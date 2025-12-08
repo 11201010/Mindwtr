@@ -42,11 +42,58 @@ jobs:
             apps/desktop/dist/*.tar.gz
             apps/desktop/dist/*.deb
 
-  # Create GitHub Release with desktop artifacts
+  # Build Android APK using EAS Cloud
+  android:
+    runs-on: ubuntu-latest
+    name: Android APK Build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build Android APK (EAS Cloud)
+        run: |
+          cd apps/mobile
+          eas build --platform android --profile preview --non-interactive --wait
+
+      - name: Download APK from EAS
+        run: |
+          cd apps/mobile
+          BUILD_URL=$(eas build:list --platform android --limit 1 --json --non-interactive | jq -r '.[0].artifacts.buildUrl // empty')
+          if [ -n "$BUILD_URL" ]; then
+            curl -L -o focus-gtd-${{ github.ref_name }}.apk "$BUILD_URL"
+            echo "Downloaded APK from: $BUILD_URL"
+          else
+            echo "No build URL found"
+          fi
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apps/mobile/*.apk
+          if-no-files-found: warn
+
+  # Create GitHub Release with all artifacts
   release:
-    needs: [desktop-linux]
+    needs: [desktop-linux, android]
     runs-on: ubuntu-latest
     name: Create Release
+    if: always() && needs.desktop-linux.result == 'success'
     
     steps:
       - name: Checkout code
@@ -57,6 +104,13 @@ jobs:
         with:
           name: desktop-linux
           path: ./release-assets
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: ./release-assets
+        continue-on-error: true
 
       - name: List release assets
         run: ls -la ./release-assets/ || echo "No assets found"
@@ -70,4 +124,3 @@ jobs:
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
