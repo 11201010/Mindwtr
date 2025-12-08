@@ -69,6 +69,7 @@ export function SettingsView() {
             developer: 'Developer',
             website: 'Website',
             github: 'GitHub',
+            license: 'License',
             system: 'System',
             light: 'Light',
             dark: 'Dark',
@@ -88,6 +89,7 @@ export function SettingsView() {
             developer: '开发者',
             website: '网站',
             github: 'GitHub',
+            license: '许可证',
             system: '系统',
             light: '浅色',
             dark: '深色',
@@ -187,11 +189,15 @@ export function SettingsView() {
                 <div className="bg-card border border-border rounded-lg p-4 space-y-2">
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">{l.version}</span>
-                        <span>1.0.0</span>
+                        <span>0.1.0</span>
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">{l.platform}</span>
                         <span>Desktop (Electron)</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">{l.license}</span>
+                        <span>MIT</span>
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">{l.developer}</span>

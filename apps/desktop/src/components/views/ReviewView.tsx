@@ -3,6 +3,7 @@ import { useTaskStore } from '@focus-gtd/core';
 import { TaskItem } from '../TaskItem';
 import { CheckSquare, Calendar, Layers, Archive, ArrowRight, Check, RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useLanguage } from '../../contexts/language-context';
 
 
 type ReviewStep = 'intro' | 'inbox' | 'calendar' | 'waiting' | 'projects' | 'someday' | 'completed';
@@ -10,15 +11,16 @@ type ReviewStep = 'intro' | 'inbox' | 'calendar' | 'waiting' | 'projects' | 'som
 export function ReviewView() {
     const [currentStep, setCurrentStep] = useState<ReviewStep>('intro');
     const { tasks, projects } = useTaskStore();
+    const { t } = useLanguage();
 
     const steps: { id: ReviewStep; title: string; description: string; icon: any }[] = [
-        { id: 'intro', title: 'Weekly Review', description: 'Get clear, get current, and get creative.', icon: RefreshCw },
-        { id: 'inbox', title: 'Process Inbox', description: 'Clarify and organize your inbox items.', icon: CheckSquare },
-        { id: 'calendar', title: 'Review Calendar', description: 'Check past 2 weeks and upcoming 2 weeks.', icon: Calendar },
-        { id: 'waiting', title: 'Waiting For', description: 'Follow up on delegated tasks.', icon: ArrowRight },
-        { id: 'projects', title: 'Review Projects', description: 'Ensure every active project has a next action.', icon: Layers },
-        { id: 'someday', title: 'Someday/Maybe', description: 'Review projects you might want to start.', icon: Archive },
-        { id: 'completed', title: 'All Done!', description: 'You are ready for the week ahead.', icon: Check },
+        { id: 'intro', title: t('review.title'), description: t('review.intro'), icon: RefreshCw },
+        { id: 'inbox', title: t('review.inboxStep'), description: t('review.inboxStepDesc'), icon: CheckSquare },
+        { id: 'calendar', title: t('review.calendarStep'), description: t('review.calendarStepDesc'), icon: Calendar },
+        { id: 'waiting', title: t('review.waitingStep'), description: t('review.waitingStepDesc'), icon: ArrowRight },
+        { id: 'projects', title: t('review.projectsStep'), description: t('review.projectsStepDesc'), icon: Layers },
+        { id: 'someday', title: t('review.somedayStep'), description: t('review.somedayStepDesc'), icon: Archive },
+        { id: 'completed', title: t('review.allDone'), description: t('review.allDoneDesc'), icon: Check },
     ];
 
     const currentStepIndex = steps.findIndex(s => s.id === currentStep);
@@ -44,15 +46,15 @@ export function ReviewView() {
                         <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
                             <RefreshCw className="w-10 h-10 text-primary" />
                         </div>
-                        <h2 className="text-3xl font-bold">Time for your Weekly Review</h2>
+                        <h2 className="text-3xl font-bold">{t('review.timeFor')}</h2>
                         <p className="text-muted-foreground text-lg max-w-md mx-auto">
-                            Clear your mind and get organized. This process will guide you through cleaning up your lists and planning for the week ahead.
+                            {t('review.timeForDesc')}
                         </p>
                         <button
                             onClick={nextStep}
                             className="bg-primary text-primary-foreground px-8 py-3 rounded-lg text-lg font-medium hover:bg-primary/90 transition-colors"
                         >
-                            Start Review
+                            {t('review.startReview')}
                         </button>
                     </div>
                 );
@@ -62,17 +64,16 @@ export function ReviewView() {
                 return (
                     <div className="space-y-4">
                         <div className="bg-muted/30 p-4 rounded-lg border border-border">
-                            <h3 className="font-semibold mb-2">Inbox Zero Goal</h3>
+                            <h3 className="font-semibold mb-2">{t('review.inboxZero')}</h3>
                             <p className="text-sm text-muted-foreground">
-                                You have <span className="font-bold text-foreground">{inboxTasks.length}</span> items in your Inbox.
-                                Process them by clarifying what they are and organizing them into next actions, projects, or trash.
+                                <span className="font-bold text-foreground">{inboxTasks.length}</span> {t('review.inboxZeroDesc')}
                             </p>
                         </div>
                         <div className="space-y-2">
                             {inboxTasks.length === 0 ? (
                                 <div className="text-center py-12 text-muted-foreground">
                                     <Check className="w-12 h-12 mx-auto mb-4 text-green-500" />
-                                    <p>Inbox is empty! Great job.</p>
+                                    <p>{t('review.inboxEmpty')}</p>
                                 </div>
                             ) : (
                                 inboxTasks.map(task => <TaskItem key={task.id} task={task} />)
@@ -87,15 +88,15 @@ export function ReviewView() {
                     <div className="space-y-6">
                         <div className="grid grid-cols-2 gap-6">
                             <div className="space-y-2">
-                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">Past 14 Days</h3>
+                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">{t('review.past14')}</h3>
                                 <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] text-sm text-muted-foreground">
-                                    Review your calendar for the past two weeks. Did you miss anything? Do any completed appointments require follow-up actions?
+                                    {t('review.past14Desc')}
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">Upcoming 14 Days</h3>
+                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">{t('review.upcoming14')}</h3>
                                 <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] text-sm text-muted-foreground">
-                                    Look at the upcoming two weeks. What do you need to prepare for? Capture any new next actions.
+                                    {t('review.upcoming14Desc')}
                                 </div>
                             </div>
                         </div>
@@ -107,12 +108,12 @@ export function ReviewView() {
                 return (
                     <div className="space-y-4">
                         <p className="text-muted-foreground">
-                            Review these items. Have you received what you're waiting for? Do you need to send a reminder?
+                            {t('review.waitingHint')}
                         </p>
                         <div className="space-y-2">
                             {waitingTasks.length === 0 ? (
                                 <div className="text-center py-12 text-muted-foreground">
-                                    <p>Nothing in Waiting For.</p>
+                                    <p>{t('review.waitingEmpty')}</p>
                                 </div>
                             ) : (
                                 waitingTasks.map(task => <TaskItem key={task.id} task={task} />)
@@ -125,14 +126,11 @@ export function ReviewView() {
                 const activeProjects = projects.filter(p => p.status === 'active');
                 return (
                     <div className="space-y-6">
-                        <p className="text-muted-foreground">
-                            Review each project. Does it have at least one concrete <strong>Next Action</strong>? If not, add one now.
-                            Mark completed projects as done.
-                        </p>
+                        <p className="text-muted-foreground" dangerouslySetInnerHTML={{ __html: t('review.projectsHint') }} />
                         <div className="space-y-4">
                             {activeProjects.map(project => {
-                                const projectTasks = tasks.filter(t => t.projectId === project.id && t.status !== 'done');
-                                const hasNextAction = projectTasks.some(t => t.status === 'next');
+                                const projectTasks = tasks.filter(task => task.projectId === project.id && task.status !== 'done');
+                                const hasNextAction = projectTasks.some(task => task.status === 'next');
 
                                 return (
                                     <div key={project.id} className="border border-border rounded-lg p-4">
@@ -142,7 +140,7 @@ export function ReviewView() {
                                                 <h3 className="font-semibold">{project.title}</h3>
                                             </div>
                                             <div className={cn("text-xs px-2 py-1 rounded-full", hasNextAction ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600")}>
-                                                {hasNextAction ? "Has Next Action" : "Needs Action"}
+                                                {hasNextAction ? t('review.hasNextAction') : t('review.needsAction')}
                                             </div>
                                         </div>
                                         <div className="space-y-2 pl-5">
@@ -150,7 +148,7 @@ export function ReviewView() {
                                                 <TaskItem key={task.id} task={task} />
                                             ))}
                                             {projectTasks.length === 0 && (
-                                                <div className="text-sm text-muted-foreground italic">No active tasks</div>
+                                                <div className="text-sm text-muted-foreground italic">{t('review.noActiveTasks')}</div>
                                             )}
                                         </div>
                                     </div>
@@ -165,12 +163,12 @@ export function ReviewView() {
                 return (
                     <div className="space-y-4">
                         <p className="text-muted-foreground">
-                            Review your Someday/Maybe list. Is there anything here you want to make active now? Or delete?
+                            {t('review.somedayHint')}
                         </p>
                         <div className="space-y-2">
                             {somedayTasks.length === 0 ? (
                                 <div className="text-center py-12 text-muted-foreground">
-                                    <p>List is empty.</p>
+                                    <p>{t('review.listEmpty')}</p>
                                 </div>
                             ) : (
                                 somedayTasks.map(task => <TaskItem key={task.id} task={task} />)
@@ -185,15 +183,15 @@ export function ReviewView() {
                         <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
                             <Check className="w-10 h-10 text-green-600" />
                         </div>
-                        <h2 className="text-3xl font-bold">Review Complete!</h2>
+                        <h2 className="text-3xl font-bold">{t('review.complete')}</h2>
                         <p className="text-muted-foreground text-lg max-w-md mx-auto">
-                            You've clarified your inputs, updated your lists, and you're ready to engage with your work.
+                            {t('review.completeDesc')}
                         </p>
                         <button
                             onClick={() => setCurrentStep('intro')}
                             className="bg-primary text-primary-foreground px-8 py-3 rounded-lg text-lg font-medium hover:bg-primary/90 transition-colors"
                         >
-                            Finish
+                            {t('review.finish')}
                         </button>
                     </div>
                 );

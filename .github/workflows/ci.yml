@@ -7,9 +7,10 @@ on:
     branches: [main, master]
 
 jobs:
-  lint-and-build:
+  # Core package tests
+  core:
     runs-on: ubuntu-latest
-    
+    name: Core Package
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,26 +23,44 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: TypeScript check (core package)
+      - name: TypeScript check
         run: cd packages/core && bun run tsc --noEmit
+
+      - name: Run unit tests
+        run: cd packages/core && bun test
+        continue-on-error: true
+
+  # Desktop app build and tests
+  desktop:
+    runs-on: ubuntu-latest
+    name: Desktop App
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: TypeScript check
+        run: cd apps/desktop && bun run tsc --noEmit
+        continue-on-error: true
+
+      - name: Run tests
+        run: cd apps/desktop && bun test
         continue-on-error: true
 
       - name: Build desktop app
         run: bun run desktop:build
-        continue-on-error: true
 
-      - name: Run tests (if available)
-        run: |
-          if [ -f "packages/core/package.json" ] && grep -q '"test"' packages/core/package.json; then
-            cd packages/core && bun test
-          else
-            echo "No tests configured yet"
-          fi
-        continue-on-error: true
-
-  mobile-check:
+  # Mobile app validation
+  mobile:
     runs-on: ubuntu-latest
-    
+    name: Mobile App
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,6 +73,31 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: TypeScript check (mobile app)
+      - name: TypeScript check
+        run: cd apps/mobile && bunx tsc --noEmit
+        continue-on-error: true
+
+      - name: Expo Doctor check
         run: cd apps/mobile && bunx expo-doctor
         continue-on-error: true
+
+  # Lint check (optional - can add ESLint later)
+  lint:
+    runs-on: ubuntu-latest
+    name: Code Quality
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Check for lint errors (mobile)
+        run: cd apps/mobile && bun run lint
+        continue-on-error: true
+

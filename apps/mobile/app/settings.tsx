@@ -106,7 +106,11 @@ export default function SettingsScreen() {
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
                     <View style={styles.settingRow}>
                         <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.version')}</Text>
-                        <Text style={[styles.settingValue, { color: tc.secondaryText }]}>1.0.0</Text>
+                        <Text style={[styles.settingValue, { color: tc.secondaryText }]}>0.1.0</Text>
+                    </View>
+                    <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                        <Text style={[styles.settingLabel, { color: tc.text }]}>{language === 'zh' ? '许可证' : 'License'}</Text>
+                        <Text style={[styles.settingValue, { color: tc.secondaryText }]}>MIT</Text>
                     </View>
                     <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                         <Text style={[styles.settingLabel, { color: tc.text }]}>{language === 'zh' ? '开发者' : 'Developer'}</Text>
