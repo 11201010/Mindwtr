@@ -153,6 +153,7 @@ export function CalendarView() {
                   <Text
                     style={[
                       styles.dayText,
+                      { color: tc.text },
                       isToday(date) && styles.todayText,
                     ]}
                   >
@@ -170,8 +171,8 @@ export function CalendarView() {
         </View>
 
         {selectedDate && (
-          <View style={styles.selectedDateSection}>
-            <Text style={styles.selectedDateTitle}>
+          <View style={[styles.selectedDateSection, { backgroundColor: tc.cardBg }]}>
+            <Text style={[styles.selectedDateTitle, { color: tc.text }]}>
               {selectedDate.toLocaleDateString('en-US', {
                 weekday: 'long',
                 year: 'numeric',
@@ -182,7 +183,7 @@ export function CalendarView() {
 
             <View style={styles.addTaskForm}>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                 value={newTaskTitle}
                 onChangeText={setNewTaskTitle}
                 placeholder="Add new task..."
@@ -199,12 +200,12 @@ export function CalendarView() {
 
             <View style={styles.tasksList}>
               {getTasksForDay(selectedDate.getDate()).map((task) => (
-                <View key={task.id} style={styles.taskItem}>
-                  <Text style={styles.taskItemTitle} numberOfLines={1}>
+                <View key={task.id} style={[styles.taskItem, { backgroundColor: tc.inputBg }]}>
+                  <Text style={[styles.taskItemTitle, { color: tc.text }]} numberOfLines={1}>
                     {task.title}
                   </Text>
                   {task.startTime && (
-                    <Text style={styles.taskItemTime}>
+                    <Text style={[styles.taskItemTime, { color: tc.secondaryText }]}>
                       {new Date(task.startTime).toLocaleTimeString('en-US', {
                         hour: '2-digit',
                         minute: '2-digit',
@@ -214,7 +215,7 @@ export function CalendarView() {
                 </View>
               ))}
               {getTasksForDay(selectedDate.getDate()).length === 0 && (
-                <Text style={styles.noTasks}>No tasks for this day</Text>
+                <Text style={[styles.noTasks, { color: tc.secondaryText }]}>No tasks for this day</Text>
               )}
             </View>
           </View>
