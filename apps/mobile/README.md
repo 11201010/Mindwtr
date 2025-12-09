@@ -8,7 +8,9 @@ React Native mobile app for the Focus GTD productivity system.
 - **Inbox Processing** - Guided clarify workflow with 2-minute rule
 - **Context Filtering** - Filter tasks by @home, @work, @errands, etc.
 - **Dark Mode** - Full dark theme support with system preference
-- **Swipe Actions** - Quick task management gestures
+- **Swipe Actions** - Quick task management gestures (Swipes Right for Done on Inbox)
+- **Smart Tags** - Frequent and recommended context tags
+- **Quick Status** - Instant status change via status badge tap
 
 ### Screens
 | Screen | Description |

@@ -45,7 +45,7 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 
 ### Cross-Platform
 - 🖥️ **Desktop** - Tauri v2 app (macOS, Linux, Windows)
-- 📱 **Mobile** - React Native/Expo (iOS, Android) with Swipe Actions
+- 📱 **Mobile** - React Native/Expo (iOS, Android) with Smart Tags & Swipe Actions
 - 🌍 **i18n** - English and Chinese language support
 - 🔄 **Shared Core** - Same data model and business logic
 

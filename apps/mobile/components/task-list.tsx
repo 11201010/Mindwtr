@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { View, TextInput, FlatList, StyleSheet, TouchableOpacity, Text, Animated, Pressable, RefreshControl } from 'react-native';
 import { useTaskStore, Task, TaskStatus } from '@focus-gtd/core';
-import Swipeable from 'react-native-gesture-handler/Swipeable';
+
 
 import { TaskEditModal } from './task-edit-modal';
-import { TaskStatusBadge } from './task-status-badge';
+import { SwipeableTaskItem } from './swipeable-task-item';
 import { useTheme } from '../contexts/theme-context';
 import { useLanguage } from '../contexts/language-context';
 import { Colors } from '@/constants/theme';
@@ -109,60 +109,15 @@ export function TaskList({ statusFilter, title, allowAdd = true, projectId }: Ta
     setEditingTask(null);
   };
 
-  const renderRightActions = (progress: any, dragX: any, item: Task) => {
-    const scale = dragX.interpolate({
-      inputRange: [-100, 0],
-      outputRange: [1, 0],
-      extrapolate: 'clamp',
-    });
-    return (
-      <TouchableOpacity onPress={() => deleteTask(item.id)} style={styles.deleteAction}>
-        <Animated.Text style={[styles.actionText, { transform: [{ scale }] }]}>Delete</Animated.Text>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderLeftActions = (progress: any, dragX: any, item: Task) => {
-    const scale = dragX.interpolate({
-      inputRange: [0, 100],
-      outputRange: [0, 1],
-      extrapolate: 'clamp',
-    });
-    return (
-      <TouchableOpacity
-        onPress={() => updateTask(item.id, { status: 'next' })}
-        style={styles.promoteAction}
-      >
-        <Animated.Text style={[styles.actionText, { transform: [{ scale }] }]}>Next</Animated.Text>
-      </TouchableOpacity>
-    );
-  };
-
   const renderTask = ({ item }: { item: Task }) => (
-    <Swipeable
-      renderRightActions={(progress, dragX) => renderRightActions(progress, dragX, item)}
-      renderLeftActions={(progress, dragX) => renderLeftActions(progress, dragX, item)}
-    >
-      <Pressable style={[styles.taskItem, { backgroundColor: themeColors.cardBg }]} onPress={() => handleEditTask(item)}>
-        <View style={styles.taskContent}>
-          <Text style={[styles.taskTitle, { color: themeColors.text }]}>{item.title}</Text>
-          {item.description && (
-            <Text style={[styles.taskDescription, { color: themeColors.placeholder }]} numberOfLines={1}>
-              {item.description}
-            </Text>
-          )}
-          <Text style={[styles.taskMeta, { color: themeColors.placeholder }]}>
-            {item.contexts.join(', ')} {item.projectId && '• Project'}
-          </Text>
-        </View>
-        <View style={styles.badgeContainer}>
-          <TaskStatusBadge
-            status={item.status}
-            onUpdate={(newStatus: TaskStatus) => updateTask(item.id, { status: newStatus })}
-          />
-        </View>
-      </Pressable>
-    </Swipeable>
+    <SwipeableTaskItem
+      task={item}
+      isDark={isDark}
+      tc={themeColors as any}
+      onPress={() => handleEditTask(item)}
+      onStatusChange={(status) => updateTask(item.id, { status: status as TaskStatus })}
+      onDelete={() => deleteTask(item.id)}
+    />
   );
 
   return (
