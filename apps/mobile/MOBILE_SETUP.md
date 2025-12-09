@@ -125,6 +125,8 @@ function MyComponent() {
 - ✅ **Next Actions** - Tasks ready to work on
 - ✅ **Projects** - Organize multi-step outcomes
 - ✅ **Contexts** - Filter by @home, @work, etc.
+- ✅ **Board View** - Kanban style with Todo/Next/In-Progress/Done columns
+- ✅ **Swipe Actions** - Quick task management (Left: Next/Archive, Right: Delete)
 - ✅ **Settings** - Theme, language, sync
 - ✅ **File Sync** - Sync data with Dropbox/Syncthing
 - ✅ **Dark Mode** - Full dark theme support

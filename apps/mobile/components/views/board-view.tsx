@@ -4,39 +4,25 @@ import type { Task, TaskStatus } from '@focus-gtd/core';
 import { useState } from 'react';
 import { useTheme } from '../../contexts/theme-context';
 import { Colors } from '@/constants/theme';
+import { SwipeableTaskItem } from '../swipeable-task-item';
 
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
   { id: 'todo', label: 'Todo', color: '#6B7280' },
+  { id: 'next', label: 'Next', color: '#3B82F6' },
   { id: 'in-progress', label: 'In Progress', color: '#EAB308' },
   { id: 'done', label: 'Done', color: '#10B981' },
 ];
 
-function TaskCard({ task, onPress }: { task: Task; onPress: () => void }) {
-  return (
-    <Pressable style={styles.taskCard} onPress={onPress}>
-      <Text style={styles.taskTitle} numberOfLines={2}>
-        {task.title}
-      </Text>
-      {task.dueDate && (
-        <Text style={styles.taskDueDate}>
-          {new Date(task.dueDate).toLocaleDateString()}
-        </Text>
-      )}
-      {task.contexts && task.contexts.length > 0 && (
-        <Text style={styles.taskContexts} numberOfLines={1}>
-          {task.contexts.join(', ')}
-        </Text>
-      )}
-    </Pressable>
-  );
-}
-
-function Column({ id, label, color, tasks, onTaskPress }: {
+function Column({ id, label, color, tasks, onTaskPress, onStatusChange, onDelete, isDark, tc }: {
   id: TaskStatus;
   label: string;
   color: string;
   tasks: Task[];
   onTaskPress: (task: Task) => void;
+  onStatusChange: (taskId: string, status: string) => void;
+  onDelete: (taskId: string) => void;
+  isDark: boolean;
+  tc: any;
 }) {
   return (
     <View style={[styles.column, { borderTopColor: color }]}>
@@ -48,7 +34,15 @@ function Column({ id, label, color, tasks, onTaskPress }: {
       </View>
       <ScrollView style={styles.columnContent} showsVerticalScrollIndicator={false}>
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onPress={() => onTaskPress(task)} />
+          <SwipeableTaskItem
+            key={task.id}
+            task={task}
+            isDark={isDark}
+            tc={tc}
+            onPress={() => onTaskPress(task)}
+            onStatusChange={(status) => onStatusChange(task.id, status)}
+            onDelete={() => onDelete(task.id)}
+          />
         ))}
         {tasks.length === 0 && (
           <View style={styles.emptyColumn}>
@@ -61,7 +55,7 @@ function Column({ id, label, color, tasks, onTaskPress }: {
 }
 
 export function BoardView() {
-  const { tasks, updateTask } = useTaskStore();
+  const { tasks, updateTask, deleteTask } = useTaskStore();
   const { isDark } = useTheme();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
@@ -105,6 +99,10 @@ export function BoardView() {
             color={col.color}
             tasks={tasks.filter((t) => t.status === col.id)}
             onTaskPress={handleTaskPress}
+            onStatusChange={(taskId, status) => updateTask(taskId, { status: status as any })}
+            onDelete={deleteTask}
+            isDark={isDark}
+            tc={tc}
           />
         ))}
       </ScrollView>
@@ -204,29 +202,7 @@ const styles = StyleSheet.create({
     padding: 12,
     maxHeight: 500,
   },
-  taskCard: {
-    backgroundColor: '#F9FAFB',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#3B82F6',
-  },
-  taskTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  taskDueDate: {
-    fontSize: 12,
-    color: '#DC2626',
-    marginBottom: 4,
-  },
-  taskContexts: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
+
   emptyColumn: {
     alignItems: 'center',
     paddingVertical: 24,

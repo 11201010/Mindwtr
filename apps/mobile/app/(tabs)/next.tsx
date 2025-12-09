@@ -1,17 +1,21 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useTaskStore, Task } from '@focus-gtd/core';
+import { useTaskStore } from '@focus-gtd/core';
+import type { Task } from '@focus-gtd/core';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { Colors } from '@/constants/theme';
+import { SwipeableTaskItem } from '@/components/swipeable-task-item';
 
 // GTD preset contexts
 const PRESET_CONTEXTS = ['@home', '@work', '@errands', '@agendas', '@computer', '@phone', '@anywhere'];
 
+import { sortTasks } from '@/utils/task-sorter';
+
 export default function NextActionsScreen() {
-  const { tasks, updateTask } = useTaskStore();
+  const { tasks, updateTask, deleteTask } = useTaskStore();
   const { isDark } = useTheme();
   const { t } = useLanguage();
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -34,17 +38,17 @@ export default function NextActionsScreen() {
     ...tasks.flatMap(t => t.contexts || [])
   ])).sort();
 
-  const nextTasks = tasks.filter(t => {
+  const nextTasks = sortTasks(tasks.filter(t => {
     if (t.status !== 'next') return false;
     if (selectedContext && !t.contexts?.includes(selectedContext)) return false;
     return true;
-  });
+  }));
 
-  const todoTasks = tasks.filter(t => {
+  const todoTasks = sortTasks(tasks.filter(t => {
     if (t.status !== 'todo') return false;
     if (selectedContext && !t.contexts?.includes(selectedContext)) return false;
     return true;
-  });
+  }));
 
   const handlePromote = useCallback((taskId: string) => {
     updateTask(taskId, { status: 'next' });
@@ -115,30 +119,22 @@ export default function NextActionsScreen() {
   );
 
   const renderNextItem = useCallback(({ item }: { item: Task }) => (
-    <TouchableOpacity onPress={() => onEdit(item)} style={[styles.taskCard, { backgroundColor: tc.cardBg }]}>
-      <View style={styles.taskContent}>
-        <Text style={[styles.taskTitle, { color: tc.text }]}>{item.title}</Text>
-        <View style={styles.taskMetaRow}>
-          {item.contexts && item.contexts.length > 0 && (
-            <Text style={[styles.contextBadge, { color: '#3B82F6' }]}>
-              {item.contexts[0]}
-            </Text>
-          )}
-          {item.projectId && <Text style={[styles.taskMeta, { color: tc.secondaryText }]}>Project</Text>}
-        </View>
-      </View>
-      <TouchableOpacity onPress={() => handleComplete(item.id)} style={styles.actionButton}>
-        <IconSymbol name="circle" size={24} color={tc.secondaryText} />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  ), [handleComplete, onEdit, tc]);
+    <SwipeableTaskItem
+      task={item}
+      isDark={isDark}
+      tc={tc}
+      onPress={() => onEdit(item)}
+      onStatusChange={(status) => updateTask(item.id, { status: status as any })}
+      onDelete={() => deleteTask(item.id)}
+    />
+  ), [onEdit, tc, updateTask, deleteTask, isDark]);
 
   const renderTodoItem = useCallback(({ item }: { item: Task }) => (
     <View style={[styles.todoItem, { backgroundColor: tc.filterBg }]}>
       <View style={styles.todoContent}>
         <Text style={[styles.todoTitle, { color: tc.secondaryText }]}>{item.title}</Text>
         {item.contexts && item.contexts.length > 0 && (
-          <Text style={[styles.contextBadge, { color: '#3B82F6', fontSize: 11 }]}>
+          <Text style={[styles.contextBadge, { color: '#3B82F6' }]}>
             {item.contexts[0]}
           </Text>
         )}
@@ -155,7 +151,7 @@ export default function NextActionsScreen() {
         <Text style={[styles.headerTitle, { color: tc.text }]}>{t('next.title')}</Text>
         <Text style={[styles.headerSubtitle, { color: tc.secondaryText }]}>
           {nextTasks.length} {t('next.ready')}
-          {selectedContext && ` • ${selectedContext}`}
+          {selectedContext && ` • ${selectedContext} `}
         </Text>
       </View>
 
@@ -191,7 +187,7 @@ export default function NextActionsScreen() {
             <View style={styles.emptyContainer}>
               <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
                 {selectedContext
-                  ? `${t('next.noContext')} ${selectedContext}`
+                  ? `${t('next.noContext')} ${selectedContext} `
                   : t('next.noTasks')}
               </Text>
             </View>
@@ -201,7 +197,7 @@ export default function NextActionsScreen() {
           <View style={styles.emptyContainer}>
             <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
               {selectedContext
-                ? `${t('next.noContext')} ${selectedContext}`
+                ? `${t('next.noContext')} ${selectedContext} `
                 : t('next.noTasks')}
             </Text>
           </View>
@@ -261,6 +257,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+    paddingBottom: 100,
   },
   sectionHeader: {
     marginBottom: 12,
@@ -272,41 +269,13 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 12,
   },
-  taskCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
-  },
-  taskContent: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  taskMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  taskMeta: {
-    fontSize: 12,
-  },
   contextBadge: {
     fontSize: 12,
     fontWeight: '500',
-  },
-  actionButton: {
-    padding: 8,
-    marginLeft: 8,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   todoSection: {
     marginTop: 24,

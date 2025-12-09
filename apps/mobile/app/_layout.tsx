@@ -1,5 +1,4 @@
 import '../shim';
-import '../global.css';
 import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
 import { Drawer } from 'expo-router/drawer';
 import { StatusBar } from 'expo-status-bar';
@@ -117,6 +116,14 @@ function RootLayoutContent() {
             options={{
               drawerLabel: t('nav.projects'),
               title: t('projects.title'),
+            }}
+          />
+
+          <Drawer.Screen
+            name="archived"
+            options={{
+              drawerLabel: t('nav.archived') || 'Archived',
+              title: t('archived.title') || 'Archived',
             }}
           />
 

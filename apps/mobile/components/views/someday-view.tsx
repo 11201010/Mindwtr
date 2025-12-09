@@ -4,53 +4,12 @@ import type { Task } from '@focus-gtd/core';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { Colors } from '@/constants/theme';
+import { SwipeableTaskItem } from '../swipeable-task-item';
 
-function TaskCard({ task, onStatusChange }: {
-  task: Task;
-  onStatusChange: (id: string, status: 'next' | 'done') => void;
-}) {
-  return (
-    <View style={styles.taskCard}>
-      <View style={styles.taskContent}>
-        <Text style={styles.taskTitle}>{task.title}</Text>
-        {task.description && (
-          <Text style={styles.taskDescription} numberOfLines={2}>
-            {task.description}
-          </Text>
-        )}
-        {task.contexts && task.contexts.length > 0 && (
-          <View style={styles.contextsRow}>
-            {task.contexts.map((ctx, idx) => (
-              <Text key={idx} style={styles.contextTag}>
-                {ctx}
-              </Text>
-            ))}
-          </View>
-        )}
-        <Text style={styles.createdDate}>
-          Added: {new Date(task.createdAt).toLocaleDateString()}
-        </Text>
-      </View>
-      <View style={styles.actions}>
-        <Pressable
-          style={[styles.actionButton, styles.nextButton]}
-          onPress={() => onStatusChange(task.id, 'next')}
-        >
-          <Text style={styles.actionButtonText}>Move to Next</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.actionButton, styles.doneButton]}
-          onPress={() => onStatusChange(task.id, 'done')}
-        >
-          <Text style={styles.actionButtonText}>Archive</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
+
 
 export function SomedayView() {
-  const { tasks, updateTask } = useTaskStore();
+  const { tasks, updateTask, deleteTask } = useTaskStore();
   const { isDark } = useTheme();
   const { t } = useLanguage();
 
@@ -97,7 +56,15 @@ export function SomedayView() {
       <ScrollView style={styles.taskList} showsVerticalScrollIndicator={false}>
         {somedayTasks.length > 0 ? (
           somedayTasks.map((task) => (
-            <TaskCard key={task.id} task={task} onStatusChange={handleStatusChange} />
+            <SwipeableTaskItem
+              key={task.id}
+              task={task}
+              isDark={isDark}
+              tc={tc}
+              onPress={() => { }}
+              onStatusChange={(status) => handleStatusChange(task.id, status as any)}
+              onDelete={() => deleteTask(task.id)}
+            />
           ))
         ) : (
           <View style={styles.emptyState}>
@@ -160,75 +127,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
-  taskCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#8B5CF6',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  taskContent: {
-    marginBottom: 12,
-  },
-  taskTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  taskDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  contextsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 4,
-    marginBottom: 4,
-  },
-  contextTag: {
-    fontSize: 12,
-    color: '#3B82F6',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  createdDate: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontStyle: 'italic',
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  nextButton: {
-    backgroundColor: '#3B82F6',
-  },
-  doneButton: {
-    backgroundColor: '#6B7280',
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',

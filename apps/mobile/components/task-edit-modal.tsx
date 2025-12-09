@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, Pressable } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Task, TaskStatus } from '@focus-gtd/core';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
@@ -31,6 +32,13 @@ export function TaskEditModal({ visible, task, onClose, onSave }: TaskEditModalP
         }
     };
 
+    const handleQuickDone = () => {
+        if (task.id) {
+            onSave(task.id, { ...editedTask, status: 'done' });
+            onClose();
+        }
+    };
+
     const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
         const currentMode = showDatePicker;
         if (Platform.OS === 'android') {
@@ -53,7 +61,7 @@ export function TaskEditModal({ visible, task, onClose, onSave }: TaskEditModalP
 
     return (
         <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-            <View style={styles.container}>
+            <SafeAreaView style={styles.container} edges={['top']}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={onClose}>
                         <Text style={styles.headerBtn}>Cancel</Text>
@@ -159,7 +167,7 @@ export function TaskEditModal({ visible, task, onClose, onSave }: TaskEditModalP
                         />
                     </View>
                 </ScrollView>
-            </View>
+            </SafeAreaView>
         </Modal>
     );
 }
@@ -212,4 +220,6 @@ const styles = StyleSheet.create({
     headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     startBtn: { backgroundColor: '#34C759', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
     startBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+    doneBtn: { backgroundColor: '#007AFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+    doneBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 });

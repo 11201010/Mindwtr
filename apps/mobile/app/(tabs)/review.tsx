@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { useTaskStore } from '@focus-gtd/core';
 import { useState } from 'react';
 import type { Task, TaskStatus } from '@focus-gtd/core';
@@ -44,111 +44,12 @@ const getStatusLabels = (lang: 'en' | 'zh'): Record<TaskStatus, string> => {
   };
 };
 
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { TaskEditModal } from '@/components/task-edit-modal';
-import { TaskStatusBadge } from '@/components/task-status-badge';
-
-function TaskCard({ task, onEdit, t }: { task: Task; onEdit: (task: Task) => void; t: (key: string) => string }) {
-  const { updateTask, deleteTask } = useTaskStore();
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const handleStatusChange = (newStatus: TaskStatus) => {
-    updateTask(task.id, { status: newStatus });
-  };
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return t('review.notSet');
-    const date = new Date(dateStr);
-    return date.toLocaleDateString();
-  };
-
-  const formatTime = (dateStr?: string) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  return (
-    <Pressable
-      style={[styles.taskCard, { borderLeftColor: STATUS_COLORS[task.status] }]}
-      onPress={() => setIsExpanded(!isExpanded)}
-    >
-      <View style={styles.taskHeader}>
-        <View style={styles.taskTitleRow}>
-          <Text style={styles.taskTitle}>{task.title}</Text>
-          <TaskStatusBadge
-            status={task.status}
-            onUpdate={(newStatus: TaskStatus) => updateTask(task.id, { status: newStatus })}
-          />
-        </View>
-      </View>
-
-      {isExpanded && (
-        <View style={styles.taskDetails}>
-          <>
-            {task.description && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>{t('review.description')}:</Text>
-                <Text style={styles.detailValue}>{task.description}</Text>
-              </View>
-            )}
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>{t('review.startTime')}:</Text>
-              <Text style={styles.detailValue}>
-                {formatDate(task.startTime)}
-                {task.startTime && ` ${formatTime(task.startTime)}`}
-              </Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>{t('review.deadline')}:</Text>
-              <Text style={[styles.detailValue, task.dueDate && styles.deadlineText]}>
-                {formatDate(task.dueDate)}
-                {task.dueDate && ` ${formatTime(task.dueDate)}`}
-              </Text>
-            </View>
-
-            {task.contexts && task.contexts.length > 0 && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>{t('review.contexts')}:</Text>
-                <Text style={styles.detailValue}>{task.contexts.join(', ')}</Text>
-              </View>
-            )}
-
-            <View style={styles.actionButtons}>
-              <Pressable
-                style={[styles.button, styles.editButton]}
-                onPress={() => onEdit(task)}
-              >
-                <Text style={styles.buttonText}>✏️ {t('common.edit')}</Text>
-              </Pressable>
-
-              {task.status !== 'done' && (
-                <Pressable
-                  style={[styles.button, styles.doneButton]}
-                  onPress={() => handleStatusChange('done')}
-                >
-                  <Text style={styles.buttonText}>✅ {t('review.markDone')}</Text>
-                </Pressable>
-              )}
-
-              <Pressable
-                style={[styles.button, styles.deleteButton]}
-                onPress={() => deleteTask(task.id)}
-              >
-                <Text style={styles.buttonText}>🗑️ {t('common.delete')}</Text>
-              </Pressable>
-            </View>
-          </>
-        </View>
-      )}
-    </Pressable>
-  );
-}
+import { SwipeableTaskItem } from '@/components/swipeable-task-item';
+import { sortTasks } from '@/utils/task-sorter';
 
 export default function ReviewScreen() {
-  const { tasks, updateTask } = useTaskStore();
+  const { tasks, updateTask, deleteTask } = useTaskStore();
   const { isDark } = useTheme();
   const { language, t } = useLanguage();
   const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all');
@@ -167,19 +68,13 @@ export default function ReviewScreen() {
     filterBg: isDark ? '#374151' : '#F3F4F6',
   };
 
-  const filteredTasks = tasks.filter((task) =>
+  // Filter out archived and deleted tasks first, then apply status filter
+  const activeTasks = tasks.filter((t) => t.status !== 'archived' && !t.deletedAt);
+  const filteredTasks = activeTasks.filter((task) =>
     filterStatus === 'all' ? true : task.status === filterStatus
   );
 
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    // Sort by dueDate first (earliest first), then by status
-    if (a.dueDate && !b.dueDate) return -1;
-    if (!a.dueDate && b.dueDate) return 1;
-    if (a.dueDate && b.dueDate) {
-      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-    }
-    return a.status.localeCompare(b.status);
-  });
+  const sortedTasks = sortTasks(filteredTasks);
 
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
@@ -194,7 +89,7 @@ export default function ReviewScreen() {
           onPress={() => setFilterStatus('all')}
         >
           <Text style={[styles.filterText, { color: tc.secondaryText }, filterStatus === 'all' && styles.filterTextActive]}>
-            {t('common.all')} ({tasks.length})
+            {t('common.all')} ({activeTasks.length})
           </Text>
         </Pressable>
         {STATUS_OPTIONS.map((status) => (
@@ -204,7 +99,7 @@ export default function ReviewScreen() {
             onPress={() => setFilterStatus(status)}
           >
             <Text style={[styles.filterText, { color: tc.secondaryText }, filterStatus === status && styles.filterTextActive]}>
-              {STATUS_LABELS[status]} ({tasks.filter((t) => t.status === status).length})
+              {STATUS_LABELS[status]} ({activeTasks.filter((t) => t.status === status).length})
             </Text>
           </Pressable>
         ))}
@@ -212,14 +107,17 @@ export default function ReviewScreen() {
 
       <ScrollView style={styles.taskList}>
         {sortedTasks.map((task) => (
-          <TaskCard
+          <SwipeableTaskItem
             key={task.id}
             task={task}
-            t={t}
-            onEdit={(t) => {
-              setEditingTask(t);
+            isDark={isDark}
+            tc={tc}
+            onPress={() => {
+              setEditingTask(task);
               setIsModalVisible(true);
             }}
+            onStatusChange={(status) => updateTask(task.id, { status: status as any })}
+            onDelete={() => deleteTask(task.id)}
           />
         ))}
         {sortedTasks.length === 0 && (
@@ -245,36 +143,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     padding: 16,
-    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#111827',
   },
   count: {
     fontSize: 14,
-    color: '#6B7280',
   },
   filterBar: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    borderBottomWidth: 1,
     maxHeight: 60,
   },
   filterButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#F3F4F6',
     marginRight: 8,
   },
   filterButtonActive: {
@@ -282,7 +173,6 @@ const styles = StyleSheet.create({
   },
   filterText: {
     fontSize: 14,
-    color: '#4B5563',
     fontWeight: '500',
   },
   filterTextActive: {
@@ -292,170 +182,12 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
-  taskCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  taskHeader: {
-    marginBottom: 8,
-  },
-  taskTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  taskTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    flex: 1,
-    marginRight: 12,
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusText: {
-    fontSize: 12,
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  taskDetails: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  detailRow: {
-    marginBottom: 8,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  deadlineText: {
-    color: '#DC2626',
-    fontWeight: '500',
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  statusButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  statusButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  statusButtonText: {
-    fontSize: 12,
-    color: '#4B5563',
-    fontWeight: '500',
-  },
-  statusButtonTextActive: {
-    color: '#FFFFFF',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  editButton: {
-    backgroundColor: '#3B82F6',
-  },
-  doneButton: {
-    backgroundColor: '#10B981',
-  },
-  deleteButton: {
-    backgroundColor: '#EF4444',
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  editForm: {
-    gap: 12,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    backgroundColor: '#FFFFFF',
-  },
-  dateButton: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'flex-start',
-  },
-  dateButtonText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  saveButton: {
-    backgroundColor: '#10B981',
-  },
-  cancelButton: {
-    backgroundColor: '#6B7280',
-  },
   emptyState: {
+    padding: 32,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
   },
   emptyText: {
     fontSize: 16,
-    color: '#9CA3AF',
+    textAlign: 'center',
   },
 });

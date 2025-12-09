@@ -22,6 +22,7 @@ const translations: Record<Language, Record<string, string>> = {
         'nav.waiting': 'Waiting For',
         'nav.someday': 'Someday/Maybe',
         'nav.projects': 'Projects',
+        'nav.archived': 'Archived',
         'nav.settings': 'Settings',
 
         // Tabs
@@ -156,6 +157,12 @@ const translations: Record<Language, Record<string, string>> = {
         'common.edit': 'Edit',
         'common.add': 'Add',
         'common.all': 'All',
+
+        // Archived
+        'archived.title': 'Archived',
+        'archived.empty': 'No archived tasks',
+        'archived.emptyHint': 'Tasks you archive will appear here',
+        'contexts.search': 'Search contexts...',
     },
     zh: {
         // App
@@ -169,6 +176,7 @@ const translations: Record<Language, Record<string, string>> = {
         'nav.waiting': '等待中',
         'nav.someday': '将来/也许',
         'nav.projects': '项目',
+        'nav.archived': '归档',
         'nav.settings': '设置',
 
         // Tabs
@@ -303,6 +311,12 @@ const translations: Record<Language, Record<string, string>> = {
         'common.edit': '编辑',
         'common.add': '添加',
         'common.all': '全部',
+
+        // Archived
+        'archived.title': '归档',
+        'archived.empty': '没有归档的任务',
+        'archived.emptyHint': '你归档的任务将会显示在这里',
+        'contexts.search': '搜索情境...',
     },
 };
 
