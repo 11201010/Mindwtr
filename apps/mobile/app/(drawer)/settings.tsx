@@ -141,10 +141,9 @@ export default function SettingsPage() {
 
     // Sub-screen header
     const SubHeader = ({ title }: { title: string }) => (
-        <TouchableOpacity style={styles.subHeader} onPress={() => setCurrentScreen('main')}>
-            <Text style={[styles.backButton, { color: '#3B82F6' }]}>← {language === 'zh' ? '返回' : 'Back'}</Text>
+        <View style={styles.subHeader}>
             <Text style={[styles.subHeaderTitle, { color: tc.text }]}>{title}</Text>
-        </TouchableOpacity>
+        </View>
     );
 
     // Menu Item

@@ -35,3 +35,13 @@ export const PRESET_CONTEXTS = [
 export type LocationContext = typeof LOCATION_CONTEXTS[number];
 export type EnergyContext = typeof ENERGY_CONTEXTS[number];
 export type PresetContext = typeof PRESET_CONTEXTS[number];
+
+// Tags presets
+export const PRESET_TAGS = [
+    '#creative',
+    '#focused',
+    '#lowenergy',
+    '#routine',
+] as const;
+
+export type PresetTag = typeof PRESET_TAGS[number];

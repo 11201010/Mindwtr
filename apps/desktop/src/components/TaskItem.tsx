@@ -11,13 +11,14 @@ interface TaskItemProps {
 }
 
 export const TaskItem = memo(function TaskItem({ task, project: propProject }: TaskItemProps) {
-    const { updateTask, deleteTask, moveTask, projects } = useTaskStore();
+    const { updateTask, deleteTask, moveTask, projects, tasks } = useTaskStore();
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const [editDueDate, setEditDueDate] = useState(task.dueDate || '');
     const [editStartTime, setEditStartTime] = useState(task.startTime || '');
     const [editProjectId, setEditProjectId] = useState(task.projectId || '');
     const [editContexts, setEditContexts] = useState(task.contexts?.join(', ') || '');
+    const [editTags, setEditTags] = useState(task.tags?.join(', ') || '');
     const [editDescription, setEditDescription] = useState(task.description || '');
     const [editLocation, setEditLocation] = useState(task.location || '');
     const [editRecurrence, setEditRecurrence] = useState(task.recurrence || '');
@@ -36,6 +37,7 @@ export const TaskItem = memo(function TaskItem({ task, project: propProject }: T
                 startTime: editStartTime || undefined,
                 projectId: editProjectId || undefined,
                 contexts: editContexts.split(',').map(c => c.trim()).filter(Boolean),
+                tags: editTags.split(',').map(c => c.trim()).filter(Boolean),
                 description: editDescription || undefined,
                 location: editLocation || undefined,
                 recurrence: editRecurrence || undefined,
@@ -214,6 +216,65 @@ export const TaskItem = memo(function TaskItem({ task, project: propProject }: T
                                                             newTags = [...currentTags, tag];
                                                         }
                                                         setEditContexts(newTags.join(', '));
+                                                    }}
+                                                    className={cn(
+                                                        "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                                                        isActive
+                                                            ? "bg-primary/10 border-primary text-primary"
+                                                            : "bg-transparent border-border text-muted-foreground hover:border-primary/50"
+                                                    )}
+                                                >
+                                                    {tag}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1 w-full">
+                                    <label className="text-xs text-muted-foreground font-medium">Tags (comma separated)</label>
+                                    <input
+                                        type="text"
+                                        aria-label="Tags"
+                                        value={editTags}
+                                        onChange={(e) => setEditTags(e.target.value)}
+                                        placeholder="#urgent, #idea"
+                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full"
+                                    />
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        {((() => {
+                                            // Compute most frequent tags (hashtags)
+                                            // Note: In a real app we might want to memoize this or pass it down,
+                                            // but for this inline component, we'll compute it from store tasks
+                                            const allTasks = tasks || [];
+                                            const PRESET_TAGS = ['#creative', '#focused', '#lowenergy', '#routine'];
+
+                                            const counts = new Map<string, number>();
+                                            allTasks.forEach(t => {
+                                                t.tags?.forEach(tag => {
+                                                    counts.set(tag, (counts.get(tag) || 0) + 1);
+                                                });
+                                            });
+
+                                            const sorted = Array.from(counts.entries())
+                                                .sort((a, b) => b[1] - a[1])
+                                                .map(([tag]) => tag);
+
+                                            return Array.from(new Set([...sorted, ...PRESET_TAGS])).slice(0, 8);
+                                        })()).map(tag => {
+                                            const currentTags = editTags.split(',').map(t => t.trim()).filter(Boolean);
+                                            const isActive = currentTags.includes(tag);
+                                            return (
+                                                <button
+                                                    key={tag}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        let newTags;
+                                                        if (isActive) {
+                                                            newTags = currentTags.filter(t => t !== tag);
+                                                        } else {
+                                                            newTags = [...currentTags, tag];
+                                                        }
+                                                        setEditTags(newTags.join(', '));
                                                     }}
                                                     className={cn(
                                                         "text-[10px] px-2 py-0.5 rounded-full border transition-colors",

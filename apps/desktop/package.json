@@ -1,7 +1,7 @@
 {
-  "name": "gtd-todo-app",
+  "name": "focus-gtd",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A complete Getting Things Done (GTD) productivity system for desktop",
   "author": {
     "name": "dongdongbh",

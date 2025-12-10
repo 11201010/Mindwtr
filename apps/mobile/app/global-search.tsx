@@ -46,11 +46,11 @@ export default function SearchScreen() {
             } else {
                 // Map status to route
                 const status = task.status;
-                if (status === 'inbox') router.push('/(tabs)');
-                else if (status === 'next') router.push('/(tabs)/next');
-                else if (status === 'waiting') router.push('/waiting');
-                else if (status === 'someday') router.push('/someday');
-                else router.push('/(tabs)/next');
+                if (status === 'inbox') router.push('/(drawer)/(tabs)/inbox');
+                else if (status === 'next') router.push('/(drawer)/(tabs)/next');
+                else if (status === 'waiting') router.push('/(drawer)/waiting');
+                else if (status === 'someday') router.push('/(drawer)/someday');
+                else router.push('/(drawer)/(tabs)/next');
             }
         }
     };

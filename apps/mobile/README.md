@@ -13,17 +13,17 @@ React Native mobile app for the Focus GTD productivity system.
 - **Quick Status** - Instant status change via status badge tap
 
 ### Screens
-| Screen | Description |
-|--------|-------------|
-| Inbox | Capture and process incoming items |
-| Next Actions | Context-filtered actionable tasks |
-| Agenda | Time-based view |
-| Review | Task review and status changes |
-| Projects | Multi-step outcomes (drawer) |
-| Contexts | Filter by location/tool (drawer) |
-| Waiting For | Delegated items (drawer) |
-| Someday/Maybe | Deferred ideas (drawer) |
-| Settings | Theme preferences |
+| Screen        | Description                        |
+| ------------- | ---------------------------------- |
+| Inbox         | Capture and process incoming items |
+| Next Actions  | Context-filtered actionable tasks  |
+| Agenda        | Time-based view                    |
+| Review        | Task review and status changes     |
+| Projects      | Multi-step outcomes (drawer)       |
+| Contexts      | Filter by location/tool (drawer)   |
+| Waiting For   | Delegated items (drawer)           |
+| Someday/Maybe | Deferred ideas (drawer)            |
+| Settings      | Theme preferences                  |
 
 ## Tech Stack
 
@@ -55,6 +55,52 @@ bun mobile:ios
 - Expo Go app (for device testing) OR
 - Android Studio (for emulator) OR
 - Xcode (for iOS Simulator)
+
+## Building APK Locally
+
+To build an Android APK locally (without using Expo cloud builds):
+
+### 1. Install Java JDK
+
+```bash
+# Arch Linux
+sudo pacman -S jdk17-openjdk
+
+# Set JAVA_HOME (add to ~/.zshrc for persistence)
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+```
+
+### 2. Install Android SDK
+
+```bash
+# Create SDK directory
+mkdir -p ~/Android/Sdk/cmdline-tools
+
+# Download command-line tools from:
+# https://developer.android.com/studio#command-line-tools-only
+# Extract to ~/Android/Sdk/cmdline-tools/latest/
+
+# Set environment variables (add to ~/.zshrc)
+export ANDROID_HOME=~/Android/Sdk
+export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+
+# Install SDK components
+yes | sdkmanager --licenses
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+```
+
+### 3. Build APK
+
+```bash
+# From monorepo root, ensure lockfile is synced
+bun install
+
+# Build APK (from apps/mobile directory)
+cd apps/mobile
+npx eas-cli build --platform android --profile preview --local --output focus-gtd-v0.2.3.apk
+```
+
+The APK will be saved to `apps/mobile/focus-gtd-v0.2.3.apk`.
 
 ## Android Environment
 
@@ -113,12 +159,12 @@ The mobile app uses NativeWind v4 for Tailwind CSS styling.
 
 ### Configuration Files
 
-| File | Purpose |
-|------|---------|
-| `tailwind.config.js` | Tailwind theme and NativeWind preset |
-| `global.css` | Tailwind directives entry point |
-| `babel.config.js` | NativeWind babel preset |
-| `metro.config.js` | CSS processing with `withNativeWind` |
+| File                  | Purpose                               |
+| --------------------- | ------------------------------------- |
+| `tailwind.config.js`  | Tailwind theme and NativeWind preset  |
+| `global.css`          | Tailwind directives entry point       |
+| `babel.config.js`     | NativeWind babel preset               |
+| `metro.config.js`     | CSS processing with `withNativeWind`  |
 | `nativewind-env.d.ts` | TypeScript types for `className` prop |
 
 ## Data & Sync

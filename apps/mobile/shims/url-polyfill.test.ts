@@ -28,6 +28,7 @@ describe('URL Polyfill Shim', () => {
         const OriginalURL = globalThis.URL;
 
         // We need a class that extends or mimics URL but definitely has no createObjectURL static method
+        // @ts-ignore - MockURL matching OriginalURL structure for tests
         class MockURL extends OriginalURL {
             // @ts-ignore - Intentionally removing static method to simulate Hermes
             static createObjectURL = undefined;

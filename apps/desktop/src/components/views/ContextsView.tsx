@@ -13,12 +13,12 @@ export function ContextsView() {
 
     // Extract all unique contexts from active tasks
     const allContexts = Array.from(new Set(
-        activeTasks.flatMap(t => t.contexts || [])
+        activeTasks.flatMap(t => [...(t.contexts || []), ...(t.tags || [])])
     )).sort();
 
     const filteredTasks = selectedContext
-        ? activeTasks.filter(t => t.contexts?.includes(selectedContext) && t.status !== 'done')
-        : activeTasks.filter(t => (t.contexts?.length || 0) > 0 && t.status !== 'done');
+        ? activeTasks.filter(t => (t.contexts?.includes(selectedContext) || t.tags?.includes(selectedContext)) && t.status !== 'done')
+        : activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done');
 
     return (
         <div className="flex h-full gap-6">
@@ -40,7 +40,7 @@ export function ContextsView() {
                         <Tag className="w-4 h-4" />
                         <span className="flex-1">All Contexts</span>
                         <span className="text-xs text-muted-foreground">
-                            {activeTasks.filter(t => (t.contexts?.length || 0) > 0 && t.status !== 'done').length}
+                            {activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done').length}
                         </span>
                     </div>
 
@@ -56,7 +56,7 @@ export function ContextsView() {
                             <span className="text-muted-foreground">@</span>
                             <span className="flex-1 truncate">{context.replace(/^@/, '')}</span>
                             <span className="text-xs text-muted-foreground">
-                                {activeTasks.filter(t => t.contexts?.includes(context) && t.status !== 'done').length}
+                                {activeTasks.filter(t => (t.contexts?.includes(context) || t.tags?.includes(context)) && t.status !== 'done').length}
                             </span>
                         </div>
                     ))}

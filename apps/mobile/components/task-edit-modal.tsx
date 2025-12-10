@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Task, TaskStatus, TimeEstimate, useTaskStore, generateUUID } from '@focus-gtd/core';
+import { Task, TaskStatus, TimeEstimate, useTaskStore, generateUUID, PRESET_TAGS } from '@focus-gtd/core';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 interface TaskEditModalProps {
@@ -44,6 +44,27 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
         // Add default tags if we don't have enough history
         const defaults = ['@home', '@work', '@errands', '@computer', '@phone'];
         const unique = new Set([...sorted, ...defaults]);
+
+        return Array.from(unique).slice(0, 8);
+    }, [tasks]);
+
+    // Compute most frequent tags (hashtags)
+    const suggestedHashtags = React.useMemo(() => {
+        const counts = new Map<string, number>();
+        tasks.forEach(t => {
+            t.tags?.forEach(tag => {
+                counts.set(tag, (counts.get(tag) || 0) + 1);
+            });
+        });
+
+        const sorted = Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1]) // Sort desc by count
+            .map(([tag]) => tag);
+
+        // Explicitly cast PRESET_TAGS to string[] or use it directly
+        // TS Error Fix: If PRESET_TAGS is constant tuple, spread works but type might need assertion
+        // But TS says "Cannot find name", so import is the key.
+        const unique = new Set([...sorted, ...PRESET_TAGS]);
 
         return Array.from(unique).slice(0, 8);
     }, [tasks]);
@@ -254,7 +275,6 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                                     autoCapitalize="none"
                                 />
                                 <View style={styles.suggestionsContainer}>
-                                    <Text style={styles.suggestionLabel}>Quick Add:</Text>
                                     <View style={styles.suggestionTags}>
                                         {suggestedTags.map(tag => {
                                             const isActive = editedTask.contexts?.includes(tag);
@@ -278,31 +298,50 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                                 </View>
                             </View>
 
-                            <View style={styles.row}>
-                                <View style={[styles.formGroup, styles.flex1]}>
-                                    <Text style={styles.label}>Start Date</Text>
-                                    <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker('start')}>
-                                        <Text>{formatDate(editedTask.startTime)}</Text>
-                                    </TouchableOpacity>
-                                </View>
-                                <View style={[styles.formGroup, styles.flex1]}>
-                                    <Text style={styles.label}>Due Date</Text>
-                                    <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker('due')}>
-                                        <Text>{formatDate(editedTask.dueDate)}</Text>
-                                    </TouchableOpacity>
+                            <View style={styles.formGroup}>
+                                <Text style={styles.label}>Tags (comma separated)</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    value={editedTask.tags?.join(', ')}
+                                    onChangeText={(text) => setEditedTask(prev => ({
+                                        ...prev,
+                                        tags: text.split(',').map(t => t.trim()).filter(Boolean)
+                                    }))}
+                                    placeholder="#urgent, #idea"
+                                    autoCapitalize="none"
+                                />
+                                <View style={styles.suggestionsContainer}>
+                                    <View style={styles.suggestionTags}>
+                                        {suggestedHashtags.map(tag => {
+                                            const isActive = editedTask.tags?.includes(tag);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={tag}
+                                                    style={[
+                                                        styles.suggestionChip,
+                                                        isActive && styles.suggestionChipActive
+                                                    ]}
+                                                    onPress={() => {
+                                                        const current = editedTask.tags || [];
+                                                        let newTags;
+                                                        if (current.includes(tag)) {
+                                                            newTags = current.filter(t => t !== tag);
+                                                        } else {
+                                                            newTags = [...current, tag];
+                                                        }
+                                                        setEditedTask(prev => ({ ...prev, tags: newTags }));
+                                                    }}
+                                                >
+                                                    <Text style={[
+                                                        styles.suggestionText,
+                                                        isActive && styles.suggestionTextActive
+                                                    ]}>{tag}</Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
                                 </View>
                             </View>
-
-                            {showDatePicker && (
-                                <DateTimePicker
-                                    value={new Date(
-                                        (showDatePicker === 'start' ? editedTask.startTime : editedTask.dueDate) || Date.now()
-                                    )}
-                                    mode="date"
-                                    display="default"
-                                    onChange={onDateChange}
-                                />
-                            )}
 
                             <View style={styles.formGroup}>
                                 <Text style={styles.label}>Time Estimate</Text>
@@ -326,6 +365,16 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                                         </TouchableOpacity>
                                     ))}
                                 </View>
+                            </View>
+
+                            <View style={styles.formGroup}>
+                                <Text style={styles.label}>Description</Text>
+                                <TextInput
+                                    style={[styles.input, styles.textArea]}
+                                    value={editedTask.description || ''}
+                                    onChangeText={(text) => setEditedTask(prev => ({ ...prev, description: text }))}
+                                    multiline
+                                />
                             </View>
 
                             <View style={styles.formGroup}>
@@ -385,20 +434,35 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                                 </View>
                             </View>
 
-                            <View style={styles.formGroup}>
-                                <Text style={styles.label}>Description</Text>
-                                <TextInput
-                                    style={[styles.input, styles.textArea]}
-                                    value={editedTask.description || ''}
-                                    onChangeText={(text) => setEditedTask(prev => ({ ...prev, description: text }))}
-                                    multiline
-                                />
+                            <View style={styles.row}>
+                                <View style={[styles.formGroup, styles.flex1]}>
+                                    <Text style={styles.label}>Start Date</Text>
+                                    <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker('start')}>
+                                        <Text>{formatDate(editedTask.startTime)}</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={[styles.formGroup, styles.flex1]}>
+                                    <Text style={styles.label}>Due Date</Text>
+                                    <TouchableOpacity style={styles.dateBtn} onPress={() => setShowDatePicker('due')}>
+                                        <Text>{formatDate(editedTask.dueDate)}</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-
-
 
                             {/* Add extra padding at bottom for scrolling past keyboard */}
                             <View style={{ height: 100 }} />
+
+                            {showDatePicker && (
+                                <DateTimePicker
+                                    value={new Date(
+                                        (showDatePicker === 'start' ? editedTask.startTime : editedTask.dueDate) || Date.now()
+                                    )}
+                                    mode="date"
+                                    display="default"
+                                    onChange={onDateChange}
+                                />
+                            )}
+
                         </ScrollView>
                     </KeyboardAvoidingView>
                 )}

@@ -70,6 +70,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'next.noContext': 'No Next Actions with',
 
         // Contact / Contexts (Mobile updates)
+        'contexts.title': 'Contexts',
         'contexts.filter': 'Filter tasks by context',
         'contexts.all': 'All Contexts',
         'contexts.noContexts': 'No contexts found. Add contexts like @home, @work, @computer to your tasks',
@@ -77,6 +78,7 @@ export const translations: Record<Language, Record<string, string>> = {
 
         // Board
         'board.title': 'Board View',
+        'board.next': 'Next Actions',
         'board.todo': 'Todo',
         'board.inProgress': 'In Progress',
         'board.done': 'Done',
@@ -382,6 +384,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'next.noContext': '没有此情境的下一步行动',
 
         // Contact / Contexts (Mobile updates)
+        'contexts.title': '情境',
         'contexts.filter': '按情境筛选任务',
         'contexts.all': '所有情境',
         'contexts.noContexts': '未找到情境。为任务添加 @家, @工作, @电脑 等情境',
@@ -389,6 +392,7 @@ export const translations: Record<Language, Record<string, string>> = {
 
         // Board
         'board.title': '看板',
+        'board.next': '下一步行动',
         'board.todo': '待办',
         'board.inProgress': '进行中',
         'board.done': '已完成',

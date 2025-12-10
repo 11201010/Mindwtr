@@ -177,10 +177,7 @@ export default function ProjectsScreen() {
             {selectedProject && (
               <>
                 <View style={[styles.modalHeader, { borderBottomColor: tc.border, backgroundColor: tc.cardBg }]}>
-                  <TouchableOpacity onPress={() => setSelectedProject(null)} style={styles.backButton}>
-                    <Text style={styles.backButtonText}>{t('projects.back')}</Text>
-                  </TouchableOpacity>
-                  <Text style={[styles.modalTitle, { color: tc.text }]}>{selectedProject.title}</Text>
+                  <Text style={[styles.modalTitle, { color: tc.text, marginLeft: 16 }]}>{selectedProject.title}</Text>
                   <TouchableOpacity
                     onPress={() => {
                       updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential });

@@ -23,7 +23,7 @@ export function ContextsView() {
 
   // Combine preset contexts with contexts from tasks
   const allContexts = Array.from(
-    new Set([...PRESET_CONTEXTS, ...tasks.flatMap((t) => t.contexts || [])])
+    new Set([...PRESET_CONTEXTS, ...tasks.flatMap((t) => [...(t.contexts || []), ...(t.tags || [])])])
   ).sort();
 
   // Filter contexts by search query
@@ -35,8 +35,8 @@ export function ContextsView() {
 
   const activeTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'archived' && !t.deletedAt);
   const filteredTasks = selectedContext
-    ? activeTasks.filter((t) => t.contexts?.includes(selectedContext))
-    : activeTasks.filter((t) => (t.contexts?.length || 0) > 0);
+    ? activeTasks.filter((t) => t.contexts?.includes(selectedContext) || t.tags?.includes(selectedContext))
+    : activeTasks.filter((t) => (t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0);
 
   // Use standard sort
   const sortedTasks = sortTasks(filteredTasks);
@@ -97,13 +97,13 @@ export function ContextsView() {
             </Text>
             <View style={styles.contextBadge}>
               <Text style={styles.contextBadgeText}>
-                {activeTasks.filter((t) => (t.contexts?.length || 0) > 0).length}
+                {activeTasks.filter((t) => (t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0).length}
               </Text>
             </View>
           </Pressable>
 
           {filteredContexts.map((context) => {
-            const count = activeTasks.filter((t) => t.contexts?.includes(context)).length;
+            const count = activeTasks.filter((t) => t.contexts?.includes(context) || t.tags?.includes(context)).length;
             return (
               <Pressable
                 key={context}

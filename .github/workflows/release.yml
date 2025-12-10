@@ -63,55 +63,12 @@ jobs:
           path: release-artifacts/*
           if-no-files-found: error
 
-  # Build Android APK using EAS Cloud
-  android:
-    runs-on: ubuntu-latest
-    name: Android APK Build
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Setup EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build Android APK (EAS Cloud)
-        run: |
-          cd apps/mobile
-          eas build --platform android --profile preview --non-interactive --wait
-
-      - name: Download APK from EAS
-        run: |
-          cd apps/mobile
-          BUILD_URL=$(eas build:list --platform android --limit 1 --json --non-interactive | jq -r '.[0].artifacts.buildUrl // empty')
-          if [ -n "$BUILD_URL" ]; then
-            curl -L -o focus-gtd-${{ github.ref_name }}.apk "$BUILD_URL"
-            echo "Downloaded APK from: $BUILD_URL"
-          else
-            echo "No build URL found"
-          fi
-
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: apps/mobile/*.apk
-          if-no-files-found: warn
+  # Android build removed to save EAS minutes (build locally instead)
+  # android: ...
 
   # Create GitHub Release with all artifacts
   release:
-    needs: [desktop-linux, android]
+    needs: [desktop-linux]
     runs-on: ubuntu-latest
     name: Create Release
     if: always() && needs.desktop-linux.result == 'success'
@@ -126,21 +83,41 @@ jobs:
           name: desktop-linux
           path: ./release-assets
 
-      - name: Download Android APK
-        uses: actions/download-artifact@v4
-        with:
-          name: android-apk
-          path: ./release-assets
-        continue-on-error: true
+      # Android artifact download removed
+
 
       - name: List release assets
         run: ls -la ./release-assets/ || echo "No assets found"
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          
+          echo "## What's Changed in $CURRENT_TAG" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            # Get commit messages between tags
+            git log --pretty=format:"- %s" $PREV_TAG..HEAD >> CHANGELOG.md
+          else
+            # First release - get all commits
+            git log --pretty=format:"- %s" >> CHANGELOG.md
+          fi
+          
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG" >> CHANGELOG.md
+          
+          cat CHANGELOG.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: ./release-assets/*
-          generate_release_notes: true
+          body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
         env:
