@@ -29,7 +29,7 @@ const LANGUAGES: { id: Language; native: string }[] = [
     { id: 'zh', native: '中文' },
 ];
 
-const SYNC_PATH_KEY = '@focus_gtd_sync_path';
+const SYNC_PATH_KEY = '@mindwtr_sync_path';
 
 export default function SettingsPage() {
     const { themeMode, setThemeMode, isDark } = useTheme();

@@ -8,7 +8,7 @@ import { SyncService } from '../../lib/sync-service';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
-const THEME_STORAGE_KEY = 'focus-gtd-theme';
+const THEME_STORAGE_KEY = 'mindwtr-theme';
 
 const LANGUAGES: { id: Language; label: string; native: string }[] = [
     { id: 'en', label: 'English', native: 'English' },
@@ -147,7 +147,7 @@ export function SettingsView() {
             browse: 'Browse...',
             syncNow: 'Sync Now',
             syncing: 'Syncing...',
-            pathHint: 'Type a path directly (e.g., ~/Sync/focus-gtd) or use Browse if available',
+            pathHint: 'Type a path directly (e.g., ~/Sync/mindwtr) or use Browse if available',
         },
         zh: {
             title: '设置',
@@ -181,7 +181,7 @@ export function SettingsView() {
             browse: '浏览...',
             syncNow: '立即同步',
             syncing: '同步中...',
-            pathHint: '直接输入路径（如 ~/Sync/focus-gtd）或点击浏览选择',
+            pathHint: '直接输入路径（如 ~/Sync/mindwtr）或点击浏览选择',
         },
     };
 

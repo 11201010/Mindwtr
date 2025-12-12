@@ -1,6 +1,6 @@
 import { StorageAdapter, AppData } from '@mindwtr/core';
 
-const DATA_KEY = 'focus-gtd-data';
+const DATA_KEY = 'mindwtr-data';
 
 // Web version using localStorage
 export const mobileStorage: StorageAdapter = {

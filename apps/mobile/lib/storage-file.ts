@@ -82,7 +82,7 @@ export const writeSyncFile = async (fileUri: string, data: AppData): Promise<voi
 export const exportData = async (data: AppData): Promise<void> => {
     try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `focus-gtd-backup-${timestamp}.json`;
+        const filename = `mindwtr-backup-${timestamp}.json`;
         const jsonContent = JSON.stringify(data, null, 2);
 
         // On Android, try SAF to let user pick save location

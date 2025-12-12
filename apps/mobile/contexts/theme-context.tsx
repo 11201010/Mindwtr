@@ -12,7 +12,7 @@ interface ThemeContextType {
     isDark: boolean;
 }
 
-const THEME_STORAGE_KEY = '@focus_gtd_theme';
+const THEME_STORAGE_KEY = '@mindwtr_theme';
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 

@@ -1,7 +1,7 @@
 import { StorageAdapter, AppData } from '@mindwtr/core';
 import { Platform } from 'react-native';
 
-const DATA_KEY = 'focus-gtd-data';
+const DATA_KEY = 'mindwtr-data';
 
 // Platform-specific storage implementation
 const createStorage = (): StorageAdapter => {

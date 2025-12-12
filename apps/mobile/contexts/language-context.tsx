@@ -13,7 +13,7 @@ interface LanguageContextType {
 
 
 
-const LANGUAGE_STORAGE_KEY = 'focus-gtd-language';
+const LANGUAGE_STORAGE_KEY = 'mindwtr-language';
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
