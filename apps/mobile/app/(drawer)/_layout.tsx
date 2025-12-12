@@ -160,7 +160,6 @@ export default function DrawerLayout() {
       <Drawer.Screen
         name="saved-search/[id]"
         options={{
-          href: null,
           drawerLabel: () => null,
           drawerItemStyle: { display: 'none' },
           title: t('search.savedSearches'),

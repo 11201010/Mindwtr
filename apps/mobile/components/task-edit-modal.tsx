@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Task, TaskStatus, TimeEstimate, useTaskStore, generateUUID, PRESET_TAGS, RecurrenceRule, RECURRENCE_RULES } from '@mindwtr/core';
+import { Attachment, Task, TaskStatus, TimeEstimate, useTaskStore, generateUUID, PRESET_TAGS, RecurrenceRule, RECURRENCE_RULES } from '@mindwtr/core';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Linking from 'expo-linking';
+import * as Sharing from 'expo-sharing';
 import { useLanguage } from '../contexts/language-context';
+import { useThemeColors } from '@/hooks/use-theme-colors';
+import { MarkdownText } from './markdown-text';
 
 interface TaskEditModalProps {
     visible: boolean;
@@ -18,9 +23,13 @@ const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'w
 export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: TaskEditModalProps) {
     const { tasks } = useTaskStore();
     const { t } = useLanguage();
+    const tc = useThemeColors();
     const [editedTask, setEditedTask] = useState<Partial<Task>>({});
     const [showDatePicker, setShowDatePicker] = useState<'start' | 'due' | 'review' | null>(null);
     const [focusMode, setFocusMode] = useState(false);
+    const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
+    const [linkModalVisible, setLinkModalVisible] = useState(false);
+    const [linkInput, setLinkInput] = useState('');
 
     // Compute most frequent tags from all tasks
     const suggestedTags = React.useMemo(() => {
@@ -76,6 +85,66 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
             onSave(task.id, editedTask);
             onClose();
         }
+    };
+
+    const attachments = (editedTask.attachments || []) as Attachment[];
+    const visibleAttachments = attachments.filter((a) => !a.deletedAt);
+
+    const addFileAttachment = async () => {
+        const result = await DocumentPicker.getDocumentAsync({
+            copyToCacheDirectory: false,
+            multiple: false,
+        });
+        if (result.canceled) return;
+        const asset = result.assets[0];
+        const now = new Date().toISOString();
+        const attachment: Attachment = {
+            id: generateUUID(),
+            kind: 'file',
+            title: asset.name || 'file',
+            uri: asset.uri,
+            mimeType: asset.mimeType,
+            size: asset.size,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setEditedTask((prev) => ({ ...prev, attachments: [...(prev.attachments || []), attachment] }));
+    };
+
+    const confirmAddLink = () => {
+        const url = linkInput.trim();
+        if (!url) return;
+        const now = new Date().toISOString();
+        const attachment: Attachment = {
+            id: generateUUID(),
+            kind: 'link',
+            title: url,
+            uri: url,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setEditedTask((prev) => ({ ...prev, attachments: [...(prev.attachments || []), attachment] }));
+        setLinkInput('');
+        setLinkModalVisible(false);
+    };
+
+    const openAttachment = async (attachment: Attachment) => {
+        if (attachment.kind === 'link') {
+            Linking.openURL(attachment.uri).catch(console.error);
+            return;
+        }
+        const available = await Sharing.isAvailableAsync().catch(() => false);
+        if (available) {
+            Sharing.shareAsync(attachment.uri).catch(console.error);
+        } else {
+            Linking.openURL(attachment.uri).catch(console.error);
+        }
+    };
+
+    const removeAttachment = (id: string) => {
+        const now = new Date().toISOString();
+        const next = attachments.map((a) => (a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a));
+        setEditedTask((prev) => ({ ...prev, attachments: next }));
     };
 
 
@@ -446,19 +515,76 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
 	                                </View>
 	                            </View>
 
-	                            <View style={styles.formGroup}>
-	                                <Text style={styles.label}>{t('taskEdit.descriptionLabel')}</Text>
-	                                <TextInput
-	                                    style={[styles.input, styles.textArea]}
-                                    value={editedTask.description || ''}
-                                    onChangeText={(text) => setEditedTask(prev => ({ ...prev, description: text }))}
-                                    multiline
-                                />
-	                            </View>
+		                            <View style={styles.formGroup}>
+		                                <View style={styles.inlineHeader}>
+		                                    <Text style={styles.label}>{t('taskEdit.descriptionLabel')}</Text>
+		                                    <TouchableOpacity onPress={() => setShowDescriptionPreview((v) => !v)}>
+		                                        <Text style={[styles.inlineAction, { color: tc.tint }]}>
+		                                            {showDescriptionPreview ? t('markdown.edit') : t('markdown.preview')}
+		                                        </Text>
+		                                    </TouchableOpacity>
+		                                </View>
+		                                {showDescriptionPreview ? (
+		                                    <View style={[styles.markdownPreview, { backgroundColor: tc.filterBg, borderColor: tc.border }]}>
+		                                        <MarkdownText markdown={editedTask.description || ''} tc={tc} />
+		                                    </View>
+		                                ) : (
+		                                    <TextInput
+		                                        style={[styles.input, styles.textArea]}
+	                                        value={editedTask.description || ''}
+	                                        onChangeText={(text) => setEditedTask(prev => ({ ...prev, description: text }))}
+	                                        placeholder={t('taskEdit.descriptionPlaceholder')}
+	                                        multiline
+	                                    />
+		                                )}
+		                            </View>
 
-                            <View style={styles.formGroup}>
-                                <Text style={styles.label}>{t('taskEdit.checklist')}</Text>
-                                <View style={styles.checklistContainer}>
+		                            <View style={styles.formGroup}>
+		                                <View style={styles.inlineHeader}>
+		                                    <Text style={styles.label}>{t('attachments.title')}</Text>
+		                                    <View style={styles.inlineActions}>
+		                                        <TouchableOpacity
+		                                            onPress={addFileAttachment}
+		                                            style={[styles.smallButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+		                                        >
+		                                            <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addFile')}</Text>
+		                                        </TouchableOpacity>
+		                                        <TouchableOpacity
+		                                            onPress={() => setLinkModalVisible(true)}
+		                                            style={[styles.smallButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+		                                        >
+		                                            <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addLink')}</Text>
+		                                        </TouchableOpacity>
+		                                    </View>
+		                                </View>
+		                                {visibleAttachments.length === 0 ? (
+		                                    <Text style={[styles.helperText, { color: tc.secondaryText }]}>{t('common.none')}</Text>
+		                                ) : (
+		                                    <View style={[styles.attachmentsList, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
+		                                        {visibleAttachments.map((attachment) => (
+		                                            <View key={attachment.id} style={[styles.attachmentRow, { borderBottomColor: tc.border }]}>
+		                                                <TouchableOpacity
+		                                                    style={styles.attachmentTitleWrap}
+		                                                    onPress={() => openAttachment(attachment)}
+		                                                >
+		                                                    <Text style={[styles.attachmentTitle, { color: tc.tint }]} numberOfLines={1}>
+		                                                        {attachment.title}
+		                                                    </Text>
+		                                                </TouchableOpacity>
+		                                                <TouchableOpacity onPress={() => removeAttachment(attachment.id)}>
+		                                                    <Text style={[styles.attachmentRemove, { color: tc.secondaryText }]}>
+		                                                        {t('attachments.remove')}
+		                                                    </Text>
+		                                                </TouchableOpacity>
+		                                            </View>
+		                                        ))}
+		                                    </View>
+		                                )}
+		                            </View>
+
+	                            <View style={styles.formGroup}>
+	                                <Text style={styles.label}>{t('taskEdit.checklist')}</Text>
+	                                <View style={styles.checklistContainer}>
                                     {editedTask.checklist?.map((item, index) => (
                                         <View key={item.id || index} style={styles.checklistItem}>
                                             <TouchableOpacity
@@ -587,12 +713,52 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
 	                                />
 	                            )}
 
-	                        </ScrollView>
-                    </KeyboardAvoidingView>
-                )}
-            </SafeAreaView>
-        </Modal>
-    );
+		                        </ScrollView>
+	                    </KeyboardAvoidingView>
+	                )}
+
+	                <Modal
+	                    visible={linkModalVisible}
+	                    transparent
+	                    animationType="fade"
+	                    onRequestClose={() => setLinkModalVisible(false)}
+	                >
+	                    <View style={styles.overlay}>
+	                        <View style={[styles.modalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+	                            <Text style={[styles.modalTitle, { color: tc.text }]}>{t('attachments.addLink')}</Text>
+	                            <TextInput
+	                                value={linkInput}
+	                                onChangeText={setLinkInput}
+	                                placeholder={t('attachments.linkPlaceholder')}
+	                                placeholderTextColor={tc.secondaryText}
+	                                style={[styles.modalInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+	                                autoCapitalize="none"
+	                                autoCorrect={false}
+	                            />
+	                            <View style={styles.modalButtons}>
+	                                <TouchableOpacity
+	                                    onPress={() => {
+	                                        setLinkModalVisible(false);
+	                                        setLinkInput('');
+	                                    }}
+	                                    style={styles.modalButton}
+	                                >
+	                                    <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
+	                                </TouchableOpacity>
+	                                <TouchableOpacity
+	                                    onPress={confirmAddLink}
+	                                    disabled={!linkInput.trim()}
+	                                    style={[styles.modalButton, !linkInput.trim() && styles.modalButtonDisabled]}
+	                                >
+	                                    <Text style={[styles.modalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
+	                                </TouchableOpacity>
+	                            </View>
+	                        </View>
+	                    </View>
+	                </Modal>
+	            </SafeAreaView>
+	        </Modal>
+	    );
 }
 
 const styles = StyleSheet.create({
@@ -741,5 +907,113 @@ const styles = StyleSheet.create({
         color: '#007AFF',
         fontSize: 15,
         fontWeight: '500',
+    },
+    inlineHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    inlineAction: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    inlineActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    smallButton: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+    },
+    smallButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    markdownPreview: {
+        marginTop: 8,
+        padding: 12,
+        borderRadius: 10,
+        borderWidth: 1,
+    },
+    helperText: {
+        fontSize: 13,
+        marginTop: 6,
+    },
+    attachmentsList: {
+        marginTop: 8,
+        borderWidth: 1,
+        borderColor: '#e5e5e5',
+        borderRadius: 10,
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+    },
+    attachmentRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderBottomWidth: 1,
+    },
+    attachmentTitleWrap: {
+        flex: 1,
+        paddingRight: 10,
+    },
+    attachmentTitle: {
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    attachmentRemove: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    modalCard: {
+        width: '100%',
+        maxWidth: 420,
+        borderRadius: 12,
+        padding: 16,
+        borderWidth: 1,
+    },
+    modalTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        marginBottom: 12,
+    },
+    modalInput: {
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 16,
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 12,
+        marginTop: 14,
+    },
+    modalButton: {
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderRadius: 10,
+    },
+    modalButtonText: {
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    modalButtonDisabled: {
+        opacity: 0.5,
     },
 });

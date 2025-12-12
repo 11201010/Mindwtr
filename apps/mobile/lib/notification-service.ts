@@ -1,5 +1,5 @@
-import { getNextScheduledAt, Task } from '@mindwtr/core';
-import { useTaskStore } from '@mindwtr/core';
+import { getNextScheduledAt, translations, type Language, Task, useTaskStore } from '@mindwtr/core';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { NotificationContentInput, NotificationResponse, Subscription } from 'expo-notifications';
 import Constants from 'expo-constants';
 
@@ -8,10 +8,14 @@ type NotificationsApi = typeof import('expo-notifications');
 type ScheduledEntry = { scheduledAtIso: string; notificationId: string };
 
 const scheduledByTask = new Map<string, ScheduledEntry>();
+const scheduledDigestByKind = new Map<'morning' | 'evening', string>();
+let digestConfigKey: string | null = null;
 let started = false;
 let responseSubscription: Subscription | null = null;
 
 let Notifications: NotificationsApi | null = null;
+
+const LANGUAGE_STORAGE_KEY = 'mindwtr-language';
 
 async function loadNotifications(): Promise<NotificationsApi | null> {
   if (Notifications) return Notifications;
@@ -40,11 +44,92 @@ async function loadNotifications(): Promise<NotificationsApi | null> {
   }
 }
 
+async function getCurrentLanguage(): Promise<Language> {
+  try {
+    const saved = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (saved === 'zh') return 'zh';
+    return 'en';
+  } catch {
+    return 'en';
+  }
+}
+
+function parseTimeOfDay(value: string | undefined, fallback: { hour: number; minute: number }) {
+  if (!value) return fallback;
+  const [h, m] = value.split(':');
+  const hour = Number.parseInt(h, 10);
+  const minute = Number.parseInt(m, 10);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return fallback;
+  if (hour < 0 || hour > 23) return fallback;
+  if (minute < 0 || minute > 59) return fallback;
+  return { hour, minute };
+}
+
 async function ensurePermission(api: NotificationsApi) {
   const { status } = await api.getPermissionsAsync();
   if (status === 'granted') return true;
   const request = await api.requestPermissionsAsync();
   return request.status === 'granted';
+}
+
+async function cancelDailyDigests(api: NotificationsApi) {
+  for (const id of scheduledDigestByKind.values()) {
+    await api.cancelScheduledNotificationAsync(id).catch(() => { });
+  }
+  scheduledDigestByKind.clear();
+}
+
+async function rescheduleDailyDigest(api: NotificationsApi) {
+  const { settings } = useTaskStore.getState();
+
+  const notificationsEnabled = settings.notificationsEnabled !== false;
+  const morningEnabled = settings.dailyDigestMorningEnabled === true;
+  const eveningEnabled = settings.dailyDigestEveningEnabled === true;
+  const morningTime = settings.dailyDigestMorningTime || '09:00';
+  const eveningTime = settings.dailyDigestEveningTime || '20:00';
+
+  const nextKey = JSON.stringify({
+    notificationsEnabled,
+    morningEnabled,
+    eveningEnabled,
+    morningTime,
+    eveningTime,
+  });
+  if (nextKey === digestConfigKey) return;
+  digestConfigKey = nextKey;
+
+  await cancelDailyDigests(api);
+  if (!notificationsEnabled) return;
+  if (!morningEnabled && !eveningEnabled) return;
+
+  const language = await getCurrentLanguage();
+  const tr = translations[language];
+
+  if (morningEnabled) {
+    const { hour, minute } = parseTimeOfDay(settings.dailyDigestMorningTime, { hour: 9, minute: 0 });
+    const id = await api.scheduleNotificationAsync({
+      content: {
+        title: tr['digest.morningTitle'],
+        body: tr['digest.morningBody'],
+        data: { kind: 'daily-digest', when: 'morning' },
+      } as any,
+      trigger: { hour, minute, repeats: true } as any,
+    });
+    scheduledDigestByKind.set('morning', id);
+  }
+
+  if (eveningEnabled) {
+    const { hour, minute } = parseTimeOfDay(settings.dailyDigestEveningTime, { hour: 20, minute: 0 });
+    const id = await api.scheduleNotificationAsync({
+      content: {
+        title: tr['digest.eveningTitle'],
+        body: tr['digest.eveningBody'],
+        data: { kind: 'daily-digest', when: 'evening' },
+      } as any,
+      trigger: { hour, minute, repeats: true } as any,
+    });
+    scheduledDigestByKind.set('evening', id);
+  }
 }
 
 async function scheduleForTask(api: NotificationsApi, task: Task, when: Date) {
@@ -118,9 +203,11 @@ export async function startMobileNotifications() {
   ]).catch(() => { });
 
   await rescheduleAll(api);
+  await rescheduleDailyDigest(api);
 
   useTaskStore.subscribe(() => {
     rescheduleAll(api).catch(console.error);
+    rescheduleDailyDigest(api).catch(console.error);
   });
 
   responseSubscription?.remove();
@@ -140,8 +227,13 @@ export async function stopMobileNotifications() {
     for (const entry of scheduledByTask.values()) {
       await Notifications.cancelScheduledNotificationAsync(entry.notificationId).catch(() => { });
     }
+    for (const id of scheduledDigestByKind.values()) {
+      await Notifications.cancelScheduledNotificationAsync(id).catch(() => { });
+    }
   }
 
   scheduledByTask.clear();
+  scheduledDigestByKind.clear();
+  digestConfigKey = null;
   started = false;
 }

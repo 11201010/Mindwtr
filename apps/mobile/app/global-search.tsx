@@ -29,6 +29,7 @@ export default function SearchScreen() {
         itemBg: isDark ? '#1F2937' : '#F9FAFB',
         border: isDark ? '#374151' : '#E5E7EB',
         placeholder: isDark ? '#6B7280' : '#9CA3AF',
+        tint: settings?.accentColor || (isDark ? Colors.dark.tint : Colors.light.tint),
     };
 
     const trimmedQuery = query.trim();

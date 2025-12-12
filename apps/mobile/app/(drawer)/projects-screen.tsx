@@ -2,22 +2,28 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, SectionList, StyleSheet, TouchableOpacity, Modal, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useTaskStore , Project } from '@mindwtr/core';
+import { Attachment, generateUUID, Project, useTaskStore } from '@mindwtr/core';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Linking from 'expo-linking';
+import * as Sharing from 'expo-sharing';
 
 import { TaskList } from '../../components/task-list';
-import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
-import { Colors } from '@/constants/theme';
+import { useThemeColors } from '@/hooks/use-theme-colors';
+import { MarkdownText } from '../../components/markdown-text';
 
 export default function ProjectsScreen() {
   const { projects, tasks, addProject, updateProject, deleteProject, toggleProjectFocus } = useTaskStore();
-  const { isDark } = useTheme();
   const { t } = useLanguage();
+  const tc = useThemeColors();
   const [newProjectTitle, setNewProjectTitle] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [notesExpanded, setNotesExpanded] = useState(false);
+  const [showNotesPreview, setShowNotesPreview] = useState(false);
   const [showReviewPicker, setShowReviewPicker] = useState(false);
+  const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [linkInput, setLinkInput] = useState('');
 
   const formatReviewDate = (dateStr?: string) => {
     if (!dateStr) return t('common.notSet');
@@ -26,15 +32,6 @@ export default function ProjectsScreen() {
     } catch {
       return dateStr;
     }
-  };
-
-  const tc = {
-    bg: isDark ? Colors.dark.background : Colors.light.background,
-    cardBg: isDark ? '#1F2937' : '#FFFFFF',
-    text: isDark ? Colors.dark.text : Colors.light.text,
-    secondaryText: isDark ? '#9CA3AF' : '#6B7280',
-    border: isDark ? '#374151' : '#E5E7EB',
-    inputBg: isDark ? '#374151' : '#f9f9f9',
   };
 
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
@@ -104,6 +101,74 @@ export default function ProjectsScreen() {
         }
       ]
     );
+  };
+
+  const openAttachment = async (attachment: Attachment) => {
+    if (attachment.kind === 'link') {
+      Linking.openURL(attachment.uri).catch(console.error);
+      return;
+    }
+
+    const available = await Sharing.isAvailableAsync().catch(() => false);
+    if (available) {
+      Sharing.shareAsync(attachment.uri).catch(console.error);
+    } else {
+      Linking.openURL(attachment.uri).catch(console.error);
+    }
+  };
+
+  const addProjectFileAttachment = async () => {
+    if (!selectedProject) return;
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: false,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    const now = new Date().toISOString();
+    const attachment: Attachment = {
+      id: generateUUID(),
+      kind: 'file',
+      title: asset.name || 'file',
+      uri: asset.uri,
+      mimeType: asset.mimeType,
+      size: asset.size,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = [...(selectedProject.attachments || []), attachment];
+    updateProject(selectedProject.id, { attachments: next });
+    setSelectedProject({ ...selectedProject, attachments: next });
+  };
+
+  const confirmAddProjectLink = () => {
+    if (!selectedProject) return;
+    const url = linkInput.trim();
+    if (!url) return;
+    const now = new Date().toISOString();
+    const attachment: Attachment = {
+      id: generateUUID(),
+      kind: 'link',
+      title: url,
+      uri: url,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = [...(selectedProject.attachments || []), attachment];
+    updateProject(selectedProject.id, { attachments: next });
+    setSelectedProject({ ...selectedProject, attachments: next });
+    setLinkModalVisible(false);
+    setLinkInput('');
+  };
+
+  const removeProjectAttachment = (id: string) => {
+    if (!selectedProject) return;
+    const now = new Date().toISOString();
+    const next = (selectedProject.attachments || []).map((a) =>
+      a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a
+    );
+    updateProject(selectedProject.id, { attachments: next });
+    setSelectedProject({ ...selectedProject, attachments: next });
   };
 
   return (
@@ -196,7 +261,14 @@ export default function ProjectsScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.projectTouchArea}
-                onPress={() => setSelectedProject(item)}
+                onPress={() => {
+                  setSelectedProject(item);
+                  setNotesExpanded(false);
+                  setShowNotesPreview(false);
+                  setShowReviewPicker(false);
+                  setLinkModalVisible(false);
+                  setLinkInput('');
+                }}
               >
                 <View style={[styles.projectColor, { backgroundColor: item.color }]} />
                 <View style={styles.projectContent}>
@@ -240,7 +312,14 @@ export default function ProjectsScreen() {
       <Modal
         visible={!!selectedProject}
         animationType="slide"
-        onRequestClose={() => setSelectedProject(null)}
+        onRequestClose={() => {
+          setSelectedProject(null);
+          setNotesExpanded(false);
+          setShowNotesPreview(false);
+          setShowReviewPicker(false);
+          setLinkModalVisible(false);
+          setLinkInput('');
+        }}
       >
         <GestureHandlerRootView style={{ flex: 1 }}>
           <SafeAreaView style={{ flex: 1, backgroundColor: tc.bg }}>
@@ -304,28 +383,95 @@ export default function ProjectsScreen() {
 	
 		                {/* Project Notes Section */}
 	                <View style={[styles.notesContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-	                  <TouchableOpacity
-	                    style={styles.notesHeader}
-	                    onPress={() => setNotesExpanded(!notesExpanded)}
-	                  >
-	                    <Text style={[styles.notesTitle, { color: tc.text }]}>
-	                      {notesExpanded ? '▼' : '▶'} {t('project.notes') || 'Project Notes'}
-	                    </Text>
-	                  </TouchableOpacity>
-	                  {notesExpanded && (
-	                    <TextInput
-	                      style={[styles.notesInput, { color: tc.text, backgroundColor: tc.inputBg }]}
-	                      multiline
-	                      placeholder="Add project notes..."
-	                      placeholderTextColor={tc.secondaryText}
-	                      defaultValue={selectedProject.supportNotes}
-	                      onEndEditing={(e) => {
-	                        if (selectedProject) {
-	                          updateProject(selectedProject.id, { supportNotes: e.nativeEvent.text })
-	                        }
+	                  <View style={styles.notesHeaderRow}>
+	                    <TouchableOpacity
+	                      style={styles.notesHeader}
+	                      onPress={() => {
+	                        setNotesExpanded(!notesExpanded);
+	                        if (notesExpanded) setShowNotesPreview(false);
 	                      }}
-	                    />
+	                    >
+	                      <Text style={[styles.notesTitle, { color: tc.text }]}>
+	                        {notesExpanded ? '▼' : '▶'} {t('project.notes')}
+	                      </Text>
+	                    </TouchableOpacity>
+	                    {notesExpanded && (
+	                      <TouchableOpacity
+	                        onPress={() => setShowNotesPreview((v) => !v)}
+	                        style={[styles.smallButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+	                      >
+	                        <Text style={[styles.smallButtonText, { color: tc.tint }]}>
+	                          {showNotesPreview ? t('markdown.edit') : t('markdown.preview')}
+	                        </Text>
+	                      </TouchableOpacity>
+	                    )}
+	                  </View>
+	                  {notesExpanded && (
+	                    showNotesPreview ? (
+	                      <View style={[styles.markdownPreview, { borderColor: tc.border, backgroundColor: tc.filterBg }]}>
+	                        <MarkdownText markdown={selectedProject.supportNotes || ''} tc={tc} />
+	                      </View>
+	                    ) : (
+	                      <TextInput
+	                        style={[styles.notesInput, { color: tc.text, backgroundColor: tc.inputBg, borderColor: tc.border }]}
+	                        multiline
+	                        placeholder={t('projects.notesPlaceholder')}
+	                        placeholderTextColor={tc.secondaryText}
+	                        value={selectedProject.supportNotes || ''}
+	                        onChangeText={(text) => setSelectedProject({ ...selectedProject, supportNotes: text })}
+	                        onEndEditing={() => updateProject(selectedProject.id, { supportNotes: selectedProject.supportNotes })}
+	                      />
+	                    )
 	                  )}
+		                </View>
+
+		                {/* Project Attachments */}
+		                <View style={[styles.attachmentsContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+		                  <View style={styles.attachmentsHeader}>
+		                    <Text style={[styles.attachmentsTitle, { color: tc.text }]}>{t('attachments.title')}</Text>
+		                    <View style={styles.attachmentsActions}>
+		                      <TouchableOpacity
+		                        onPress={addProjectFileAttachment}
+		                        style={[styles.smallButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+		                      >
+		                        <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addFile')}</Text>
+		                      </TouchableOpacity>
+		                      <TouchableOpacity
+		                        onPress={() => {
+		                          setLinkModalVisible(true);
+		                          setLinkInput('');
+		                        }}
+		                        style={[styles.smallButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+		                      >
+		                        <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addLink')}</Text>
+		                      </TouchableOpacity>
+		                    </View>
+		                  </View>
+		                  {((selectedProject.attachments || []) as Attachment[]).filter((a) => !a.deletedAt).length === 0 ? (
+		                    <Text style={[styles.helperText, { color: tc.secondaryText }]}>{t('common.none')}</Text>
+		                  ) : (
+		                    <View style={[styles.attachmentsList, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
+		                      {((selectedProject.attachments || []) as Attachment[])
+		                        .filter((a) => !a.deletedAt)
+		                        .map((attachment) => (
+		                          <View key={attachment.id} style={[styles.attachmentRow, { borderBottomColor: tc.border }]}>
+		                            <TouchableOpacity
+		                              style={styles.attachmentTitleWrap}
+		                              onPress={() => openAttachment(attachment)}
+		                            >
+		                              <Text style={[styles.attachmentTitle, { color: tc.tint }]} numberOfLines={1}>
+		                                {attachment.title}
+		                              </Text>
+		                            </TouchableOpacity>
+		                            <TouchableOpacity onPress={() => removeProjectAttachment(attachment.id)}>
+		                              <Text style={[styles.attachmentRemove, { color: tc.secondaryText }]}>
+		                                {t('attachments.remove')}
+		                              </Text>
+		                            </TouchableOpacity>
+		                          </View>
+		                        ))}
+		                    </View>
+		                  )}
 		                </View>
 
 		                {/* Project Area */}
@@ -399,6 +545,46 @@ export default function ProjectsScreen() {
             )}
           </SafeAreaView>
         </GestureHandlerRootView>
+      </Modal>
+
+      <Modal
+        visible={linkModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLinkModalVisible(false)}
+      >
+        <View style={styles.overlay}>
+          <View style={[styles.linkModalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+            <Text style={[styles.linkModalTitle, { color: tc.text }]}>{t('attachments.addLink')}</Text>
+            <TextInput
+              value={linkInput}
+              onChangeText={setLinkInput}
+              placeholder={t('attachments.linkPlaceholder')}
+              placeholderTextColor={tc.secondaryText}
+              style={[styles.linkModalInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.linkModalButtons}>
+              <TouchableOpacity
+                onPress={() => {
+                  setLinkModalVisible(false);
+                  setLinkInput('');
+                }}
+                style={styles.linkModalButton}
+              >
+                <Text style={[styles.linkModalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={confirmAddProjectLink}
+                disabled={!linkInput.trim()}
+                style={[styles.linkModalButton, !linkInput.trim() && styles.linkModalButtonDisabled]}
+              >
+                <Text style={[styles.linkModalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View >
   );
@@ -615,6 +801,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  notesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   notesHeader: {
     paddingVertical: 8,
   },
@@ -629,6 +821,116 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
     fontSize: 14,
+    borderWidth: 1,
+  },
+  smallButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  smallButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  markdownPreview: {
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  attachmentsContainer: {
+    borderBottomWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  attachmentsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  attachmentsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  attachmentsActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  helperText: {
+    marginTop: 8,
+    fontSize: 13,
+  },
+  attachmentsList: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  attachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+  },
+  attachmentTitleWrap: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  attachmentTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  attachmentRemove: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  linkModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+  },
+  linkModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  linkModalInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+  },
+  linkModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 14,
+  },
+  linkModalButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  linkModalButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  linkModalButtonDisabled: {
+    opacity: 0.5,
   },
   reviewContainer: {
     borderBottomWidth: 1,

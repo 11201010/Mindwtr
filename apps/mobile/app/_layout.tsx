@@ -98,16 +98,18 @@ function RootLayoutContent() {
   }, [storageWarningShown]);
 
   useEffect(() => {
-    const unsubscribe = useTaskStore.subscribe(
-      (state) => state.settings.notificationsEnabled,
-      (enabled) => {
-        if (enabled === false) {
-          stopMobileNotifications().catch(console.error);
-        } else {
-          startMobileNotifications().catch(console.error);
-        }
+    let previousEnabled = useTaskStore.getState().settings.notificationsEnabled;
+    const unsubscribe = useTaskStore.subscribe((state) => {
+      const enabled = state.settings.notificationsEnabled;
+      if (enabled === previousEnabled) return;
+      previousEnabled = enabled;
+
+      if (enabled === false) {
+        stopMobileNotifications().catch(console.error);
+      } else {
+        startMobileNotifications().catch(console.error);
       }
-    );
+    });
 
     return () => unsubscribe();
   }, []);

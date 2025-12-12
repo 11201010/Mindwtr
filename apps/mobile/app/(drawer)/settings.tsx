@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import {
     View,
     Text,
+    TextInput,
     Switch,
     StyleSheet,
     ScrollView,
@@ -14,6 +15,7 @@ import {
     Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage, Language } from '../../contexts/language-context';
@@ -21,7 +23,14 @@ import { useLanguage, Language } from '../../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useTaskStore } from '@mindwtr/core';
 import { pickAndParseSyncFile, exportData } from '../../lib/storage-file';
-import { performMobileSync, SYNC_PATH_KEY } from '../../lib/sync-service';
+import {
+    performMobileSync,
+    SYNC_PATH_KEY,
+    SYNC_BACKEND_KEY,
+    WEBDAV_URL_KEY,
+    WEBDAV_USERNAME_KEY,
+    WEBDAV_PASSWORD_KEY,
+} from '../../lib/sync-service';
 
 type SettingsScreen = 'main' | 'appearance' | 'language' | 'notifications' | 'sync' | 'about';
 
@@ -37,16 +46,64 @@ export default function SettingsPage() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [currentScreen, setCurrentScreen] = useState<SettingsScreen>('main');
     const [syncPath, setSyncPath] = useState<string | null>(null);
+    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav'>('file');
+    const [webdavUrl, setWebdavUrl] = useState('');
+    const [webdavUsername, setWebdavUsername] = useState('');
+    const [webdavPassword, setWebdavPassword] = useState('');
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+    const [digestTimePicker, setDigestTimePicker] = useState<'morning' | 'evening' | null>(null);
 
     const tc = useThemeColors();
     const notificationsEnabled = settings.notificationsEnabled !== false;
+    const dailyDigestMorningEnabled = settings.dailyDigestMorningEnabled === true;
+    const dailyDigestEveningEnabled = settings.dailyDigestEveningEnabled === true;
+    const dailyDigestMorningTime = settings.dailyDigestMorningTime || '09:00';
+    const dailyDigestEveningTime = settings.dailyDigestEveningTime || '20:00';
+
+    const formatTime = (time: string) => time;
+    const toTimePickerDate = (time: string) => {
+        const [hours, minutes] = time.split(':').map((v) => parseInt(v, 10));
+        const date = new Date();
+        date.setHours(Number.isFinite(hours) ? hours : 9, Number.isFinite(minutes) ? minutes : 0, 0, 0);
+        return date;
+    };
+
+    const onDigestTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
+        const picker = digestTimePicker;
+        setDigestTimePicker(null);
+        if (!picker || !selected) return;
+        const hours = String(selected.getHours()).padStart(2, '0');
+        const minutes = String(selected.getMinutes()).padStart(2, '0');
+        const value = `${hours}:${minutes}`;
+        if (picker === 'morning') {
+            updateSettings({ dailyDigestMorningTime: value }).catch(console.error);
+        } else {
+            updateSettings({ dailyDigestEveningTime: value }).catch(console.error);
+        }
+    };
 
     // Load sync path on mount
     useEffect(() => {
-        AsyncStorage.getItem(SYNC_PATH_KEY).then(path => {
+        AsyncStorage.multiGet([
+            SYNC_PATH_KEY,
+            SYNC_BACKEND_KEY,
+            WEBDAV_URL_KEY,
+            WEBDAV_USERNAME_KEY,
+            WEBDAV_PASSWORD_KEY,
+        ]).then((entries) => {
+            const entryMap = new Map(entries);
+            const path = entryMap.get(SYNC_PATH_KEY);
+            const backend = entryMap.get(SYNC_BACKEND_KEY);
+            const url = entryMap.get(WEBDAV_URL_KEY);
+            const username = entryMap.get(WEBDAV_USERNAME_KEY);
+            const password = entryMap.get(WEBDAV_PASSWORD_KEY);
+
             if (path) setSyncPath(path);
-        });
+            setSyncBackend(backend === 'webdav' ? 'webdav' : 'file');
+            if (url) setWebdavUrl(url);
+            if (username) setWebdavUsername(username);
+            if (password) setWebdavPassword(password);
+        }).catch(console.error);
     }, []);
 
     // Handle Android hardware back button
@@ -157,6 +214,8 @@ export default function SettingsPage() {
                 if (fileUri) {
                     await AsyncStorage.setItem(SYNC_PATH_KEY, fileUri);
                     setSyncPath(fileUri);
+                    await AsyncStorage.setItem(SYNC_BACKEND_KEY, 'file');
+                    setSyncBackend('file');
                     Alert.alert(
                         language === 'zh' ? '成功' : 'Success',
                         language === 'zh' ? '同步文件已设置' : 'Sync file set successfully'
@@ -171,17 +230,34 @@ export default function SettingsPage() {
 
     // Sync from stored path
     const handleSync = async () => {
-        if (!syncPath) {
-            Alert.alert(
-                language === 'zh' ? '提示' : 'Notice',
-                language === 'zh' ? '请先设置同步文件' : 'Please set a sync file first'
-            );
-            return;
-        }
-
         setIsSyncing(true);
         try {
-            const result = await performMobileSync(syncPath);
+            if (syncBackend === 'webdav') {
+                if (!webdavUrl.trim()) {
+                    Alert.alert(
+                        language === 'zh' ? '提示' : 'Notice',
+                        language === 'zh' ? '请先设置 WebDAV 地址' : 'Please set a WebDAV URL first'
+                    );
+                    return;
+                }
+                await AsyncStorage.multiSet([
+                    [SYNC_BACKEND_KEY, 'webdav'],
+                    [WEBDAV_URL_KEY, webdavUrl.trim()],
+                    [WEBDAV_USERNAME_KEY, webdavUsername],
+                    [WEBDAV_PASSWORD_KEY, webdavPassword],
+                ]);
+            } else {
+                if (!syncPath) {
+                    Alert.alert(
+                        language === 'zh' ? '提示' : 'Notice',
+                        language === 'zh' ? '请先设置同步文件' : 'Please set a sync file first'
+                    );
+                    return;
+                }
+                await AsyncStorage.setItem(SYNC_BACKEND_KEY, 'file');
+            }
+
+            const result = await performMobileSync(syncBackend === 'file' ? syncPath || undefined : undefined);
             if (result.success) {
                 Alert.alert(
                     language === 'zh' ? '成功' : 'Success',
@@ -330,6 +406,92 @@ export default function SettingsPage() {
                         </View>
                     </View>
 
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                        <View style={styles.settingRow}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.dailyDigest')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.dailyDigestDesc')}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.dailyDigestMorning')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.dailyDigestMorningTime')}: {formatTime(dailyDigestMorningTime)}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={dailyDigestMorningEnabled}
+                                onValueChange={(value) => updateSettings({ dailyDigestMorningEnabled: value }).catch(console.error)}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => setDigestTimePicker('morning')}
+                            disabled={!dailyDigestMorningEnabled}
+                        >
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text, opacity: dailyDigestMorningEnabled ? 1 : 0.5 }]}>
+                                    {t('settings.dailyDigestMorningTime')}
+                                </Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText, opacity: dailyDigestMorningEnabled ? 1 : 0.5 }]}>
+                                    {formatTime(dailyDigestMorningTime)}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.dailyDigestEvening')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.dailyDigestEveningTime')}: {formatTime(dailyDigestEveningTime)}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={dailyDigestEveningEnabled}
+                                onValueChange={(value) => updateSettings({ dailyDigestEveningEnabled: value }).catch(console.error)}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => setDigestTimePicker('evening')}
+                            disabled={!dailyDigestEveningEnabled}
+                        >
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text, opacity: dailyDigestEveningEnabled ? 1 : 0.5 }]}>
+                                    {t('settings.dailyDigestEveningTime')}
+                                </Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText, opacity: dailyDigestEveningEnabled ? 1 : 0.5 }]}>
+                                    {formatTime(dailyDigestEveningTime)}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+
+                    {digestTimePicker && (
+                        <DateTimePicker
+                            value={toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
+                            mode="time"
+                            display="default"
+                            onChange={(event, date) => {
+                                if (Platform.OS === 'android') {
+                                    if (event.type === 'dismissed') {
+                                        setDigestTimePicker(null);
+                                        return;
+                                    }
+                                }
+                                onDigestTimeChange(event, date);
+                            }}
+                        />
+                    )}
+
                     <Text style={[styles.description, { color: tc.secondaryText, marginTop: 12 }]}>
                         {t('settings.notificationsDevHint')}
                     </Text>
@@ -344,79 +506,235 @@ export default function SettingsPage() {
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
                 <SubHeader title={t('settings.dataSync')} />
                 <ScrollView style={styles.scrollView}>
-                    {/* Step-by-step instructions */}
-                    <View style={[styles.helpBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-                        <Text style={[styles.helpTitle, { color: tc.text }]}>
-                            {language === 'zh' ? '如何同步' : 'How to Sync'}
-                        </Text>
-                        <Text style={[styles.helpText, { color: tc.secondaryText }]}>
-                            {language === 'zh'
-                                ? '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件"选中该文件\n3. 之后点击"同步"即可合并数据'
-                                : '1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select File" to choose that file\n3. Then tap "Sync" to merge data'}
-                        </Text>
-                    </View>
-
-                    <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 16 }]}>
-                        {language === 'zh' ? '同步设置' : 'Sync Settings'}
-                    </Text>
-                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                        {/* Sync File Path */}
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginBottom: 12 }]}>
                         <View style={styles.settingRow}>
                             <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, { color: tc.text }]}>
-                                    {language === 'zh' ? '同步文件' : 'Sync File'}
-                                </Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
-                                    {syncPath ? syncPath.split('/').pop() : (language === 'zh' ? '未设置' : 'Not set')}
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncBackend')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {syncBackend === 'webdav' ? t('settings.syncBackendWebdav') : t('settings.syncBackendFile')}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={handleSetSyncPath}>
-                                <Text style={styles.linkText}>{language === 'zh' ? '选择文件' : 'Select File'}</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Sync Now */}
-                        <TouchableOpacity
-                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={handleSync}
-                            disabled={isSyncing || !syncPath}
-                        >
-                            <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, { color: syncPath ? '#3B82F6' : tc.secondaryText }]}>
-                                    {language === 'zh' ? '同步' : 'Sync'}
-                                </Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                    {language === 'zh' ? '读取并合并同步文件' : 'Read and merge sync file'}
-                                </Text>
-                            </View>
-                            {isSyncing && <ActivityIndicator size="small" color="#3B82F6" />}
-                        </TouchableOpacity>
-
-                        {/* Last Sync Status */}
-                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                            <View style={styles.settingInfo}>
-                                <Text style={[styles.settingLabel, { color: tc.text }]}>
-                                    {language === 'zh' ? '上次同步' : 'Last Sync'}
-                                </Text>
-                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                    {settings.lastSyncAt
-                                        ? new Date(settings.lastSyncAt).toLocaleString()
-                                        : (language === 'zh' ? '从未同步' : 'Never')}
-                                    {settings.lastSyncStatus === 'error' && (language === 'zh' ? '（失败）' : ' (failed)')}
-                                </Text>
-                                {settings.lastSyncStats && (
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                        {(language === 'zh' ? '冲突' : 'Conflicts')}: {(settings.lastSyncStats.tasks.conflicts || 0) + (settings.lastSyncStats.projects.conflicts || 0)}
+                            <View style={styles.backendToggle}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.backendOption,
+                                        { borderColor: tc.border, backgroundColor: syncBackend === 'file' ? tc.filterBg : 'transparent' },
+                                    ]}
+                                    onPress={() => {
+                                        AsyncStorage.setItem(SYNC_BACKEND_KEY, 'file').catch(console.error);
+                                        setSyncBackend('file');
+                                    }}
+                                >
+                                    <Text style={[styles.backendOptionText, { color: syncBackend === 'file' ? tc.tint : tc.secondaryText }]}>
+                                        {t('settings.syncBackendFile')}
                                     </Text>
-                                )}
-                                {settings.lastSyncStatus === 'error' && settings.lastSyncError && (
-                                    <Text style={[styles.settingDescription, { color: '#EF4444' }]}>
-                                        {settings.lastSyncError}
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.backendOption,
+                                        { borderColor: tc.border, backgroundColor: syncBackend === 'webdav' ? tc.filterBg : 'transparent' },
+                                    ]}
+                                    onPress={() => {
+                                        AsyncStorage.setItem(SYNC_BACKEND_KEY, 'webdav').catch(console.error);
+                                        setSyncBackend('webdav');
+                                    }}
+                                >
+                                    <Text style={[styles.backendOptionText, { color: syncBackend === 'webdav' ? tc.tint : tc.secondaryText }]}>
+                                        {t('settings.syncBackendWebdav')}
                                     </Text>
-                                )}
+                                </TouchableOpacity>
                             </View>
                         </View>
                     </View>
+
+                    {syncBackend === 'file' && (
+                        <>
+                            {/* Step-by-step instructions */}
+                            <View style={[styles.helpBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                                <Text style={[styles.helpTitle, { color: tc.text }]}>
+                                    {language === 'zh' ? '如何同步' : 'How to Sync'}
+                                </Text>
+                                <Text style={[styles.helpText, { color: tc.secondaryText }]}>
+                                    {language === 'zh'
+                                        ? '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件"选中该文件\n3. 之后点击"同步"即可合并数据'
+                                        : '1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select File" to choose that file\n3. Then tap "Sync" to merge data'}
+                                </Text>
+                            </View>
+
+                            <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 16 }]}>
+                                {language === 'zh' ? '同步设置' : 'Sync Settings'}
+                            </Text>
+                            <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
+                                {/* Sync File Path */}
+                                <View style={styles.settingRow}>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                            {language === 'zh' ? '同步文件' : 'Sync File'}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
+                                            {syncPath ? syncPath.split('/').pop() : (language === 'zh' ? '未设置' : 'Not set')}
+                                        </Text>
+                                    </View>
+                                    <TouchableOpacity onPress={handleSetSyncPath}>
+                                        <Text style={styles.linkText}>{language === 'zh' ? '选择文件' : 'Select File'}</Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Sync Now */}
+                                <TouchableOpacity
+                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={handleSync}
+                                    disabled={isSyncing || !syncPath}
+                                >
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: syncPath ? '#3B82F6' : tc.secondaryText }]}>
+                                            {language === 'zh' ? '同步' : 'Sync'}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {language === 'zh' ? '读取并合并同步文件' : 'Read and merge sync file'}
+                                        </Text>
+                                    </View>
+                                    {isSyncing && <ActivityIndicator size="small" color="#3B82F6" />}
+                                </TouchableOpacity>
+
+                                {/* Last Sync Status */}
+                                <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                            {language === 'zh' ? '上次同步' : 'Last Sync'}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {settings.lastSyncAt
+                                                ? new Date(settings.lastSyncAt).toLocaleString()
+                                                : (language === 'zh' ? '从未同步' : 'Never')}
+                                            {settings.lastSyncStatus === 'error' && (language === 'zh' ? '（失败）' : ' (failed)')}
+                                        </Text>
+                                        {settings.lastSyncStats && (
+                                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                                {(language === 'zh' ? '冲突' : 'Conflicts')}: {(settings.lastSyncStats.tasks.conflicts || 0) + (settings.lastSyncStats.projects.conflicts || 0)}
+                                            </Text>
+                                        )}
+                                        {settings.lastSyncStatus === 'error' && settings.lastSyncError && (
+                                            <Text style={[styles.settingDescription, { color: '#EF4444' }]}>
+                                                {settings.lastSyncError}
+                                            </Text>
+                                        )}
+                                    </View>
+                                </View>
+                            </View>
+                        </>
+                    )}
+
+                    {syncBackend === 'webdav' && (
+                        <>
+                            <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 16 }]}>
+                                {t('settings.syncBackendWebdav')}
+                            </Text>
+                            <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
+                                <View style={styles.inputGroup}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.webdavUrl')}</Text>
+                                    <TextInput
+                                        value={webdavUrl}
+                                        onChangeText={setWebdavUrl}
+                                        placeholder="https://example.com/remote.php/dav/files/user/mindwtr-sync.json"
+                                        placeholderTextColor={tc.secondaryText}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        style={[styles.textInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                    />
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.webdavHint')}
+                                    </Text>
+                                </View>
+
+                                <View style={[styles.inputGroup, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.webdavUsername')}</Text>
+                                    <TextInput
+                                        value={webdavUsername}
+                                        onChangeText={setWebdavUsername}
+                                        placeholder="user"
+                                        placeholderTextColor={tc.secondaryText}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        style={[styles.textInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                    />
+                                </View>
+
+                                <View style={[styles.inputGroup, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.webdavPassword')}</Text>
+                                    <TextInput
+                                        value={webdavPassword}
+                                        onChangeText={setWebdavPassword}
+                                        placeholder="••••••••"
+                                        placeholderTextColor={tc.secondaryText}
+                                        secureTextEntry
+                                        style={[styles.textInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                    />
+                                </View>
+
+                                <TouchableOpacity
+                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={() => {
+                                        AsyncStorage.multiSet([
+                                            [SYNC_BACKEND_KEY, 'webdav'],
+                                            [WEBDAV_URL_KEY, webdavUrl.trim()],
+                                            [WEBDAV_USERNAME_KEY, webdavUsername],
+                                            [WEBDAV_PASSWORD_KEY, webdavPassword],
+                                        ]).then(() => {
+                                            Alert.alert(language === 'zh' ? '成功' : 'Success', t('settings.webdavSave'));
+                                        }).catch(console.error);
+                                    }}
+                                >
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: tc.tint }]}>{t('settings.webdavSave')}</Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {t('settings.webdavUrl')}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={handleSync}
+                                    disabled={isSyncing || !webdavUrl.trim()}
+                                >
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: webdavUrl.trim() ? tc.tint : tc.secondaryText }]}>
+                                            {language === 'zh' ? '同步' : 'Sync'}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {language === 'zh' ? '读取并合并 WebDAV 数据' : 'Read and merge WebDAV data'}
+                                        </Text>
+                                    </View>
+                                    {isSyncing && <ActivityIndicator size="small" color={tc.tint} />}
+                                </TouchableOpacity>
+
+                                <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                            {language === 'zh' ? '上次同步' : 'Last Sync'}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {settings.lastSyncAt
+                                                ? new Date(settings.lastSyncAt).toLocaleString()
+                                                : (language === 'zh' ? '从未同步' : 'Never')}
+                                            {settings.lastSyncStatus === 'error' && (language === 'zh' ? '（失败）' : ' (failed)')}
+                                        </Text>
+                                        {settings.lastSyncStats && (
+                                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                                {(language === 'zh' ? '冲突' : 'Conflicts')}: {(settings.lastSyncStats.tasks.conflicts || 0) + (settings.lastSyncStats.projects.conflicts || 0)}
+                                            </Text>
+                                        )}
+                                        {settings.lastSyncStatus === 'error' && settings.lastSyncError && (
+                                            <Text style={[styles.settingDescription, { color: '#EF4444' }]}>
+                                                {settings.lastSyncError}
+                                            </Text>
+                                        )}
+                                    </View>
+                                </View>
+                            </View>
+                        </>
+                    )}
 
                     {/* Backup Section */}
                     <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 24 }]}>
@@ -537,4 +855,9 @@ const styles = StyleSheet.create({
     helpBox: { borderRadius: 12, padding: 16, marginBottom: 8, borderWidth: 1 },
     helpTitle: { fontSize: 15, fontWeight: '600', marginBottom: 8 },
     helpText: { fontSize: 13, lineHeight: 20 },
+    backendToggle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    backendOption: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1 },
+    backendOptionText: { fontSize: 13, fontWeight: '700' },
+    inputGroup: { padding: 16 },
+    textInput: { marginTop: 8, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
 });
