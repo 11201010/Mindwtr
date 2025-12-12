@@ -1,9 +1,11 @@
 import { useState, memo } from 'react';
 
-import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Plus, Clock, Timer } from 'lucide-react';
-import { useTaskStore, Task, TaskStatus, TimeEstimate, getTaskAgeLabel, getTaskStaleness, getTaskUrgency, getStatusColor, Project, safeFormatDate, safeParseDate, getChecklistProgress, getUnblocksCount } from '@mindwtr/core';
+import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Plus, Clock, Timer, Paperclip, Link2 } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { useTaskStore, Attachment, Task, TaskStatus, TimeEstimate, generateUUID, getTaskAgeLabel, getTaskStaleness, getTaskUrgency, getStatusColor, Project, safeFormatDate, safeParseDate, getChecklistProgress, getUnblocksCount, stripMarkdown } from '@mindwtr/core';
 import { cn } from '../lib/utils';
 import { useLanguage } from '../contexts/language-context';
+import { Markdown } from './Markdown';
 
 // Convert stored ISO or datetime-local strings into datetime-local input values.
 function toDateTimeLocalValue(dateStr: string | undefined): string {
@@ -43,15 +45,70 @@ export const TaskItem = memo(function TaskItem({
     const [editContexts, setEditContexts] = useState(task.contexts?.join(', ') || '');
     const [editTags, setEditTags] = useState(task.tags?.join(', ') || '');
     const [editDescription, setEditDescription] = useState(task.description || '');
+    const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [editLocation, setEditLocation] = useState(task.location || '');
     const [editRecurrence, setEditRecurrence] = useState(task.recurrence || '');
     const [editTimeEstimate, setEditTimeEstimate] = useState<TimeEstimate | ''>(task.timeEstimate || '');
     const [editReviewAt, setEditReviewAt] = useState(toDateTimeLocalValue(task.reviewAt));
     const [editBlockedByTaskIds, setEditBlockedByTaskIds] = useState<string[]>(task.blockedByTaskIds || []);
+    const [editAttachments, setEditAttachments] = useState<Attachment[]>(task.attachments || []);
 
     const ageLabel = getTaskAgeLabel(task.createdAt, language);
     const checklistProgress = getChecklistProgress(task);
     const unblocksCount = getUnblocksCount(task.id, tasks ?? []);
+    const visibleAttachments = (task.attachments || []).filter((a) => !a.deletedAt);
+    const visibleEditAttachments = editAttachments.filter((a) => !a.deletedAt);
+
+    const openAttachment = (attachment: Attachment) => {
+        if (attachment.kind === 'link') {
+            window.open(attachment.uri, '_blank');
+            return;
+        }
+        const url = attachment.uri.startsWith('file://') ? attachment.uri : `file://${attachment.uri}`;
+        window.open(url, '_blank');
+    };
+
+    const addFileAttachment = async () => {
+        const selected = await open({
+            multiple: false,
+            directory: false,
+            title: t('attachments.addFile'),
+        });
+        if (!selected || typeof selected !== 'string') return;
+        const now = new Date().toISOString();
+        const title = selected.split(/[/\\]/).pop() || selected;
+        const attachment: Attachment = {
+            id: generateUUID(),
+            kind: 'file',
+            title,
+            uri: selected,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setEditAttachments((prev) => [...prev, attachment]);
+    };
+
+    const addLinkAttachment = () => {
+        const url = window.prompt(t('attachments.addLink'), t('attachments.linkPlaceholder'));
+        if (!url) return;
+        const now = new Date().toISOString();
+        const attachment: Attachment = {
+            id: generateUUID(),
+            kind: 'link',
+            title: url,
+            uri: url,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setEditAttachments((prev) => [...prev, attachment]);
+    };
+
+    const removeAttachment = (id: string) => {
+        const now = new Date().toISOString();
+        setEditAttachments((prev) =>
+            prev.map((a) => (a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a))
+        );
+    };
 
     const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         moveTask(task.id, e.target.value as TaskStatus);
@@ -73,6 +130,7 @@ export const TaskItem = memo(function TaskItem({
                 timeEstimate: editTimeEstimate || undefined,
                 reviewAt: editReviewAt || undefined,
                 blockedByTaskIds: editBlockedByTaskIds.length > 0 ? editBlockedByTaskIds : undefined,
+                attachments: editAttachments.length > 0 ? editAttachments : undefined,
             });
             setIsEditing(false);
         }
@@ -124,16 +182,84 @@ export const TaskItem = memo(function TaskItem({
                                 className="w-full bg-transparent border-b border-primary/50 p-1 text-base font-medium focus:ring-0 focus:border-primary outline-none"
                                 placeholder={t('taskEdit.titleLabel')}
                             />
-                            <div className="flex flex-col gap-1">
-                                <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
-                                <textarea
-                                    aria-label="Task description"
-                                    value={editDescription}
-                                    onChange={(e) => setEditDescription(e.target.value)}
-                                    className="text-xs bg-muted/50 border border-border rounded px-2 py-1 min-h-[60px] resize-y"
-                                    placeholder={t('taskEdit.descriptionPlaceholder')}
-                                />
-                            </div>
+	                            <div className="flex flex-col gap-2">
+	                                <div className="flex items-center justify-between">
+	                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
+	                                    <button
+	                                        type="button"
+	                                        onClick={() => setShowDescriptionPreview((v) => !v)}
+	                                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
+	                                    >
+	                                        {showDescriptionPreview ? t('markdown.edit') : t('markdown.preview')}
+	                                    </button>
+	                                </div>
+	                                {showDescriptionPreview ? (
+	                                    <div className="text-xs bg-muted/30 border border-border rounded px-2 py-2">
+	                                        <Markdown markdown={editDescription || ''} />
+	                                    </div>
+	                                ) : (
+	                                    <textarea
+	                                        aria-label="Task description"
+	                                        value={editDescription}
+	                                        onChange={(e) => setEditDescription(e.target.value)}
+	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 min-h-[60px] resize-y"
+	                                        placeholder={t('taskEdit.descriptionPlaceholder')}
+	                                    />
+	                                )}
+	                            </div>
+
+	                            <div className="flex flex-col gap-2">
+	                                <div className="flex items-center justify-between">
+	                                    <label className="text-xs text-muted-foreground font-medium">{t('attachments.title')}</label>
+	                                    <div className="flex items-center gap-2">
+	                                        <button
+	                                            type="button"
+	                                            onClick={addFileAttachment}
+	                                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
+	                                        >
+	                                            <Paperclip className="w-3 h-3" />
+	                                            {t('attachments.addFile')}
+	                                        </button>
+	                                        <button
+	                                            type="button"
+	                                            onClick={addLinkAttachment}
+	                                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
+	                                        >
+	                                            <Link2 className="w-3 h-3" />
+	                                            {t('attachments.addLink')}
+	                                        </button>
+	                                    </div>
+	                                </div>
+	                                {visibleEditAttachments.length === 0 ? (
+	                                    <p className="text-xs text-muted-foreground">{t('common.none')}</p>
+	                                ) : (
+	                                    <div className="space-y-1">
+	                                        {visibleEditAttachments.map((attachment) => (
+	                                            <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs">
+	                                                <button
+	                                                    type="button"
+	                                                    onClick={(e) => {
+	                                                        e.preventDefault();
+	                                                        e.stopPropagation();
+	                                                        openAttachment(attachment);
+	                                                    }}
+	                                                    className="truncate text-primary hover:underline"
+	                                                    title={attachment.title}
+	                                                >
+	                                                    {attachment.title}
+	                                                </button>
+	                                                <button
+	                                                    type="button"
+	                                                    onClick={() => removeAttachment(attachment.id)}
+	                                                    className="text-muted-foreground hover:text-foreground"
+	                                                >
+	                                                    {t('attachments.remove')}
+	                                                </button>
+	                                            </div>
+	                                        ))}
+	                                    </div>
+	                                )}
+	                            </div>
 	                            <div className="flex flex-wrap gap-4">
 	                                <div className="flex flex-col gap-1">
 	                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.startDateLabel')}</label>
@@ -493,11 +619,35 @@ export const TaskItem = memo(function TaskItem({
                                 {task.title}
                             </div>
 
-                            {task.description && (
-                                <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                                    {task.description}
-                                </p>
-                            )}
+	                            {task.description && (
+	                                <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+	                                    {stripMarkdown(task.description)}
+	                                </p>
+	                            )}
+
+	                            {visibleAttachments.length > 0 && (
+	                                <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
+	                                    <Paperclip className="w-3 h-3" />
+	                                    {visibleAttachments.slice(0, 2).map((attachment) => (
+	                                        <button
+	                                            key={attachment.id}
+	                                            type="button"
+	                                            onClick={(e) => {
+	                                                e.preventDefault();
+	                                                e.stopPropagation();
+	                                                openAttachment(attachment);
+	                                            }}
+	                                            className="truncate hover:underline"
+	                                            title={attachment.title}
+	                                        >
+	                                            {attachment.title}
+	                                        </button>
+	                                    ))}
+	                                    {visibleAttachments.length > 2 && (
+	                                        <span className="opacity-80">+{visibleAttachments.length - 2}</span>
+	                                    )}
+	                                </div>
+	                            )}
 
                             <div className="flex flex-wrap items-center gap-4 mt-2 text-xs">
                                 {project && (

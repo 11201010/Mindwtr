@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Moon, Sun, Monitor, Globe, Check, ExternalLink, RefreshCw, Keyboard } from 'lucide-react';
+import { Moon, Sun, Monitor, Globe, Check, ExternalLink, RefreshCw, Keyboard, Bell } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useLanguage, Language } from '../../contexts/language-context';
 import { useKeybindings } from '../../contexts/keybinding-context';
@@ -25,6 +25,11 @@ export function SettingsView() {
     const { settings, updateSettings } = useTaskStore();
     const [saved, setSaved] = useState(false);
     const [appVersion, setAppVersion] = useState('0.1.0');
+    const notificationsEnabled = settings?.notificationsEnabled !== false;
+    const dailyDigestMorningEnabled = settings?.dailyDigestMorningEnabled === true;
+    const dailyDigestEveningEnabled = settings?.dailyDigestEveningEnabled === true;
+    const dailyDigestMorningTime = settings?.dailyDigestMorningTime || '09:00';
+    const dailyDigestEveningTime = settings?.dailyDigestEveningTime || '20:00';
 
     // Update check state
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
@@ -35,6 +40,10 @@ export function SettingsView() {
     // Sync state
     const [syncPath, setSyncPath] = useState<string>('');
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav'>(() => SyncService.getSyncBackend());
+    const [webdavUrl, setWebdavUrl] = useState('');
+    const [webdavUsername, setWebdavUsername] = useState('');
+    const [webdavPassword, setWebdavPassword] = useState('');
 
     useEffect(() => {
         loadPreferences();
@@ -44,6 +53,11 @@ export function SettingsView() {
     useEffect(() => {
         // Load current sync path from Tauri
         SyncService.getSyncPath().then(setSyncPath).catch(console.error);
+        setSyncBackend(SyncService.getSyncBackend());
+        const cfg = SyncService.getWebDavConfig();
+        setWebdavUrl(cfg.url);
+        setWebdavUsername(cfg.username);
+        setWebdavPassword(cfg.password);
     }, []);
 
     useEffect(() => {
@@ -88,7 +102,16 @@ export function SettingsView() {
     };
 
     const handleSync = async () => {
-        if (!syncPath) return;
+        if (syncBackend === 'webdav') {
+            if (!webdavUrl.trim()) return;
+            SyncService.setWebDavConfig({
+                url: webdavUrl.trim(),
+                username: webdavUsername.trim(),
+                password: webdavPassword,
+            });
+        } else if (!syncPath) {
+            return;
+        }
 
         try {
             setIsSyncing(true);
@@ -107,6 +130,21 @@ export function SettingsView() {
         } finally {
             setIsSyncing(false);
         }
+    };
+
+    const handleSetSyncBackend = (backend: 'file' | 'webdav') => {
+        setSyncBackend(backend);
+        SyncService.setSyncBackend(backend);
+        showSaved();
+    };
+
+    const handleSaveWebDav = () => {
+        SyncService.setWebDavConfig({
+            url: webdavUrl.trim(),
+            username: webdavUsername.trim(),
+            password: webdavPassword,
+        });
+        showSaved();
     };
 
     const showSaved = () => {
@@ -159,6 +197,15 @@ export function SettingsView() {
             keybindingVim: 'Vim',
             keybindingEmacs: 'Emacs',
             viewShortcuts: 'View shortcuts',
+            notifications: 'Notifications',
+            notificationsDesc: 'Enable task reminders and daily digest notifications.',
+            notificationsEnable: 'Enable notifications',
+            dailyDigest: 'Daily Digest',
+            dailyDigestDesc: 'Morning briefing and evening review prompts.',
+            dailyDigestMorning: 'Morning briefing',
+            dailyDigestMorningTime: 'Morning time',
+            dailyDigestEvening: 'Evening review',
+            dailyDigestEveningTime: 'Evening time',
             // Data section
             data: 'Data Storage',
             currentLocation: 'Current Location',
@@ -173,6 +220,14 @@ export function SettingsView() {
             syncNow: 'Sync Now',
             syncing: 'Syncing...',
             pathHint: 'Type a path directly (e.g., ~/Sync/mindwtr) or use Browse if available',
+            syncBackend: 'Sync backend',
+            syncBackendFile: 'File',
+            syncBackendWebdav: 'WebDAV',
+            webdavUrl: 'WebDAV URL',
+            webdavUsername: 'Username',
+            webdavPassword: 'Password',
+            webdavSave: 'Save WebDAV',
+            webdavHint: 'Use a full URL to your sync JSON file (e.g., https://example.com/remote.php/dav/files/user/mindwtr-sync.json).',
             lastSync: 'Last sync',
             lastSyncNever: 'Never',
             lastSyncSuccess: 'Sync completed',
@@ -212,6 +267,15 @@ export function SettingsView() {
             keybindingVim: 'Vim',
             keybindingEmacs: 'Emacs',
             viewShortcuts: '查看快捷键',
+            notifications: '通知',
+            notificationsDesc: '启用任务提醒与每日简报通知。',
+            notificationsEnable: '启用通知',
+            dailyDigest: '每日简报',
+            dailyDigestDesc: '早间简报与晚间回顾提醒。',
+            dailyDigestMorning: '早间简报',
+            dailyDigestMorningTime: '早间时间',
+            dailyDigestEvening: '晚间回顾',
+            dailyDigestEveningTime: '晚间时间',
             // Data section
             data: '数据存储',
             currentLocation: '当前位置',
@@ -226,6 +290,14 @@ export function SettingsView() {
             syncNow: '立即同步',
             syncing: '同步中...',
             pathHint: '直接输入路径（如 ~/Sync/mindwtr）或点击浏览选择',
+            syncBackend: '同步后端',
+            syncBackendFile: '文件',
+            syncBackendWebdav: 'WebDAV',
+            webdavUrl: 'WebDAV 地址',
+            webdavUsername: '用户名',
+            webdavPassword: '密码',
+            webdavSave: '保存 WebDAV',
+            webdavHint: '请输入同步 JSON 文件的完整 URL（例如 https://example.com/remote.php/dav/files/user/mindwtr-sync.json）。',
             lastSync: '上次同步',
             lastSyncNever: '从未同步',
             lastSyncSuccess: '同步完成',
@@ -446,6 +518,83 @@ export function SettingsView() {
 
                 <div className="border-t border-border"></div>
 
+                {/* Notifications Section */}
+                <section className="space-y-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2">
+                        <Bell className="w-5 h-5" />
+                        {t.notifications}
+                    </h2>
+
+                    <div className="bg-card border border-border rounded-lg p-6 space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                            {t.notificationsDesc}
+                        </p>
+
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-sm font-medium">{t.notificationsEnable}</p>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={notificationsEnabled}
+                                onChange={(e) => updateSettings({ notificationsEnabled: e.target.checked }).then(showSaved).catch(console.error)}
+                                className="h-4 w-4 accent-blue-600"
+                            />
+                        </div>
+
+                        <div className="border-t border-border/50"></div>
+
+                        <div className="space-y-3">
+                            <div>
+                                <p className="text-sm font-medium">{t.dailyDigest}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{t.dailyDigestDesc}</p>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="text-sm font-medium">{t.dailyDigestMorning}</div>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="time"
+                                        value={dailyDigestMorningTime}
+                                        disabled={!notificationsEnabled || !dailyDigestMorningEnabled}
+                                        onChange={(e) => updateSettings({ dailyDigestMorningTime: e.target.value }).then(showSaved).catch(console.error)}
+                                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                                    />
+                                    <input
+                                        type="checkbox"
+                                        checked={dailyDigestMorningEnabled}
+                                        disabled={!notificationsEnabled}
+                                        onChange={(e) => updateSettings({ dailyDigestMorningEnabled: e.target.checked }).then(showSaved).catch(console.error)}
+                                        className="h-4 w-4 accent-blue-600 disabled:opacity-50"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="text-sm font-medium">{t.dailyDigestEvening}</div>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="time"
+                                        value={dailyDigestEveningTime}
+                                        disabled={!notificationsEnabled || !dailyDigestEveningEnabled}
+                                        onChange={(e) => updateSettings({ dailyDigestEveningTime: e.target.value }).then(showSaved).catch(console.error)}
+                                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                                    />
+                                    <input
+                                        type="checkbox"
+                                        checked={dailyDigestEveningEnabled}
+                                        disabled={!notificationsEnabled}
+                                        onChange={(e) => updateSettings({ dailyDigestEveningEnabled: e.target.checked }).then(showSaved).catch(console.error)}
+                                        className="h-4 w-4 accent-blue-600 disabled:opacity-50"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div className="border-t border-border"></div>
+
                 {/* Sync Management Section */}
                 <section className="space-y-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -458,43 +607,119 @@ export function SettingsView() {
                             {t.syncDescription}
                         </p>
 
-                        <div className="flex flex-col gap-2">
-                            <label className="text-sm font-medium">{t.syncFolderLocation}</label>
+                        <div className="flex items-center justify-between gap-4">
+                            <span className="text-sm font-medium">{t.syncBackend}</span>
                             <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={syncPath}
-                                    onChange={(e) => setSyncPath(e.target.value)}
-                                    placeholder="/path/to/your/sync/folder"
-                                    className="flex-1 bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
                                 <button
-                                    onClick={async () => {
-                                        if (syncPath) {
-                                            const result = await SyncService.setSyncPath(syncPath);
-                                            if (result.success) {
-                                                showSaved();
-                                            }
-                                        }
-                                    }}
-                                    disabled={!syncPath}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-gray-400 whitespace-nowrap"
+                                    onClick={() => handleSetSyncBackend('file')}
+                                    className={cn(
+                                        "px-3 py-1.5 rounded-md text-sm font-medium transition-colors border",
+                                        syncBackend === 'file'
+                                            ? "bg-primary/10 text-primary border-primary ring-1 ring-primary"
+                                            : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                    )}
                                 >
-                                    {t.savePath}
+                                    {t.syncBackendFile}
                                 </button>
                                 <button
-                                    onClick={handleChangeSyncLocation}
-                                    className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/90 whitespace-nowrap"
+                                    onClick={() => handleSetSyncBackend('webdav')}
+                                    className={cn(
+                                        "px-3 py-1.5 rounded-md text-sm font-medium transition-colors border",
+                                        syncBackend === 'webdav'
+                                            ? "bg-primary/10 text-primary border-primary ring-1 ring-primary"
+                                            : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                    )}
                                 >
-                                    {t.browse}
+                                    {t.syncBackendWebdav}
                                 </button>
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                                {t.pathHint}
-                            </p>
                         </div>
 
-                        {syncPath && (
+                        {syncBackend === 'file' && (
+                            <div className="flex flex-col gap-2">
+                                <label className="text-sm font-medium">{t.syncFolderLocation}</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={syncPath}
+                                        onChange={(e) => setSyncPath(e.target.value)}
+                                        placeholder="/path/to/your/sync/folder"
+                                        className="flex-1 bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <button
+                                        onClick={async () => {
+                                            if (syncPath) {
+                                                const result = await SyncService.setSyncPath(syncPath);
+                                                if (result.success) {
+                                                    showSaved();
+                                                }
+                                            }
+                                        }}
+                                        disabled={!syncPath}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-gray-400 whitespace-nowrap"
+                                    >
+                                        {t.savePath}
+                                    </button>
+                                    <button
+                                        onClick={handleChangeSyncLocation}
+                                        className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/90 whitespace-nowrap"
+                                    >
+                                        {t.browse}
+                                    </button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    {t.pathHint}
+                                </p>
+                            </div>
+                        )}
+
+                        {syncBackend === 'webdav' && (
+                            <div className="space-y-3">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium">{t.webdavUrl}</label>
+                                    <input
+                                        type="text"
+                                        value={webdavUrl}
+                                        onChange={(e) => setWebdavUrl(e.target.value)}
+                                        placeholder="https://example.com/remote.php/dav/files/user/mindwtr-sync.json"
+                                        className="bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <p className="text-xs text-muted-foreground">{t.webdavHint}</p>
+                                </div>
+
+                                <div className="grid sm:grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium">{t.webdavUsername}</label>
+                                        <input
+                                            type="text"
+                                            value={webdavUsername}
+                                            onChange={(e) => setWebdavUsername(e.target.value)}
+                                            className="bg-muted p-2 rounded text-sm border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-sm font-medium">{t.webdavPassword}</label>
+                                        <input
+                                            type="password"
+                                            value={webdavPassword}
+                                            onChange={(e) => setWebdavPassword(e.target.value)}
+                                            className="bg-muted p-2 rounded text-sm border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-end">
+                                    <button
+                                        onClick={handleSaveWebDav}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 whitespace-nowrap"
+                                    >
+                                        {t.webdavSave}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {(syncBackend === 'webdav' ? !!webdavUrl.trim() : !!syncPath) && (
                             <div className="pt-2">
                                 <button
                                     onClick={handleSync}

@@ -26,6 +26,12 @@ export function QuickAddModal() {
     }, []);
 
     useEffect(() => {
+        const handler = () => setIsOpen(true);
+        window.addEventListener('mindwtr:quick-add', handler);
+        return () => window.removeEventListener('mindwtr:quick-add', handler);
+    }, []);
+
+    useEffect(() => {
         if (isOpen) {
             setValue('');
             setTimeout(() => inputRef.current?.focus(), 50);

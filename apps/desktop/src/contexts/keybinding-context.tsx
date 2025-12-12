@@ -42,6 +42,10 @@ function triggerGlobalSearch() {
     window.dispatchEvent(event);
 }
 
+function triggerQuickAdd() {
+    window.dispatchEvent(new Event('mindwtr:quick-add'));
+}
+
 export function KeybindingProvider({
     children,
     currentView,
@@ -231,6 +235,11 @@ export function KeybindingProvider({
             if (isHelpOpen && e.key === 'Escape') {
                 e.preventDefault();
                 setIsHelpOpen(false);
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'Space' && !e.altKey && !isEditableTarget(e.target)) {
+                e.preventDefault();
+                triggerQuickAdd();
                 return;
             }
             if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'b' && !isEditableTarget(e.target)) {

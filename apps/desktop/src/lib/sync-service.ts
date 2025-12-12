@@ -1,8 +1,38 @@
 
 import { invoke } from '@tauri-apps/api/core';
-import { mergeAppDataWithStats, AppData, useTaskStore, MergeStats } from '@mindwtr/core';
+import { mergeAppDataWithStats, AppData, useTaskStore, MergeStats, webdavGetJson, webdavPutJson } from '@mindwtr/core';
+
+type SyncBackend = 'file' | 'webdav';
+
+const SYNC_BACKEND_KEY = 'mindwtr-sync-backend';
+const WEBDAV_URL_KEY = 'mindwtr-webdav-url';
+const WEBDAV_USERNAME_KEY = 'mindwtr-webdav-username';
+const WEBDAV_PASSWORD_KEY = 'mindwtr-webdav-password';
 
 export class SyncService {
+    static getSyncBackend(): SyncBackend {
+        const raw = localStorage.getItem(SYNC_BACKEND_KEY);
+        return raw === 'webdav' ? 'webdav' : 'file';
+    }
+
+    static setSyncBackend(backend: SyncBackend) {
+        localStorage.setItem(SYNC_BACKEND_KEY, backend);
+    }
+
+    static getWebDavConfig() {
+        return {
+            url: localStorage.getItem(WEBDAV_URL_KEY) || '',
+            username: localStorage.getItem(WEBDAV_USERNAME_KEY) || '',
+            password: localStorage.getItem(WEBDAV_PASSWORD_KEY) || '',
+        };
+    }
+
+    static setWebDavConfig(config: { url: string; username?: string; password?: string }) {
+        localStorage.setItem(WEBDAV_URL_KEY, config.url);
+        localStorage.setItem(WEBDAV_USERNAME_KEY, config.username || '');
+        localStorage.setItem(WEBDAV_PASSWORD_KEY, config.password || '');
+    }
+
     /**
      * Get the currently configured sync path from the backend
      */
@@ -39,8 +69,18 @@ export class SyncService {
             // 1. Read Local Data
             const localData = await invoke<AppData>('get_data');
 
-            // 2. Read Sync Data
-            const syncData = await invoke<AppData>('read_sync_file');
+            // 2. Read Sync Data (file or WebDAV)
+            let syncData: AppData;
+            if (SyncService.getSyncBackend() === 'webdav') {
+                const { url, username, password } = SyncService.getWebDavConfig();
+                if (!url) {
+                    throw new Error('WebDAV URL not configured');
+                }
+                const remote = await webdavGetJson<AppData>(url, { username, password });
+                syncData = remote || { tasks: [], projects: [], settings: {} };
+            } else {
+                syncData = await invoke<AppData>('read_sync_file');
+            }
 
             // 3. Merge Strategies
             // mergeAppData uses Last-Write-Wins (LWW) based on updatedAt
@@ -67,7 +107,12 @@ export class SyncService {
             await invoke('save_data', { data: finalData });
 
             // 5. Write back to Sync
-            await invoke('write_sync_file', { data: finalData });
+            if (SyncService.getSyncBackend() === 'webdav') {
+                const { url, username, password } = SyncService.getWebDavConfig();
+                await webdavPutJson(url, finalData, { username, password });
+            } else {
+                await invoke('write_sync_file', { data: finalData });
+            }
 
             // 6. Refresh UI Store
             await useTaskStore.getState().fetchData();

@@ -11,6 +11,7 @@ type HelpItem = { keys: string; labelKey: string };
 
 export function KeybindingHelpModal({ style, onClose, currentView, t }: KeybindingHelpModalProps) {
     const vimGlobal: HelpItem[] = [
+        { keys: 'Cmd/Ctrl-Shift-Space', labelKey: 'keybindings.quickAdd' },
         { keys: '/', labelKey: 'keybindings.openSearch' },
         { keys: '?', labelKey: 'keybindings.openHelp' },
         { keys: 'Ctrl-b', labelKey: 'keybindings.toggleSidebar' },
@@ -38,6 +39,7 @@ export function KeybindingHelpModal({ style, onClose, currentView, t }: Keybindi
     ];
 
     const emacsGlobal: HelpItem[] = [
+        { keys: 'Cmd/Ctrl-Shift-Space', labelKey: 'keybindings.quickAdd' },
         { keys: 'Ctrl-s', labelKey: 'keybindings.openSearch' },
         { keys: 'Ctrl-h', labelKey: 'keybindings.openHelp' },
         { keys: 'Ctrl-b', labelKey: 'keybindings.toggleSidebar' },

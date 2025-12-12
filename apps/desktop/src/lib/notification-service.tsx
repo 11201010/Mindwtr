@@ -1,7 +1,8 @@
-import { getNextScheduledAt, Task } from '@mindwtr/core';
+import { getDailyDigestSummary, getNextScheduledAt, stripMarkdown, translations, type Language, Task } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
 
 const notifiedAtByTask = new Map<string, string>();
+const digestSentOnByKind = new Map<'morning' | 'evening', string>();
 let intervalId: number | null = null;
 
 type TauriNotificationApi = {
@@ -11,6 +12,36 @@ type TauriNotificationApi = {
 };
 
 let tauriNotificationApi: TauriNotificationApi | null = null;
+
+const CHECK_INTERVAL_MS = 15_000;
+
+function getCurrentLanguage(): Language {
+    try {
+        const raw = localStorage.getItem('mindwtr-language');
+        if (raw === 'zh') return 'zh';
+        return 'en';
+    } catch {
+        return 'en';
+    }
+}
+
+function localDateKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function parseTimeOfDay(value: string | undefined, fallback: { hour: number; minute: number }) {
+    if (!value) return fallback;
+    const [h, m] = value.split(':');
+    const hour = Number.parseInt(h, 10);
+    const minute = Number.parseInt(m, 10);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return fallback;
+    if (hour < 0 || hour > 23) return fallback;
+    if (minute < 0 || minute > 59) return fallback;
+    return { hour, minute };
+}
 
 async function loadTauriNotificationApi(): Promise<TauriNotificationApi | null> {
     if (!(window as any).__TAURI__) return null;
@@ -49,32 +80,81 @@ async function ensurePermission() {
     }
 }
 
+function sendNotification(title: string, body?: string) {
+    if (tauriNotificationApi?.sendNotification) {
+        tauriNotificationApi.sendNotification({ title, body });
+        return;
+    }
+
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        try {
+            new Notification(title, body ? { body } : undefined);
+        } catch {
+            // ignore
+        }
+    }
+}
+
 function checkDueAndNotify() {
     const now = new Date();
-    const { tasks } = useTaskStore.getState();
+    const { tasks, projects, settings } = useTaskStore.getState();
+
+    if (settings.notificationsEnabled === false) return;
 
     tasks.forEach((task: Task) => {
         const next = getNextScheduledAt(task, now);
         if (!next) return;
-        if (next.getTime() > now.getTime()) return;
+        const diffMs = next.getTime() - now.getTime();
+        if (diffMs > CHECK_INTERVAL_MS) return;
 
         const key = next.toISOString();
         if (notifiedAtByTask.get(task.id) === key) return;
 
-        if (tauriNotificationApi?.sendNotification) {
-            tauriNotificationApi.sendNotification({
-                title: task.title,
-                body: task.description || '',
-            });
-        } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            try {
-                new Notification(task.title, { body: task.description || '' });
-            } catch {
-                // ignore
-            }
-        }
+        sendNotification(task.title, stripMarkdown(task.description || '') || undefined);
         notifiedAtByTask.set(task.id, key);
     });
+
+    const dateKey = localDateKey(now);
+    const lang = getCurrentLanguage();
+    const tr = translations[lang];
+
+    const morningEnabled = settings.dailyDigestMorningEnabled === true;
+    const eveningEnabled = settings.dailyDigestEveningEnabled === true;
+
+    const { hour: morningHour, minute: morningMinute } = parseTimeOfDay(settings.dailyDigestMorningTime, { hour: 9, minute: 0 });
+    const { hour: eveningHour, minute: eveningMinute } = parseTimeOfDay(settings.dailyDigestEveningTime, { hour: 20, minute: 0 });
+
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    if (morningEnabled) {
+        const target = morningHour * 60 + morningMinute;
+        if (nowMinutes >= target && digestSentOnByKind.get('morning') !== dateKey) {
+            const summary = getDailyDigestSummary(tasks, projects, now);
+            const reviewDue = summary.reviewDueTasks + summary.reviewDueProjects;
+            const hasAny =
+                summary.dueToday > 0 || summary.overdue > 0 || summary.focusToday > 0 || reviewDue > 0;
+
+            const body = hasAny
+                ? [
+                    `${tr['digest.dueToday']}: ${summary.dueToday}`,
+                    `${tr['digest.overdue']}: ${summary.overdue}`,
+                    `${tr['digest.focus']}: ${summary.focusToday}`,
+                    `${tr['digest.reviewDue']}: ${reviewDue}`,
+                ].join(' • ')
+                : tr['digest.noItems'];
+
+            sendNotification(tr['digest.morningTitle'], body);
+            digestSentOnByKind.set('morning', dateKey);
+        }
+    }
+
+    if (eveningEnabled) {
+        const target = eveningHour * 60 + eveningMinute;
+        if (nowMinutes >= target && digestSentOnByKind.get('evening') !== dateKey) {
+            sendNotification(tr['digest.eveningTitle'], tr['digest.eveningBody']);
+            digestSentOnByKind.set('evening', dateKey);
+        }
+    }
 }
 
 export async function startDesktopNotifications() {
@@ -82,7 +162,7 @@ export async function startDesktopNotifications() {
     await loadTauriNotificationApi();
 
     if (intervalId) clearInterval(intervalId);
-    intervalId = window.setInterval(checkDueAndNotify, 60 * 1000);
+    intervalId = window.setInterval(checkDueAndNotify, CHECK_INTERVAL_MS);
     checkDueAndNotify();
 
     // Re-check on data changes.
