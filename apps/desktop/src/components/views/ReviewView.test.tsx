@@ -36,7 +36,7 @@ vi.mock('../TaskItem', () => ({
 describe('ReviewView', () => {
     it('renders the review list with a guide button', () => {
         renderWithProviders(<ReviewView />);
-        expect(screen.getByText('Weekly Review')).toBeInTheDocument();
+        expect(screen.getByText('Review')).toBeInTheDocument();
         expect(screen.getByText('Weekly Review Guide')).toBeInTheDocument();
     });
 
