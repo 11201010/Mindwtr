@@ -54,14 +54,29 @@ describe('TaskItem', () => {
         expect(screen.getByDisplayValue('Test Task')).toBeInTheDocument();
     });
 
-    it('calls moveTask when checkbox is clicked', () => {
+    it('does not render checkbox when not in selection mode', () => {
         render(
             <LanguageProvider>
                 <TaskItem task={mockTask} />
             </LanguageProvider>
         );
-        const checkbox = screen.getByRole('checkbox');
+        expect(screen.queryByRole('checkbox')).toBeNull();
+    });
+
+    it('toggles selection when checkbox is clicked in selection mode', () => {
+        const onToggleSelect = vi.fn();
+        render(
+            <LanguageProvider>
+                <TaskItem
+                    task={mockTask}
+                    selectionMode
+                    isMultiSelected={false}
+                    onToggleSelect={onToggleSelect}
+                />
+            </LanguageProvider>
+        );
+        const checkbox = screen.getByRole('checkbox', { name: 'Select task' });
         fireEvent.click(checkbox);
-        expect(mocks.moveTask).toHaveBeenCalledWith('1', 'done');
+        expect(onToggleSelect).toHaveBeenCalledTimes(1);
     });
 });

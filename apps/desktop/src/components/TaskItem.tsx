@@ -102,19 +102,15 @@ export const TaskItem = memo(function TaskItem({
             style={{ borderLeftColor: getStatusColor(task.status).border }}
         >
             <div className="flex items-start gap-3">
-                <input
-                    type="checkbox"
-                    aria-label={selectionMode ? 'Select task' : 'Mark task as done'}
-                    checked={selectionMode ? isMultiSelected : task.status === 'done'}
-                    onChange={() => {
-                        if (selectionMode) {
-                            onToggleSelect?.();
-                        } else {
-                            moveTask(task.id, task.status === 'done' ? 'inbox' : 'done');
-                        }
-                    }}
-                    className="mt-1.5 h-4 w-4 rounded border-primary text-primary focus:ring-primary cursor-pointer"
-                />
+                {selectionMode && (
+                    <input
+                        type="checkbox"
+                        aria-label="Select task"
+                        checked={isMultiSelected}
+                        onChange={() => onToggleSelect?.()}
+                        className="mt-1.5 h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                    />
+                )}
 
                 <div className="flex-1 min-w-0">
                     {isEditing ? (
