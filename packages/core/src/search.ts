@@ -240,6 +240,7 @@ export function filterTasksBySearch(tasks: Task[], projects: Project[], query: s
 }
 
 export function filterProjectsBySearch(projects: Project[], tasks: Task[], query: string, now: Date = new Date()): Project[] {
+    void tasks;
     const ast = parseSearchQuery(query);
     if (ast.clauses.length === 0) return [];
 

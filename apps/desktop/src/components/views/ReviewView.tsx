@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { isDueForReview, sortTasksBy, useTaskStore, type Project, type Task, type TaskStatus, type TaskSortBy } from '@mindwtr/core';
 import { Archive, ArrowRight, Calendar, Check, CheckSquare, Layers, RefreshCw, X, type LucideIcon } from 'lucide-react';
