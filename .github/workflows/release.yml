@@ -83,14 +83,21 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build Tauri app
+      - name: Build Tauri app (with target)
+        if: matrix.rust_target != ''
         run: |
           cd apps/desktop
-          if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo tauri build --target ${{ matrix.rust_target }}
-          else
-            cargo tauri build
-          fi
+          cargo tauri build --target ${{ matrix.rust_target }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Tauri app (default)
+        if: matrix.rust_target == '' || matrix.rust_target == null
+        run: |
+          cd apps/desktop
+          cargo tauri build
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
