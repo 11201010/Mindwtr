@@ -12,38 +12,11 @@ import { SwipeableTaskItem } from '@/components/swipeable-task-item';
 
 const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
-
-
-const getStatusLabels = (lang: 'en' | 'zh'): Record<TaskStatus, string> => {
-  if (lang === 'zh') {
-    return {
-      inbox: '📥 收集箱',
-      todo: '📝 待办',
-      next: '▶️ 下一步',
-      'in-progress': '🚧 进行中',
-      waiting: '⏸️ 等待中',
-      someday: '💭 将来',
-      done: '✅ 完成',
-      archived: '🗄️ 归档',
-    };
-  }
-  return {
-    inbox: '📥 Inbox',
-    todo: '📝 Todo',
-    next: '▶️ Next',
-    'in-progress': '🚧 In Progress',
-    waiting: '⏸️ Waiting',
-    someday: '💭 Someday',
-    done: '✅ Done',
-    archived: '🗄️ Archived',
-  };
-};
-
 export default function ReviewScreen() {
   const router = useRouter();
   const { tasks, updateTask, deleteTask, batchMoveTasks, batchDeleteTasks, batchUpdateTasks, settings } = useTaskStore();
   const { isDark } = useTheme();
-  const { language, t } = useLanguage();
+  const { t } = useLanguage();
   const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -52,11 +25,8 @@ export default function ReviewScreen() {
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const [tagModalVisible, setTagModalVisible] = useState(false);
   const [tagInput, setTagInput] = useState('');
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
 
-  const STATUS_LABELS = getStatusLabels(language as 'en' | 'zh');
-
-  // Theme-aware colors
-  // Theme-aware colors
   const tc = useThemeColors();
 
   const tasksById = useMemo(() => {
@@ -126,12 +96,12 @@ export default function ReviewScreen() {
   const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
   const sortedTasks = sortTasksBy(filteredTasks, sortBy);
 
-	  return (
+  return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <View style={[styles.header, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
         <View>
-          <Text style={[styles.title, { color: tc.text }]}>📋 {language === 'zh' ? '回顾任务' : 'Review'}</Text>
-          <Text style={[styles.count, { color: tc.secondaryText }]}>{filteredTasks.length} {language === 'zh' ? '个任务' : 'tasks'}</Text>
+          <Text style={[styles.title, { color: tc.text }]}>{t('review.title')}</Text>
+          <Text style={[styles.count, { color: tc.secondaryText }]}>{filteredTasks.length} {t('common.tasks')}</Text>
         </View>
         <View style={styles.headerButtons}>
           <TouchableOpacity
@@ -149,7 +119,7 @@ export default function ReviewScreen() {
             style={styles.weeklyReviewButton}
             onPress={() => setShowReviewModal(true)}
           >
-            <Text style={styles.weeklyReviewButtonText}>🔄 {language === 'zh' ? '周回顾' : 'Weekly Review'}</Text>
+            <Text style={styles.weeklyReviewButtonText}>{t('review.openGuide')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -170,7 +140,7 @@ export default function ReviewScreen() {
             onPress={() => setFilterStatus(status)}
           >
             <Text style={[styles.filterText, { color: tc.secondaryText }, filterStatus === status && styles.filterTextActive]}>
-              {STATUS_LABELS[status]} ({activeTasks.filter((t) => t.status === status).length})
+              {t(`status.${status}`)} ({activeTasks.filter((t) => t.status === status).length})
             </Text>
           </Pressable>
         ))}
@@ -181,19 +151,14 @@ export default function ReviewScreen() {
           <Text style={[styles.bulkCount, { color: tc.secondaryText }]}>
             {selectedIdsArray.length} {t('bulk.selected')}
           </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkMoveRow}>
-            {bulkStatuses.map((status) => (
-              <TouchableOpacity
-                key={status}
-                onPress={() => handleBatchMove(status)}
-                disabled={!hasSelection}
-                style={[styles.bulkMoveButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
-              >
-                <Text style={[styles.bulkMoveText, { color: tc.text }]}>{t(`status.${status}`)}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
           <View style={styles.bulkActions}>
+            <TouchableOpacity
+              onPress={() => setMoveModalVisible(true)}
+              disabled={!hasSelection}
+              style={[styles.bulkActionButton, { backgroundColor: tc.filterBg, opacity: hasSelection ? 1 : 0.5 }]}
+            >
+              <Text style={[styles.bulkActionText, { color: tc.text }]}>{t('bulk.moveTo')}</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setTagModalVisible(true)}
               disabled={!hasSelection}
@@ -236,6 +201,48 @@ export default function ReviewScreen() {
           </View>
         )}
       </ScrollView>
+
+      <Modal
+        visible={moveModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMoveModalVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setMoveModalVisible(false)}>
+          <Pressable
+            style={[styles.modalCard, { backgroundColor: tc.cardBg }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: tc.text }]}>{t('bulk.moveTo')}</Text>
+            <View style={styles.moveOptions}>
+              {bulkStatuses.map((status) => (
+                <TouchableOpacity
+                  key={status}
+                  onPress={async () => {
+                    setMoveModalVisible(false);
+                    await handleBatchMove(status);
+                  }}
+                  disabled={!hasSelection}
+                  style={[
+                    styles.moveOptionButton,
+                    { backgroundColor: tc.filterBg, borderColor: tc.border, opacity: hasSelection ? 1 : 0.5 },
+                  ]}
+                >
+                  <Text style={[styles.moveOptionText, { color: tc.text }]}>{t(`status.${status}`)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                onPress={() => setMoveModalVisible(false)}
+                style={styles.modalButton}
+              >
+                <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={tagModalVisible}
@@ -409,6 +416,21 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   bulkActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  moveOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  moveOptionButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  moveOptionText: {
     fontSize: 12,
     fontWeight: '600',
   },

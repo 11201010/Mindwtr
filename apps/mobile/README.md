@@ -6,11 +6,24 @@ React Native mobile app for the Mindwtr productivity system.
 
 ### GTD Workflow
 - **Inbox Processing** - Guided clarify workflow with 2-minute rule
-- **Context Filtering** - Filter tasks by @home, @work, @errands, etc.
+- **Context Filtering** - Hierarchical contexts (@work/meetings)
 - **Dark Mode** - Full dark theme support with system preference
-- **Swipe Actions** - Quick task management gestures (Swipes Right for Done on Inbox)
+- **Swipe Actions** - Quick task management gestures
 - **Smart Tags** - Frequent and recommended context tags
 - **Quick Status** - Instant status change via status badge tap
+
+### Productivity
+- **Global Search** - Search operators (status:, context:, due:<=7d)
+- **Saved Searches** - Save and reuse search filters
+- **Task Dependencies** - Block tasks until prerequisites complete
+- **Markdown Notes** - Rich text descriptions
+- **Attachments** - Files and links on tasks
+- **Share Sheet** - Capture from any app
+- **Accent Color** - Customize highlights
+
+### Notifications
+- **Due Date Reminders** - Push notifications with snooze
+- **Daily Digest** - Morning briefing + evening review prompts
 
 ### Screens
 | Screen        | Description                        |
@@ -20,10 +33,12 @@ React Native mobile app for the Mindwtr productivity system.
 | Agenda        | Time-based view                    |
 | Review        | Task review and status changes     |
 | Projects      | Multi-step outcomes (drawer)       |
-| Contexts      | Filter by location/tool (drawer)   |
+| Contexts      | Hierarchical filtering (drawer)    |
 | Waiting For   | Delegated items (drawer)           |
 | Someday/Maybe | Deferred ideas (drawer)            |
-| Settings      | Theme preferences                  |
+| Board         | Kanban drag-and-drop (drawer)      |
+| Calendar      | Time-based view (drawer)           |
+| Settings      | Theme, sync, notifications         |
 
 ## Tech Stack
 

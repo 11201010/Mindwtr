@@ -21,7 +21,7 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 ## Features
 
 ### GTD Workflow
-- **Capture** - Quick add tasks to Inbox from anywhere
+- **Capture** - Quick add tasks from anywhere (global hotkey, tray, share sheet)
 - **Clarify** - Guided inbox processing with 2-minute rule
 - **Organize** - Projects, contexts, and status lists
 - **Reflect** - Weekly review wizard
@@ -30,24 +30,36 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 ### Views
 - 📥 **Inbox** - Capture zone with processing wizard
 - ▶️ **Next Actions** - Context-filtered actionable tasks
-- 📁 **Projects** - Multi-step outcomes
-- 🏷️ **Contexts** - @home, @work, @errands, etc.
+- 📁 **Projects** - Multi-step outcomes with areas
+- 🏷️ **Contexts** - Hierarchical contexts (@work/meetings)
 - ⏳ **Waiting For** - Delegated items
 - 💭 **Someday/Maybe** - Deferred ideas
 - 📅 **Calendar** - Time-based planning
-- 📋 **Weekly Review** - Guided GTD review
+- 📋 **Board** - Kanban-style drag-and-drop
+- 📝 **Review** - Guided GTD weekly review
+
+### Productivity Features
+- 🔍 **Global Search** - Search operators (status:, context:, due:<=7d)
+- 💾 **Saved Searches** - Save and reuse search filters
+- 📦 **Bulk Actions** - Multi-select, batch move/tag/delete
+- 🔗 **Task Dependencies** - Block tasks until prerequisites complete
+- 📎 **Attachments** - Files and links on tasks
+- ✏️ **Markdown Notes** - Rich text descriptions with preview
+- 🔔 **Notifications** - Due date reminders with snooze
+- 📊 **Daily Digest** - Morning briefing + evening review
 
 ### Data & Sync
-- 🔄 **File-based Sync** - Sync folder support (Dropbox, Syncthing, etc.)
-- 🔀 **Merge Strategy** - Smart merge prevents data loss
-- 🗑️ **Soft Delete** - Deleted items sync properly across devices
+- 📁 **File Sync** - Dropbox, Google Drive, Syncthing, etc.
+- 🌐 **WebDAV Sync** - Nextcloud, ownCloud, self-hosted
+- 🔀 **Smart Merge** - Last-write-wins prevents data loss
 - 📤 **Export/Backup** - Export data to JSON
 
 ### Cross-Platform
-- 🖥️ **Desktop** - Tauri v2 app (macOS, Linux, Windows)
-- 📱 **Mobile** - React Native/Expo (iOS, Android) with Smart Tags & Swipe Actions
-- 🌍 **i18n** - English and Chinese language support
-- 🔄 **Shared Core** - Same data model and business logic
+- 🖥️ **Desktop** - Tauri v2 (macOS, Linux, Windows)
+- 📱 **Mobile** - React Native/Expo (iOS, Android)
+- ⌨️ **Keyboard Shortcuts** - Vim and Emacs presets
+- 🎨 **Themes** - Light/Dark with accent color
+- 🌍 **i18n** - English and Chinese
 
 ## Installation
 
@@ -102,7 +114,13 @@ Tasks and projects are stored locally on your device:
 - **Desktop**: `~/.config/mindwtr/data.json`
 - **Mobile**: Device storage (AsyncStorage)
 
-Optional sync via Dropbox, Syncthing, or similar can be configured in Settings.
+Sync via File (Dropbox, etc.) or WebDAV (Nextcloud, etc.) can be configured in Settings.
+
+## Documentation
+
+- 📚 [Wiki](https://github.com/dongdongbh/Mindwtr/wiki) - Complete user guide
+- 🚀 [Getting Started](https://github.com/dongdongbh/Mindwtr/wiki/Getting-Started)
+- 💡 [GTD Best Practices](https://github.com/dongdongbh/Mindwtr/wiki/GTD-Best-Practices)
 
 ## Development
 
@@ -110,10 +128,10 @@ For developers, see the [Development Guide](docs/development.md).
 
 ## Roadmap
 
-- [ ] 🔔 **Notifications/Reminders** - Mobile push notifications for due tasks
 - [ ] 📱 **Android Widget** - Agenda widget for home screen
 - [ ] ☁️ **Cloud Sync** - Optional cloud-based sync service
 - [ ] 🌐 **Web App** - Browser-based version
+- [ ] 🔌 **API/CLI** - Automation and scripting support
 
 ## License
 

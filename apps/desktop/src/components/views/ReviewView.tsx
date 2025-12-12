@@ -318,6 +318,7 @@ export function ReviewView() {
     const [selectionMode, setSelectionMode] = useState(false);
     const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
     const [showGuide, setShowGuide] = useState(false);
+    const [moveToStatus, setMoveToStatus] = useState<TaskStatus | ''>('');
 
     const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
 
@@ -356,6 +357,8 @@ export function ReviewView() {
 
     const selectedIdsArray = useMemo(() => Array.from(multiSelectedIds), [multiSelectedIds]);
 
+    const bulkStatuses: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
+
     const exitSelectionMode = useCallback(() => {
         setSelectionMode(false);
         setMultiSelectedIds(new Set());
@@ -378,6 +381,7 @@ export function ReviewView() {
     const handleBatchMove = useCallback(async (newStatus: TaskStatus) => {
         if (selectedIdsArray.length === 0) return;
         await batchMoveTasks(selectedIdsArray, newStatus);
+        setMoveToStatus('');
         exitSelectionMode();
     }, [batchMoveTasks, selectedIdsArray, exitSelectionMode]);
 
@@ -436,11 +440,11 @@ export function ReviewView() {
                 </div>
             </header>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
                 <button
                     onClick={() => setFilterStatus('all')}
                     className={cn(
-                        "px-3 py-1.5 text-sm rounded-full border transition-colors",
+                        "px-3 py-1.5 text-sm rounded-full border transition-colors whitespace-nowrap shrink-0",
                         filterStatus === 'all'
                             ? "bg-primary text-primary-foreground border-primary"
                             : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
@@ -453,7 +457,7 @@ export function ReviewView() {
                         key={status}
                         onClick={() => setFilterStatus(status)}
                         className={cn(
-                            "px-3 py-1.5 text-sm rounded-full border transition-colors",
+                            "px-3 py-1.5 text-sm rounded-full border transition-colors whitespace-nowrap shrink-0",
                             filterStatus === status
                                 ? "bg-primary text-primary-foreground border-primary"
                                 : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
@@ -465,33 +469,50 @@ export function ReviewView() {
             </div>
 
             {selectionMode && selectedIdsArray.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 bg-card border border-border rounded-lg p-3">
-                    <span className="text-sm text-muted-foreground">
-                        {selectedIdsArray.length} {t('bulk.selected')}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                        {(['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday'] as TaskStatus[]).map((status) => (
-                            <button
-                                key={status}
-                                onClick={() => handleBatchMove(status)}
-                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors"
+                <div className="flex flex-wrap items-center gap-3 bg-card border border-border rounded-lg p-3">
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm text-muted-foreground">
+                            {selectedIdsArray.length} {t('bulk.selected')}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="review-bulk-move" className="text-xs text-muted-foreground">
+                                {t('bulk.moveTo')}
+                            </label>
+                            <select
+                                id="review-bulk-move"
+                                value={moveToStatus}
+                                onChange={async (e) => {
+                                    const nextStatus = e.target.value as TaskStatus;
+                                    setMoveToStatus(nextStatus);
+                                    await handleBatchMove(nextStatus);
+                                }}
+                                className="text-xs bg-muted/50 border border-border rounded px-2 py-1 hover:bg-muted transition-colors"
                             >
-                                {t(`status.${status}`)}
-                            </button>
-                        ))}
+                                <option value="" disabled>
+                                    {t('bulk.moveTo')}
+                                </option>
+                                {bulkStatuses.map((status) => (
+                                    <option key={status} value={status}>
+                                        {t(`status.${status}`)}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
-                    <button
-                        onClick={handleBatchAddTag}
-                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors"
-                    >
-                        {t('bulk.addTag')}
-                    </button>
-                    <button
-                        onClick={handleBatchDelete}
-                        className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
-                    >
-                        {t('bulk.delete')}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleBatchAddTag}
+                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors"
+                        >
+                            {t('bulk.addTag')}
+                        </button>
+                        <button
+                            onClick={handleBatchDelete}
+                            className="text-xs px-2 py-1 rounded bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                        >
+                            {t('bulk.delete')}
+                        </button>
+                    </div>
                 </div>
             )}
 

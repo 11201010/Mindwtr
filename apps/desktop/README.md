@@ -6,21 +6,37 @@ Tauri v2 desktop app for the Mindwtr productivity system.
 
 ### GTD Workflow
 - **Inbox Processing** - Guided clarify workflow with 2-minute rule
-- **Context Filtering** - Filter tasks by @home, @work, @errands, etc.
+- **Context Filtering** - Hierarchical contexts (@work/meetings)
 - **Weekly Review** - Step-by-step GTD review wizard
 - **Board View** - Kanban-style drag-and-drop
 - **Calendar View** - Time-based task planning
+
+### Productivity
+- **Global Search** - Search operators (status:, context:, due:<=7d)
+- **Saved Searches** - Save and reuse search filters
+- **Bulk Actions** - Multi-select, batch move/tag/delete
+- **Task Dependencies** - Block tasks until prerequisites complete
+- **Markdown Notes** - Rich text descriptions with preview
+- **Attachments** - Files and links on tasks
+- **Keyboard Shortcuts** - Vim and Emacs presets
+- **Global Hotkey** - Capture from anywhere
+- **Tray Icon** - Quick access and capture
+
+### Notifications
+- **Due Date Reminders** - Desktop notifications with snooze
+- **Daily Digest** - Morning briefing + evening review prompts
 
 ### Views
 | View          | Description                        |
 | ------------- | ---------------------------------- |
 | Inbox         | Capture and process incoming items |
 | Next Actions  | Context-filtered actionable tasks  |
-| Projects      | Multi-step outcomes with tasks     |
-| Contexts      | Filter by location/tool            |
+| Projects      | Multi-step outcomes with areas     |
+| Contexts      | Hierarchical context filtering     |
 | Waiting For   | Delegated items                    |
 | Someday/Maybe | Deferred ideas                     |
 | Calendar      | Time-based view                    |
+| Board         | Kanban drag-and-drop               |
 | Review        | Weekly review wizard               |
 | Settings      | Theme, sync, and preferences       |
 
@@ -80,7 +96,9 @@ Tasks are saved to:
 
 ## Sync
 
-Configure a sync folder in Settings to sync data with Dropbox, Syncthing, or any folder-based sync service.
+Configure sync in Settings:
+- **File Sync** - Dropbox, Google Drive, Syncthing, etc.
+- **WebDAV** - Nextcloud, ownCloud, self-hosted servers
 
 ## Testing
 

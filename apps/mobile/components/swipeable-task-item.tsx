@@ -44,6 +44,7 @@ export function SwipeableTaskItem({
     onToggleSelect
 }: SwipeableTaskItemProps) {
     const swipeableRef = useRef<Swipeable>(null);
+    const ignorePressUntil = useRef<number>(0);
     const { t, language } = useLanguage();
     const { updateTask } = useTaskStore();
 
@@ -109,6 +110,7 @@ export function SwipeableTaskItem({
     ].filter(Boolean).join(', ');
 
     const handlePress = () => {
+        if (Date.now() < ignorePressUntil.current) return;
         if (selectionMode && onToggleSelect) {
             onToggleSelect();
             return;
@@ -117,6 +119,7 @@ export function SwipeableTaskItem({
     };
 
     const handleLongPress = () => {
+        ignorePressUntil.current = Date.now() + 500;
         if (onToggleSelect) onToggleSelect();
     };
 
