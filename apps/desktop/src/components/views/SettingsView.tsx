@@ -66,7 +66,7 @@ export function SettingsView() {
     const [syncPath, setSyncPath] = useState<string>('');
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncError, setSyncError] = useState<string | null>(null);
-    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud'>(() => SyncService.getSyncBackend());
+    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud'>('file');
     const [webdavUrl, setWebdavUrl] = useState('');
     const [webdavUsername, setWebdavUsername] = useState('');
     const [webdavPassword, setWebdavPassword] = useState('');
@@ -97,14 +97,20 @@ export function SettingsView() {
 
     useEffect(() => {
         SyncService.getSyncPath().then(setSyncPath).catch(console.error);
-        setSyncBackend(SyncService.getSyncBackend());
-        const cfg = SyncService.getWebDavConfig();
-        setWebdavUrl(cfg.url);
-        setWebdavUsername(cfg.username);
-        setWebdavPassword(cfg.password);
-        const cloudCfg = SyncService.getCloudConfig();
-        setCloudUrl(cloudCfg.url);
-        setCloudToken(cloudCfg.token);
+        SyncService.getSyncBackend().then(setSyncBackend).catch(console.error);
+        SyncService.getWebDavConfig()
+            .then((cfg) => {
+                setWebdavUrl(cfg.url);
+                setWebdavUsername(cfg.username);
+                setWebdavPassword(cfg.password);
+            })
+            .catch(console.error);
+        SyncService.getCloudConfig()
+            .then((cfg) => {
+                setCloudUrl(cfg.url);
+                setCloudToken(cfg.token);
+            })
+            .catch(console.error);
     }, []);
 
     useEffect(() => {
@@ -160,14 +166,14 @@ export function SettingsView() {
         }
     };
 
-    const handleSetSyncBackend = (backend: 'file' | 'webdav' | 'cloud') => {
+    const handleSetSyncBackend = async (backend: 'file' | 'webdav' | 'cloud') => {
         setSyncBackend(backend);
-        SyncService.setSyncBackend(backend);
+        await SyncService.setSyncBackend(backend);
         showSaved();
     };
 
-    const handleSaveWebDav = () => {
-        SyncService.setWebDavConfig({
+    const handleSaveWebDav = async () => {
+        await SyncService.setWebDavConfig({
             url: webdavUrl.trim(),
             username: webdavUsername.trim(),
             password: webdavPassword,
@@ -175,8 +181,8 @@ export function SettingsView() {
         showSaved();
     };
 
-    const handleSaveCloud = () => {
-        SyncService.setCloudConfig({
+    const handleSaveCloud = async () => {
+        await SyncService.setCloudConfig({
             url: cloudUrl.trim(),
             token: cloudToken.trim(),
         });
@@ -190,11 +196,11 @@ export function SettingsView() {
 
             if (syncBackend === 'webdav') {
                 if (!webdavUrl.trim()) return;
-                handleSaveWebDav();
+                await handleSaveWebDav();
             }
             if (syncBackend === 'cloud') {
                 if (!cloudUrl.trim() || !cloudToken.trim()) return;
-                handleSaveCloud();
+                await handleSaveCloud();
             }
 
             if (syncBackend === 'file') {

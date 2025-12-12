@@ -25,6 +25,12 @@ struct LegacyAppConfigJson {
 #[derive(Debug, Default)]
 struct AppConfigToml {
     sync_path: Option<String>,
+    sync_backend: Option<String>,
+    webdav_url: Option<String>,
+    webdav_username: Option<String>,
+    webdav_password: Option<String>,
+    cloud_url: Option<String>,
+    cloud_token: Option<String>,
 }
 
 struct QuickAddPending(AtomicBool);
@@ -100,6 +106,18 @@ fn read_config_toml(path: &Path) -> AppConfigToml {
         let value = value.trim();
         if key == "sync_path" {
             config.sync_path = parse_toml_string_value(value);
+        } else if key == "sync_backend" {
+            config.sync_backend = parse_toml_string_value(value);
+        } else if key == "webdav_url" {
+            config.webdav_url = parse_toml_string_value(value);
+        } else if key == "webdav_username" {
+            config.webdav_username = parse_toml_string_value(value);
+        } else if key == "webdav_password" {
+            config.webdav_password = parse_toml_string_value(value);
+        } else if key == "cloud_url" {
+            config.cloud_url = parse_toml_string_value(value);
+        } else if key == "cloud_token" {
+            config.cloud_token = parse_toml_string_value(value);
         }
     }
     config
@@ -114,6 +132,24 @@ fn write_config_toml(path: &Path, config: &AppConfigToml) -> Result<(), String> 
     lines.push("# Mindwtr desktop config".to_string());
     if let Some(sync_path) = &config.sync_path {
         lines.push(format!("sync_path = {}", serialize_toml_string_value(sync_path)));
+    }
+    if let Some(sync_backend) = &config.sync_backend {
+        lines.push(format!("sync_backend = {}", serialize_toml_string_value(sync_backend)));
+    }
+    if let Some(webdav_url) = &config.webdav_url {
+        lines.push(format!("webdav_url = {}", serialize_toml_string_value(webdav_url)));
+    }
+    if let Some(webdav_username) = &config.webdav_username {
+        lines.push(format!("webdav_username = {}", serialize_toml_string_value(webdav_username)));
+    }
+    if let Some(webdav_password) = &config.webdav_password {
+        lines.push(format!("webdav_password = {}", serialize_toml_string_value(webdav_password)));
+    }
+    if let Some(cloud_url) = &config.cloud_url {
+        lines.push(format!("cloud_url = {}", serialize_toml_string_value(cloud_url)));
+    }
+    if let Some(cloud_token) = &config.cloud_token {
+        lines.push(format!("cloud_token = {}", serialize_toml_string_value(cloud_token)));
     }
     let content = format!("{}\n", lines.join("\n"));
     fs::write(path, content).map_err(|e| e.to_string())
@@ -134,6 +170,7 @@ fn bootstrap_storage_layout(app: &tauri::AppHandle) -> Result<(), String> {
     if !config_path.exists() {
         let config = AppConfigToml {
             sync_path: legacy_config.sync_path.clone(),
+            ..AppConfigToml::default()
         };
         write_config_toml(&config_path, &config)?;
     }
@@ -218,6 +255,89 @@ fn set_sync_path(app: tauri::AppHandle, sync_path: String) -> Result<serde_json:
         "success": true,
         "path": sync_path
     }))
+}
+
+fn normalize_backend(value: &str) -> Option<&str> {
+    match value {
+        "file" | "webdav" | "cloud" => Some(value),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn get_sync_backend(app: tauri::AppHandle) -> Result<String, String> {
+    let config = read_config_toml(&get_config_path(&app));
+    let raw = config.sync_backend.unwrap_or_else(|| "file".to_string());
+    Ok(normalize_backend(raw.trim()).unwrap_or("file").to_string())
+}
+
+#[tauri::command]
+fn set_sync_backend(app: tauri::AppHandle, backend: String) -> Result<bool, String> {
+    let Some(normalized) = normalize_backend(backend.trim()) else {
+        return Err("Invalid sync backend".to_string());
+    };
+    let config_path = get_config_path(&app);
+    let mut config = read_config_toml(&config_path);
+    config.sync_backend = Some(normalized.to_string());
+    write_config_toml(&config_path, &config)?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn get_webdav_config(app: tauri::AppHandle) -> Result<Value, String> {
+    let config = read_config_toml(&get_config_path(&app));
+    Ok(serde_json::json!({
+        "url": config.webdav_url.unwrap_or_default(),
+        "username": config.webdav_username.unwrap_or_default(),
+        "password": config.webdav_password.unwrap_or_default()
+    }))
+}
+
+#[tauri::command]
+fn set_webdav_config(app: tauri::AppHandle, url: String, username: String, password: String) -> Result<bool, String> {
+    let url = url.trim().to_string();
+    let config_path = get_config_path(&app);
+    let mut config = read_config_toml(&config_path);
+
+    if url.is_empty() {
+        config.webdav_url = None;
+        config.webdav_username = None;
+        config.webdav_password = None;
+    } else {
+        config.webdav_url = Some(url);
+        config.webdav_username = Some(username);
+        config.webdav_password = Some(password);
+    }
+
+    write_config_toml(&config_path, &config)?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn get_cloud_config(app: tauri::AppHandle) -> Result<Value, String> {
+    let config = read_config_toml(&get_config_path(&app));
+    Ok(serde_json::json!({
+        "url": config.cloud_url.unwrap_or_default(),
+        "token": config.cloud_token.unwrap_or_default()
+    }))
+}
+
+#[tauri::command]
+fn set_cloud_config(app: tauri::AppHandle, url: String, token: String) -> Result<bool, String> {
+    let url = url.trim().to_string();
+    let config_path = get_config_path(&app);
+    let mut config = read_config_toml(&config_path);
+
+    if url.is_empty() {
+        config.cloud_url = None;
+        config.cloud_token = None;
+    } else {
+        config.cloud_url = Some(url);
+        config.cloud_token = Some(token);
+    }
+
+    write_config_toml(&config_path, &config)?;
+    Ok(true)
 }
 
 
@@ -327,6 +447,12 @@ pub fn run() {
             get_data_path_cmd,
             get_sync_path,
             set_sync_path,
+            get_sync_backend,
+            set_sync_backend,
+            get_webdav_config,
+            set_webdav_config,
+            get_cloud_config,
+            set_cloud_config,
             read_sync_file,
             write_sync_file,
             consume_quick_add_pending

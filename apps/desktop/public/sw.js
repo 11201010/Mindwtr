@@ -36,11 +36,13 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => undefined);
           return res;
         })
-        .catch(() => {
-          if (!isNavigation) return undefined;
-          return caches.match('/index.html');
+        .catch(async () => {
+          if (isNavigation) {
+            const fallback = await caches.match('/index.html');
+            if (fallback) return fallback;
+          }
+          return Response.error();
         });
     }),
   );
 });
-

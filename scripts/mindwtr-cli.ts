@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 
 import {
-    createNextRecurringTask,
+    applyTaskUpdates,
     generateUUID,
     parseQuickAdd,
     searchAll,
@@ -117,17 +117,28 @@ async function main() {
         const { title, props } = parseQuickAdd(input, data.projects);
         const finalTitle = (title || input).trim();
         const status = asStatus(props.status) || 'inbox';
+        const tags = Array.isArray(props.tags) ? props.tags : [];
+        const contexts = Array.isArray(props.contexts) ? props.contexts : [];
+        const {
+            id: _id,
+            title: _title,
+            createdAt: _createdAt,
+            updatedAt: _updatedAt,
+            status: _status,
+            tags: _tags,
+            contexts: _contexts,
+            ...restProps
+        } = props as any;
 
         const task: Task = {
             id: generateUUID(),
             title: finalTitle,
+            ...restProps,
             status,
-            tags: Array.isArray(props.tags) ? props.tags : [],
-            contexts: Array.isArray(props.contexts) ? props.contexts : [],
+            tags,
+            contexts,
             createdAt: now,
             updatedAt: now,
-            ...props,
-            status,
         } as Task;
 
         data.tasks.push(task);
@@ -193,20 +204,9 @@ async function main() {
 
         const now = new Date().toISOString();
         const existing = data.tasks[idx];
-        const previousStatus = existing.status;
-        const updated: Task = {
-            ...existing,
-            status: 'done',
-            completedAt: now,
-            isFocusedToday: false,
-            updatedAt: now,
-        };
-        data.tasks[idx] = updated;
-
-        const next = createNextRecurringTask(existing, now, previousStatus);
-        if (next) {
-            data.tasks.push(next);
-        }
+        const { updatedTask, nextRecurringTask } = applyTaskUpdates(existing, { status: 'done' }, now);
+        data.tasks[idx] = updatedTask;
+        if (nextRecurringTask) data.tasks.push(nextRecurringTask);
 
         saveAppData(filePath, data);
         console.log('ok');

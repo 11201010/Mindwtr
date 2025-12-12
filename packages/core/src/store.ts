@@ -6,7 +6,7 @@ import { createNextRecurringTask } from './recurrence';
 
 let storage: StorageAdapter = noopStorage;
 
-function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: string): { updatedTask: Task; nextRecurringTask: Task | null } {
+export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: string): { updatedTask: Task; nextRecurringTask: Task | null } {
     const incomingStatus = updates.status ?? oldTask.status;
     const statusChanged = incomingStatus !== oldTask.status;
 

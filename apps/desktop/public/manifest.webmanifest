@@ -1,8 +1,10 @@
 {
   "name": "Mindwtr",
   "short_name": "Mindwtr",
+  "description": "A complete Getting Things Done (GTD) productivity system.",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0b1220",
   "theme_color": "#2563eb",
   "icons": [
@@ -13,4 +15,3 @@
     }
   ]
 }
-

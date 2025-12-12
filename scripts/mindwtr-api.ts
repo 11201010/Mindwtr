@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 
 import {
-    createNextRecurringTask,
+    applyTaskUpdates,
     generateUUID,
     parseQuickAdd,
     searchAll,
@@ -76,35 +76,6 @@ function asStatus(value: unknown): TaskStatus | null {
     if (typeof value !== 'string') return null;
     const allowed: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
     return allowed.includes(value as TaskStatus) ? (value as TaskStatus) : null;
-}
-
-function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: string): { updatedTask: Task; nextRecurringTask: Task | null } {
-    const incomingStatus = updates.status ?? oldTask.status;
-    const statusChanged = incomingStatus !== oldTask.status;
-
-    let finalUpdates: Partial<Task> = updates;
-    let nextRecurringTask: Task | null = null;
-
-    if (statusChanged && (incomingStatus === 'done' || incomingStatus === 'archived')) {
-        finalUpdates = {
-            ...updates,
-            status: incomingStatus,
-            completedAt: now,
-            isFocusedToday: false,
-        };
-        nextRecurringTask = createNextRecurringTask(oldTask, now, oldTask.status);
-    } else if (statusChanged && (oldTask.status === 'done' || oldTask.status === 'archived')) {
-        finalUpdates = {
-            ...updates,
-            status: incomingStatus,
-            completedAt: undefined,
-        };
-    }
-
-    return {
-        updatedTask: { ...oldTask, ...finalUpdates, updatedAt: now },
-        nextRecurringTask,
-    };
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
@@ -241,16 +212,27 @@ async function main() {
                     };
 
                     const status = asStatus(props.status) || 'inbox';
+                    const tags = Array.isArray(props.tags) ? (props.tags as any) : [];
+                    const contexts = Array.isArray(props.contexts) ? (props.contexts as any) : [];
+                    const {
+                        id: _id,
+                        title: _title,
+                        createdAt: _createdAt,
+                        updatedAt: _updatedAt,
+                        status: _status,
+                        tags: _tags,
+                        contexts: _contexts,
+                        ...restProps
+                    } = props as any;
                     const task: Task = {
                         id: generateUUID(),
                         title,
+                        ...restProps,
                         status,
-                        tags: Array.isArray(props.tags) ? (props.tags as any) : [],
-                        contexts: Array.isArray(props.contexts) ? (props.contexts as any) : [],
+                        tags,
+                        contexts,
                         createdAt: now,
                         updatedAt: now,
-                        ...props,
-                        status,
                     } as Task;
 
                     data.tasks.push(task);
@@ -262,6 +244,13 @@ async function main() {
             const taskMatch = pathname.match(/^\/tasks\/([^/]+)$/);
             if (taskMatch) {
                 const taskId = decodeURIComponent(taskMatch[1]);
+
+                if (req.method === 'GET') {
+                    const data = loadAppData(dataPath);
+                    const task = data.tasks.find((t) => t.id === taskId);
+                    if (!task) return errorResponse('Task not found', 404);
+                    return jsonResponse({ task });
+                }
 
                 if (req.method === 'PATCH') {
                     const body = await readJsonBody(req);

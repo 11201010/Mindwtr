@@ -2,6 +2,7 @@ export interface WebDavOptions {
     username?: string;
     password?: string;
     headers?: Record<string, string>;
+    timeoutMs?: number;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -68,14 +69,50 @@ function buildHeaders(options: WebDavOptions): Record<string, string> {
     return headers;
 }
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+function isAbortError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'name' in error && (error as any).name === 'AbortError';
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
+
+    const signal = abortController ? abortController.signal : init.signal;
+    const externalSignal = init.signal;
+    if (abortController && externalSignal) {
+        if (externalSignal.aborted) {
+            abortController.abort();
+        } else {
+            externalSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+        }
+    }
+
+    try {
+        return await fetch(url, { ...init, signal });
+    } catch (error) {
+        if (isAbortError(error)) {
+            throw new Error('WebDAV request timed out');
+        }
+        throw error;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
 export async function webdavGetJson<T>(
     url: string,
     options: WebDavOptions = {}
 ): Promise<T | null> {
-    const res = await fetch(url, {
-        method: 'GET',
-        headers: buildHeaders(options),
-    });
+    const res = await fetchWithTimeout(
+        url,
+        {
+            method: 'GET',
+            headers: buildHeaders(options),
+        },
+        options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
 
     if (res.status === 404) return null;
     if (!res.ok) {
@@ -95,11 +132,15 @@ export async function webdavPutJson(
     const headers = buildHeaders(options);
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
 
-    const res = await fetch(url, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(data, null, 2),
-    });
+    const res = await fetchWithTimeout(
+        url,
+        {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(data, null, 2),
+        },
+        options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
         const text = await res.text().catch(() => '');

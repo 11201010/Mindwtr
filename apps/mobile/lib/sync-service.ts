@@ -17,24 +17,29 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
 
   let wroteLocal = false;
   try {
+    let webdavConfig: { url: string; username: string; password: string } | null = null;
+    let cloudConfig: { url: string; token: string } | null = null;
+    let fileSyncPath: string | null = null;
     let incomingData: AppData | null;
     if (backend === 'webdav') {
       const url = await AsyncStorage.getItem(WEBDAV_URL_KEY);
       if (!url) return { success: false, error: 'WebDAV URL not configured' };
       const username = (await AsyncStorage.getItem(WEBDAV_USERNAME_KEY)) || '';
       const password = (await AsyncStorage.getItem(WEBDAV_PASSWORD_KEY)) || '';
+      webdavConfig = { url, username, password };
       incomingData = await webdavGetJson<AppData>(url, { username, password });
     } else if (backend === 'cloud') {
       const url = await AsyncStorage.getItem(CLOUD_URL_KEY);
       const token = await AsyncStorage.getItem(CLOUD_TOKEN_KEY);
       if (!url || !token) return { success: false, error: 'Cloud sync not configured' };
+      cloudConfig = { url, token };
       incomingData = await cloudGetJson<AppData>(url, { token });
     } else {
-      const syncPath = syncPathOverride || await AsyncStorage.getItem(SYNC_PATH_KEY);
-      if (!syncPath) {
+      fileSyncPath = syncPathOverride || await AsyncStorage.getItem(SYNC_PATH_KEY);
+      if (!fileSyncPath) {
         return { success: false, error: 'No sync file configured' };
       }
-      incomingData = await readSyncFile(syncPath);
+      incomingData = await readSyncFile(fileSyncPath);
       if (!incomingData) {
         incomingData = { tasks: [], projects: [], settings: {} };
       }
@@ -58,20 +63,14 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
     await mobileStorage.saveData(finalData);
     wroteLocal = true;
     if (backend === 'webdav') {
-      const url = await AsyncStorage.getItem(WEBDAV_URL_KEY);
-      if (!url) return { success: false, error: 'WebDAV URL not configured' };
-      const username = (await AsyncStorage.getItem(WEBDAV_USERNAME_KEY)) || '';
-      const password = (await AsyncStorage.getItem(WEBDAV_PASSWORD_KEY)) || '';
-      await webdavPutJson(url, finalData, { username, password });
+      if (!webdavConfig?.url) return { success: false, error: 'WebDAV URL not configured' };
+      await webdavPutJson(webdavConfig.url, finalData, { username: webdavConfig.username, password: webdavConfig.password });
     } else if (backend === 'cloud') {
-      const url = await AsyncStorage.getItem(CLOUD_URL_KEY);
-      const token = await AsyncStorage.getItem(CLOUD_TOKEN_KEY);
-      if (!url || !token) return { success: false, error: 'Cloud sync not configured' };
-      await cloudPutJson(url, finalData, { token });
+      if (!cloudConfig?.url || !cloudConfig.token) return { success: false, error: 'Cloud sync not configured' };
+      await cloudPutJson(cloudConfig.url, finalData, { token: cloudConfig.token });
     } else {
-      const syncPath = syncPathOverride || await AsyncStorage.getItem(SYNC_PATH_KEY);
-      if (!syncPath) return { success: false, error: 'No sync file configured' };
-      await writeSyncFile(syncPath, finalData);
+      if (!fileSyncPath) return { success: false, error: 'No sync file configured' };
+      await writeSyncFile(fileSyncPath, finalData);
     }
 
     await useTaskStore.getState().fetchData();

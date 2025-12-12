@@ -5,6 +5,11 @@ import { dirname, join } from 'path';
 
 type Flags = Record<string, string | boolean>;
 
+type RateLimitState = {
+    count: number;
+    resetAt: number;
+};
+
 function parseArgs(argv: string[]) {
     const flags: Flags = {};
     for (let i = 0; i < argv.length; i += 1) {
@@ -45,6 +50,35 @@ function tokenToKey(token: string): string {
     return createHash('sha256').update(token).digest('hex');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateAppData(value: unknown): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
+    if (!isRecord(value)) return { ok: false, error: 'Invalid data: expected an object' };
+    const tasks = value.tasks;
+    const projects = value.projects;
+    const settings = value.settings;
+
+    if (!Array.isArray(tasks)) return { ok: false, error: 'Invalid data: tasks must be an array' };
+    if (!Array.isArray(projects)) return { ok: false, error: 'Invalid data: projects must be an array' };
+    if (settings !== undefined && !isRecord(settings)) return { ok: false, error: 'Invalid data: settings must be an object' };
+
+    for (const task of tasks) {
+        if (!isRecord(task) || typeof task.id !== 'string' || typeof task.title !== 'string') {
+            return { ok: false, error: 'Invalid data: each task must be an object with string id and title' };
+        }
+    }
+
+    for (const project of projects) {
+        if (!isRecord(project) || typeof project.id !== 'string' || typeof project.title !== 'string') {
+            return { ok: false, error: 'Invalid data: each project must be an object with string id and title' };
+        }
+    }
+
+    return { ok: true, data: value };
+}
+
 function readData(filePath: string): any | null {
     try {
         const raw = readFileSync(filePath, 'utf8');
@@ -64,6 +98,10 @@ async function main() {
     const port = Number(flags.port || process.env.PORT || 8787);
     const host = String(flags.host || process.env.HOST || '0.0.0.0');
     const dataDir = String(process.env.MINDWTR_CLOUD_DATA_DIR || join(process.cwd(), 'data'));
+
+    const rateLimits = new Map<string, RateLimitState>();
+    const windowMs = Number(process.env.MINDWTR_CLOUD_RATE_WINDOW_MS || 60_000);
+    const maxPerWindow = Number(process.env.MINDWTR_CLOUD_RATE_MAX || 120);
 
     console.log(`[mindwtr-cloud] dataDir: ${dataDir}`);
     console.log(`[mindwtr-cloud] listening on http://${host}:${port}`);
@@ -85,6 +123,20 @@ async function main() {
                 const token = getToken(req);
                 if (!token) return errorResponse('Unauthorized', 401);
                 const key = tokenToKey(token);
+                const now = Date.now();
+                const state = rateLimits.get(key);
+                if (state && now < state.resetAt) {
+                    state.count += 1;
+                    if (state.count > maxPerWindow) {
+                        const retryAfter = Math.ceil((state.resetAt - now) / 1000);
+                        return jsonResponse(
+                            { error: 'Rate limit exceeded', retryAfterSeconds: retryAfter },
+                            { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+                        );
+                    }
+                } else {
+                    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+                }
                 const filePath = join(dataDir, `${key}.json`);
 
                 if (req.method === 'GET') {
@@ -102,7 +154,9 @@ async function main() {
                     } catch {
                         return errorResponse('Invalid JSON body');
                     }
-                    writeData(filePath, parsed);
+                    const validated = validateAppData(parsed);
+                    if (!validated.ok) return errorResponse(validated.error, 400);
+                    writeData(filePath, validated.data);
                     return jsonResponse({ ok: true });
                 }
             }
@@ -116,4 +170,3 @@ main().catch((err) => {
     console.error(err);
     process.exit(1);
 });
-

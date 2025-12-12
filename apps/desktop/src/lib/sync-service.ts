@@ -17,17 +17,25 @@ async function tauriInvoke<T>(command: string, args?: Record<string, unknown>): 
     return mod.invoke<T>(command as any, args as any);
 }
 
+type WebDavConfig = { url: string; username: string; password: string };
+type CloudConfig = { url: string; token: string };
+
+function normalizeSyncBackend(raw: string | null): SyncBackend {
+    return raw === 'webdav' ? 'webdav' : raw === 'cloud' ? 'cloud' : 'file';
+}
+
 export class SyncService {
-    static getSyncBackend(): SyncBackend {
-        const raw = localStorage.getItem(SYNC_BACKEND_KEY);
-        return raw === 'webdav' ? 'webdav' : raw === 'cloud' ? 'cloud' : 'file';
+    private static didMigrate = false;
+
+    private static getSyncBackendLocal(): SyncBackend {
+        return normalizeSyncBackend(localStorage.getItem(SYNC_BACKEND_KEY));
     }
 
-    static setSyncBackend(backend: SyncBackend) {
+    private static setSyncBackendLocal(backend: SyncBackend) {
         localStorage.setItem(SYNC_BACKEND_KEY, backend);
     }
 
-    static getWebDavConfig() {
+    private static getWebDavConfigLocal(): WebDavConfig {
         return {
             url: localStorage.getItem(WEBDAV_URL_KEY) || '',
             username: localStorage.getItem(WEBDAV_USERNAME_KEY) || '',
@@ -35,22 +43,146 @@ export class SyncService {
         };
     }
 
-    static setWebDavConfig(config: { url: string; username?: string; password?: string }) {
+    private static setWebDavConfigLocal(config: { url: string; username?: string; password?: string }) {
         localStorage.setItem(WEBDAV_URL_KEY, config.url);
         localStorage.setItem(WEBDAV_USERNAME_KEY, config.username || '');
         localStorage.setItem(WEBDAV_PASSWORD_KEY, config.password || '');
     }
 
-    static getCloudConfig() {
+    private static getCloudConfigLocal(): CloudConfig {
         return {
             url: localStorage.getItem(CLOUD_URL_KEY) || '',
             token: localStorage.getItem(CLOUD_TOKEN_KEY) || '',
         };
     }
 
-    static setCloudConfig(config: { url: string; token: string }) {
+    private static setCloudConfigLocal(config: { url: string; token: string }) {
         localStorage.setItem(CLOUD_URL_KEY, config.url);
         localStorage.setItem(CLOUD_TOKEN_KEY, config.token);
+    }
+
+    private static async maybeMigrateLegacyLocalStorageToConfig() {
+        if (!isTauriRuntime() || SyncService.didMigrate) return;
+        SyncService.didMigrate = true;
+
+        const legacyBackend = localStorage.getItem(SYNC_BACKEND_KEY);
+        const legacyWebdav = SyncService.getWebDavConfigLocal();
+        const legacyCloud = SyncService.getCloudConfigLocal();
+
+        const hasLegacyBackend = legacyBackend === 'webdav' || legacyBackend === 'cloud';
+        const hasLegacyWebdav = Boolean(legacyWebdav.url);
+        const hasLegacyCloud = Boolean(legacyCloud.url && legacyCloud.token);
+
+        if (!hasLegacyBackend && !hasLegacyWebdav && !hasLegacyCloud) return;
+
+        try {
+            const [currentBackend, currentWebdav, currentCloud] = await Promise.all([
+                tauriInvoke<string>('get_sync_backend'),
+                tauriInvoke<WebDavConfig>('get_webdav_config'),
+                tauriInvoke<CloudConfig>('get_cloud_config'),
+            ]);
+
+            let migrated = false;
+            if (hasLegacyBackend && normalizeSyncBackend(currentBackend) === 'file') {
+                await tauriInvoke('set_sync_backend', { backend: legacyBackend });
+                migrated = true;
+            }
+
+            if (hasLegacyWebdav && !currentWebdav.url) {
+                await tauriInvoke('set_webdav_config', legacyWebdav);
+                migrated = true;
+            }
+
+            if (hasLegacyCloud && !currentCloud.url && !currentCloud.token) {
+                await tauriInvoke('set_cloud_config', legacyCloud);
+                migrated = true;
+            }
+
+            if (migrated) {
+                localStorage.removeItem(SYNC_BACKEND_KEY);
+                localStorage.removeItem(WEBDAV_URL_KEY);
+                localStorage.removeItem(WEBDAV_USERNAME_KEY);
+                localStorage.removeItem(WEBDAV_PASSWORD_KEY);
+                localStorage.removeItem(CLOUD_URL_KEY);
+                localStorage.removeItem(CLOUD_TOKEN_KEY);
+            }
+        } catch (error) {
+            console.error('Failed to migrate legacy sync config:', error);
+        }
+    }
+
+    static async getSyncBackend(): Promise<SyncBackend> {
+        if (!isTauriRuntime()) return SyncService.getSyncBackendLocal();
+        await SyncService.maybeMigrateLegacyLocalStorageToConfig();
+        try {
+            const backend = await tauriInvoke<string>('get_sync_backend');
+            return normalizeSyncBackend(backend);
+        } catch (error) {
+            console.error('Failed to get sync backend:', error);
+            return SyncService.getSyncBackendLocal();
+        }
+    }
+
+    static async setSyncBackend(backend: SyncBackend): Promise<void> {
+        if (!isTauriRuntime()) {
+            SyncService.setSyncBackendLocal(backend);
+            return;
+        }
+        try {
+            await tauriInvoke('set_sync_backend', { backend });
+        } catch (error) {
+            console.error('Failed to set sync backend:', error);
+        }
+    }
+
+    static async getWebDavConfig(): Promise<WebDavConfig> {
+        if (!isTauriRuntime()) return SyncService.getWebDavConfigLocal();
+        await SyncService.maybeMigrateLegacyLocalStorageToConfig();
+        try {
+            return await tauriInvoke<WebDavConfig>('get_webdav_config');
+        } catch (error) {
+            console.error('Failed to get WebDAV config:', error);
+            return SyncService.getWebDavConfigLocal();
+        }
+    }
+
+    static async setWebDavConfig(config: { url: string; username?: string; password?: string }): Promise<void> {
+        if (!isTauriRuntime()) {
+            SyncService.setWebDavConfigLocal(config);
+            return;
+        }
+        try {
+            await tauriInvoke('set_webdav_config', {
+                url: config.url,
+                username: config.username || '',
+                password: config.password || '',
+            });
+        } catch (error) {
+            console.error('Failed to set WebDAV config:', error);
+        }
+    }
+
+    static async getCloudConfig(): Promise<CloudConfig> {
+        if (!isTauriRuntime()) return SyncService.getCloudConfigLocal();
+        await SyncService.maybeMigrateLegacyLocalStorageToConfig();
+        try {
+            return await tauriInvoke<CloudConfig>('get_cloud_config');
+        } catch (error) {
+            console.error('Failed to get cloud config:', error);
+            return SyncService.getCloudConfigLocal();
+        }
+    }
+
+    static async setCloudConfig(config: { url: string; token: string }): Promise<void> {
+        if (!isTauriRuntime()) {
+            SyncService.setCloudConfigLocal(config);
+            return;
+        }
+        try {
+            await tauriInvoke('set_cloud_config', { url: config.url, token: config.token });
+        } catch (error) {
+            console.error('Failed to set cloud config:', error);
+        }
     }
 
     /**
@@ -93,16 +225,16 @@ export class SyncService {
 
             // 2. Read Sync Data (file or WebDAV)
             let syncData: AppData;
-            const backend = SyncService.getSyncBackend();
+            const backend = await SyncService.getSyncBackend();
             if (backend === 'webdav') {
-                const { url, username, password } = SyncService.getWebDavConfig();
+                const { url, username, password } = await SyncService.getWebDavConfig();
                 if (!url) {
                     throw new Error('WebDAV URL not configured');
                 }
                 const remote = await webdavGetJson<AppData>(url, { username, password });
                 syncData = remote || { tasks: [], projects: [], settings: {} };
             } else if (backend === 'cloud') {
-                const { url, token } = SyncService.getCloudConfig();
+                const { url, token } = await SyncService.getCloudConfig();
                 if (!url || !token) {
                     throw new Error('Cloud sync not configured');
                 }
@@ -142,10 +274,10 @@ export class SyncService {
 
             // 5. Write back to Sync
             if (backend === 'webdav') {
-                const { url, username, password } = SyncService.getWebDavConfig();
+                const { url, username, password } = await SyncService.getWebDavConfig();
                 await webdavPutJson(url, finalData, { username, password });
             } else if (backend === 'cloud') {
-                const { url, token } = SyncService.getCloudConfig();
+                const { url, token } = await SyncService.getCloudConfig();
                 await cloudPutJson(url, finalData, { token });
             } else {
                 await tauriInvoke('write_sync_file', { data: finalData });
