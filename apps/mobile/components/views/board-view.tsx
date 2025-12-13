@@ -87,6 +87,17 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
     opacity: isDragging.value ? 0.85 : 1,
   }));
 
+  const timeEstimateLabel = (() => {
+    if (!task.timeEstimate) return null;
+    if (task.timeEstimate === '5min') return '5m';
+    if (task.timeEstimate === '15min') return '15m';
+    if (task.timeEstimate === '30min') return '30m';
+    if (task.timeEstimate === '1hr') return '1h';
+    return '2h+';
+  })();
+
+  const showMetaRow = (task.tags?.length ?? 0) > 0 || (task.contexts?.length ?? 0) > 0 || Boolean(timeEstimateLabel);
+
   return (
     <GestureDetector gesture={composedGesture}>
       <Animated.View style={[
@@ -101,43 +112,47 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
           )}
           onSwipeableOpen={() => onDelete(task.id)}
         >
-          <View style={[
-            styles.taskCard,
-            { backgroundColor: isDark ? '#374151' : '#FFFFFF' }
-          ]}>
-            <Text style={[styles.taskTitle, { color: isDark ? '#FFFFFF' : '#111827' }]} numberOfLines={2}>
-              {task.title}
-            </Text>
-            {task.contexts && task.contexts.length > 0 && (
-              <View style={styles.contextsRow}>
-                {task.contexts.slice(0, 2).map((ctx, idx) => (
-                  <Text
-                    key={idx}
-                    style={[
-                      styles.contextTag,
-                      isDark ? styles.contextTagDark : styles.contextTagLight,
-                    ]}
-                  >
-                    {ctx}
-                  </Text>
-                ))}
-              </View>
-            )}
-            {task.timeEstimate && (
-              <View style={styles.timeEstimateRow}>
-                <View style={styles.timeEstimateBadge}>
-                  <Text style={styles.timeEstimateText}>
-                    ⏱ {task.timeEstimate === '5min' ? '5m' :
-                      task.timeEstimate === '15min' ? '15m' :
-                        task.timeEstimate === '30min' ? '30m' :
-                          task.timeEstimate === '1hr' ? '1h' : '2h+'}
-                  </Text>
+	          <View style={[
+	            styles.taskCard,
+	            { backgroundColor: isDark ? '#374151' : '#FFFFFF' }
+	          ]}>
+	            <Text style={[styles.taskTitle, { color: isDark ? '#FFFFFF' : '#111827' }]} numberOfLines={2}>
+	              {task.title}
+	            </Text>
+              {showMetaRow && (
+                <View style={styles.contextsRow}>
+                  {(task.tags || []).slice(0, 6).map((tag, idx) => (
+                    <Text
+                      key={`${tag}-${idx}`}
+                      style={[
+                        styles.tagChip,
+                        isDark ? styles.tagChipDark : styles.tagChipLight,
+                      ]}
+                    >
+                      {tag}
+                    </Text>
+                  ))}
+                  {(task.contexts || []).slice(0, 6).map((ctx, idx) => (
+                    <Text
+                      key={`${ctx}-${idx}`}
+                      style={[
+                        styles.contextTag,
+                        isDark ? styles.contextTagDark : styles.contextTagLight,
+                      ]}
+                    >
+                      {ctx}
+                    </Text>
+                  ))}
+                  {timeEstimateLabel && (
+                    <View style={styles.timeEstimateBadge}>
+                      <Text style={styles.timeEstimateText}>⏱ {timeEstimateLabel}</Text>
+                    </View>
+                  )}
                 </View>
-              </View>
-            )}
-          </View>
-        </Swipeable>
-      </Animated.View>
+              )}
+	          </View>
+	        </Swipeable>
+	      </Animated.View>
     </GestureDetector>
   );
 }
@@ -402,9 +417,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(59,130,246,0.35)',
   },
-  timeEstimateRow: {
-    marginTop: 8,
-    flexDirection: 'row',
+  tagChip: {
+    fontSize: 11,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tagChipLight: {
+    color: '#6D28D9',
+    backgroundColor: '#F5F3FF',
+  },
+  tagChipDark: {
+    color: '#C4B5FD',
+    backgroundColor: 'rgba(139,92,246,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.35)',
   },
   timeEstimateBadge: {
     backgroundColor: '#DBEAFE',

@@ -101,11 +101,11 @@ export default function ReviewScreen() {
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <View style={[styles.header, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
-        <View>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTitleBlock}>
           <Text style={[styles.title, { color: tc.text }]}>{t('review.title')}</Text>
           <Text style={[styles.count, { color: tc.secondaryText }]}>{filteredTasks.length} {t('common.tasks')}</Text>
-        </View>
-        <View style={styles.headerButtons}>
+          </View>
           <TouchableOpacity
             style={[
               styles.selectButton,
@@ -117,6 +117,8 @@ export default function ReviewScreen() {
               {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
             </Text>
           </TouchableOpacity>
+        </View>
+        <View style={styles.headerButtonsRow}>
           <TouchableOpacity
             style={[styles.guideButton, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
             onPress={() => setShowDailyReviewModal(true)}
@@ -331,9 +333,17 @@ const styles = StyleSheet.create({
   header: {
     padding: 16,
     borderBottomWidth: 1,
+    gap: 12,
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   title: {
     fontSize: 22,
@@ -390,7 +400,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  headerButtons: {
+  headerButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

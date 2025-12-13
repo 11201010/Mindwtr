@@ -71,6 +71,20 @@ export function SwipeableTaskItem({
 
     const checklistProgress = getChecklistProgress(task);
 
+    const timeEstimateLabel = (() => {
+        if (!task.timeEstimate) return null;
+        if (task.timeEstimate === '5min') return '5m';
+        if (task.timeEstimate === '15min') return '15m';
+        if (task.timeEstimate === '30min') return '30m';
+        if (task.timeEstimate === '1hr') return '1h';
+        return '2h+';
+    })();
+
+    const showMetaChips =
+        (task.tags?.length ?? 0) > 0 ||
+        (!hideContexts && (task.contexts?.length ?? 0) > 0) ||
+        Boolean(timeEstimateLabel);
+
     const renderLeftActions = () => (
         <Pressable
             style={[styles.swipeActionLeft, { backgroundColor: leftAction.color }]}
@@ -193,9 +207,9 @@ export function SwipeableTaskItem({
                                 )}
                             </View>
                         )}
-                        {task.tags && task.tags.length > 0 && (
-                            <View style={styles.tagsRow}>
-                                {task.tags.slice(0, 6).map((tag, idx) => (
+                        {showMetaChips && (
+                            <View style={styles.metaRow}>
+                                {(task.tags || []).slice(0, 6).map((tag, idx) => (
                                     <Text
                                         key={`${tag}-${idx}`}
                                         style={[
@@ -206,13 +220,9 @@ export function SwipeableTaskItem({
                                         {tag}
                                     </Text>
                                 ))}
-                            </View>
-                        )}
-                        {!hideContexts && task.contexts && task.contexts.length > 0 && (
-                            <View style={styles.contextsRow}>
-                                {task.contexts.map((ctx, idx) => (
+                                {!hideContexts && (task.contexts || []).slice(0, 6).map((ctx, idx) => (
                                     <Text
-                                        key={idx}
+                                        key={`${ctx}-${idx}`}
                                         style={[
                                             styles.contextTag,
                                             isDark ? styles.contextTagDark : styles.contextTagLight,
@@ -221,6 +231,14 @@ export function SwipeableTaskItem({
                                         {ctx}
                                     </Text>
                                 ))}
+                                {timeEstimateLabel && (
+                                    <Text style={[
+                                        styles.metaPill,
+                                        { backgroundColor: tc.filterBg, borderColor: tc.border, color: tc.text }
+                                    ]}>
+                                        ⏱ {timeEstimateLabel}
+                                    </Text>
+                                )}
                             </View>
                         )}
                         {checklistProgress && (
@@ -287,17 +305,6 @@ export function SwipeableTaskItem({
                                     getTaskStaleness(task.createdAt) === 'stale' && styles.ageTextStale,
                                     getTaskStaleness(task.createdAt) === 'very-stale' && styles.ageTextVeryStale,
                                 ]}>⏱ {getTaskAgeLabel(task.createdAt, language)}</Text>
-                            </View>
-                        )}
-                        {/* Time Estimate Badge */}
-                        {task.timeEstimate && (
-                            <View style={styles.timeBadge}>
-                                <Text style={styles.timeText}>
-                                    ⏱ {task.timeEstimate === '5min' ? '5m' :
-                                        task.timeEstimate === '15min' ? '15m' :
-                                            task.timeEstimate === '30min' ? '30m' :
-                                                task.timeEstimate === '1hr' ? '1h' : '2h+'}
-                                </Text>
                             </View>
                         )}
                     </View>

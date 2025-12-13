@@ -61,7 +61,7 @@ export default function DrawerLayout() {
   const { t } = useLanguage();
   const { width: windowWidth } = useWindowDimensions();
 
-  const drawerWidth = Math.min(320, Math.round(windowWidth * 0.78));
+  const drawerWidth = Math.min(240, Math.round(windowWidth * 0.62));
 
   return (
     <Drawer
