@@ -572,6 +572,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.set_skip_taskbar(true);
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             // Ensure data file exists on startup
             ensure_data_file(&app.handle()).ok();
@@ -651,6 +658,7 @@ pub fn run() {
 
 fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_skip_taskbar(false);
         let _ = window.show();
         let _ = window.set_focus();
     }
