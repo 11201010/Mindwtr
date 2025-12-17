@@ -86,35 +86,27 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 
 ### 2. Install Android SDK
 
-```bash
 # Create SDK directory
 mkdir -p ~/Android/Sdk/cmdline-tools
 
-# Download command-line tools from:
-# https://developer.android.com/studio#command-line-tools-only
-# Extract to ~/Android/Sdk/cmdline-tools/latest/
+# Download and extract command-line tools
+cd /tmp
+wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip commandlinetools-linux-*.zip
+mv cmdline-tools ~/Android/Sdk/cmdline-tools/latest
 
-# Set environment variables (add to ~/.zshrc)
+# Set environment variables (add to ~/.zshrc or ~/.bashrc)
 export ANDROID_HOME=~/Android/Sdk
 export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
 
-# Install SDK components
+# Reload shell
+source ~/.zshrc
+
+# Accept licenses and install components
 yes | sdkmanager --licenses
 sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
-```
 
 ### 3. Build APK
-
-```bash
-# From monorepo root, ensure lockfile is synced
-bun install
-
-# Build APK (from apps/mobile directory)
-cd apps/mobile
-npx eas-cli build --platform android --profile preview --local --output mindwtr-v0.2.7.apk
-```
-
-The APK will be saved to `apps/mobile/mindwtr-v0.2.7.apk`.
 
 ## Android Environment
 
@@ -130,33 +122,8 @@ export PATH=$PATH:$ANDROID_HOME/platform-tools
 export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
 ```
 
-### Troubleshooting: SDK Path Conflicts
-
-If you see this error during build:
-```
-java.lang.RuntimeException: Several environment variables contain different paths to the SDK.
-ANDROID_HOME: /home/user/Android/Sdk
-ANDROID_SDK_ROOT: /opt/android-sdk
-```
-
-**Fix it by removing `ANDROID_SDK_ROOT`:**
-
+### Build
 ```bash
-# Check where ANDROID_SDK_ROOT is set
-grep -r "ANDROID_SDK_ROOT" ~/.bashrc ~/.zshrc ~/.profile ~/.zshenv 2>/dev/null
-
-# Remove or comment out the ANDROID_SDK_ROOT line from that file
-# Then reload your shell:
-source ~/.zshrc  # or source ~/.bashrc
-
-# Verify only ANDROID_HOME is set:
-echo "ANDROID_HOME: $ANDROID_HOME"
-echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"  # Should be empty
-```
-
-**Quick workaround** (without editing shell config):
-```bash
-unset ANDROID_SDK_ROOT
 npx eas-cli build --platform android --profile preview --local --output mindwtr-v0.2.7.apk
 ```
 

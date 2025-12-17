@@ -293,7 +293,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     name: AUR Release
-    if: ${{ needs.release.result == 'success' }}
+    if: always() && needs.release.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
