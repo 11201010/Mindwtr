@@ -241,15 +241,44 @@ fn ensure_data_file(app: &tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn get_data(app: tauri::AppHandle) -> Result<Value, String> {
     let data_path = get_data_path(&app);
-    let content = fs::read_to_string(&data_path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    let backup_path = data_path.with_extension("json.bak");
+    match read_json_with_retries(&data_path, 4) {
+        Ok(value) => Ok(value),
+        Err(primary_err) => {
+            if backup_path.exists() {
+                if let Ok(value) = read_json_with_retries(&backup_path, 2) {
+                    return Ok(value);
+                }
+            }
+            Err(primary_err)
+        }
+    }
 }
 
 #[tauri::command]
 fn save_data(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
     let data_path = get_data_path(&app);
-    fs::write(&data_path, serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    if let Some(parent) = data_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let backup_path = data_path.with_extension("json.bak");
+    if data_path.exists() {
+        let _ = fs::copy(&data_path, &backup_path);
+    }
+
+    let tmp_path = data_path.with_extension("json.tmp");
+    let content = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    {
+        let mut file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+
+    if cfg!(windows) && data_path.exists() {
+        fs::remove_file(&data_path).map_err(|e| e.to_string())?;
+    }
+    fs::rename(&tmp_path, &data_path).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -489,7 +518,7 @@ fn write_sync_file(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
 
 fn sanitize_json_text(raw: &str) -> String {
     // Strip BOM and trailing NULs (can occur with partial writes / filesystem quirks).
-    let mut text = raw.trim_start_matches('\u{FEFF}').to_string();
+    let mut text = raw.trim_start_matches('\u{FEFF}').trim_end().to_string();
     while text.ends_with('\u{0}') {
         text.pop();
     }
@@ -498,21 +527,22 @@ fn sanitize_json_text(raw: &str) -> String {
 
 fn parse_json_relaxed(raw: &str) -> Result<Value, serde_json::Error> {
     let sanitized = sanitize_json_text(raw);
-    match serde_json::from_str::<Value>(&sanitized) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            // If trailing characters are present, try parsing up to the last closing bracket.
-            if err.to_string().contains("trailing characters") {
-                if let Some(pos) = sanitized.rfind(|c| c == '}' || c == ']') {
-                    let candidate = &sanitized[..=pos];
-                    if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-                        return Ok(value);
-                    }
-                }
-            }
-            Err(err)
-        }
+    if sanitized.is_empty() {
+        return serde_json::from_str::<Value>("{}");
     }
+
+    // 1) Strict parse (fast path)
+    if let Ok(value) = serde_json::from_str::<Value>(&sanitized) {
+        return Ok(value);
+    }
+
+    // 2) Lenient parse: parse the first JSON value and ignore any trailing bytes.
+    // This makes sync resilient to "mid-write" files (e.g., Syncthing replacing data.json).
+    let start = sanitized
+        .find(|c| c == '{' || c == '[')
+        .unwrap_or(0);
+    let mut de = serde_json::Deserializer::from_str(&sanitized[start..]);
+    Value::deserialize(&mut de)
 }
 
 fn read_json_with_retries(path: &Path, attempts: usize) -> Result<Value, String> {
