@@ -1,6 +1,7 @@
 import { addDays, addMonths, addWeeks, addYears, endOfDay, isAfter, isBefore, isEqual, parseISO, startOfDay } from 'date-fns';
 import { safeParseDate } from './date';
 import { matchesHierarchicalToken, normalizePrefixedToken } from './hierarchy-utils';
+import { normalizeTaskStatus } from './task-status';
 import type { Project, Task, TaskStatus } from './types';
 
 export type SearchComparator = '<' | '<=' | '>' | '>=' | '=';
@@ -22,13 +23,10 @@ export interface SearchQuery {
 
 const STATUS_SET: Set<TaskStatus> = new Set([
     'inbox',
-    'todo',
     'next',
-    'in-progress',
     'waiting',
     'someday',
     'done',
-    'archived',
 ]);
 
 const DATE_FIELDS = new Set(['due', 'start', 'review', 'created']);
@@ -181,7 +179,8 @@ export function matchesTask(term: SearchTerm, task: Task, projects: Project[], n
     if (!field) {
         result = matchesText(task.title, value) || matchesText(task.description, value);
     } else if (field === 'status') {
-        result = STATUS_SET.has(value as TaskStatus) ? task.status === (value as TaskStatus) : false;
+        const normalized = normalizeTaskStatus(value);
+        result = STATUS_SET.has(normalized) ? task.status === normalized : false;
     } else if (field === 'context' || field === 'contexts') {
         const ctx = normalizeContext(value);
         result = (task.contexts || []).some((existing) => matchesHierarchicalToken(ctx, existing));

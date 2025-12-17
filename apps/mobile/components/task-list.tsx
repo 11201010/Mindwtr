@@ -86,7 +86,7 @@ export function TaskList({
     if (!newTaskTitle.trim()) return;
 
     const defaultStatus: TaskStatus = projectId
-      ? 'todo'
+      ? 'next'
       : (statusFilter !== 'all' ? statusFilter : 'inbox');
 
     const { title: parsedTitle, props } = parseQuickAdd(newTaskTitle, projects);
@@ -226,7 +226,7 @@ export function TaskList({
             {selectedIdsArray.length} {t('bulk.selected')}
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bulkMoveRow}>
-            {(['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'] as TaskStatus[]).map((status) => (
+            {(['inbox', 'next', 'waiting', 'someday', 'done'] as TaskStatus[]).map((status) => (
               <TouchableOpacity
                 key={status}
                 onPress={() => handleBatchMove(status)}

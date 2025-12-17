@@ -97,7 +97,7 @@ export function CalendarView() {
         for (const task of tasks) {
             if (task.deletedAt) continue;
             if (task.id === excludeTaskId) continue;
-            if (task.status === 'done' || task.status === 'archived') continue;
+            if (task.status === 'done') continue;
             const start = task.startTime ? safeParseDate(task.startTime) : null;
             if (!start) continue;
             if (!isSameDay(start, day)) continue;
@@ -151,7 +151,7 @@ export function CalendarView() {
         for (const task of tasks) {
             if (task.deletedAt) continue;
             if (task.id === excludeTaskId) continue;
-            if (task.status === 'done' || task.status === 'archived') continue;
+            if (task.status === 'done') continue;
             const start = task.startTime ? safeParseDate(task.startTime) : null;
             if (!start) continue;
             if (!isSameDay(start, day)) continue;
@@ -258,8 +258,8 @@ export function CalendarView() {
         return tasks
             .filter((task) => {
                 if (task.deletedAt) return false;
-                if (task.status === 'done' || task.status === 'archived') return false;
-                if (task.status !== 'next' && task.status !== 'todo') return false;
+                if (task.status === 'done') return false;
+                if (task.status !== 'next') return false;
                 return task.title.toLowerCase().includes(query);
             })
             .slice(0, 12);

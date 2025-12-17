@@ -37,7 +37,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     const today = useMemo(() => new Date(), []);
 
     const activeTasks = useMemo(
-        () => tasks.filter((task) => !task.deletedAt && task.status !== 'archived'),
+        () => tasks.filter((task) => !task.deletedAt && task.status !== 'done'),
         [tasks],
     );
 

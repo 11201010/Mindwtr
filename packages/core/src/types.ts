@@ -1,4 +1,4 @@
-export type TaskStatus = 'inbox' | 'todo' | 'next' | 'in-progress' | 'waiting' | 'someday' | 'done' | 'archived';
+export type TaskStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'done';
 
 export type TimeEstimate = '5min' | '10min' | '15min' | '30min' | '1hr' | '2hr' | '3hr' | '4hr' | '4hr+';
 

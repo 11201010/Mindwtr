@@ -125,10 +125,10 @@ export default function ReviewScreen() {
     exitSelectionMode();
   }, [batchUpdateTasks, selectedIdsArray, tasksById, tagInput, hasSelection, exitSelectionMode]);
 
-  const bulkStatuses: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
+  const bulkStatuses: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
-  // Filter out archived and deleted tasks first, then apply status filter
-  const activeTasks = tasks.filter((t) => t.status !== 'archived' && !t.deletedAt);
+  // Filter out deleted tasks first, then apply status filter
+  const activeTasks = tasks.filter((t) => !t.deletedAt);
   const filteredTasks = activeTasks.filter((task) =>
     filterStatus === 'all' ? true : task.status === filterStatus
   );

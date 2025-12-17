@@ -1,7 +1,7 @@
 import { View, Text, SectionList, Pressable, StyleSheet } from 'react-native';
 import { useMemo, useState, useCallback } from 'react';
 
-import { useTaskStore, Task, safeFormatDate, safeParseDate, isDueForReview } from '@mindwtr/core';
+import { useTaskStore, Task, safeFormatDate, safeParseDate, isDueForReview, type TaskStatus } from '@mindwtr/core';
 
 import { useLanguage } from '../../../contexts/language-context';
 import { useTheme } from '../../../contexts/theme-context';
@@ -19,20 +19,22 @@ function TaskCard({ task, onPress, onToggleFocus, tc, isDark, focusedCount }: {
 }) {
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      'in-progress': '#EF4444',
       next: '#3B82F6',
-      todo: '#10B981',
       waiting: '#F59E0B',
+      inbox: '#6B7280',
+      someday: '#8B5CF6',
+      done: '#10B981',
     };
     return colors[status] || '#6B7280';
   };
 
   const getStatusLabel = (status: string) => {
     const labels: Record<string, string> = {
-      'in-progress': '🔄 In Progress',
       next: '▶️ Next',
-      todo: '📋 To Do',
       waiting: '⏸️ Waiting',
+      inbox: '📥 Inbox',
+      someday: '💭 Someday',
+      done: '✅ Done',
     };
     return labels[status] || status;
   };
@@ -121,20 +123,19 @@ export default function AgendaScreen() {
   const tc = useThemeColors();
 
     const sections = useMemo(() => {
-        const activeTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'archived' && !t.deletedAt);
+        const activeTasks = tasks.filter(t => t.status !== 'done' && !t.deletedAt);
 
         // Today's Focus: tasks marked as isFocusedToday
         const focusedTasks = activeTasks.filter(t => t.isFocusedToday);
 
-    const inProgressTasks = activeTasks.filter(t => t.status === 'in-progress' && !t.isFocusedToday);
     const overdueTasks = activeTasks.filter(t => {
       const dd = safeParseDate(t.dueDate);
-      return dd && dd < new Date() && t.status !== 'in-progress' && !t.isFocusedToday;
+      return dd && dd < new Date() && !t.isFocusedToday;
     });
     const todayTasks = activeTasks.filter(t => {
       const dd = safeParseDate(t.dueDate);
       return dd && dd.toDateString() === new Date().toDateString() &&
-        t.status !== 'in-progress' && !t.isFocusedToday;
+        !t.isFocusedToday;
     });
     const nextTasks = activeTasks.filter(t => t.status === 'next' && !t.isFocusedToday).slice(0, 5);
     const reviewDueTasks = activeTasks.filter(t =>
@@ -145,7 +146,7 @@ export default function AgendaScreen() {
     const upcomingTasks = activeTasks
       .filter(t => {
         const dd = safeParseDate(t.dueDate);
-        return dd && dd > new Date() && t.status !== 'in-progress' && !t.isFocusedToday;
+        return dd && dd > new Date() && !t.isFocusedToday;
       })
       .sort((a, b) => {
         const da = safeParseDate(a.dueDate);
@@ -157,7 +158,6 @@ export default function AgendaScreen() {
     const result = [];
     // Today's Focus always at the top (max 3)
     if (focusedTasks.length > 0) result.push({ title: `🎯 ${t('agenda.todaysFocus') || "Today's Focus"}`, data: focusedTasks.slice(0, 3) });
-    if (inProgressTasks.length > 0) result.push({ title: `🔄 ${t('agenda.inProgress')}`, data: inProgressTasks });
     if (overdueTasks.length > 0) result.push({ title: `🔴 ${t('agenda.overdue')}`, data: overdueTasks });
     if (todayTasks.length > 0) result.push({ title: `🟡 ${t('agenda.dueToday')}`, data: todayTasks });
     if (nextTasks.length > 0) result.push({ title: `▶️ ${t('agenda.nextActions')}`, data: nextTasks });
@@ -168,7 +168,7 @@ export default function AgendaScreen() {
   }, [tasks, t]);
 
   // Count focused tasks (max 3)
-  const focusedCount = tasks.filter(t => t.isFocusedToday && !t.deletedAt && t.status !== 'done' && t.status !== 'archived').length;
+  const focusedCount = tasks.filter(t => t.isFocusedToday && !t.deletedAt && t.status !== 'done').length;
 
   const handleToggleFocus = useCallback((taskId: string) => {
     const task = tasks.find(t => t.id === taskId);
@@ -191,7 +191,7 @@ export default function AgendaScreen() {
     setSelectedTask(task);
   }, []);
 
-  const handleStatusChange = (status: 'todo' | 'next' | 'in-progress' | 'done') => {
+  const handleStatusChange = (status: TaskStatus) => {
     if (selectedTask) {
       updateTask(selectedTask.id, { status });
       setSelectedTask(null);
@@ -252,10 +252,10 @@ export default function AgendaScreen() {
             <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>Update Status:</Text>
             <View style={styles.actionButtons}>
               <Pressable
-                style={[styles.actionButton, styles.todoButton]}
-                onPress={() => handleStatusChange('todo')}
+                style={[styles.actionButton, styles.inboxButton]}
+                onPress={() => handleStatusChange('inbox')}
               >
-                <Text style={styles.actionButtonText}>📋 To Do</Text>
+                <Text style={styles.actionButtonText}>📥 Inbox</Text>
               </Pressable>
               <Pressable
                 style={[styles.actionButton, styles.nextButton]}
@@ -264,10 +264,16 @@ export default function AgendaScreen() {
                 <Text style={styles.actionButtonText}>▶️ Next</Text>
               </Pressable>
               <Pressable
-                style={[styles.actionButton, styles.progressButton]}
-                onPress={() => handleStatusChange('in-progress')}
+                style={[styles.actionButton, styles.waitingButton]}
+                onPress={() => handleStatusChange('waiting')}
               >
-                <Text style={styles.actionButtonText}>🔄 Start</Text>
+                <Text style={styles.actionButtonText}>⏸️ Waiting</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.actionButton, styles.somedayButton]}
+                onPress={() => handleStatusChange('someday')}
+              >
+                <Text style={styles.actionButtonText}>💭 Someday</Text>
               </Pressable>
               <Pressable
                 style={[styles.actionButton, styles.doneButton]}
@@ -460,17 +466,20 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
   },
-  todoButton: {
-    backgroundColor: '#10B981',
+  inboxButton: {
+    backgroundColor: '#6B7280',
   },
   nextButton: {
     backgroundColor: '#3B82F6',
   },
-  progressButton: {
-    backgroundColor: '#EF4444',
+  waitingButton: {
+    backgroundColor: '#F59E0B',
+  },
+  somedayButton: {
+    backgroundColor: '#8B5CF6',
   },
   doneButton: {
-    backgroundColor: '#6B7280',
+    backgroundColor: '#10B981',
   },
   actionButtonText: {
     fontSize: 14,

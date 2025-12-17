@@ -7,9 +7,9 @@ import { useLanguage } from '../../contexts/language-context';
 
 const getColumns = (t: (key: string) => string): { id: TaskStatus; label: string }[] => [
     { id: 'inbox', label: t('list.inbox') || 'Inbox' },
-    { id: 'todo', label: t('list.todo') },
     { id: 'next', label: t('list.next') },
-    { id: 'in-progress', label: t('list.inProgress') },
+    { id: 'waiting', label: t('list.waiting') },
+    { id: 'someday', label: t('list.someday') },
     { id: 'done', label: t('list.done') },
 ];
 

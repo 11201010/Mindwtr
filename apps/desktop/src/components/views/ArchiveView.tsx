@@ -12,10 +12,13 @@ export function ArchiveView() {
     const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
 
     const archivedTasks = useMemo(() => {
-        // Show tasks that are done or archived
-        const filtered = tasks.filter(t =>
-            t.status === 'archived' || t.status === 'done'
-        );
+        // "Archived" == completed history (older than 7 days)
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const filtered = tasks.filter((t) => {
+            if (t.status !== 'done') return false;
+            const completedAt = t.completedAt ? new Date(t.completedAt).getTime() : 0;
+            return Number.isFinite(completedAt) && completedAt > 0 && completedAt < cutoff;
+        });
 
         // Use standard sort
         const sorted = sortTasksBy(filtered, sortBy);

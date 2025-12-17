@@ -31,7 +31,7 @@ export function ProjectsView() {
     }, {} as Record<string, Task[]>);
 
     tasks.forEach(task => {
-        if (task.projectId && !task.deletedAt && task.status !== 'done' && task.status !== 'archived') {
+        if (task.projectId && !task.deletedAt && task.status !== 'done') {
             if (tasksByProject[task.projectId]) {
                 tasksByProject[task.projectId].push(task);
             }
@@ -69,7 +69,7 @@ export function ProjectsView() {
 
     const selectedProject = projects.find(p => p.id === selectedProjectId);
     const projectTasks = selectedProjectId
-        ? tasks.filter(t => t.projectId === selectedProjectId && t.status !== 'done' && t.status !== 'archived' && !t.deletedAt)
+        ? tasks.filter(t => t.projectId === selectedProjectId && t.status !== 'done' && !t.deletedAt)
         : [];
     const visibleAttachments = (selectedProject?.attachments || []).filter((a) => !a.deletedAt);
 
@@ -195,12 +195,11 @@ export function ProjectsView() {
                                 let nextAction = undefined;
                                 let nextCandidate = undefined;
                                 for (const t of projTasks) {
-                                    if (t.status === 'todo') {
-                                        nextAction = t;
-                                        break;
-                                    }
                                     if (!nextCandidate && t.status === 'next') {
                                         nextCandidate = t;
+                                    }
+                                    if (!nextAction && t.status === 'inbox') {
+                                        nextAction = t;
                                     }
                                 }
                                 nextAction = nextAction || nextCandidate;
@@ -499,8 +498,8 @@ export function ProjectsView() {
                                     if (input.value.trim()) {
                                         const { title: parsedTitle, props } = parseQuickAdd(input.value, projects);
                                         const finalTitle = parsedTitle || input.value;
-                                        const initialProps: Partial<Task> = { projectId: selectedProject.id, status: 'todo', ...props };
-                                        if (!props.status) initialProps.status = 'todo';
+                                        const initialProps: Partial<Task> = { projectId: selectedProject.id, status: 'next', ...props };
+                                        if (!props.status) initialProps.status = 'next';
                                         if (!props.projectId) initialProps.projectId = selectedProject.id;
                                         addTask(finalTitle, initialProps);
                                         input.value = '';

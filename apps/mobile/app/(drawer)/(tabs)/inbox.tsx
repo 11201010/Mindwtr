@@ -143,7 +143,7 @@ export default function InboxScreen() {
     if (!currentTask) return;
 
     updateTask(currentTask.id, {
-      status: 'todo',
+      status: 'next',
       contexts: selectedContexts,
       projectId: projectId || undefined
     });

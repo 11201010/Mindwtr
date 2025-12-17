@@ -15,10 +15,11 @@ import Animated, {
 import { TaskEditModal } from '../task-edit-modal';
 
 const COLUMNS: { id: TaskStatus; label: string; labelKey: string; color: string }[] = [
-  { id: 'todo', label: 'Todo', labelKey: 'board.todo', color: '#6B7280' },
-  { id: 'next', label: 'Next', labelKey: 'board.next', color: '#3B82F6' },
-  { id: 'in-progress', label: 'In Progress', labelKey: 'board.inProgress', color: '#EAB308' },
-  { id: 'done', label: 'Done', labelKey: 'board.done', color: '#10B981' },
+  { id: 'inbox', label: 'Inbox', labelKey: 'status.inbox', color: '#6B7280' },
+  { id: 'next', label: 'Next', labelKey: 'status.next', color: '#3B82F6' },
+  { id: 'waiting', label: 'Waiting', labelKey: 'status.waiting', color: '#F59E0B' },
+  { id: 'someday', label: 'Someday', labelKey: 'status.someday', color: '#8B5CF6' },
+  { id: 'done', label: 'Done', labelKey: 'status.done', color: '#10B981' },
 ];
 
 interface DraggableTaskProps {

@@ -1,5 +1,6 @@
 import { addDays, addMonths, addWeeks, addYears, isValid, nextDay, parseISO, set } from 'date-fns';
 import type { Project, Task, TaskStatus } from './types';
+import { normalizeTaskStatus } from './task-status';
 
 export interface QuickAddResult {
     title: string;
@@ -8,13 +9,10 @@ export interface QuickAddResult {
 
 const STATUS_TOKENS: Record<string, TaskStatus> = {
     inbox: 'inbox',
-    todo: 'todo',
     next: 'next',
-    'in-progress': 'in-progress',
     waiting: 'waiting',
     someday: 'someday',
     done: 'done',
-    archived: 'archived',
 };
 
 const DOW_MAP: Record<string, number> = {
@@ -135,7 +133,8 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
     let status: TaskStatus | undefined;
     const statusMatch = working.match(/\/(inbox|todo|next|in-progress|waiting|someday|done|archived)\b/i);
     if (statusMatch) {
-        status = STATUS_TOKENS[statusMatch[1].toLowerCase()];
+        const token = statusMatch[1].toLowerCase();
+        status = STATUS_TOKENS[token] ?? normalizeTaskStatus(token);
         working = stripToken(working, statusMatch[0]);
     }
 

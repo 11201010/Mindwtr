@@ -24,10 +24,10 @@ export interface SwipeableTaskItemProps {
 
 /**
  * A swipeable task item with context-aware left swipe actions:
- * - Done tasks: swipe to Archive
- * - Next/Todo tasks: swipe to Start (in-progress)
- * - In-progress tasks: swipe to Done
- * - Other: swipe to Done (default)
+ * - Inbox: swipe to Next
+ * - Next: swipe to Done
+ * - Waiting/Someday: swipe to Next
+ * - Done: swipe to restore to Inbox
  * 
  * Right swipe always shows Delete action.
  */
@@ -53,15 +53,13 @@ export function SwipeableTaskItem({
     // Status-aware left swipe action
     const getLeftAction = (): { label: string; color: string; action: TaskStatus } => {
         if (task.status === 'done') {
-            return { label: `📦 ${t('projects.archive')}`, color: getStatusColor('archived').text, action: 'archived' };
-        } else if (task.status === 'next' || task.status === 'todo') {
-            return { label: `▶️ ${t('taskEdit.start')}`, color: getStatusColor('in-progress').text, action: 'in-progress' };
-        } else if (task.status === 'in-progress') {
+            return { label: `↩ ${t('archived.restoreToInbox')}`, color: getStatusColor('inbox').text, action: 'inbox' };
+        } else if (task.status === 'next') {
             return { label: `✓ ${t('common.done')}`, color: getStatusColor('done').text, action: 'done' };
         } else if (task.status === 'waiting' || task.status === 'someday') {
             return { label: `▶️ ${t('status.next')}`, color: getStatusColor('next').text, action: 'next' };
         } else if (task.status === 'inbox') {
-            return { label: `✓ ${t('common.done')}`, color: getStatusColor('done').text, action: 'done' };
+            return { label: `▶️ ${t('status.next')}`, color: getStatusColor('next').text, action: 'next' };
         } else {
             return { label: `✓ ${t('common.done')}`, color: getStatusColor('done').text, action: 'done' };
         }
@@ -126,7 +124,7 @@ export function SwipeableTaskItem({
         </Pressable>
     );
 
-    const quickStatusOptions: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
+    const quickStatusOptions: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
     const accessibilityLabel = [
         task.title,
@@ -310,7 +308,7 @@ export function SwipeableTaskItem({
                             </View>
                         )}
                         {/* Task Age Indicator */}
-                        {task.status !== 'done' && task.status !== 'archived' && getTaskAgeLabel(task.createdAt, language) && (
+                        {task.status !== 'done' && getTaskAgeLabel(task.createdAt, language) && (
                             <View style={[
                                 styles.ageBadge,
                                 getTaskStaleness(task.createdAt) === 'fresh' && styles.ageFresh,
@@ -343,7 +341,7 @@ export function SwipeableTaskItem({
                     >
                         <Text style={[
                             styles.statusText,
-                            ['todo', 'inbox'].includes(task.status) ? styles.textDark : styles.textLight
+                            styles.textLight
                         ]}>
                             {t(`status.${task.status}`)}
                         </Text>

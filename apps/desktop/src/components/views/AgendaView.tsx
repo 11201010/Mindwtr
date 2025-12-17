@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useTaskStore, Task, getTaskAgeLabel, getTaskStaleness, type TaskStatus, safeFormatDate, safeParseDate, isDueForReview } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
-import { Clock, Star, Calendar, AlertCircle, PlayCircle, ArrowRight, type LucideIcon } from 'lucide-react';
+import { Clock, Star, Calendar, AlertCircle, ArrowRight, type LucideIcon } from 'lucide-react';
 
 export function AgendaView() {
     const { tasks, updateTask } = useTaskStore();
@@ -10,7 +10,7 @@ export function AgendaView() {
 
     // Filter active tasks
     const activeTasks = useMemo(() =>
-        tasks.filter(t => !t.deletedAt && t.status !== 'done' && t.status !== 'archived'),
+        tasks.filter(t => !t.deletedAt && t.status !== 'done'),
         [tasks]
     );
 
@@ -27,17 +27,16 @@ export function AgendaView() {
         const now = new Date();
         const todayStr = now.toDateString();
 
-        const inProgress = activeTasks.filter(t => t.status === 'in-progress' && !t.isFocusedToday);
         const overdue = activeTasks.filter(t => {
             if (!t.dueDate) return false;
             const dueDate = safeParseDate(t.dueDate);
-            return dueDate && dueDate < now && t.status !== 'in-progress' && !t.isFocusedToday;
+            return dueDate && dueDate < now && !t.isFocusedToday;
         });
         const dueToday = activeTasks.filter(t => {
             if (!t.dueDate) return false;
             const dueDate = safeParseDate(t.dueDate);
             return dueDate && dueDate.toDateString() === todayStr &&
-                t.status !== 'in-progress' && !t.isFocusedToday;
+                !t.isFocusedToday;
         });
         const nextActions = activeTasks.filter(t =>
             t.status === 'next' && !t.isFocusedToday
@@ -49,7 +48,7 @@ export function AgendaView() {
             !t.isFocusedToday
         );
 
-        return { inProgress, overdue, dueToday, nextActions, reviewDue };
+        return { overdue, dueToday, nextActions, reviewDue };
     }, [activeTasks]);
 
     const handleToggleFocus = (taskId: string) => {
@@ -93,10 +92,11 @@ export function AgendaView() {
                             {task.status && (
                                 <span className={cn(
                                     "px-2 py-0.5 rounded-full text-white",
-                                    task.status === 'in-progress' && "bg-red-500",
+                                    task.status === 'inbox' && "bg-slate-500",
                                     task.status === 'next' && "bg-blue-500",
-                                    task.status === 'todo' && "bg-green-500",
-                                    task.status === 'waiting' && "bg-orange-500"
+                                    task.status === 'waiting' && "bg-orange-500",
+                                    task.status === 'someday' && "bg-purple-500",
+                                    task.status === 'done' && "bg-green-600"
                                 )}>
                                     {t(`status.${task.status}`)}
                                 </span>
@@ -158,9 +158,10 @@ export function AgendaView() {
                             onChange={(e) => handleStatusChange(task.id, e.target.value)}
                             className="text-xs px-2 py-1 rounded bg-muted/50 text-foreground border border-border hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
                         >
-                            <option value="todo">{t('status.todo')}</option>
+                            <option value="inbox">{t('status.inbox')}</option>
                             <option value="next">{t('status.next')}</option>
-                            <option value="in-progress">{t('status.in-progress')}</option>
+                            <option value="waiting">{t('status.waiting')}</option>
+                            <option value="someday">{t('status.someday')}</option>
                             <option value="done">{t('status.done')}</option>
                         </select>
                     </div>
@@ -232,13 +233,6 @@ export function AgendaView() {
 
             {/* Other Sections */}
             <div className="space-y-6">
-                <Section
-                    title={t('agenda.inProgress')}
-                    icon={PlayCircle}
-                    tasks={sections.inProgress}
-                    color="text-red-600"
-                />
-
                 <Section
                     title={t('agenda.overdue')}
                     icon={AlertCircle}

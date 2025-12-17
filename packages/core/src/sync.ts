@@ -1,5 +1,6 @@
 
 import type { AppData, Attachment, Project, Task } from './types';
+import { normalizeTaskForLoad } from './task-status';
 
 export interface EntityMergeStats {
     localTotal: number;
@@ -130,6 +131,16 @@ export function filterDeleted<T extends { deletedAt?: string }>(items: T[]): T[]
  * Preserves local settings (device-specific preferences).
  */
 export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeResult {
+    const nowIso = new Date().toISOString();
+    const localNormalized: AppData = {
+        ...local,
+        tasks: (local.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
+    };
+    const incomingNormalized: AppData = {
+        ...incoming,
+        tasks: (incoming.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
+    };
+
     const mergeAttachments = (a?: Attachment[], b?: Attachment[]): Attachment[] | undefined => {
         const aList = a || [];
         const bList = b || [];
@@ -138,14 +149,14 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         return merged.length > 0 ? merged : undefined;
     };
 
-    const tasksResult = mergeEntitiesWithStats(local.tasks, incoming.tasks, (localTask: Task, incomingTask: Task, winner: Task) => {
+    const tasksResult = mergeEntitiesWithStats(localNormalized.tasks, incomingNormalized.tasks, (localTask: Task, incomingTask: Task, winner: Task) => {
         if (winner.deletedAt) return winner;
         const loser = winner === incomingTask ? localTask : incomingTask;
         const attachments = mergeAttachments(winner.attachments, loser.attachments);
         return attachments ? { ...winner, attachments } : winner;
     });
 
-    const projectsResult = mergeEntitiesWithStats(local.projects, incoming.projects, (localProject: Project, incomingProject: Project, winner: Project) => {
+    const projectsResult = mergeEntitiesWithStats(localNormalized.projects, incomingNormalized.projects, (localProject: Project, incomingProject: Project, winner: Project) => {
         if (winner.deletedAt) return winner;
         const loser = winner === incomingProject ? localProject : incomingProject;
         const attachments = mergeAttachments(winner.attachments, loser.attachments);
@@ -156,7 +167,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         data: {
             tasks: tasksResult.merged,
             projects: projectsResult.merged,
-            settings: local.settings,
+            settings: localNormalized.settings,
         },
         stats: {
             tasks: tasksResult.stats,

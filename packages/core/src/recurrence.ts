@@ -52,7 +52,7 @@ function resetChecklist(checklist: ChecklistItem[] | undefined): ChecklistItem[]
  * - Uses task.dueDate as the base if present/valid, else completion time.
  * - Shifts startTime/reviewAt forward if present.
  * - Resets checklist completion and IDs.
- * - New instance status is based on the previous status, with in-progress/done/archived -> next.
+ * - New instance status is based on the previous status, with done -> next.
  */
 export function createNextRecurringTask(
     task: Task,
@@ -69,7 +69,7 @@ export function createNextRecurringTask(
     const nextReviewAt = task.reviewAt ? nextIsoFrom(task.reviewAt, rule, completedAtDate) : undefined;
 
     let newStatus: TaskStatus = previousStatus;
-    if (newStatus === 'in-progress' || newStatus === 'done' || newStatus === 'archived') {
+    if (newStatus === 'done') {
         newStatus = 'next';
     }
 

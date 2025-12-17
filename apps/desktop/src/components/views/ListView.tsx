@@ -82,16 +82,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             if (t.deletedAt) return false;
 
             if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-            // Filter out archived unless we are in archived view (which uses statusFilter='archived')
-            // But ListView is generic. If statusFilter is 'inbox', we want inbox.
-            // If 'all', we usually want active tasks.
-            // Desktop App.tsx passes explicit filters.
-
-            if (statusFilter === 'all' && (t.status === 'archived' || t.status === 'done')) {
-                // "All" view usually implies ContextsView or similar. 
-                // But ListView statusFilter is usually one status.
-            }
-            // Just respect statusFilter.
+            // Respect statusFilter (handled above).
 
             // Sequential project filter: for 'next' status, only show first task from sequential projects
             if (statusFilter === 'next' && t.projectId) {
@@ -360,7 +351,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const handleSetProject = (projectId: string | null) => {
         if (processingTask) {
             updateTask(processingTask.id, {
-                status: 'todo',
+                status: 'next',
                 contexts: selectedContexts,
                 projectId: projectId || undefined
             });
@@ -368,7 +359,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
         processNext();
     };
 
-    const showContextFilter = ['next', 'todo', 'all'].includes(statusFilter);
+    const showContextFilter = ['next', 'all'].includes(statusFilter);
     const isInbox = statusFilter === 'inbox';
     const inboxCount = tasks.filter(t => t.status === 'inbox').length;
     const nextCount = tasks.filter(t => t.status === 'next' && !t.deletedAt).length;
@@ -424,7 +415,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                         {selectedIdsArray.length} {t('bulk.selected')}
                     </span>
                     <div className="flex items-center gap-2">
-                        {(['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday'] as TaskStatus[]).map((status) => (
+                        {(['inbox', 'next', 'waiting', 'someday', 'done'] as TaskStatus[]).map((status) => (
                             <button
                                 key={status}
                                 onClick={() => handleBatchMove(status)}
@@ -748,8 +739,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                 </div>
             )}
 
-            {/* Only show add task for inbox/next/todo - other views are read-only */}
-            {['inbox', 'next', 'todo'].includes(statusFilter) && (
+            {/* Only show add task for inbox/next - other views are read-only */}
+            {['inbox', 'next'].includes(statusFilter) && (
                 <form onSubmit={handleAddTask} className="relative">
                     <input
                         ref={addInputRef}
@@ -768,7 +759,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                     </button>
                 </form>
             )}
-            {['inbox', 'next', 'todo'].includes(statusFilter) && !isProcessing && (
+            {['inbox', 'next'].includes(statusFilter) && !isProcessing && (
                 <p className="text-xs text-muted-foreground">
                     {t('quickAdd.help')}
                 </p>

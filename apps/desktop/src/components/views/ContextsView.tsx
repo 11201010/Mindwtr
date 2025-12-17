@@ -24,8 +24,8 @@ export function ContextsView() {
     };
 
     const filteredTasks = selectedContext
-        ? activeTasks.filter(t => matchesSelected(t, selectedContext) && t.status !== 'done' && t.status !== 'archived')
-        : activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done' && t.status !== 'archived');
+        ? activeTasks.filter(t => matchesSelected(t, selectedContext) && t.status !== 'done')
+        : activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done');
 
     return (
         <div className="flex h-full gap-6">
@@ -47,7 +47,7 @@ export function ContextsView() {
                         <Tag className="w-4 h-4" />
                         <span className="flex-1">{t('contexts.all')}</span>
                         <span className="text-xs text-muted-foreground">
-                            {activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done' && t.status !== 'archived').length}
+                            {activeTasks.filter(t => ((t.contexts?.length || 0) > 0 || (t.tags?.length || 0) > 0) && t.status !== 'done').length}
                         </span>
                     </div>
 
@@ -63,7 +63,7 @@ export function ContextsView() {
                             <span className="text-muted-foreground">@</span>
                             <span className="flex-1 truncate">{context.replace(/^@/, '')}</span>
                             <span className="text-xs text-muted-foreground">
-                                {activeTasks.filter(t => matchesSelected(t, context) && t.status !== 'done' && t.status !== 'archived').length}
+                                {activeTasks.filter(t => matchesSelected(t, context) && t.status !== 'done').length}
                             </span>
                         </div>
                     ))}

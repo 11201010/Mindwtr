@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useTaskStore, PRESET_CONTEXTS, sortTasksBy, matchesHierarchicalToken, type Task, type Project, type TaskSortBy, type TaskStatus } from '@mindwtr/core';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TaskEditModal } from '@/components/task-edit-modal';
 
 import { useTheme } from '../../../contexts/theme-context';
@@ -27,7 +26,7 @@ export default function NextActionsScreen() {
   // Get all unique contexts from tasks (merge with presets)
   const allContexts = useMemo(() => Array.from(new Set([
     ...PRESET_CONTEXTS,
-    ...tasks.filter((t) => !t.deletedAt && (t.status === 'next' || t.status === 'todo')).flatMap(t => t.contexts || []),
+    ...tasks.filter((t) => !t.deletedAt && t.status === 'next').flatMap(t => t.contexts || []),
   ])).sort(), [tasks]);
 
   const projectMap = useMemo(() => {
@@ -71,19 +70,6 @@ export default function NextActionsScreen() {
     return true;
   }), sortBy);
 
-  const todoTasks = sortTasksBy(tasks.filter(t => {
-    if (t.deletedAt) return false;
-    if (t.status !== 'todo') return false;
-    if (!matchesSelectedContext(t, selectedContext)) return false;
-    return true;
-  }), sortBy);
-
-  const handlePromote = useCallback((taskId: string) => {
-    updateTask(taskId, { status: 'next' });
-  }, [updateTask]);
-
-
-
   const onEdit = useCallback((task: Task) => {
     setEditingTask(task);
     setIsModalVisible(true);
@@ -116,7 +102,7 @@ export default function NextActionsScreen() {
       </TouchableOpacity>
       {allContexts.map(context => {
         const count = tasks.filter(t =>
-          (t.status === 'next' || t.status === 'todo') &&
+          t.status === 'next' &&
           matchesSelectedContext(t, context)
         ).length;
         return (
@@ -151,28 +137,6 @@ export default function NextActionsScreen() {
     />
   ), [onEdit, tc, updateTask, deleteTask, isDark]);
 
-  const renderTodoItem = useCallback(({ item }: { item: Task }) => (
-    <View style={[styles.todoItem, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-      <View style={styles.todoContent}>
-        <Text style={[styles.todoTitle, { color: tc.text }]} numberOfLines={2}>{item.title}</Text>
-        {item.contexts && item.contexts.length > 0 && (
-          <Text style={[
-            styles.contextBadge,
-            {
-              backgroundColor: isDark ? 'rgba(59, 130, 246, 0.18)' : '#EFF6FF',
-              color: tc.tint,
-            }
-          ]}>
-            {item.contexts[0]}
-          </Text>
-        )}
-      </View>
-      <TouchableOpacity onPress={() => handlePromote(item.id)} style={styles.promoteButton}>
-        <IconSymbol name="arrow.up.circle.fill" size={24} color="#3B82F6" />
-      </TouchableOpacity>
-    </View>
-  ), [handlePromote, tc, isDark]);
-
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       {renderContextFilter()}
@@ -194,37 +158,6 @@ export default function NextActionsScreen() {
         renderItem={renderNextItem}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          todoTasks.length > 0 ? (
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: tc.text }]}>{t('next.current')}</Text>
-            </View>
-          ) : null
-        }
-        ListFooterComponent={
-          todoTasks.length > 0 ? (
-            <View style={[styles.todoSection, { borderTopColor: tc.border }]}>
-              <View style={styles.sectionHeader}>
-                <Text style={[styles.sectionTitle, { color: tc.text }]}>{t('next.promote')} ({todoTasks.length})</Text>
-                <Text style={[styles.sectionSubtitle, { color: tc.secondaryText }]}>{t('next.promoteHint')}</Text>
-              </View>
-              <FlatList
-                data={todoTasks}
-                renderItem={renderTodoItem}
-                keyExtractor={item => item.id}
-                scrollEnabled={false}
-              />
-            </View>
-          ) : (
-            <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                {selectedContext
-                  ? `${t('next.noContext')} ${selectedContext} `
-                  : t('next.noTasks')}
-              </Text>
-            </View>
-          )
-        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={[styles.emptyText, { color: tc.secondaryText }]}>

@@ -298,21 +298,18 @@ export const TaskItem = memo(function TaskItem({
 	                                </div>
 		                                <div className="flex flex-col gap-1">
 		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.statusLabel')}</label>
-		                                    <select
-	                                        value={task.status}
-	                                        aria-label="Status"
-	                                        onChange={handleStatusChange}
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-			                                    >
-		                                        <option value="inbox">{t('status.inbox')}</option>
-		                                        <option value="todo">{t('status.todo')}</option>
-		                                        <option value="next">{t('status.next')}</option>
-		                                        <option value="in-progress">{t('status.in-progress')}</option>
-		                                        <option value="waiting">{t('status.waiting')}</option>
-		                                        <option value="someday">{t('status.someday')}</option>
-		                                        <option value="done">{t('status.done')}</option>
-		                                        <option value="archived">{t('status.archived')}</option>
-		                                    </select>
+			                                    <select
+		                                        value={task.status}
+		                                        aria-label="Status"
+		                                        onChange={handleStatusChange}
+		                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+				                                    >
+			                                        <option value="inbox">{t('status.inbox')}</option>
+			                                        <option value="next">{t('status.next')}</option>
+			                                        <option value="waiting">{t('status.waiting')}</option>
+			                                        <option value="someday">{t('status.someday')}</option>
+			                                        <option value="done">{t('status.done')}</option>
+			                                    </select>
 		                                </div>
 		                                <div className="flex flex-col gap-1">
 		                                    <label className="text-xs text-muted-foreground font-medium">{t('projects.title')}</label>
@@ -723,7 +720,7 @@ export const TaskItem = memo(function TaskItem({
                                     </div>
                                 )}
                                 {/* Task Age Indicator */}
-                                {task.status !== 'done' && task.status !== 'archived' && ageLabel && (
+                                {task.status !== 'done' && ageLabel && (
                                     <div className={cn(
                                         "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full",
                                         getTaskStaleness(task.createdAt) === 'fresh' && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -796,21 +793,18 @@ export const TaskItem = memo(function TaskItem({
 	                        >
 	                            <Pencil className="w-4 h-4" />
 	                        </button>
-	                        <select
-	                            value={task.status}
-	                            aria-label="Task status"
-	                            onChange={handleStatusChange}
-	                            className="text-xs px-2 py-1 rounded cursor-pointer bg-muted/50 text-foreground border border-border hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
-	                        >
-	                            <option value="inbox">{t('status.inbox')}</option>
-	                            <option value="todo">{t('status.todo')}</option>
-	                            <option value="next">{t('status.next')}</option>
-                            <option value="in-progress">{t('status.in-progress')}</option>
-                            <option value="someday">{t('status.someday')}</option>
-                            <option value="waiting">{t('status.waiting')}</option>
-                            <option value="done">{t('status.done')}</option>
-                            <option value="archived">{t('status.archived')}</option>
-                        </select>
+		                        <select
+		                            value={task.status}
+		                            aria-label="Task status"
+		                            onChange={handleStatusChange}
+		                            className="text-xs px-2 py-1 rounded cursor-pointer bg-muted/50 text-foreground border border-border hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
+		                        >
+		                            <option value="inbox">{t('status.inbox')}</option>
+		                            <option value="next">{t('status.next')}</option>
+	                            <option value="waiting">{t('status.waiting')}</option>
+	                            <option value="someday">{t('status.someday')}</option>
+	                            <option value="done">{t('status.done')}</option>
+	                        </select>
 
                         <button
                             onClick={() => deleteTask(task.id)}

@@ -10,13 +10,10 @@ import type { Language } from './i18n';
  */
 const STATUS_ORDER: Record<TaskStatus, number> = {
     'inbox': 0,
-    'todo': 1,
-    'next': 2,
-    'waiting': 3,
-    'someday': 4,
-    'in-progress': 5,
-    'done': 6,
-    'archived': 7,
+    'next': 1,
+    'waiting': 2,
+    'someday': 3,
+    'done': 4,
 };
 
 /**
@@ -25,18 +22,15 @@ const STATUS_ORDER: Record<TaskStatus, number> = {
  */
 export const STATUS_COLORS: Record<TaskStatus, { bg: string; text: string; border: string }> = {
     'inbox': { bg: '#6B728020', text: '#6B7280', border: '#6B7280' },
-    'todo': { bg: '#3B82F620', text: '#3B82F6', border: '#3B82F6' },
     'next': { bg: '#10B98120', text: '#10B981', border: '#10B981' },
     'waiting': { bg: '#F59E0B20', text: '#F59E0B', border: '#F59E0B' },
     'someday': { bg: '#8B5CF620', text: '#8B5CF6', border: '#8B5CF6' },
-    'in-progress': { bg: '#F9731620', text: '#F97316', border: '#F97316' },
     'done': { bg: '#22C55E20', text: '#22C55E', border: '#22C55E' },
-    'archived': { bg: '#9CA3AF20', text: '#9CA3AF', border: '#9CA3AF' },
 };
 
 /**
  * Sort tasks by status, due date, and creation time.
- * Order: inbox → todo → next → waiting → someday → in-progress → done → archived
+ * Order: inbox → next → waiting → someday → done
  * Within same status: tasks with due dates first (sorted by date), then by creation time (FIFO)
  */
 export function sortTasks(tasks: Task[]): Task[] {

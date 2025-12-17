@@ -82,7 +82,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                 'waiting': 'waiting',
                 'someday': 'someday',
                 'done': 'done',
-                'archived': 'archived',
+                'archived': 'done',
             };
             const targetView = statusViewMap[task.status] || 'next';
             onNavigate(targetView, task.id);

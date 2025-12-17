@@ -155,14 +155,14 @@ export function CalendarView() {
       if (e > s) intervals.push({ start: s, end: e });
     }
 
-    // Scheduled tasks (startTime + estimate).
-    for (const task of tasks) {
-      if (task.deletedAt) continue;
-      if (task.id === excludeTaskId) continue;
-      if (task.status === 'done' || task.status === 'archived') continue;
-      const start = task.startTime ? safeParseDate(task.startTime) : null;
-      if (!start) continue;
-      if (!isSameDay(start, day)) continue;
+	    // Scheduled tasks (startTime + estimate).
+	    for (const task of tasks) {
+	      if (task.deletedAt) continue;
+	      if (task.id === excludeTaskId) continue;
+	      if (task.status === 'done') continue;
+	      const start = task.startTime ? safeParseDate(task.startTime) : null;
+	      if (!start) continue;
+	      if (!isSameDay(start, day)) continue;
       const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
       const s = Math.max(start.getTime(), dayStart.getTime());
       const e = Math.min(start.getTime() + durMs, dayEnd.getTime());
@@ -211,13 +211,13 @@ export function CalendarView() {
       if (e > s && overlaps(startMs, endMs, s, e)) return false;
     }
 
-    for (const task of tasks) {
-      if (task.deletedAt) continue;
-      if (task.id === excludeTaskId) continue;
-      if (task.status === 'done' || task.status === 'archived') continue;
-      const start = task.startTime ? safeParseDate(task.startTime) : null;
-      if (!start) continue;
-      if (!isSameDay(start, day)) continue;
+	    for (const task of tasks) {
+	      if (task.deletedAt) continue;
+	      if (task.id === excludeTaskId) continue;
+	      if (task.status === 'done') continue;
+	      const start = task.startTime ? safeParseDate(task.startTime) : null;
+	      if (!start) continue;
+	      if (!isSameDay(start, day)) continue;
       const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
       const s = Math.max(start.getTime(), dayStart.getTime());
       const e = Math.min(start.getTime() + durMs, dayEnd.getTime());
@@ -273,18 +273,19 @@ export function CalendarView() {
       .slice(0, 6);
   }, [tasks, selectedDate]);
 
-  const todoSearchCandidates = useMemo(() => {
-    if (!selectedDate) return [];
-    const query = scheduleQuery.trim().toLowerCase();
-    if (!query) return [];
-    return tasks
-      .filter((task) => {
-        if (task.deletedAt) return false;
-        if (task.status !== 'todo') return false;
-        return task.title.toLowerCase().includes(query);
-      })
-      .slice(0, 8);
-  }, [tasks, scheduleQuery, selectedDate]);
+	  const searchCandidates = useMemo(() => {
+	    if (!selectedDate) return [];
+	    const query = scheduleQuery.trim().toLowerCase();
+	    if (!query) return [];
+	    return tasks
+	      .filter((task) => {
+	        if (task.deletedAt) return false;
+	        if (task.status === 'done') return false;
+	        if (task.status === 'next') return false;
+	        return task.title.toLowerCase().includes(query);
+	      })
+	      .slice(0, 8);
+	  }, [tasks, scheduleQuery, selectedDate]);
 
   const scheduleTaskOnSelectedDate = (taskId: string) => {
     if (!selectedDate) return;
@@ -512,7 +513,7 @@ export function CalendarView() {
     const dayEvents = getExternalEventsForDate(selectedDate);
     const allDayEvents = dayEvents.filter((e) => e.allDay);
     const timedEvents = dayEvents.filter((e) => !e.allDay);
-    const scheduledTasks = getScheduledForDate(selectedDate).filter((task) => !task.deletedAt && task.status !== 'done' && task.status !== 'archived');
+	    const scheduledTasks = getScheduledForDate(selectedDate).filter((task) => !task.deletedAt && task.status !== 'done');
 
     return (
       <View style={[styles.container, { backgroundColor: tc.bg }]}>
@@ -661,12 +662,12 @@ export function CalendarView() {
               />
             </View>
 
-            {todoSearchCandidates.length > 0 && (
-              <View style={styles.scheduleResults}>
+	            {searchCandidates.length > 0 && (
+	              <View style={styles.scheduleResults}>
                 <Text style={[styles.scheduleResultsTitle, { color: tc.secondaryText }]}>
                   {t('calendar.scheduleResults')}
                 </Text>
-                {todoSearchCandidates.map((task) => (
+	                {searchCandidates.map((task) => (
                   (() => {
                     const durationMinutes = timeEstimateToMinutes(task.timeEstimate);
                     const slot = findFreeSlotForDay(selectedDate, durationMinutes, task.id);
@@ -832,12 +833,12 @@ export function CalendarView() {
 	            </View>
 	
 	            <View style={styles.tasksList}>
-	              {todoSearchCandidates.length > 0 && (
-	                <View style={styles.scheduleResults}>
+		              {searchCandidates.length > 0 && (
+		                <View style={styles.scheduleResults}>
 	                  <Text style={[styles.scheduleResultsTitle, { color: tc.secondaryText }]}>
 	                    {t('calendar.scheduleResults')}
 	                  </Text>
-	                  {todoSearchCandidates.map((task) => (
+		                  {searchCandidates.map((task) => (
 	                    (() => {
 	                      const durationMinutes = timeEstimateToMinutes(task.timeEstimate);
 	                      const slot = findFreeSlotForDay(selectedDate, durationMinutes, task.id);

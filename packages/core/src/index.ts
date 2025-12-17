@@ -20,3 +20,4 @@ export * from './markdown';
 export * from './webdav';
 export * from './cloud';
 export * from './ics';
+export * from './task-status';

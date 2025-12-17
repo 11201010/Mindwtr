@@ -8,7 +8,7 @@ import type { Task } from './types';
  */
 export function getNextScheduledAt(task: Task, now: Date = new Date()): Date | null {
     if (task.deletedAt) return null;
-    if (task.status === 'done' || task.status === 'archived') return null;
+    if (task.status === 'done') return null;
 
     const candidates: Date[] = [];
     const start = safeParseDate(task.startTime);
@@ -38,4 +38,3 @@ export function isDueWithinMinutes(task: Task, minutes: number, now: Date = new 
     const diffMs = next.getTime() - now.getTime();
     return diffMs >= 0 && diffMs <= minutes * 60 * 1000;
 }
-

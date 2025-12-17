@@ -3,6 +3,7 @@ import { generateUUID as uuidv4 } from './uuid';
 import { Task, TaskStatus, AppData, Project } from './types';
 import { StorageAdapter, noopStorage } from './storage';
 import { createNextRecurringTask } from './recurrence';
+import { normalizeTaskForLoad } from './task-status';
 
 let storage: StorageAdapter = noopStorage;
 
@@ -13,7 +14,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
     let finalUpdates: Partial<Task> = updates;
     let nextRecurringTask: Task | null = null;
 
-    if (statusChanged && (incomingStatus === 'done' || incomingStatus === 'archived')) {
+    if (statusChanged && incomingStatus === 'done') {
         finalUpdates = {
             ...updates,
             status: incomingStatus,
@@ -21,7 +22,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
             isFocusedToday: false,
         };
         nextRecurringTask = createNextRecurringTask(oldTask, now, oldTask.status);
-    } else if (statusChanged && (oldTask.status === 'done' || oldTask.status === 'archived')) {
+    } else if (statusChanged && oldTask.status === 'done') {
         finalUpdates = {
             ...updates,
             status: incomingStatus,
@@ -170,7 +171,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         try {
             const data = await storage.getData();
             // Store ALL data including tombstones for persistence
-            const allTasks = data.tasks || [];
+            const nowIso = new Date().toISOString();
+            const allTasks = (data.tasks || []).map((task) => normalizeTaskForLoad(task, nowIso));
             const allProjects = data.projects || [];
             // Filter out soft-deleted items for UI display
             const visibleTasks = allTasks.filter(t => !t.deletedAt);
@@ -365,13 +367,12 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         let newAllTasks = get()._allTasks;
 
         if (statusChanged && (incomingStatus === 'completed' || incomingStatus === 'archived')) {
-            const taskStatus = incomingStatus === 'completed' ? 'done' : 'archived';
+            const taskStatus: TaskStatus = 'done';
             newAllTasks = newAllTasks.map(task => {
                 if (
                     task.projectId === id &&
                     !task.deletedAt &&
-                    task.status !== 'done' &&
-                    task.status !== 'archived'
+                    task.status !== 'done'
                 ) {
                     return {
                         ...task,

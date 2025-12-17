@@ -150,8 +150,8 @@ function WeeklyReviewGuideModal({ onClose }: { onClose: () => void }) {
                         <p className="text-muted-foreground">{t('review.projectsHint')}</p>
                         <div className="space-y-4">
                             {orderedProjects.map(project => {
-                                const projectTasks = tasks.filter(task => task.projectId === project.id && task.status !== 'done' && task.status !== 'archived');
-                                const hasNextAction = projectTasks.some(task => task.status === 'next' || task.status === 'todo');
+                                const projectTasks = tasks.filter(task => task.projectId === project.id && task.status !== 'done');
+                                const hasNextAction = projectTasks.some(task => task.status === 'next');
 
                                 return (
                                     <div key={project.id} className="border border-border rounded-lg p-4">
@@ -325,7 +325,7 @@ function DailyReviewGuideModal({ onClose }: { onClose: () => void }) {
     const today = new Date();
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-    const activeTasks = tasks.filter((task) => !task.deletedAt && task.status !== 'archived');
+    const activeTasks = tasks.filter((task) => !task.deletedAt);
     const inboxTasks = activeTasks.filter((task) => task.status === 'inbox');
     const focusedTasks = activeTasks.filter((task) => task.isFocusedToday && task.status !== 'done');
     const waitingDueTasks = activeTasks.filter((task) => task.status === 'waiting' && isDueForReview(task.reviewAt));
@@ -578,10 +578,10 @@ export function ReviewView() {
     }, [tasks]);
 
     const activeTasks = useMemo(() => {
-        return tasks.filter((t) => !t.deletedAt && t.status !== 'archived');
+        return tasks.filter((t) => !t.deletedAt);
     }, [tasks]);
 
-    const statusOptions: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done'];
+    const statusOptions: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
     const statusCounts = useMemo(() => {
         const counts: Record<string, number> = { all: activeTasks.length };
@@ -598,7 +598,7 @@ export function ReviewView() {
 
     const selectedIdsArray = useMemo(() => Array.from(multiSelectedIds), [multiSelectedIds]);
 
-    const bulkStatuses: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
+    const bulkStatuses: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
     const exitSelectionMode = useCallback(() => {
         setSelectionMode(false);

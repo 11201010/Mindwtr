@@ -18,7 +18,7 @@ interface TaskEditModalProps {
     onFocusMode?: (taskId: string) => void;
 }
 
-const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'todo', 'next', 'in-progress', 'waiting', 'someday', 'done', 'archived'];
+const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'done'];
 
 const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'status',
@@ -563,14 +563,13 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                         <Text style={styles.label}>{t('taskEdit.blockedByLabel')}</Text>
                         <View style={styles.suggestionsContainer}>
                             <View style={styles.suggestionTags}>
-                                {tasks
-                                    .filter(otherTask =>
-                                        otherTask.id !== task?.id &&
-                                        !otherTask.deletedAt &&
-                                        otherTask.status !== 'done' &&
-                                        otherTask.status !== 'archived'
-                                    )
-                                    .map(otherTask => {
+	                                {tasks
+	                                    .filter(otherTask =>
+	                                        otherTask.id !== task?.id &&
+	                                        !otherTask.deletedAt &&
+	                                        otherTask.status !== 'done'
+	                                    )
+	                                    .map(otherTask => {
                                         const isActive = editedTask.blockedByTaskIds?.includes(otherTask.id);
                                         return (
                                             <TouchableOpacity
@@ -859,17 +858,6 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>{focusMode ? editedTask.title || t('taskEdit.checklist') : t('taskEdit.editTask')}</Text>
                     <View style={styles.headerRight}>
-                        {!focusMode && (editedTask.status === 'next' || editedTask.status === 'todo') && (
-                            <TouchableOpacity
-                                onPress={() => {
-                                    onSave(task.id, { ...editedTask, status: 'in-progress' });
-                                    onClose();
-                                }}
-                                style={styles.startBtn}
-                            >
-                                <Text style={styles.startBtnText}>▶ {t('taskEdit.start')}</Text>
-                            </TouchableOpacity>
-                        )}
                         <TouchableOpacity onPress={handleShare}>
                             <Text style={styles.headerBtn}>{t('common.share')}</Text>
                         </TouchableOpacity>
