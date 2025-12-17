@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem};
@@ -419,12 +422,13 @@ fn set_external_calendars(app: tauri::AppHandle, calendars: Vec<ExternalCalendar
 fn read_sync_file(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let sync_path_str = get_sync_path(app)?;
     let sync_file = PathBuf::from(&sync_path_str).join(DATA_FILE_NAME);
+    let backup_file = PathBuf::from(&sync_path_str).join(format!("{}.bak", DATA_FILE_NAME));
     
     if !sync_file.exists() {
         let legacy_sync_file = PathBuf::from(&sync_path_str).join(format!("{}-sync.json", APP_NAME));
         if legacy_sync_file.exists() {
             let content = fs::read_to_string(&legacy_sync_file).map_err(|e| e.to_string())?;
-            return serde_json::from_str(&content).map_err(|e| e.to_string());
+            return parse_json_relaxed(&content).map_err(|e| e.to_string());
         }
         // Return empty app data structure if file doesn't exist
         return Ok(serde_json::json!({
@@ -434,8 +438,18 @@ fn read_sync_file(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
         }));
     }
 
-    let content = fs::read_to_string(&sync_file).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    match read_json_with_retries(&sync_file, 5) {
+        Ok(value) => Ok(value),
+        Err(primary_err) => {
+            // Fallback to last known good backup if available.
+            if backup_file.exists() {
+                if let Ok(value) = read_json_with_retries(&backup_file, 2) {
+                    return Ok(value);
+                }
+            }
+            Err(primary_err)
+        }
+    }
 }
 
 
@@ -443,15 +457,81 @@ fn read_sync_file(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 fn write_sync_file(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
     let sync_path_str = get_sync_path(app)?;
     let sync_file = PathBuf::from(&sync_path_str).join(DATA_FILE_NAME);
+    let backup_file = PathBuf::from(&sync_path_str).join(format!("{}.bak", DATA_FILE_NAME));
+    let tmp_file = PathBuf::from(&sync_path_str).join(format!("{}.tmp", DATA_FILE_NAME));
 
     if let Some(parent) = sync_file.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    fs::write(&sync_file, serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    // Best-effort backup for recovery.
+    if sync_file.exists() {
+        let _ = fs::copy(&sync_file, &backup_file);
+    }
+
+    let content = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+
+    // Atomic-ish write: write to tmp then rename over the target.
+    {
+        let mut file = File::create(&tmp_file).map_err(|e| e.to_string())?;
+        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
+
+    if cfg!(windows) && sync_file.exists() {
+        // Windows doesn't allow renaming over an existing file.
+        fs::remove_file(&sync_file).map_err(|e| e.to_string())?;
+    }
+    fs::rename(&tmp_file, &sync_file).map_err(|e| e.to_string())?;
     
     Ok(true)
+}
+
+fn sanitize_json_text(raw: &str) -> String {
+    // Strip BOM and trailing NULs (can occur with partial writes / filesystem quirks).
+    let mut text = raw.trim_start_matches('\u{FEFF}').to_string();
+    while text.ends_with('\u{0}') {
+        text.pop();
+    }
+    text
+}
+
+fn parse_json_relaxed(raw: &str) -> Result<Value, serde_json::Error> {
+    let sanitized = sanitize_json_text(raw);
+    match serde_json::from_str::<Value>(&sanitized) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            // If trailing characters are present, try parsing up to the last closing bracket.
+            if err.to_string().contains("trailing characters") {
+                if let Some(pos) = sanitized.rfind(|c| c == '}' || c == ']') {
+                    let candidate = &sanitized[..=pos];
+                    if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+                        return Ok(value);
+                    }
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+fn read_json_with_retries(path: &Path, attempts: usize) -> Result<Value, String> {
+    let mut last_err: Option<String> = None;
+    for attempt in 0..attempts {
+        match fs::read_to_string(path) {
+            Ok(content) => match parse_json_relaxed(&content) {
+                Ok(value) => return Ok(value),
+                Err(e) => last_err = Some(e.to_string()),
+            },
+            Err(e) => last_err = Some(e.to_string()),
+        }
+
+        // Small backoff to allow other writers (Syncthing) to finish replacing the file.
+        if attempt + 1 < attempts {
+            std::thread::sleep(Duration::from_millis(120 + (attempt as u64) * 80));
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "Failed to read sync file".to_string()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
