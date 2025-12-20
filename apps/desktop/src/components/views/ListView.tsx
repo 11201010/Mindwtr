@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Plus, Play, X, Trash2, Moon, User, CheckCircle } from 'lucide-react';
-import { useTaskStore, TaskStatus, Task, PRESET_CONTEXTS, sortTasksBy, Project, parseQuickAdd, isTaskBlocked, matchesHierarchicalToken } from '@mindwtr/core';
+import { useTaskStore, TaskStatus, Task, PRESET_CONTEXTS, sortTasksBy, Project, parseQuickAdd, isTaskBlocked, matchesHierarchicalToken, safeParseDate } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
 import { cn } from '../../lib/utils';
@@ -77,12 +77,18 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     }, [tasks, projects]);
 
     const filteredTasks = useMemo(() => {
+        const now = new Date();
         const filtered = tasks.filter(t => {
             // Always filter out soft-deleted tasks
             if (t.deletedAt) return false;
 
             if (statusFilter !== 'all' && t.status !== statusFilter) return false;
             // Respect statusFilter (handled above).
+
+            if (statusFilter === 'inbox') {
+                const start = safeParseDate(t.startTime);
+                if (start && start > now) return false;
+            }
 
             // Sequential project filter: for 'next' status, only show first task from sequential projects
             if (statusFilter === 'next' && t.projectId) {
@@ -361,7 +367,12 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 
     const showContextFilter = ['next', 'all'].includes(statusFilter);
     const isInbox = statusFilter === 'inbox';
-    const inboxCount = tasks.filter(t => t.status === 'inbox').length;
+    const inboxCount = tasks.filter(t => {
+        if (t.status !== 'inbox' || t.deletedAt) return false;
+        const start = safeParseDate(t.startTime);
+        if (start && start > new Date()) return false;
+        return true;
+    }).length;
     const nextCount = tasks.filter(t => t.status === 'next' && !t.deletedAt).length;
     const isNextView = statusFilter === 'next';
     const NEXT_WARNING_THRESHOLD = 15;

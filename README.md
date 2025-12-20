@@ -24,7 +24,7 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 - **Capture** - Quick add tasks from anywhere (global hotkey, tray, share sheet)
 - **Clarify** - Guided inbox processing with 2-minute rule
 - **Organize** - Projects, contexts, and status lists
-- **Reflect** - Weekly review wizard
+- **Reflect** - Weekly review wizard with reminders
 - **Engage** - Context-filtered next actions
 
 ### Views
@@ -47,6 +47,7 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 - ✏️ **Markdown Notes** - Rich text descriptions with preview
 - 🔔 **Notifications** - Due date reminders with snooze
 - 📊 **Daily Digest** - Morning briefing + evening review
+- 📅 **Weekly Review** - Customizable weekly reminder
 
 ### Data & Sync
 - 📁 **File Sync** - Dropbox, Google Drive, Syncthing, etc.

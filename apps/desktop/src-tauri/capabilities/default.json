@@ -10,6 +10,7 @@
     "dialog:default",
     "fs:default",
     "global-shortcut:default",
+    "shell:default",
     {
       "identifier": "http:default",
       "allow": [

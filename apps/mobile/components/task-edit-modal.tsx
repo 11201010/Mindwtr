@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
-import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView, Share } from 'react-native';
+import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView, Share, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Attachment, Task, TaskEditorFieldId, TaskStatus, TimeEstimate, useTaskStore, generateUUID, PRESET_TAGS, RecurrenceRule, RECURRENCE_RULES } from '@mindwtr/core';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -177,6 +177,38 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
             uri: asset.uri,
             mimeType: asset.mimeType,
             size: asset.size,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setEditedTask((prev) => ({ ...prev, attachments: [...(prev.attachments || []), attachment] }));
+    };
+
+    const addImageAttachment = async () => {
+        let imagePicker: typeof import('expo-image-picker') | null = null;
+        try {
+            imagePicker = await import('expo-image-picker');
+        } catch (error) {
+            console.warn('Image picker unavailable', error);
+            Alert.alert(t('attachments.photoUnavailableTitle'), t('attachments.photoUnavailableBody'));
+            return;
+        }
+
+        const permission = await imagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) return;
+        const result = await imagePicker.launchImageLibraryAsync({
+            mediaTypes: imagePicker.MediaTypeOptions.Images,
+            quality: 0.9,
+        });
+        if (result.canceled) return;
+        const asset = result.assets[0];
+        const now = new Date().toISOString();
+        const attachment: Attachment = {
+            id: generateUUID(),
+            kind: 'file',
+            title: asset.fileName || asset.uri.split('/').pop() || 'image',
+            uri: asset.uri,
+            mimeType: asset.mimeType,
+            size: (asset as { fileSize?: number }).fileSize,
             createdAt: now,
             updatedAt: now,
         };
@@ -377,42 +409,33 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
         ...effectivePresets.map((value) => ({ value, label: formatTimeEstimateLabel(value) })),
     ];
 
+    const orderKey = (settings.gtd?.taskEditor?.order ?? []).join('|');
+    const hiddenKey = (settings.gtd?.taskEditor?.hidden ?? []).join('|');
+
     const taskEditorOrder = useMemo(() => {
         const saved = settings.gtd?.taskEditor?.order ?? [];
         const known = new Set(DEFAULT_TASK_EDITOR_ORDER);
         const normalized = saved.filter((id) => known.has(id));
         const missing = DEFAULT_TASK_EDITOR_ORDER.filter((id) => !normalized.includes(id));
         return [...normalized, ...missing];
-    }, [settings.gtd?.taskEditor?.order]);
+    }, [orderKey]);
 
     const hiddenSet = useMemo(() => {
         const saved = settings.gtd?.taskEditor?.hidden ?? DEFAULT_TASK_EDITOR_HIDDEN;
         const known = new Set(taskEditorOrder);
         return new Set(saved.filter((id) => known.has(id)));
-    }, [settings.gtd?.taskEditor?.hidden, taskEditorOrder]);
+    }, [hiddenKey, taskEditorOrder]);
 
-    const hasFieldValue = useCallback((fieldId: TaskEditorFieldId) => {
-        if (fieldId === 'status') return true;
-        if (fieldId === 'contexts') return (editedTask.contexts?.length ?? 0) > 0;
-        if (fieldId === 'tags') return (editedTask.tags?.length ?? 0) > 0;
-        if (fieldId === 'blockedBy') return (editedTask.blockedByTaskIds?.length ?? 0) > 0;
-        if (fieldId === 'timeEstimate') return Boolean(editedTask.timeEstimate);
-        if (fieldId === 'recurrence') return Boolean(editedTask.recurrence);
-        if (fieldId === 'startTime') return Boolean(editedTask.startTime);
-        if (fieldId === 'dueDate') return Boolean(editedTask.dueDate);
-        if (fieldId === 'reviewAt') return Boolean(editedTask.reviewAt);
-        if (fieldId === 'description') return Boolean((editedTask.description ?? '').trim());
-        if (fieldId === 'attachments') return (visibleAttachments.length ?? 0) > 0;
-        if (fieldId === 'checklist') return (editedTask.checklist?.length ?? 0) > 0;
-        return false;
-    }, [editedTask, visibleAttachments]);
+    useEffect(() => {
+        setShowMoreOptions(false);
+    }, [orderKey, hiddenKey]);
 
     const compactFieldIds = useMemo(() => {
-        return taskEditorOrder.filter((fieldId) => !hiddenSet.has(fieldId) || hasFieldValue(fieldId));
-    }, [taskEditorOrder, hiddenSet, hasFieldValue]);
+        return taskEditorOrder.filter((fieldId) => !hiddenSet.has(fieldId));
+    }, [taskEditorOrder, hiddenSet]);
 
     const fieldIdsToRender = showMoreOptions ? taskEditorOrder : compactFieldIds;
-    const hasHiddenFields = compactFieldIds.length < taskEditorOrder.length;
+    const hasHiddenFields = hiddenSet.size > 0;
 
     const recurrenceOptions: { value: RecurrenceRule | ''; label: string }[] = [
         { value: '', label: t('recurrence.none') },
@@ -742,6 +765,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode }: T
                                     style={[styles.smallButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                                 >
                                     <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addFile')}</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={addImageAttachment}
+                                    style={[styles.smallButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                                >
+                                    <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addPhoto')}</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     onPress={() => setLinkModalVisible(true)}

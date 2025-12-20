@@ -6,6 +6,7 @@ import {
     Database,
     ExternalLink,
     Info,
+    ListChecks,
     Monitor,
     RefreshCw,
 } from 'lucide-react';
@@ -20,7 +21,7 @@ import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL } from '../../lib
 import { cn } from '../../lib/utils';
 
 type ThemeMode = 'system' | 'light' | 'dark';
-type SettingsPage = 'main' | 'notifications' | 'sync' | 'calendar' | 'about';
+type SettingsPage = 'main' | 'gtd' | 'notifications' | 'sync' | 'calendar' | 'about';
 
 const THEME_STORAGE_KEY = 'mindwtr-theme';
 
@@ -46,6 +47,9 @@ export function SettingsView() {
     const dailyDigestEveningEnabled = settings?.dailyDigestEveningEnabled === true;
     const dailyDigestMorningTime = settings?.dailyDigestMorningTime || '09:00';
     const dailyDigestEveningTime = settings?.dailyDigestEveningTime || '20:00';
+    const autoArchiveDays = Number.isFinite(settings?.gtd?.autoArchiveDays)
+        ? Math.max(0, Math.floor(settings?.gtd?.autoArchiveDays as number))
+        : 7;
 
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -243,14 +247,32 @@ export function SettingsView() {
         }
     };
 
-    const handleDownloadUpdate = () => {
-        if (updateInfo?.downloadUrl) {
-            window.open(updateInfo.downloadUrl, '_blank');
-        } else if (updateInfo?.releaseUrl) {
-            window.open(updateInfo.releaseUrl, '_blank');
-        } else {
-            window.open(GITHUB_RELEASES_URL, '_blank');
+    const handleDownloadUpdate = async () => {
+        const targetUrl = updateInfo?.downloadUrl || updateInfo?.releaseUrl || GITHUB_RELEASES_URL;
+
+        try {
+            if (isTauriRuntime()) {
+                const { open } = await import('@tauri-apps/plugin-shell');
+                await open(targetUrl);
+            } else {
+                window.open(targetUrl, '_blank');
+            }
+        } catch (error) {
+            console.error('Failed to open update URL:', error);
+            window.open(targetUrl, '_blank');
         }
+
+        if (isTauriRuntime()) {
+            try {
+                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+                if (/linux/i.test(userAgent)) {
+                    alert(t.linuxUpdateHint);
+                }
+            } catch (error) {
+                console.error('Failed to detect platform:', error);
+            }
+        }
+
         setShowUpdateModal(false);
     };
 
@@ -261,6 +283,11 @@ export function SettingsView() {
             subtitle: 'Customize your Mindwtr experience',
             back: 'Back',
             appearance: 'Appearance',
+            gtd: 'GTD',
+            gtdDesc: 'Tune the GTD workflow defaults.',
+            autoArchive: 'Auto-archive done tasks',
+            autoArchiveDesc: 'Move completed tasks to Archived after a set number of days.',
+            autoArchiveNever: 'Never (keep in Done)',
             language: 'Language',
             keybindings: 'Keyboard Shortcuts',
             keybindingsDesc: 'Choose your preferred desktop keybinding style.',
@@ -328,6 +355,7 @@ export function SettingsView() {
             changelog: 'Changelog',
             noChangelog: 'No changelog available',
             later: 'Later',
+            linuxUpdateHint: 'On Linux, Mindwtr cannot auto-install updates. After downloading, install via your package manager (e.g., yay -S mindwtr or paru -S mindwtr) or the downloaded package.',
             saved: 'Settings saved',
             selectSyncFolderTitle: 'Select sync folder',
             system: 'System',
@@ -340,6 +368,11 @@ export function SettingsView() {
             subtitle: '自定义您的 Mindwtr 体验',
             back: '返回',
             appearance: '外观',
+            gtd: 'GTD',
+            gtdDesc: '调整 GTD 工作流默认设置。',
+            autoArchive: '自动归档完成任务',
+            autoArchiveDesc: '在设定天数后将已完成任务移入归档。',
+            autoArchiveNever: '从不（保留在已完成）',
             language: '语言',
             keybindings: '快捷键',
             keybindingsDesc: '选择桌面端偏好的快捷键风格。',
@@ -407,6 +440,7 @@ export function SettingsView() {
             changelog: '更新日志',
             noChangelog: '暂无更新日志',
             later: '稍后',
+            linuxUpdateHint: 'Linux 上无法自动安装更新。下载后请使用包管理器更新（如 yay -S mindwtr 或 paru -S mindwtr），或安装下载的包。',
             saved: '设置已保存',
             selectSyncFolderTitle: '选择同步文件夹',
             system: '系统',
@@ -423,15 +457,17 @@ export function SettingsView() {
     const lastSyncDisplay = lastSyncAt ? safeFormatDate(lastSyncAt, 'PPpp', lastSyncAt) : t.lastSyncNever;
     const conflictCount = (lastSyncStats?.tasks.conflicts || 0) + (lastSyncStats?.projects.conflicts || 0);
 
-    const pageTitle = page === 'notifications'
-        ? t.notifications
-        : page === 'sync'
-            ? t.sync
-            : page === 'calendar'
-                ? t.calendar
-                : page === 'about'
-                    ? t.about
-                    : t.general;
+    const pageTitle = page === 'gtd'
+        ? t.gtd
+        : page === 'notifications'
+            ? t.notifications
+            : page === 'sync'
+                ? t.sync
+                : page === 'calendar'
+                    ? t.calendar
+                    : page === 'about'
+                        ? t.about
+                        : t.general;
 
     const navItems: Array<{
         id: SettingsPage;
@@ -440,6 +476,7 @@ export function SettingsView() {
         description?: string;
     }> = [
         { id: 'main', icon: Monitor, label: t.general, description: `${t.appearance} • ${t.language} • ${t.keybindings}` },
+        { id: 'gtd', icon: ListChecks, label: t.gtd, description: t.gtdDesc },
         { id: 'notifications', icon: Bell, label: t.notifications },
         { id: 'sync', icon: Database, label: t.sync },
         { id: 'calendar', icon: CalendarDays, label: t.calendar },
@@ -516,6 +553,48 @@ export function SettingsView() {
                                 >
                                     {t.viewShortcuts}
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        if (page === 'gtd') {
+            const autoArchiveOptions = [0, 1, 3, 7, 14, 30, 60];
+            const formatArchiveLabel = (days: number) => {
+                if (days <= 0) return t.autoArchiveNever;
+                return language === 'zh' ? `${days} 天` : `${days} days`;
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="bg-card border border-border rounded-lg divide-y divide-border">
+                        <div className="p-4 flex items-center justify-between gap-6">
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium">{t.autoArchive}</div>
+                                <div className="text-xs text-muted-foreground mt-1">{t.autoArchiveDesc}</div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <select
+                                    value={autoArchiveDays}
+                                    onChange={(e) => {
+                                        const value = Number.parseInt(e.target.value, 10);
+                                        updateSettings({
+                                            gtd: {
+                                                ...(settings.gtd ?? {}),
+                                                autoArchiveDays: Number.isFinite(value) ? value : 7,
+                                            },
+                                        }).then(showSaved).catch(console.error);
+                                    }}
+                                    className="text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                >
+                                    {autoArchiveOptions.map((days) => (
+                                        <option key={days} value={days}>
+                                            {formatArchiveLabel(days)}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                     </div>

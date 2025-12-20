@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { View, TextInput, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl, ScrollView, Modal, Pressable } from 'react-native';
 import { router } from 'expo-router';
-import { useTaskStore, Task, TaskStatus, sortTasksBy, parseQuickAdd, isTaskBlocked } from '@mindwtr/core';
+import { useTaskStore, Task, TaskStatus, sortTasksBy, parseQuickAdd, isTaskBlocked, safeParseDate } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 
 
@@ -65,12 +65,17 @@ export function TaskList({
 
   // Memoize filtered and sorted tasks for performance
   const filteredTasks = useMemo(() => {
+    const now = new Date();
     const filtered = tasks.filter(t => {
       // Filter out soft-deleted tasks
       if (t.deletedAt) return false;
       const matchesStatus = statusFilter === 'all' ? true : t.status === statusFilter;
       const matchesProject = projectId ? t.projectId === projectId : true;
       if (statusFilter === 'next' && isTaskBlocked(t, tasksById)) return false;
+      if (statusFilter === 'inbox') {
+        const start = safeParseDate(t.startTime);
+        if (start && start > now) return false;
+      }
       return matchesStatus && matchesProject;
     });
     return sortTasksBy(filtered, sortBy);

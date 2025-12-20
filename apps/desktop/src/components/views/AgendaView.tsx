@@ -70,11 +70,13 @@ export function AgendaView() {
         const canFocus = task.isFocusedToday || focusedCount < 3;
         const ageLabel = getTaskAgeLabel(task.createdAt, language);
         const staleness = getTaskStaleness(task.createdAt);
+        const focusTextClass = task.isFocusedToday ? "text-slate-100" : "text-foreground";
+        const focusMutedClass = task.isFocusedToday ? "text-slate-300" : "text-muted-foreground";
 
         return (
             <div className={cn(
                 "bg-card border rounded-lg p-4 hover:shadow-md transition-all",
-                task.isFocusedToday && "border-yellow-500 bg-yellow-50/50 dark:bg-yellow-950/20"
+                task.isFocusedToday && "border-yellow-500 bg-slate-900/90 text-slate-100"
             )}>
                 <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
@@ -82,6 +84,7 @@ export function AgendaView() {
                             {task.isFocusedToday && <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />}
                             <span className={cn(
                                 "font-medium truncate",
+                                focusTextClass,
                                 task.status === 'done' && "line-through text-muted-foreground"
                             )}>
                                 {task.title}
@@ -103,7 +106,7 @@ export function AgendaView() {
                             )}
 
                             {task.dueDate && (
-                                <span className="flex items-center gap-1 text-muted-foreground">
+                                <span className={cn("flex items-center gap-1", focusMutedClass)}>
                                     <Calendar className="w-3 h-3" />
                                     {safeFormatDate(task.dueDate, 'P')}
                                 </span>
@@ -123,7 +126,7 @@ export function AgendaView() {
                             )}
 
                             {task.contexts?.slice(0, 2).map(ctx => (
-                                <span key={ctx} className="text-muted-foreground">{ctx}</span>
+                                <span key={ctx} className={focusMutedClass}>{ctx}</span>
                             ))}
                         </div>
                     </div>
@@ -209,11 +212,11 @@ export function AgendaView() {
             </header>
 
             {/* Today's Focus Section */}
-            <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950/20 dark:to-orange-950/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-6">
-                <h3 className="font-bold text-lg flex items-center gap-2 mb-4">
+            <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950/60 dark:to-orange-950/40 border border-yellow-200 dark:border-yellow-700 rounded-xl p-6">
+                <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-900 dark:text-slate-900">
                     <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
                     {t('agenda.todaysFocus')}
-                    <span className="text-sm font-normal text-muted-foreground">
+                    <span className="text-sm font-normal text-slate-600">
                         ({focusedCount}/3)
                     </span>
                 </h3>

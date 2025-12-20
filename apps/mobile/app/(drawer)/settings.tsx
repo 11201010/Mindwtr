@@ -45,6 +45,7 @@ type SettingsScreen =
     | 'notifications'
     | 'calendar'
     | 'gtd'
+    | 'gtd-archive'
     | 'gtd-time-estimates'
     | 'gtd-task-editor'
     | 'sync'
@@ -70,6 +71,7 @@ export default function SettingsPage() {
     const [cloudToken, setCloudToken] = useState('');
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
     const [digestTimePicker, setDigestTimePicker] = useState<'morning' | 'evening' | null>(null);
+    const [weeklyReviewTimePicker, setWeeklyReviewTimePicker] = useState(false);
     const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
     const [newCalendarName, setNewCalendarName] = useState('');
     const [newCalendarUrl, setNewCalendarUrl] = useState('');
@@ -80,11 +82,17 @@ export default function SettingsPage() {
     const dailyDigestEveningEnabled = settings.dailyDigestEveningEnabled === true;
     const dailyDigestMorningTime = settings.dailyDigestMorningTime || '09:00';
     const dailyDigestEveningTime = settings.dailyDigestEveningTime || '20:00';
+    const weeklyReviewEnabled = settings.weeklyReviewEnabled === true;
+    const weeklyReviewTime = settings.weeklyReviewTime || '18:00';
+    const weeklyReviewDay = Number.isFinite(settings.weeklyReviewDay) ? settings.weeklyReviewDay as number : 0;
     const defaultTimeEstimatePresets: TimeEstimate[] = ['10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
     const timeEstimateOptions: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
     const timeEstimatePresets: TimeEstimate[] = (settings.gtd?.timeEstimatePresets?.length
         ? settings.gtd.timeEstimatePresets
         : defaultTimeEstimatePresets) as TimeEstimate[];
+    const autoArchiveDays = Number.isFinite(settings.gtd?.autoArchiveDays)
+        ? Math.max(0, Math.floor(settings.gtd?.autoArchiveDays as number))
+        : 7;
 
     const formatTimeEstimateLabel = (value: TimeEstimate) => {
         if (value === '5min') return '5m';
@@ -99,6 +107,7 @@ export default function SettingsPage() {
     };
 
     const formatTime = (time: string) => time;
+    const locale = language === 'zh' ? 'zh-CN' : 'en-US';
     const toTimePickerDate = (time: string) => {
         const [hours, minutes] = time.split(':').map((v) => parseInt(v, 10));
         const date = new Date();
@@ -118,6 +127,28 @@ export default function SettingsPage() {
         } else {
             updateSettings({ dailyDigestEveningTime: value }).catch(console.error);
         }
+    };
+
+    const onWeeklyReviewTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
+        setWeeklyReviewTimePicker(false);
+        if (!selected) return;
+        const hours = String(selected.getHours()).padStart(2, '0');
+        const minutes = String(selected.getMinutes()).padStart(2, '0');
+        updateSettings({ weeklyReviewTime: `${hours}:${minutes}` }).catch(console.error);
+    };
+
+    const getWeekdayLabel = (dayIndex: number) => {
+        const base = new Date(2024, 0, 7 + dayIndex);
+        return base.toLocaleDateString(locale, { weekday: 'long' });
+    };
+
+    const selectWeeklyReviewDay = () => {
+        const options = Array.from({ length: 7 }, (_, idx) => ({
+            text: getWeekdayLabel(idx),
+            onPress: () => updateSettings({ weeklyReviewDay: idx }).catch(console.error),
+        }));
+        options.push({ text: t('common.cancel'), style: 'cancel' });
+        Alert.alert(t('settings.weeklyReviewDay'), '', options);
     };
 
     // Load sync path on mount
@@ -158,7 +189,7 @@ export default function SettingsPage() {
     useEffect(() => {
         const onBackPress = () => {
             if (currentScreen !== 'main') {
-                if (currentScreen === 'gtd-time-estimates' || currentScreen === 'gtd-task-editor') {
+                if (currentScreen === 'gtd-time-estimates' || currentScreen === 'gtd-task-editor' || currentScreen === 'gtd-archive') {
                     setCurrentScreen('gtd');
                 } else {
                     setCurrentScreen('main');
@@ -508,6 +539,53 @@ export default function SettingsPage() {
                         </TouchableOpacity>
                     </View>
 
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                        <View style={styles.settingRow}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.weeklyReview')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.weeklyReviewDesc')}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={weeklyReviewEnabled}
+                                onValueChange={(value) => updateSettings({ weeklyReviewEnabled: value }).catch(console.error)}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                                disabled={!notificationsEnabled}
+                            />
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={selectWeeklyReviewDay}
+                            disabled={!weeklyReviewEnabled || !notificationsEnabled}
+                        >
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text, opacity: weeklyReviewEnabled ? 1 : 0.5 }]}>
+                                    {t('settings.weeklyReviewDay')}
+                                </Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText, opacity: weeklyReviewEnabled ? 1 : 0.5 }]}>
+                                    {getWeekdayLabel(weeklyReviewDay)}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => setWeeklyReviewTimePicker(true)}
+                            disabled={!weeklyReviewEnabled || !notificationsEnabled}
+                        >
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text, opacity: weeklyReviewEnabled ? 1 : 0.5 }]}>
+                                    {t('settings.weeklyReviewTime')}
+                                </Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText, opacity: weeklyReviewEnabled ? 1 : 0.5 }]}>
+                                    {formatTime(weeklyReviewTime)}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+
                     {digestTimePicker && (
                         <DateTimePicker
                             value={toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
@@ -521,6 +599,23 @@ export default function SettingsPage() {
                                     }
                                 }
                                 onDigestTimeChange(event, date);
+                            }}
+                        />
+                    )}
+
+                    {weeklyReviewTimePicker && (
+                        <DateTimePicker
+                            value={toTimePickerDate(weeklyReviewTime)}
+                            mode="time"
+                            display="default"
+                            onChange={(event, date) => {
+                                if (Platform.OS === 'android') {
+                                    if (event.type === 'dismissed') {
+                                        setWeeklyReviewTimePicker(false);
+                                        return;
+                                    }
+                                }
+                                onWeeklyReviewTimeChange(event, date);
                             }}
                         />
                     )}
@@ -544,9 +639,55 @@ export default function SettingsPage() {
                             onPress={() => setCurrentScreen('gtd-time-estimates')}
                         />
                         <MenuItem
+                            title={t('settings.autoArchive')}
+                            onPress={() => setCurrentScreen('gtd-archive')}
+                        />
+                        <MenuItem
                             title={t('settings.taskEditorLayout')}
                             onPress={() => setCurrentScreen('gtd-task-editor')}
                         />
+                    </View>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
+
+    // ============ GTD: AUTO ARCHIVE ============
+    if (currentScreen === 'gtd-archive') {
+        const autoArchiveOptions = [0, 1, 3, 7, 14, 30, 60];
+        const formatAutoArchiveLabel = (days: number) => {
+            if (days <= 0) return t('settings.autoArchiveNever');
+            return language === 'zh' ? `${days} 天` : `${days} days`;
+        };
+
+        const handleSelectArchive = (days: number) => {
+            updateSettings({
+                gtd: {
+                    ...(settings.gtd ?? {}),
+                    autoArchiveDays: days,
+                },
+            }).catch(console.error);
+        };
+
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SubHeader title={t('settings.autoArchive')} />
+                <ScrollView style={styles.scrollView}>
+                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.autoArchiveDesc')}</Text>
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
+                        {autoArchiveOptions.map((days, idx) => {
+                            const selected = autoArchiveDays === days;
+                            return (
+                                <TouchableOpacity
+                                    key={days}
+                                    style={[styles.settingRow, idx > 0 && { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={() => handleSelectArchive(days)}
+                                >
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{formatAutoArchiveLabel(days)}</Text>
+                                    {selected && <Text style={{ color: '#3B82F6', fontSize: 20 }}>✓</Text>}
+                                </TouchableOpacity>
+                            );
+                        })}
                     </View>
                 </ScrollView>
             </SafeAreaView>

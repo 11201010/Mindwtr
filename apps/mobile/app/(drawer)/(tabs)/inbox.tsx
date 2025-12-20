@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, TextInput, Platform } from 'react-native';
 
-import { useTaskStore, PRESET_CONTEXTS, safeFormatDate } from '@mindwtr/core';
+import { useTaskStore, PRESET_CONTEXTS, safeFormatDate, safeParseDate, type Task } from '@mindwtr/core';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { TaskList } from '../../../components/task-list';
 
 import { useLanguage } from '../../../contexts/language-context';
@@ -19,11 +20,19 @@ export default function InboxScreen() {
   const [newContext, setNewContext] = useState('');
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [waitingNote, setWaitingNote] = useState('');
+  const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
 
   const { isDark } = useTheme();
   const tc = useThemeColors();
 
-  const inboxTasks = tasks.filter(t => t.status === 'inbox' && !t.deletedAt);
+  const inboxTasks = tasks.filter(t => {
+    if (t.deletedAt) return false;
+    if (t.status !== 'inbox') return false;
+    const start = safeParseDate(t.startTime);
+    if (start && start > new Date()) return false;
+    return true;
+  });
   const processingQueue = inboxTasks.filter(t => !skippedIds.has(t.id));
   const currentTask = processingQueue[currentIndex] || null;
   const totalCount = inboxTasks.length;
@@ -34,6 +43,7 @@ export default function InboxScreen() {
     setCurrentIndex(0);
     setProcessingStep('actionable');
     setSkippedIds(new Set());
+    setPendingStartDate(null);
   };
 
   const processButton = inboxTasks.length > 0 ? (
@@ -53,11 +63,13 @@ export default function InboxScreen() {
     if (currentIndex + 1 < processingQueue.length) {
       setCurrentIndex(currentIndex + 1);
       setProcessingStep('actionable');
+      setPendingStartDate(null);
     } else {
       // Done processing
       setIsProcessing(false);
       setCurrentIndex(0);
       setSkippedIds(new Set());
+      setPendingStartDate(null);
     }
   };
 
@@ -110,10 +122,14 @@ export default function InboxScreen() {
 
   const handleConfirmWaitingMobile = () => {
     if (currentTask) {
-      updateTask(currentTask.id, {
+      const updates: Partial<Task> = {
         status: 'waiting',
-        description: waitingNote || currentTask.description
-      });
+        description: waitingNote || currentTask.description,
+      };
+      if (pendingStartDate) {
+        updates.startTime = pendingStartDate.toISOString();
+      }
+      updateTask(currentTask.id, updates);
     }
     setWaitingNote('');
     moveToNext();
@@ -142,11 +158,15 @@ export default function InboxScreen() {
   const handleSetProject = (projectId: string | null) => {
     if (!currentTask) return;
 
-    updateTask(currentTask.id, {
+    const updates: Partial<Task> = {
       status: 'next',
       contexts: selectedContexts,
-      projectId: projectId || undefined
-    });
+      projectId: projectId || undefined,
+    };
+    if (pendingStartDate) {
+      updates.startTime = pendingStartDate.toISOString();
+    }
+    updateTask(currentTask.id, updates);
     setSelectedContexts([]);
     moveToNext();
   };
@@ -342,11 +362,35 @@ export default function InboxScreen() {
                   {t('inbox.whatNext')}
                 </Text>
 
+                <View style={styles.startDateRow}>
+                  <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
+                    {t('taskEdit.startDateLabel')} ({t('common.notSet')})
+                  </Text>
+                  <View style={styles.startDateActions}>
+                    <TouchableOpacity
+                      style={[styles.startDateButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                      onPress={() => setShowStartDatePicker(true)}
+                    >
+                      <Text style={[styles.startDateButtonText, { color: tc.text }]}>
+                        {pendingStartDate ? safeFormatDate(pendingStartDate.toISOString(), 'P') : t('common.notSet')}
+                      </Text>
+                    </TouchableOpacity>
+                    {pendingStartDate && (
+                      <TouchableOpacity
+                        style={[styles.startDateClear, { borderColor: tc.border }]}
+                        onPress={() => setPendingStartDate(null)}
+                      >
+                        <Text style={[styles.startDateClearText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+
                 <View style={styles.buttonColumn}>
                   <TouchableOpacity
-	                    style={[styles.bigButton, styles.buttonPrimary]}
-	                    onPress={() => handleDecision('defer')}
-	                  >
+		                    style={[styles.bigButton, styles.buttonPrimary]}
+		                    onPress={() => handleDecision('defer')}
+		                  >
 	                    <Text style={styles.bigButtonText}>📋 {t('inbox.illDoIt')}</Text>
 	                  </TouchableOpacity>
 	                  <TouchableOpacity
@@ -357,6 +401,27 @@ export default function InboxScreen() {
 	                  </TouchableOpacity>
                 </View>
               </View>
+            )}
+
+            {showStartDatePicker && (
+              <DateTimePicker
+                value={pendingStartDate ?? new Date()}
+                mode="date"
+                display="default"
+                onChange={(event, date) => {
+                  if (Platform.OS === 'android') {
+                    if (event.type === 'dismissed') {
+                      setShowStartDatePicker(false);
+                      return;
+                    }
+                  }
+                  setShowStartDatePicker(false);
+                  if (!date) return;
+                  const next = new Date(date);
+                  next.setHours(9, 0, 0, 0);
+                  setPendingStartDate(next);
+                }}
+              />
             )}
 
 	            {processingStep === 'waiting-note' && (
@@ -569,6 +634,35 @@ const styles = StyleSheet.create({
   stepHint: {
     fontSize: 14,
     textAlign: 'center',
+  },
+  startDateRow: {
+    gap: 8,
+    alignItems: 'center',
+  },
+  startDateActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  startDateButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  startDateButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  startDateClear: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  startDateClearText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   buttonRow: {
     flexDirection: 'row',

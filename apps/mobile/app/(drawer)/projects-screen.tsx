@@ -19,6 +19,7 @@ export default function ProjectsScreen() {
   const { t } = useLanguage();
   const tc = useThemeColors();
   const [newProjectTitle, setNewProjectTitle] = useState('');
+  const [newProjectArea, setNewProjectArea] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [notesExpanded, setNotesExpanded] = useState(false);
   const [showNotesPreview, setShowNotesPreview] = useState(false);
@@ -61,8 +62,11 @@ export default function ProjectsScreen() {
 
   const handleAddProject = () => {
     if (newProjectTitle.trim()) {
-      addProject(newProjectTitle, selectedColor);
+      addProject(newProjectTitle, selectedColor, {
+        areaTitle: newProjectArea.trim() || undefined,
+      });
       setNewProjectTitle('');
+      setNewProjectArea('');
     }
   };
 
@@ -199,6 +203,15 @@ export default function ProjectsScreen() {
           placeholderTextColor={tc.secondaryText}
           value={newProjectTitle}
           onChangeText={setNewProjectTitle}
+          onSubmitEditing={handleAddProject}
+          returnKeyType="done"
+        />
+        <TextInput
+          style={[styles.input, { borderColor: tc.border, backgroundColor: tc.inputBg, color: tc.text, marginTop: 8 }]}
+          placeholder={t('projects.areaPlaceholder')}
+          placeholderTextColor={tc.secondaryText}
+          value={newProjectArea}
+          onChangeText={setNewProjectArea}
           onSubmitEditing={handleAddProject}
           returnKeyType="done"
         />

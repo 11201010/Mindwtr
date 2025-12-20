@@ -14,6 +14,7 @@ import { setStorageAdapter, useTaskStore, flushPendingSave } from '@mindwtr/core
 import { mobileStorage } from '../lib/storage-adapter';
 import { startMobileNotifications, stopMobileNotifications } from '../lib/notification-service';
 import { performMobileSync } from '../lib/sync-service';
+import { updateAndroidWidgetFromStore } from '../lib/widget-service';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { verifyPolyfills } from '../utils/verify-polyfills';
 
@@ -72,6 +73,10 @@ function RootLayoutContent() {
           lastAutoSyncAt.current = now;
           performMobileSync().catch(console.error);
         }
+        updateAndroidWidgetFromStore().catch(console.error);
+        setTimeout(() => {
+          updateAndroidWidgetFromStore().catch(console.error);
+        }, 800);
       }
       if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
         // Going to background - flush saves and sync
@@ -115,6 +120,10 @@ function RootLayoutContent() {
         if (store.settings.notificationsEnabled !== false) {
           startMobileNotifications().catch(console.error);
         }
+        updateAndroidWidgetFromStore().catch(console.error);
+        setTimeout(() => {
+          updateAndroidWidgetFromStore().catch(console.error);
+        }, 800);
       } catch (e) {
         console.error('[Mobile] Failed to load data:', e);
         Alert.alert(

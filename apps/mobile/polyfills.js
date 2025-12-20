@@ -2,6 +2,10 @@
 const { URL: ShimURL, URLSearchParams: ShimURLSearchParams, setupURLPolyfill } = require('./shims/url-polyfill');
 setupURLPolyfill();
 
+if (typeof globalThis !== 'undefined' && typeof globalThis.window === 'undefined') {
+    globalThis.window = globalThis;
+}
+
 const maybeCopyGlobals = (target) => {
     if (!target) return;
     target.URL = ShimURL;
@@ -29,4 +33,3 @@ try {
 } catch (e) {
     console.error('[Polyfills] Error applying polyfills:', e);
 }
-

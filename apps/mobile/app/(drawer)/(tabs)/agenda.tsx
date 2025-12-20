@@ -187,6 +187,12 @@ export default function AgendaScreen() {
     }
   }, [tasks, focusedCount, updateTask]);
 
+  const listKey = useMemo(() => {
+    return sections
+      .map((section) => `${section.title}:${section.data.map((task) => `${task.id}-${task.updatedAt ?? ''}-${task.isFocusedToday ? '1' : '0'}`).join(',')}`)
+      .join('|');
+  }, [sections]);
+
   const handleTaskPress = useCallback((task: Task) => {
     setSelectedTask(task);
   }, []);
@@ -229,8 +235,10 @@ export default function AgendaScreen() {
         </View>
       )}
       <SectionList
+        key={listKey}
         sections={sections}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => `${item.id}:${item.updatedAt ?? ''}:${item.isFocusedToday ? 'focus' : 'rest'}`}
+        extraData={tasks}
         renderItem={renderItem}
         renderSectionHeader={renderSectionHeader}
         contentContainerStyle={styles.content}

@@ -10,6 +10,8 @@ type ScheduledEntry = { scheduledAtIso: string; notificationId: string };
 const scheduledByTask = new Map<string, ScheduledEntry>();
 const scheduledDigestByKind = new Map<'morning' | 'evening', string>();
 let digestConfigKey: string | null = null;
+let weeklyReviewConfigKey: string | null = null;
+let scheduledWeeklyReviewId: string | null = null;
 let started = false;
 let responseSubscription: Subscription | null = null;
 let storeSubscription: (() => void) | null = null;
@@ -80,6 +82,12 @@ async function cancelDailyDigests(api: NotificationsApi) {
   scheduledDigestByKind.clear();
 }
 
+async function cancelWeeklyReview(api: NotificationsApi) {
+  if (!scheduledWeeklyReviewId) return;
+  await api.cancelScheduledNotificationAsync(scheduledWeeklyReviewId).catch(() => { });
+  scheduledWeeklyReviewId = null;
+}
+
 async function rescheduleDailyDigest(api: NotificationsApi) {
   const { settings } = useTaskStore.getState();
 
@@ -131,6 +139,43 @@ async function rescheduleDailyDigest(api: NotificationsApi) {
     });
     scheduledDigestByKind.set('evening', id);
   }
+}
+
+async function rescheduleWeeklyReview(api: NotificationsApi) {
+  const { settings } = useTaskStore.getState();
+
+  const notificationsEnabled = settings.notificationsEnabled !== false;
+  const weeklyReviewEnabled = settings.weeklyReviewEnabled === true;
+  const weeklyReviewTime = settings.weeklyReviewTime || '18:00';
+  const weeklyReviewDay = Number.isFinite(settings.weeklyReviewDay)
+    ? Math.max(0, Math.min(6, Math.floor(settings.weeklyReviewDay as number)))
+    : 0;
+
+  const nextKey = JSON.stringify({
+    notificationsEnabled,
+    weeklyReviewEnabled,
+    weeklyReviewDay,
+    weeklyReviewTime,
+  });
+  if (nextKey === weeklyReviewConfigKey) return;
+  weeklyReviewConfigKey = nextKey;
+
+  await cancelWeeklyReview(api);
+  if (!notificationsEnabled || !weeklyReviewEnabled) return;
+
+  const language = await getCurrentLanguage();
+  const tr = translations[language];
+  const { hour, minute } = parseTimeOfDay(weeklyReviewTime, { hour: 18, minute: 0 });
+  const weekday = weeklyReviewDay + 1; // Expo: 1 = Sunday
+
+  scheduledWeeklyReviewId = await api.scheduleNotificationAsync({
+    content: {
+      title: tr['digest.weeklyReviewTitle'],
+      body: tr['digest.weeklyReviewBody'],
+      data: { kind: 'weekly-review', weekday },
+    } as any,
+    trigger: { weekday, hour, minute, repeats: true } as any,
+  });
 }
 
 async function scheduleForTask(api: NotificationsApi, task: Task, when: Date) {
@@ -205,11 +250,13 @@ export async function startMobileNotifications() {
 
   await rescheduleAll(api);
   await rescheduleDailyDigest(api);
+  await rescheduleWeeklyReview(api);
 
   storeSubscription?.();
   storeSubscription = useTaskStore.subscribe(() => {
     rescheduleAll(api).catch(console.error);
     rescheduleDailyDigest(api).catch(console.error);
+    rescheduleWeeklyReview(api).catch(console.error);
   });
 
   responseSubscription?.remove();
@@ -234,10 +281,15 @@ export async function stopMobileNotifications() {
     for (const id of scheduledDigestByKind.values()) {
       await Notifications.cancelScheduledNotificationAsync(id).catch(() => { });
     }
+    if (scheduledWeeklyReviewId) {
+      await Notifications.cancelScheduledNotificationAsync(scheduledWeeklyReviewId).catch(() => { });
+    }
   }
 
   scheduledByTask.clear();
   scheduledDigestByKind.clear();
+  scheduledWeeklyReviewId = null;
   digestConfigKey = null;
+  weeklyReviewConfigKey = null;
   started = false;
 }

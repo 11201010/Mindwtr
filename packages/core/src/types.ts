@@ -99,6 +99,7 @@ export interface AppData {
                 order?: TaskEditorFieldId[];
                 hidden?: TaskEditorFieldId[];
             };
+            autoArchiveDays?: number;
         };
         theme?: 'light' | 'dark' | 'system';
         language?: 'en' | 'zh' | 'system';
@@ -110,6 +111,9 @@ export interface AppData {
         dailyDigestMorningTime?: string; // HH:mm
         dailyDigestEveningEnabled?: boolean;
         dailyDigestEveningTime?: string; // HH:mm
+        weeklyReviewEnabled?: boolean;
+        weeklyReviewDay?: number; // 0 = Sunday
+        weeklyReviewTime?: string; // HH:mm
         savedSearches?: SavedSearch[];
         sidebarCollapsed?: boolean;
         taskSortBy?: TaskSortBy;

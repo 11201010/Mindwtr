@@ -1,7 +1,10 @@
 import { StorageAdapter, AppData } from '@mindwtr/core';
 import { Platform } from 'react-native';
 
-const DATA_KEY = 'mindwtr-data';
+import { WIDGET_DATA_KEY } from './widget-data';
+import { updateAndroidWidgetFromData } from './widget-service';
+
+const DATA_KEY = WIDGET_DATA_KEY;
 const LEGACY_DATA_KEYS = ['focus-gtd-data', 'gtd-todo-data', 'gtd-data'];
 
 // Platform-specific storage implementation
@@ -51,6 +54,7 @@ const createStorage = (): StorageAdapter => {
 
     // Native platforms - use AsyncStorage
     const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+
     return {
         getData: async (): Promise<AppData> => {
             let jsonValue = await AsyncStorage.getItem(DATA_KEY);
@@ -68,7 +72,9 @@ const createStorage = (): StorageAdapter => {
                 return { tasks: [], projects: [], settings: {} };
             }
             try {
-                return JSON.parse(jsonValue);
+                const data = JSON.parse(jsonValue) as AppData;
+                updateAndroidWidgetFromData(data).catch(() => {});
+                return data;
             } catch (e) {
                 // JSON parse error - data corrupted, throw so user is notified
                 console.error('Failed to parse stored data - may be corrupted', e);
@@ -79,6 +85,7 @@ const createStorage = (): StorageAdapter => {
             try {
                 const jsonValue = JSON.stringify(data);
                 await AsyncStorage.setItem(DATA_KEY, jsonValue);
+                await updateAndroidWidgetFromData(data);
             } catch (e) {
                 console.error('Failed to save data', e);
                 throw new Error('Failed to save data: ' + (e as Error).message);

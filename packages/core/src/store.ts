@@ -91,7 +91,7 @@ interface TaskStore {
 
     // Project Actions
     /** Add a new project */
-    addProject: (title: string, color: string) => Promise<void>;
+    addProject: (title: string, color: string, initialProps?: Partial<Project>) => Promise<void>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
     /** Delete a project */
@@ -183,17 +183,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             let allTasks = (data.tasks || []).map((task) => normalizeTaskForLoad(task, nowIso));
 
             // Auto-archive stale completed items to keep day-to-day UI fast/clean.
-            const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            const configuredArchiveDays = data.settings?.gtd?.autoArchiveDays;
+            const archiveDays = Number.isFinite(configuredArchiveDays)
+                ? Math.max(0, Math.floor(configuredArchiveDays as number))
+                : 7;
+            const shouldAutoArchive = archiveDays > 0;
+            const cutoffMs = shouldAutoArchive ? Date.now() - archiveDays * 24 * 60 * 60 * 1000 : 0;
             let didAutoArchive = false;
-            allTasks = allTasks.map((task) => {
-                if (task.deletedAt) return task;
-                if (task.status !== 'done') return task;
-                const completedAt = task.completedAt ? new Date(task.completedAt).getTime() : NaN;
-                if (!Number.isFinite(completedAt) || completedAt <= 0) return task;
-                if (completedAt >= cutoffMs) return task;
-                didAutoArchive = true;
-                return { ...task, status: 'archived', isFocusedToday: false, updatedAt: nowIso };
-            });
+            if (shouldAutoArchive) {
+                allTasks = allTasks.map((task) => {
+                    if (task.deletedAt) return task;
+                    if (task.status !== 'done') return task;
+                    const completedAt = task.completedAt ? new Date(task.completedAt).getTime() : NaN;
+                    if (!Number.isFinite(completedAt) || completedAt <= 0) return task;
+                    if (completedAt >= cutoffMs) return task;
+                    didAutoArchive = true;
+                    return { ...task, status: 'archived', isFocusedToday: false, updatedAt: nowIso };
+                });
+            }
             const allProjects = data.projects || [];
             // Filter out soft-deleted and archived items for day-to-day UI display
             const visibleTasks = allTasks.filter(t => !t.deletedAt && t.status !== 'archived');
@@ -360,7 +367,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
      * @param title Project title
      * @param color Project color hex code
      */
-    addProject: async (title: string, color: string) => {
+    addProject: async (title: string, color: string, initialProps?: Partial<Project>) => {
         const changeAt = Date.now();
         const newProject: Project = {
             id: uuidv4(),
@@ -369,6 +376,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             status: 'active',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            ...initialProps,
         };
         const newAllProjects = [...get()._allProjects, newProject];
         const newVisibleProjects = [...get().projects, newProject];
@@ -515,6 +523,47 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
      */
     updateSettings: async (updates: Partial<AppData['settings']>) => {
         const newSettings = { ...get().settings, ...updates };
+        const archiveDaysUpdate = updates.gtd?.autoArchiveDays !== undefined;
+
+        if (archiveDaysUpdate) {
+            const configuredArchiveDays = newSettings.gtd?.autoArchiveDays;
+            const archiveDays = Number.isFinite(configuredArchiveDays)
+                ? Math.max(0, Math.floor(configuredArchiveDays as number))
+                : 7;
+            const shouldAutoArchive = archiveDays > 0;
+            const cutoffMs = shouldAutoArchive ? Date.now() - archiveDays * 24 * 60 * 60 * 1000 : 0;
+            const nowIso = new Date().toISOString();
+            let didAutoArchive = false;
+
+            let newAllTasks = get()._allTasks;
+            if (shouldAutoArchive) {
+                newAllTasks = newAllTasks.map((task) => {
+                    if (task.deletedAt) return task;
+                    if (task.status !== 'done') return task;
+                    const completedAt = task.completedAt ? new Date(task.completedAt).getTime() : NaN;
+                    if (!Number.isFinite(completedAt) || completedAt <= 0) return task;
+                    if (completedAt >= cutoffMs) return task;
+                    didAutoArchive = true;
+                    return { ...task, status: 'archived', isFocusedToday: false, updatedAt: nowIso };
+                });
+            }
+
+            if (didAutoArchive) {
+                const newVisibleTasks = newAllTasks.filter((t) => !t.deletedAt && t.status !== 'archived');
+                set({
+                    tasks: newVisibleTasks,
+                    _allTasks: newAllTasks,
+                    settings: newSettings,
+                    lastDataChangeAt: Date.now(),
+                });
+                debouncedSave(
+                    { tasks: newAllTasks, projects: get()._allProjects, settings: newSettings },
+                    (msg) => set({ error: msg })
+                );
+                return;
+            }
+        }
+
         set({ settings: newSettings });
         debouncedSave(
             { tasks: get()._allTasks, projects: get()._allProjects, settings: newSettings },
