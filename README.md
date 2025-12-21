@@ -148,4 +148,4 @@ For developers, see the [Development Guide](docs/development.md).
 - [x] ☁️ **Cloud Sync** - Self-hosted cloud backend
 - [x] 🌐 **Web App (PWA)** - Browser-based version
 - [x] 🔌 **CLI & API** - Automation and scripting support
-- [ ] 📱 **Android Widget** - Agenda widget for home screen
+- [x] 📱 **Android Widget** - Agenda widget for home screen

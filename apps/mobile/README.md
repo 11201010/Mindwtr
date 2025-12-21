@@ -12,6 +12,7 @@ React Native mobile app for the Mindwtr productivity system.
 - **Smart Tags** - Frequent and recommended context tags
 - **Quick Status** - Instant status change via status badge tap
 - **Auto-Archive** - Automatically archive completed tasks
+- **Android Widget** - Home screen widget for quick access and agenda view
 
 ### Productivity
 - **Global Search** - Search operators (status:, context:, due:<=7d)
