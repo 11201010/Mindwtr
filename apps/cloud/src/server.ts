@@ -102,6 +102,8 @@ async function main() {
     const rateLimits = new Map<string, RateLimitState>();
     const windowMs = Number(process.env.MINDWTR_CLOUD_RATE_WINDOW_MS || 60_000);
     const maxPerWindow = Number(process.env.MINDWTR_CLOUD_RATE_MAX || 120);
+    const maxBodyBytes = Number(process.env.MINDWTR_CLOUD_MAX_BODY_BYTES || 2_000_000);
+    const encoder = new TextEncoder();
 
     console.log(`[mindwtr-cloud] dataDir: ${dataDir}`);
     console.log(`[mindwtr-cloud] listening on http://${host}:${port}`);
@@ -146,8 +148,15 @@ async function main() {
                 }
 
                 if (req.method === 'PUT') {
+                    const contentLength = Number(req.headers.get('content-length') || '0');
+                    if (contentLength && contentLength > maxBodyBytes) {
+                        return errorResponse('Payload too large', 413);
+                    }
                     const text = await req.text();
                     if (!text.trim()) return errorResponse('Missing body');
+                    if (encoder.encode(text).length > maxBodyBytes) {
+                        return errorResponse('Payload too large', 413);
+                    }
                     let parsed: any;
                     try {
                         parsed = JSON.parse(text);

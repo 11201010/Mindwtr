@@ -78,6 +78,9 @@ function asStatus(value: unknown): TaskStatus | null {
     return allowed.includes(value as TaskStatus) ? (value as TaskStatus) : null;
 }
 
+const MAX_BODY_BYTES = Number(process.env.MINDWTR_API_MAX_BODY_BYTES || 1_000_000);
+const encoder = new TextEncoder();
+
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
     const headers = new Headers(init.headers);
     headers.set('Content-Type', 'application/json; charset=utf-8');
@@ -108,8 +111,15 @@ function requireAuth(req: Request): Response | null {
 }
 
 async function readJsonBody(req: Request): Promise<any> {
+    const contentLength = Number(req.headers.get('content-length') || '0');
+    if (contentLength && contentLength > MAX_BODY_BYTES) {
+        return { __mindwtrError: { message: 'Payload too large', status: 413 } };
+    }
     const text = await req.text();
     if (!text.trim()) return null;
+    if (encoder.encode(text).length > MAX_BODY_BYTES) {
+        return { __mindwtrError: { message: 'Payload too large', status: 413 } };
+    }
     try {
         return JSON.parse(text);
     } catch {
@@ -196,6 +206,10 @@ async function main() {
 
             if (req.method === 'POST' && pathname === '/tasks') {
                 const body = await readJsonBody(req);
+                if (body && typeof body === 'object' && '__mindwtrError' in body) {
+                    const err = (body as any).__mindwtrError;
+                    return errorResponse(String(err?.message || 'Payload too large'), Number(err?.status) || 413);
+                }
                 if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body');
 
                 return withWriteLock(async () => {
@@ -258,6 +272,10 @@ async function main() {
 
                 if (req.method === 'PATCH') {
                     const body = await readJsonBody(req);
+                    if (body && typeof body === 'object' && '__mindwtrError' in body) {
+                        const err = (body as any).__mindwtrError;
+                        return errorResponse(String(err?.message || 'Payload too large'), Number(err?.status) || 413);
+                    }
                     if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body');
 
                     return withWriteLock(async () => {
