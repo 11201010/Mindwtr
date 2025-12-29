@@ -17,11 +17,11 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
 
     const { inboxCount, nextCount } = useMemo(() => {
         const activeTasks = tasks.filter((task) => !task.deletedAt);
-        const now = new Date();
+        const now = Date.now();
         const inbox = activeTasks.filter((task) => {
             if (task.status !== 'inbox') return false;
             const start = safeParseDate(task.startTime);
-            if (start && start > now) return false;
+            if (start && start.getTime() > now) return false;
             return true;
         }).length;
         const next = activeTasks.filter((task) => task.status === 'next').length;
