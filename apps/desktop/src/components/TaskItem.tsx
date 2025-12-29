@@ -24,6 +24,7 @@ import {
     type ClarifyResponse,
 } from '@mindwtr/core';
 import { cn } from '../lib/utils';
+import { PromptModal } from './PromptModal';
 import { useLanguage } from '../contexts/language-context';
 import { Markdown } from './Markdown';
 import { isTauriRuntime } from '../lib/runtime';
@@ -75,6 +76,7 @@ export const TaskItem = memo(function TaskItem({
     const [editBlockedByTaskIds, setEditBlockedByTaskIds] = useState<string[]>(task.blockedByTaskIds || []);
     const [editAttachments, setEditAttachments] = useState<Attachment[]>(task.attachments || []);
     const [attachmentError, setAttachmentError] = useState<string | null>(null);
+    const [showLinkPrompt, setShowLinkPrompt] = useState(false);
     const [aiClarifyResponse, setAiClarifyResponse] = useState<ClarifyResponse | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiBreakdownSteps, setAiBreakdownSteps] = useState<string[] | null>(null);
@@ -173,18 +175,7 @@ export const TaskItem = memo(function TaskItem({
 
     const addLinkAttachment = () => {
         setAttachmentError(null);
-        const url = window.prompt(t('attachments.addLink'), t('attachments.linkPlaceholder'));
-        if (!url) return;
-        const now = new Date().toISOString();
-        const attachment: Attachment = {
-            id: generateUUID(),
-            kind: 'link',
-            title: url,
-            uri: url,
-            createdAt: now,
-            updatedAt: now,
-        };
-        setEditAttachments((prev) => [...prev, attachment]);
+        setShowLinkPrompt(true);
     };
 
     const removeAttachment = (id: string) => {
@@ -425,6 +416,7 @@ export const TaskItem = memo(function TaskItem({
     const project = propProject || (task.projectId ? projectById.get(task.projectId) : undefined);
 
     return (
+        <>
         <div
             data-task-id={task.id}
             onClickCapture={() => onSelect?.()}
@@ -1225,5 +1217,31 @@ export const TaskItem = memo(function TaskItem({
                 )}
             </div>
         </div >
+        <PromptModal
+            isOpen={showLinkPrompt}
+            title={t('attachments.addLink')}
+            description={t('attachments.linkPlaceholder')}
+            placeholder={t('attachments.linkPlaceholder')}
+            defaultValue=""
+            confirmLabel={t('common.save')}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setShowLinkPrompt(false)}
+            onConfirm={(value) => {
+                const url = value.trim();
+                if (!url) return;
+                const now = new Date().toISOString();
+                const attachment: Attachment = {
+                    id: generateUUID(),
+                    kind: 'link',
+                    title: url,
+                    uri: url,
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                setEditAttachments((prev) => [...prev, attachment]);
+                setShowLinkPrompt(false);
+            }}
+        />
+        </>
     );
 });

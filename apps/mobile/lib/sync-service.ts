@@ -11,6 +11,8 @@ export const WEBDAV_PASSWORD_KEY = '@mindwtr_webdav_password';
 export const CLOUD_URL_KEY = '@mindwtr_cloud_url';
 export const CLOUD_TOKEN_KEY = '@mindwtr_cloud_token';
 
+const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
+
 let syncInFlight: Promise<{ success: boolean; stats?: MergeStats; error?: string }> | null = null;
 
 export async function performMobileSync(syncPathOverride?: string): Promise<{ success: boolean; stats?: MergeStats; error?: string }> {
@@ -33,13 +35,13 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         const username = (await AsyncStorage.getItem(WEBDAV_USERNAME_KEY)) || '';
         const password = (await AsyncStorage.getItem(WEBDAV_PASSWORD_KEY)) || '';
         webdavConfig = { url, username, password };
-        incomingData = await webdavGetJson<AppData>(url, { username, password });
+        incomingData = await webdavGetJson<AppData>(url, { username, password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
       } else if (backend === 'cloud') {
         const url = await AsyncStorage.getItem(CLOUD_URL_KEY);
         const token = await AsyncStorage.getItem(CLOUD_TOKEN_KEY);
         if (!url || !token) return { success: false, error: 'Cloud sync not configured' };
         cloudConfig = { url, token };
-        incomingData = await cloudGetJson<AppData>(url, { token });
+        incomingData = await cloudGetJson<AppData>(url, { token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
       } else {
         fileSyncPath = syncPathOverride || await AsyncStorage.getItem(SYNC_PATH_KEY);
         if (!fileSyncPath) {
@@ -70,10 +72,10 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       wroteLocal = true;
       if (backend === 'webdav') {
         if (!webdavConfig?.url) return { success: false, error: 'WebDAV URL not configured' };
-        await webdavPutJson(webdavConfig.url, finalData, { username: webdavConfig.username, password: webdavConfig.password });
+        await webdavPutJson(webdavConfig.url, finalData, { username: webdavConfig.username, password: webdavConfig.password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
       } else if (backend === 'cloud') {
         if (!cloudConfig?.url || !cloudConfig.token) return { success: false, error: 'Cloud sync not configured' };
-        await cloudPutJson(cloudConfig.url, finalData, { token: cloudConfig.token });
+        await cloudPutJson(cloudConfig.url, finalData, { token: cloudConfig.token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
       } else {
         if (!fileSyncPath) return { success: false, error: 'No sync file configured' };
         await writeSyncFile(fileSyncPath, finalData);

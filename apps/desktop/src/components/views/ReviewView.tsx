@@ -5,6 +5,7 @@ import { Archive, ArrowRight, Calendar, Check, CheckSquare, Layers, RefreshCw, S
 
 import { TaskItem } from '../TaskItem';
 import { cn } from '../../lib/utils';
+import { PromptModal } from '../PromptModal';
 import { useLanguage } from '../../contexts/language-context';
 import { buildAIConfig, loadAIKey } from '../../lib/ai-config';
 
@@ -749,6 +750,8 @@ export function ReviewView() {
     const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all');
     const [selectionMode, setSelectionMode] = useState(false);
     const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
+    const [tagPromptOpen, setTagPromptOpen] = useState(false);
+    const [tagPromptIds, setTagPromptIds] = useState<string[]>([]);
     const [showGuide, setShowGuide] = useState(false);
     const [showDailyGuide, setShowDailyGuide] = useState(false);
     const [moveToStatus, setMoveToStatus] = useState<TaskStatus | ''>('');
@@ -826,19 +829,12 @@ export function ReviewView() {
 
     const handleBatchAddTag = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
-        const input = window.prompt(t('bulk.addTag'));
-        if (!input) return;
-        const tag = input.startsWith('#') ? input : `#${input}`;
-        await batchUpdateTasks(selectedIdsArray.map((id) => {
-            const task = tasksById[id];
-            const existingTags = task?.tags || [];
-            const nextTags = Array.from(new Set([...existingTags, tag]));
-            return { id, updates: { tags: nextTags } };
-        }));
-        exitSelectionMode();
+        setTagPromptIds(selectedIdsArray);
+        setTagPromptOpen(true);
     }, [batchUpdateTasks, selectedIdsArray, tasksById, t, exitSelectionMode]);
 
     return (
+        <>
         <div className="space-y-6">
             <header className="flex items-center justify-between">
                 <div className="space-y-1">
@@ -982,5 +978,29 @@ export function ReviewView() {
                 <DailyReviewGuideModal onClose={() => setShowDailyGuide(false)} />
             )}
         </div>
+        <PromptModal
+            isOpen={tagPromptOpen}
+            title={t('bulk.addTag')}
+            description={t('bulk.addTag')}
+            placeholder="#tag"
+            defaultValue=""
+            confirmLabel={t('common.save')}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setTagPromptOpen(false)}
+            onConfirm={async (value) => {
+                const input = value.trim();
+                if (!input) return;
+                const tag = input.startsWith('#') ? input : `#${input}`;
+                await batchUpdateTasks(tagPromptIds.map((id) => {
+                    const task = tasksById[id];
+                    const existingTags = task?.tags || [];
+                    const nextTags = Array.from(new Set([...existingTags, tag]));
+                    return { id, updates: { tags: nextTags } };
+                }));
+                setTagPromptOpen(false);
+                exitSelectionMode();
+            }}
+        />
+        </>
     );
 }

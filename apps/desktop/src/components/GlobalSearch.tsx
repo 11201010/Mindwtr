@@ -3,6 +3,7 @@ import { Search, FileText, CheckCircle, Save } from 'lucide-react';
 import { useTaskStore, Task, Project, searchAll, generateUUID, SavedSearch } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
+import { PromptModal } from './PromptModal';
 
 interface GlobalSearchProps {
     onNavigate: (view: string, itemId?: string) => void;
@@ -12,6 +13,8 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
+    const [showSavePrompt, setShowSavePrompt] = useState(false);
+    const [savePromptDefault, setSavePromptDefault] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
     const { _allTasks, projects, settings, updateSettings, setHighlightTask } = useTaskStore();
     const { t } = useLanguage();
@@ -44,6 +47,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
             setTimeout(() => inputRef.current?.focus(), 50);
             setQuery('');
             setSelectedIndex(0);
+            setShowSavePrompt(false);
         }
     }, [isOpen]);
 
@@ -111,17 +115,8 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
             onNavigate(`savedSearch:${existing.id}`);
             return;
         }
-        const name = window.prompt(t('search.saveSearchPrompt'), trimmedQuery);
-        if (!name || !name.trim()) return;
-
-        const newSearch: SavedSearch = {
-            id: generateUUID(),
-            name: name.trim(),
-            query: trimmedQuery,
-        };
-        await updateSettings({ savedSearches: [...savedSearches, newSearch] });
-        setIsOpen(false);
-        onNavigate(`savedSearch:${newSearch.id}`);
+        setSavePromptDefault(trimmedQuery);
+        setShowSavePrompt(true);
     };
 
     return (
@@ -219,6 +214,30 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                     )}
                 </div>
             </div>
+
+            <PromptModal
+                isOpen={showSavePrompt}
+                title={t('search.saveSearch')}
+                description={t('search.saveSearchPrompt')}
+                placeholder={t('search.saveSearch')}
+                defaultValue={savePromptDefault}
+                confirmLabel={t('common.save')}
+                cancelLabel={t('common.cancel')}
+                onCancel={() => setShowSavePrompt(false)}
+                onConfirm={async (value) => {
+                    const name = value.trim();
+                    if (!name) return;
+                    const newSearch: SavedSearch = {
+                        id: generateUUID(),
+                        name,
+                        query: trimmedQuery,
+                    };
+                    await updateSettings({ savedSearches: [...savedSearches, newSearch] });
+                    setShowSavePrompt(false);
+                    setIsOpen(false);
+                    onNavigate(`savedSearch:${newSearch.id}`);
+                }}
+            />
 
             {/* Click backdrop to close */}
             <button

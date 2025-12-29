@@ -5,6 +5,7 @@ import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, CheckCirc
 import { cn } from '../../lib/utils';
 import { useLanguage } from '../../contexts/language-context';
 import { Markdown } from '../Markdown';
+import { PromptModal } from '../PromptModal';
 import { isTauriRuntime } from '../../lib/runtime';
 
 function toDateTimeLocalValue(dateStr: string | undefined): string {
@@ -24,6 +25,7 @@ export function ProjectsView() {
     const [notesExpanded, setNotesExpanded] = useState(false);
     const [showNotesPreview, setShowNotesPreview] = useState(false);
     const [attachmentError, setAttachmentError] = useState<string | null>(null);
+    const [showLinkPrompt, setShowLinkPrompt] = useState(false);
 
     useEffect(() => {
         setAttachmentError(null);
@@ -117,18 +119,7 @@ export function ProjectsView() {
     const addProjectLinkAttachment = () => {
         if (!selectedProject) return;
         setAttachmentError(null);
-        const url = window.prompt(t('attachments.addLink'), t('attachments.linkPlaceholder'));
-        if (!url) return;
-        const now = new Date().toISOString();
-        const attachment: Attachment = {
-            id: generateUUID(),
-            kind: 'link',
-            title: url,
-            uri: url,
-            createdAt: now,
-            updatedAt: now,
-        };
-        updateProject(selectedProject.id, { attachments: [...(selectedProject.attachments || []), attachment] });
+        setShowLinkPrompt(true);
     };
 
     const removeProjectAttachment = (id: string) => {
@@ -141,6 +132,7 @@ export function ProjectsView() {
     };
 
     return (
+        <>
         <div className="flex h-full gap-6">
             {/* Sidebar List of Projects */}
             <div className="w-64 flex-shrink-0 flex flex-col gap-4 border-r border-border pr-6">
@@ -554,5 +546,32 @@ export function ProjectsView() {
                 )}
             </div>
         </div>
+        <PromptModal
+            isOpen={showLinkPrompt}
+            title={t('attachments.addLink')}
+            description={t('attachments.linkPlaceholder')}
+            placeholder={t('attachments.linkPlaceholder')}
+            defaultValue=""
+            confirmLabel={t('common.save')}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setShowLinkPrompt(false)}
+            onConfirm={(value) => {
+                if (!selectedProject) return;
+                const url = value.trim();
+                if (!url) return;
+                const now = new Date().toISOString();
+                const attachment: Attachment = {
+                    id: generateUUID(),
+                    kind: 'link',
+                    title: url,
+                    uri: url,
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                updateProject(selectedProject.id, { attachments: [...(selectedProject.attachments || []), attachment] });
+                setShowLinkPrompt(false);
+            }}
+        />
+        </>
     );
 }

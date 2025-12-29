@@ -4,6 +4,7 @@ import { useTaskStore, TaskStatus, Task, PRESET_CONTEXTS, PRESET_TAGS, sortTasks
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
 import { cn } from '../../lib/utils';
+import { PromptModal } from '../PromptModal';
 import { useLanguage } from '../../contexts/language-context';
 import { useKeybindings } from '../../contexts/keybinding-context';
 import { buildCopilotConfig, loadAIKey } from '../../lib/ai-config';
@@ -27,6 +28,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [selectionMode, setSelectionMode] = useState(false);
     const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
+    const [tagPromptOpen, setTagPromptOpen] = useState(false);
+    const [tagPromptIds, setTagPromptIds] = useState<string[]>([]);
     const addInputRef = useRef<HTMLInputElement>(null);
     const [aiKey, setAiKey] = useState('');
     const [copilotSuggestion, setCopilotSuggestion] = useState<{ context?: string; tags?: string[] } | null>(null);
@@ -286,16 +289,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 
     const handleBatchAddTag = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
-        const input = window.prompt(t('bulk.addTag'));
-        if (!input) return;
-        const tag = input.startsWith('#') ? input : `#${input}`;
-        await batchUpdateTasks(selectedIdsArray.map((id) => {
-            const task = tasksById[id];
-            const existingTags = task?.tags || [];
-            const nextTags = Array.from(new Set([...existingTags, tag]));
-            return { id, updates: { tags: nextTags } };
-        }));
-        exitSelectionMode();
+        setTagPromptIds(selectedIdsArray);
+        setTagPromptOpen(true);
     }, [batchUpdateTasks, selectedIdsArray, tasksById, t, exitSelectionMode]);
 
     const handleAddTask = (e: React.FormEvent) => {
@@ -437,6 +432,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const NEXT_WARNING_THRESHOLD = 15;
 
     return (
+        <>
         <div className="space-y-6">
             <header className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold tracking-tight">
@@ -890,5 +886,29 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 	                )}
             </div>
         </div>
+        <PromptModal
+            isOpen={tagPromptOpen}
+            title={t('bulk.addTag')}
+            description={t('bulk.addTag')}
+            placeholder="#tag"
+            defaultValue=""
+            confirmLabel={t('common.save')}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setTagPromptOpen(false)}
+            onConfirm={async (value) => {
+                const input = value.trim();
+                if (!input) return;
+                const tag = input.startsWith('#') ? input : `#${input}`;
+                await batchUpdateTasks(tagPromptIds.map((id) => {
+                    const task = tasksById[id];
+                    const existingTags = task?.tags || [];
+                    const nextTags = Array.from(new Set([...existingTags, tag]));
+                    return { id, updates: { tags: nextTags } };
+                }));
+                setTagPromptOpen(false);
+                exitSelectionMode();
+            }}
+        />
+        </>
     );
 }
