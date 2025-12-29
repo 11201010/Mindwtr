@@ -35,8 +35,7 @@ export function parseJson<T>(raw: string, validator?: (value: unknown) => value 
             return parsed as T;
         }
         const message = error instanceof Error ? error.message : String(error);
-        const preview = cleaned.length > 240 ? `${cleaned.slice(0, 240)}…` : cleaned;
-        throw new Error(`AI JSON parse error: ${message}. Raw: ${preview}`);
+        throw new Error(`AI JSON parse error: ${message}.`);
     }
 }
 

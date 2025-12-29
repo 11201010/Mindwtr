@@ -95,9 +95,13 @@ function requireAuth(req: Request): Response | null {
     const token = process.env.MINDWTR_API_TOKEN;
     if (!token) return null;
 
-    const header = req.headers.get('authorization') || '';
-    const expected = `Bearer ${token}`;
-    if (header !== expected) {
+    const header = (req.headers.get('authorization') || '').trim();
+    const [scheme, value] = header.split(/\s+/);
+    if (!scheme || !value) {
+        return errorResponse('Unauthorized', 401);
+    }
+    const expected = token.trim();
+    if (scheme.toLowerCase() !== 'bearer' || value !== expected) {
         return errorResponse('Unauthorized', 401);
     }
     return null;
