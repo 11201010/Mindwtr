@@ -166,8 +166,3 @@ Sync via File (Dropbox, etc.), WebDAV (Nextcloud, etc.), or Cloud can be configu
 For developers, see the [Development Guide](docs/development.md).
 
 ## Roadmap
-
-- [x] ☁️ **Cloud Sync** - Self-hosted cloud backend
-- [x] 🌐 **Web App (PWA)** - Browser-based version
-- [x] 🔌 **CLI & API** - Automation and scripting support
-- [x] 📱 **Android Widget** - Agenda widget for home screen

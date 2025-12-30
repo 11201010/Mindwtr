@@ -166,8 +166,3 @@ iOS 构建需要 Apple Developer 账号（$99/年），目前仅提供模拟器�
 开发者请查看 [Development Guide](docs/development.md)。
 
 ## 路线图
-
-- [x] ☁️ **云同步** - 自托管云后端
-- [x] 🌐 **Web 应用（PWA）** - 浏览器版
-- [x] 🔌 **CLI 与 API** - 自动化与脚本支持
-- [x] 📱 **Android 小部件** - 日程小组件
