@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { endOfMonth, format, isSameDay, isSameMonth, isToday, startOfMonth, eachDayOfInterval } from 'date-fns';
+import { endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, startOfMonth, startOfWeek, eachDayOfInterval } from 'date-fns';
 import { parseIcs, safeParseDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
 import { isTauriRuntime } from '../../lib/runtime';
@@ -22,9 +22,11 @@ export function CalendarView() {
     const [editingTimeValue, setEditingTimeValue] = useState<string>('');
     const calendarBodyRef = useRef<HTMLDivElement | null>(null);
 
+    const calendarStart = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 0 });
+    const calendarEnd = endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 0 });
     const days = eachDayOfInterval({
-        start: startOfMonth(currentMonth),
-        end: endOfMonth(currentMonth),
+        start: calendarStart,
+        end: calendarEnd,
     });
 
     const getDeadlinesForDay = (date: Date) => {
