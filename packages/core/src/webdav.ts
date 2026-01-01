@@ -3,6 +3,7 @@ export interface WebDavOptions {
     password?: string;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    fetcher?: typeof fetch;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -93,7 +94,12 @@ function assertSecureUrl(url: string) {
     }
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    fetcher: typeof fetch,
+): Promise<Response> {
     const abortController = typeof AbortController === 'function' ? new AbortController() : null;
     const timeoutId = abortController ? setTimeout(() => abortController.abort(), timeoutMs) : null;
 
@@ -108,7 +114,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     }
 
     try {
-        return await fetch(url, { ...init, signal });
+        return await fetcher(url, { ...init, signal });
     } catch (error) {
         if (isAbortError(error)) {
             throw new Error('WebDAV request timed out');
@@ -124,6 +130,7 @@ export async function webdavGetJson<T>(
     options: WebDavOptions = {}
 ): Promise<T | null> {
     assertSecureUrl(url);
+    const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,
         {
@@ -131,6 +138,7 @@ export async function webdavGetJson<T>(
             headers: buildHeaders(options),
         },
         options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        fetcher,
     );
 
     if (res.status === 404) return null;
@@ -149,6 +157,7 @@ export async function webdavPutJson(
     options: WebDavOptions = {}
 ): Promise<void> {
     assertSecureUrl(url);
+    const fetcher = options.fetcher ?? fetch;
     const headers = buildHeaders(options);
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
 
@@ -160,6 +169,7 @@ export async function webdavPutJson(
             body: JSON.stringify(data, null, 2),
         },
         options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        fetcher,
     );
 
     if (!res.ok) {

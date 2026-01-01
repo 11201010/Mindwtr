@@ -25,6 +25,17 @@ function normalizeSyncBackend(raw: string | null): SyncBackend {
     return raw === 'webdav' ? 'webdav' : raw === 'cloud' ? 'cloud' : 'file';
 }
 
+async function getTauriFetch(): Promise<typeof fetch | undefined> {
+    if (!isTauriRuntime()) return undefined;
+    try {
+        const mod = await import('@tauri-apps/plugin-http');
+        return mod.fetch;
+    } catch (error) {
+        console.warn('Failed to load tauri http fetch', error);
+        return undefined;
+    }
+}
+
 export class SyncService {
     private static didMigrate = false;
     private static syncInFlight: Promise<{ success: boolean; stats?: MergeStats; error?: string }> | null = null;
@@ -246,7 +257,8 @@ export class SyncService {
                     throw new Error('WebDAV URL not configured');
                 }
                 syncUrl = url;
-                const remote = await webdavGetJson<AppData>(url, { username, password });
+                const fetcher = await getTauriFetch();
+                const remote = await webdavGetJson<AppData>(url, { username, password, fetcher });
                 syncData = remote || { tasks: [], projects: [], settings: {} };
             } else if (backend === 'cloud') {
                 const { url, token } = await SyncService.getCloudConfig();
@@ -254,7 +266,8 @@ export class SyncService {
                     throw new Error('Cloud sync not configured');
                 }
                 syncUrl = url;
-                const remote = await cloudGetJson<AppData>(url, { token });
+                const fetcher = await getTauriFetch();
+                const remote = await cloudGetJson<AppData>(url, { token, fetcher });
                 syncData = remote || { tasks: [], projects: [], settings: {} };
             } else {
                 if (!isTauriRuntime()) {
@@ -294,10 +307,12 @@ export class SyncService {
             step = 'write-remote';
             if (backend === 'webdav') {
                 const { url, username, password } = await SyncService.getWebDavConfig();
-                await webdavPutJson(url, finalData, { username, password });
+                const fetcher = await getTauriFetch();
+                await webdavPutJson(url, finalData, { username, password, fetcher });
             } else if (backend === 'cloud') {
                 const { url, token } = await SyncService.getCloudConfig();
-                await cloudPutJson(url, finalData, { token });
+                const fetcher = await getTauriFetch();
+                await cloudPutJson(url, finalData, { token, fetcher });
             } else {
                 await tauriInvoke('write_sync_file', { data: finalData });
             }

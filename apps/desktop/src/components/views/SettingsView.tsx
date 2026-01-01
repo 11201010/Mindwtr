@@ -30,7 +30,7 @@ import { useKeybindings } from '../../contexts/keybinding-context';
 import { useLanguage, type Language } from '../../contexts/language-context';
 import { isTauriRuntime } from '../../lib/runtime';
 import { SyncService } from '../../lib/sync-service';
-import { clearLog, getLogPath } from '../../lib/app-log';
+import { clearLog, getLogPath, logInfo } from '../../lib/app-log';
 import { ExternalCalendarService } from '../../lib/external-calendar-service';
 import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL } from '../../lib/update-service';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
@@ -296,12 +296,16 @@ export function SettingsView() {
     };
 
     const toggleLogging = async () => {
+        const nextEnabled = !loggingEnabled;
         await updateSettings({
             diagnostics: {
                 ...(settings?.diagnostics ?? {}),
-                loggingEnabled: !loggingEnabled,
+                loggingEnabled: nextEnabled,
             },
         }).then(showSaved).catch(console.error);
+        if (nextEnabled) {
+            await logInfo('Debug logging enabled', { scope: 'diagnostics' });
+        }
     };
 
     const handleClearLog = async () => {

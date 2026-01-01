@@ -47,7 +47,7 @@ import {
 import { pickAndParseSyncFile, exportData } from '../../lib/storage-file';
 import { fetchExternalCalendarEvents, getExternalCalendars, saveExternalCalendars } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
-import { clearLog, getLogPath } from '../../lib/app-log';
+import { clearLog, getLogPath, logInfo } from '../../lib/app-log';
 import {
     performMobileSync,
     SYNC_PATH_KEY,
@@ -431,7 +431,13 @@ export default function SettingsPage() {
                 ...(settings.diagnostics ?? {}),
                 loggingEnabled: value,
             },
-        }).catch(console.error);
+        })
+            .then(async () => {
+                if (value) {
+                    await logInfo('Debug logging enabled', { scope: 'diagnostics' });
+                }
+            })
+            .catch(console.error);
     };
 
     const handleShareLog = async () => {

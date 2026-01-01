@@ -83,7 +83,11 @@ async function appendLogLine(entry: LogEntry): Promise<string | null> {
     try {
         await ensureLogDir();
         const line = `${JSON.stringify(entry)}\n`;
-        await writeTextFile(LOG_FILE, line, { baseDir: BaseDirectory.Data, append: true });
+        try {
+            await writeTextFile(LOG_FILE, line, { baseDir: BaseDirectory.Data, append: true });
+        } catch (error) {
+            await writeTextFile(LOG_FILE, line, { baseDir: BaseDirectory.Data });
+        }
         return await getLogPath();
     } catch (error) {
         console.warn('Failed to write log', error);
@@ -129,6 +133,20 @@ export async function logError(
         url: sanitizeUrl(context.url),
         stack,
         context: sanitizeContext(context.extra),
+    });
+}
+
+export async function logInfo(
+    message: string,
+    context?: { scope?: string; extra?: Record<string, string> }
+): Promise<string | null> {
+    const safeMessage = redactSensitiveText(message);
+    return appendLogLine({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: context?.scope ?? 'info',
+        message: safeMessage,
+        context: sanitizeContext(context?.extra),
     });
 }
 

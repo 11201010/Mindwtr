@@ -127,6 +127,20 @@ export async function logError(
   });
 }
 
+export async function logInfo(
+  message: string,
+  context?: { scope?: string; extra?: Record<string, string> }
+): Promise<string | null> {
+  const safeMessage = redactSensitiveText(message);
+  return appendLogLine({
+    ts: new Date().toISOString(),
+    level: 'info',
+    scope: context?.scope ?? 'info',
+    message: safeMessage,
+    context: sanitizeContext(context?.extra),
+  });
+}
+
 export async function logSyncError(
   error: unknown,
   context: { backend: string; step: string; url?: string }
