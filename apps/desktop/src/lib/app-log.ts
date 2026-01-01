@@ -150,9 +150,14 @@ export async function getLogPath(): Promise<string | null> {
 export async function clearLog(): Promise<void> {
     if (!isTauriRuntime()) return;
     try {
-        await remove(LOG_FILE, { baseDir: BaseDirectory.Data, recursive: false });
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('clear_log_file');
     } catch (error) {
-        console.warn('Failed to clear log', error);
+        try {
+            await remove(LOG_FILE, { baseDir: BaseDirectory.Data, recursive: false });
+        } catch (removeError) {
+            console.warn('Failed to clear log', removeError);
+        }
     }
 }
 

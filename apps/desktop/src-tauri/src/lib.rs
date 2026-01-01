@@ -95,6 +95,17 @@ fn append_log_line(app: tauri::AppHandle, line: String) -> Result<String, String
     Ok(log_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn clear_log_file(app: tauri::AppHandle) -> Result<String, String> {
+    let log_path = get_data_dir(&app).join("logs").join("mindwtr.log");
+    if log_path.exists() {
+        if let Err(err) = std::fs::remove_file(&log_path) {
+            return Err(err.to_string());
+        }
+    }
+    Ok(log_path.to_string_lossy().to_string())
+}
+
 fn get_config_dir(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .resolve(APP_NAME, BaseDirectory::Config)
@@ -839,6 +850,7 @@ pub fn run() {
             get_linux_distro,
             log_ai_debug,
             append_log_line,
+            clear_log_file,
             consume_quick_add_pending
         ])
         .run(tauri::generate_context!())
