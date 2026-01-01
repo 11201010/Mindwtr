@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import {
     Bell,
     CalendarDays,
@@ -93,6 +93,7 @@ export function SettingsView() {
     const aiCopilotModel = settings?.ai?.copilotModel ?? getDefaultCopilotModel(aiProvider);
     const aiCopilotOptions = getCopilotModelOptions(aiProvider);
     const loggingEnabled = settings?.diagnostics?.loggingEnabled === true;
+    const didWriteLogRef = useRef(false);
 
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -170,6 +171,12 @@ export function SettingsView() {
             })
             .catch(console.error);
     }, []);
+
+    useEffect(() => {
+        if (!loggingEnabled || didWriteLogRef.current) return;
+        didWriteLogRef.current = true;
+        logInfo('Debug logging enabled', { scope: 'diagnostics' }).catch(console.warn);
+    }, [loggingEnabled]);
 
     useEffect(() => {
         ExternalCalendarService.getCalendars().then(setExternalCalendars).catch(console.error);
