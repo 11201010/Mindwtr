@@ -3,6 +3,7 @@ import { useTaskStore } from '@mindwtr/core';
 import { useLanguage } from './language-context';
 import { KeybindingHelpModal } from '../components/KeybindingHelpModal';
 import { isTauriRuntime } from '../lib/runtime';
+import { useUiStore } from '../store/ui-store';
 
 export type KeybindingStyle = 'vim' | 'emacs';
 
@@ -60,6 +61,7 @@ export function KeybindingProvider({
     const settings = store.settings || {};
     const updateSettings = store.updateSettings || (async () => {});
     const { t } = useLanguage();
+    const toggleFocusMode = useUiStore((state) => state.toggleFocusMode);
 
     const [style, setStyleState] = useState<KeybindingStyle>('vim');
     const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -268,6 +270,11 @@ export function KeybindingProvider({
                 triggerQuickAdd();
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\' && !isEditableTarget(e.target)) {
+                e.preventDefault();
+                toggleFocusMode();
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'b' && !isEditableTarget(e.target)) {
                 e.preventDefault();
                 toggleSidebar();
@@ -282,7 +289,7 @@ export function KeybindingProvider({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [style, vimGoMap, emacsAltMap, onNavigate, isHelpOpen, toggleSidebar]);
+    }, [style, vimGoMap, emacsAltMap, onNavigate, isHelpOpen, toggleSidebar, toggleFocusMode]);
 
     const contextValue = useMemo<KeybindingContextType>(() => ({
         style,

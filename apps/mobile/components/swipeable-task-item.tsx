@@ -110,6 +110,7 @@ export function SwipeableTaskItem({
         const hasTime = due.getHours() !== 0 || due.getMinutes() !== 0;
         return safeFormatDate(due, hasTime ? 'Pp' : 'P');
     })();
+    const isStagnant = (task.pushCount ?? 0) > 3;
 
     const showMetaChips =
         (task.tags?.length ?? 0) > 0 ||
@@ -222,8 +223,11 @@ export function SwipeableTaskItem({
                             </View>
                         )}
                         {dueLabel && (
-                            <Text style={styles.taskDueDate}>
+                            <Text style={[styles.taskDueDate, isStagnant && styles.taskDueDateStale]}>
                                 {t('taskEdit.dueDateLabel')}: {dueLabel}
+                                {isStagnant && (
+                                    <Text style={styles.staleIndicator}> ⏳ {task.pushCount}</Text>
+                                )}
                             </Text>
                         )}
                         {(task.startTime || task.reviewAt) && (
@@ -472,6 +476,13 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#EF4444',
         marginTop: 4,
+    },
+    taskDueDateStale: {
+        color: '#9CA3AF',
+    },
+    staleIndicator: {
+        fontSize: 11,
+        color: '#9CA3AF',
     },
     metaRow: {
         flexDirection: 'row',

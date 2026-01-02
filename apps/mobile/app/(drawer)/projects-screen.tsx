@@ -18,12 +18,19 @@ export default function ProjectsScreen() {
   const { projects, tasks, addProject, updateProject, deleteProject, toggleProjectFocus } = useTaskStore();
   const { t } = useLanguage();
   const tc = useThemeColors();
+  const statusPalette: Record<Project['status'], { text: string; bg: string; border: string }> = {
+    active: { text: tc.tint, bg: `${tc.tint}22`, border: tc.tint },
+    waiting: { text: '#F59E0B', bg: '#F59E0B22', border: '#F59E0B' },
+    someday: { text: '#A855F7', bg: '#A855F722', border: '#A855F7' },
+    archived: { text: tc.secondaryText, bg: tc.filterBg, border: tc.border },
+  };
   const [newProjectTitle, setNewProjectTitle] = useState('');
   const [newProjectArea, setNewProjectArea] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [notesExpanded, setNotesExpanded] = useState(false);
   const [showNotesPreview, setShowNotesPreview] = useState(false);
   const [showReviewPicker, setShowReviewPicker] = useState(false);
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [linkModalVisible, setLinkModalVisible] = useState(false);
   const [linkInput, setLinkInput] = useState('');
 
@@ -88,23 +95,11 @@ export default function ProjectsScreen() {
     }
   };
 
-  const handleCompleteSelectedProject = () => {
+  const handleSetProjectStatus = (status: Project['status']) => {
     if (!selectedProject) return;
-    Alert.alert(
-      t('projects.title'),
-      t('projects.completeConfirm'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('projects.complete'),
-          style: 'default',
-          onPress: () => {
-            updateProject(selectedProject.id, { status: 'completed' });
-            setSelectedProject({ ...selectedProject, status: 'completed' });
-          }
-        }
-      ]
-    );
+    updateProject(selectedProject.id, { status });
+    setSelectedProject({ ...selectedProject, status });
+    setShowStatusMenu(false);
   };
 
   const handleArchiveSelectedProject = () => {
@@ -283,6 +278,7 @@ export default function ProjectsScreen() {
                   setNotesExpanded(false);
                   setShowNotesPreview(false);
                   setShowReviewPicker(false);
+                  setShowStatusMenu(false);
                   setLinkModalVisible(false);
                   setLinkInput('');
                 }}
@@ -299,8 +295,19 @@ export default function ProjectsScreen() {
                       ⚠️ No next action
                     </Text>
                   ) : (
-                    <Text style={[styles.projectMeta, { color: tc.secondaryText }]}>
-                      {item.status}
+                    <Text
+                      style={[
+                        styles.projectMeta,
+                        { color: statusPalette[item.status]?.text ?? tc.secondaryText },
+                      ]}
+                    >
+                      {item.status === 'active'
+                        ? t('status.active')
+                        : item.status === 'waiting'
+                          ? t('status.waiting')
+                          : item.status === 'someday'
+                            ? t('status.someday')
+                            : t('status.archived')}
                     </Text>
                   )}
                 </View>
@@ -335,6 +342,7 @@ export default function ProjectsScreen() {
           setNotesExpanded(false);
           setShowNotesPreview(false);
           setShowReviewPicker(false);
+          setShowStatusMenu(false);
           setLinkModalVisible(false);
           setLinkInput('');
         }}
@@ -381,17 +389,39 @@ export default function ProjectsScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <View style={[styles.statusActionsRow, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
-                  {selectedProject.status === 'active' ? (
-                    <>
+                <View style={[styles.statusBlock, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
+                  <View style={styles.statusActionsRow}>
+                    <Text style={[styles.statusLabel, { color: tc.secondaryText }]}>{t('projects.statusLabel')}</Text>
+                    <TouchableOpacity
+                      onPress={() => setShowStatusMenu((prev) => !prev)}
+                      style={[
+                        styles.statusPicker,
+                        {
+                          backgroundColor: statusPalette[selectedProject.status]?.bg ?? tc.filterBg,
+                          borderColor: statusPalette[selectedProject.status]?.border ?? tc.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.statusPickerText, { color: statusPalette[selectedProject.status]?.text ?? tc.text }]}>
+                        {selectedProject.status === 'active'
+                          ? t('status.active')
+                          : selectedProject.status === 'waiting'
+                            ? t('status.waiting')
+                            : t('status.someday')}
+                      </Text>
+                      <Text style={[styles.statusPickerText, { color: statusPalette[selectedProject.status]?.text ?? tc.text }]}>▾</Text>
+                    </TouchableOpacity>
+                    <View style={{ flex: 1 }} />
+                    {selectedProject.status === 'archived' ? (
                       <TouchableOpacity
-                        onPress={handleCompleteSelectedProject}
-                        style={[styles.statusButton, styles.completeButton]}
+                        onPress={() => handleSetProjectStatus('active')}
+                        style={[styles.statusButton, styles.reactivateButton]}
                       >
-                        <Text style={[styles.statusButtonText, styles.completeText]}>
-                          {t('projects.complete')}
+                        <Text style={[styles.statusButtonText, styles.reactivateText]}>
+                          {t('projects.reactivate')}
                         </Text>
                       </TouchableOpacity>
+                    ) : (
                       <TouchableOpacity
                         onPress={handleArchiveSelectedProject}
                         style={[styles.statusButton, styles.archiveButton]}
@@ -400,19 +430,34 @@ export default function ProjectsScreen() {
                           {t('projects.archive')}
                         </Text>
                       </TouchableOpacity>
-                    </>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={() => {
-                        updateProject(selectedProject.id, { status: 'active' });
-                        setSelectedProject({ ...selectedProject, status: 'active' });
-                      }}
-                      style={[styles.statusButton, styles.reactivateButton]}
-                    >
-                      <Text style={[styles.statusButtonText, styles.reactivateText]}>
-                        {t('projects.reactivate')}
-                      </Text>
-                    </TouchableOpacity>
+                    )}
+                  </View>
+                  {showStatusMenu && (
+                    <View style={[styles.statusMenu, { backgroundColor: tc.inputBg, borderColor: tc.border }]}>
+                      {(['active', 'waiting', 'someday'] as const).map((status) => {
+                        const isActive = selectedProject.status === status;
+                        const palette = statusPalette[status];
+                        return (
+                          <TouchableOpacity
+                            key={status}
+                            onPress={() => handleSetProjectStatus(status)}
+                            style={[
+                              styles.statusMenuItem,
+                              isActive && { backgroundColor: tc.filterBg },
+                            ]}
+                          >
+                            <View style={[styles.statusDot, { backgroundColor: palette?.border ?? tc.border }]} />
+                            <Text style={[styles.statusMenuText, { color: palette?.text ?? tc.text }]}>
+                              {status === 'active'
+                                ? t('status.active')
+                                : status === 'waiting'
+                                  ? t('status.waiting')
+                                  : t('status.someday')}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   )}
                 </View>
 
@@ -801,12 +846,55 @@ const styles = StyleSheet.create({
   sequentialToggleTextActive: {
     color: '#FFFFFF',
   },
+  statusBlock: {
+    borderBottomWidth: 1,
+  },
   statusActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderBottomWidth: 1,
+    gap: 8,
+  },
+  statusLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusPicker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  statusPickerText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusMenu: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  statusMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusMenuText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
   },
   statusButton: {
     paddingHorizontal: 12,

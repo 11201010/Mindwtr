@@ -11,6 +11,7 @@ export function AgendaView() {
     const [selectedPriorities, setSelectedPriorities] = useState<TaskPriority[]>([]);
     const [selectedTimeEstimates, setSelectedTimeEstimates] = useState<TimeEstimate[]>([]);
     const [filtersOpen, setFiltersOpen] = useState(false);
+    const [top3Only, setTop3Only] = useState(false);
 
     // Filter active tasks
     const activeTasks = useMemo(() =>
@@ -86,8 +87,6 @@ export function AgendaView() {
         [filteredActiveTasks]
     );
 
-    const focusedCount = focusedTasks.length;
-
     // Categorize tasks
     const sections = useMemo(() => {
         const now = new Date();
@@ -116,6 +115,38 @@ export function AgendaView() {
 
         return { overdue, dueToday, nextActions, reviewDue };
     }, [filteredActiveTasks]);
+    const focusedCount = focusedTasks.length;
+    const top3Candidates = useMemo(() => {
+        const byId = new Map<string, Task>();
+        [...sections.overdue, ...sections.dueToday, ...sections.nextActions, ...sections.reviewDue].forEach((task) => {
+            byId.set(task.id, task);
+        });
+        return Array.from(byId.values());
+    }, [sections]);
+    const top3Tasks = useMemo(() => {
+        const priorityRank: Record<TaskPriority, number> = {
+            low: 1,
+            medium: 2,
+            high: 3,
+            urgent: 4,
+        };
+        const parseDue = (value?: string) => {
+            if (!value) return Number.POSITIVE_INFINITY;
+            const parsed = safeParseDate(value);
+            return parsed ? parsed.getTime() : Number.POSITIVE_INFINITY;
+        };
+        const sorted = [...top3Candidates].sort((a, b) => {
+            const priorityDiff = (priorityRank[b.priority as TaskPriority] || 0) - (priorityRank[a.priority as TaskPriority] || 0);
+            if (priorityDiff !== 0) return priorityDiff;
+            const dueDiff = parseDue(a.dueDate) - parseDue(b.dueDate);
+            if (dueDiff !== 0) return dueDiff;
+            const aCreated = safeParseDate(a.createdAt)?.getTime() ?? 0;
+            const bCreated = safeParseDate(b.createdAt)?.getTime() ?? 0;
+            return aCreated - bCreated;
+        });
+        return sorted.slice(0, 3);
+    }, [top3Candidates]);
+    const remainingCount = Math.max(top3Candidates.length - top3Tasks.length, 0);
 
     const handleToggleFocus = (taskId: string) => {
         const task = tasks.find(t => t.id === taskId);
@@ -292,6 +323,18 @@ export function AgendaView() {
                 <p className="text-muted-foreground">
                     {hasFilters ? `${visibleActive} / ${totalActive}` : totalActive} {t('agenda.active')}
                 </p>
+                <button
+                    type="button"
+                    onClick={() => setTop3Only((prev) => !prev)}
+                    className={cn(
+                        "mt-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border transition-colors",
+                        top3Only
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                    )}
+                >
+                    {t('agenda.top3Only')}
+                </button>
             </header>
 
             <div className="bg-card border border-border rounded-lg p-3 space-y-3">
@@ -397,59 +440,87 @@ export function AgendaView() {
                 )}
             </div>
 
-            {/* Today's Focus Section */}
-            <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950/60 dark:to-orange-950/40 border border-yellow-200 dark:border-yellow-700 rounded-xl p-6">
-                <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-900 dark:text-slate-900">
-                    <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
-                    {t('agenda.todaysFocus')}
-                    <span className="text-sm font-normal text-slate-600">
-                        ({focusedCount}/3)
-                    </span>
-                </h3>
-
-                {focusedTasks.length > 0 ? (
+            {top3Only ? (
+                <div className="space-y-4">
                     <div className="space-y-2">
-                        {focusedTasks.map(task => (
-                            <TaskCard key={task.id} task={task} showFocusToggle={true} />
-                        ))}
+                        <h3 className="font-semibold">{t('agenda.top3Title')}</h3>
+                        {top3Tasks.length > 0 ? (
+                            <div className="space-y-2">
+                                {top3Tasks.map(task => (
+                                    <TaskCard key={task.id} task={task} showFocusToggle={false} />
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-muted-foreground text-sm">{t('agenda.noTasks')}</p>
+                        )}
                     </div>
-                ) : (
-                    <p className="text-muted-foreground text-center py-4">
-                        ⭐ {t('agenda.focusHint')}
-                    </p>
-                )}
-            </div>
+                    {remainingCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setTop3Only(false)}
+                            className="text-xs px-3 py-2 rounded bg-muted/50 text-muted-foreground hover:bg-muted transition-colors"
+                        >
+                            {t('agenda.showMore').replace('{{count}}', `${remainingCount}`)}
+                        </button>
+                    )}
+                </div>
+            ) : (
+                <>
+                    {/* Today's Focus Section */}
+                    <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950/60 dark:to-orange-950/40 border border-yellow-200 dark:border-yellow-700 rounded-xl p-6">
+                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-900 dark:text-slate-900">
+                            <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
+                            {t('agenda.todaysFocus')}
+                            <span className="text-sm font-normal text-slate-600">
+                                ({focusedCount}/3)
+                            </span>
+                        </h3>
 
-            {/* Other Sections */}
-            <div className="space-y-6">
-                <Section
-                    title={t('agenda.overdue')}
-                    icon={AlertCircle}
-                    tasks={sections.overdue}
-                    color="text-red-600"
-                />
+                        {focusedTasks.length > 0 ? (
+                            <div className="space-y-2">
+                                {focusedTasks.map(task => (
+                                    <TaskCard key={task.id} task={task} showFocusToggle={true} />
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-muted-foreground text-center py-4">
+                                ⭐ {t('agenda.focusHint')}
+                            </p>
+                        )}
+                    </div>
 
-                <Section
-                    title={t('agenda.dueToday')}
-                    icon={Calendar}
-                    tasks={sections.dueToday}
-                    color="text-yellow-600"
-                />
+                    {/* Other Sections */}
+                    <div className="space-y-6">
+                        <Section
+                            title={t('agenda.overdue')}
+                            icon={AlertCircle}
+                            tasks={sections.overdue}
+                            color="text-red-600"
+                        />
 
-                <Section
-                    title={t('agenda.nextActions')}
-                    icon={ArrowRight}
-                    tasks={sections.nextActions}
-                    color="text-blue-600"
-                />
+                        <Section
+                            title={t('agenda.dueToday')}
+                            icon={Calendar}
+                            tasks={sections.dueToday}
+                            color="text-yellow-600"
+                        />
 
-                <Section
-                    title={t('agenda.reviewDue') || 'Review Due'}
-                    icon={Clock}
-                    tasks={sections.reviewDue}
-                    color="text-purple-600"
-                />
-            </div>
+                        <Section
+                            title={t('agenda.nextActions')}
+                            icon={ArrowRight}
+                            tasks={sections.nextActions}
+                            color="text-blue-600"
+                        />
+
+                        <Section
+                            title={t('agenda.reviewDue') || 'Review Due'}
+                            icon={Clock}
+                            tasks={sections.reviewDue}
+                            color="text-purple-600"
+                        />
+                    </div>
+                </>
+            )}
 
             {visibleActive === 0 && (
                 <div className="text-center py-12 text-muted-foreground">

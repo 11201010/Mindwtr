@@ -42,6 +42,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'keybindings.openSearch': 'Open search',
         'keybindings.quickAdd': 'Quick add',
         'keybindings.toggleSidebar': 'Toggle sidebar',
+        'keybindings.toggleFocusMode': 'Toggle focus mode',
         'keybindings.goInbox': 'Go to Inbox',
         'keybindings.goNext': 'Go to Next Actions',
         'keybindings.goAgenda': 'Go to Agenda',
@@ -89,6 +90,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'status.someday': 'Someday',
         'status.done': 'Done',
         'status.archived': 'Archived',
+        'status.active': 'Active',
 
         // Priority Labels
         'priority.low': 'Low',
@@ -139,9 +141,12 @@ export const translations: Record<Language, Record<string, string>> = {
         'taskEdit.locationPlaceholder': 'e.g. Office',
         'taskEdit.projectLabel': 'Project',
         'taskEdit.noProjectOption': 'No Project',
+        'taskEdit.moreOptions': 'More options',
+        'taskEdit.hideOptions': 'Hide options',
         'taskEdit.startDateLabel': 'Start Date',
         'taskEdit.dueDateLabel': 'Due Date',
         'taskEdit.reviewDateLabel': 'Review Date',
+        'taskEdit.pushCountHint': 'Pushed',
         'taskEdit.blockedByLabel': 'Blocked by',
         'taskEdit.unblocksLabel': 'Unblocks',
         'taskStatus.changeStatus': 'Change Status',
@@ -152,6 +157,11 @@ export const translations: Record<Language, Record<string, string>> = {
         'recurrence.weekly': 'Weekly',
         'recurrence.monthly': 'Monthly',
         'recurrence.yearly': 'Yearly',
+        'recurrence.strategyLabel': 'Strategy',
+        'recurrence.strategyStrict': 'Strict',
+        'recurrence.strategyFluid': 'Fluid',
+        'recurrence.strategyStrictDesc': 'Due on the scheduled date (e.g., bills)',
+        'recurrence.strategyFluidDesc': 'Due after completion (e.g., laundry)',
 
         // Inbox (Mobile)
         'inbox.title': 'Inbox',
@@ -238,6 +248,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
         // Projects
         'projects.title': 'Projects',
+        'projects.statusLabel': 'Status',
+        'projects.activeSection': 'Active Projects',
         'projects.noProjects': 'No projects yet.',
         'projects.selectProject': 'Select a project to view tasks',
         'projects.addTask': 'Add Task',
@@ -260,6 +272,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'projects.areaFilter': 'Area filter',
         'projects.allAreas': 'All areas',
         'projects.noArea': 'No area',
+        'projects.deferredSection': 'Someday / Waiting',
         'projects.complete': 'Complete',
         'projects.archive': 'Archive',
         'projects.reactivate': 'Reactivate',
@@ -606,6 +619,9 @@ export const translations: Record<Language, Record<string, string>> = {
         // Agenda
         'agenda.title': 'Agenda',
         'agenda.active': 'active items',
+        'agenda.top3Only': 'Show Top 3 Only',
+        'agenda.top3Title': "Today's Top 3",
+        'agenda.showMore': 'Show {{count}} more tasks...',
         'agenda.todaysFocus': "Today's Focus",
         'agenda.focusHint': "Click the star on any task below to add it to today's focus (max 3).",
         'agenda.addToFocus': "Add to today's focus",
@@ -721,6 +737,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'keybindings.openSearch': '打开搜索',
         'keybindings.quickAdd': '快速添加',
         'keybindings.toggleSidebar': '切换侧边栏',
+        'keybindings.toggleFocusMode': '切换专注模式',
         'keybindings.goInbox': '前往收集箱',
         'keybindings.goNext': '前往下一步行动',
         'keybindings.goAgenda': '前往日程',
@@ -768,6 +785,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'status.someday': '将来',
         'status.done': '已完成',
         'status.archived': '归档',
+        'status.active': '活跃',
 
         // Priority Labels
         'priority.low': '低',
@@ -818,9 +836,12 @@ export const translations: Record<Language, Record<string, string>> = {
         'taskEdit.locationPlaceholder': '例如：办公室',
         'taskEdit.projectLabel': '项目',
         'taskEdit.noProjectOption': '无项目',
+        'taskEdit.moreOptions': '更多选项',
+        'taskEdit.hideOptions': '收起选项',
         'taskEdit.startDateLabel': '开始日期',
         'taskEdit.dueDateLabel': '截止日期',
         'taskEdit.reviewDateLabel': '回顾日期',
+        'taskEdit.pushCountHint': '推迟次数',
         'taskEdit.blockedByLabel': '被以下任务阻塞',
         'taskEdit.unblocksLabel': '解除阻塞',
         'taskStatus.changeStatus': '更改状态',
@@ -831,6 +852,11 @@ export const translations: Record<Language, Record<string, string>> = {
         'recurrence.weekly': '每周',
         'recurrence.monthly': '每月',
         'recurrence.yearly': '每年',
+        'recurrence.strategyLabel': '策略',
+        'recurrence.strategyStrict': '严格',
+        'recurrence.strategyFluid': '流动',
+        'recurrence.strategyStrictDesc': '按计划日期（如账单）',
+        'recurrence.strategyFluidDesc': '按完成时间后顺延（如洗衣）',
 
         // Inbox (Mobile)
         'inbox.title': '收集箱',
@@ -917,6 +943,8 @@ export const translations: Record<Language, Record<string, string>> = {
 
         // Projects
         'projects.title': '项目',
+        'projects.statusLabel': '状态',
+        'projects.activeSection': '活跃项目',
         'projects.noProjects': '暂无项目',
         'projects.selectProject': '选择一个项目查看任务',
         'projects.addTask': '添加任务',
@@ -939,6 +967,7 @@ export const translations: Record<Language, Record<string, string>> = {
         'projects.areaFilter': '领域筛选',
         'projects.allAreas': '所有领域',
         'projects.noArea': '无领域',
+        'projects.deferredSection': '将来 / 等待',
         'projects.complete': '完成',
         'projects.archive': '归档',
         'projects.reactivate': '重新激活',
@@ -1285,6 +1314,9 @@ export const translations: Record<Language, Record<string, string>> = {
         // Agenda
         'agenda.title': '日程',
         'agenda.active': '个活动项目',
+        'agenda.top3Only': '仅显示前三项',
+        'agenda.top3Title': '今日前三项',
+        'agenda.showMore': '显示另外 {{count}} 项...',
         'agenda.todaysFocus': '今日焦点',
         'agenda.focusHint': '点击下方任务右侧的星标，将其加入今日焦点（最多 3 项）。',
         'agenda.addToFocus': '加入今日焦点',

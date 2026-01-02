@@ -3,6 +3,7 @@ import { Calendar, Inbox, CheckSquare, Archive, Layers, Tag, CheckCircle2, HelpC
 import { cn } from '../lib/utils';
 import { useTaskStore, safeParseDate } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
+import { useUiStore } from '../store/ui-store';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -14,6 +15,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
     const { tasks, settings, updateSettings } = useTaskStore();
     const { t } = useLanguage();
     const isCollapsed = settings?.sidebarCollapsed ?? false;
+    const isFocusMode = useUiStore((state) => state.isFocusMode);
 
     const { inboxCount, nextCount } = useMemo(() => {
         const activeTasks = tasks.filter((task) => !task.deletedAt);
@@ -58,10 +60,11 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
     return (
         <div className="flex h-screen bg-background text-foreground">
             {/* Sidebar */}
-            <aside className={cn(
-                "border-r border-border bg-card flex flex-col transition-all duration-150",
-                isCollapsed ? "w-16 p-2" : "w-64 p-4"
-            )}>
+            {!isFocusMode && (
+                <aside className={cn(
+                    "border-r border-border bg-card flex flex-col transition-all duration-150",
+                    isCollapsed ? "w-16 p-2" : "w-64 p-4"
+                )}>
                 <div className={cn("flex items-center gap-2 px-2 mb-4", isCollapsed && "justify-center")}>
                     <img
                         src="/logo.png"
@@ -177,13 +180,14 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                         {!isCollapsed && t('nav.settings')}
                     </button>
                 </div>
-            </aside>
+                </aside>
+            )}
 
             {/* Main Content */}
             <main className="flex-1 overflow-auto">
                 <div className={cn(
                     "mx-auto p-8 h-full",
-                    ['board', 'calendar'].includes(currentView) ? "max-w-full" : "max-w-4xl"
+                    isFocusMode ? "max-w-[800px]" : ['board', 'calendar'].includes(currentView) ? "max-w-full" : "max-w-4xl"
                 )}>
                     {children}
                 </div>

@@ -14,6 +14,7 @@ import {
     PRESET_CONTEXTS,
     PRESET_TAGS,
     RecurrenceRule,
+    type RecurrenceStrategy,
     RECURRENCE_RULES,
 } from '@mindwtr/core';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -56,6 +57,24 @@ const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
 const DEFAULT_TASK_EDITOR_HIDDEN = DEFAULT_TASK_EDITOR_ORDER.filter((id) => !['status', 'priority', 'contexts', 'description', 'recurrence'].includes(id));
 
 type TaskEditTab = 'task' | 'view';
+
+const getRecurrenceRuleValue = (recurrence: Task['recurrence']): RecurrenceRule | '' => {
+    if (!recurrence) return '';
+    if (typeof recurrence === 'string') return recurrence as RecurrenceRule;
+    return recurrence.rule;
+};
+
+const getRecurrenceStrategyValue = (recurrence: Task['recurrence']): RecurrenceStrategy => {
+    if (recurrence && typeof recurrence === 'object' && recurrence.strategy === 'fluid') {
+        return 'fluid';
+    }
+    return 'strict';
+};
+
+const buildRecurrenceValue = (rule: RecurrenceRule | '', strategy: RecurrenceStrategy): Task['recurrence'] | undefined => {
+    if (!rule) return undefined;
+    return { rule, strategy };
+};
 
 export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, defaultTab }: TaskEditModalProps) {
     const { tasks, projects, settings, duplicateTask, resetTaskChecklist } = useTaskStore();
@@ -139,7 +158,9 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
 
     useEffect(() => {
         if (task) {
-            setEditedTask({ ...task });
+            const recurrenceRule = getRecurrenceRuleValue(task.recurrence);
+            const recurrenceStrategy = getRecurrenceStrategyValue(task.recurrence);
+            setEditedTask({ ...task, recurrence: buildRecurrenceValue(recurrenceRule, recurrenceStrategy) });
             setShowMoreOptions(false);
             setShowDescriptionPreview(false);
             setEditTab(resolveInitialTab(defaultTab, task));
@@ -241,6 +262,9 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const handleSave = () => {
         if (!task) return;
         const updates: Partial<Task> = { ...editedTask };
+        const recurrenceRule = getRecurrenceRuleValue(editedTask.recurrence);
+        const recurrenceStrategy = getRecurrenceStrategyValue(editedTask.recurrence);
+        updates.recurrence = buildRecurrenceValue(recurrenceRule, recurrenceStrategy);
         if (editedTask.blockedByTaskIds) {
             const filtered = editedTask.blockedByTaskIds.filter((id) => availableBlockerIds.has(id));
             updates.blockedByTaskIds = filtered.length > 0 ? filtered : undefined;
@@ -657,6 +681,8 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             label: t(`recurrence.${rule}`),
         })),
     ];
+    const recurrenceRuleValue = getRecurrenceRuleValue(editedTask.recurrence);
+    const recurrenceStrategyValue = getRecurrenceStrategyValue(editedTask.recurrence);
 
     const toggleContext = (tag: string) => {
         const current = editedTask.contexts || [];
@@ -1073,18 +1099,39 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                 <TouchableOpacity
                                     key={opt.value || 'none'}
                                     style={getStatusChipStyle(
-                                        editedTask.recurrence === opt.value || (!opt.value && !editedTask.recurrence)
+                                        recurrenceRuleValue === opt.value || (!opt.value && !recurrenceRuleValue)
                                     )}
-                                    onPress={() => setEditedTask(prev => ({ ...prev, recurrence: opt.value || undefined }))}
+                                    onPress={() => setEditedTask(prev => ({
+                                        ...prev,
+                                        recurrence: buildRecurrenceValue(opt.value || '', recurrenceStrategyValue),
+                                    }))}
                                 >
                                     <Text style={getStatusTextStyle(
-                                        editedTask.recurrence === opt.value || (!opt.value && !editedTask.recurrence)
+                                        recurrenceRuleValue === opt.value || (!opt.value && !recurrenceRuleValue)
                                     )}>
                                         {opt.label}
                                     </Text>
                                 </TouchableOpacity>
                             ))}
                         </View>
+                        {!!recurrenceRuleValue && (
+                            <View style={[styles.statusContainer, { marginTop: 8 }]}>
+                                {(['strict', 'fluid'] as RecurrenceStrategy[]).map((strategy) => (
+                                    <TouchableOpacity
+                                        key={strategy}
+                                        style={getStatusChipStyle(recurrenceStrategyValue === strategy)}
+                                        onPress={() => setEditedTask(prev => ({
+                                            ...prev,
+                                            recurrence: buildRecurrenceValue(recurrenceRuleValue, strategy),
+                                        }))}
+                                    >
+                                        <Text style={getStatusTextStyle(recurrenceStrategyValue === strategy)}>
+                                            {strategy === 'strict' ? t('recurrence.strategyStrict') : t('recurrence.strategyFluid')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
                     </View>
                 );
             case 'startTime':
@@ -1345,7 +1392,11 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         const timeEstimateLabel = mergedTask.timeEstimate
             ? (formatTimeEstimateLabel(mergedTask.timeEstimate as TimeEstimate) || String(mergedTask.timeEstimate))
             : undefined;
-        const recurrenceLabel = mergedTask.recurrence ? (t(`recurrence.${mergedTask.recurrence}`) || mergedTask.recurrence) : undefined;
+        const recurrenceRule = getRecurrenceRuleValue(mergedTask.recurrence);
+        const recurrenceStrategy = getRecurrenceStrategyValue(mergedTask.recurrence);
+        const recurrenceLabel = recurrenceRule
+            ? `${t(`recurrence.${recurrenceRule}`) || recurrenceRule}${recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.strategyFluid')}` : ''}`
+            : undefined;
 
         return (
             <ScrollView

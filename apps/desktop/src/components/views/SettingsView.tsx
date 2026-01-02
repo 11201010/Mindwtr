@@ -22,6 +22,7 @@ import {
     type AIProviderId,
     type AIReasoningEffort,
     safeFormatDate,
+    type TaskEditorFieldId,
     type ExternalCalendarSubscription,
     useTaskStore,
 } from '@mindwtr/core';
@@ -336,7 +337,11 @@ export function SettingsView() {
                 return;
             }
             setUpdateInfo(info);
-            setDownloadNotice(null);
+            if (info.platform === 'linux' && linuxFlavor === 'arch') {
+                setDownloadNotice(t.downloadAURHint);
+            } else {
+                setDownloadNotice(null);
+            }
             setIsDownloadingUpdate(false);
             setShowUpdateModal(true);
         } catch (error) {
@@ -349,6 +354,14 @@ export function SettingsView() {
 
     const handleDownloadUpdate = async () => {
         const targetUrl = preferredDownloadUrl;
+        if (updateInfo?.platform === 'linux' && linuxFlavor === 'arch') {
+            setDownloadNotice(t.downloadAURHint);
+            return;
+        }
+        if (!targetUrl) {
+            setDownloadNotice(t.downloadFailed);
+            return;
+        }
         setIsDownloadingUpdate(true);
         setDownloadNotice(t.downloadStarting);
 
@@ -397,6 +410,23 @@ export function SettingsView() {
             keybindingVim: 'Vim',
             keybindingEmacs: 'Emacs',
             viewShortcuts: 'View shortcuts',
+            taskEditorLayout: 'Task editor layout',
+            taskEditorLayoutDesc: 'Choose which fields are shown by default in the task editor.',
+            taskEditorLayoutHint: 'Hidden fields appear when they have content or after clicking “More options”.',
+            taskEditorLayoutReset: 'Reset layout',
+            taskEditorFieldStatus: 'Status',
+            taskEditorFieldPriority: 'Priority',
+            taskEditorFieldContexts: 'Contexts',
+            taskEditorFieldDescription: 'Description',
+            taskEditorFieldTags: 'Tags',
+            taskEditorFieldTimeEstimate: 'Time estimate',
+            taskEditorFieldRecurrence: 'Recurrence',
+            taskEditorFieldStartTime: 'Start date',
+            taskEditorFieldDueDate: 'Due date',
+            taskEditorFieldReviewAt: 'Review date',
+            taskEditorFieldBlockedBy: 'Blocked by',
+            taskEditorFieldAttachments: 'Attachments',
+            taskEditorFieldChecklist: 'Checklist',
             notifications: 'Notifications',
             notificationsDesc: 'Enable task reminders and daily digest notifications.',
             notificationsEnable: 'Enable notifications',
@@ -515,6 +545,23 @@ export function SettingsView() {
             keybindingVim: 'Vim',
             keybindingEmacs: 'Emacs',
             viewShortcuts: '查看快捷键',
+            taskEditorLayout: '任务编辑布局',
+            taskEditorLayoutDesc: '选择默认显示的任务编辑字段。',
+            taskEditorLayoutHint: '隐藏字段仅在有内容或点击“更多选项”后显示。',
+            taskEditorLayoutReset: '重置布局',
+            taskEditorFieldStatus: '状态',
+            taskEditorFieldPriority: '优先级',
+            taskEditorFieldContexts: '情境',
+            taskEditorFieldDescription: '描述',
+            taskEditorFieldTags: '标签',
+            taskEditorFieldTimeEstimate: '时间预估',
+            taskEditorFieldRecurrence: '重复',
+            taskEditorFieldStartTime: '开始日期',
+            taskEditorFieldDueDate: '截止日期',
+            taskEditorFieldReviewAt: '回顾日期',
+            taskEditorFieldBlockedBy: '被阻塞',
+            taskEditorFieldAttachments: '附件',
+            taskEditorFieldChecklist: '清单',
             notifications: '通知',
             notificationsDesc: '启用任务提醒与每日简报通知。',
             notificationsEnable: '启用通知',
@@ -669,11 +716,19 @@ export function SettingsView() {
         return null;
     }, [updateInfo, linuxFlavor]);
 
-    const preferredDownloadUrl =
-        recommendedDownload?.url ??
-        (linuxFlavor === 'arch' ? updateInfo?.releaseUrl : updateInfo?.downloadUrl) ??
-        updateInfo?.releaseUrl ??
-        GITHUB_RELEASES_URL;
+    const preferredDownloadUrl = useMemo(() => {
+        if (!updateInfo) return null;
+        if (updateInfo.platform === 'linux') {
+            if (linuxFlavor === 'arch') return null;
+            if (linuxFlavor === 'debian' || linuxFlavor === 'rpm') {
+                return recommendedDownload?.url ?? updateInfo.releaseUrl ?? GITHUB_RELEASES_URL;
+            }
+        }
+        return recommendedDownload?.url ?? updateInfo.downloadUrl ?? updateInfo.releaseUrl ?? GITHUB_RELEASES_URL;
+    }, [updateInfo, linuxFlavor, recommendedDownload]);
+
+    const isArchLinuxUpdate = updateInfo?.platform === 'linux' && linuxFlavor === 'arch';
+    const canDownloadUpdate = Boolean(preferredDownloadUrl) && !isArchLinuxUpdate;
 
     const lastSyncAt = settings?.lastSyncAt;
     const lastSyncStatus = settings?.lastSyncStatus;
@@ -793,6 +848,92 @@ export function SettingsView() {
                 if (days <= 0) return t.autoArchiveNever;
                 return language === 'zh' ? `${days} 天` : `${days} days`;
             };
+            const defaultTaskEditorOrder: TaskEditorFieldId[] = [
+                'status',
+                'priority',
+                'contexts',
+                'description',
+                'tags',
+                'timeEstimate',
+                'recurrence',
+                'startTime',
+                'dueDate',
+                'reviewAt',
+                'blockedBy',
+                'attachments',
+                'checklist',
+            ];
+            const defaultTaskEditorHidden = [...defaultTaskEditorOrder];
+            const savedOrder = settings.gtd?.taskEditor?.order ?? [];
+            const savedHidden = settings.gtd?.taskEditor?.hidden ?? defaultTaskEditorHidden;
+            const taskEditorOrder = [
+                ...savedOrder.filter((id) => defaultTaskEditorOrder.includes(id)),
+                ...defaultTaskEditorOrder.filter((id) => !savedOrder.includes(id)),
+            ];
+            const taskEditorDisplayOrder = taskEditorOrder.filter((id) => id !== 'dueDate');
+            const hiddenSet = new Set(savedHidden);
+            const fieldLabel = (fieldId: TaskEditorFieldId) => {
+                switch (fieldId) {
+                    case 'status':
+                        return t.taskEditorFieldStatus;
+                    case 'priority':
+                        return t.taskEditorFieldPriority;
+                    case 'contexts':
+                        return t.taskEditorFieldContexts;
+                    case 'description':
+                        return t.taskEditorFieldDescription;
+                    case 'tags':
+                        return t.taskEditorFieldTags;
+                    case 'timeEstimate':
+                        return t.taskEditorFieldTimeEstimate;
+                    case 'recurrence':
+                        return t.taskEditorFieldRecurrence;
+                    case 'startTime':
+                        return t.taskEditorFieldStartTime;
+                    case 'dueDate':
+                        return t.taskEditorFieldDueDate;
+                    case 'reviewAt':
+                        return t.taskEditorFieldReviewAt;
+                    case 'blockedBy':
+                        return t.taskEditorFieldBlockedBy;
+                    case 'attachments':
+                        return t.taskEditorFieldAttachments;
+                    case 'checklist':
+                        return t.taskEditorFieldChecklist;
+                    default:
+                        return fieldId;
+                }
+            };
+            const saveTaskEditor = (next: { order?: TaskEditorFieldId[]; hidden?: TaskEditorFieldId[] }) => {
+                updateSettings({
+                    gtd: {
+                        ...(settings.gtd ?? {}),
+                        taskEditor: {
+                            ...(settings.gtd?.taskEditor ?? {}),
+                            ...next,
+                        },
+                    },
+                }).then(showSaved).catch(console.error);
+            };
+            const toggleFieldVisibility = (fieldId: TaskEditorFieldId) => {
+                const nextHidden = new Set(hiddenSet);
+                if (nextHidden.has(fieldId)) {
+                    nextHidden.delete(fieldId);
+                } else {
+                    nextHidden.add(fieldId);
+                }
+                saveTaskEditor({ order: taskEditorOrder, hidden: Array.from(nextHidden) });
+            };
+            const moveField = (fieldId: TaskEditorFieldId, delta: number) => {
+                const fromIndex = taskEditorOrder.indexOf(fieldId);
+                if (fromIndex === -1) return;
+                const toIndex = Math.max(0, Math.min(taskEditorOrder.length - 1, fromIndex + delta));
+                if (fromIndex === toIndex) return;
+                const nextOrder = [...taskEditorOrder];
+                const [moved] = nextOrder.splice(fromIndex, 1);
+                nextOrder.splice(toIndex, 0, moved);
+                saveTaskEditor({ order: nextOrder, hidden: Array.from(hiddenSet) });
+            };
 
             return (
                 <div className="space-y-6">
@@ -823,6 +964,70 @@ export function SettingsView() {
                                     ))}
                                 </select>
                             </div>
+                        </div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-sm font-medium">{t.taskEditorLayout}</div>
+                                <div className="text-xs text-muted-foreground mt-1">{t.taskEditorLayoutDesc}</div>
+                                <div className="text-xs text-muted-foreground">{t.taskEditorLayoutHint}</div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => saveTaskEditor({ order: [...defaultTaskEditorOrder], hidden: [...defaultTaskEditorHidden] })}
+                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
+                            >
+                                {t.taskEditorLayoutReset}
+                            </button>
+                        </div>
+                        <div className="space-y-2">
+                            {taskEditorDisplayOrder.map((fieldId, index) => {
+                                const isVisible = !hiddenSet.has(fieldId);
+                                return (
+                                    <div
+                                        key={fieldId}
+                                        className={cn(
+                                            "flex items-center justify-between rounded-md px-3 py-2 border transition-colors cursor-pointer",
+                                            isVisible ? "bg-primary/10 border-primary/40" : "bg-muted/30 border-transparent hover:border-border"
+                                        )}
+                                        onClick={() => toggleFieldVisibility(fieldId)}
+                                    >
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className={cn("text-xs uppercase tracking-wide", isVisible ? "text-primary" : "text-muted-foreground")}>
+                                                {isVisible ? t.on : t.off}
+                                            </span>
+                                            <span className={cn(isVisible ? "text-foreground" : "text-muted-foreground")}>
+                                                {fieldLabel(fieldId)}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    moveField(fieldId, -1);
+                                                }}
+                                                disabled={index === 0}
+                                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40"
+                                            >
+                                                ↑
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    moveField(fieldId, 1);
+                                                }}
+                                                disabled={index === taskEditorDisplayOrder.length - 1}
+                                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40"
+                                            >
+                                                ↓
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
@@ -1660,11 +1865,11 @@ export function SettingsView() {
                             </button>
                             <button
                                 onClick={handleDownloadUpdate}
-                                disabled={isDownloadingUpdate}
+                                disabled={isDownloadingUpdate || !canDownloadUpdate}
                                 className={cn(
                                     "px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                                    isDownloadingUpdate
-                                        ? "bg-green-600/60 text-white cursor-not-allowed"
+                                    isDownloadingUpdate || !canDownloadUpdate
+                                        ? "bg-muted text-muted-foreground cursor-not-allowed"
                                         : "bg-green-600 text-white hover:bg-green-700"
                                 )}
                             >

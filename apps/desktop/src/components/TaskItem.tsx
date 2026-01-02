@@ -1,4 +1,4 @@
-import { useMemo, useState, memo, useEffect } from 'react';
+import { useMemo, useState, memo, useEffect, useRef, useCallback } from 'react';
 
 import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Plus, Clock, Timer, Paperclip, Link2, Pencil } from 'lucide-react';
 import {
@@ -8,6 +8,9 @@ import {
     TaskStatus,
     TaskPriority,
     TimeEstimate,
+    TaskEditorFieldId,
+    type RecurrenceRule,
+    type RecurrenceStrategy,
     generateUUID,
     getTaskAgeLabel,
     getTaskStaleness,
@@ -32,12 +35,42 @@ import { isTauriRuntime } from '../lib/runtime';
 import { normalizeAttachmentInput } from '../lib/attachment-utils';
 import { buildAIConfig, buildCopilotConfig, loadAIKey } from '../lib/ai-config';
 
+const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
+    'status',
+    'priority',
+    'contexts',
+    'description',
+    'tags',
+    'timeEstimate',
+    'recurrence',
+    'startTime',
+    'dueDate',
+    'reviewAt',
+    'blockedBy',
+    'attachments',
+    'checklist',
+];
+const DEFAULT_TASK_EDITOR_HIDDEN: TaskEditorFieldId[] = [...DEFAULT_TASK_EDITOR_ORDER];
+
 // Convert stored ISO or datetime-local strings into datetime-local input values.
 function toDateTimeLocalValue(dateStr: string | undefined): string {
     if (!dateStr) return '';
     const parsed = safeParseDate(dateStr);
     if (!parsed) return dateStr;
     return safeFormatDate(parsed, "yyyy-MM-dd'T'HH:mm", dateStr);
+}
+
+function getRecurrenceRuleValue(recurrence: Task['recurrence']): RecurrenceRule | '' {
+    if (!recurrence) return '';
+    if (typeof recurrence === 'string') return recurrence as RecurrenceRule;
+    return recurrence.rule || '';
+}
+
+function getRecurrenceStrategyValue(recurrence: Task['recurrence']): RecurrenceStrategy {
+    if (recurrence && typeof recurrence === 'object' && recurrence.strategy === 'fluid') {
+        return 'fluid';
+    }
+    return 'strict';
 }
 
 interface TaskItemProps {
@@ -62,7 +95,6 @@ export const TaskItem = memo(function TaskItem({
     const { updateTask, deleteTask, moveTask, projects, tasks, settings, duplicateTask, resetTaskChecklist, highlightTaskId, setHighlightTask } = useTaskStore();
     const { t, language } = useLanguage();
     const [isEditing, setIsEditing] = useState(false);
-    const [isChecklistOpen, setIsChecklistOpen] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const [editDueDate, setEditDueDate] = useState(toDateTimeLocalValue(task.dueDate));
     const [editStartTime, setEditStartTime] = useState(toDateTimeLocalValue(task.startTime));
@@ -72,7 +104,8 @@ export const TaskItem = memo(function TaskItem({
     const [editDescription, setEditDescription] = useState(task.description || '');
     const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [editLocation, setEditLocation] = useState(task.location || '');
-    const [editRecurrence, setEditRecurrence] = useState(task.recurrence || '');
+    const [editRecurrence, setEditRecurrence] = useState<RecurrenceRule | ''>(getRecurrenceRuleValue(task.recurrence));
+    const [editRecurrenceStrategy, setEditRecurrenceStrategy] = useState<RecurrenceStrategy>(getRecurrenceStrategyValue(task.recurrence));
     const [editTimeEstimate, setEditTimeEstimate] = useState<TimeEstimate | ''>(task.timeEstimate || '');
     const [editPriority, setEditPriority] = useState<TaskPriority | ''>(task.priority || '');
     const [editReviewAt, setEditReviewAt] = useState(toDateTimeLocalValue(task.reviewAt));
@@ -80,6 +113,8 @@ export const TaskItem = memo(function TaskItem({
     const [editAttachments, setEditAttachments] = useState<Attachment[]>(task.attachments || []);
     const [attachmentError, setAttachmentError] = useState<string | null>(null);
     const [showLinkPrompt, setShowLinkPrompt] = useState(false);
+    const [showDetails, setShowDetails] = useState(false);
+    const [isViewOpen, setIsViewOpen] = useState(false);
     const [aiClarifyResponse, setAiClarifyResponse] = useState<ClarifyResponse | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiBreakdownSteps, setAiBreakdownSteps] = useState<string[] | null>(null);
@@ -91,6 +126,9 @@ export const TaskItem = memo(function TaskItem({
     const aiEnabled = settings?.ai?.enabled === true;
     const aiProvider = (settings?.ai?.provider ?? 'openai') as 'openai' | 'gemini';
     const isHighlighted = highlightTaskId === task.id;
+    const recurrenceRule = getRecurrenceRuleValue(task.recurrence);
+    const recurrenceStrategy = getRecurrenceStrategyValue(task.recurrence);
+    const isStagnant = (task.pushCount ?? 0) > 3;
 
     useEffect(() => {
         if (!isHighlighted) return;
@@ -151,6 +189,7 @@ export const TaskItem = memo(function TaskItem({
     const unblocksCount = getUnblocksCount(task.id, tasks ?? []);
     const visibleAttachments = (task.attachments || []).filter((a) => !a.deletedAt);
     const visibleEditAttachments = editAttachments.filter((a) => !a.deletedAt);
+    const wasEditingRef = useRef(false);
     const blockedByTasks = useMemo(() => {
         if (!task.blockedByTaskIds?.length) return [];
         const taskMap = new Map((tasks ?? []).map((t) => [t.id, t]));
@@ -159,10 +198,514 @@ export const TaskItem = memo(function TaskItem({
             .filter((t): t is Task => Boolean(t && availableBlockerIds.has(t.id)));
     }, [task.blockedByTaskIds, tasks, availableBlockerIds]);
 
-    const removeBlocker = (blockerId: string) => {
-        const nextBlockedBy = (task.blockedByTaskIds || []).filter((id) => id !== blockerId);
-        updateTask(task.id, { blockedByTaskIds: nextBlockedBy.length > 0 ? nextBlockedBy : undefined });
+    const savedOrder = settings?.gtd?.taskEditor?.order ?? [];
+    const savedHidden = settings?.gtd?.taskEditor?.hidden ?? DEFAULT_TASK_EDITOR_HIDDEN;
+    const taskEditorOrder = useMemo(() => {
+        const known = new Set(DEFAULT_TASK_EDITOR_ORDER);
+        const normalized = savedOrder.filter((id) => known.has(id));
+        const missing = DEFAULT_TASK_EDITOR_ORDER.filter((id) => !normalized.includes(id));
+        return [...normalized, ...missing];
+    }, [savedOrder]);
+    const hiddenSet = useMemo(() => {
+        const known = new Set(taskEditorOrder);
+        return new Set(savedHidden.filter((id) => known.has(id)));
+    }, [savedHidden, taskEditorOrder]);
+
+    const editorFieldIds = useMemo(
+        () => taskEditorOrder.filter((fieldId) => fieldId !== 'dueDate'),
+        [taskEditorOrder]
+    );
+
+    const hasValue = useCallback((fieldId: TaskEditorFieldId) => {
+        switch (fieldId) {
+            case 'status':
+                return task.status !== 'inbox';
+            case 'priority':
+                return Boolean(editPriority);
+            case 'contexts':
+                return Boolean(editContexts.trim());
+            case 'description':
+                return Boolean(editDescription.trim());
+            case 'tags':
+                return Boolean(editTags.trim());
+            case 'timeEstimate':
+                return Boolean(editTimeEstimate);
+            case 'recurrence':
+                return Boolean(editRecurrence);
+            case 'startTime':
+                return Boolean(editStartTime);
+            case 'dueDate':
+                return Boolean(editDueDate);
+            case 'reviewAt':
+                return Boolean(editReviewAt);
+            case 'blockedBy':
+                return editBlockedByTaskIds.length > 0;
+            case 'attachments':
+                return visibleEditAttachments.length > 0;
+            case 'checklist':
+                return (task.checklist || []).length > 0;
+            default:
+                return false;
+        }
+    }, [
+        editContexts,
+        editDescription,
+        editDueDate,
+        editPriority,
+        editRecurrence,
+        editReviewAt,
+        editStartTime,
+        editTags,
+        editTimeEstimate,
+        editBlockedByTaskIds,
+        task.checklist,
+        task.status,
+        visibleEditAttachments.length,
+    ]);
+
+    const fieldIdsToRender = useMemo(() => {
+        if (showDetails) return editorFieldIds;
+        return editorFieldIds.filter((fieldId) => !hiddenSet.has(fieldId) || hasValue(fieldId));
+    }, [editorFieldIds, hasValue, hiddenSet, showDetails]);
+
+    const renderField = (fieldId: TaskEditorFieldId) => {
+        switch (fieldId) {
+            case 'description':
+                return (
+                    <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
+                            <button
+                                type="button"
+                                onClick={() => setShowDescriptionPreview((v) => !v)}
+                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
+                            >
+                                {showDescriptionPreview ? t('markdown.edit') : t('markdown.preview')}
+                            </button>
+                        </div>
+                        {showDescriptionPreview ? (
+                            <div className="text-xs bg-muted/30 border border-border rounded px-2 py-2">
+                                <Markdown markdown={editDescription || ''} />
+                            </div>
+                        ) : (
+                            <textarea
+                                aria-label="Task description"
+                                value={editDescription}
+                                onChange={(e) => {
+                                    setEditDescription(e.target.value);
+                                    resetCopilotDraft();
+                                }}
+                                className="text-xs bg-muted/50 border border-border rounded px-2 py-1 min-h-[60px] resize-y"
+                                placeholder={t('taskEdit.descriptionPlaceholder')}
+                            />
+                        )}
+                    </div>
+                );
+            case 'attachments':
+                return (
+                    <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-muted-foreground font-medium">{t('attachments.title')}</label>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={addFileAttachment}
+                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
+                                >
+                                    <Paperclip className="w-3 h-3" />
+                                    {t('attachments.addFile')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={addLinkAttachment}
+                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
+                                >
+                                    <Link2 className="w-3 h-3" />
+                                    {t('attachments.addLink')}
+                                </button>
+                            </div>
+                        </div>
+                        {attachmentError && (
+                            <div className="text-xs text-red-400">{attachmentError}</div>
+                        )}
+                        {visibleEditAttachments.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">{t('common.none')}</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {visibleEditAttachments.map((attachment) => (
+                                    <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs">
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                openAttachment(attachment);
+                                            }}
+                                            className="truncate text-primary hover:underline"
+                                            title={attachment.title}
+                                        >
+                                            {attachment.title}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => removeAttachment(attachment.id)}
+                                            className="text-muted-foreground hover:text-foreground"
+                                        >
+                                            {t('attachments.remove')}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            case 'startTime':
+                return (
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.startDateLabel')}</label>
+                        <input
+                            type="datetime-local"
+                            aria-label="Start time"
+                            value={editStartTime}
+                            onChange={(e) => setEditStartTime(e.target.value)}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                        />
+                    </div>
+                );
+            case 'reviewAt':
+                return (
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.reviewDateLabel')}</label>
+                        <input
+                            type="datetime-local"
+                            aria-label="Review date"
+                            value={editReviewAt}
+                            onChange={(e) => setEditReviewAt(e.target.value)}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                        />
+                    </div>
+                );
+            case 'status':
+                return (
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.statusLabel')}</label>
+                        <select
+                            value={task.status}
+                            aria-label="Status"
+                            onChange={handleStatusChange}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                        >
+                            <option value="inbox">{t('status.inbox')}</option>
+                            <option value="next">{t('status.next')}</option>
+                            <option value="waiting">{t('status.waiting')}</option>
+                            <option value="someday">{t('status.someday')}</option>
+                            <option value="done">{t('status.done')}</option>
+                        </select>
+                    </div>
+                );
+            case 'priority':
+                return (
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.priorityLabel')}</label>
+                        <select
+                            value={editPriority}
+                            aria-label={t('taskEdit.priorityLabel')}
+                            onChange={(e) => setEditPriority(e.target.value as TaskPriority | '')}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                        >
+                            <option value="">{t('common.none')}</option>
+                            <option value="low">{t('priority.low')}</option>
+                            <option value="medium">{t('priority.medium')}</option>
+                            <option value="high">{t('priority.high')}</option>
+                            <option value="urgent">{t('priority.urgent')}</option>
+                        </select>
+                    </div>
+                );
+            case 'recurrence':
+                return (
+                    <div className="flex flex-col gap-1 w-full">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.recurrenceLabel')}</label>
+                        <select
+                            value={editRecurrence}
+                            aria-label="Recurrence"
+                            onChange={(e) => setEditRecurrence(e.target.value as RecurrenceRule | '')}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
+                        >
+                            <option value="">{t('recurrence.none')}</option>
+                            <option value="daily">{t('recurrence.daily')}</option>
+                            <option value="weekly">{t('recurrence.weekly')}</option>
+                            <option value="monthly">{t('recurrence.monthly')}</option>
+                            <option value="yearly">{t('recurrence.yearly')}</option>
+                        </select>
+                        {editRecurrence && (
+                            <div className="flex items-center gap-2 pt-1">
+                                <span className="text-[10px] text-muted-foreground">{t('recurrence.strategyLabel')}</span>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditRecurrenceStrategy('strict')}
+                                        className={cn(
+                                            "text-[10px] px-2 py-1 rounded border transition-colors",
+                                            editRecurrenceStrategy === 'strict'
+                                                ? "bg-primary text-primary-foreground border-primary"
+                                                : "bg-transparent text-muted-foreground border-border hover:bg-accent"
+                                        )}
+                                        title={t('recurrence.strategyStrictDesc')}
+                                    >
+                                        {t('recurrence.strategyStrict')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditRecurrenceStrategy('fluid')}
+                                        className={cn(
+                                            "text-[10px] px-2 py-1 rounded border transition-colors",
+                                            editRecurrenceStrategy === 'fluid'
+                                                ? "bg-primary text-primary-foreground border-primary"
+                                                : "bg-transparent text-muted-foreground border-border hover:bg-accent"
+                                        )}
+                                        title={t('recurrence.strategyFluidDesc')}
+                                    >
+                                        {t('recurrence.strategyFluid')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            case 'timeEstimate':
+                return (
+                    <div className="flex flex-col gap-1 w-full">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.timeEstimateLabel')}</label>
+                        <select
+                            value={editTimeEstimate}
+                            aria-label="Time estimate"
+                            onChange={(e) => setEditTimeEstimate(e.target.value as TimeEstimate | '')}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
+                        >
+                            <option value="">{t('common.none')}</option>
+                            <option value="5min">5m</option>
+                            <option value="10min">10m</option>
+                            <option value="15min">15m</option>
+                            <option value="30min">30m</option>
+                            <option value="1hr">1h</option>
+                            <option value="2hr">2h</option>
+                            <option value="3hr">3h</option>
+                            <option value="4hr">4h</option>
+                            <option value="4hr+">4h+</option>
+                        </select>
+                    </div>
+                );
+            case 'contexts':
+                return (
+                    <div className="flex flex-col gap-1 w-full">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.contextsLabel')}</label>
+                        <input
+                            type="text"
+                            aria-label="Contexts"
+                            value={editContexts}
+                            onChange={(e) => setEditContexts(e.target.value)}
+                            placeholder="@home, @work"
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground placeholder:text-muted-foreground"
+                        />
+                        <div className="flex flex-wrap gap-2 pt-1">
+                            {['@home', '@work', '@errands', '@computer', '@phone'].map(tag => {
+                                const currentTags = editContexts.split(',').map(t => t.trim()).filter(Boolean);
+                                const isActive = currentTags.includes(tag);
+                                return (
+                                    <button
+                                        key={tag}
+                                        type="button"
+                                        onClick={() => {
+                                            let newTags;
+                                            if (isActive) {
+                                                newTags = currentTags.filter(t => t !== tag);
+                                            } else {
+                                                newTags = [...currentTags, tag];
+                                            }
+                                            setEditContexts(newTags.join(', '));
+                                        }}
+                                        className={cn(
+                                            "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                                            isActive
+                                                ? "bg-primary/10 border-primary text-primary"
+                                                : "bg-transparent border-border text-muted-foreground hover:border-primary/50"
+                                        )}
+                                    >
+                                        {tag}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            case 'tags':
+                return (
+                    <div className="flex flex-col gap-1 w-full">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.tagsLabel')}</label>
+                        <input
+                            type="text"
+                            aria-label="Tags"
+                            value={editTags}
+                            onChange={(e) => setEditTags(e.target.value)}
+                            placeholder="#urgent, #idea"
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground placeholder:text-muted-foreground"
+                        />
+                        <div className="flex flex-wrap gap-2 pt-1">
+                            {popularTagOptions.map(tag => {
+                                const currentTags = editTags.split(',').map(t => t.trim()).filter(Boolean);
+                                const isActive = currentTags.includes(tag);
+                                return (
+                                    <button
+                                        key={tag}
+                                        type="button"
+                                        onClick={() => {
+                                            let newTags;
+                                            if (isActive) {
+                                                newTags = currentTags.filter(t => t !== tag);
+                                            } else {
+                                                newTags = [...currentTags, tag];
+                                            }
+                                            setEditTags(newTags.join(', '));
+                                        }}
+                                        className={cn(
+                                            "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                                            isActive
+                                                ? "bg-primary/10 border-primary text-primary"
+                                                : "bg-transparent border-border text-muted-foreground hover:border-primary/50"
+                                        )}
+                                    >
+                                        {tag}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            case 'blockedBy':
+                return (
+                    <div className="flex flex-col gap-1 min-w-[180px]">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.blockedByLabel')}</label>
+                        <select
+                            multiple
+                            value={editBlockedByTaskIds}
+                            aria-label="Blocked by"
+                            onChange={(e) => {
+                                const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+                                setEditBlockedByTaskIds(selected);
+                            }}
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 h-20 text-foreground"
+                        >
+                            {availableBlockerTasks.map((otherTask) => (
+                                <option key={otherTask.id} value={otherTask.id}>
+                                    {otherTask.title}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                );
+            case 'checklist':
+                return (
+                    <div className="flex flex-col gap-2 w-full pt-2 border-t border-border/50">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.checklist')}</label>
+                        <div className="space-y-2">
+                            {(task.checklist || []).map((item, index) => (
+                                <div key={item.id || index} className="flex items-center gap-2 group/item">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const newList = (task.checklist || []).map((item, i) =>
+                                                i === index ? { ...item, isCompleted: !item.isCompleted } : item
+                                            );
+                                            updateTask(task.id, { checklist: newList });
+                                        }}
+                                        className={cn(
+                                            "w-4 h-4 border rounded flex items-center justify-center transition-colors",
+                                            item.isCompleted
+                                                ? "bg-primary border-primary text-primary-foreground"
+                                                : "border-muted-foreground hover:border-primary"
+                                        )}
+                                    >
+                                        {item.isCompleted && <Check className="w-3 h-3" />}
+                                    </button>
+                                    <input
+                                        type="text"
+                                        value={item.title}
+                                        onChange={(e) => {
+                                            const newList = (task.checklist || []).map((item, i) =>
+                                                i === index ? { ...item, title: e.target.value } : item
+                                            );
+                                            updateTask(task.id, { checklist: newList });
+                                        }}
+                                        className={cn(
+                                            "flex-1 bg-transparent text-sm focus:outline-none border-b border-transparent focus:border-primary/50 px-1",
+                                            item.isCompleted && "text-muted-foreground line-through"
+                                        )}
+                                        placeholder={t('taskEdit.itemNamePlaceholder')}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const newList = (task.checklist || []).filter((_, i) => i !== index);
+                                            updateTask(task.id, { checklist: newList });
+                                        }}
+                                        className="opacity-0 group-hover/item:opacity-100 text-muted-foreground hover:text-destructive p-1"
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            ))}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const newItem = {
+                                        id: generateUUID(),
+                                        title: '',
+                                        isCompleted: false
+                                    };
+                                    updateTask(task.id, {
+                                        checklist: [...(task.checklist || []), newItem]
+                                    });
+                                }}
+                                className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1"
+                            >
+                                <Plus className="w-3 h-3" />
+                                {t('taskEdit.addItem')}
+                            </button>
+                            {(task.checklist || []).length > 0 && (
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => resetTaskChecklist(task.id)}
+                                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
+                                    >
+                                        {t('taskEdit.resetChecklist')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            default:
+                return null;
+        }
     };
+
+    useEffect(() => {
+        if (isEditing && !wasEditingRef.current) {
+            setShowDetails(false);
+        }
+        if (!isEditing) {
+            wasEditingRef.current = false;
+            return;
+        }
+        wasEditingRef.current = true;
+    }, [isEditing]);
+
+    useEffect(() => {
+        if (isEditing) {
+            setIsViewOpen(false);
+        }
+    }, [isEditing]);
 
     const openAttachment = (attachment: Attachment) => {
         if (attachment.kind === 'link') {
@@ -224,7 +767,8 @@ export const TaskItem = memo(function TaskItem({
         setEditTags(task.tags?.join(', ') || '');
         setEditDescription(task.description || '');
         setEditLocation(task.location || '');
-        setEditRecurrence(task.recurrence || '');
+        setEditRecurrence(getRecurrenceRuleValue(task.recurrence));
+        setEditRecurrenceStrategy(getRecurrenceStrategyValue(task.recurrence));
         setEditTimeEstimate(task.timeEstimate || '');
         setEditPriority(task.priority || '');
         setEditReviewAt(toDateTimeLocalValue(task.reviewAt));
@@ -411,6 +955,9 @@ export const TaskItem = memo(function TaskItem({
         e.preventDefault();
         if (editTitle.trim()) {
             const filteredBlockedBy = editBlockedByTaskIds.filter((id) => availableBlockerIds.has(id));
+            const recurrenceValue = editRecurrence
+                ? { rule: editRecurrence, strategy: editRecurrenceStrategy }
+                : undefined;
             updateTask(task.id, {
                 title: editTitle,
                 dueDate: editDueDate || undefined,
@@ -420,7 +967,7 @@ export const TaskItem = memo(function TaskItem({
                 tags: editTags.split(',').map(c => c.trim()).filter(Boolean),
                 description: editDescription || undefined,
                 location: editLocation || undefined,
-                recurrence: editRecurrence || undefined,
+                recurrence: recurrenceValue,
                 timeEstimate: editTimeEstimate || undefined,
                 priority: editPriority || undefined,
                 reviewAt: editReviewAt || undefined,
@@ -620,390 +1167,63 @@ export const TaskItem = memo(function TaskItem({
                                     </div>
                                 </div>
                             )}
-	                            <div className="flex flex-col gap-2">
-	                                <div className="flex items-center justify-between">
-	                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
-	                                    <button
-	                                        type="button"
-	                                        onClick={() => setShowDescriptionPreview((v) => !v)}
-	                                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
-	                                    >
-	                                        {showDescriptionPreview ? t('markdown.edit') : t('markdown.preview')}
-	                                    </button>
-	                                </div>
-	                                {showDescriptionPreview ? (
-	                                    <div className="text-xs bg-muted/30 border border-border rounded px-2 py-2">
-	                                        <Markdown markdown={editDescription || ''} />
-	                                    </div>
-	                                ) : (
-	                                    <textarea
-	                                        aria-label="Task description"
-	                                        value={editDescription}
-	                                        onChange={(e) => {
-                                                setEditDescription(e.target.value);
-                                                resetCopilotDraft();
-                                            }}
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 min-h-[60px] resize-y"
-	                                        placeholder={t('taskEdit.descriptionPlaceholder')}
-	                                    />
-	                                )}
-	                            </div>
-
-	                            <div className="flex flex-col gap-2">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-xs text-muted-foreground font-medium">{t('attachments.title')}</label>
-                                    <div className="flex items-center gap-2">
-	                                        <button
-	                                            type="button"
-	                                            onClick={addFileAttachment}
-	                                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
-	                                        >
-	                                            <Paperclip className="w-3 h-3" />
-	                                            {t('attachments.addFile')}
-	                                        </button>
-	                                        <button
-	                                            type="button"
-	                                            onClick={addLinkAttachment}
-	                                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
-	                                        >
-	                                            <Link2 className="w-3 h-3" />
-	                                            {t('attachments.addLink')}
-	                                        </button>
-                                    </div>
-                                </div>
-                                {attachmentError && (
-                                    <div className="text-xs text-red-400">{attachmentError}</div>
-                                )}
-                                {visibleEditAttachments.length === 0 ? (
-	                                    <p className="text-xs text-muted-foreground">{t('common.none')}</p>
-	                                ) : (
-	                                    <div className="space-y-1">
-	                                        {visibleEditAttachments.map((attachment) => (
-	                                            <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs">
-	                                                <button
-	                                                    type="button"
-	                                                    onClick={(e) => {
-	                                                        e.preventDefault();
-	                                                        e.stopPropagation();
-	                                                        openAttachment(attachment);
-	                                                    }}
-	                                                    className="truncate text-primary hover:underline"
-	                                                    title={attachment.title}
-	                                                >
-	                                                    {attachment.title}
-	                                                </button>
-	                                                <button
-	                                                    type="button"
-	                                                    onClick={() => removeAttachment(attachment.id)}
-	                                                    className="text-muted-foreground hover:text-foreground"
-	                                                >
-	                                                    {t('attachments.remove')}
-	                                                </button>
-	                                            </div>
-	                                        ))}
-	                                    </div>
-	                                )}
-	                            </div>
-	                            <div className="flex flex-wrap gap-4">
-	                                <div className="flex flex-col gap-1">
-	                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.startDateLabel')}</label>
-	                                    <input
-                                        type="datetime-local"
-                                        aria-label="Start time"
-	                                        value={editStartTime}
-	                                        onChange={(e) => setEditStartTime(e.target.value)}
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-	                                    />
-                                </div>
-		                                <div className="flex flex-col gap-1">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.dueDateLabel')}</label>
-		                                    <input
-	                                        type="datetime-local"
-	                                        aria-label="Deadline"
-		                                        value={editDueDate}
-		                                        onChange={(e) => setEditDueDate(e.target.value)}
-		                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-		                                    />
-	                                </div>
-		                                <div className="flex flex-col gap-1">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.reviewDateLabel')}</label>
-		                                    <input
-	                                        type="datetime-local"
-	                                        aria-label="Review date"
-		                                        value={editReviewAt}
-		                                        onChange={(e) => setEditReviewAt(e.target.value)}
-		                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-		                                    />
-	                                </div>
-		                                <div className="flex flex-col gap-1">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.statusLabel')}</label>
-			                                    <select
-		                                        value={task.status}
-		                                        aria-label="Status"
-		                                        onChange={handleStatusChange}
-		                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-				                                    >
-			                                        <option value="inbox">{t('status.inbox')}</option>
-			                                        <option value="next">{t('status.next')}</option>
-			                                        <option value="waiting">{t('status.waiting')}</option>
-			                                        <option value="someday">{t('status.someday')}</option>
-			                                        <option value="done">{t('status.done')}</option>
-			                                    </select>
-		                                </div>
-		                                <div className="flex flex-col gap-1">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.priorityLabel')}</label>
-		                                    <select
-	                                        value={editPriority}
-	                                        aria-label={t('taskEdit.priorityLabel')}
-	                                        onChange={(e) => setEditPriority(e.target.value as TaskPriority | '')}
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-	                                    >
-		                                        <option value="">{t('common.none')}</option>
-		                                        <option value="low">{t('priority.low')}</option>
-		                                        <option value="medium">{t('priority.medium')}</option>
-		                                        <option value="high">{t('priority.high')}</option>
-		                                        <option value="urgent">{t('priority.urgent')}</option>
-		                                    </select>
-		                                </div>
-		                                <div className="flex flex-col gap-1">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('projects.title')}</label>
-		                                    <select
-	                                        value={editProjectId}
-	                                        aria-label="Project"
-	                                        onChange={(e) => setEditProjectId(e.target.value)}
-			                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-			                                    >
-		                                        <option value="">{t('taskEdit.noProjectOption')}</option>
-			                                        {projects.map(p => (
-			                                            <option key={p.id} value={p.id}>{p.title}</option>
-			                                        ))}
-			                                    </select>
-			                                </div>
-			                                <div className="flex flex-col gap-1 min-w-[180px]">
-			                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.blockedByLabel')}</label>
-			                                    <select
-			                                        multiple
-			                                        value={editBlockedByTaskIds}
-			                                        aria-label="Blocked by"
-				                                        onChange={(e) => {
-				                                            const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-				                                            setEditBlockedByTaskIds(selected);
-				                                        }}
-				                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 h-20 text-foreground"
-				                                    >
-                                        {availableBlockerTasks.map((otherTask) => (
-                                            <option key={otherTask.id} value={otherTask.id}>
-                                                {otherTask.title}
-			                                </option>
-			                            ))}
-			                                    </select>
-			                                </div>
-			                                <div className="flex flex-col gap-1">
-			                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.locationLabel')}</label>
-			                                    <input
-                                        type="text"
-                                        aria-label="Location"
-	                                        value={editLocation}
-	                                        onChange={(e) => setEditLocation(e.target.value)}
-			                                        placeholder={t('taskEdit.locationPlaceholder')}
-			                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground placeholder:text-muted-foreground"
-			                                    />
-		                                </div>
-		                                <div className="flex flex-col gap-1 w-full">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.recurrenceLabel')}</label>
-		                                    <select
-	                                        value={editRecurrence}
-	                                        aria-label="Recurrence"
-			                                        onChange={(e) => setEditRecurrence(e.target.value)}
-			                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
-			                                    >
-		                                        <option value="">{t('recurrence.none')}</option>
-		                                        <option value="daily">{t('recurrence.daily')}</option>
-		                                        <option value="weekly">{t('recurrence.weekly')}</option>
-		                                        <option value="monthly">{t('recurrence.monthly')}</option>
-		                                        <option value="yearly">{t('recurrence.yearly')}</option>
-		                                    </select>
-		                                </div>
-		                                <div className="flex flex-col gap-1 w-full">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.timeEstimateLabel')}</label>
-		                                    <select
-	                                        value={editTimeEstimate}
-	                                        aria-label="Time estimate"
-			                                        onChange={(e) => setEditTimeEstimate(e.target.value as TimeEstimate | '')}
-			                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
-			                                    >
-		                                        <option value="">{t('common.none')}</option>
-		                                        <option value="5min">5m</option>
-		                                        <option value="10min">10m</option>
-		                                        <option value="15min">15m</option>
-		                                        <option value="30min">30m</option>
-		                                        <option value="1hr">1h</option>
-		                                        <option value="2hr">2h</option>
-		                                        <option value="3hr">3h</option>
-		                                        <option value="4hr">4h</option>
-		                                        <option value="4hr+">4h+</option>
-		                                    </select>
-		                                </div>
-		                                <div className="flex flex-col gap-1 w-full">
-		                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.contextsLabel')}</label>
-		                                    <input
-                                        type="text"
-                                        aria-label="Contexts"
-	                                        value={editContexts}
-	                                        onChange={(e) => setEditContexts(e.target.value)}
-	                                        placeholder="@home, @work"
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground placeholder:text-muted-foreground"
-	                                    />
-                                    <div className="flex flex-wrap gap-2 pt-1">
-                                        {['@home', '@work', '@errands', '@computer', '@phone'].map(tag => {
-                                            const currentTags = editContexts.split(',').map(t => t.trim()).filter(Boolean);
-                                            const isActive = currentTags.includes(tag);
-                                            return (
-                                                <button
-                                                    key={tag}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        let newTags;
-                                                        if (isActive) {
-                                                            newTags = currentTags.filter(t => t !== tag);
-                                                        } else {
-                                                            newTags = [...currentTags, tag];
-                                                        }
-                                                        setEditContexts(newTags.join(', '));
-                                                    }}
-                                                    className={cn(
-                                                        "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
-                                                        isActive
-                                                            ? "bg-primary/10 border-primary text-primary"
-                                                            : "bg-transparent border-border text-muted-foreground hover:border-primary/50"
-                                                    )}
-                                                >
-                                                    {tag}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                                <div className="flex flex-col gap-1 w-full">
-                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.tagsLabel')}</label>
-                                    <input
-                                        type="text"
-                                        aria-label="Tags"
-	                                        value={editTags}
-	                                        onChange={(e) => setEditTags(e.target.value)}
-	                                        placeholder="#urgent, #idea"
-	                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground placeholder:text-muted-foreground"
-	                                    />
-                                    <div className="flex flex-wrap gap-2 pt-1">
-                                        {popularTagOptions.map(tag => {
-                                            const currentTags = editTags.split(',').map(t => t.trim()).filter(Boolean);
-                                            const isActive = currentTags.includes(tag);
-                                            return (
-                                                <button
-                                                    key={tag}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        let newTags;
-                                                        if (isActive) {
-                                                            newTags = currentTags.filter(t => t !== tag);
-                                                        } else {
-                                                            newTags = [...currentTags, tag];
-                                                        }
-                                                        setEditTags(newTags.join(', '));
-                                                    }}
-                                                    className={cn(
-                                                        "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
-                                                        isActive
-                                                            ? "bg-primary/10 border-primary text-primary"
-                                                            : "bg-transparent border-border text-muted-foreground hover:border-primary/50"
-                                                    )}
-                                                >
-                                                    {tag}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                                <div className="flex flex-col gap-2 w-full pt-2 border-t border-border/50">
-                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.checklist')}</label>
-                                    <div className="space-y-2">
-                                        {(task.checklist || []).map((item, index) => (
-                                            <div key={item.id || index} className="flex items-center gap-2 group/item">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const newList = (task.checklist || []).map((item, i) =>
-                                                            i === index ? { ...item, isCompleted: !item.isCompleted } : item
-                                                        );
-                                                        updateTask(task.id, { checklist: newList });
-                                                    }}
-                                                    className={cn(
-                                                        "w-4 h-4 border rounded flex items-center justify-center transition-colors",
-                                                        item.isCompleted
-                                                            ? "bg-primary border-primary text-primary-foreground"
-                                                            : "border-muted-foreground hover:border-primary"
-                                                    )}
-                                                >
-                                                    {item.isCompleted && <Check className="w-3 h-3" />}
-                                                </button>
-                                                <input
-                                                    type="text"
-                                                    value={item.title}
-                                                    onChange={(e) => {
-                                                        const newList = (task.checklist || []).map((item, i) =>
-                                                            i === index ? { ...item, title: e.target.value } : item
-                                                        );
-                                                        updateTask(task.id, { checklist: newList });
-                                                    }}
-                                                    className={cn(
-                                                        "flex-1 bg-transparent text-sm focus:outline-none border-b border-transparent focus:border-primary/50 px-1",
-                                                        item.isCompleted && "text-muted-foreground line-through"
-                                                    )}
-                                                    placeholder={t('taskEdit.itemNamePlaceholder')}
-                                                />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        const newList = (task.checklist || []).filter((_, i) => i !== index);
-                                                        updateTask(task.id, { checklist: newList });
-                                                    }}
-                                                    className="opacity-0 group-hover/item:opacity-100 text-muted-foreground hover:text-destructive p-1"
-                                                >
-                                                    <Trash2 className="w-3 h-3" />
-                                                </button>
-                                            </div>
+                            <div className="flex flex-wrap gap-4">
+                                <div className="flex flex-col gap-1 min-w-[200px]">
+                                    <label className="text-xs text-muted-foreground font-medium">{t('projects.title')}</label>
+                                    <select
+                                        value={editProjectId}
+                                        aria-label="Project"
+                                        onChange={(e) => setEditProjectId(e.target.value)}
+                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                    >
+                                        <option value="">{t('taskEdit.noProjectOption')}</option>
+                                        {projects.map(p => (
+                                            <option key={p.id} value={p.id}>{p.title}</option>
                                         ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const newItem = {
-                                                    id: generateUUID(),
-                                                    title: '',
-                                                    isCompleted: false
-                                                };
-                                                updateTask(task.id, {
-                                                    checklist: [...(task.checklist || []), newItem]
-                                                });
-                                            }}
-                                            className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1"
-                                        >
-                                            <Plus className="w-3 h-3" />
-                                            {t('taskEdit.addItem')}
-                                        </button>
-                                        {(task.checklist || []).length > 0 && (
-                                            <div className="flex items-center gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => resetTaskChecklist(task.id)}
-                                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
-                                                >
-                                                    {t('taskEdit.resetChecklist')}
-                                                </button>
-                                            </div>
-                                        )}
-                                    </div>
+                                    </select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.dueDateLabel')}</label>
+                                    <input
+                                        type="datetime-local"
+                                        aria-label="Deadline"
+                                        value={editDueDate}
+                                        onChange={(e) => setEditDueDate(e.target.value)}
+                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                    />
                                 </div>
                             </div>
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDetails((prev) => !prev)}
+                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
+                                >
+                                    {showDetails ? t('taskEdit.hideOptions') : t('taskEdit.moreOptions')}
+                                </button>
+                            </div>
+                            {fieldIdsToRender.length > 0 && (
+                                <div className="space-y-3">
+                                    {fieldIdsToRender.map((fieldId) => (
+                                        <div key={fieldId}>
+                                            {renderField(fieldId)}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {(showDetails || Boolean(editLocation.trim())) && (
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.locationLabel')}</label>
+                                    <input
+                                        type="text"
+                                        aria-label="Location"
+                                        value={editLocation}
+                                        onChange={(e) => setEditLocation(e.target.value)}
+                                        placeholder={t('taskEdit.locationPlaceholder')}
+                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground placeholder:text-muted-foreground"
+                                    />
+                                </div>
+                            )}
                             <div className="flex gap-2 pt-1">
                                 <button
                                     type="button"
@@ -1032,10 +1252,14 @@ export const TaskItem = memo(function TaskItem({
                         </form>
 	                    ) : (
                         <div
-                            onClick={() => {
+                            onClick={(e) => {
                                 if (selectionMode) {
                                     onToggleSelect?.();
+                                    return;
                                 }
+                                const target = e.target as HTMLElement | null;
+                                if (target?.closest('button, a, input, select, textarea')) return;
+                                setIsViewOpen((prev) => !prev);
                             }}
                             onDoubleClick={() => {
                                 if (!selectionMode) {
@@ -1046,6 +1270,7 @@ export const TaskItem = memo(function TaskItem({
                                 "group/content rounded -ml-2 pl-2 pr-1 py-1 transition-colors",
                                 selectionMode ? "cursor-pointer hover:bg-muted/40" : "cursor-default",
                             )}
+                            aria-expanded={isViewOpen}
                         >
                             <button
                                 type="button"
@@ -1064,16 +1289,18 @@ export const TaskItem = memo(function TaskItem({
                                 {task.title}
                             </div>
 
-	                            {task.description && (
-	                                <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-	                                    {stripMarkdown(task.description)}
-	                                </p>
-	                            )}
+                            {isViewOpen && (
+                                <div onClick={(e) => e.stopPropagation()}>
+                                {task.description && (
+                                    <p className="text-sm text-muted-foreground mt-1">
+                                        {stripMarkdown(task.description)}
+                                    </p>
+                                )}
 
 	                            {visibleAttachments.length > 0 && (
-	                                <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
+	                                <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground">
 	                                    <Paperclip className="w-3 h-3" />
-	                                    {visibleAttachments.slice(0, 2).map((attachment) => (
+	                                    {visibleAttachments.map((attachment) => (
 	                                        <button
 	                                            key={attachment.id}
 	                                            type="button"
@@ -1088,9 +1315,6 @@ export const TaskItem = memo(function TaskItem({
 	                                            {attachment.title}
 	                                        </button>
 	                                    ))}
-	                                    {visibleAttachments.length > 2 && (
-	                                        <span className="opacity-80">+{visibleAttachments.length - 2}</span>
-	                                    )}
 	                                </div>
 	                            )}
 
@@ -1108,9 +1332,20 @@ export const TaskItem = memo(function TaskItem({
                                     </div>
                                 )}
                                 {task.dueDate && (
-                                    <div className={cn("flex items-center gap-1", getUrgencyColor())} title={t('taskEdit.dueDateLabel')}>
+                                    <div
+                                        className={cn("flex items-center gap-1", getUrgencyColor(), isStagnant && "text-muted-foreground/70")}
+                                        title={t('taskEdit.dueDateLabel')}
+                                    >
                                         <CalendarIcon className="w-3 h-3" />
                                         {safeFormatDate(task.dueDate, 'MMM d, HH:mm')}
+                                        {isStagnant && (
+                                            <span
+                                                className="ml-1 text-[10px] text-muted-foreground"
+                                                title={`${t('taskEdit.pushCountHint')}: ${task.pushCount ?? 0}`}
+                                            >
+                                                ⏳ {task.pushCount}
+                                            </span>
+                                        )}
                                     </div>
                                 )}
                                 {task.location && (
@@ -1118,10 +1353,13 @@ export const TaskItem = memo(function TaskItem({
                                         <span className="font-medium">📍 {task.location}</span>
                                     </div>
                                 )}
-                                {task.recurrence && (
+                                {recurrenceRule && (
                                     <div className="flex items-center gap-1 text-purple-600" title={t('taskEdit.recurrenceLabel')}>
                                         <Repeat className="w-3 h-3" />
-                                        <span>{t(`recurrence.${task.recurrence}`)}</span>
+                                        <span>
+                                            {t(`recurrence.${recurrenceRule}`)}
+                                            {recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.strategyFluid')}` : ''}
+                                        </span>
                                     </div>
                                 )}
                                 {task.priority && (
@@ -1154,29 +1392,18 @@ export const TaskItem = memo(function TaskItem({
                                     <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
                                         <span className="text-[10px] uppercase tracking-wide">{t('taskEdit.blockedByLabel')}</span>
                                         {blockedByTasks.map((blocker) => (
-                                            <button
+                                            <span
                                                 key={blocker.id}
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    removeBlocker(blocker.id);
-                                                }}
-                                                className="text-[10px] px-2 py-0.5 rounded-full border border-border bg-muted/40 hover:bg-destructive/10 hover:text-destructive transition-colors"
-                                                title="Remove blocker"
+                                                className="text-[10px] px-2 py-0.5 rounded-full border border-border bg-muted/40"
                                             >
                                                 {blocker.title}
-                                            </button>
+                                            </span>
                                         ))}
                                     </div>
                                 )}
                                 {checklistProgress && (
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setIsChecklistOpen((v) => !v);
-                                        }}
-                                        className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+                                    <div
+                                        className="flex items-center gap-2 text-muted-foreground"
                                         title={t('checklist.progress')}
                                     >
                                         <span className="font-medium">
@@ -1188,7 +1415,7 @@ export const TaskItem = memo(function TaskItem({
                                                 style={{ width: `${Math.round(checklistProgress.percent * 100)}%` }}
                                             />
                                         </div>
-                                    </button>
+                                    </div>
                                 )}
                                 {unblocksCount > 0 && (
                                     <div className="text-muted-foreground text-xs">
@@ -1223,33 +1450,28 @@ export const TaskItem = memo(function TaskItem({
                                 )}
                             </div>
 
-                            {!isEditing && isChecklistOpen && (task.checklist || []).length > 0 && (
+                            {(task.checklist || []).length > 0 && (
                                 <div
                                     className="mt-3 space-y-1 pl-1"
                                     onPointerDown={(e) => e.stopPropagation()}
                                 >
                                     {(task.checklist || []).map((item, index) => (
                                         <div key={item.id || index} className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    const newList = (task.checklist || []).map((it, i) =>
-                                                        i === index ? { ...it, isCompleted: !it.isCompleted } : it
-                                                    );
-                                                    updateTask(task.id, { checklist: newList });
-                                                }}
+                                            <span
                                                 className={cn(
-                                                    "w-3 h-3 border rounded flex items-center justify-center transition-colors",
+                                                    "w-3 h-3 border rounded flex items-center justify-center",
                                                     item.isCompleted
                                                         ? "bg-primary border-primary text-primary-foreground"
-                                                        : "border-muted-foreground hover:border-primary"
+                                                        : "border-muted-foreground"
                                                 )}
                                             >
                                                 {item.isCompleted && <Check className="w-2 h-2" />}
-                                            </button>
+                                            </span>
                                             <span className={cn(item.isCompleted && "line-through")}>{item.title}</span>
                                         </div>
                                     ))}
+                                </div>
+                            )}
                                 </div>
                             )}
                         </div>
@@ -1265,6 +1487,7 @@ export const TaskItem = memo(function TaskItem({
 	                            type="button"
 	                            onClick={() => {
 	                                resetEditState();
+                                    setIsViewOpen(false);
 	                                setIsEditing(true);
 	                            }}
 	                            aria-label={t('common.edit')}

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useTaskStore, Attachment, Task, generateUUID, safeFormatDate, safeParseDate, parseQuickAdd } from '@mindwtr/core';
+import { useTaskStore, Attachment, Task, type Project, generateUUID, safeFormatDate, safeParseDate, parseQuickAdd } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
-import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, CheckCircle, Archive as ArchiveIcon, RotateCcw, Paperclip, Link2 } from 'lucide-react';
+import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, Archive as ArchiveIcon, RotateCcw, Paperclip, Link2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useLanguage } from '../../contexts/language-context';
 import { Markdown } from '../Markdown';
@@ -27,6 +27,7 @@ export function ProjectsView() {
     const [showNotesPreview, setShowNotesPreview] = useState(false);
     const [attachmentError, setAttachmentError] = useState<string | null>(null);
     const [showLinkPrompt, setShowLinkPrompt] = useState(false);
+    const [showDeferredProjects, setShowDeferredProjects] = useState(false);
     const ALL_AREAS = '__all__';
     const NO_AREA = '__none__';
     const [areaDraft, setAreaDraft] = useState('');
@@ -64,7 +65,7 @@ export function ProjectsView() {
         return sorted;
     }, [projects, NO_AREA]);
 
-    const groupedProjects = useMemo(() => {
+    const { groupedActiveProjects, groupedDeferredProjects } = useMemo(() => {
         const visibleProjects = projects.filter(p => !p.deletedAt);
         const sorted = [...visibleProjects].sort((a, b) => {
             if (a.isFocused && !b.isFocused) return -1;
@@ -77,16 +78,24 @@ export function ProjectsView() {
             return project.areaTitle?.trim() === selectedArea;
         });
 
-        const groups = new Map<string, typeof sorted>();
         const noAreaLabel = t('common.none');
+        const groupByArea = (list: typeof filtered) => {
+            const groups = new Map<string, typeof filtered>();
+            for (const project of list) {
+                const area = project.areaTitle?.trim() || noAreaLabel;
+                if (!groups.has(area)) groups.set(area, []);
+                groups.get(area)!.push(project);
+            }
+            return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        };
 
-        for (const project of filtered) {
-            const area = project.areaTitle?.trim() || noAreaLabel;
-            if (!groups.has(area)) groups.set(area, []);
-            groups.get(area)!.push(project);
-        }
+        const active = filtered.filter((project) => project.status === 'active');
+        const deferred = filtered.filter((project) => project.status !== 'active');
 
-        return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        return {
+            groupedActiveProjects: groupByArea(active),
+            groupedDeferredProjects: groupByArea(deferred),
+        };
     }, [projects, t, selectedArea, ALL_AREAS, NO_AREA]);
 
     const handleCreateProject = (e: React.FormEvent) => {
@@ -241,7 +250,12 @@ export function ProjectsView() {
                 )}
 
                 <div className="space-y-3 overflow-y-auto flex-1">
-                    {groupedProjects.map(([area, areaProjects]) => (
+                    {groupedActiveProjects.length > 0 && (
+                        <div className="px-2 pt-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            {t('projects.activeSection')}
+                        </div>
+                    )}
+                    {groupedActiveProjects.map(([area, areaProjects]) => (
                         <div key={area} className="space-y-1">
                             <div className="px-2 pt-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                                 {area}
@@ -314,7 +328,51 @@ export function ProjectsView() {
                         </div>
                     ))}
 
-                    {projects.length === 0 && !isCreating && (
+                    {groupedDeferredProjects.length > 0 && (
+                        <div className="pt-2 border-t border-border">
+                            <button
+                                type="button"
+                                onClick={() => setShowDeferredProjects((prev) => !prev)}
+                                className="w-full flex items-center justify-between px-2 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors"
+                            >
+                                <span>{t('projects.deferredSection')}</span>
+                                {showDeferredProjects ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </button>
+                            {showDeferredProjects && (
+                                <div className="space-y-3">
+                                    {groupedDeferredProjects.map(([area, areaProjects]) => (
+                                        <div key={`deferred-${area}`} className="space-y-1">
+                                            <div className="px-2 pt-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                                {area}
+                                            </div>
+                                            {areaProjects.map(project => (
+                                                <div
+                                                    key={project.id}
+                                                    className={cn(
+                                                        "rounded-lg cursor-pointer transition-colors text-sm border",
+                                                        selectedProjectId === project.id
+                                                            ? "bg-accent text-accent-foreground border-accent"
+                                                            : "border-transparent hover:bg-muted/50"
+                                                    )}
+                                                    onClick={() => setSelectedProjectId(project.id)}
+                                                >
+                                                    <div className="flex items-center gap-2 p-2">
+                                                        <Folder className="w-4 h-4" style={{ color: project.color }} />
+                                                        <span className="flex-1 truncate">{project.title}</span>
+                                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground uppercase">
+                                                            {t(`status.${project.status}`) || project.status}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {groupedActiveProjects.length === 0 && groupedDeferredProjects.length === 0 && !isCreating && (
                         <div className="text-sm text-muted-foreground text-center py-8">
                             {t('projects.noProjects')}
                         </div>
@@ -326,73 +384,45 @@ export function ProjectsView() {
             <div className="flex-1 flex flex-col h-full overflow-hidden">
                 {selectedProject ? (
                     <>
-                        <header className="flex items-center justify-between mb-6">
-                            <div className="flex items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => projectColorInputRef.current?.click()}
-                                    className="w-4 h-4 rounded-full border border-border"
-                                    style={{ backgroundColor: selectedProject.color }}
-                                    title={t('projects.color')}
-                                    aria-label={t('projects.color')}
-                                />
-                                <input
-                                    ref={projectColorInputRef}
-                                    type="color"
-                                    value={selectedProject.color}
-                                    onChange={(e) => updateProject(selectedProject.id, { color: e.target.value })}
-                                    className="sr-only"
-                                    aria-hidden="true"
-                                />
-                                <div className="flex flex-col">
-                                    <h2 className="text-2xl font-bold">{selectedProject.title}</h2>
-                                    {projectProgress && projectProgress.total > 0 && (
-                                        <div className="text-xs text-muted-foreground">
-                                            {t('status.done')}: {projectProgress.doneCount} / {projectProgress.remainingCount} {t('process.remaining')}
-                                        </div>
-                                    )}
+                        <header className="mb-6 space-y-3">
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => projectColorInputRef.current?.click()}
+                                        className="w-4 h-4 rounded-full border border-border"
+                                        style={{ backgroundColor: selectedProject.color }}
+                                        title={t('projects.color')}
+                                        aria-label={t('projects.color')}
+                                    />
+                                    <input
+                                        ref={projectColorInputRef}
+                                        type="color"
+                                        value={selectedProject.color}
+                                        onChange={(e) => updateProject(selectedProject.id, { color: e.target.value })}
+                                        className="sr-only"
+                                        aria-hidden="true"
+                                    />
+                                    <div className="flex flex-col min-w-0">
+                                        <h2 className="text-2xl font-bold truncate">{selectedProject.title}</h2>
+                                        {projectProgress && projectProgress.total > 0 && (
+                                            <div className="text-xs text-muted-foreground">
+                                                {t('status.done')}: {projectProgress.doneCount} / {projectProgress.remainingCount} {t('process.remaining')}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                {/* Sequential Toggle */}
-                                <button
-                                    type="button"
-                                    onClick={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
-                                    className={cn(
-                                        "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
-                                        selectedProject.isSequential
-                                            ? "bg-primary text-primary-foreground"
-                                            : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                                    )}
-                                    title={selectedProject.isSequential ? t('projects.sequentialTooltip') : t('projects.parallelTooltip')}
-                                >
-                                    <ListOrdered className="w-4 h-4" />
-                                    {selectedProject.isSequential ? t('projects.sequential') : t('projects.parallel')}
-                                </button>
-                                {selectedProject.status === 'active' ? (
-                                    <>
+                                <div className="flex items-center gap-2">
+                                    {selectedProject.status === 'archived' ? (
                                         <button
                                             type="button"
-                                            onClick={async (e) => {
-                                                e.stopPropagation();
-                                                e.preventDefault();
-                                                const confirmed = isTauriRuntime()
-                                                    ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
-                                                        confirm(t('projects.completeConfirm'), {
-                                                            title: t('projects.title'),
-                                                            kind: 'warning',
-                                                        }),
-                                                    )
-                                                    : window.confirm(t('projects.completeConfirm'));
-                                                if (confirmed) {
-                                                    updateProject(selectedProject.id, { status: 'completed' });
-                                                }
-                                            }}
-                                            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-500/20 transition-colors"
+                                            onClick={() => updateProject(selectedProject.id, { status: 'active' })}
+                                            className="flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
                                         >
-                                            <CheckCircle className="w-4 h-4" />
-                                            {t('projects.complete')}
+                                            <RotateCcw className="w-4 h-4" />
+                                            {t('projects.reactivate')}
                                         </button>
+                                    ) : (
                                         <button
                                             type="button"
                                             onClick={async (e) => {
@@ -410,44 +440,70 @@ export function ProjectsView() {
                                                     updateProject(selectedProject.id, { status: 'archived' });
                                                 }
                                             }}
-                                            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
+                                            className="flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium bg-muted hover:bg-muted/80 text-muted-foreground transition-colors whitespace-nowrap"
                                         >
                                             <ArchiveIcon className="w-4 h-4" />
                                             {t('projects.archive')}
                                         </button>
-                                    </>
-                                ) : (
+                                    )}
                                     <button
                                         type="button"
-                                        onClick={() => updateProject(selectedProject.id, { status: 'active' })}
-                                        className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                                        onClick={async (e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            const confirmed = isTauriRuntime()
+                                                ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
+                                                    confirm(t('projects.deleteConfirm'), {
+                                                        title: t('projects.title'),
+                                                        kind: 'warning',
+                                                    }),
+                                                )
+                                                : window.confirm(t('projects.deleteConfirm'));
+                                            if (confirmed) {
+                                                deleteProject(selectedProject.id);
+                                                setSelectedProjectId(null);
+                                            }
+                                        }}
+                                        className="text-destructive hover:bg-destructive/10 h-8 w-8 rounded-md transition-colors flex items-center justify-center"
+                                        title={t('common.delete')}
                                     >
-                                        <RotateCcw className="w-4 h-4" />
-                                        {t('projects.reactivate')}
+                                        <Trash2 className="w-4 h-4" />
                                     </button>
-                                )}
-                                <button
-                                    type="button"
-                                    onClick={async (e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        const confirmed = isTauriRuntime()
-                                            ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
-                                                confirm(t('projects.deleteConfirm'), {
-                                                    title: t('projects.title'),
-                                                    kind: 'warning',
-                                                }),
-                                            )
-                                            : window.confirm(t('projects.deleteConfirm'));
-                                        if (confirmed) {
-                                            deleteProject(selectedProject.id);
-                                            setSelectedProjectId(null);
-                                        }
-                                    }}
-                                    className="text-destructive hover:bg-destructive/10 p-2 rounded-md transition-colors"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
+                                </div>
+                            </div>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                                    {/* Sequential Toggle */}
+                                    <button
+                                        type="button"
+                                        onClick={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
+                                        className={cn(
+                                            "flex items-center gap-2 px-3 h-8 rounded-md text-xs font-medium transition-colors whitespace-nowrap",
+                                            selectedProject.isSequential
+                                                ? "bg-primary text-primary-foreground"
+                                                : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                                        )}
+                                        title={selectedProject.isSequential ? t('projects.sequentialTooltip') : t('projects.parallelTooltip')}
+                                    >
+                                        <ListOrdered className="w-4 h-4" />
+                                        {selectedProject.isSequential ? t('projects.sequential') : t('projects.parallel')}
+                                    </button>
+                                    <div className="flex items-center gap-2 min-w-[180px]">
+                                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                                            {t('projects.statusLabel')}
+                                        </span>
+                                        <select
+                                            value={selectedProject.status}
+                                            onChange={(e) => updateProject(selectedProject.id, { status: e.target.value as Project['status'] })}
+                                            className="h-8 text-xs bg-muted/50 border border-border rounded px-2 text-foreground"
+                                            disabled={selectedProject.status === 'archived'}
+                                        >
+                                            <option value="active">{t('status.active')}</option>
+                                            <option value="waiting">{t('status.waiting')}</option>
+                                            <option value="someday">{t('status.someday')}</option>
+                                        </select>
+                                    </div>
+                                </div>
                             </div>
                         </header>
 
