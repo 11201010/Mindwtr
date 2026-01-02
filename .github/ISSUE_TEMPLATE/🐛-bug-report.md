@@ -31,7 +31,28 @@ A clear and concise description of what the bug is.
 A clear and concise description of what you expected to happen.
 
 ### 📸 Screenshots / Logs
-If applicable, add screenshots or paste relevant logs (run from terminal to see logs on Desktop).
+If applicable, add screenshots or paste relevant logs.
+
+<details>
+<summary><strong>📋 How to collect logs (Click to expand)</strong></summary>
+
+Logging is off by default. Enable it only when you want to report a bug.
+
+**Desktop:**
+1. Go to **Settings → Sync → Diagnostics**.
+2. Enable **Debug logging**.
+3. Reproduce the issue.
+4. Copy the **Log file path** and attach the file here.
+   * *Linux default:* `~/.local/share/mindwtr/logs/mindwtr.log`
+
+**Mobile:**
+1. Go to **Settings → Data & Sync → Diagnostics**.
+2. Enable **Debug logging**.
+3. Reproduce the issue.
+4. Tap **Share log** and attach it here.
+
+*Note: Logs are local-only and redact common credentials.*
+</details>
 
 ### 📋 Additional Context
 Add any other context about the problem here.
