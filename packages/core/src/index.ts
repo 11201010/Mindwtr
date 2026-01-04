@@ -23,3 +23,5 @@ export * from './task-status';
 export * from './ai/ai-service';
 export * from './ai/types';
 export * from './ai/catalog';
+export * from './sqlite-schema';
+export * from './sqlite-adapter';
