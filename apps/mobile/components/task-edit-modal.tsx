@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView, Share, Alert, Image, Animated } from 'react-native';
+import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView, Share, Alert, Image, Animated, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     Attachment,
@@ -124,6 +124,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [showMoreOptions, setShowMoreOptions] = useState(false);
     const [linkModalVisible, setLinkModalVisible] = useState(false);
+    const [showProjectPicker, setShowProjectPicker] = useState(false);
     const [linkInput, setLinkInput] = useState('');
     const [customWeekdays, setCustomWeekdays] = useState<RecurrenceWeekday[]>([]);
     const [isAIWorking, setIsAIWorking] = useState(false);
@@ -1564,6 +1565,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         );
     };
 
+    const activeProjects = projects
+        .filter((p) => !p.deletedAt)
+        .sort((a, b) => a.title.localeCompare(b.title));
+
     if (!task) return null;
 
     return (
@@ -1688,6 +1693,27 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                             }}
                                             placeholderTextColor={tc.secondaryText}
                                         />
+                                    </View>
+                                    <View style={styles.formGroup}>
+                                        <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.projectLabel')}</Text>
+                                        <View style={styles.dateRow}>
+                                            <TouchableOpacity
+                                                style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
+                                                onPress={() => setShowProjectPicker(true)}
+                                            >
+                                                <Text style={{ color: tc.text }}>
+                                                    {projects.find((p) => p.id === editedTask.projectId)?.title || t('taskEdit.noProjectOption')}
+                                                </Text>
+                                            </TouchableOpacity>
+                                            {!!editedTask.projectId && (
+                                                <TouchableOpacity
+                                                    style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                                    onPress={() => setEditedTask(prev => ({ ...prev, projectId: undefined }))}
+                                                >
+                                                    <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
                                     </View>
 
                                     {aiEnabled && (
@@ -1830,6 +1856,53 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                     style={[styles.modalButton, !linkInput.trim() && styles.modalButtonDisabled]}
                                 >
                                     <Text style={[styles.modalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={showProjectPicker}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setShowProjectPicker(false)}
+                >
+                    <View style={styles.overlay}>
+                        <View style={[styles.modalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            <Text style={[styles.modalTitle, { color: tc.text }]}>{t('taskEdit.projectLabel')}</Text>
+                            <ScrollView
+                                style={[styles.pickerList, { borderColor: tc.border, backgroundColor: tc.inputBg }]}
+                                contentContainerStyle={{ paddingVertical: 4 }}
+                            >
+                                <Pressable
+                                    onPress={() => {
+                                        setEditedTask(prev => ({ ...prev, projectId: undefined }));
+                                        setShowProjectPicker(false);
+                                    }}
+                                    style={styles.pickerItem}
+                                >
+                                    <Text style={[styles.pickerItemText, { color: tc.text }]}>{t('taskEdit.noProjectOption')}</Text>
+                                </Pressable>
+                                {activeProjects.map((project) => (
+                                    <Pressable
+                                        key={project.id}
+                                        onPress={() => {
+                                            setEditedTask(prev => ({ ...prev, projectId: project.id }));
+                                            setShowProjectPicker(false);
+                                        }}
+                                        style={styles.pickerItem}
+                                    >
+                                        <Text style={[styles.pickerItemText, { color: tc.text }]}>{project.title}</Text>
+                                    </Pressable>
+                                ))}
+                            </ScrollView>
+                            <View style={styles.modalButtons}>
+                                <TouchableOpacity
+                                    onPress={() => setShowProjectPicker(false)}
+                                    style={styles.modalButton}
+                                >
+                                    <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -2318,5 +2391,18 @@ const styles = StyleSheet.create({
     },
     modalButtonDisabled: {
         opacity: 0.5,
+    },
+    pickerList: {
+        marginTop: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        maxHeight: 260,
+    },
+    pickerItem: {
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+    },
+    pickerItemText: {
+        fontSize: 16,
     },
 });

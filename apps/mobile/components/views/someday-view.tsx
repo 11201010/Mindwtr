@@ -1,12 +1,13 @@
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useTaskStore } from '@mindwtr/core';
-import { useEffect, useRef } from 'react';
-import type { TaskStatus } from '@mindwtr/core';
+import { useEffect, useRef, useState } from 'react';
+import type { Task, TaskStatus } from '@mindwtr/core';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { SwipeableTaskItem } from '../swipeable-task-item';
+import { TaskEditModal } from '../task-edit-modal';
 
 
 
@@ -14,6 +15,7 @@ export function SomedayView() {
   const { tasks, updateTask, deleteTask, highlightTaskId, setHighlightTask } = useTaskStore();
   const { isDark } = useTheme();
   const { t } = useLanguage();
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const tc = useThemeColors();
 
@@ -25,6 +27,10 @@ export function SomedayView() {
 
   const handleStatusChange = (id: string, status: TaskStatus) => {
     updateTask(id, { status });
+  };
+
+  const handleSaveTask = (taskId: string, updates: Partial<Task>) => {
+    updateTask(taskId, updates);
   };
 
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,7 +72,7 @@ export function SomedayView() {
               task={task}
               isDark={isDark}
               tc={tc}
-              onPress={() => { }}
+              onPress={() => setEditingTask(task)}
               onStatusChange={(status) => handleStatusChange(task.id, status as TaskStatus)}
               onDelete={() => deleteTask(task.id)}
               isHighlighted={task.id === highlightTaskId}
@@ -82,6 +88,14 @@ export function SomedayView() {
           </View>
         )}
       </ScrollView>
+
+      <TaskEditModal
+        visible={editingTask !== null}
+        task={editingTask}
+        onClose={() => setEditingTask(null)}
+        onSave={handleSaveTask}
+        defaultTab="view"
+      />
     </View>
   );
 }
