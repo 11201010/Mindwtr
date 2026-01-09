@@ -134,7 +134,22 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const tc = useThemeColors();
     const prioritiesEnabled = settings.features?.priorities === true;
     const timeEstimatesEnabled = settings.features?.timeEstimates === true;
-    const [editedTask, setEditedTask] = useState<Partial<Task>>({});
+    const liveTask = useMemo(() => {
+        if (!task?.id) return task ?? null;
+        return tasks.find((item) => item.id === task.id) ?? task;
+    }, [task, tasks]);
+    const [editedTask, setEditedTaskState] = useState<Partial<Task>>({});
+    const isDirtyRef = useRef(false);
+    const baseTaskRef = useRef<Task | null>(null);
+    const setEditedTask = useCallback(
+        (value: React.SetStateAction<Partial<Task>>, markDirty = true) => {
+            if (markDirty) {
+                isDirtyRef.current = true;
+            }
+            setEditedTaskState(value);
+        },
+        []
+    );
     const [showDatePicker, setShowDatePicker] = useState<'start' | 'start-time' | 'due' | 'due-time' | 'review' | null>(null);
     const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
     const [pendingDueDate, setPendingDueDate] = useState<Date | null>(null);
@@ -216,34 +231,43 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     };
 
     useEffect(() => {
-        if (task) {
-            const recurrenceRule = getRecurrenceRuleValue(task.recurrence);
-            const recurrenceStrategy = getRecurrenceStrategyValue(task.recurrence);
-            const byDay = getRecurrenceByDayValue(task.recurrence);
-            const rrule = getRecurrenceRRuleValue(task.recurrence);
-            setCustomWeekdays(byDay);
-            setEditedTask({
-                ...task,
+        if (liveTask) {
+            const recurrenceRule = getRecurrenceRuleValue(liveTask.recurrence);
+            const recurrenceStrategy = getRecurrenceStrategyValue(liveTask.recurrence);
+            const byDay = getRecurrenceByDayValue(liveTask.recurrence);
+            const rrule = getRecurrenceRRuleValue(liveTask.recurrence);
+            const normalizedTask: Task = {
+                ...liveTask,
                 recurrence: recurrenceRule
                     ? { rule: recurrenceRule, strategy: recurrenceStrategy, ...(rrule ? { rrule } : {}), ...(byDay.length ? { byDay } : {}) }
                     : undefined,
-            });
-            setShowMoreOptions(false);
-            setShowDescriptionPreview(false);
-            setEditTab(resolveInitialTab(defaultTab, task));
-            setCopilotSuggestion(null);
-            setCopilotApplied(false);
-            setCopilotContext(undefined);
-            setCopilotEstimate(undefined);
-            setCopilotTags([]);
+            };
+            const taskChanged = baseTaskRef.current?.id !== normalizedTask.id;
+            const updatedChanged = baseTaskRef.current?.updatedAt !== normalizedTask.updatedAt;
+            if (taskChanged || (!isDirtyRef.current && updatedChanged)) {
+                setCustomWeekdays(byDay);
+                setEditedTaskState(normalizedTask);
+                baseTaskRef.current = normalizedTask;
+                isDirtyRef.current = false;
+                setShowMoreOptions(false);
+                setShowDescriptionPreview(false);
+                setEditTab(resolveInitialTab(defaultTab, normalizedTask));
+                setCopilotSuggestion(null);
+                setCopilotApplied(false);
+                setCopilotContext(undefined);
+                setCopilotEstimate(undefined);
+                setCopilotTags([]);
+            }
         } else if (visible) {
-            setEditedTask({});
+            setEditedTaskState({});
+            baseTaskRef.current = null;
+            isDirtyRef.current = false;
             setShowMoreOptions(false);
             setShowDescriptionPreview(false);
             setEditTab(resolveInitialTab(defaultTab, null));
             setCustomWeekdays([]);
         }
-    }, [task, defaultTab, visible]);
+    }, [liveTask, defaultTab, visible]);
 
     useEffect(() => {
         loadAIKey(aiProvider).then(setAiKey).catch(console.error);
@@ -385,7 +409,24 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         } else {
             updates.recurrence = undefined;
         }
-        onSave(task.id, updates);
+        const baseTask = baseTaskRef.current ?? task;
+        const trimmedUpdates: Partial<Task> = { ...updates };
+        (Object.keys(trimmedUpdates) as Array<keyof Task>).forEach((key) => {
+            const nextValue = trimmedUpdates[key];
+            const baseValue = baseTask[key];
+            if (Array.isArray(nextValue) || typeof nextValue === 'object') {
+                const nextSerialized = nextValue == null ? null : JSON.stringify(nextValue);
+                const baseSerialized = baseValue == null ? null : JSON.stringify(baseValue);
+                if (nextSerialized === baseSerialized) delete trimmedUpdates[key];
+            } else if ((nextValue ?? null) === (baseValue ?? null)) {
+                delete trimmedUpdates[key];
+            }
+        });
+        if (Object.keys(trimmedUpdates).length === 0) {
+            onClose();
+            return;
+        }
+        onSave(task.id, trimmedUpdates);
         onClose();
     };
 
