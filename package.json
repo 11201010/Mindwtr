@@ -7,7 +7,8 @@
   ],
   "resolutions": {
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "expo-constants": "18.0.13"
   },
   "scripts": {
     "desktop:dev": "bun run --filter mindwtr dev",
