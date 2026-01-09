@@ -1580,6 +1580,9 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if cfg!(target_os = "windows") {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.set_skip_taskbar(true);
                 let _ = window.hide();
