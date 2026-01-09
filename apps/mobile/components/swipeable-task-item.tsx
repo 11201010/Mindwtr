@@ -223,6 +223,7 @@ export function SwipeableTaskItem({
                     style={[
                         styles.taskItem,
                         { backgroundColor: tc.taskItemBg },
+                        showFocusToggle && task.isFocusedToday && !selectionMode && { borderWidth: 2, borderColor: tc.tint },
                         isHighlighted && !selectionMode && { borderWidth: 2, borderColor: tc.tint },
                         selectionMode && { borderWidth: 2, borderColor: isMultiSelected ? tc.tint : tc.border }
                     ]}
