@@ -29,13 +29,15 @@ interface DraggableTaskProps {
   onDrop: (taskId: string, newColumnIndex: number) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
+  onDuplicate: (task: Task) => void;
   deleteLabel: string;
+  duplicateLabel: string;
   projectTitle?: string;
   projectColor?: string;
   timeEstimatesEnabled: boolean;
 }
 
-function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDelete, deleteLabel, projectTitle, projectColor, timeEstimatesEnabled }: DraggableTaskProps) {
+function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDelete, onDuplicate, deleteLabel, duplicateLabel, projectTitle, projectColor, timeEstimatesEnabled }: DraggableTaskProps) {
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
   const zIndex = useSharedValue(1);
@@ -46,6 +48,7 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
   // Tap gesture for editing
   const tapGesture = Gesture.Tap()
     .onEnd(() => {
+      if (task.status === 'done') return;
       runOnJS(onTap)(task);
     });
 
@@ -110,6 +113,12 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
         animatedStyle
       ]}>
         <Swipeable
+          renderLeftActions={() => (
+            <View style={styles.duplicateAction}>
+              <Text style={styles.duplicateActionText}>{duplicateLabel}</Text>
+            </View>
+          )}
+          onSwipeableLeftOpen={() => onDuplicate(task)}
           renderRightActions={() => (
             <View style={styles.deleteAction}>
               <Text style={styles.deleteActionText}>{deleteLabel}</Text>
@@ -178,13 +187,15 @@ interface ColumnProps {
   onDrop: (taskId: string, newColumnIndex: number) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
+  onDuplicate: (task: Task) => void;
   noTasksLabel: string;
   deleteLabel: string;
+  duplicateLabel: string;
   projectById: Record<string, { title: string; color?: string }>;
   timeEstimatesEnabled: boolean;
 }
 
-function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDelete, noTasksLabel, deleteLabel, projectById, timeEstimatesEnabled }: ColumnProps) {
+function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDelete, onDuplicate, noTasksLabel, deleteLabel, duplicateLabel, projectById, timeEstimatesEnabled }: ColumnProps) {
   return (
     <View style={[styles.column, { borderTopColor: color, backgroundColor: isDark ? '#1F2937' : '#F3F4F6' }]}>
       <View style={[styles.columnHeader, { borderBottomColor: isDark ? '#374151' : '#E5E7EB' }]}>
@@ -203,7 +214,9 @@ function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDel
             onDrop={onDrop}
             onTap={onTap}
             onDelete={onDelete}
+            onDuplicate={onDuplicate}
             deleteLabel={deleteLabel}
+            duplicateLabel={duplicateLabel}
             projectTitle={task.projectId ? projectById[task.projectId]?.title : undefined}
             projectColor={task.projectId ? projectById[task.projectId]?.color : undefined}
             timeEstimatesEnabled={timeEstimatesEnabled}
@@ -222,7 +235,7 @@ function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDel
 }
 
 export function BoardView() {
-  const { tasks, projects, areas, updateTask, deleteTask } = useTaskStore();
+  const { tasks, projects, areas, updateTask, deleteTask, duplicateTask } = useTaskStore();
   const { isDark } = useTheme();
   const tc = useThemeColors();
   const { t } = useLanguage();
@@ -267,6 +280,10 @@ export function BoardView() {
     deleteTask(taskId);
   }, [deleteTask]);
 
+  const handleDuplicate = useCallback((task: Task) => {
+    duplicateTask(task.id, false);
+  }, [duplicateTask]);
+
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <ScrollView
@@ -285,8 +302,10 @@ export function BoardView() {
             onDrop={handleDrop}
             onTap={handleTap}
             onDelete={handleDelete}
+            onDuplicate={handleDuplicate}
             noTasksLabel={t('board.noTasks')}
             deleteLabel={t('board.delete')}
+            duplicateLabel={t('taskEdit.duplicateTask')}
             projectById={projectById}
             timeEstimatesEnabled={timeEstimatesEnabled}
           />
@@ -391,6 +410,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   deleteActionText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  duplicateAction: {
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    flex: 1,
+    paddingLeft: 20,
+    borderRadius: 8,
+  },
+  duplicateActionText: {
     color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 14,

@@ -337,6 +337,13 @@ export function TaskItemDisplay({
                             >
                                 <RotateCcw className="w-4 h-4" />
                             </button>
+                            <button
+                                onClick={onDelete}
+                                aria-label="Delete task"
+                                className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/20"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
                         </>
                     ) : (
                         <>

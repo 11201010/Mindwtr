@@ -53,14 +53,14 @@ function DraggableTask({ task }: { task: Task }) {
     if (isDragging) {
         return (
             <div ref={setNodeRef} style={style} className="opacity-50">
-                <TaskItem task={task} />
+                <TaskItem task={task} readOnly={task.status === 'done'} />
             </div>
         );
     }
 
     return (
         <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="touch-none">
-            <TaskItem task={task} />
+            <TaskItem task={task} readOnly={task.status === 'done'} />
         </div>
     );
 }
