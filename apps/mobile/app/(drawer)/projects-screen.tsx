@@ -4,6 +4,7 @@ import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore } from '@mindwtr/core';
+import { Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Linking from 'expo-linking';
@@ -503,13 +504,6 @@ export default function ProjectsScreen() {
                           </View>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          onLongPress={drag}
-                          delayLongPress={150}
-                          style={styles.dragHandle}
-                        >
-                          <Text style={[styles.dragHandleText, { color: tc.secondaryText }]}>≡</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
                           onPress={() => {
                             Alert.alert(
                               t('projects.title'),
@@ -523,7 +517,14 @@ export default function ProjectsScreen() {
                           style={styles.deleteButton}
                           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         >
-                        <Text style={styles.deleteText}>×</Text>
+                          <Trash2 size={18} color={tc.secondaryText} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onLongPress={drag}
+                          delayLongPress={150}
+                          style={styles.dragHandle}
+                        >
+                          <Text style={[styles.dragHandleText, { color: tc.secondaryText }]}>≡</Text>
                         </TouchableOpacity>
                       </View>
                     );
@@ -1270,11 +1271,6 @@ const styles = StyleSheet.create({
     height: 32,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  deleteText: {
-    fontSize: 28,
-    color: '#999',
-    fontWeight: '300',
   },
   emptyContainer: {
     padding: 48,
