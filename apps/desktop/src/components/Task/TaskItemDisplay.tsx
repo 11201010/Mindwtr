@@ -78,7 +78,6 @@ export function TaskItemDisplay({
     const checklistProgress = getChecklistProgress(task);
     const ageLabel = getTaskAgeLabel(task.createdAt);
     const showCompactMeta = !isViewOpen
-        && ['inbox', 'next', 'someday', 'waiting'].includes(task.status)
         && (project || (task.contexts?.length ?? 0) > 0);
 
     return (
