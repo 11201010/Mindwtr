@@ -99,6 +99,10 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - 🎨 **Themes** - Light/Dark
 - 🌍 **i18n** - English, Chinese, Spanish, Hindi, Arabic, German, Russian, Japanese, French, Portuguese, Korean, Italian, Turkish
 
+### Platform Notes
+- **Desktop**: Global shortcuts, keyboard navigation, no swipe actions, no zen mode.
+- **Mobile**: Swipe actions, zen mode, Android widget support; no global shortcuts.
+
 ## Installation
 
 ### Desktop (Linux)
