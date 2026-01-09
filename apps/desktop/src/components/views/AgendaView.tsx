@@ -509,11 +509,11 @@ export function AgendaView() {
             ) : (
                 <>
                     {/* Today's Focus Section */}
-                    <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950/60 dark:to-orange-950/40 border border-yellow-200 dark:border-yellow-700 rounded-xl p-6">
-                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-900 dark:text-slate-900">
-                            <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
+                    <div className="bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900/40 dark:to-amber-900/25 border border-yellow-200 dark:border-amber-500/30 rounded-xl p-6">
+                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-900 dark:text-amber-100">
+                            <Star className="w-5 h-5 text-yellow-500 fill-yellow-500 dark:text-amber-300 dark:fill-amber-300" />
                             {t('agenda.todaysFocus')}
-                            <span className="text-sm font-normal text-slate-600">
+                            <span className="text-sm font-normal text-slate-600 dark:text-amber-200">
                                 ({focusedCount}/3)
                             </span>
                         </h3>
