@@ -907,7 +907,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         }
         node?.getNode?.()?.scrollTo?.({ x, animated });
     }, [containerWidth]);
-    const swipeThreshold = containerWidth ? containerWidth * 0.35 : 0;
+    const swipeThreshold = containerWidth ? containerWidth * 0.2 : 0;
 
     useEffect(() => {
         if (!visible || !containerWidth) return;
@@ -1737,7 +1737,14 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                         onScrollEndDrag={(event) => {
                             if (!containerWidth) return;
                             const offsetX = event.nativeEvent.contentOffset.x;
-                            const target = offsetX >= swipeThreshold ? 'view' : 'task';
+                            const velocityX = event.nativeEvent.velocity?.x ?? 0;
+                            const target = velocityX > 0.2
+                                ? 'view'
+                                : velocityX < -0.2
+                                    ? 'task'
+                                    : offsetX >= swipeThreshold
+                                        ? 'view'
+                                        : 'task';
                             scrollToTab(target);
                             setModeTab(target);
                         }}
