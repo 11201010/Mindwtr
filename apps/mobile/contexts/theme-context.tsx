@@ -2,8 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme as useSystemColorScheme } from 'react-native';
 
-type ThemeMode = 'system' | 'light' | 'dark' | 'eink' | 'nord' | 'sepia';
-type ThemePreset = 'default' | 'eink' | 'nord' | 'sepia';
+type ThemeMode = 'system' | 'light' | 'dark' | 'eink' | 'nord' | 'sepia' | 'oled';
+type ThemePreset = 'default' | 'eink' | 'nord' | 'sepia' | 'oled';
 type ThemeStyle = 'default' | 'material3';
 type ColorScheme = 'light' | 'dark';
 
@@ -33,10 +33,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         themeMode === 'eink' ? 'eink' :
         themeMode === 'nord' ? 'nord' :
         themeMode === 'sepia' ? 'sepia' :
+        themeMode === 'oled' ? 'oled' :
         'default';
 
     const resolvedMode: ColorScheme | 'system' =
-        themeMode === 'nord' ? 'dark'
+        themeMode === 'nord' || themeMode === 'oled' ? 'dark'
             : themeMode === 'eink' || themeMode === 'sepia' ? 'light'
                 : themeMode;
 

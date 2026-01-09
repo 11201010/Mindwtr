@@ -1,4 +1,4 @@
-export type ThemePresetName = 'default' | 'eink' | 'nord' | 'sepia';
+export type ThemePresetName = 'default' | 'eink' | 'nord' | 'sepia' | 'oled';
 
 export type ThemePresetColors = {
     bg: string;
@@ -73,5 +73,23 @@ export const THEME_PRESETS: Record<Exclude<ThemePresetName, 'default'>, ThemePre
         icon: '#7A5C3E',
         tabIconDefault: '#7A5C3E',
         tabIconSelected: '#9C6F3C',
+    },
+    oled: {
+        bg: '#000000',
+        cardBg: '#000000',
+        taskItemBg: '#000000',
+        text: '#E5E7EB',
+        secondaryText: '#9CA3AF',
+        border: '#1F2937',
+        tint: '#4F9DFF',
+        onTint: '#000000',
+        inputBg: '#0B0B0B',
+        danger: '#F87171',
+        success: '#34D399',
+        warning: '#FBBF24',
+        filterBg: '#0B0B0B',
+        icon: '#9CA3AF',
+        tabIconDefault: '#6B7280',
+        tabIconSelected: '#4F9DFF',
     },
 };

@@ -301,6 +301,7 @@ export default function SettingsPage() {
         { value: 'eink', label: t('settings.eink') },
         { value: 'nord', label: t('settings.nord') },
         { value: 'sepia', label: t('settings.sepia') },
+        { value: 'oled', label: t('settings.oled') },
     ];
     const [themePickerOpen, setThemePickerOpen] = useState(false);
     const currentThemeLabel = themeOptions.find((opt) => opt.value === themeMode)?.label ?? t('settings.system');
