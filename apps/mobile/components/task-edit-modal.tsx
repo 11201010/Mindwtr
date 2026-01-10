@@ -1744,7 +1744,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                     { color: editTab === 'task' ? '#fff' : tc.text },
                                 ]}
                             >
-                                {t('taskEdit.tab.task')}
+                                {t('markdown.edit')}
                             </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
@@ -1758,7 +1758,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                     { color: editTab === 'view' ? '#fff' : tc.text },
                                 ]}
                             >
-                                {t('taskEdit.tab.view')}
+                                {t('markdown.preview')}
                             </Text>
                         </TouchableOpacity>
                     </View>
