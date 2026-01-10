@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Pressable, ActivityIndicator } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { Task, TaskEditorFieldId, TimeEstimate } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -36,6 +36,7 @@ type TaskEditFormTabProps = {
     pendingDueDate: Date | null;
     getSafePickerDateValue: (dateStr?: string) => Date;
     onDateChange: (event: DateTimePickerEvent, selectedDate?: Date) => void;
+    onCloseDatePicker: () => void;
     containerWidth: number;
 };
 
@@ -68,6 +69,7 @@ export function TaskEditFormTab({
     pendingDueDate,
     getSafePickerDateValue,
     onDateChange,
+    onCloseDatePicker,
     containerWidth,
 }: TaskEditFormTabProps) {
     const countFilledFields = (fieldIds: TaskEditorFieldId[]): number => {
@@ -140,6 +142,14 @@ export function TaskEditFormTab({
                             >
                                 <Text style={[styles.aiButtonText, { color: tc.tint }]}>{t('taskEdit.aiBreakdown')}</Text>
                             </TouchableOpacity>
+                            {isAIWorking && (
+                                <View style={styles.aiWorking}>
+                                    <ActivityIndicator size="small" color={tc.tint} />
+                                    <Text style={[styles.aiWorkingText, { color: tc.secondaryText }]}>
+                                        {t('ai.working') || 'Working…'}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     )}
                     {aiEnabled && copilotSuggestion && !copilotApplied && (
@@ -205,22 +215,32 @@ export function TaskEditFormTab({
                     <View style={{ height: 100 }} />
 
                     {showDatePicker && (
-                        <DateTimePicker
-                            value={(() => {
-                                if (showDatePicker === 'start') return getSafePickerDateValue(editedTask.startTime);
-                                if (showDatePicker === 'start-time') return pendingStartDate ?? getSafePickerDateValue(editedTask.startTime);
-                                if (showDatePicker === 'review') return getSafePickerDateValue(editedTask.reviewAt);
-                                if (showDatePicker === 'due-time') return pendingDueDate ?? getSafePickerDateValue(editedTask.dueDate);
-                                return getSafePickerDateValue(editedTask.dueDate);
-                            })()}
-                            mode={
-                                showDatePicker === 'start-time' || showDatePicker === 'due-time'
-                                    ? 'time'
-                                    : 'date'
-                            }
-                            display="default"
-                            onChange={onDateChange}
-                        />
+                        <View>
+                            {Platform.OS === 'ios' && (
+                                <View style={styles.pickerToolbar}>
+                                    <View style={styles.pickerSpacer} />
+                                    <Pressable onPress={onCloseDatePicker} style={styles.pickerDone}>
+                                        <Text style={styles.pickerDoneText}>{t('common.done')}</Text>
+                                    </Pressable>
+                                </View>
+                            )}
+                            <DateTimePicker
+                                value={(() => {
+                                    if (showDatePicker === 'start') return getSafePickerDateValue(editedTask.startTime);
+                                    if (showDatePicker === 'start-time') return pendingStartDate ?? getSafePickerDateValue(editedTask.startTime);
+                                    if (showDatePicker === 'review') return getSafePickerDateValue(editedTask.reviewAt);
+                                    if (showDatePicker === 'due-time') return pendingDueDate ?? getSafePickerDateValue(editedTask.dueDate);
+                                    return getSafePickerDateValue(editedTask.dueDate);
+                                })()}
+                                mode={
+                                    showDatePicker === 'start-time' || showDatePicker === 'due-time'
+                                        ? 'time'
+                                        : 'date'
+                                }
+                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                onChange={onDateChange}
+                            />
+                        </View>
                     )}
                 </ScrollView>
             </KeyboardAvoidingView>

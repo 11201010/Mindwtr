@@ -186,6 +186,16 @@ export const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
     },
+    aiWorking: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingLeft: 4,
+    },
+    aiWorkingText: {
+        fontSize: 12,
+        fontWeight: '500',
+    },
     copilotPill: {
         borderWidth: 1,
         borderRadius: 12,
@@ -200,6 +210,26 @@ export const styles = StyleSheet.create({
     copilotHint: {
         fontSize: 11,
         marginTop: 2,
+    },
+    pickerToolbar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        paddingVertical: 8,
+    },
+    pickerSpacer: {
+        flex: 1,
+    },
+    pickerDone: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: '#007AFF',
+    },
+    pickerDoneText: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '600',
     },
     checklistActions: {
         flexDirection: 'row',
