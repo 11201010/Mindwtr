@@ -519,49 +519,56 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     updateTask: async (id: string, updates: Partial<Task>) => {
         const changeAt = Date.now();
         const now = new Date().toISOString();
-        const oldTask = get()._allTasks.find((t) => t.id === id);
+        let nextAllTasks: Task[] | null = null;
+        let nextVisibleTasks: Task[] | null = null;
+        set((state) => {
+            const oldTask = state._allTasks.find((t) => t.id === id);
+            if (!oldTask) return state;
 
-        if (!oldTask) {
-            return;
-        }
-
-        let adjustedUpdates = updates;
-        if (Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
-            const nextProjectId = updates.projectId ?? undefined;
-            const projectChanged = (oldTask.projectId ?? undefined) !== nextProjectId;
-            if (projectChanged) {
-                const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
-                if (nextProjectId) {
-                    if (!hasOrderNum) {
+            let adjustedUpdates = updates;
+            if (Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
+                const nextProjectId = updates.projectId ?? undefined;
+                const projectChanged = (oldTask.projectId ?? undefined) !== nextProjectId;
+                if (projectChanged) {
+                    const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
+                    if (nextProjectId) {
+                        if (!hasOrderNum) {
+                            adjustedUpdates = {
+                                ...adjustedUpdates,
+                                orderNum: getNextProjectOrder(nextProjectId, state._allTasks),
+                            };
+                        }
+                    } else {
                         adjustedUpdates = {
                             ...adjustedUpdates,
-                            orderNum: getNextProjectOrder(nextProjectId, get()._allTasks),
+                            orderNum: undefined,
                         };
                     }
-                } else {
-                    adjustedUpdates = {
-                        ...adjustedUpdates,
-                        orderNum: undefined,
-                    };
                 }
             }
+
+            const { updatedTask, nextRecurringTask } = applyTaskUpdates(oldTask, adjustedUpdates, now);
+
+            const updatedAllTasks = state._allTasks.map((task) =>
+                task.id === id ? updatedTask : task
+            );
+
+            if (nextRecurringTask) updatedAllTasks.push(nextRecurringTask);
+
+            let updatedVisibleTasks = updateVisibleTasks(state.tasks, oldTask, updatedTask);
+            if (nextRecurringTask) {
+                updatedVisibleTasks = updateVisibleTasks(updatedVisibleTasks, null, nextRecurringTask);
+            }
+            nextAllTasks = updatedAllTasks;
+            nextVisibleTasks = updatedVisibleTasks;
+            return { tasks: updatedVisibleTasks, _allTasks: updatedAllTasks, lastDataChangeAt: changeAt };
+        });
+
+        if (!nextAllTasks || !nextVisibleTasks) {
+            return;
         }
-
-        const { updatedTask, nextRecurringTask } = applyTaskUpdates(oldTask, adjustedUpdates, now);
-
-        const newAllTasks = get()._allTasks.map((task) =>
-            task.id === id ? updatedTask : task
-        );
-
-        if (nextRecurringTask) newAllTasks.push(nextRecurringTask);
-
-        let newVisibleTasks = updateVisibleTasks(get().tasks, oldTask, updatedTask);
-        if (nextRecurringTask) {
-            newVisibleTasks = updateVisibleTasks(newVisibleTasks, null, nextRecurringTask);
-        }
-        set({ tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt });
         debouncedSave(
-            { tasks: newAllTasks, projects: get()._allProjects, areas: get()._allAreas, settings: get().settings },
+            { tasks: nextAllTasks, projects: get()._allProjects, areas: get()._allAreas, settings: get().settings },
             (msg) => set({ error: msg })
         );
     },
