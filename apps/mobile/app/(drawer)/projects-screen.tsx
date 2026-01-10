@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView } from 'react-native';
-import DraggableFlatList, { type RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
+import DraggableFlatList from 'react-native-draggable-flatlist';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Area, Attachment, generateUUID, Project, PRESET_TAGS, Task, TaskStatus, useTaskStore } from '@mindwtr/core';
+import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore } from '@mindwtr/core';
 import { Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -11,17 +11,14 @@ import * as Linking from 'expo-linking';
 import * as Sharing from 'expo-sharing';
 
 import { TaskList } from '../../components/task-list';
-import { SwipeableTaskItem } from '../../components/swipeable-task-item';
-import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownText } from '../../components/markdown-text';
 import { ListSectionHeader, defaultListContentStyle } from '@/components/list-layout';
 
 export default function ProjectsScreen() {
-  const { projects, tasks, areas, addProject, updateProject, deleteProject, toggleProjectFocus, addArea, updateArea, deleteArea, reorderAreas, reorderProjects, reorderProjectTasks, updateTask, deleteTask } = useTaskStore();
+  const { projects, tasks, areas, addProject, updateProject, deleteProject, toggleProjectFocus, addArea, updateArea, deleteArea, reorderAreas, reorderProjects } = useTaskStore();
   const { t } = useLanguage();
-  const { isDark } = useTheme();
   const tc = useThemeColors();
   const statusPalette: Record<Project['status'], { text: string; bg: string; border: string }> = {
     active: { text: tc.tint, bg: `${tc.tint}22`, border: tc.tint },
@@ -38,8 +35,6 @@ export default function ProjectsScreen() {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [linkModalVisible, setLinkModalVisible] = useState(false);
   const [linkInput, setLinkInput] = useState('');
-  const [isReorderingTasks, setIsReorderingTasks] = useState(false);
-  const [taskReorderMode, setTaskReorderMode] = useState(false);
   const [showAreaPicker, setShowAreaPicker] = useState(false);
   const [showAreaManager, setShowAreaManager] = useState(false);
   const [newAreaName, setNewAreaName] = useState('');
@@ -299,45 +294,6 @@ export default function ProjectsScreen() {
     setSelectedProject({ ...selectedProject, attachments: next });
   };
 
-  const reorderTasks = useMemo(() => {
-    if (!selectedProject) return [];
-    const list = tasks.filter((task) => task.projectId === selectedProject.id && !task.deletedAt);
-    const hasOrder = list.some((task) => Number.isFinite(task.orderNum));
-    return [...list].sort((a, b) => {
-      if (hasOrder) {
-        const orderA = Number.isFinite(a.orderNum) ? (a.orderNum as number) : Number.POSITIVE_INFINITY;
-        const orderB = Number.isFinite(b.orderNum) ? (b.orderNum as number) : Number.POSITIVE_INFINITY;
-        if (orderA !== orderB) return orderA - orderB;
-      }
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
-  }, [selectedProject, tasks]);
-
-  const renderReorderTask = ({ item, drag, isActive }: RenderItemParams<Task>) => (
-    <ScaleDecorator>
-      <TouchableOpacity
-        onLongPress={drag}
-        delayLongPress={150}
-        activeOpacity={1}
-        disabled={isActive}
-        style={{ opacity: isActive ? 0.7 : 1 }}
-      >
-        <View pointerEvents="none">
-          <SwipeableTaskItem
-            task={item}
-            isDark={isDark}
-            tc={tc}
-            onPress={() => {}}
-            onStatusChange={(status) => updateTask(item.id, { status: status as TaskStatus })}
-            onDelete={() => deleteTask(item.id)}
-            disableSwipe
-            showDragHandle
-            hideStatusBadge
-          />
-        </View>
-      </TouchableOpacity>
-    </ScaleDecorator>
-  );
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -585,11 +541,6 @@ export default function ProjectsScreen() {
         visible={!!selectedProject}
         animationType="slide"
         onRequestClose={() => {
-          if (taskReorderMode) {
-            setTaskReorderMode(false);
-            setIsReorderingTasks(false);
-            return;
-          }
           persistSelectedProjectEdits(selectedProject);
           setSelectedProject(null);
           setNotesExpanded(false);
@@ -600,48 +551,10 @@ export default function ProjectsScreen() {
           setLinkInput('');
           setShowAreaPicker(false);
           setShowTagPicker(false);
-          setIsReorderingTasks(false);
-          setTaskReorderMode(false);
         }}
       >
                 <SafeAreaView style={{ flex: 1, backgroundColor: tc.bg }}>
-                  {selectedProject && taskReorderMode ? (
-                    <View style={styles.reorderContainer}>
-                      <View style={[styles.reorderHeader, { borderBottomColor: tc.border, backgroundColor: tc.cardBg }]}>
-                        <Text style={[styles.reorderTitle, { color: tc.text }]}>{selectedProject.title}</Text>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setTaskReorderMode(false);
-                            setIsReorderingTasks(false);
-                          }}
-                          style={[styles.reorderExitButton, { borderColor: tc.border }]}
-                          accessibilityLabel={t('projects.reorder') || 'Reorder'}
-                        >
-                          <Text style={[styles.reorderExitText, { color: tc.text }]}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
-                      <DraggableFlatList
-                        data={reorderTasks}
-                        keyExtractor={(item: Task) => item.id}
-                        renderItem={renderReorderTask}
-                        activationDistance={12}
-                        contentContainerStyle={styles.reorderListContent}
-                        onDragBegin={() => setIsReorderingTasks(true)}
-                        onDragEnd={({ data }) => {
-                          reorderProjectTasks(selectedProject.id, data.map((task) => task.id));
-                          setIsReorderingTasks(false);
-                        }}
-                        onDragCancel={() => setIsReorderingTasks(false)}
-                        ListEmptyComponent={
-                          <View style={styles.emptyContainer}>
-                            <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
-                              {t('list.noTasks')}
-                            </Text>
-                          </View>
-                        }
-                      />
-                    </View>
-                  ) : selectedProject ? (
+                  {selectedProject ? (
                     <ScrollView
                       style={{ flex: 1 }}
                       contentContainerStyle={styles.projectDetailScroll}
@@ -928,10 +841,7 @@ export default function ProjectsScreen() {
                   title={selectedProject.title}
                   showHeader={false}
                   projectId={selectedProject.id}
-                  enableReorder
-                  onEnterReorderMode={() => setTaskReorderMode(true)}
                   allowAdd={true}
-                  onReorderActiveChange={setIsReorderingTasks}
                   staticList
                 />
                     </ScrollView>
@@ -1418,38 +1328,6 @@ const styles = StyleSheet.create({
   },
   sequentialToggleTextActive: {
     color: '#FFFFFF',
-  },
-  reorderExitButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#CBD5F5',
-    marginLeft: 8,
-  },
-  reorderExitText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  reorderContainer: {
-    flex: 1,
-  },
-  reorderListContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  reorderHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  reorderTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    flex: 1,
   },
   statusBlock: {
     borderBottomWidth: 1,
