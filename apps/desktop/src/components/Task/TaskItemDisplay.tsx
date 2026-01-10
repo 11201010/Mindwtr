@@ -40,13 +40,13 @@ const getUrgencyColor = (task: Task) => {
 const getPriorityBadge = (priority: TaskPriority) => {
     switch (priority) {
         case 'low':
-            return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+            return 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-200';
         case 'medium':
-            return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400';
+            return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-200';
         case 'high':
-            return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+            return 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-200';
         case 'urgent':
-            return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+            return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-200';
         default:
             return 'bg-muted text-muted-foreground';
     }
