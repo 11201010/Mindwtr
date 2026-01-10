@@ -58,6 +58,12 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
 
     return (
         <div className="flex h-screen bg-background text-foreground">
+            <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:rounded-md focus:bg-primary focus:text-primary-foreground"
+            >
+                {t('accessibility.skipToContent') || 'Skip to content'}
+            </a>
             {/* Sidebar */}
             {!isFocusMode && (
                 <aside className={cn(
@@ -74,7 +80,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                     <button
                         onClick={toggleSidebar}
                         className={cn(
-                            "ml-auto p-1 rounded hover:bg-accent transition-colors text-muted-foreground",
+                            "ml-auto p-1 rounded hover:bg-accent transition-colors text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary/40",
                             isCollapsed && "ml-0"
                         )}
                         title={t('keybindings.toggleSidebar')}
@@ -88,7 +94,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                 <button
                     onClick={triggerSearch}
                     className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2 mb-4 rounded-md text-sm font-medium transition-colors bg-muted/50 hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+                        "w-full flex items-center gap-3 px-3 py-2 mb-4 rounded-md text-sm font-medium transition-colors bg-muted/50 hover:bg-accent hover:text-accent-foreground text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary/40",
                         isCollapsed && "justify-center px-2"
                     )}
                     title={t('search.placeholder')}
@@ -185,7 +191,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
             )}
 
             {/* Main Content */}
-            <main className="flex-1 overflow-auto" data-main-content tabIndex={-1}>
+            <main id="main-content" className="flex-1 overflow-auto" data-main-content tabIndex={-1}>
                 <div className={cn(
                     "mx-auto p-8 h-full",
                     isFocusMode ? "max-w-[800px]" : ['board', 'calendar'].includes(currentView) ? "max-w-full" : "max-w-4xl"

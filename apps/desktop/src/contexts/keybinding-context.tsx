@@ -368,9 +368,14 @@ export function KeybindingProvider({
                 triggerQuickAdd();
                 return;
             }
-            if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\' && !isEditableTarget(e.target)) {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key === '\\' && !isEditableTarget(e.target)) {
                 e.preventDefault();
                 toggleFocusMode();
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === '\\' && !isEditableTarget(e.target)) {
+                e.preventDefault();
+                toggleSidebar();
                 return;
             }
             if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'b' && !isEditableTarget(e.target)) {

@@ -580,8 +580,9 @@ export function AgendaView() {
                                 ))}
                             </div>
                         ) : (
-                            <p className="text-muted-foreground text-center py-4">
-                                ⭐ {t('agenda.focusHint')}
+                            <p className="text-muted-foreground text-center py-4 flex items-center justify-center gap-2">
+                                <Star className="w-4 h-4 text-amber-400" />
+                                {t('agenda.focusHint')}
                             </p>
                         )}
                     </div>

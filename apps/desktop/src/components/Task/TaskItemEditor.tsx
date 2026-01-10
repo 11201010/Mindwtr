@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { hasTimeComponent, safeFormatDate, safeParseDate, type ClarifyResponse, type Project, type TaskEditorFieldId, type TimeEstimate } from '@mindwtr/core';
 import { ProjectSelector } from '../ui/ProjectSelector';
 import { TaskInput } from './TaskInput';
@@ -130,6 +130,19 @@ export function TaskItemEditor({
     const [detailsOpen, setDetailsOpen] = useState(
         sectionCounts.details > 0 || detailsFields.includes('description') || detailsFields.includes('checklist')
     );
+    const [aiMenuOpen, setAiMenuOpen] = useState(false);
+    const aiMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!aiMenuOpen) return;
+        const handleClick = (event: MouseEvent) => {
+            if (!aiMenuRef.current) return;
+            if (aiMenuRef.current.contains(event.target as Node)) return;
+            setAiMenuOpen(false);
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [aiMenuOpen]);
     return (
         <form
             onSubmit={onSubmit}
@@ -145,43 +158,64 @@ export function TaskItemEditor({
             className="flex flex-col gap-3 max-h-[80vh]"
         >
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
-            <TaskInput
-                autoFocus
-                value={editTitle}
-                onChange={(value) => {
-                    setEditTitle(value);
-                    resetCopilotDraft();
-                }}
-                projects={projects}
-                contexts={inputContexts}
-                onCreateProject={onCreateProject}
-                placeholder={t('taskEdit.titleLabel')}
-                className="w-full bg-transparent border-b border-primary/50 p-1 text-base font-medium focus:ring-0 focus:border-primary outline-none"
-            />
-            {aiEnabled && (
-                <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={handleAIClarify}
-                        disabled={isAIWorking}
-                        aria-busy={isAIWorking}
-                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground disabled:opacity-60"
-                    >
-                        {isAIWorking && <Loader2 className="w-3 h-3 mr-1 inline-block animate-spin" />}
-                        {t('taskEdit.aiClarify')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleAIBreakdown}
-                        disabled={isAIWorking}
-                        aria-busy={isAIWorking}
-                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground disabled:opacity-60"
-                    >
-                        {isAIWorking && <Loader2 className="w-3 h-3 mr-1 inline-block animate-spin" />}
-                        {t('taskEdit.aiBreakdown')}
-                    </button>
-                </div>
-            )}
+            <div className="flex items-start gap-2">
+                <TaskInput
+                    autoFocus
+                    value={editTitle}
+                    onChange={(value) => {
+                        setEditTitle(value);
+                        resetCopilotDraft();
+                    }}
+                    projects={projects}
+                    contexts={inputContexts}
+                    onCreateProject={onCreateProject}
+                    placeholder={t('taskEdit.titleLabel')}
+                    className="w-full bg-transparent border-b border-primary/50 p-1 text-base font-medium focus:ring-0 focus:border-primary outline-none"
+                />
+                {aiEnabled && (
+                    <div className="relative" ref={aiMenuRef}>
+                        <button
+                            type="button"
+                            onClick={() => setAiMenuOpen((prev) => !prev)}
+                            aria-label={t('taskEdit.aiAssistant') || 'AI assistant'}
+                            aria-expanded={aiMenuOpen}
+                            className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        >
+                            <Sparkles className="w-4 h-4" />
+                        </button>
+                        {aiMenuOpen && (
+                            <div className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-card shadow-lg overflow-hidden z-10">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setAiMenuOpen(false);
+                                        handleAIClarify();
+                                    }}
+                                    disabled={isAIWorking}
+                                    aria-busy={isAIWorking}
+                                    className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                >
+                                    {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {t('taskEdit.aiClarify')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setAiMenuOpen(false);
+                                        handleAIBreakdown();
+                                    }}
+                                    disabled={isAIWorking}
+                                    aria-busy={isAIWorking}
+                                    className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                >
+                                    {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {t('taskEdit.aiBreakdown')}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
             {aiEnabled && copilotSuggestion && !copilotApplied && (
                 <button
                     type="button"

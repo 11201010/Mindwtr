@@ -1,13 +1,50 @@
 import { create } from 'zustand';
+import type { TaskPriority, TimeEstimate } from '@mindwtr/core';
 
 interface UiState {
     isFocusMode: boolean;
     setFocusMode: (value: boolean) => void;
     toggleFocusMode: () => void;
+    listFilters: {
+        tokens: string[];
+        priorities: TaskPriority[];
+        estimates: TimeEstimate[];
+        open: boolean;
+    };
+    setListFilters: (partial: Partial<UiState['listFilters']>) => void;
+    resetListFilters: () => void;
+    boardFilters: {
+        selectedProjectIds: string[];
+        open: boolean;
+    };
+    setBoardFilters: (partial: Partial<UiState['boardFilters']>) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
     isFocusMode: false,
     setFocusMode: (value) => set({ isFocusMode: value }),
     toggleFocusMode: () => set((state) => ({ isFocusMode: !state.isFocusMode })),
+    listFilters: {
+        tokens: [],
+        priorities: [],
+        estimates: [],
+        open: false,
+    },
+    setListFilters: (partial) =>
+        set((state) => ({ listFilters: { ...state.listFilters, ...partial } })),
+    resetListFilters: () =>
+        set((state) => ({
+            listFilters: {
+                ...state.listFilters,
+                tokens: [],
+                priorities: [],
+                estimates: [],
+            },
+        })),
+    boardFilters: {
+        selectedProjectIds: [],
+        open: false,
+    },
+    setBoardFilters: (partial) =>
+        set((state) => ({ boardFilters: { ...state.boardFilters, ...partial } })),
 }));

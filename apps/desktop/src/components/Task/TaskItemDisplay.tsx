@@ -1,7 +1,8 @@
-import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, Pencil, RotateCcw, Copy } from 'lucide-react';
-import type { Attachment, Project, Task, TaskPriority, TaskStatus, RecurrenceRule, RecurrenceStrategy } from '@mindwtr/core';
+import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, Pencil, RotateCcw, Copy, MapPin, Hourglass } from 'lucide-react';
+import type { Attachment, Project, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy } from '@mindwtr/core';
 import { getChecklistProgress, getTaskAgeLabel, getTaskStaleness, getTaskUrgency, hasTimeComponent, safeFormatDate, stripMarkdown } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
+import { MetadataBadge } from '../ui/MetadataBadge';
 
 interface TaskItemDisplayProps {
     task: Task;
@@ -37,19 +38,12 @@ const getUrgencyColor = (task: Task) => {
     }
 };
 
-const getPriorityBadge = (priority: TaskPriority) => {
-    switch (priority) {
-        case 'low':
-            return 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-200';
-        case 'medium':
-            return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-200';
-        case 'high':
-            return 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-200';
-        case 'urgent':
-            return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-200';
-        default:
-            return 'bg-muted text-muted-foreground';
-    }
+const formatTimeEstimate = (estimate: string) => {
+    const value = String(estimate);
+    if (value.endsWith('min')) return value.replace('min', 'm');
+    if (value.endsWith('hr+')) return value.replace('hr+', 'h+');
+    if (value.endsWith('hr')) return value.replace('hr', 'h');
+    return value;
 };
 
 export function TaskItemDisplay({
@@ -133,19 +127,18 @@ export function TaskItemDisplay({
                     {showCompactMeta && (
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             {project && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-foreground">
-                                    <span
-                                        className="inline-block h-2 w-2 rounded-full"
-                                        style={{ backgroundColor: projectColor || '#94a3b8' }}
-                                    />
-                                    {project.title}
-                                </span>
+                                <MetadataBadge
+                                    variant="project"
+                                    label={project.title}
+                                    dotColor={projectColor || '#94a3b8'}
+                                />
                             )}
                             {(task.contexts ?? []).slice(0, 3).map((ctx) => (
-                                <span key={ctx} className="truncate">
-                                    {ctx}
-                                </span>
+                                <MetadataBadge key={ctx} variant="context" label={ctx} />
                             ))}
+                            {(task.contexts?.length ?? 0) > 3 && (
+                                <span className="text-[10px] text-muted-foreground">+{(task.contexts?.length ?? 0) - 3}</span>
+                            )}
                         </div>
                     )}
                 </button>
@@ -173,74 +166,70 @@ export function TaskItemDisplay({
                             </div>
                         )}
 
-                        <div className="flex flex-wrap items-center gap-4 mt-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-3 mt-2 text-xs">
                             {project && (
-                                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/50 text-accent-foreground font-medium text-[10px]">
-                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: projectColor || '#94a3b8' }} />
-                                    {project.title}
-                                </div>
+                                <MetadataBadge
+                                    variant="project"
+                                    label={project.title}
+                                    dotColor={projectColor || '#94a3b8'}
+                                />
                             )}
                             {task.startTime && (
-                                <div className="flex items-center gap-1 text-blue-500/80" title={t('taskEdit.startDateLabel')}>
-                                    <ArrowRight className="w-3 h-3" />
-                                    {safeFormatDate(task.startTime, hasTimeComponent(task.startTime) ? 'MMM d, HH:mm' : 'MMM d')}
-                                </div>
+                                <MetadataBadge
+                                    variant="info"
+                                    icon={ArrowRight}
+                                    label={safeFormatDate(task.startTime, hasTimeComponent(task.startTime) ? 'MMM d, HH:mm' : 'MMM d')}
+                                />
                             )}
                             {task.dueDate && (
-                                <div
-                                    className={cn("flex items-center gap-1", getUrgencyColor(task), isStagnant && "text-muted-foreground/70")}
-                                    title={t('taskEdit.dueDateLabel')}
-                                >
-                                    <CalendarIcon className="w-3 h-3" />
-                                    {safeFormatDate(task.dueDate, hasTimeComponent(task.dueDate) ? 'MMM d, HH:mm' : 'MMM d')}
+                                <div className="flex items-center gap-2">
+                                    <MetadataBadge
+                                        variant="info"
+                                        icon={CalendarIcon}
+                                        label={safeFormatDate(task.dueDate, hasTimeComponent(task.dueDate) ? 'MMM d, HH:mm' : 'MMM d')}
+                                        className={cn(getUrgencyColor(task), isStagnant && "text-muted-foreground/70")}
+                                    />
                                     {isStagnant && (
-                                        <span
-                                            className="ml-1 text-[10px] text-muted-foreground"
-                                            title={`${t('taskEdit.pushCountHint')}: ${task.pushCount ?? 0}`}
-                                        >
-                                            ⏳ {task.pushCount}
-                                        </span>
+                                        <MetadataBadge
+                                            variant="age"
+                                            icon={Hourglass}
+                                            label={`${task.pushCount ?? 0}`}
+                                        />
                                     )}
                                 </div>
                             )}
                             {task.location && (
-                                <div className="flex items-center gap-1 text-muted-foreground" title={t('taskEdit.locationLabel')}>
-                                    <span className="font-medium">📍 {task.location}</span>
-                                </div>
+                                <MetadataBadge
+                                    variant="info"
+                                    icon={MapPin}
+                                    label={task.location}
+                                />
                             )}
                             {recurrenceRule && (
-                                <div className="flex items-center gap-1 text-purple-600" title={t('taskEdit.recurrenceLabel')}>
-                                    <Repeat className="w-3 h-3" />
-                                    <span>
-                                        {t(`recurrence.${recurrenceRule}`)}
-                                        {recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.afterCompletionShort')}` : ''}
-                                    </span>
-                                </div>
+                                <MetadataBadge
+                                    variant="info"
+                                    icon={Repeat}
+                                    label={`${t(`recurrence.${recurrenceRule}`)}${recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.afterCompletionShort')}` : ''}`}
+                                />
                             )}
                             {prioritiesEnabled && task.priority && (
-                                <div
-                                    className={cn(
-                                        "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wide",
-                                        getPriorityBadge(task.priority)
-                                    )}
-                                    title={t('taskEdit.priorityLabel')}
-                                >
-                                    {t(`priority.${task.priority}`)}
-                                </div>
+                                <MetadataBadge
+                                    variant="priority"
+                                    label={t(`priority.${task.priority}`)}
+                                />
                             )}
                             {task.contexts?.length > 0 && (
                                 <div className="flex items-center gap-2">
-                                    {task.contexts.map(ctx => (
-                                        <span key={ctx} className="text-muted-foreground hover:text-foreground transition-colors">
-                                            {ctx}
-                                        </span>
+                                    {task.contexts.map((ctx) => (
+                                        <MetadataBadge key={ctx} variant="context" label={ctx} />
                                     ))}
                                 </div>
                             )}
                             {task.tags.length > 0 && (
-                                <div className="flex items-center gap-1 text-muted-foreground">
-                                    <Tag className="w-3 h-3" />
-                                    {task.tags.join(', ')}
+                                <div className="flex items-center gap-2">
+                                    {task.tags.map((tag) => (
+                                        <MetadataBadge key={tag} variant="tag" icon={Tag} label={tag} />
+                                    ))}
                                 </div>
                             )}
                             {checklistProgress && (
@@ -260,28 +249,24 @@ export function TaskItemDisplay({
                                 </div>
                             )}
                             {task.status !== 'done' && ageLabel && (
-                                <div className={cn(
-                                    "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full",
-                                    getTaskStaleness(task.createdAt) === 'fresh' && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-                                    getTaskStaleness(task.createdAt) === 'aging' && 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-                                    getTaskStaleness(task.createdAt) === 'stale' && 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-                                    getTaskStaleness(task.createdAt) === 'very-stale' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                                )} title="Task age">
-                                    <Clock className="w-3 h-3" />
-                                    {ageLabel}
-                                </div>
+                                <MetadataBadge
+                                    variant="age"
+                                    icon={Clock}
+                                    label={ageLabel}
+                                    className={cn(
+                                        getTaskStaleness(task.createdAt) === 'fresh' && 'metadata-badge--age-fresh',
+                                        getTaskStaleness(task.createdAt) === 'aging' && 'metadata-badge--age-aging',
+                                        getTaskStaleness(task.createdAt) === 'stale' && 'metadata-badge--age-stale',
+                                        getTaskStaleness(task.createdAt) === 'very-stale' && 'metadata-badge--age-very-stale'
+                                    )}
+                                />
                             )}
                             {timeEstimatesEnabled && task.timeEstimate && (
-                                <div className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" title="Estimated time">
-                                    <Timer className="w-3 h-3" />
-                                    {String(task.timeEstimate).endsWith('min')
-                                        ? String(task.timeEstimate).replace('min', 'm')
-                                        : String(task.timeEstimate).endsWith('hr+')
-                                            ? String(task.timeEstimate).replace('hr+', 'h+')
-                                            : String(task.timeEstimate).endsWith('hr')
-                                                ? String(task.timeEstimate).replace('hr', 'h')
-                                                : String(task.timeEstimate)}
-                                </div>
+                                <MetadataBadge
+                                    variant="estimate"
+                                    icon={Timer}
+                                    label={formatTimeEstimate(task.timeEstimate)}
+                                />
                             )}
                         </div>
 

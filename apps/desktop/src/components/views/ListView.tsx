@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { Plus, Filter } from 'lucide-react';
+import { Plus, Filter, AlertTriangle } from 'lucide-react';
 import { useTaskStore, TaskStatus, Task, TaskPriority, TimeEstimate, PRESET_CONTEXTS, PRESET_TAGS, sortTasksBy, Project, parseQuickAdd, matchesHierarchicalToken, safeParseDate, createAIProvider, type AIProviderId } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
@@ -10,6 +10,7 @@ import { InboxProcessor } from './InboxProcessor';
 import { useLanguage } from '../../contexts/language-context';
 import { useKeybindings } from '../../contexts/keybinding-context';
 import { buildCopilotConfig, loadAIKey } from '../../lib/ai-config';
+import { useUiStore } from '../../store/ui-store';
 
 
 interface ListViewProps {
@@ -94,11 +95,14 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const { registerTaskListScope } = useKeybindings();
     const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
     const [newTaskTitle, setNewTaskTitle] = useState('');
-    const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
-    const [selectedPriorities, setSelectedPriorities] = useState<TaskPriority[]>([]);
-    const [selectedTimeEstimates, setSelectedTimeEstimates] = useState<TimeEstimate[]>([]);
+    const listFilters = useUiStore((state) => state.listFilters);
+    const setListFilters = useUiStore((state) => state.setListFilters);
+    const resetListFilters = useUiStore((state) => state.resetListFilters);
     const [baseTasks, setBaseTasks] = useState<Task[]>([]);
-    const [filtersOpen, setFiltersOpen] = useState(false);
+    const selectedTokens = listFilters.tokens;
+    const selectedPriorities = listFilters.priorities;
+    const selectedTimeEstimates = listFilters.estimates;
+    const filtersOpen = listFilters.open;
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [selectionMode, setSelectionMode] = useState(false);
     const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
@@ -597,38 +601,92 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const filterSummaryLabel = filterSummary.slice(0, 3).join(', ');
     const filterSummarySuffix = filterSummary.length > 3 ? ` +${filterSummary.length - 3}` : '';
     const showFiltersPanel = filtersOpen || hasFilters;
-    const toggleTokenFilter = (token: string) => {
-        setSelectedTokens((prev) =>
-            prev.includes(token) ? prev.filter((item) => item !== token) : [...prev, token]
-        );
-    };
-    const togglePriorityFilter = (priority: TaskPriority) => {
-        setSelectedPriorities((prev) =>
-            prev.includes(priority) ? prev.filter((item) => item !== priority) : [...prev, priority]
-        );
-    };
-    const toggleTimeFilter = (estimate: TimeEstimate) => {
-        setSelectedTimeEstimates((prev) =>
-            prev.includes(estimate) ? prev.filter((item) => item !== estimate) : [...prev, estimate]
-        );
-    };
+    const toggleTokenFilter = useCallback((token: string) => {
+        const nextTokens = selectedTokens.includes(token)
+            ? selectedTokens.filter((item) => item !== token)
+            : [...selectedTokens, token];
+        setListFilters({ tokens: nextTokens });
+    }, [selectedTokens, setListFilters]);
+    const togglePriorityFilter = useCallback((priority: TaskPriority) => {
+        const nextPriorities = selectedPriorities.includes(priority)
+            ? selectedPriorities.filter((item) => item !== priority)
+            : [...selectedPriorities, priority];
+        setListFilters({ priorities: nextPriorities });
+    }, [selectedPriorities, setListFilters]);
+    const toggleTimeFilter = useCallback((estimate: TimeEstimate) => {
+        const nextEstimates = selectedTimeEstimates.includes(estimate)
+            ? selectedTimeEstimates.filter((item) => item !== estimate)
+            : [...selectedTimeEstimates, estimate];
+        setListFilters({ estimates: nextEstimates });
+    }, [selectedTimeEstimates, setListFilters]);
     const clearFilters = () => {
-        setSelectedTokens([]);
-        setSelectedPriorities([]);
-        setSelectedTimeEstimates([]);
+        resetListFilters();
     };
 
     useEffect(() => {
         if (!prioritiesEnabled && selectedPriorities.length > 0) {
-            setSelectedPriorities([]);
+            setListFilters({ priorities: [] });
         }
-    }, [prioritiesEnabled, selectedPriorities.length]);
+    }, [prioritiesEnabled, selectedPriorities.length, setListFilters]);
 
     useEffect(() => {
         if (!timeEstimatesEnabled && selectedTimeEstimates.length > 0) {
-            setSelectedTimeEstimates([]);
+            setListFilters({ estimates: [] });
         }
-    }, [timeEstimatesEnabled, selectedTimeEstimates.length]);
+    }, [timeEstimatesEnabled, selectedTimeEstimates.length, setListFilters]);
+
+    const openQuickAdd = useCallback((status: TaskStatus | 'all') => {
+        const initialStatus = status === 'all' ? 'inbox' : status;
+        window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+            detail: { initialProps: { status: initialStatus } },
+        }));
+    }, []);
+
+    const resolveText = useCallback((key: string, fallback: string) => {
+        const value = t(key);
+        return value === key ? fallback : value;
+    }, [t]);
+
+    const emptyState = useMemo(() => {
+        switch (statusFilter) {
+            case 'inbox':
+                return {
+                    title: t('list.inbox') || 'Inbox',
+                    body: resolveText('inbox.emptyAddHint', 'Inbox is clear. Capture something new.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+            case 'next':
+                return {
+                    title: t('list.next') || 'Next Actions',
+                    body: resolveText('list.noTasks', 'No next actions yet.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+            case 'waiting':
+                return {
+                    title: resolveText('waiting.empty', t('list.waiting') || 'Waiting'),
+                    body: resolveText('waiting.emptyHint', 'Track delegated or pending items.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+            case 'someday':
+                return {
+                    title: resolveText('someday.empty', t('list.someday') || 'Someday'),
+                    body: resolveText('someday.emptyHint', 'Store ideas for later.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+            case 'done':
+                return {
+                    title: t('list.done') || 'Done',
+                    body: resolveText('list.noTasks', 'Completed tasks will show here.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+            default:
+                return {
+                    title: t('list.tasks') || 'Tasks',
+                    body: resolveText('list.noTasks', 'No tasks yet.'),
+                    action: t('nav.addTask') || 'Add task',
+                };
+        }
+    }, [resolveText, statusFilter, t]);
 
     return (
         <>
@@ -711,7 +769,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             {/* Next Actions Warning */}
             {isNextView && nextCount > NEXT_WARNING_THRESHOLD && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex items-start gap-3">
-                    <span className="text-amber-500 text-xl">⚠️</span>
+                    <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5" />
                     <div>
                         <p className="font-medium text-amber-700 dark:text-amber-400">
                             {nextCount} {t('next.warningCount')}
@@ -757,7 +815,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                             )}
                             <button
                                 type="button"
-                                onClick={() => setFiltersOpen((prev) => !prev)}
+                                onClick={() => setListFilters({ open: !filtersOpen })}
                                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                             >
                                 {showFiltersPanel ? t('filters.hide') : t('filters.show')}
@@ -917,10 +975,22 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                 aria-label={t('list.tasks') || 'Task list'}
             >
                 {filteredTasks.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground">
-                        <p>
-                            {hasFilters ? t('filters.noMatch') : t('list.noTasks') || `${t('contexts.noTasks')}`}
-                        </p>
+                    <div className="text-center py-12 text-muted-foreground flex flex-col items-center gap-3">
+                        {hasFilters ? (
+                            <p>{t('filters.noMatch')}</p>
+                        ) : (
+                            <>
+                                <div className="text-base font-medium text-foreground">{emptyState.title}</div>
+                                <p className="text-sm text-muted-foreground">{emptyState.body}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => openQuickAdd(statusFilter)}
+                                    className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                >
+                                    {emptyState.action}
+                                </button>
+                            </>
+                        )}
                     </div>
                 ) : shouldVirtualize ? (
                     <div style={{ height: totalHeight, position: 'relative' }}>

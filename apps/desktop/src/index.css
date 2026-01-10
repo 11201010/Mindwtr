@@ -21,7 +21,7 @@
     --secondary-foreground: 222.2 47.4% 11.2%;
 
     --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted-foreground: 240 5% 40%;
 
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
@@ -29,9 +29,30 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    --border: 240 5.9% 85%;
+    --input: 240 5.9% 85%;
     --ring: 222.2 84% 4.9%;
+
+    --status-inbox: 217 91% 60%;
+    --status-next: 142 70% 40%;
+    --status-waiting: 45 93% 47%;
+    --status-someday: 270 70% 60%;
+    --status-done: 220 10% 60%;
+
+    --badge-project-bg: 214 100% 96%;
+    --badge-project-fg: 214 30% 30%;
+    --badge-context-bg: 270 100% 96%;
+    --badge-context-fg: 270 35% 35%;
+    --badge-tag-bg: 0 0% 94%;
+    --badge-tag-fg: 220 10% 30%;
+    --badge-priority-bg: 34 100% 92%;
+    --badge-priority-fg: 30 80% 30%;
+    --badge-estimate-bg: 142 70% 92%;
+    --badge-estimate-fg: 142 40% 30%;
+    --badge-age-bg: 45 100% 94%;
+    --badge-age-fg: 24 45% 35%;
+    --badge-info-bg: 210 40% 96%;
+    --badge-info-fg: 220 10% 30%;
 
     --radius: 0.5rem;
   }
@@ -55,7 +76,7 @@
     --secondary-foreground: 220 13% 88%;
 
     --muted: 220 13% 22%;             /* #33333f - muted background */
-    --muted-foreground: 220 13% 60%;  /* #8b8b99 - muted text */
+    --muted-foreground: 220 13% 70%;
 
     --accent: 220 13% 22%;
     --accent-foreground: 220 13% 91%;
@@ -63,9 +84,30 @@
     --destructive: 0 72% 51%;         /* #ef4444 - red */
     --destructive-foreground: 220 13% 98%;
 
-    --border: 220 13% 24%;            /* #383844 - border color */
-    --input: 220 13% 24%;
+    --border: 220 13% 30%;
+    --input: 220 13% 30%;
     --ring: 217 91% 60%;              /* matches primary */
+
+    --status-inbox: 217 91% 65%;
+    --status-next: 142 60% 50%;
+    --status-waiting: 45 90% 55%;
+    --status-someday: 270 65% 70%;
+    --status-done: 220 10% 60%;
+
+    --badge-project-bg: 220 18% 24%;
+    --badge-project-fg: 210 40% 90%;
+    --badge-context-bg: 270 20% 26%;
+    --badge-context-fg: 270 40% 85%;
+    --badge-tag-bg: 220 13% 24%;
+    --badge-tag-fg: 220 10% 85%;
+    --badge-priority-bg: 30 40% 26%;
+    --badge-priority-fg: 35 85% 80%;
+    --badge-estimate-bg: 140 30% 24%;
+    --badge-estimate-fg: 140 50% 85%;
+    --badge-age-bg: 35 25% 24%;
+    --badge-age-fg: 35 70% 80%;
+    --badge-info-bg: 220 13% 24%;
+    --badge-info-fg: 220 13% 88%;
   }
 
   :root.theme-eink {
@@ -89,6 +131,25 @@
     --border: 0 0% 0%;
     --input: 0 0% 0%;
     --ring: 0 0% 0%;
+    --status-inbox: 0 0% 0%;
+    --status-next: 0 0% 0%;
+    --status-waiting: 0 0% 0%;
+    --status-someday: 0 0% 0%;
+    --status-done: 0 0% 0%;
+    --badge-project-bg: 0 0% 100%;
+    --badge-project-fg: 0 0% 0%;
+    --badge-context-bg: 0 0% 100%;
+    --badge-context-fg: 0 0% 0%;
+    --badge-tag-bg: 0 0% 100%;
+    --badge-tag-fg: 0 0% 0%;
+    --badge-priority-bg: 0 0% 100%;
+    --badge-priority-fg: 0 0% 0%;
+    --badge-estimate-bg: 0 0% 100%;
+    --badge-estimate-fg: 0 0% 0%;
+    --badge-age-bg: 0 0% 100%;
+    --badge-age-fg: 0 0% 0%;
+    --badge-info-bg: 0 0% 100%;
+    --badge-info-fg: 0 0% 0%;
   }
 
   :root.theme-eink *, :root.theme-eink *::before, :root.theme-eink *::after {
@@ -116,6 +177,25 @@
     --border: 220 16.5% 35.7%;
     --input: 220 16.5% 35.7%;
     --ring: 193.3 43.4% 67.5%;
+    --status-inbox: 193.3 43.4% 67.5%;
+    --status-next: 140 40% 62%;
+    --status-waiting: 40 70% 64%;
+    --status-someday: 280 35% 70%;
+    --status-done: 220 10% 70%;
+    --badge-project-bg: 220 16% 31%;
+    --badge-project-fg: 217.5 26.7% 94.1%;
+    --badge-context-bg: 270 20% 30%;
+    --badge-context-fg: 217.5 26.7% 94.1%;
+    --badge-tag-bg: 220 16% 31%;
+    --badge-tag-fg: 217.5 26.7% 94.1%;
+    --badge-priority-bg: 35 35% 35%;
+    --badge-priority-fg: 40 80% 85%;
+    --badge-estimate-bg: 140 30% 30%;
+    --badge-estimate-fg: 140 60% 85%;
+    --badge-age-bg: 40 25% 30%;
+    --badge-age-fg: 40 70% 85%;
+    --badge-info-bg: 220 16% 31%;
+    --badge-info-fg: 217.5 26.7% 94.1%;
   }
 
   :root.theme-sepia {
@@ -139,6 +219,25 @@
     --border: 40 43.7% 79.8%;
     --input: 40 43.7% 79.8%;
     --ring: 31.9 44.4% 42.4%;
+    --status-inbox: 31.9 44.4% 42.4%;
+    --status-next: 120 30% 45%;
+    --status-waiting: 40 70% 45%;
+    --status-someday: 270 40% 55%;
+    --status-done: 0 11.3% 40%;
+    --badge-project-bg: 41.7 69.7% 90%;
+    --badge-project-fg: 0 11.3% 20.8%;
+    --badge-context-bg: 37.6 54.8% 85%;
+    --badge-context-fg: 0 11.3% 20.8%;
+    --badge-tag-bg: 40.5 55.6% 88%;
+    --badge-tag-fg: 0 11.3% 20.8%;
+    --badge-priority-bg: 37.6 54.8% 82%;
+    --badge-priority-fg: 31.9 44.4% 42.4%;
+    --badge-estimate-bg: 40.5 57.1% 86.3%;
+    --badge-estimate-fg: 30 32.6% 36.1%;
+    --badge-age-bg: 40.5 57.1% 86.3%;
+    --badge-age-fg: 30 32.6% 36.1%;
+    --badge-info-bg: 40.5 57.1% 86.3%;
+    --badge-info-fg: 30 32.6% 36.1%;
   }
 }
 
@@ -154,5 +253,105 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .metadata-badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium;
+    background-color: hsl(var(--badge-info-bg));
+    color: hsl(var(--badge-info-fg));
+  }
+
+  .metadata-badge__dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 9999px;
+  }
+
+  .metadata-badge__icon {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  .metadata-badge__label {
+    @apply truncate;
+  }
+
+  .metadata-badge--project {
+    background-color: hsl(var(--badge-project-bg));
+    color: hsl(var(--badge-project-fg));
+  }
+
+  .metadata-badge--context {
+    background-color: hsl(var(--badge-context-bg));
+    color: hsl(var(--badge-context-fg));
+  }
+
+  .metadata-badge--tag {
+    background-color: hsl(var(--badge-tag-bg));
+    color: hsl(var(--badge-tag-fg));
+  }
+
+  .metadata-badge--priority {
+    background-color: hsl(var(--badge-priority-bg));
+    color: hsl(var(--badge-priority-fg));
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .metadata-badge--estimate {
+    background-color: hsl(var(--badge-estimate-bg));
+    color: hsl(var(--badge-estimate-fg));
+  }
+
+  .metadata-badge--age {
+    background-color: hsl(var(--badge-age-bg));
+    color: hsl(var(--badge-age-fg));
+  }
+
+  .metadata-badge--info {
+    background-color: hsl(var(--badge-info-bg));
+    color: hsl(var(--badge-info-fg));
+  }
+
+  .metadata-badge--age-fresh {
+    background-color: hsl(142 70% 92%);
+    color: hsl(142 40% 30%);
+  }
+
+  .dark .metadata-badge--age-fresh {
+    background-color: hsl(142 30% 24%);
+    color: hsl(142 50% 85%);
+  }
+
+  .metadata-badge--age-aging {
+    background-color: hsl(45 100% 90%);
+    color: hsl(35 60% 30%);
+  }
+
+  .dark .metadata-badge--age-aging {
+    background-color: hsl(45 30% 24%);
+    color: hsl(45 70% 80%);
+  }
+
+  .metadata-badge--age-stale {
+    background-color: hsl(30 100% 90%);
+    color: hsl(25 70% 35%);
+  }
+
+  .dark .metadata-badge--age-stale {
+    background-color: hsl(30 30% 24%);
+    color: hsl(30 70% 80%);
+  }
+
+  .metadata-badge--age-very-stale {
+    background-color: hsl(0 100% 92%);
+    color: hsl(0 60% 40%);
+  }
+
+  .dark .metadata-badge--age-very-stale {
+    background-color: hsl(0 30% 24%);
+    color: hsl(0 70% 80%);
   }
 }

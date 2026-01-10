@@ -5,6 +5,7 @@ import { useTaskStore, Task, TaskStatus, sortTasksBy } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
 import { Filter } from 'lucide-react';
+import { useUiStore } from '../../store/ui-store';
 
 const getColumns = (t: (key: string) => string): { id: TaskStatus; label: string }[] => [
     { id: 'inbox', label: t('list.inbox') || 'Inbox' },
@@ -14,13 +15,33 @@ const getColumns = (t: (key: string) => string): { id: TaskStatus; label: string
     { id: 'done', label: t('list.done') },
 ];
 
-function DroppableColumn({ id, label, tasks }: { id: TaskStatus; label: string; tasks: Task[] }) {
+const STATUS_BORDER: Record<TaskStatus, string> = {
+    inbox: 'border-t-[hsl(var(--status-inbox))]',
+    next: 'border-t-[hsl(var(--status-next))]',
+    waiting: 'border-t-[hsl(var(--status-waiting))]',
+    someday: 'border-t-[hsl(var(--status-someday))]',
+    done: 'border-t-[hsl(var(--status-done))]',
+};
+
+function DroppableColumn({
+    id,
+    label,
+    tasks,
+    emptyState,
+    onQuickAdd,
+}: {
+    id: TaskStatus;
+    label: string;
+    tasks: Task[];
+    emptyState: { title: string; body: string; action: string };
+    onQuickAdd: (status: TaskStatus) => void;
+}) {
     const { setNodeRef } = useDroppable({ id });
 
     return (
         <div
             ref={setNodeRef}
-            className="flex flex-col h-full min-w-[240px] flex-1 bg-muted/30 rounded-lg p-4 border border-border/50"
+            className={`flex flex-col h-full min-w-[240px] flex-1 bg-muted/30 rounded-lg p-4 border border-border/50 border-t-4 ${STATUS_BORDER[id]}`}
         >
             <h3 className="font-semibold mb-4 flex items-center justify-between">
                 {label}
@@ -32,9 +53,23 @@ function DroppableColumn({ id, label, tasks }: { id: TaskStatus; label: string; 
                 role="list"
                 aria-label={`${label} tasks list`}
             >
-                {tasks.map((task) => (
-                    <DraggableTask key={task.id} task={task} />
-                ))}
+                {tasks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center text-center text-xs text-muted-foreground py-6 px-2 gap-2">
+                        <div className="text-sm font-medium text-foreground">{emptyState.title}</div>
+                        <div>{emptyState.body}</div>
+                        <button
+                            type="button"
+                            onClick={() => onQuickAdd(id)}
+                            className="mt-1 text-xs px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        >
+                            {emptyState.action}
+                        </button>
+                    </div>
+                ) : (
+                    tasks.map((task) => (
+                        <DraggableTask key={task.id} task={task} />
+                    ))
+                )}
             </div>
         </div>
     );
@@ -71,24 +106,26 @@ export function BoardView() {
     const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
 
     const [activeTask, setActiveTask] = React.useState<Task | null>(null);
-    const [selectedProjectIds, setSelectedProjectIds] = React.useState<string[]>([]);
-    const [filtersOpen, setFiltersOpen] = React.useState(false);
+    const boardFilters = useUiStore((state) => state.boardFilters);
+    const setBoardFilters = useUiStore((state) => state.setBoardFilters);
     const COLUMNS = getColumns(t);
     const NO_PROJECT_FILTER = '__no_project__';
-    const hasProjectFilters = selectedProjectIds.length > 0;
-    const showFiltersPanel = filtersOpen || hasProjectFilters;
+    const hasProjectFilters = boardFilters.selectedProjectIds.length > 0;
+    const showFiltersPanel = boardFilters.open || hasProjectFilters;
     const areaById = React.useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const sortedProjects = React.useMemo(
         () => projects.filter(p => !p.deletedAt).sort((a, b) => a.title.localeCompare(b.title)),
         [projects]
     );
     const toggleProjectFilter = (projectId: string) => {
-        setSelectedProjectIds((prev) =>
-            prev.includes(projectId) ? prev.filter((item) => item !== projectId) : [...prev, projectId]
-        );
+        setBoardFilters({
+            selectedProjectIds: boardFilters.selectedProjectIds.includes(projectId)
+                ? boardFilters.selectedProjectIds.filter((item) => item !== projectId)
+                : [...boardFilters.selectedProjectIds, projectId],
+        });
     };
     const clearProjectFilters = () => {
-        setSelectedProjectIds([]);
+        setBoardFilters({ selectedProjectIds: [] });
     };
 
     const handleDragStart = (event: DragStartEvent) => {
@@ -113,11 +150,63 @@ export function BoardView() {
     const sortedTasks = sortTasksBy(tasks.filter(t => !t.deletedAt), sortBy);
     const filteredTasks = React.useMemo(() => {
         if (!hasProjectFilters) return sortedTasks;
-        return sortedTasks.filter((task) => {
+            return sortedTasks.filter((task) => {
             const projectKey = task.projectId ?? NO_PROJECT_FILTER;
-            return selectedProjectIds.includes(projectKey);
+            return boardFilters.selectedProjectIds.includes(projectKey);
         });
-    }, [hasProjectFilters, sortedTasks, selectedProjectIds]);
+    }, [hasProjectFilters, sortedTasks, boardFilters.selectedProjectIds]);
+
+    const resolveText = React.useCallback((key: string, fallback: string) => {
+        const value = t(key);
+        return value === key ? fallback : value;
+    }, [t]);
+
+    const openQuickAdd = (status: TaskStatus) => {
+        window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+            detail: { initialProps: { status } },
+        }));
+    };
+
+    const getEmptyState = (status: TaskStatus) => {
+        switch (status) {
+            case 'inbox':
+                return {
+                    title: t('list.inbox') || 'Inbox',
+                    body: resolveText('inbox.emptyAddHint', 'Inbox is clear. Capture something new.'),
+                    action: t('common.add') || 'Add',
+                };
+            case 'next':
+                return {
+                    title: t('list.next') || 'Next Actions',
+                    body: resolveText('list.noTasks', 'No next actions yet.'),
+                    action: t('common.add') || 'Add',
+                };
+            case 'waiting':
+                return {
+                    title: resolveText('waiting.empty', t('list.waiting') || 'Waiting'),
+                    body: resolveText('waiting.emptyHint', 'Track delegated or pending items.'),
+                    action: t('common.add') || 'Add',
+                };
+            case 'someday':
+                return {
+                    title: resolveText('someday.empty', t('list.someday') || 'Someday'),
+                    body: resolveText('someday.emptyHint', 'Store ideas for later.'),
+                    action: t('common.add') || 'Add',
+                };
+            case 'done':
+                return {
+                    title: t('list.done') || 'Done',
+                    body: resolveText('list.noTasks', 'Completed tasks appear here.'),
+                    action: t('common.add') || 'Add',
+                };
+            default:
+                return {
+                    title: t('list.inbox') || 'Inbox',
+                    body: resolveText('list.noTasks', 'No tasks yet.'),
+                    action: t('common.add') || 'Add',
+                };
+        }
+    };
 
     return (
         <div className="h-full overflow-x-auto overflow-y-hidden">
@@ -141,7 +230,7 @@ export function BoardView() {
                         )}
                         <button
                             type="button"
-                            onClick={() => setFiltersOpen((prev) => !prev)}
+                            onClick={() => setBoardFilters({ open: !boardFilters.open })}
                             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                         >
                             {showFiltersPanel ? t('filters.hide') : t('filters.show')}
@@ -208,6 +297,8 @@ export function BoardView() {
                             id={col.id}
                             label={col.label}
                             tasks={filteredTasks.filter(t => t.status === col.id)}
+                            emptyState={getEmptyState(col.id)}
+                            onQuickAdd={openQuickAdd}
                         />
                     ))}
 

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useTaskStore, Attachment, Task, type Project, type Area, generateUUID, safeFormatDate, safeParseDate, parseQuickAdd, PRESET_CONTEXTS } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
 import { TaskInput } from '../Task/TaskInput';
-import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, Archive as ArchiveIcon, RotateCcw, Paperclip, Link2, GripVertical } from 'lucide-react';
+import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, Archive as ArchiveIcon, RotateCcw, Paperclip, Link2, GripVertical, Star, AlertTriangle, CornerDownRight } from 'lucide-react';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -695,8 +695,9 @@ export function ProjectsView() {
                                                                             !project.isFocused && focusedCount >= 5 && "opacity-30 cursor-not-allowed"
                                                                         )}
                                                                         title={project.isFocused ? "Remove from focus" : focusedCount >= 5 ? "Max 5 focused projects" : "Add to focus"}
+                                                                        aria-label={project.isFocused ? "Remove from focus" : "Add to focus"}
                                                                     >
-                                                                        {project.isFocused ? '⭐' : '☆'}
+                                                                        <Star className="w-4 h-4" fill={project.isFocused ? 'currentColor' : 'none'} />
                                                                     </button>
                                                                     <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
                                                                     <span className="flex-1 truncate">{project.title}</span>
@@ -706,12 +707,14 @@ export function ProjectsView() {
                                                                 </div>
                                                                 <div className="px-2 pb-2 pl-8">
                                                                     {nextAction ? (
-                                                                        <span className="text-xs text-muted-foreground truncate block">
-                                                                            ↳ {nextAction.title}
+                                                                        <span className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                                                                            <CornerDownRight className="w-3 h-3" />
+                                                                            {nextAction.title}
                                                                         </span>
                                                                     ) : projTasks.length > 0 ? (
-                                                                        <span className="text-xs text-amber-600 dark:text-amber-400">
-                                                                            ⚠️ {t('projects.noNextAction')}
+                                                                        <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                                                            <AlertTriangle className="w-3 h-3" />
+                                                                            {t('projects.noNextAction')}
                                                                         </span>
                                                                     ) : null}
                                                                 </div>
@@ -807,8 +810,23 @@ export function ProjectsView() {
                     )}
 
                     {groupedActiveProjects.length === 0 && groupedDeferredProjects.length === 0 && !isCreating && (
-                        <div className="text-sm text-muted-foreground text-center py-8">
-                            {t('projects.noProjects')}
+                        <div className="text-sm text-muted-foreground text-center py-8 space-y-3">
+                            <p className="text-base font-medium text-foreground">{t('projects.noProjects')}</p>
+                            <p>
+                                {(() => {
+                                    const hint = t('projects.emptyHint');
+                                    return hint === 'projects.emptyHint'
+                                        ? 'Create your first project to start organizing work.'
+                                        : hint;
+                                })()}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setIsCreating(true)}
+                                className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                {t('projects.create')}
+                            </button>
                         </div>
                     )}
                 </div>
