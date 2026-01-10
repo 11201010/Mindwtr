@@ -194,6 +194,12 @@ function RootLayoutContent() {
     return () => {
       subscription?.remove();
       isActive.current = false;
+      if (syncDebounceTimer.current) {
+        clearTimeout(syncDebounceTimer.current);
+      }
+      if (syncThrottleTimer.current) {
+        clearTimeout(syncThrottleTimer.current);
+      }
       if (widgetRefreshTimer.current) {
         clearTimeout(widgetRefreshTimer.current);
       }
@@ -218,6 +224,7 @@ function RootLayoutContent() {
     }
 
     // Load data from storage
+    let cancelled = false;
     const loadData = async () => {
       try {
         loadAttempts.current += 1;
@@ -225,6 +232,7 @@ function RootLayoutContent() {
           clearTimeout(retryLoadTimer.current);
           retryLoadTimer.current = null;
         }
+        if (cancelled) return;
         if (storageInitError) {
           return;
         }
@@ -233,6 +241,7 @@ function RootLayoutContent() {
 
         const store = useTaskStore.getState();
         await store.fetchData();
+        if (cancelled) return;
         if (store.settings.notificationsEnabled !== false) {
           startMobileNotifications().catch(console.error);
         }
@@ -246,6 +255,7 @@ function RootLayoutContent() {
         }, 800);
       } catch (e) {
         console.error('[Mobile] Failed to load data:', e);
+        if (cancelled) return;
         if (loadAttempts.current < 3 && isActive.current) {
           if (retryLoadTimer.current) {
             clearTimeout(retryLoadTimer.current);
@@ -263,7 +273,9 @@ function RootLayoutContent() {
           [{ text: 'OK' }]
         );
       } finally {
-        setIsDataLoaded(true);
+        if (!cancelled) {
+          setIsDataLoaded(true);
+        }
       }
     };
 
@@ -272,7 +284,18 @@ function RootLayoutContent() {
       return;
     }
     loadData();
-  }, [storageWarningShown]);
+    return () => {
+      cancelled = true;
+      if (retryLoadTimer.current) {
+        clearTimeout(retryLoadTimer.current);
+        retryLoadTimer.current = null;
+      }
+      if (widgetRefreshTimer.current) {
+        clearTimeout(widgetRefreshTimer.current);
+        widgetRefreshTimer.current = null;
+      }
+    };
+  }, [storageWarningShown, storageInitError]);
 
   useEffect(() => {
     let previousEnabled = useTaskStore.getState().settings.notificationsEnabled;
