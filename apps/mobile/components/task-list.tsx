@@ -41,7 +41,7 @@ export interface TaskListProps {
 }
 
 // ... inside TaskList component
-export function TaskList({
+function TaskListComponent({
   statusFilter,
   title,
   showHeader = true,
@@ -748,6 +748,8 @@ export function TaskList({
     </View>
   );
 }
+
+export const TaskList = React.memo(TaskListComponent);
 
 const styles = StyleSheet.create({
   container: {
