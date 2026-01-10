@@ -17,6 +17,27 @@ export type InlineToken =
     | { type: 'code'; text: string }
     | { type: 'link'; text: string; href: string };
 
+const sanitizeLinkHref = (href: string): string | null => {
+    const trimmed = href.trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+        return null;
+    }
+    if (trimmed.startsWith('#')) {
+        return trimmed;
+    }
+    try {
+        const url = new URL(trimmed);
+        if (['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) {
+            return trimmed;
+        }
+    } catch {
+        return null;
+    }
+    return null;
+};
+
 export function parseInlineMarkdown(text: string): InlineToken[] {
     const tokens: InlineToken[] = [];
     if (!text) return tokens;
@@ -44,7 +65,12 @@ export function parseInlineMarkdown(text: string): InlineToken[] {
         } else if (italicA || italicB) {
             tokens.push({ type: 'italic', text: italicA || italicB });
         } else if (linkText && linkHref) {
-            tokens.push({ type: 'link', text: linkText, href: linkHref });
+            const safeHref = sanitizeLinkHref(linkHref);
+            if (safeHref) {
+                tokens.push({ type: 'link', text: linkText, href: safeHref });
+            } else {
+                tokens.push({ type: 'text', text: linkText });
+            }
         }
 
         lastIndex = INLINE_TOKEN_RE.lastIndex;
