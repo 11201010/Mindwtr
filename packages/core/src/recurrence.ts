@@ -2,7 +2,7 @@ import { addDays, addMonths, addWeeks, addYears, format } from 'date-fns';
 
 import { safeParseDate } from './date';
 import { generateUUID as uuidv4 } from './uuid';
-import type { Recurrence, RecurrenceByDay, RecurrenceRule, RecurrenceStrategy, RecurrenceWeekday, Task, TaskStatus, ChecklistItem } from './types';
+import type { Recurrence, RecurrenceByDay, RecurrenceRule, RecurrenceStrategy, RecurrenceWeekday, Task, TaskStatus, ChecklistItem, Attachment } from './types';
 
 export const RECURRENCE_RULES: RecurrenceRule[] = ['daily', 'weekly', 'monthly', 'yearly'];
 
@@ -360,6 +360,16 @@ export function createNextRecurringTask(
         newStatus = 'next';
     }
 
+    const duplicatedAttachments = (task.attachments || [])
+        .filter((attachment) => !attachment.deletedAt)
+        .map<Attachment>((attachment) => ({
+            ...attachment,
+            id: uuidv4(),
+            createdAt: completedAtIso,
+            updatedAt: completedAtIso,
+            deletedAt: undefined,
+        }));
+
     return {
         id: uuidv4(),
         title: task.title,
@@ -371,6 +381,7 @@ export function createNextRecurringTask(
         contexts: [...(task.contexts || [])],
         checklist: resetChecklist(task.checklist),
         description: task.description,
+        attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,
         location: task.location,
         projectId: task.projectId,
         isFocusedToday: false,
