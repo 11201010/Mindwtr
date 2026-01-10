@@ -115,7 +115,7 @@ export function TaskItemDisplay({
                         selectionMode ? "cursor-pointer" : "cursor-default"
                     )}
                     aria-expanded={isViewOpen}
-                    aria-label="Toggle task details"
+                    aria-label={t('task.toggleDetails') || 'Toggle task details'}
                 >
                     <div
                         className={cn(

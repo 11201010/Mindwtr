@@ -85,6 +85,7 @@ const en: Record<string, string> = {
         'list.someday': 'Someday/Maybe',
         'list.waiting': 'Waiting For',
         'list.done': 'Completed',
+        'list.tasks': 'Task list',
         'list.noTasks': 'No tasks found',
 
         // Status Labels
@@ -159,6 +160,8 @@ const en: Record<string, string> = {
         'taskEdit.pushCountHint': 'Pushed',
         'taskEdit.unblocksLabel': 'Unblocks',
         'taskStatus.changeStatus': 'Change Status',
+        'task.toggleDetails': 'Toggle task details',
+        'task.select': 'Select task',
 
         // Recurrence Labels
         'recurrence.none': 'None',
@@ -873,6 +876,7 @@ const zh: Record<string, string> = {
         'list.someday': '将来/也许',
         'list.waiting': '等待中',
         'list.done': '已完成',
+        'list.tasks': '任务列表',
         'list.noTasks': '未找到任务',
 
         // Status Labels
@@ -947,6 +951,8 @@ const zh: Record<string, string> = {
         'taskEdit.pushCountHint': '推迟次数',
         'taskEdit.unblocksLabel': '解除阻塞',
         'taskStatus.changeStatus': '更改状态',
+        'task.toggleDetails': '展开/折叠任务详情',
+        'task.select': '选择任务',
 
         // Recurrence Labels
         'recurrence.none': '无',

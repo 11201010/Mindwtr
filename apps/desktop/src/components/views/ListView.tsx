@@ -905,6 +905,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                 ref={listScrollRef}
                 onScroll={handleListScroll}
                 className="flex-1 min-h-0 overflow-y-auto pt-3"
+                role="list"
+                aria-label={t('list.tasks') || 'Task list'}
             >
                 {filteredTasks.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground">
