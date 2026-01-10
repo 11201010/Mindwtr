@@ -12,23 +12,6 @@ function isSafeLink(href: string): boolean {
     }
 }
 
-function isLocalLink(href: string): boolean {
-    if (href.startsWith('file://')) return true;
-    if (href.startsWith('/')) return true;
-    if (/^[a-zA-Z]:[\\/]/.test(href)) return true;
-    if (href.startsWith('~/')) return true;
-    return false;
-}
-
-async function openLinkTarget(href: string) {
-    try {
-        const mod = await import('@tauri-apps/plugin-shell');
-        await mod.open(href);
-    } catch (error) {
-        console.error('[Markdown] Failed to open link:', error);
-    }
-}
-
 function renderInline(text: string): React.ReactNode[] {
     return parseInlineMarkdown(text).map((token, index) => {
         if (token.type === 'text') return token.text;
@@ -46,21 +29,16 @@ function renderInline(text: string): React.ReactNode[] {
             return <em key={`italic-${index}`}>{token.text}</em>;
         }
         if (token.type === 'link') {
-            if (isSafeLink(token.href) || isLocalLink(token.href)) {
-                const local = isLocalLink(token.href);
+            if (isSafeLink(token.href)) {
                 return (
                     <a
                         key={`link-${index}`}
                         href={token.href}
-                        target={local ? undefined : '_blank'}
-                        rel={local ? undefined : 'noreferrer'}
+                        target="_blank"
+                        rel="noreferrer"
                         className="text-primary underline underline-offset-2 hover:opacity-90"
                         onClick={(e) => {
                             e.stopPropagation();
-                            if (local) {
-                                e.preventDefault();
-                                void openLinkTarget(token.href);
-                            }
                         }}
                     >
                         {token.text}
