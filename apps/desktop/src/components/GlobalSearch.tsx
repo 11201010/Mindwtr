@@ -18,24 +18,29 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
     const [ftsResults, setFtsResults] = useState<{ tasks: Task[]; projects: Project[] } | null>(null);
     const [ftsLoading, setFtsLoading] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const isOpenRef = useRef(false);
     const { _allTasks, projects, settings, updateSettings, setHighlightTask } = useTaskStore();
     const { t } = useLanguage();
 
     // Toggle search with Cmd+K / Ctrl+K
+    useEffect(() => {
+        isOpenRef.current = isOpen;
+    }, [isOpen]);
+
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 setIsOpen(prev => !prev);
             }
-            if (e.key === 'Escape' && isOpen) {
+            if (e.key === 'Escape' && isOpenRef.current) {
                 setIsOpen(false);
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen]);
+    }, []);
 
     useEffect(() => {
         const handleOpen: EventListener = () => setIsOpen(true);
