@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, SectionList, ScrollView } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList } from 'react-native';
 import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -58,6 +58,7 @@ export default function ProjectsScreen() {
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
   const sortedAreas = useMemo(() => [...areas].sort((a, b) => a.order - b.order), [areas]);
+  const focusedCount = useMemo(() => projects.filter((project) => project.isFocused).length, [projects]);
   const areaById = useMemo(() => new Map(sortedAreas.map((area) => [area.id, area])), [sortedAreas]);
   const areaUsage = useMemo(() => {
     const counts = new Map<string, number>();
@@ -165,6 +166,102 @@ export default function ProjectsScreen() {
 
     return sections;
   }, [projects, t, sortedAreas, areaById, selectedTagFilter, ALL_TAGS, NO_TAGS]);
+
+  const renderProjectItem = ({ item }: { item: Project }) => {
+    const project = item;
+    const projTasks = tasks.filter(t => t.projectId === project.id && t.status !== 'done' && !t.deletedAt);
+    const nextAction = projTasks.find((task) => task.status === 'next');
+    const showFocusedWarning = project.isFocused && !nextAction && projTasks.length > 0;
+    const projectColor = project.areaId ? areaById.get(project.areaId)?.color : undefined;
+
+    return (
+      <View style={[
+        styles.projectItem,
+        { backgroundColor: tc.cardBg },
+        project.isFocused && { borderColor: '#F59E0B', borderWidth: 1 },
+      ]}>
+        <TouchableOpacity
+          onPress={() => toggleProjectFocus(project.id)}
+          style={styles.focusButton}
+          disabled={!project.isFocused && focusedCount >= 5}
+        >
+          <Text style={[
+            styles.focusIcon,
+            project.isFocused ? { opacity: 1 } : { opacity: focusedCount >= 5 ? 0.3 : 0.5 }
+          ]}>
+            {project.isFocused ? '⭐' : '☆'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.projectTouchArea}
+          onPress={() => {
+            setSelectedProject(project);
+            setNotesExpanded(false);
+            setShowNotesPreview(false);
+            setShowProjectMeta(false);
+            setShowReviewPicker(false);
+            setShowStatusMenu(false);
+            setLinkModalVisible(false);
+            setLinkInput('');
+          }}
+        >
+          <View style={[styles.projectColor, { backgroundColor: projectColor || '#6B7280' }]} />
+          <View style={styles.projectContent}>
+            <View style={styles.projectTitleRow}>
+              <Text style={[styles.projectTitle, { color: tc.text }]}>{project.title}</Text>
+              {project.tagIds?.length ? (
+                <View style={styles.projectTagDots}>
+                  {project.tagIds.slice(0, 4).map((tag: string) => (
+                    <View key={tag} style={[styles.projectTagDot, { backgroundColor: tc.secondaryText }]} />
+                  ))}
+                </View>
+              ) : null}
+            </View>
+            {nextAction ? (
+              <Text style={[styles.projectMeta, { color: tc.secondaryText }]} numberOfLines={1}>
+                ↳ {nextAction.title}
+              </Text>
+            ) : showFocusedWarning ? (
+              <Text style={[styles.projectMeta, { color: '#F59E0B' }]}>
+                ⚠️ No next action
+              </Text>
+            ) : (
+              <Text
+                style={[
+                  styles.projectMeta,
+                  { color: statusPalette[project.status]?.text ?? tc.secondaryText },
+                ]}
+              >
+                {project.status === 'active'
+                  ? t('status.active')
+                  : project.status === 'waiting'
+                    ? t('status.waiting')
+                    : project.status === 'someday'
+                      ? t('status.someday')
+                      : t('status.archived')}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            Alert.alert(
+              t('projects.title'),
+              t('projects.deleteConfirm'),
+              [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('common.delete'), style: 'destructive', onPress: () => deleteProject(project.id) }
+              ]
+            );
+          }}
+          style={styles.deleteButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Trash2 size={18} color={tc.secondaryText} />
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
 
   const handleAddProject = () => {
@@ -471,104 +568,7 @@ export default function ProjectsScreen() {
         renderSectionHeader={({ section }) => (
           <ListSectionHeader title={section.title} tc={tc} />
         )}
-        renderItem={({ item, section, index }) => {
-          const project = item;
-          const projTasks = tasks.filter(t => t.projectId === project.id && t.status !== 'done' && !t.deletedAt);
-          const nextAction = projTasks.find((task) => task.status === 'next');
-          const focusedCount = projects.filter(p => p.isFocused).length;
-          const showFocusedWarning = project.isFocused && !nextAction && projTasks.length > 0;
-          const projectColor = project.areaId ? areaById.get(project.areaId)?.color : undefined;
-          const isSectionEnd = index === section.data.length - 1;
-
-          return (
-            <View style={[
-              styles.projectItem,
-              { backgroundColor: tc.cardBg },
-              project.isFocused && { borderColor: '#F59E0B', borderWidth: 1 },
-              isSectionEnd && { marginBottom: 16 },
-            ]}>
-              <TouchableOpacity
-                onPress={() => toggleProjectFocus(project.id)}
-                style={styles.focusButton}
-                disabled={!project.isFocused && focusedCount >= 5}
-              >
-                <Text style={[
-                  styles.focusIcon,
-                  project.isFocused ? { opacity: 1 } : { opacity: focusedCount >= 5 ? 0.3 : 0.5 }
-                ]}>
-                  {project.isFocused ? '⭐' : '☆'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.projectTouchArea}
-                onPress={() => {
-                  setSelectedProject(project);
-                  setNotesExpanded(false);
-                  setShowNotesPreview(false);
-                  setShowProjectMeta(false);
-                  setShowReviewPicker(false);
-                  setShowStatusMenu(false);
-                  setLinkModalVisible(false);
-                  setLinkInput('');
-                }}
-              >
-                <View style={[styles.projectColor, { backgroundColor: projectColor || '#6B7280' }]} />
-                <View style={styles.projectContent}>
-                  <View style={styles.projectTitleRow}>
-                    <Text style={[styles.projectTitle, { color: tc.text }]}>{project.title}</Text>
-                    {project.tagIds?.length ? (
-                      <View style={styles.projectTagDots}>
-                        {project.tagIds.slice(0, 4).map((tag: string) => (
-                          <View key={tag} style={[styles.projectTagDot, { backgroundColor: tc.secondaryText }]} />
-                        ))}
-                      </View>
-                    ) : null}
-                  </View>
-                  {nextAction ? (
-                    <Text style={[styles.projectMeta, { color: tc.secondaryText }]} numberOfLines={1}>
-                      ↳ {nextAction.title}
-                    </Text>
-                  ) : showFocusedWarning ? (
-                    <Text style={[styles.projectMeta, { color: '#F59E0B' }]}>
-                      ⚠️ No next action
-                    </Text>
-                  ) : (
-                    <Text
-                      style={[
-                        styles.projectMeta,
-                        { color: statusPalette[project.status]?.text ?? tc.secondaryText },
-                      ]}
-                    >
-                      {project.status === 'active'
-                        ? t('status.active')
-                        : project.status === 'waiting'
-                          ? t('status.waiting')
-                          : project.status === 'someday'
-                            ? t('status.someday')
-                            : t('status.archived')}
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  Alert.alert(
-                    t('projects.title'),
-                    t('projects.deleteConfirm'),
-                    [
-                      { text: t('common.cancel'), style: 'cancel' },
-                      { text: t('common.delete'), style: 'destructive', onPress: () => deleteProject(project.id) }
-                    ]
-                  );
-                }}
-                style={styles.deleteButton}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Trash2 size={18} color={tc.secondaryText} />
-              </TouchableOpacity>
-            </View>
-          );
-        }}
+        renderItem={({ item }) => renderProjectItem({ item })}
       />
 
       <Modal
@@ -1284,16 +1284,6 @@ const styles = StyleSheet.create({
   },
   sectionBlock: {
     marginBottom: 12,
-  },
-  dragHandle: {
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    marginRight: 4,
-    borderRadius: 6,
-  },
-  dragHandleText: {
-    fontSize: 16,
-    fontWeight: '700',
   },
   projectTitleRow: {
     flexDirection: 'row',
