@@ -1,20 +1,21 @@
 import { Link, Tabs } from 'expo-router';
-import { Search, Inbox, ArrowRightCircle, Folder, Menu, Plus } from 'lucide-react-native';
+import { Search, Inbox, ArrowRightCircle, Folder, Menu, Mic, Plus } from 'lucide-react-native';
 import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useLanguage } from '../../../contexts/language-context';
 import { QuickCaptureSheet } from '@/components/quick-capture-sheet';
 import { QuickCaptureProvider } from '../../../contexts/quick-capture-context';
-import type { Task } from '@mindwtr/core';
+import { useTaskStore, type Task } from '@mindwtr/core';
 
 export default function TabLayout() {
   const tc = useThemeColors();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const { settings } = useTaskStore();
   const androidNavInset = Platform.OS === 'android' && insets.bottom >= 20
     ? Math.max(0, insets.bottom - 12)
     : 0;
@@ -24,28 +25,34 @@ export default function TabLayout() {
     visible: boolean;
     initialValue?: string;
     initialProps?: Partial<Task> | null;
+    autoRecord?: boolean;
   }>({
     visible: false,
     initialValue: '',
     initialProps: null,
+    autoRecord: false,
   });
+  const longPressRef = useRef(false);
 
-  const openQuickCapture = useCallback((options?: { initialValue?: string; initialProps?: Partial<Task> }) => {
+  const openQuickCapture = useCallback((options?: { initialValue?: string; initialProps?: Partial<Task>; autoRecord?: boolean }) => {
     setCaptureState({
       visible: true,
       initialValue: options?.initialValue ?? '',
       initialProps: options?.initialProps ?? null,
+      autoRecord: options?.autoRecord ?? false,
     });
   }, []);
 
   const closeQuickCapture = useCallback(() => {
-    setCaptureState({ visible: false, initialValue: '', initialProps: null });
+    setCaptureState({ visible: false, initialValue: '', initialProps: null, autoRecord: false });
   }, []);
 
   const iconTint = tc.tabIconSelected;
   const inactiveTint = tc.tabIconDefault;
   const activeIndicator = tc.tint;
   const captureColor = tc.tint;
+  const defaultCapture = settings.gtd?.defaultCaptureMethod ?? 'audio';
+  const defaultAutoRecord = defaultCapture === 'audio';
 
   return (
     <QuickCaptureProvider value={{ openQuickCapture }}>
@@ -139,16 +146,39 @@ export default function TabLayout() {
           title: t('nav.addTask'),
           tabBarButton: () => (
             <TouchableOpacity
-              onPress={() => openQuickCapture()}
+              onPress={() => {
+                if (longPressRef.current) {
+                  longPressRef.current = false;
+                  return;
+                }
+                openQuickCapture({ autoRecord: defaultAutoRecord });
+              }}
+              onLongPress={() => {
+                longPressRef.current = true;
+                openQuickCapture({ autoRecord: !defaultAutoRecord });
+                setTimeout(() => {
+                  longPressRef.current = false;
+                }, 400);
+              }}
               accessibilityRole="button"
-              accessibilityLabel={t('nav.addTask')}
+              accessibilityLabel={defaultAutoRecord ? t('quickAdd.audioCaptureLabel') : t('nav.addTask')}
               style={styles.captureButton}
             >
               <View style={[styles.captureButtonInner, { backgroundColor: captureColor }]}>
-                <Plus size={24} color={tc.onTint} strokeWidth={3} />
+                {defaultAutoRecord ? (
+                  <Mic size={24} color={tc.onTint} strokeWidth={2.5} />
+                ) : (
+                  <Plus size={24} color={tc.onTint} strokeWidth={3} />
+                )}
               </View>
             </TouchableOpacity>
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="capture-quick"
+        options={{
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -174,6 +204,7 @@ export default function TabLayout() {
       visible={captureState.visible}
       initialValue={captureState.initialValue}
       initialProps={captureState.initialProps ?? undefined}
+      autoRecord={captureState.autoRecord}
       onClose={closeQuickCapture}
     />
     </QuickCaptureProvider>

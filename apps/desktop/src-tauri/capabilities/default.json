@@ -12,7 +12,12 @@
     "dialog:default",
     "fs:default",
     "fs:allow-mkdir",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
     "fs:allow-write-text-file",
+    "fs:allow-remove",
+    "fs:allow-exists",
+    "fs:allow-size",
     "global-shortcut:default",
     "shell:default",
     "shell:allow-open",
@@ -20,7 +25,28 @@
       "identifier": "fs:scope",
       "allow": [
         {
-          "path": "$DATA/mindwtr/logs/**"
+          "path": "$DATA/mindwtr"
+        },
+        {
+          "path": "$DATA/mindwtr/**"
+        },
+        {
+          "path": "$APPDATA"
+        },
+        {
+          "path": "$APPDATA/**"
+        },
+        {
+          "path": "$DATA/mindwtr/audio-captures/**"
+        },
+        {
+          "path": "$DATA/mindwtr/whisper-models/**"
+        },
+        {
+          "path": "$HOME"
+        },
+        {
+          "path": "$HOME/**"
         }
       ]
     },

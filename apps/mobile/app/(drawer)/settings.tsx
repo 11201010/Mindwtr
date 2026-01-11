@@ -20,7 +20,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { File } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
@@ -92,6 +92,15 @@ const LANGUAGES: { id: Language; native: string }[] = [
     { id: 'tr', native: 'Türkçe' },
 ];
 
+const WHISPER_MODEL_BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
+const WHISPER_MODELS: Array<{ id: string; fileName: string; label: string }> = [
+    { id: 'whisper-tiny', fileName: 'ggml-tiny.bin', label: 'whisper-tiny' },
+    { id: 'whisper-tiny.en', fileName: 'ggml-tiny.en.bin', label: 'whisper-tiny.en' },
+    { id: 'whisper-base', fileName: 'ggml-base.bin', label: 'whisper-base' },
+    { id: 'whisper-base.en', fileName: 'ggml-base.en.bin', label: 'whisper-base.en' },
+];
+const DEFAULT_WHISPER_MODEL = WHISPER_MODELS[0]?.id ?? 'whisper-tiny';
+
 const maskCalendarUrl = (url: string): string => {
     const trimmed = url.trim();
     if (!trimmed) return '';
@@ -125,14 +134,20 @@ export default function SettingsPage() {
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
     const [digestTimePicker, setDigestTimePicker] = useState<'morning' | 'evening' | null>(null);
     const [weeklyReviewTimePicker, setWeeklyReviewTimePicker] = useState(false);
-    const [modelPicker, setModelPicker] = useState<null | 'model' | 'copilot'>(null);
+    const [modelPicker, setModelPicker] = useState<null | 'model' | 'copilot' | 'speech'>(null);
     const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
     const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
     const [newCalendarName, setNewCalendarName] = useState('');
     const [newCalendarUrl, setNewCalendarUrl] = useState('');
     const [aiApiKey, setAiApiKey] = useState('');
+    const [speechApiKey, setSpeechApiKey] = useState('');
+    const [whisperDownloadState, setWhisperDownloadState] = useState<'idle' | 'downloading' | 'success' | 'error'>('idle');
+    const [whisperDownloadError, setWhisperDownloadError] = useState('');
+    const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+    const [speechOpen, setSpeechOpen] = useState(false);
 
     const tc = useThemeColors();
+    const isExpoGo = Constants.appOwnership === 'expo';
     const notificationsEnabled = settings.notificationsEnabled !== false;
     const dailyDigestMorningEnabled = settings.dailyDigestMorningEnabled === true;
     const dailyDigestEveningEnabled = settings.dailyDigestEveningEnabled === true;
@@ -151,11 +166,31 @@ export default function SettingsPage() {
     const aiCopilotModel = settings.ai?.copilotModel ?? getDefaultCopilotModel(aiProvider);
     const aiCopilotOptions = getCopilotModelOptions(aiProvider);
     const anthropicThinkingEnabled = aiProvider === 'anthropic' && aiThinkingBudget > 0;
+    const speechSettings = settings.ai?.speechToText ?? {};
+    const speechEnabled = speechSettings.enabled === true;
+    const speechProvider = (speechSettings.provider ?? 'gemini') as 'openai' | 'gemini' | 'whisper';
+    const speechModel = speechSettings.model ?? (
+        speechProvider === 'openai'
+            ? 'gpt-4o-transcribe'
+            : speechProvider === 'gemini'
+                ? 'gemini-2.5-flash'
+                : DEFAULT_WHISPER_MODEL
+    );
+    const speechLanguage = speechSettings.language ?? 'auto';
+    const speechMode = speechSettings.mode ?? 'smart_parse';
+    const speechFieldStrategy = speechSettings.fieldStrategy ?? 'smart';
+    const speechModelOptions = speechProvider === 'openai'
+        ? ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1']
+        : speechProvider === 'gemini'
+            ? ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+            : WHISPER_MODELS.map((model) => model.id);
     const defaultTimeEstimatePresets: TimeEstimate[] = ['10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
     const timeEstimateOptions: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
     const timeEstimatePresets: TimeEstimate[] = (settings.gtd?.timeEstimatePresets?.length
         ? settings.gtd.timeEstimatePresets
         : defaultTimeEstimatePresets) as TimeEstimate[];
+    const defaultCaptureMethod = settings.gtd?.defaultCaptureMethod ?? 'audio';
+    const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false;
     const autoArchiveDays = Number.isFinite(settings.gtd?.autoArchiveDays)
         ? Math.max(0, Math.floor(settings.gtd?.autoArchiveDays as number))
         : 7;
@@ -273,6 +308,14 @@ export default function SettingsPage() {
         loadAIKey(aiProvider).then(setAiApiKey).catch(console.error);
     }, [aiProvider]);
 
+    useEffect(() => {
+        if (speechProvider === 'whisper') {
+            setSpeechApiKey('');
+            return;
+        }
+        loadAIKey(speechProvider).then(setSpeechApiKey).catch(console.error);
+    }, [speechProvider]);
+
     // Handle Android hardware back button
     useEffect(() => {
         const onBackPress = () => {
@@ -310,6 +353,159 @@ export default function SettingsPage() {
     const openLink = (url: string) => Linking.openURL(url);
     const updateAISettings = (next: Partial<NonNullable<typeof settings.ai>>) => {
         updateSettings({ ai: { ...(settings.ai ?? {}), ...next } }).catch(console.error);
+    };
+    const updateSpeechSettings = (
+        next: Partial<NonNullable<NonNullable<typeof settings.ai>['speechToText']>>
+    ) => {
+        updateAISettings({ speechToText: { ...(settings.ai?.speechToText ?? {}), ...next } });
+    };
+
+    const getWhisperDirectory = () => {
+        const candidates: Directory[] = [];
+        try {
+            candidates.push(new Directory(Paths.document, 'whisper-models'));
+        } catch (error) {
+            console.warn('Whisper document directory unavailable', error);
+        }
+        try {
+            candidates.push(new Directory(Paths.cache, 'whisper-models'));
+        } catch (error) {
+            console.warn('Whisper cache directory unavailable', error);
+        }
+        return candidates.length ? candidates[0] : null;
+    };
+
+    const safePathInfo = (uri: string) => {
+        try {
+            return Paths.info(uri);
+        } catch (error) {
+            console.warn('Whisper path info failed', error);
+            return null;
+        }
+    };
+
+    const resolveWhisperModelPath = (modelId: string) => {
+        const model = WHISPER_MODELS.find((entry) => entry.id === modelId);
+        if (!model) return undefined;
+        const base = getWhisperDirectory();
+        if (!base) return undefined;
+        return new File(base, model.fileName).uri;
+    };
+
+    const applyWhisperModel = (modelId: string) => {
+        updateSpeechSettings({ model: modelId, offlineModelPath: resolveWhisperModelPath(modelId) });
+    };
+
+    const selectedWhisperModel = WHISPER_MODELS.find((model) => model.id === speechModel) ?? WHISPER_MODELS[0];
+    const whisperModelPath = speechProvider === 'whisper'
+        ? (resolveWhisperModelPath(speechModel) ?? speechSettings.offlineModelPath)
+        : undefined;
+    let whisperDownloaded = false;
+    let whisperSizeLabel = '';
+    if (whisperModelPath) {
+        const info = safePathInfo(whisperModelPath);
+        if (info?.exists && info.isDirectory === false) {
+            try {
+                const file = new File(whisperModelPath);
+                whisperDownloaded = (file.size ?? 0) > 0;
+                if (whisperDownloaded && file.size) {
+                    whisperSizeLabel = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+                }
+            } catch (error) {
+                console.warn('Whisper file info failed', error);
+            }
+        }
+    }
+
+    const handleDownloadWhisperModel = async () => {
+        if (!selectedWhisperModel) return;
+        setWhisperDownloadError('');
+        setWhisperDownloadState('downloading');
+        const clearSuccess = () => {
+            setTimeout(() => setWhisperDownloadState('idle'), 2000);
+        };
+        try {
+            const directory = getWhisperDirectory();
+            if (!directory) {
+                throw new Error('Whisper storage unavailable');
+            }
+            directory.create({ intermediates: true, idempotent: true });
+            const fileName = selectedWhisperModel.fileName;
+            if (!fileName) {
+                throw new Error('Whisper model filename missing');
+            }
+            const url = `${WHISPER_MODEL_BASE_URL}/${fileName}`;
+            const targetFile = new File(directory, fileName);
+            try {
+                const entries = directory.list();
+                const conflict = entries.find((entry) => Paths.basename(entry.uri) === fileName);
+                if (conflict instanceof Directory) {
+                    conflict.delete();
+                }
+                if (conflict instanceof File) {
+                    conflict.delete();
+                }
+            } catch (cleanupError) {
+                console.warn('Whisper model cleanup failed', cleanupError);
+            }
+            const existingInfo = safePathInfo(targetFile.uri);
+            if (existingInfo?.exists && existingInfo.isDirectory === false) {
+                try {
+                    const existingFile = new File(targetFile.uri);
+                    if ((existingFile.size ?? 0) > 0) {
+                        updateSpeechSettings({ offlineModelPath: targetFile.uri, model: selectedWhisperModel.id });
+                        setWhisperDownloadState('success');
+                        clearSuccess();
+                        return;
+                    }
+                } catch (error) {
+                    console.warn('Whisper existing file check failed', error);
+                }
+            }
+            try {
+                const file = await File.downloadFileAsync(url, targetFile, { idempotent: true });
+                updateSpeechSettings({ offlineModelPath: file.uri, model: selectedWhisperModel.id });
+            } catch (downloadError) {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw downloadError;
+                }
+                const buffer = await response.arrayBuffer();
+                targetFile.write(new Uint8Array(buffer));
+                updateSpeechSettings({ offlineModelPath: targetFile.uri, model: selectedWhisperModel.id });
+            }
+            setWhisperDownloadState('success');
+            clearSuccess();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setWhisperDownloadError(message);
+            setWhisperDownloadState('error');
+            console.warn('Whisper model download failed', error);
+            Alert.alert(t('settings.speechOfflineDownloadError'), message);
+            return;
+        }
+    };
+
+    const handleDeleteWhisperModel = () => {
+        try {
+            if (whisperModelPath) {
+                const info = safePathInfo(whisperModelPath);
+                const basename = Paths.basename(whisperModelPath);
+                if (basename && basename.endsWith('.bin') && info?.exists) {
+                    if (info.isDirectory) {
+                        const dir = new Directory(whisperModelPath);
+                        dir.delete();
+                    } else {
+                        const file = new File(whisperModelPath);
+                        file.delete();
+                    }
+                }
+            }
+            updateSpeechSettings({ offlineModelPath: undefined });
+        } catch (error) {
+            console.warn('Whisper model delete failed', error);
+            Alert.alert(t('settings.speechOfflineDeleteError'), t('settings.speechOfflineDeleteErrorBody'));
+        }
     };
 
     const GITHUB_RELEASES_API = 'https://api.github.com/repos/dongdongbh/Mindwtr/releases/latest';
@@ -858,9 +1054,25 @@ export default function SettingsPage() {
                         keyboardShouldPersistTaps="handled"
                         contentContainerStyle={{ paddingBottom: 140 }}
                     >
-                        <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.aiDesc')}</Text>
                         <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                            <View style={styles.settingRow}>
+                            <TouchableOpacity
+                                style={styles.settingRow}
+                                onPress={() => setAiAssistantOpen((prev) => !prev)}
+                            >
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.ai')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.aiDesc')}
+                                    </Text>
+                                </View>
+                                <Text style={[styles.chevron, { color: tc.secondaryText }]}>
+                                    {aiAssistantOpen ? '▾' : '▸'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            {aiAssistantOpen && (
+                                <>
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                                 <View style={styles.settingInfo}>
                                     <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.aiEnable')}</Text>
                                 </View>
@@ -1136,6 +1348,298 @@ export default function SettingsPage() {
                                 style={[styles.textInput, { borderColor: tc.border, color: tc.text }]}
                             />
                         </View>
+                                </>
+                            )}
+                        </View>
+                        <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                            <TouchableOpacity
+                                style={styles.settingRow}
+                                onPress={() => setSpeechOpen((prev) => !prev)}
+                            >
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechTitle')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.speechDesc')}
+                                    </Text>
+                                </View>
+                                <Text style={[styles.chevron, { color: tc.secondaryText }]}>
+                                    {speechOpen ? '▾' : '▸'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            {speechOpen && (
+                                <>
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechEnable')}</Text>
+                                </View>
+                                <Switch
+                                    value={speechEnabled}
+                                    onValueChange={(value) => updateSpeechSettings({ enabled: value })}
+                                    trackColor={{ false: '#767577', true: '#3B82F6' }}
+                                />
+                            </View>
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechProvider')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {speechProvider === 'openai'
+                                            ? t('settings.aiProviderOpenAI')
+                                            : speechProvider === 'gemini'
+                                                ? t('settings.aiProviderGemini')
+                                                : t('settings.speechProviderOffline')}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <View style={styles.backendToggle}>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: speechProvider === 'openai' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => {
+                                            updateSpeechSettings({
+                                                provider: 'openai',
+                                                model: 'gpt-4o-transcribe',
+                                                offlineModelPath: undefined,
+                                            });
+                                        }}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: speechProvider === 'openai' ? tc.tint : tc.secondaryText }]}>
+                                            {t('settings.aiProviderOpenAI')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: speechProvider === 'gemini' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => {
+                                            updateSpeechSettings({
+                                                provider: 'gemini',
+                                                model: 'gemini-2.5-flash',
+                                                offlineModelPath: undefined,
+                                            });
+                                        }}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: speechProvider === 'gemini' ? tc.tint : tc.secondaryText }]}>
+                                            {t('settings.aiProviderGemini')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: speechProvider === 'whisper' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => {
+                                            updateSpeechSettings({
+                                                provider: 'whisper',
+                                                model: DEFAULT_WHISPER_MODEL,
+                                                offlineModelPath: resolveWhisperModelPath(DEFAULT_WHISPER_MODEL),
+                                            });
+                                        }}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: speechProvider === 'whisper' ? tc.tint : tc.secondaryText }]}>
+                                            {t('settings.speechProviderOffline')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechModel')}</Text>
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <TouchableOpacity
+                                    style={[styles.dropdownButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                                    onPress={() => setModelPicker('speech')}
+                                >
+                                    <Text style={[styles.dropdownValue, { color: tc.text }]} numberOfLines={1}>
+                                        {speechModel}
+                                    </Text>
+                                    <Text style={[styles.dropdownChevron, { color: tc.secondaryText }]}>▾</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            {speechProvider === 'whisper' ? (
+                                <>
+                                    <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                        <View style={styles.settingInfo}>
+                                            <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechOfflineModel')}</Text>
+                                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                                {t('settings.speechOfflineModelDesc')}
+                                            </Text>
+                                            {isExpoGo ? (
+                                                <Text style={[styles.settingDescription, { color: tc.danger, marginTop: 6 }]}>
+                                                    {localize(
+                                                        'Whisper transcription requires a dev build or production build (not Expo Go).',
+                                                        'Whisper 转录需要开发版或正式版构建（Expo Go 不支持）。'
+                                                    )}
+                                                </Text>
+                                            ) : null}
+                                        </View>
+                                    </View>
+                                    <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={{ color: tc.secondaryText, fontSize: 12 }}>
+                                                    {whisperDownloaded ? t('settings.speechOfflineReady') : t('settings.speechOfflineNotDownloaded')}
+                                                    {whisperSizeLabel ? ` - ${whisperSizeLabel}` : ''}
+                                                </Text>
+                                                {whisperDownloadState === 'success' ? (
+                                                    <Text style={{ color: tc.tint, fontSize: 12, marginTop: 6 }}>
+                                                        {t('settings.speechOfflineDownloadSuccess')}
+                                                    </Text>
+                                                ) : null}
+                                                {whisperDownloadError ? (
+                                                    <Text style={{ color: tc.danger, fontSize: 12, marginTop: 6 }}>
+                                                        {whisperDownloadError}
+                                                    </Text>
+                                                ) : null}
+                                            </View>
+                                            {whisperDownloadState === 'downloading' ? (
+                                                <ActivityIndicator color={tc.tint} />
+                                            ) : whisperDownloaded ? (
+                                                <TouchableOpacity
+                                                    style={[styles.backendOption, { borderColor: tc.border }]}
+                                                    onPress={handleDeleteWhisperModel}
+                                                >
+                                                    <Text style={[styles.backendOptionText, { color: tc.text }]}>
+                                                        {t('settings.speechOfflineDelete')}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ) : (
+                                                <TouchableOpacity
+                                                    style={[styles.backendOption, { borderColor: tc.border }]}
+                                                    onPress={handleDownloadWhisperModel}
+                                                >
+                                                    <Text style={[styles.backendOptionText, { color: tc.text }]}>
+                                                        {t('settings.speechOfflineDownload')}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
+                                    </View>
+                                </>
+                            ) : (
+                                <>
+                                    <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                        <View style={styles.settingInfo}>
+                                            <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.aiApiKey')}</Text>
+                                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                                {t('settings.aiApiKeyHint')}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                    <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                        <TextInput
+                                            value={speechApiKey}
+                                            onChangeText={(value) => {
+                                                setSpeechApiKey(value);
+                                                saveAIKey(speechProvider, value).catch(console.error);
+                                            }}
+                                            placeholder={t('settings.aiApiKeyPlaceholder')}
+                                            placeholderTextColor={tc.secondaryText}
+                                            autoCapitalize="none"
+                                            secureTextEntry
+                                            style={[styles.textInput, { borderColor: tc.border, color: tc.text }]}
+                                        />
+                                    </View>
+                                </>
+                            )}
+
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechLanguage')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.speechLanguageHint')}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <TextInput
+                                    value={speechLanguage === 'auto' ? '' : speechLanguage}
+                                    onChangeText={(value) => {
+                                        const trimmed = value.trim();
+                                        updateSpeechSettings({ language: trimmed ? trimmed : 'auto' });
+                                    }}
+                                    placeholder={t('settings.speechLanguageAuto')}
+                                    placeholderTextColor={tc.secondaryText}
+                                    autoCapitalize="none"
+                                    style={[styles.textInput, { borderColor: tc.border, color: tc.text }]}
+                                />
+                            </View>
+
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechMode')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.speechModeHint')}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <View style={styles.backendToggle}>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: speechMode === 'smart_parse' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => updateSpeechSettings({ mode: 'smart_parse' })}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: speechMode === 'smart_parse' ? tc.tint : tc.secondaryText }]}>
+                                            {t('settings.speechModeSmart')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: speechMode === 'transcribe_only' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => updateSpeechSettings({ mode: 'transcribe_only' })}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: speechMode === 'transcribe_only' ? tc.tint : tc.secondaryText }]}>
+                                            {t('settings.speechModeTranscript')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.speechFieldStrategy')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.speechFieldStrategyHint')}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <View style={styles.backendToggle}>
+                                    {[
+                                        { value: 'smart', label: t('settings.speechFieldSmart') },
+                                        { value: 'title_only', label: t('settings.speechFieldTitle') },
+                                        { value: 'description_only', label: t('settings.speechFieldDescription') },
+                                    ].map((option) => (
+                                        <TouchableOpacity
+                                            key={option.value}
+                                            style={[
+                                                styles.backendOption,
+                                                { borderColor: tc.border, backgroundColor: speechFieldStrategy === option.value ? tc.filterBg : 'transparent' },
+                                            ]}
+                                            onPress={() => updateSpeechSettings({ fieldStrategy: option.value as 'smart' | 'title_only' | 'description_only' })}
+                                        >
+                                            <Text style={[styles.backendOptionText, { color: speechFieldStrategy === option.value ? tc.tint : tc.secondaryText }]}>
+                                                {option.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </View>
+                                </>
+                            )}
                         </View>
                         <Modal
                             transparent
@@ -1149,11 +1653,23 @@ export default function SettingsPage() {
                                     onStartShouldSetResponder={() => true}
                                 >
                                     <Text style={[styles.pickerTitle, { color: tc.text }]}>
-                                        {modelPicker === 'model' ? t('settings.aiModel') : t('settings.aiCopilotModel')}
+                                        {modelPicker === 'model'
+                                            ? t('settings.aiModel')
+                                            : modelPicker === 'copilot'
+                                                ? t('settings.aiCopilotModel')
+                                                : t('settings.speechModel')}
                                     </Text>
                                     <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent}>
-                                        {(modelPicker === 'model' ? aiModelOptions : aiCopilotOptions).map((option) => {
-                                            const selected = modelPicker === 'model' ? aiModel === option : aiCopilotModel === option;
+                                        {(modelPicker === 'model'
+                                            ? aiModelOptions
+                                            : modelPicker === 'copilot'
+                                                ? aiCopilotOptions
+                                                : speechModelOptions).map((option) => {
+                                            const selected = modelPicker === 'model'
+                                                ? aiModel === option
+                                                : modelPicker === 'copilot'
+                                                    ? aiCopilotModel === option
+                                                    : speechModel === option;
                                             return (
                                                 <TouchableOpacity
                                                     key={option}
@@ -1164,8 +1680,14 @@ export default function SettingsPage() {
                                                     onPress={() => {
                                                         if (modelPicker === 'model') {
                                                             updateAISettings({ model: option });
-                                                        } else {
+                                                        } else if (modelPicker === 'copilot') {
                                                             updateAISettings({ copilotModel: option });
+                                                        } else {
+                                                            if (speechProvider === 'whisper') {
+                                                                applyWhisperModel(option);
+                                                            } else {
+                                                                updateSpeechSettings({ model: option });
+                                                            }
                                                         }
                                                         setModelPicker(null);
                                                     }}
@@ -1209,6 +1731,78 @@ export default function SettingsPage() {
                             title={t('settings.taskEditorLayout')}
                             onPress={() => setCurrentScreen('gtd-task-editor')}
                         />
+                    </View>
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                        <View style={styles.settingRow}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.captureDefault')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.captureDefaultDesc')}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                            <View style={styles.backendToggle}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.backendOption,
+                                        { borderColor: tc.border, backgroundColor: defaultCaptureMethod === 'text' ? tc.filterBg : 'transparent' },
+                                    ]}
+                                    onPress={() => {
+                                        updateSettings({
+                                            gtd: {
+                                                ...(settings.gtd ?? {}),
+                                                defaultCaptureMethod: 'text',
+                                            },
+                                        }).catch(console.error);
+                                    }}
+                                >
+                                    <Text style={[styles.backendOptionText, { color: defaultCaptureMethod === 'text' ? tc.tint : tc.secondaryText }]}>
+                                        {t('settings.captureDefaultText')}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.backendOption,
+                                        { borderColor: tc.border, backgroundColor: defaultCaptureMethod === 'audio' ? tc.filterBg : 'transparent' },
+                                    ]}
+                                    onPress={() => {
+                                        updateSettings({
+                                            gtd: {
+                                                ...(settings.gtd ?? {}),
+                                                defaultCaptureMethod: 'audio',
+                                            },
+                                        }).catch(console.error);
+                                    }}
+                                >
+                                    <Text style={[styles.backendOptionText, { color: defaultCaptureMethod === 'audio' ? tc.tint : tc.secondaryText }]}>
+                                        {t('settings.captureDefaultAudio')}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                        {defaultCaptureMethod === 'audio' ? (
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.captureSaveAudio')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {t('settings.captureSaveAudioDesc')}
+                                    </Text>
+                                </View>
+                                <Switch
+                                    value={saveAudioAttachments}
+                                    onValueChange={(value) => {
+                                        updateSettings({
+                                            gtd: {
+                                                ...(settings.gtd ?? {}),
+                                                saveAudioAttachments: value,
+                                            },
+                                        }).catch(console.error);
+                                    }}
+                                    trackColor={{ false: '#767577', true: '#3B82F6' }}
+                                />
+                            </View>
+                        ) : null}
                     </View>
                 </ScrollView>
             </SafeAreaView>

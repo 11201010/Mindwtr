@@ -10,6 +10,12 @@ type Labels = {
     autoArchiveNever: string;
     on: string;
     off: string;
+    captureDefault: string;
+    captureDefaultDesc: string;
+    captureDefaultText: string;
+    captureDefaultAudio: string;
+    captureSaveAudio: string;
+    captureSaveAudioDesc: string;
     taskEditorLayout: string;
     taskEditorLayoutDesc: string;
     taskEditorLayoutHint: string;
@@ -113,6 +119,9 @@ export function SettingsGtdPage({
         ...defaultTaskEditorOrder.filter((id) => !savedOrder.includes(id)),
     ];
     const hiddenSet = new Set(savedHidden);
+    const defaultCaptureMethod = settings.gtd?.defaultCaptureMethod ?? 'text';
+    const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false;
+    const speechEnabled = settings.ai?.speechToText?.enabled === true;
     const fieldLabel = (fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
             case 'status':
@@ -229,6 +238,86 @@ export function SettingsGtdPage({
                         </select>
                     </div>
                 </div>
+            </div>
+            <div className="bg-card border border-border rounded-lg divide-y divide-border">
+                <div className="p-4 space-y-3">
+                    <div>
+                        <div className="text-sm font-medium">{t.captureDefault}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.captureDefaultDesc}</div>
+                    </div>
+                    <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                updateSettings({
+                                    gtd: {
+                                        ...(settings.gtd ?? {}),
+                                        defaultCaptureMethod: 'text',
+                                    },
+                                }).then(showSaved).catch(console.error);
+                            }}
+                            className={cn(
+                                'px-3 py-1 text-xs rounded-md transition-colors',
+                                defaultCaptureMethod === 'text'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            {t.captureDefaultText}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                updateSettings({
+                                    gtd: {
+                                        ...(settings.gtd ?? {}),
+                                        defaultCaptureMethod: 'audio',
+                                    },
+                                }).then(showSaved).catch(console.error);
+                            }}
+                            className={cn(
+                                'px-3 py-1 text-xs rounded-md transition-colors',
+                                defaultCaptureMethod === 'audio'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            {t.captureDefaultAudio}
+                        </button>
+                    </div>
+                </div>
+                {defaultCaptureMethod === 'audio' && speechEnabled ? (
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.captureSaveAudio}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.captureSaveAudioDesc}</div>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={saveAudioAttachments}
+                            onClick={() => {
+                                updateSettings({
+                                    gtd: {
+                                        ...(settings.gtd ?? {}),
+                                        saveAudioAttachments: !saveAudioAttachments,
+                                    },
+                                }).then(showSaved).catch(console.error);
+                            }}
+                            className={cn(
+                                'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                                saveAudioAttachments ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                    saveAudioAttachments ? 'translate-x-4' : 'translate-x-1'
+                                )}
+                            />
+                        </button>
+                    </div>
+                ) : null}
             </div>
             <details className="bg-card border border-border rounded-lg p-4">
                 <summary className="list-none cursor-pointer">

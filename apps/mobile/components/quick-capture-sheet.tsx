@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Pressable, ScrollView, Switch, Platform, KeyboardAvoidingView } from 'react-native';
-import { CalendarDays, Folder, Flag, X, Clock } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Pressable, ScrollView, Switch, Platform, KeyboardAvoidingView } from 'react-native';
+import { CalendarDays, Folder, Flag, X, Clock, Mic, Square } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Audio } from 'expo-av';
+import { Directory, File, Paths } from 'expo-file-system';
 
-import { parseQuickAdd, safeFormatDate, safeParseDate, type Task, type TaskPriority, useTaskStore } from '@mindwtr/core';
+import { parseQuickAdd, safeFormatDate, safeParseDate, type Attachment, type Task, type TaskPriority, generateUUID, useTaskStore } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { loadAIKey } from '../lib/ai-config';
+import { processAudioCapture, type SpeechToTextResult } from '../lib/speech-to-text';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
@@ -15,13 +19,15 @@ export function QuickCaptureSheet({
   onClose,
   initialProps,
   initialValue,
+  autoRecord,
 }: {
   visible: boolean;
   onClose: () => void;
   initialProps?: Partial<Task>;
   initialValue?: string;
+  autoRecord?: boolean;
 }) {
-  const { addTask, addProject, projects, settings } = useTaskStore();
+  const { addTask, addProject, updateTask, projects, settings, tasks } = useTaskStore();
   const { t } = useLanguage();
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -39,6 +45,8 @@ export function QuickCaptureSheet({
   const [priority, setPriority] = useState<TaskPriority | null>(null);
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [addAnother, setAddAnother] = useState(false);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recordingBusy, setRecordingBusy] = useState(false);
 
   const filteredProjects = useMemo(() => {
     const query = projectQuery.trim().toLowerCase();
@@ -59,15 +67,188 @@ export function QuickCaptureSheet({
     setStartTime(initialProps?.startTime ? safeParseDate(initialProps.startTime) : null);
     setProjectId(initialProps?.projectId ?? null);
     setPriority((initialProps?.priority as TaskPriority) ?? null);
+    if (autoRecord) return;
     const handle = setTimeout(() => inputRef.current?.focus(), 120);
     return () => clearTimeout(handle);
-  }, [visible, initialProps, initialValue]);
+  }, [autoRecord, visible, initialProps, initialValue]);
 
   useEffect(() => {
     if (prioritiesEnabled) return;
     setPriority(null);
     setShowPriorityPicker(false);
   }, [prioritiesEnabled]);
+
+  const ensureAudioDirectory = useCallback(async () => {
+    const candidates: Directory[] = [];
+    try {
+      candidates.push(Paths.document);
+    } catch (error) {
+      console.warn('Document directory unavailable', error);
+    }
+    try {
+      candidates.push(Paths.cache);
+    } catch (error) {
+      console.warn('Cache directory unavailable', error);
+    }
+    for (const root of candidates) {
+      try {
+        const dir = new Directory(root, 'audio-captures');
+        dir.create({ intermediates: true, idempotent: true });
+        return dir;
+      } catch (error) {
+        console.warn('Failed to create audio directory', error);
+      }
+    }
+    return null;
+  }, []);
+
+  const getExtension = (uri: string) => {
+    const match = uri.match(/\.[a-z0-9]+$/i);
+    return match ? match[0] : '.m4a';
+  };
+
+  const getMimeType = (extension: string) => {
+    switch (extension.toLowerCase()) {
+      case '.aac':
+        return 'audio/aac';
+      case '.mp3':
+        return 'audio/mpeg';
+      case '.wav':
+        return 'audio/wav';
+      case '.caf':
+        return 'audio/x-caf';
+      case '.3gp':
+      case '.3gpp':
+        return 'audio/3gpp';
+      case '.m4a':
+      default:
+        return 'audio/mp4';
+    }
+  };
+
+  const buildTaskProps = useCallback(async (fallbackTitle: string, extraProps?: Partial<Task>) => {
+    const trimmed = value.trim();
+    let finalTitle = trimmed || fallbackTitle;
+    let projectTitle: string | undefined;
+    let parsedProps: Partial<Task> = {};
+
+    if (trimmed) {
+      const parsed = parseQuickAdd(trimmed, projects);
+      finalTitle = parsed.title || trimmed;
+      parsedProps = parsed.props;
+      projectTitle = parsed.projectTitle;
+    }
+
+    const initialPropsMerged: Partial<Task> = { status: 'inbox', ...initialProps, ...parsedProps, ...extraProps };
+    if (!initialPropsMerged.status) initialPropsMerged.status = 'inbox';
+
+    if (!initialPropsMerged.projectId && projectTitle) {
+      const created = await addProject(projectTitle, '#94a3b8');
+      initialPropsMerged.projectId = created.id;
+    }
+
+    if (projectId) initialPropsMerged.projectId = projectId;
+    if (prioritiesEnabled && priority) initialPropsMerged.priority = priority;
+    if (dueDate) initialPropsMerged.dueDate = dueDate.toISOString();
+    if (startTime) initialPropsMerged.startTime = startTime.toISOString();
+
+    return { title: finalTitle, props: initialPropsMerged };
+  }, [addProject, dueDate, initialProps, prioritiesEnabled, priority, projectId, projects, startTime, value]);
+
+  const applySpeechResult = useCallback(async (taskId: string, result: SpeechToTextResult) => {
+    const { tasks: currentTasks, projects: currentProjects, addProject: addProjectNow, updateTask: updateTaskNow, settings: currentSettings } = useTaskStore.getState();
+    const existing = currentTasks.find((task) => task.id === taskId);
+    if (!existing) return;
+
+    const updates: Partial<Task> = {};
+    const mode = currentSettings.ai?.speechToText?.mode ?? 'smart_parse';
+    const fieldStrategy = currentSettings.ai?.speechToText?.fieldStrategy ?? 'smart';
+    const transcript = result.transcript?.trim();
+
+    if (mode === 'transcribe_only') {
+      if (transcript) {
+        if (fieldStrategy === 'description_only') {
+          updates.description = transcript;
+        } else if (fieldStrategy === 'title_only') {
+          updates.title = transcript;
+        } else {
+          const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+          if (wordCount <= 15) {
+            updates.title = transcript;
+          } else {
+            updates.description = transcript;
+          }
+        }
+      }
+    } else {
+      if (result.title && result.title.trim()) updates.title = result.title.trim();
+      if (result.description !== undefined && result.description !== null) {
+        const desc = result.description.trim();
+        updates.description = desc ? desc : undefined;
+      }
+      if (!updates.title && transcript) {
+        if (fieldStrategy === 'description_only') {
+          updates.description = transcript;
+        } else if (fieldStrategy === 'title_only') {
+          updates.title = transcript;
+        } else {
+          const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+          if (wordCount <= 15) {
+            updates.title = transcript;
+          } else {
+            const words = transcript.split(/\s+/).filter(Boolean);
+            updates.title = `${words.slice(0, 7).join(' ')}...`;
+            if (!updates.description) {
+              updates.description = transcript;
+            }
+          }
+        }
+      }
+    }
+
+    if (result.dueDate) {
+      const parsed = safeParseDate(result.dueDate);
+      if (parsed) updates.dueDate = parsed.toISOString();
+    }
+    if (result.startTime) {
+      const parsed = safeParseDate(result.startTime);
+      if (parsed) updates.startTime = parsed.toISOString();
+    }
+
+    const normalizeList = (items: string[] | null | undefined, prefix: string) => {
+      if (!Array.isArray(items)) return [];
+      return items
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => (item.startsWith(prefix) ? item : `${prefix}${item}`));
+    };
+
+    const nextTags = normalizeList(result.tags ?? [], '#');
+    const nextContexts = normalizeList(result.contexts ?? [], '@');
+    if (nextTags.length) {
+      updates.tags = Array.from(new Set([...(existing.tags ?? []), ...nextTags]));
+    }
+    if (nextContexts.length) {
+      updates.contexts = Array.from(new Set([...(existing.contexts ?? []), ...nextContexts]));
+    }
+
+    if (result.projectTitle && !existing.projectId) {
+      const trimmed = typeof result.projectTitle === 'string' ? result.projectTitle.trim() : '';
+      if (trimmed) {
+        const match = currentProjects.find((project) => project.title.toLowerCase() === trimmed.toLowerCase());
+        if (match) {
+          updates.projectId = match.id;
+        } else {
+          const created = await addProjectNow(trimmed, '#94a3b8');
+          updates.projectId = created.id;
+        }
+      }
+    }
+
+    if (Object.keys(updates).length) {
+      await updateTaskNow(taskId, updates);
+    }
+  }, []);
 
   const resetState = () => {
     setValue('');
@@ -83,30 +264,19 @@ export function QuickCaptureSheet({
   };
 
   const handleClose = () => {
+    if (recording && !recordingBusy) {
+      void stopRecording({ saveTask: false });
+    }
     resetState();
     onClose();
   };
 
   const handleSave = async () => {
     if (!value.trim()) return;
-    const { title, props, projectTitle } = parseQuickAdd(value, projects);
-    const finalTitle = title || value;
-    if (!finalTitle.trim()) return;
+    const { title, props } = await buildTaskProps(value.trim());
+    if (!title.trim()) return;
 
-    const initialPropsMerged: Partial<Task> = { status: 'inbox', ...initialProps, ...props };
-    if (!initialPropsMerged.status) initialPropsMerged.status = 'inbox';
-
-    if (!initialPropsMerged.projectId && projectTitle) {
-      const created = await addProject(projectTitle, '#94a3b8');
-      initialPropsMerged.projectId = created.id;
-    }
-
-    if (projectId) initialPropsMerged.projectId = projectId;
-    if (prioritiesEnabled && priority) initialPropsMerged.priority = priority;
-    if (dueDate) initialPropsMerged.dueDate = dueDate.toISOString();
-    if (startTime) initialPropsMerged.startTime = startTime.toISOString();
-
-    await addTask(finalTitle, initialPropsMerged);
+    await addTask(title, props);
 
     if (addAnother) {
       setValue('');
@@ -116,6 +286,188 @@ export function QuickCaptureSheet({
 
     handleClose();
   };
+
+  const startRecording = useCallback(async () => {
+    if (recording || recordingBusy) return;
+    setRecordingBusy(true);
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(t('quickAdd.audioPermissionTitle'), t('quickAdd.audioPermissionBody'));
+        return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+      });
+      const { recording: nextRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(nextRecording);
+    } catch (error) {
+      console.error('Failed to start recording', error);
+      Alert.alert(t('quickAdd.audioErrorTitle'), t('quickAdd.audioErrorBody'));
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [recording, recordingBusy, t]);
+
+  const stopRecording = useCallback(async ({ saveTask }: { saveTask: boolean }) => {
+    if (recordingBusy) return;
+    const currentRecording = recording;
+    if (!currentRecording) return;
+    setRecordingBusy(true);
+    setRecording(null);
+    try {
+      try {
+        await currentRecording.stopAndUnloadAsync();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('already been unloaded')) {
+          throw error;
+        }
+      }
+      const uri = currentRecording.getURI();
+      if (!uri) {
+        throw new Error('Recording URI missing');
+      }
+      if (!saveTask) return;
+
+      const now = new Date();
+      const timestamp = safeFormatDate(now, 'yyyyMMdd-HHmmss');
+      const extension = getExtension(uri);
+      const directory = await ensureAudioDirectory();
+      const fileName = `mindwtr-audio-${timestamp}${extension}`;
+      const sourceFile = new File(uri);
+      const destinationFile = directory ? new File(directory, fileName) : null;
+      let finalFile = sourceFile;
+
+      if (destinationFile) {
+        try {
+          sourceFile.move(destinationFile);
+          finalFile = destinationFile;
+        } catch (error) {
+          console.warn('Move recording failed, falling back to copy', error);
+          try {
+            sourceFile.copy(destinationFile);
+            sourceFile.delete();
+            finalFile = destinationFile;
+          } catch (copyError) {
+            console.warn('Copy recording failed, using original file', copyError);
+            finalFile = sourceFile;
+          }
+        }
+      }
+
+      let fileInfo: { exists?: boolean; size?: number } | null = null;
+      try {
+        fileInfo = finalFile.info();
+      } catch (error) {
+        console.warn('Audio info lookup failed', error);
+      }
+      const nowIso = now.toISOString();
+      const displayTitle = `${t('quickAdd.audioNoteTitle')} ${safeFormatDate(now, 'MMM d, HH:mm')}`;
+      const speech = settings.ai?.speechToText;
+      const provider = speech?.provider ?? 'gemini';
+      const model = speech?.model ?? (provider === 'openai' ? 'gpt-4o-transcribe' : provider === 'gemini' ? 'gemini-2.5-flash' : 'whisper-tiny');
+      const apiKey = provider === 'whisper' ? '' : await loadAIKey(provider).catch(() => '');
+      const modelPath = provider === 'whisper' ? speech?.offlineModelPath : undefined;
+      const speechReady = speech?.enabled
+        ? provider === 'whisper'
+          ? Boolean(modelPath)
+          : Boolean(apiKey)
+        : false;
+      const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false || !speechReady;
+
+      const audioUri = finalFile.uri;
+      const attachment: Attachment | null = saveAudioAttachments ? {
+        id: generateUUID(),
+        kind: 'file',
+        title: displayTitle,
+        uri: audioUri,
+        mimeType: getMimeType(extension),
+        size: fileInfo?.exists && fileInfo.size ? fileInfo.size : undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      } : null;
+
+      const taskId = generateUUID();
+      const attachments = [...(initialProps?.attachments ?? [])];
+      if (attachment) attachments.push(attachment);
+      const { title, props } = await buildTaskProps(displayTitle, {
+        id: taskId,
+        attachments,
+      });
+      if (!title.trim()) return;
+
+      await addTask(title, props);
+      handleClose();
+
+      if (speechReady) {
+          const timeZone = typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone
+            : undefined;
+          void processAudioCapture(audioUri, {
+            provider,
+            apiKey,
+            model,
+            modelPath,
+            language: speech?.language,
+            mode: speech?.mode ?? 'smart_parse',
+            fieldStrategy: speech?.fieldStrategy ?? 'smart',
+            parseModel: provider === 'openai' && settings.ai?.provider === 'openai' ? settings.ai?.model : undefined,
+            now: new Date(),
+            timeZone,
+          })
+            .then((result) => applySpeechResult(taskId, result))
+            .catch((error) => console.warn('Speech-to-text failed', error))
+            .finally(() => {
+              if (!saveAudioAttachments) {
+                try {
+                  finalFile.delete();
+                } catch (error) {
+                  console.warn('Audio cleanup failed', error);
+                }
+              }
+            });
+      } else if (!saveAudioAttachments) {
+        try {
+          finalFile.delete();
+        } catch (error) {
+          console.warn('Audio cleanup failed', error);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save recording', error);
+      Alert.alert(t('quickAdd.audioErrorTitle'), t('quickAdd.audioErrorBody'));
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [
+    addTask,
+    applySpeechResult,
+    buildTaskProps,
+    ensureAudioDirectory,
+    handleClose,
+    initialProps?.attachments,
+    recording,
+    recordingBusy,
+    settings.ai?.model,
+    settings.ai?.provider,
+    settings.ai?.speechToText,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (visible && autoRecord && !recording && !recordingBusy) {
+      const handle = setTimeout(() => {
+        void startRecording();
+      }, 150);
+      return () => clearTimeout(handle);
+    }
+    return undefined;
+  }, [autoRecord, recording, recordingBusy, startRecording, visible]);
 
   const selectedProject = projectId ? projects.find((project) => project.id === projectId) : null;
   const dueLabel = dueDate ? safeFormatDate(dueDate, 'MMM d') : t('taskEdit.dueDateLabel');
@@ -139,16 +491,51 @@ export function QuickCaptureSheet({
             </TouchableOpacity>
           </View>
 
-          <TextInput
-            ref={inputRef}
-            style={[styles.input, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-            placeholder={t('quickAdd.placeholder')}
-            placeholderTextColor={tc.secondaryText}
-            value={value}
-            onChangeText={setValue}
-            onSubmitEditing={handleSave}
-            returnKeyType="done"
-          />
+          <View style={styles.inputRow}>
+            <TextInput
+              ref={inputRef}
+              style={[styles.input, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+              placeholder={t('quickAdd.placeholder')}
+              placeholderTextColor={tc.secondaryText}
+              value={value}
+              onChangeText={setValue}
+              onSubmitEditing={handleSave}
+              returnKeyType="done"
+            />
+            <TouchableOpacity
+              onPress={() => {
+                if (recording) {
+                  void stopRecording({ saveTask: true });
+                } else {
+                  void startRecording();
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={recording ? t('quickAdd.audioStop') : t('quickAdd.audioRecord')}
+              style={[
+                styles.recordButton,
+                {
+                  backgroundColor: recording ? tc.danger : tc.filterBg,
+                  borderColor: tc.border,
+                  opacity: recordingBusy ? 0.6 : 1,
+                },
+              ]}
+              disabled={recordingBusy}
+            >
+              {recording ? (
+                <Square size={16} color={tc.onTint} />
+              ) : (
+                <Mic size={16} color={tc.text} />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {recording && (
+            <View style={styles.recordingRow}>
+              <View style={[styles.recordingDot, { backgroundColor: tc.danger }]} />
+              <Text style={[styles.recordingText, { color: tc.danger }]}>{t('quickAdd.audioRecording')}</Text>
+            </View>
+          )}
 
           <View style={styles.optionsRow}>
             <TouchableOpacity
@@ -370,11 +757,40 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   input: {
+    flex: 1,
     borderWidth: 1,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  recordButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordingRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  recordingText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   optionsRow: {
     marginTop: 12,

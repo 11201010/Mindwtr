@@ -3,8 +3,7 @@ import { dataDir, join } from '@tauri-apps/api/path';
 import { useTaskStore } from '@mindwtr/core';
 import { isTauriRuntime } from './runtime';
 
-const APP_NAME = 'mindwtr';
-const LOG_DIR = `${APP_NAME}/logs`;
+const LOG_DIR = 'mindwtr/logs';
 const LOG_FILE = `${LOG_DIR}/mindwtr.log`;
 
 type LogEntry = {
@@ -140,7 +139,7 @@ export async function getLogPath(): Promise<string | null> {
     if (!isTauriRuntime()) return null;
     try {
         const baseDir = await dataDir();
-        return await join(baseDir, APP_NAME, 'logs', 'mindwtr.log');
+        return await join(baseDir, 'mindwtr', 'logs', 'mindwtr.log');
     } catch (error) {
         console.warn('Failed to resolve log path', error);
         return null;

@@ -7,7 +7,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem};
@@ -17,6 +19,8 @@ use tauri::image::Image;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use rusqlite::{params, Connection, OptionalExtension, params_from_iter, ToSql};
 use keyring::{Entry, Error as KeyringError};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// App name used for config directories and files
 const APP_NAME: &str = "mindwtr";
@@ -203,9 +207,288 @@ struct TaskQueryOptions {
 
 struct QuickAddPending(AtomicBool);
 
+struct AudioRecorderState(Mutex<Option<AudioRecorderHandle>>);
+
+#[derive(Clone, Debug)]
+struct RecorderInfo {
+    sample_rate: u32,
+    channels: u16,
+}
+
+struct AudioRecorderHandle {
+    stop_tx: mpsc::Sender<()>,
+    samples: Arc<Mutex<Vec<i16>>>,
+    info: Arc<Mutex<Option<RecorderInfo>>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioCaptureResult {
+    path: String,
+    relative_path: String,
+    sample_rate: u32,
+    channels: u16,
+    size: usize,
+}
+
 #[tauri::command]
 fn consume_quick_add_pending(state: tauri::State<'_, QuickAddPending>) -> bool {
     state.0.swap(false, Ordering::SeqCst)
+}
+
+#[tauri::command]
+fn start_audio_recording(state: tauri::State<'_, AudioRecorderState>) -> Result<(), String> {
+    let mut guard = state.inner().0.lock().map_err(|_| "Recorder lock poisoned".to_string())?;
+    if guard.is_some() {
+        return Err("Recording already in progress".into());
+    }
+
+    let samples: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
+    let info: Arc<Mutex<Option<RecorderInfo>>> = Arc::new(Mutex::new(None));
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (ready_tx, ready_rx) = mpsc::channel();
+
+    let samples_clone = samples.clone();
+    let info_clone = info.clone();
+    let join = std::thread::spawn(move || {
+        let host = cpal::default_host();
+        let device = match host
+            .default_input_device()
+            .or_else(|| host.input_devices().ok().and_then(|mut devices| devices.next()))
+        {
+            Some(device) => device,
+            None => {
+                let _ = ready_tx.send(Err("No audio input device available".to_string()));
+                return;
+            }
+        };
+        let config = match device.default_input_config() {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("Failed to read input config: {err}")));
+                return;
+            }
+        };
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        let err_fn = |err| {
+            eprintln!("[audio] stream error: {err}");
+        };
+
+        let stream_config: cpal::StreamConfig = config.clone().into();
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _| {
+                        let mut buffer = samples_clone.lock().unwrap();
+                        buffer.extend(data.iter().map(|sample| {
+                            let clamped = sample.clamp(-1.0, 1.0);
+                            (clamped * i16::MAX as f32) as i16
+                        }));
+                    },
+                    err_fn,
+                    None,
+                ),
+            cpal::SampleFormat::I16 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _| {
+                        let mut buffer = samples_clone.lock().unwrap();
+                        buffer.extend_from_slice(data);
+                    },
+                    err_fn,
+                    None,
+                ),
+            cpal::SampleFormat::U16 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[u16], _| {
+                        let mut buffer = samples_clone.lock().unwrap();
+                        buffer.extend(data.iter().map(|sample| (*sample as i32 - 32768) as i16));
+                    },
+                    err_fn,
+                    None,
+                ),
+            _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
+        };
+
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("Failed to create audio stream: {err}")));
+                return;
+            }
+        };
+
+        if let Err(err) = stream.play() {
+            let _ = ready_tx.send(Err(format!("Failed to start audio stream: {err}")));
+            return;
+        }
+
+        {
+            let mut info_guard = info_clone.lock().unwrap();
+            *info_guard = Some(RecorderInfo { sample_rate, channels });
+        }
+
+        let _ = ready_tx.send(Ok(()));
+
+        let _ = stop_rx.recv();
+        drop(stream);
+    });
+
+    match ready_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(())) => {
+            *guard = Some(AudioRecorderHandle {
+                stop_tx,
+                samples,
+                info,
+                join: Some(join),
+            });
+            Ok(())
+        }
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err("Audio device did not respond".into()),
+    }
+}
+
+#[tauri::command]
+fn stop_audio_recording(app: tauri::AppHandle, state: tauri::State<'_, AudioRecorderState>) -> Result<AudioCaptureResult, String> {
+    let mut guard = state.inner().0.lock().map_err(|_| "Recorder lock poisoned".to_string())?;
+    let mut recorder = guard.take().ok_or_else(|| "No active recording".to_string())?;
+
+    let _ = recorder.stop_tx.send(());
+    if let Some(join) = recorder.join.take() {
+        let _ = join.join();
+    }
+
+    let info = recorder.info.lock().map_err(|_| "Recorder info lock poisoned".to_string())?;
+    let info = info.clone().ok_or_else(|| "Recorder did not initialize".to_string())?;
+    let samples = recorder.samples.lock().map_err(|_| "Recorder buffer lock poisoned".to_string())?;
+    if samples.is_empty() {
+        return Err("No audio captured".into());
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let file_name = format!("mindwtr-audio-{timestamp}.wav");
+    let relative_path = format!("{}/audio-captures/{}", APP_NAME, file_name);
+
+    let target_dir = get_data_dir(&app).join("audio-captures");
+    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+    let target_path = target_dir.join(&file_name);
+
+    let spec = hound::WavSpec {
+        channels: info.channels,
+        sample_rate: info.sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&target_path, spec).map_err(|e| e.to_string())?;
+    for sample in samples.iter() {
+        writer.write_sample(*sample).map_err(|e| e.to_string())?;
+    }
+    writer.finalize().map_err(|e| e.to_string())?;
+
+    Ok(AudioCaptureResult {
+        path: target_path.to_string_lossy().to_string(),
+        relative_path,
+        sample_rate: info.sample_rate,
+        channels: info.channels,
+        size: samples.len() * std::mem::size_of::<i16>(),
+    })
+}
+
+#[tauri::command]
+fn transcribe_whisper(model_path: String, audio_path: String, language: Option<String>) -> Result<String, String> {
+    let model_exists = Path::new(&model_path).exists();
+    if !model_exists {
+        return Err("Whisper model not found".into());
+    }
+
+    let mut reader = hound::WavReader::open(&audio_path).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+    if spec.channels == 0 || spec.channels > 2 {
+        return Err("Unsupported audio channel count".into());
+    }
+
+    let mut samples = Vec::new();
+    for sample in reader.samples::<i16>() {
+        let value = sample.map_err(|e| e.to_string())?;
+        samples.push(value);
+    }
+
+    let mut audio = vec![0.0f32; samples.len()];
+    whisper_rs::convert_integer_to_float_audio(&samples, &mut audio).map_err(|e| e.to_string())?;
+    if spec.channels == 2 {
+        audio = whisper_rs::convert_stereo_to_mono_audio(&audio).map_err(|e| e.to_string())?;
+    }
+    if spec.sample_rate != 16_000 {
+        audio = resample_linear(&audio, spec.sample_rate, 16_000);
+    }
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    if let Ok(threads) = std::thread::available_parallelism() {
+        params.set_n_threads(threads.get() as i32);
+    }
+
+    let language_hint = language
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+    if let Some(ref lang) = language_hint {
+        params.set_language(Some(lang));
+    }
+
+    let ctx = WhisperContext::new_with_params(&model_path, WhisperContextParameters::default())
+        .map_err(|e| e.to_string())?;
+    let mut state = ctx.create_state().map_err(|e| e.to_string())?;
+    state.full(params, &audio[..]).map_err(|e| e.to_string())?;
+
+    let num_segments = state.full_n_segments();
+    let mut text = String::new();
+    if num_segments > 0 {
+        for i in 0..num_segments {
+            if let Some(segment) = state.get_segment(i) {
+                if let Ok(seg_text) = segment.to_str_lossy() {
+                    text.push_str(&seg_text);
+                }
+            }
+        }
+    }
+
+    Ok(text.trim().to_string())
+}
+
+fn resample_linear(input: &[f32], input_rate: u32, target_rate: u32) -> Vec<f32> {
+    if input_rate == target_rate || input.is_empty() {
+        return input.to_vec();
+    }
+    let ratio = input_rate as f64 / target_rate as f64;
+    let output_len = ((input.len() as f64) / ratio).round().max(1.0) as usize;
+    let mut output = Vec::with_capacity(output_len);
+    for i in 0..output_len {
+        let position = i as f64 * ratio;
+        let index = position.floor() as usize;
+        let next_index = (index + 1).min(input.len() - 1);
+        let frac = position - index as f64;
+        let sample = input[index] * (1.0 - frac as f32) + input[next_index] * (frac as f32);
+        output.push(sample);
+    }
+    output
 }
 
 #[tauri::command]
@@ -1351,8 +1634,29 @@ fn set_ai_key(app: tauri::AppHandle, provider: String, value: Option<String>) ->
         "gemini" => KEYRING_AI_GEMINI,
         _ => return Ok(()),
     };
-    set_keyring_secret(&app, key_name, next_value)?;
-    Ok(())
+    match set_keyring_secret(&app, key_name, next_value.clone()) {
+        Ok(_) => {
+            let mut config = read_config(&app);
+            match provider.as_str() {
+                "openai" => config.ai_key_openai = None,
+                "anthropic" => config.ai_key_anthropic = None,
+                "gemini" => config.ai_key_gemini = None,
+                _ => {}
+            }
+            let _ = write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config);
+            Ok(())
+        }
+        Err(_) => {
+            let mut config = read_config(&app);
+            match provider.as_str() {
+                "openai" => config.ai_key_openai = next_value,
+                "anthropic" => config.ai_key_anthropic = next_value,
+                "gemini" => config.ai_key_gemini = next_value,
+                _ => {}
+            }
+            write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config)
+        }
+    }
 }
 
 fn default_sync_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1640,6 +1944,21 @@ fn set_external_calendars(app: tauri::AppHandle, calendars: Vec<ExternalCalendar
     Ok(true)
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<bool, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    let normalized = if trimmed.starts_with("file://") {
+        trimmed.trim_start_matches("file://")
+    } else {
+        trimmed
+    };
+    open::that(normalized).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 
 #[tauri::command]
 fn read_sync_file(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -1876,6 +2195,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .manage(AudioRecorderState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_data,
             save_data,
@@ -1898,9 +2218,13 @@ pub fn run() {
             set_cloud_config,
             get_external_calendars,
             set_external_calendars,
+            open_path,
             read_sync_file,
             write_sync_file,
             get_linux_distro,
+            start_audio_recording,
+            stop_audio_recording,
+            transcribe_whisper,
             log_ai_debug,
             append_log_line,
             clear_log_file,

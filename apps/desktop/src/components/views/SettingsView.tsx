@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import {
     Bell,
     CalendarDays,
@@ -20,6 +20,8 @@ import {
     getModelOptions,
     type AIProviderId,
     type AIReasoningEffort,
+    type AudioCaptureMode,
+    type AudioFieldStrategy,
     safeFormatDate,
     type ExternalCalendarSubscription,
     useTaskStore,
@@ -33,6 +35,13 @@ import { clearLog, getLogPath, logDiagnosticsEnabled } from '../../lib/app-log';
 import { ExternalCalendarService } from '../../lib/external-calendar-service';
 import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL, verifyDownloadChecksum } from '../../lib/update-service';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
+import {
+    DEFAULT_WHISPER_MODEL,
+    GEMINI_SPEECH_MODELS,
+    OPENAI_SPEECH_MODELS,
+    WHISPER_MODEL_BASE_URL,
+    WHISPER_MODELS,
+} from '../../lib/speech-models';
 import { cn } from '../../lib/utils';
 import { SettingsMainPage } from './settings/SettingsMainPage';
 import { SettingsGtdPage } from './settings/SettingsGtdPage';
@@ -41,6 +50,8 @@ import { SettingsNotificationsPage } from './settings/SettingsNotificationsPage'
 import { SettingsCalendarPage } from './settings/SettingsCalendarPage';
 import { SettingsSyncPage } from './settings/SettingsSyncPage';
 import { SettingsAboutPage } from './settings/SettingsAboutPage';
+import { BaseDirectory, exists, mkdir, remove, size, writeFile } from '@tauri-apps/plugin-fs';
+import { dataDir, join } from '@tauri-apps/api/path';
 
 type ThemeMode = 'system' | 'light' | 'dark' | 'eink' | 'nord' | 'sepia';
 type SettingsPage = 'main' | 'gtd' | 'notifications' | 'sync' | 'calendar' | 'ai' | 'about';
@@ -94,6 +105,11 @@ export function SettingsView() {
     const [configPath, setConfigPath] = useState('');
     const [logPath, setLogPath] = useState('');
     const [aiApiKey, setAiApiKey] = useState('');
+    const [speechApiKey, setSpeechApiKey] = useState('');
+    const [speechDownloadState, setSpeechDownloadState] = useState<'idle' | 'downloading' | 'success' | 'error'>('idle');
+    const [speechDownloadError, setSpeechDownloadError] = useState<string | null>(null);
+    const [speechOfflinePath, setSpeechOfflinePath] = useState<string | null>(null);
+    const [speechOfflineSize, setSpeechOfflineSize] = useState<number | null>(null);
 
     const notificationsEnabled = settings?.notificationsEnabled !== false;
     const dailyDigestMorningEnabled = settings?.dailyDigestMorningEnabled === true;
@@ -113,6 +129,24 @@ export function SettingsView() {
     const aiModelOptions = getModelOptions(aiProvider);
     const aiCopilotModel = settings?.ai?.copilotModel ?? getDefaultCopilotModel(aiProvider);
     const aiCopilotOptions = getCopilotModelOptions(aiProvider);
+    const speechSettings = settings?.ai?.speechToText ?? {};
+    const speechProvider = speechSettings.provider ?? 'gemini';
+    const speechEnabled = speechSettings.enabled === true;
+    const speechModel = speechSettings.model ?? (
+        speechProvider === 'openai'
+            ? OPENAI_SPEECH_MODELS[0]
+            : speechProvider === 'gemini'
+                ? GEMINI_SPEECH_MODELS[0]
+                : DEFAULT_WHISPER_MODEL
+    );
+    const speechLanguage = speechSettings.language ?? '';
+    const speechMode = (speechSettings.mode ?? 'smart_parse') as AudioCaptureMode;
+    const speechFieldStrategy = (speechSettings.fieldStrategy ?? 'smart') as AudioFieldStrategy;
+    const speechModelOptions = speechProvider === 'openai'
+        ? OPENAI_SPEECH_MODELS
+        : speechProvider === 'gemini'
+            ? GEMINI_SPEECH_MODELS
+            : WHISPER_MODELS.map((model) => model.id);
     const loggingEnabled = settings?.diagnostics?.loggingEnabled === true;
     const didWriteLogRef = useRef(false);
 
@@ -233,6 +267,26 @@ export function SettingsView() {
     }, [aiProvider]);
 
     useEffect(() => {
+        let active = true;
+        if (speechProvider === 'whisper') {
+            setSpeechApiKey('');
+            return () => {
+                active = false;
+            };
+        }
+        loadAIKey(speechProvider as AIProviderId)
+            .then((key) => {
+                if (active) setSpeechApiKey(key);
+            })
+            .catch(() => {
+                if (active) setSpeechApiKey('');
+            });
+        return () => {
+            active = false;
+        };
+    }, [speechProvider]);
+
+    useEffect(() => {
         const root = document.documentElement;
         root.classList.remove('theme-eink', 'theme-nord', 'theme-sepia');
 
@@ -287,6 +341,19 @@ export function SettingsView() {
             .catch(console.error);
     };
 
+    const updateSpeechSettings = (
+        next: Partial<NonNullable<NonNullable<typeof settings.ai>['speechToText']>>
+    ) => {
+        updateSettings({
+            ai: {
+                ...(settings.ai ?? {}),
+                speechToText: { ...(settings.ai?.speechToText ?? {}), ...next },
+            },
+        })
+            .then(showSaved)
+            .catch(console.error);
+    };
+
     const handleAIProviderChange = (provider: AIProviderId) => {
         updateAISettings({
             provider,
@@ -306,6 +373,145 @@ export function SettingsView() {
         setAiApiKey(value);
         saveAIKey(aiProvider, value).catch(console.error);
     };
+
+    const handleSpeechProviderChange = (provider: 'openai' | 'gemini' | 'whisper') => {
+        const nextModel = provider === 'openai'
+            ? OPENAI_SPEECH_MODELS[0]
+            : provider === 'gemini'
+                ? GEMINI_SPEECH_MODELS[0]
+                : DEFAULT_WHISPER_MODEL;
+        updateSpeechSettings({
+            provider,
+            model: nextModel,
+            offlineModelPath: provider === 'whisper' ? speechSettings.offlineModelPath : undefined,
+        });
+    };
+
+    const handleSpeechApiKeyChange = (value: string) => {
+        setSpeechApiKey(value);
+        if (speechProvider !== 'whisper') {
+            saveAIKey(speechProvider as AIProviderId, value).catch(console.error);
+        }
+    };
+
+    const resolveWhisperPath = useCallback(async (modelId: string) => {
+        if (!isTauri) return null;
+        const entry = WHISPER_MODELS.find((model) => model.id === modelId);
+        if (!entry) return null;
+        const base = await dataDir();
+        return await join(base, 'mindwtr', 'whisper-models', entry.fileName);
+    }, [isTauri]);
+
+    useEffect(() => {
+        let active = true;
+        if (!isTauri || speechProvider !== 'whisper') {
+            setSpeechOfflinePath(null);
+            setSpeechOfflineSize(null);
+            return () => {
+                active = false;
+            };
+        }
+        const load = async () => {
+            const resolved = speechSettings.offlineModelPath || await resolveWhisperPath(speechModel);
+            if (!active) return;
+            setSpeechOfflinePath(resolved);
+            if (!resolved) {
+                setSpeechOfflineSize(null);
+                return;
+            }
+            try {
+                const present = await exists(resolved);
+                if (!present) {
+                    setSpeechOfflineSize(null);
+                    return;
+                }
+                if (!speechSettings.offlineModelPath) {
+                    updateSpeechSettings({ offlineModelPath: resolved, model: speechModel });
+                }
+                const fileSize = await size(resolved);
+                if (active) {
+                    setSpeechOfflineSize(fileSize);
+                }
+            } catch {
+                if (active) {
+                    setSpeechOfflineSize(null);
+                }
+            }
+        };
+        load().catch(() => {
+            if (active) {
+                setSpeechOfflineSize(null);
+            }
+        });
+        return () => {
+            active = false;
+        };
+    }, [
+        isTauri,
+        resolveWhisperPath,
+        speechModel,
+        speechProvider,
+        speechSettings.offlineModelPath,
+        updateSpeechSettings,
+    ]);
+
+    const handleDownloadWhisperModel = useCallback(async () => {
+        const entry = WHISPER_MODELS.find((model) => model.id === speechModel);
+        if (!entry || !isTauri) return;
+        setSpeechDownloadError(null);
+        setSpeechDownloadState('downloading');
+        try {
+            const targetDir = 'mindwtr/whisper-models';
+            await mkdir(targetDir, { baseDir: BaseDirectory.Data, recursive: true });
+            const targetPath = `${targetDir}/${entry.fileName}`;
+            const alreadyExists = await exists(targetPath, { baseDir: BaseDirectory.Data });
+            if (alreadyExists) {
+                const fileSize = await size(targetPath, { baseDir: BaseDirectory.Data });
+                const resolved = await resolveWhisperPath(entry.id);
+                setSpeechOfflineSize(fileSize);
+                setSpeechOfflinePath(resolved);
+                updateSpeechSettings({ offlineModelPath: resolved ?? undefined, model: entry.id });
+                setSpeechDownloadState('success');
+                setTimeout(() => setSpeechDownloadState('idle'), 2000);
+                return;
+            }
+            const url = `${WHISPER_MODEL_BASE_URL}/${entry.fileName}`;
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Download failed (${response.status})`);
+            }
+            const buffer = await response.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            await writeFile(targetPath, bytes, { baseDir: BaseDirectory.Data });
+            const resolved = await resolveWhisperPath(entry.id);
+            setSpeechOfflineSize(bytes.length);
+            setSpeechOfflinePath(resolved);
+            updateSpeechSettings({ offlineModelPath: resolved ?? undefined, model: entry.id });
+            setSpeechDownloadState('success');
+            setTimeout(() => setSpeechDownloadState('idle'), 2000);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setSpeechDownloadError(message);
+            setSpeechDownloadState('error');
+        }
+    }, [isTauri, resolveWhisperPath, speechModel, updateSpeechSettings]);
+
+    const handleDeleteWhisperModel = useCallback(async () => {
+        if (!speechOfflinePath) {
+            updateSpeechSettings({ offlineModelPath: undefined });
+            return;
+        }
+        try {
+            await remove(speechOfflinePath);
+            setSpeechOfflineSize(null);
+            setSpeechOfflinePath(null);
+            updateSpeechSettings({ offlineModelPath: undefined });
+        } catch (error) {
+            console.warn('Whisper model delete failed', error);
+            setSpeechDownloadError(error instanceof Error ? error.message : String(error));
+            setSpeechDownloadState('error');
+        }
+    }, [speechOfflinePath, updateSpeechSettings]);
 
     const persistCalendars = async (next: ExternalCalendarSubscription[]) => {
         setCalendarError(null);
@@ -551,6 +757,12 @@ export function SettingsView() {
             appearance: 'Appearance',
             gtd: 'GTD',
             gtdDesc: 'Tune the GTD workflow defaults.',
+            captureDefault: 'Default capture method',
+            captureDefaultDesc: 'Choose whether quick capture starts with text or audio.',
+            captureDefaultText: 'Text',
+            captureDefaultAudio: 'Audio',
+            captureSaveAudio: 'Save audio attachments',
+            captureSaveAudioDesc: 'Keep the audio file attached after transcription.',
             autoArchive: 'Auto-archive done tasks',
             autoArchiveDesc: 'Move completed tasks to Archived after a set number of days.',
             autoArchiveNever: 'Never (keep in Done)',
@@ -609,6 +821,32 @@ export function SettingsView() {
             aiThinkingLow: 'Low',
             aiThinkingMedium: 'Medium',
             aiThinkingHigh: 'High',
+            speechTitle: 'Speech to text',
+            speechDesc: 'Transcribe voice captures and map them into task fields.',
+            speechEnable: 'Enable speech to text',
+            speechProvider: 'Speech provider',
+            speechProviderOffline: 'On-device (Whisper)',
+            speechModel: 'Speech model',
+            speechOfflineModel: 'Offline model',
+            speechOfflineModelDesc: 'Download once to transcribe fully offline.',
+            speechOfflineReady: 'Model downloaded',
+            speechOfflineNotDownloaded: 'Model not downloaded',
+            speechOfflineDownload: 'Download',
+            speechOfflineDownloadSuccess: 'Download complete',
+            speechOfflineDelete: 'Delete',
+            speechOfflineDownloadError: 'Offline model download failed',
+            speechLanguage: 'Audio language',
+            speechLanguageHint: 'Use a language name or code, or leave blank to auto-detect.',
+            speechLanguageAuto: 'Auto (detect language)',
+            speechMode: 'Processing mode',
+            speechModeHint: 'Smart parse extracts dates and fields; transcript-only just transcribes.',
+            speechModeSmart: 'Smart parse',
+            speechModeTranscript: 'Transcript only',
+            speechFieldStrategy: 'Field mapping',
+            speechFieldStrategyHint: 'Choose where the transcript should land by default.',
+            speechFieldSmart: 'Smart',
+            speechFieldTitle: 'Title',
+            speechFieldDescription: 'Description',
             dailyDigest: 'Daily Digest',
             dailyDigestDesc: 'Morning briefing and evening review prompts.',
             dailyDigestMorning: 'Morning briefing',
@@ -706,6 +944,12 @@ export function SettingsView() {
             appearance: '外观',
             gtd: 'GTD',
             gtdDesc: '调整 GTD 工作流默认设置。',
+            captureDefault: '默认捕获方式',
+            captureDefaultDesc: '选择快速捕获默认使用文本或语音。',
+            captureDefaultText: '文本',
+            captureDefaultAudio: '语音',
+            captureSaveAudio: '保留语音附件',
+            captureSaveAudioDesc: '转录后仍保留音频文件。',
             autoArchive: '自动归档完成任务',
             autoArchiveDesc: '在设定天数后将已完成任务移入归档。',
             autoArchiveNever: '从不（保留在已完成）',
@@ -764,6 +1008,32 @@ export function SettingsView() {
             aiThinkingLow: '低',
             aiThinkingMedium: '中',
             aiThinkingHigh: '高',
+            speechTitle: '语音转文字',
+            speechDesc: '转录语音并映射到任务字段。',
+            speechEnable: '启用语音转文字',
+            speechProvider: '语音服务商',
+            speechProviderOffline: '本地（Whisper）',
+            speechModel: '语音模型',
+            speechOfflineModel: '离线模型',
+            speechOfflineModelDesc: '下载一次即可离线转录。',
+            speechOfflineReady: '模型已下载',
+            speechOfflineNotDownloaded: '尚未下载模型',
+            speechOfflineDownload: '下载',
+            speechOfflineDownloadSuccess: '下载完成',
+            speechOfflineDelete: '删除',
+            speechOfflineDownloadError: '离线模型下载失败',
+            speechLanguage: '语音语言',
+            speechLanguageHint: '可填写语言名称或代码，留空则自动检测。',
+            speechLanguageAuto: '自动检测语言',
+            speechMode: '处理模式',
+            speechModeHint: '智能解析可提取日期与字段，纯转录仅输出文本。',
+            speechModeSmart: '智能解析',
+            speechModeTranscript: '仅转录',
+            speechFieldStrategy: '字段映射',
+            speechFieldStrategyHint: '选择默认写入标题或描述的位置。',
+            speechFieldSmart: '智能',
+            speechFieldTitle: '标题',
+            speechFieldDescription: '描述',
             dailyDigest: '每日简报',
             dailyDigestDesc: '早间简报与晚间回顾提醒。',
             dailyDigestMorning: '早间简报',
@@ -1060,10 +1330,27 @@ export function SettingsView() {
                     anthropicThinkingEnabled={anthropicThinkingEnabled}
                     anthropicThinkingOptions={anthropicThinkingOptions}
                     aiApiKey={aiApiKey}
+                    speechEnabled={speechEnabled}
+                    speechProvider={speechProvider}
+                    speechModel={speechModel}
+                    speechModelOptions={speechModelOptions}
+                    speechLanguage={speechLanguage}
+                    speechMode={speechMode}
+                    speechFieldStrategy={speechFieldStrategy}
+                    speechApiKey={speechApiKey}
+                    speechOfflineReady={Boolean(speechOfflineSize)}
+                    speechOfflineSize={speechOfflineSize}
+                    speechDownloadState={speechDownloadState}
+                    speechDownloadError={speechDownloadError}
                     onUpdateAISettings={updateAISettings}
+                    onUpdateSpeechSettings={updateSpeechSettings}
                     onProviderChange={handleAIProviderChange}
+                    onSpeechProviderChange={handleSpeechProviderChange}
                     onToggleAnthropicThinking={handleToggleAnthropicThinking}
                     onAiApiKeyChange={handleAiApiKeyChange}
+                    onSpeechApiKeyChange={handleSpeechApiKeyChange}
+                    onDownloadWhisperModel={handleDownloadWhisperModel}
+                    onDeleteWhisperModel={handleDeleteWhisperModel}
                 />
             );
         }

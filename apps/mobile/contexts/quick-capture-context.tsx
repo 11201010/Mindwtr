@@ -4,6 +4,7 @@ import type { Task } from '@mindwtr/core';
 export type QuickCaptureOptions = {
   initialProps?: Partial<Task>;
   initialValue?: string;
+  autoRecord?: boolean;
 };
 
 type QuickCaptureContextValue = {

@@ -38,6 +38,9 @@ import { TaskItemDisplay } from './Task/TaskItemDisplay';
 import { TaskItemFieldRenderer } from './Task/TaskItemFieldRenderer';
 import { TaskItemRecurrenceModal } from './Task/TaskItemRecurrenceModal';
 import { WEEKDAY_FULL_LABELS, WEEKDAY_ORDER } from './Task/recurrence-constants';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { readFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { dataDir } from '@tauri-apps/api/path';
 
 const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'status',
@@ -142,6 +145,17 @@ export const TaskItem = memo(function TaskItem({
     const [editReviewAt, setEditReviewAt] = useState(toDateTimeLocalValue(task.reviewAt));
     const [editAttachments, setEditAttachments] = useState<Attachment[]>(task.attachments || []);
     const [attachmentError, setAttachmentError] = useState<string | null>(null);
+    const [audioAttachment, setAudioAttachment] = useState<Attachment | null>(null);
+    const [audioSource, setAudioSource] = useState<string | null>(null);
+    const [audioError, setAudioError] = useState<string | null>(null);
+    const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
+    const [imageAttachment, setImageAttachment] = useState<Attachment | null>(null);
+    const [imageSource, setImageSource] = useState<string | null>(null);
+    const [textAttachment, setTextAttachment] = useState<Attachment | null>(null);
+    const [textContent, setTextContent] = useState('');
+    const [textError, setTextError] = useState<string | null>(null);
+    const [textLoading, setTextLoading] = useState(false);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
     const [showLinkPrompt, setShowLinkPrompt] = useState(false);
     const [isViewOpen, setIsViewOpen] = useState(false);
     const [aiClarifyResponse, setAiClarifyResponse] = useState<ClarifyResponse | null>(null);
@@ -483,13 +497,186 @@ export const TaskItem = memo(function TaskItem({
         }
     }, [isEditing]);
 
+    const isAudioAttachment = useCallback((attachment: Attachment) => {
+        const mime = attachment.mimeType?.toLowerCase();
+        if (mime && mime.startsWith('audio/')) return true;
+        return /\.(m4a|aac|mp3|wav|caf|ogg|oga|flac|webm)$/i.test(attachment.uri);
+    }, [audioObjectUrl]);
+
+    const isImageAttachment = useCallback((attachment: Attachment) => {
+        const mime = attachment.mimeType?.toLowerCase();
+        if (mime && mime.startsWith('image/')) return true;
+        return /\.(png|jpg|jpeg|gif|webp|bmp|svg|heic|heif)$/i.test(attachment.uri);
+    }, []);
+
+    const isTextAttachment = useCallback((attachment: Attachment) => {
+        const mime = attachment.mimeType?.toLowerCase();
+        if (mime) {
+            if (mime.startsWith('text/')) return true;
+            if (mime === 'application/json' || mime === 'application/xml') return true;
+            if (mime === 'application/x-yaml' || mime === 'application/toml') return true;
+        }
+        return /\.(txt|md|markdown|json|csv|log|yaml|yml|toml|ini|cfg|conf|xml)$/i.test(attachment.uri);
+    }, []);
+
+    const resolveAudioSource = useCallback((uri: string) => {
+        if (!isTauriRuntime()) return uri;
+        if (/^https?:\/\//i.test(uri)) return uri;
+        const raw = uri.replace(/^file:\/\//i, '');
+        return convertFileSrc(raw);
+    }, []);
+
+    const resolveImageSource = useCallback((uri: string) => {
+        if (!isTauriRuntime()) return uri;
+        if (/^https?:\/\//i.test(uri)) return uri;
+        const raw = uri.replace(/^file:\/\//i, '');
+        return convertFileSrc(raw);
+    }, []);
+
+    const resolveAudioBlobSource = useCallback(async (attachment: Attachment) => {
+        if (!isTauriRuntime()) return null;
+        const uri = attachment.uri.replace(/^file:\/\//i, '');
+        try {
+            const baseDir = await dataDir();
+            if (!uri.startsWith(baseDir)) return null;
+            const relative = uri.slice(baseDir.length).replace(/^[\\/]/, '');
+            const bytes = await readFile(relative, { baseDir: BaseDirectory.Data });
+            const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+            const mimeType = attachment.mimeType || 'audio/wav';
+            const blob = new Blob([buffer], { type: mimeType });
+            return URL.createObjectURL(blob);
+        } catch (error) {
+            console.warn('Failed to load audio bytes', error);
+            return null;
+        }
+    }, []);
+
+    const loadTextAttachment = useCallback(async (attachment: Attachment) => {
+        if (!isTauriRuntime()) {
+            throw new Error(t('attachments.fileNotSupported'));
+        }
+        const uri = attachment.uri.replace(/^file:\/\//i, '');
+        if (/^https?:\/\//i.test(uri)) {
+            throw new Error(t('attachments.fileNotSupported'));
+        }
+        const base = await dataDir();
+        if (uri.startsWith(base)) {
+            const relative = uri.slice(base.length).replace(/^[\\/]/, '');
+            return await readTextFile(relative, { baseDir: BaseDirectory.Data });
+        }
+        return await readTextFile(uri);
+    }, [t]);
+
+    const openExternal = useCallback(async (uri: string) => {
+        setAttachmentError(null);
+        const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(uri);
+        const normalized = hasScheme ? uri : `file://${uri}`;
+        if (isTauriRuntime()) {
+            try {
+                await invoke('open_path', { path: uri });
+                return;
+            } catch (error) {
+                console.warn('Failed to open attachment', error);
+                const message = error instanceof Error ? error.message : String(error);
+                setAttachmentError(message || t('attachments.fileNotSupported'));
+            }
+        }
+        window.open(normalized, '_blank');
+    }, [t]);
+
+    const closeAudio = useCallback(() => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+        }
+        setAudioAttachment(null);
+        setAudioSource(null);
+        setAudioError(null);
+        if (audioObjectUrl) {
+            URL.revokeObjectURL(audioObjectUrl);
+            setAudioObjectUrl(null);
+        }
+    }, []);
+
+    const closeImage = useCallback(() => {
+        setImageAttachment(null);
+        setImageSource(null);
+    }, []);
+
+    const closeText = useCallback(() => {
+        setTextAttachment(null);
+        setTextContent('');
+        setTextError(null);
+        setTextLoading(false);
+    }, []);
+
+    const openAudioExternally = useCallback(() => {
+        if (!audioAttachment) return;
+        void openExternal(audioAttachment.uri);
+    }, [audioAttachment, openExternal]);
+
+    const openTextExternally = useCallback(() => {
+        if (!textAttachment) return;
+        void openExternal(textAttachment.uri);
+    }, [textAttachment, openExternal]);
+
+    useEffect(() => {
+        if (!audioAttachment && !imageAttachment && !textAttachment) return;
+        const handler = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            if (audioAttachment) closeAudio();
+            if (imageAttachment) closeImage();
+            if (textAttachment) closeText();
+        };
+        window.addEventListener('keydown', handler);
+        return () => {
+            window.removeEventListener('keydown', handler);
+        };
+    }, [audioAttachment, closeAudio, closeImage, closeText, imageAttachment, textAttachment]);
+
     const openAttachment = (attachment: Attachment) => {
-        if (attachment.kind === 'link') {
-            window.open(attachment.uri, '_blank');
+        if (isAudioAttachment(attachment)) {
+            setAudioAttachment(attachment);
+            setAudioError(null);
+            void resolveAudioBlobSource(attachment).then((blobUrl) => {
+                if (blobUrl) {
+                    if (audioObjectUrl) {
+                        URL.revokeObjectURL(audioObjectUrl);
+                    }
+                    setAudioObjectUrl(blobUrl);
+                    setAudioSource(blobUrl);
+                } else {
+                    setAudioSource(resolveAudioSource(attachment.uri));
+                }
+            });
+            setAudioError(null);
             return;
         }
-        const url = attachment.uri.startsWith('file://') ? attachment.uri : `file://${attachment.uri}`;
-        window.open(url, '_blank');
+        if (isTextAttachment(attachment)) {
+            setTextAttachment(attachment);
+            setTextError(null);
+            setTextLoading(true);
+            void loadTextAttachment(attachment)
+                .then((content) => {
+                    setTextContent(content);
+                })
+                .catch((error) => {
+                    console.warn('Failed to read text attachment', error);
+                    const message = error instanceof Error ? error.message : String(error);
+                    setTextError(message || t('attachments.fileNotSupported'));
+                })
+                .finally(() => {
+                    setTextLoading(false);
+                });
+            return;
+        }
+        if (isImageAttachment(attachment)) {
+            setImageAttachment(attachment);
+            setImageSource(resolveImageSource(attachment.uri));
+            return;
+        }
+        void openExternal(attachment.uri);
     };
 
     const addFileAttachment = async () => {
@@ -986,6 +1173,151 @@ export const TaskItem = memo(function TaskItem({
                 setShowLinkPrompt(false);
             }}
         />
+        {audioAttachment && audioSource && (
+            <div
+                className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+                role="button"
+                tabIndex={0}
+                aria-label={t('common.close')}
+                onClick={closeAudio}
+                onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return;
+                    if (event.currentTarget !== event.target) return;
+                    event.preventDefault();
+                    closeAudio();
+                }}
+            >
+                <div
+                    className="w-full max-w-md bg-popover text-popover-foreground rounded-xl border shadow-2xl p-4 space-y-3"
+                    role="dialog"
+                    aria-modal="true"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">{audioAttachment.title || t('quickAdd.audioNoteTitle')}</div>
+                        <button
+                            type="button"
+                            onClick={closeAudio}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                            {t('common.close')}
+                        </button>
+                    </div>
+                    <audio
+                        ref={audioRef}
+                        controls
+                        src={audioSource}
+                        className="w-full"
+                        onError={() => {
+                            const code = audioRef.current?.error?.code;
+                            const message = code === 1
+                                ? 'Audio playback aborted.'
+                                : code === 2
+                                    ? 'Network error while loading audio.'
+                                    : code === 3
+                                        ? 'Audio decoding failed.'
+                                        : code === 4
+                                            ? 'Audio format not supported.'
+                                            : 'Audio playback failed.';
+                            setAudioError(message);
+                        }}
+                    />
+                    {audioError ? (
+                        <div className="flex items-center justify-between text-xs text-red-500">
+                            <span>{audioError}</span>
+                            <button
+                                type="button"
+                                onClick={openAudioExternally}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                                {t('attachments.open')}
+                            </button>
+                        </div>
+                    ) : null}
+                </div>
+            </div>
+        )}
+        {imageAttachment && imageSource && (
+            <div
+                className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+                role="button"
+                tabIndex={0}
+                aria-label={t('common.close')}
+                onClick={closeImage}
+                onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return;
+                    if (event.currentTarget !== event.target) return;
+                    event.preventDefault();
+                    closeImage();
+                }}
+            >
+                <div
+                    className="w-full max-w-3xl bg-popover text-popover-foreground rounded-xl border shadow-2xl p-4 space-y-3"
+                    role="dialog"
+                    aria-modal="true"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">{imageAttachment.title || t('attachments.title')}</div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => openExternal(imageAttachment.uri)}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                                {t('attachments.open')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={closeImage}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                                {t('common.close')}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-muted/30">
+                        <img src={imageSource} alt={imageAttachment.title} className="block max-w-full h-auto mx-auto" />
+                    </div>
+                </div>
+            </div>
+        )}
+        {textAttachment && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div className="w-full max-w-3xl rounded-lg border border-border bg-card p-4 shadow-xl">
+                    <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">{textAttachment.title || t('attachments.open')}</div>
+                        <button
+                            type="button"
+                            onClick={closeText}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                            {t('common.close')}
+                        </button>
+                    </div>
+                    <div className="mt-3">
+                        {textLoading ? (
+                            <div className="text-xs text-muted-foreground">{t('common.loading')}</div>
+                        ) : textError ? (
+                            <div className="flex items-center justify-between text-xs text-red-500">
+                                <span>{textError}</span>
+                                <button
+                                    type="button"
+                                    onClick={openTextExternally}
+                                    className="text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                    {t('attachments.open')}
+                                </button>
+                            </div>
+                        ) : (
+                            <pre className="max-h-[60vh] overflow-auto rounded border border-border bg-muted/30 p-3 text-xs text-foreground whitespace-pre-wrap">
+                                {textContent}
+                            </pre>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
         </>
     );
 });

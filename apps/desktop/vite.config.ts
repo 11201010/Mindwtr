@@ -2,6 +2,7 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import fs from 'fs'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -19,6 +20,14 @@ export default defineConfig({
     strictPort: true,
     watch: {
       ignored: ['**/src-tauri/**'],
+    },
+    fs: {
+      allow: [
+        path.resolve(__dirname, '..', '..'),
+        ...(fs.existsSync(path.resolve(__dirname, '../../../Mindwtr'))
+          ? [path.resolve(__dirname, '../../../Mindwtr')]
+          : []),
+      ],
     },
   },
   test: {

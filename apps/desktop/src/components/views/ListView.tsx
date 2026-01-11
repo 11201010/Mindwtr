@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { Plus, Filter, AlertTriangle, List } from 'lucide-react';
+import { Plus, Filter, AlertTriangle, List, Mic } from 'lucide-react';
 import { useTaskStore, TaskPriority, TimeEstimate, PRESET_CONTEXTS, PRESET_TAGS, sortTasksBy, Project, parseQuickAdd, matchesHierarchicalToken, safeParseDate, createAIProvider, type AIProviderId } from '@mindwtr/core';
 import type { Task, TaskStatus } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
@@ -648,10 +648,10 @@ export function ListView({ title, statusFilter }: ListViewProps) {
         }
     }, [timeEstimatesEnabled, selectedTimeEstimates.length, setListFilters]);
 
-    const openQuickAdd = useCallback((status: TaskStatus | 'all') => {
+    const openQuickAdd = useCallback((status: TaskStatus | 'all', captureMode?: 'text' | 'audio') => {
         const initialStatus = status === 'all' ? 'inbox' : status;
         window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
-            detail: { initialProps: { status: initialStatus } },
+            detail: { initialProps: { status: initialStatus }, captureMode },
         }));
     }, []);
 
@@ -956,15 +956,25 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                             setCopilotTags([]);
                         }}
                         placeholder={`${t('nav.addTask')}... ${t('quickAdd.example')}`}
-                        className="w-full bg-card border border-border rounded-lg py-3 pl-4 pr-12 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                        className="w-full bg-card border border-border rounded-lg py-3 pl-4 pr-20 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
-                    <button
-                        type="submit"
-                        disabled={!newTaskTitle.trim()}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-primary text-primary-foreground rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
-                    >
-                        <Plus className="w-4 h-4" />
-                    </button>
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => openQuickAdd(statusFilter, 'audio')}
+                            className="p-1.5 bg-muted/60 text-muted-foreground rounded-md hover:bg-muted transition-colors"
+                            aria-label={t('quickAdd.audioCaptureLabel')}
+                        >
+                            <Mic className="w-4 h-4" />
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!newTaskTitle.trim()}
+                            className="p-1.5 bg-primary text-primary-foreground rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+                        >
+                            <Plus className="w-4 h-4" />
+                        </button>
+                    </div>
                 </form>
             )}
             {['inbox', 'next'].includes(statusFilter) && aiEnabled && copilotSuggestion && !copilotApplied && (

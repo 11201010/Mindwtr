@@ -1,18 +1,50 @@
-import { useEffect, useRef, useState } from 'react';
-import { useTaskStore, parseQuickAdd, PRESET_CONTEXTS, safeFormatDate, Task } from '@mindwtr/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    useTaskStore,
+    parseQuickAdd,
+    PRESET_CONTEXTS,
+    safeFormatDate,
+    safeParseDate,
+    generateUUID,
+    type Attachment,
+    type Task,
+} from '@mindwtr/core';
+import { BaseDirectory, mkdir, readFile, remove, writeFile } from '@tauri-apps/plugin-fs';
+import { dataDir, join } from '@tauri-apps/api/path';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
 import { isTauriRuntime } from '../lib/runtime';
+import { loadAIKey } from '../lib/ai-config';
+import { encodeWav, resampleAudio } from '../lib/audio-utils';
+import { processAudioCapture, type SpeechToTextResult } from '../lib/speech-to-text';
+import { DEFAULT_WHISPER_MODEL } from '../lib/speech-models';
 import { TaskInput } from './Task/TaskInput';
 
+const AUDIO_CAPTURE_DIR = 'mindwtr/audio-captures';
+const TARGET_SAMPLE_RATE = 16_000;
+
 export function QuickAddModal() {
-    const { addTask, addProject, projects } = useTaskStore();
+    const { addTask, addProject, projects, settings } = useTaskStore();
     const { t } = useLanguage();
     const [isOpen, setIsOpen] = useState(false);
     const [value, setValue] = useState('');
     const [initialProps, setInitialProps] = useState<Partial<Task> | null>(null);
+    const [forcedCaptureMode, setForcedCaptureMode] = useState<'text' | 'audio' | null>(null);
+    const [captureMode, setCaptureMode] = useState<'text' | 'audio'>(
+        settings?.gtd?.defaultCaptureMethod === 'audio' ? 'audio' : 'text'
+    );
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingBusy, setRecordingBusy] = useState(false);
+    const [recordingError, setRecordingError] = useState<string | null>(null);
+    const [recordingBackend, setRecordingBackend] = useState<'web' | 'native' | null>(null);
     const lastActiveElementRef = useRef<HTMLElement | null>(null);
     const modalRef = useRef<HTMLDivElement | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const audioStreamRef = useRef<MediaStream | null>(null);
+    const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+    const audioChunksRef = useRef<Float32Array[]>([]);
+    const inputSampleRateRef = useRef<number>(16_000);
 
     useEffect(() => {
         if (!isTauriRuntime()) return;
@@ -52,11 +84,12 @@ export function QuickAddModal() {
     }, []);
 
     useEffect(() => {
-        type QuickAddDetail = { initialProps?: Partial<Task>; initialValue?: string };
+        type QuickAddDetail = { initialProps?: Partial<Task>; initialValue?: string; captureMode?: 'text' | 'audio' };
         const handler: EventListener = (event) => {
             const detail = (event as CustomEvent<QuickAddDetail>).detail;
             setInitialProps(detail?.initialProps ?? null);
             setValue(detail?.initialValue ?? '');
+            setForcedCaptureMode(detail?.captureMode ?? null);
             setIsOpen(true);
         };
         window.addEventListener('mindwtr:quick-add', handler);
@@ -69,12 +102,392 @@ export function QuickAddModal() {
         if (!value) setValue('');
     }, [isOpen, value]);
 
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const nextMode = forcedCaptureMode ?? (settings?.gtd?.defaultCaptureMethod === 'audio' ? 'audio' : 'text');
+        setCaptureMode(nextMode);
+        setRecordingError(null);
+    }, [forcedCaptureMode, isOpen, settings?.gtd?.defaultCaptureMethod]);
+
+    const applySpeechResult = useCallback(async (taskId: string, result: SpeechToTextResult) => {
+        const {
+            tasks: currentTasks,
+            projects: currentProjects,
+            addProject: addProjectNow,
+            updateTask: updateTaskNow,
+            settings: currentSettings,
+        } = useTaskStore.getState();
+        const existing = currentTasks.find((task) => task.id === taskId);
+        if (!existing) return;
+
+        const updates: Partial<Task> = {};
+        const mode = currentSettings.ai?.speechToText?.mode ?? 'smart_parse';
+        const fieldStrategy = currentSettings.ai?.speechToText?.fieldStrategy ?? 'smart';
+        const transcript = result.transcript?.trim();
+
+        if (mode === 'transcribe_only') {
+            if (transcript) {
+                if (fieldStrategy === 'description_only') {
+                    updates.description = transcript;
+                } else if (fieldStrategy === 'title_only') {
+                    updates.title = transcript;
+                } else {
+                    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+                    if (wordCount <= 15) {
+                        updates.title = transcript;
+                    } else {
+                        updates.description = transcript;
+                    }
+                }
+            }
+        } else {
+            if (result.title && result.title.trim()) updates.title = result.title.trim();
+            if (result.description !== undefined && result.description !== null) {
+                const desc = result.description.trim();
+                updates.description = desc ? desc : undefined;
+            }
+            if (!updates.title && transcript) {
+                if (fieldStrategy === 'description_only') {
+                    updates.description = transcript;
+                } else if (fieldStrategy === 'title_only') {
+                    updates.title = transcript;
+                } else {
+                    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+                    if (wordCount <= 15) {
+                        updates.title = transcript;
+                    } else {
+                        const words = transcript.split(/\s+/).filter(Boolean);
+                        updates.title = `${words.slice(0, 7).join(' ')}...`;
+                        if (!updates.description) {
+                            updates.description = transcript;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (result.dueDate) {
+            const parsed = safeParseDate(result.dueDate);
+            if (parsed) updates.dueDate = parsed.toISOString();
+        }
+        if (result.startTime) {
+            const parsed = safeParseDate(result.startTime);
+            if (parsed) updates.startTime = parsed.toISOString();
+        }
+
+        const normalizeList = (items: string[] | null | undefined, prefix: string) => {
+            if (!Array.isArray(items)) return [];
+            return items
+                .map((item) => item.trim())
+                .filter(Boolean)
+                .map((item) => (item.startsWith(prefix) ? item : `${prefix}${item}`));
+        };
+
+        const nextTags = normalizeList(result.tags ?? [], '#');
+        const nextContexts = normalizeList(result.contexts ?? [], '@');
+        if (nextTags.length) {
+            updates.tags = Array.from(new Set([...(existing.tags ?? []), ...nextTags]));
+        }
+        if (nextContexts.length) {
+            updates.contexts = Array.from(new Set([...(existing.contexts ?? []), ...nextContexts]));
+        }
+
+        if (result.projectTitle && !existing.projectId) {
+            const trimmed = typeof result.projectTitle === 'string' ? result.projectTitle.trim() : '';
+            if (trimmed) {
+                const match = currentProjects.find((project) => project.title.toLowerCase() === trimmed.toLowerCase());
+                if (match) {
+                    updates.projectId = match.id;
+                } else {
+                    const created = await addProjectNow(trimmed, '#94a3b8');
+                    updates.projectId = created.id;
+                }
+            }
+        }
+
+        if (Object.keys(updates).length) {
+            await updateTaskNow(taskId, updates);
+        }
+    }, []);
+
     const close = () => {
         setIsOpen(false);
         setInitialProps(null);
         setValue('');
+        setForcedCaptureMode(null);
         lastActiveElementRef.current?.focus();
     };
+
+    const startRecording = useCallback(async () => {
+        if (recordingBusy || isRecording) return;
+        setRecordingError(null);
+        try {
+            if (isTauriRuntime()) {
+                const { invoke } = await import('@tauri-apps/api/core');
+                await invoke('start_audio_recording');
+                setRecordingBackend('native');
+                setIsRecording(true);
+                return;
+            }
+            if (!navigator.mediaDevices?.getUserMedia) {
+                setRecordingError(t('quickAdd.audioErrorBody'));
+                return;
+            }
+            if (navigator.mediaDevices.enumerateDevices) {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const hasInput = devices.some((device) => device.kind === 'audioinput');
+                if (!hasInput) {
+                    setRecordingError(`${t('quickAdd.audioErrorBody')} (No microphone detected)`);
+                    return;
+                }
+            }
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const AudioContextConstructor =
+                window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+            if (!AudioContextConstructor) {
+                throw new Error('AudioContext unavailable');
+            }
+            const context = new AudioContextConstructor();
+            await context.resume();
+            const source = context.createMediaStreamSource(stream);
+            const processor = context.createScriptProcessor(4096, 1, 1);
+            const zeroGain = context.createGain();
+            zeroGain.gain.value = 0;
+            audioChunksRef.current = [];
+            inputSampleRateRef.current = context.sampleRate;
+            processor.onaudioprocess = (event) => {
+                const channel = event.inputBuffer.getChannelData(0);
+                audioChunksRef.current.push(new Float32Array(channel));
+            };
+            source.connect(processor);
+            processor.connect(zeroGain);
+            zeroGain.connect(context.destination);
+            audioContextRef.current = context;
+            audioStreamRef.current = stream;
+            audioSourceRef.current = source;
+            audioProcessorRef.current = processor;
+            setRecordingBackend('web');
+            setIsRecording(true);
+        } catch (error) {
+            console.error('Audio recording failed', error);
+            const message = error instanceof Error ? error.message : String(error);
+            setRecordingError(`${t('quickAdd.audioErrorBody')} (${message})`);
+        }
+    }, [isRecording, recordingBusy, t]);
+
+    const stopRecording = useCallback(async ({ saveTask }: { saveTask: boolean }) => {
+        if (recordingBusy) return;
+        if (!isRecording) return;
+        setRecordingBusy(true);
+        setIsRecording(false);
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+        try {
+            type NativeResult = {
+                path: string;
+                relativePath: string;
+                sampleRate: number;
+                channels: number;
+                size: number;
+            };
+
+            let wavBytes: Uint8Array | null = null;
+            let fileName: string;
+            let relativePath: string;
+            let absolutePath: string;
+            let audioByteSize: number | undefined;
+
+            const now = new Date();
+            if (recordingBackend === 'native' && isTauriRuntime()) {
+                const { invoke } = await import('@tauri-apps/api/core');
+                const result = await invoke<NativeResult>('stop_audio_recording');
+                relativePath = result.relativePath;
+                absolutePath = result.path;
+                const parts = absolutePath.split(/[\\/]/);
+                fileName = parts[parts.length - 1] || 'mindwtr-audio.wav';
+                audioByteSize = result.size;
+            } else {
+                audioProcessorRef.current?.disconnect();
+                audioSourceRef.current?.disconnect();
+                audioProcessorRef.current = null;
+                audioSourceRef.current = null;
+                audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+                audioStreamRef.current = null;
+                if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                    await audioContextRef.current.close();
+                }
+                audioContextRef.current = null;
+
+                const chunks = audioChunksRef.current;
+                audioChunksRef.current = [];
+                if (!saveTask) return;
+                if (!chunks.length) {
+                    throw new Error('No audio data captured');
+                }
+
+                const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                const buffer = new Float32Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    buffer.set(chunk, offset);
+                    offset += chunk.length;
+                }
+                const resampled = resampleAudio(buffer, inputSampleRateRef.current, TARGET_SAMPLE_RATE);
+                wavBytes = encodeWav(resampled, TARGET_SAMPLE_RATE);
+                audioByteSize = wavBytes.length;
+
+                const timestamp = safeFormatDate(now, 'yyyyMMdd-HHmmss');
+                fileName = `mindwtr-audio-${timestamp}.wav`;
+                await mkdir(AUDIO_CAPTURE_DIR, { baseDir: BaseDirectory.Data, recursive: true });
+                relativePath = `${AUDIO_CAPTURE_DIR}/${fileName}`;
+                await writeFile(relativePath, wavBytes, { baseDir: BaseDirectory.Data });
+                const baseDir = await dataDir();
+                absolutePath = await join(baseDir, AUDIO_CAPTURE_DIR, fileName);
+            }
+
+            if (!saveTask) {
+                remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
+                    console.warn('Audio cleanup failed', error);
+                });
+                return;
+            }
+
+            const nowIso = now.toISOString();
+            const displayTitle = `${t('quickAdd.audioNoteTitle')} ${safeFormatDate(now, 'MMM d, HH:mm')}`;
+            const speech = settings.ai?.speechToText;
+            const provider = speech?.provider ?? 'gemini';
+            const model = speech?.model ?? (
+                provider === 'openai' ? 'gpt-4o-transcribe'
+                    : provider === 'gemini' ? 'gemini-2.5-flash'
+                        : DEFAULT_WHISPER_MODEL
+            );
+            const apiKey = provider === 'whisper' ? '' : await loadAIKey(provider).catch(() => '');
+            const modelPath = provider === 'whisper' ? speech?.offlineModelPath : undefined;
+            const speechReady = speech?.enabled
+                ? provider === 'whisper'
+                    ? Boolean(modelPath)
+                    : Boolean(apiKey)
+                : false;
+            const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false || !speechReady;
+
+            const attachment: Attachment | null = saveAudioAttachments
+                ? {
+                    id: generateUUID(),
+                    kind: 'file',
+                    title: displayTitle,
+                    uri: absolutePath,
+                    mimeType: 'audio/wav',
+                    size: audioByteSize,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                }
+                : null;
+
+            const taskId = generateUUID();
+            const attachments = [...(initialProps?.attachments ?? [])];
+            if (attachment) attachments.push(attachment);
+            const props: Partial<Task> = {
+                status: 'inbox',
+                ...initialProps,
+                attachments,
+                id: taskId,
+            };
+            if (!props.status) props.status = 'inbox';
+
+            await addTask(displayTitle, props);
+            close();
+
+            const runSpeech = async (bytes: Uint8Array) => {
+                const timeZone = typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
+                    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+                    : undefined;
+                void processAudioCapture(
+                    { bytes, mimeType: 'audio/wav', name: fileName, path: absolutePath },
+                    {
+                        provider,
+                        apiKey,
+                        model,
+                        modelPath,
+                        language: speech?.language,
+                        mode: speech?.mode ?? 'smart_parse',
+                        fieldStrategy: speech?.fieldStrategy ?? 'smart',
+                        parseModel: provider === 'openai' && settings.ai?.provider === 'openai' ? settings.ai?.model : undefined,
+                        now: new Date(),
+                        timeZone,
+                    }
+                )
+                    .then((result) => applySpeechResult(taskId, result))
+                    .catch((error) => console.warn('Speech-to-text failed', error))
+                    .finally(() => {
+                        if (!saveAudioAttachments) {
+                            remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
+                                console.warn('Audio cleanup failed', error);
+                            });
+                        }
+                    });
+            };
+
+            if (speechReady) {
+                if (wavBytes) {
+                    void runSpeech(wavBytes);
+                } else {
+                    void readFile(relativePath, { baseDir: BaseDirectory.Data })
+                        .then((bytes) => (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)))
+                        .then((bytes) => runSpeech(bytes))
+                        .catch((error) => {
+                            console.warn('Failed to load audio for transcription', error);
+                            if (!saveAudioAttachments) {
+                                remove(relativePath, { baseDir: BaseDirectory.Data }).catch((cleanupError) => {
+                                    console.warn('Audio cleanup failed', cleanupError);
+                                });
+                            }
+                        });
+                }
+            } else if (!saveAudioAttachments) {
+                remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
+                    console.warn('Audio cleanup failed', error);
+                });
+            }
+        } catch (error) {
+            console.error('Failed to save recording', error);
+            const message = error instanceof Error ? error.message : String(error);
+            setRecordingError(`${t('quickAdd.audioErrorBody')} (${message})`);
+        } finally {
+            setRecordingBusy(false);
+            setRecordingBackend(null);
+        }
+    }, [
+        addTask,
+        applySpeechResult,
+        close,
+        initialProps,
+        isRecording,
+        recordingBusy,
+        recordingBackend,
+        settings.ai?.model,
+        settings.ai?.provider,
+        settings.ai?.speechToText,
+        settings.gtd?.saveAudioAttachments,
+        t,
+    ]);
+
+    const handleClose = () => {
+        if (isRecording && !recordingBusy) {
+            void stopRecording({ saveTask: false });
+        }
+        close();
+    };
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const handler = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            handleClose();
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [handleClose, isOpen]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -106,12 +519,12 @@ export function QuickAddModal() {
             role="button"
             tabIndex={0}
             aria-label={t('common.close')}
-            onClick={close}
+            onClick={handleClose}
             onKeyDown={(event) => {
                 if (event.key !== 'Escape') return;
                 if (event.currentTarget !== event.target) return;
                 event.preventDefault();
-                close();
+                handleClose();
             }}
         >
             <div
@@ -143,52 +556,118 @@ export function QuickAddModal() {
             >
                 <div className="px-4 py-3 border-b flex items-center justify-between">
                     <h3 className="font-semibold">{t('nav.addTask')}</h3>
-                    <button onClick={close} className="text-sm text-muted-foreground hover:text-foreground">Esc</button>
+                    <button onClick={handleClose} className="text-sm text-muted-foreground hover:text-foreground">Esc</button>
                 </div>
-                <form onSubmit={handleSubmit} className="p-4 space-y-2">
-                    <TaskInput
-                        value={value}
-                        autoFocus
-                        projects={projects}
-                        contexts={PRESET_CONTEXTS}
-                        onCreateProject={async (title) => {
-                            const created = await addProject(title, '#94a3b8');
-                            return created.id;
-                        }}
-                        onChange={(next) => setValue(next)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                                e.preventDefault();
-                                close();
-                            }
-                        }}
-                        placeholder={t('nav.addTask')}
-                        className={cn(
-                            "w-full bg-card border border-border rounded-lg py-3 px-4 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all",
-                        )}
-                    />
-                    <p className="text-xs text-muted-foreground">{t('quickAdd.help')}</p>
-                    {scheduledLabel && (
-                        <p className="text-xs text-muted-foreground">
-                            {t('calendar.scheduleAction')}: {scheduledLabel}
-                        </p>
-                    )}
-                    <div className="flex justify-end gap-2 pt-1">
+                <div className="px-4 pt-4">
+                    <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1">
                         <button
                             type="button"
-                            onClick={close}
-                            className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80"
+                            onClick={() => setCaptureMode('text')}
+                            className={cn(
+                                'px-3 py-1 text-xs rounded-md transition-colors',
+                                captureMode === 'text' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                            )}
                         >
-                            {t('common.cancel')}
+                            {t('settings.captureDefaultText')}
                         </button>
                         <button
-                            type="submit"
-                            className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+                            type="button"
+                            onClick={() => setCaptureMode('audio')}
+                            className={cn(
+                                'px-3 py-1 text-xs rounded-md transition-colors',
+                                captureMode === 'audio' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                            )}
                         >
-                            {t('common.save')}
+                            {t('settings.captureDefaultAudio')}
                         </button>
                     </div>
-                </form>
+                </div>
+                {captureMode === 'text' ? (
+                    <form onSubmit={handleSubmit} className="p-4 space-y-2">
+                        <TaskInput
+                            value={value}
+                            autoFocus={captureMode === 'text'}
+                            projects={projects}
+                            contexts={PRESET_CONTEXTS}
+                            onCreateProject={async (title) => {
+                                const created = await addProject(title, '#94a3b8');
+                                return created.id;
+                            }}
+                            onChange={(next) => setValue(next)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    handleClose();
+                                }
+                            }}
+                            placeholder={t('nav.addTask')}
+                            className={cn(
+                                "w-full bg-card border border-border rounded-lg py-3 px-4 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all",
+                            )}
+                        />
+                        <p className="text-xs text-muted-foreground">{t('quickAdd.help')}</p>
+                        {scheduledLabel && (
+                            <p className="text-xs text-muted-foreground">
+                                {t('calendar.scheduleAction')}: {scheduledLabel}
+                            </p>
+                        )}
+                        <div className="flex justify-end gap-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={handleClose}
+                                className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80"
+                            >
+                                {t('common.cancel')}
+                            </button>
+                            <button
+                                type="submit"
+                                className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90"
+                            >
+                                {t('common.save')}
+                            </button>
+                        </div>
+                    </form>
+                ) : (
+                    <div className="p-4 space-y-4">
+                        <div className="flex flex-col items-center justify-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (recordingBusy) return;
+                                    if (isRecording) {
+                                        void stopRecording({ saveTask: true });
+                                    } else {
+                                        void startRecording();
+                                    }
+                                }}
+                                className={cn(
+                                    'h-16 w-16 rounded-full flex items-center justify-center text-sm font-medium transition-colors',
+                                    isRecording ? 'bg-red-500 text-white' : 'bg-primary text-primary-foreground',
+                                    recordingBusy ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-90'
+                                )}
+                                aria-label={isRecording ? t('quickAdd.audioStop') : t('quickAdd.audioRecord')}
+                                disabled={recordingBusy}
+                            >
+                                {isRecording ? t('quickAdd.audioStop') : t('quickAdd.audioRecord')}
+                            </button>
+                            <div className="text-xs text-muted-foreground">
+                                {isRecording ? t('quickAdd.audioRecording') : t('quickAdd.audioCaptureLabel')}
+                            </div>
+                            {recordingError ? (
+                                <div className="text-xs text-red-500 text-center">{recordingError}</div>
+                            ) : null}
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={handleClose}
+                                className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80"
+                            >
+                                {t('common.cancel')}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

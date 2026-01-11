@@ -12,6 +12,7 @@ import { Markdown } from '../Markdown';
 import { PromptModal } from '../PromptModal';
 import { isTauriRuntime } from '../../lib/runtime';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
+import { invoke } from '@tauri-apps/api/core';
 
 function toDateTimeLocalValue(dateStr: string | undefined): string {
     if (!dateStr) return '';
@@ -478,13 +479,18 @@ export function ProjectsView() {
         setProjectTaskTitle('');
     }, [selectedProject?.id]);
 
-    const openAttachment = (attachment: Attachment) => {
-        if (attachment.kind === 'link') {
-            window.open(attachment.uri, '_blank');
-            return;
+    const openAttachment = async (attachment: Attachment) => {
+        const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(attachment.uri);
+        const normalized = hasScheme ? attachment.uri : `file://${attachment.uri}`;
+        if (isTauriRuntime()) {
+            try {
+                await invoke('open_path', { path: attachment.uri });
+                return;
+            } catch (error) {
+                console.warn('Failed to open attachment', error);
+            }
         }
-        const url = attachment.uri.startsWith('file://') ? attachment.uri : `file://${attachment.uri}`;
-        window.open(url, '_blank');
+        window.open(normalized, '_blank');
     };
 
     const addProjectFileAttachment = async () => {

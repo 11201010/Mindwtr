@@ -30,6 +30,7 @@ import type { DateTimePickerEvent } from '@react-native-community/datetimepicker
 import * as DocumentPicker from 'expo-document-picker';
 import * as Linking from 'expo-linking';
 import * as Sharing from 'expo-sharing';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownText } from './markdown-text';
@@ -122,6 +123,11 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const [editTab, setEditTab] = useState<TaskEditTab>('task');
     const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [linkModalVisible, setLinkModalVisible] = useState(false);
+    const [audioModalVisible, setAudioModalVisible] = useState(false);
+    const [audioAttachment, setAudioAttachment] = useState<Attachment | null>(null);
+    const [audioStatus, setAudioStatus] = useState<AVPlaybackStatus | null>(null);
+    const [audioLoading, setAudioLoading] = useState(false);
+    const audioSoundRef = useRef<Audio.Sound | null>(null);
     const [showProjectPicker, setShowProjectPicker] = useState(false);
     const [linkInput, setLinkInput] = useState('');
     const [customWeekdays, setCustomWeekdays] = useState<RecurrenceWeekday[]>([]);
@@ -252,6 +258,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             copilotMountedRef.current = false;
         };
     }, []);
+
 
     useEffect(() => {
         contextOptionsRef.current = contextOptions;
@@ -546,9 +553,86 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         setLinkModalVisible(false);
     };
 
+    const isAudioAttachment = (attachment: Attachment) => {
+        const mime = attachment.mimeType?.toLowerCase();
+        if (mime?.startsWith('audio/')) return true;
+        return /\.(m4a|aac|mp3|wav|caf|ogg|oga|3gp|3gpp)$/i.test(attachment.uri);
+    };
+
+    const unloadAudio = useCallback(async () => {
+        const sound = audioSoundRef.current;
+        audioSoundRef.current = null;
+        if (sound) {
+            try {
+                await sound.stopAsync();
+            } catch (error) {
+                console.warn('Stop audio failed', error);
+            }
+            try {
+                await sound.unloadAsync();
+            } catch (error) {
+                console.warn('Unload audio failed', error);
+            }
+        }
+        setAudioStatus(null);
+    }, []);
+
+    const openAudioAttachment = useCallback(async (attachment: Attachment) => {
+        setAudioAttachment(attachment);
+        setAudioModalVisible(true);
+        setAudioLoading(true);
+        try {
+            await unloadAudio();
+            await Audio.setAudioModeAsync({
+                playsInSilentModeIOS: true,
+                shouldDuckAndroid: true,
+                allowsRecordingIOS: false,
+            });
+            const { sound, status } = await Audio.Sound.createAsync(
+                { uri: attachment.uri },
+                { shouldPlay: true },
+                (nextStatus) => setAudioStatus(nextStatus)
+            );
+            audioSoundRef.current = sound;
+            setAudioStatus(status);
+        } catch (error) {
+            console.error('Failed to play audio attachment', error);
+            Alert.alert(t('quickAdd.audioErrorTitle'), t('quickAdd.audioErrorBody'));
+            setAudioModalVisible(false);
+            setAudioAttachment(null);
+        } finally {
+            setAudioLoading(false);
+        }
+    }, [t, unloadAudio]);
+
+    const closeAudioModal = useCallback(() => {
+        setAudioModalVisible(false);
+        setAudioAttachment(null);
+        setAudioLoading(false);
+        void unloadAudio();
+    }, [unloadAudio]);
+
+    const toggleAudioPlayback = useCallback(async () => {
+        const sound = audioSoundRef.current;
+        if (!sound || !audioStatus || !audioStatus.isLoaded) return;
+        try {
+            if (audioStatus.isPlaying) {
+                await sound.pauseAsync();
+            } else {
+                await sound.playAsync();
+            }
+        } catch (error) {
+            console.warn('Toggle audio playback failed', error);
+        }
+    }, [audioStatus]);
+
     const openAttachment = async (attachment: Attachment) => {
         if (attachment.kind === 'link') {
             Linking.openURL(attachment.uri).catch(console.error);
+            return;
+        }
+        if (isAudioAttachment(attachment)) {
+            openAudioAttachment(attachment).catch(console.error);
             return;
         }
         const available = await Sharing.isAvailableAsync().catch((error) => {
@@ -567,6 +651,26 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         if (mime?.startsWith('image/')) return true;
         return /\.(png|jpg|jpeg|gif|webp|heic|heif)$/i.test(attachment.uri);
     };
+
+    const formatAudioTimestamp = (millis?: number) => {
+        if (!millis || millis < 0) return '0:00';
+        const totalSeconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    };
+
+    useEffect(() => {
+        if (!visible) {
+            closeAudioModal();
+        }
+    }, [closeAudioModal, visible]);
+
+    useEffect(() => {
+        return () => {
+            void unloadAudio();
+        };
+    }, [unloadAudio]);
 
     const removeAttachment = (id: string) => {
         const now = new Date().toISOString();
@@ -1833,6 +1937,42 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                             </View>
                         </View>
                     </View>
+                </Modal>
+                <Modal
+                    visible={audioModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={closeAudioModal}
+                >
+                    <Pressable style={styles.overlay} onPress={closeAudioModal}>
+                        <Pressable
+                            style={[styles.modalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                            onPress={(event) => event.stopPropagation()}
+                        >
+                            <Text style={[styles.modalTitle, { color: tc.text }]}>
+                                {audioAttachment?.title || t('quickAdd.audioNoteTitle')}
+                            </Text>
+                            <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>
+                                {audioStatus && audioStatus.isLoaded
+                                    ? `${formatAudioTimestamp(audioStatus.positionMillis)} / ${formatAudioTimestamp(audioStatus.durationMillis)}`
+                                    : t('audio.loading')}
+                            </Text>
+                            <View style={styles.modalButtons}>
+                                <TouchableOpacity
+                                    onPress={toggleAudioPlayback}
+                                    disabled={audioLoading || !audioStatus?.isLoaded}
+                                    style={[styles.modalButton, (audioLoading || !audioStatus?.isLoaded) && styles.modalButtonDisabled]}
+                                >
+                                    <Text style={[styles.modalButtonText, { color: tc.tint }]}>
+                                        {audioStatus?.isLoaded && audioStatus.isPlaying ? t('common.pause') : t('common.play')}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={closeAudioModal} style={styles.modalButton}>
+                                    <Text style={[styles.modalButtonText, { color: tc.secondaryText }]}>{t('common.close')}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </Pressable>
+                    </Pressable>
                 </Modal>
                 <Modal
                     visible={customRecurrenceVisible}

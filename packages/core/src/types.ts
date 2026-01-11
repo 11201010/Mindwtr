@@ -140,6 +140,8 @@ export interface AppData {
                 defaultsVersion?: number;
             };
             autoArchiveDays?: number;
+            defaultCaptureMethod?: 'text' | 'audio';
+            saveAudioAttachments?: boolean;
         };
         features?: {
             priorities?: boolean;
@@ -166,6 +168,15 @@ export interface AppData {
             reasoningEffort?: 'low' | 'medium' | 'high';
             thinkingBudget?: number;
             copilotModel?: string;
+            speechToText?: {
+                enabled?: boolean;
+                provider?: 'openai' | 'gemini' | 'whisper';
+                model?: string;
+                language?: string;
+                mode?: 'smart_parse' | 'transcribe_only';
+                fieldStrategy?: 'smart' | 'title_only' | 'description_only';
+                offlineModelPath?: string;
+            };
         };
         savedSearches?: SavedSearch[];
         sidebarCollapsed?: boolean;
