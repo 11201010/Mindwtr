@@ -356,6 +356,12 @@ jobs:
           sed -i "s/^pkgrel=.*/pkgrel=1/" aur/PKGBUILD
         shell: bash
 
+      - name: Update .SRCINFO
+        run: |
+          cd aur
+          makepkg --printsrcinfo > .SRCINFO
+        shell: bash
+
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v3
         with:
