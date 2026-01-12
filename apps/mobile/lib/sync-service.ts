@@ -1,18 +1,52 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle } from '@mindwtr/core';
+import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logSyncError, sanitizeLogMessage } from './app-log';
 import { readSyncFile, writeSyncFile } from './storage-file';
-
-export const SYNC_PATH_KEY = '@mindwtr_sync_path';
-export const SYNC_BACKEND_KEY = '@mindwtr_sync_backend';
-export const WEBDAV_URL_KEY = '@mindwtr_webdav_url';
-export const WEBDAV_USERNAME_KEY = '@mindwtr_webdav_username';
-export const WEBDAV_PASSWORD_KEY = '@mindwtr_webdav_password';
-export const CLOUD_URL_KEY = '@mindwtr_cloud_url';
-export const CLOUD_TOKEN_KEY = '@mindwtr_cloud_token';
+import { getBaseSyncUrl, getCloudBaseUrl, sanitizeAppDataForRemote, syncCloudAttachments, syncFileAttachments, syncWebdavAttachments } from './attachment-sync';
+import * as FileSystem from 'expo-file-system/legacy';
+import {
+  SYNC_PATH_KEY,
+  SYNC_BACKEND_KEY,
+  WEBDAV_URL_KEY,
+  WEBDAV_USERNAME_KEY,
+  WEBDAV_PASSWORD_KEY,
+  CLOUD_URL_KEY,
+  CLOUD_TOKEN_KEY,
+} from './sync-constants';
 
 const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const SYNC_FILE_NAME = 'data.json';
+const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
+
+const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
+  if (!lastCleanupAt) return true;
+  const parsed = Date.parse(lastCleanupAt);
+  if (Number.isNaN(parsed)) return true;
+  return Date.now() - parsed >= CLEANUP_INTERVAL_MS;
+};
+
+const deleteAttachmentFile = async (uri?: string): Promise<void> => {
+  if (!uri) return;
+  if (uri.startsWith('content://') || /^https?:\/\//i.test(uri)) return;
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch (error) {
+    console.warn('Failed to delete attachment file', error);
+  }
+};
+
+const isSyncFilePath = (path: string) =>
+  path.endsWith(`/${SYNC_FILE_NAME}`) || path.endsWith(`/${LEGACY_SYNC_FILE_NAME}`);
+
+const getFileSyncBaseDir = (syncPath: string) => {
+  const trimmed = syncPath.replace(/\/+$/, '');
+  if (isSyncFilePath(trimmed)) {
+    return trimmed.replace(/\/[^/]+$/, '');
+  }
+  return trimmed;
+};
 
 let syncInFlight: Promise<{ success: boolean; stats?: MergeStats; error?: string }> | null = null;
 let syncQueued = false;
@@ -75,23 +109,102 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           wroteLocal = true;
         },
         writeRemote: async (data) => {
+          const sanitized = sanitizeAppDataForRemote(data);
           if (backend === 'webdav') {
             if (!webdavConfig?.url) throw new Error('WebDAV URL not configured');
-            await webdavPutJson(webdavConfig.url, data, { username: webdavConfig.username, password: webdavConfig.password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
+            await webdavPutJson(webdavConfig.url, sanitized, { username: webdavConfig.username, password: webdavConfig.password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
             return;
           }
           if (backend === 'cloud') {
             if (!cloudConfig?.url) throw new Error('Self-hosted URL not configured');
-            await cloudPutJson(cloudConfig.url, data, { token: cloudConfig.token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
+            await cloudPutJson(cloudConfig.url, sanitized, { token: cloudConfig.token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
             return;
           }
           if (!fileSyncPath) throw new Error('No sync file configured');
-          await writeSyncFile(fileSyncPath, data);
+          await writeSyncFile(fileSyncPath, sanitized);
         },
         onStep: (next) => {
           step = next;
         },
       });
+
+      let mergedData = syncResult.data;
+
+      if (backend === 'webdav' && webdavConfig?.url) {
+        step = 'attachments';
+        const baseSyncUrl = getBaseSyncUrl(webdavConfig.url);
+        const mutated = await syncWebdavAttachments(mergedData, webdavConfig, baseSyncUrl);
+        if (mutated) {
+          await mobileStorage.saveData(mergedData);
+          wroteLocal = true;
+        }
+      }
+
+      if (backend === 'cloud' && cloudConfig?.url) {
+        step = 'attachments';
+        const baseSyncUrl = getCloudBaseUrl(cloudConfig.url);
+        const mutated = await syncCloudAttachments(mergedData, cloudConfig, baseSyncUrl);
+        if (mutated) {
+          await mobileStorage.saveData(mergedData);
+          wroteLocal = true;
+        }
+      }
+
+      if (backend === 'file' && fileSyncPath) {
+        step = 'attachments';
+        const mutated = await syncFileAttachments(mergedData, fileSyncPath);
+        if (mutated) {
+          await mobileStorage.saveData(mergedData);
+          wroteLocal = true;
+        }
+      }
+
+      if (shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt)) {
+        step = 'attachments_cleanup';
+        const orphaned = findOrphanedAttachments(mergedData);
+        if (orphaned.length > 0) {
+          const isFileBackend = backend === 'file';
+          const isWebdavBackend = backend === 'webdav' && webdavConfig?.url;
+          const isCloudBackend = backend === 'cloud' && cloudConfig?.url;
+          const fileBaseDir = isFileBackend && fileSyncPath && !fileSyncPath.startsWith('content://')
+            ? getFileSyncBaseDir(fileSyncPath)
+            : null;
+
+          for (const attachment of orphaned) {
+            await deleteAttachmentFile(attachment.uri);
+            if (attachment.cloudKey) {
+              try {
+                if (isWebdavBackend && webdavConfig) {
+                  const baseSyncUrl = getBaseSyncUrl(webdavConfig.url);
+                  await webdavDeleteFile(`${baseSyncUrl}/${attachment.cloudKey}`, {
+                    username: webdavConfig.username,
+                    password: webdavConfig.password,
+                    timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+                  });
+                } else if (isCloudBackend && cloudConfig) {
+                  const baseSyncUrl = getCloudBaseUrl(cloudConfig.url);
+                  await cloudDeleteFile(`${baseSyncUrl}/${attachment.cloudKey}`, {
+                    token: cloudConfig.token,
+                    timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+                  });
+                } else if (fileBaseDir) {
+                  const targetPath = `${fileBaseDir}/${attachment.cloudKey}`;
+                  await FileSystem.deleteAsync(targetPath, { idempotent: true });
+                }
+              } catch (error) {
+                console.warn('Failed to delete remote attachment', error);
+              }
+            }
+          }
+          mergedData = removeOrphanedAttachmentsFromData(mergedData);
+        }
+        mergedData.settings.attachments = {
+          ...mergedData.settings.attachments,
+          lastCleanupAt: new Date().toISOString(),
+        };
+        await mobileStorage.saveData(mergedData);
+        wroteLocal = true;
+      }
 
       step = 'refresh';
       await useTaskStore.getState().fetchData();

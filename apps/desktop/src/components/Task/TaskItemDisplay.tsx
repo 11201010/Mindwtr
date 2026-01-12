@@ -3,6 +3,7 @@ import type { Attachment, Project, Task, TaskStatus, RecurrenceRule, RecurrenceS
 import { getChecklistProgress, getTaskAgeLabel, getTaskStaleness, getTaskUrgency, hasTimeComponent, safeFormatDate, stripMarkdown, resolveTaskTextDirection } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
 import { MetadataBadge } from '../ui/MetadataBadge';
+import { AttachmentProgressIndicator } from '../AttachmentProgressIndicator';
 
 interface TaskItemDisplayProps {
     task: Task;
@@ -156,19 +157,21 @@ export function TaskItemDisplay({
                             <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground">
                                 <Paperclip className="w-3 h-3" />
                                 {visibleAttachments.map((attachment) => (
-                                    <button
-                                        key={attachment.id}
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            openAttachment(attachment);
-                                        }}
-                                        className="truncate hover:underline"
-                                        title={attachment.title}
-                                    >
-                                        {attachment.title}
-                                    </button>
+                                    <div key={attachment.id} className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                openAttachment(attachment);
+                                            }}
+                                            className="truncate hover:underline"
+                                            title={attachment.title}
+                                        >
+                                            {attachment.title}
+                                        </button>
+                                        <AttachmentProgressIndicator attachmentId={attachment.id} />
+                                    </div>
                                 ))}
                             </div>
                         )}

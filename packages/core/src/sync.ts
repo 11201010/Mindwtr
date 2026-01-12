@@ -228,23 +228,38 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         areas: incoming.areas || [],
     };
 
-    const mergeAttachments = (a?: Attachment[], b?: Attachment[]): Attachment[] | undefined => {
-        const aList = a || [];
-        const bList = b || [];
-        if (aList.length === 0 && bList.length === 0) return undefined;
-        const merged = mergeEntities(aList, bList);
-        return merged.length > 0 ? merged : undefined;
+    const mergeAttachments = (local?: Attachment[], incoming?: Attachment[]): Attachment[] | undefined => {
+        const localList = local || [];
+        const incomingList = incoming || [];
+        if (localList.length === 0 && incomingList.length === 0) return undefined;
+        const merged = mergeEntities(localList, incomingList);
+        if (merged.length === 0) return undefined;
+        if (localList.length === 0) return merged;
+
+        const localById = new Map(localList.map((item) => [item.id, item]));
+        return merged.map((attachment) => {
+            const localAttachment = localById.get(attachment.id);
+            if (!localAttachment) return attachment;
+            if (attachment.kind !== 'file' || localAttachment.kind !== 'file') {
+                return attachment;
+            }
+            return {
+                ...attachment,
+                cloudKey: attachment.cloudKey || localAttachment.cloudKey,
+                fileHash: attachment.fileHash || localAttachment.fileHash,
+                uri: localAttachment.uri,
+                localStatus: localAttachment.localStatus,
+            };
+        });
     };
 
     const tasksResult = mergeEntitiesWithStats(localNormalized.tasks, incomingNormalized.tasks, (localTask: Task, incomingTask: Task, winner: Task) => {
-        const loser = winner === incomingTask ? localTask : incomingTask;
-        const attachments = mergeAttachments(winner.attachments, loser.attachments);
+        const attachments = mergeAttachments(localTask.attachments, incomingTask.attachments);
         return attachments ? { ...winner, attachments } : winner;
     });
 
     const projectsResult = mergeEntitiesWithStats(localNormalized.projects, incomingNormalized.projects, (localProject: Project, incomingProject: Project, winner: Project) => {
-        const loser = winner === incomingProject ? localProject : incomingProject;
-        const attachments = mergeAttachments(winner.attachments, loser.attachments);
+        const attachments = mergeAttachments(localProject.attachments, incomingProject.attachments);
         return attachments ? { ...winner, attachments } : winner;
     });
 

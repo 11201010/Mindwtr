@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pres
 import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore } from '@mindwtr/core';
+import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
 import { Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -15,6 +15,8 @@ import { useLanguage } from '../../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownText } from '../../components/markdown-text';
 import { ListSectionHeader, defaultListContentStyle } from '@/components/list-layout';
+import { ensureAttachmentAvailable } from '../../lib/attachment-sync';
+import { AttachmentProgressIndicator } from '../../components/AttachmentProgressIndicator';
 
 export default function ProjectsScreen() {
   const { projects, tasks, areas, addProject, updateProject, deleteProject, toggleProjectFocus, addArea, updateArea, deleteArea, reorderAreas } = useTaskStore();
@@ -45,6 +47,11 @@ export default function ProjectsScreen() {
   const [selectedTagFilter, setSelectedTagFilter] = useState(ALL_TAGS);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
+  const resolveValidationMessage = (error?: string) => {
+    if (error === 'file_too_large') return t('attachments.fileTooLarge');
+    if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
+    return t('attachments.fileNotSupported');
+  };
 
   const formatReviewDate = (dateStr?: string) => {
     if (!dateStr) return t('common.notSet');
@@ -323,8 +330,42 @@ export default function ProjectsScreen() {
   };
 
   const openAttachment = async (attachment: Attachment) => {
-    if (attachment.kind === 'link') {
-      Linking.openURL(attachment.uri).catch(console.error);
+    const shouldDownload = attachment.kind === 'file'
+      && attachment.cloudKey
+      && (attachment.localStatus === 'missing' || !attachment.uri);
+    if (shouldDownload && selectedProject) {
+      const next = (selectedProject.attachments || []).map((item) =>
+        item.id === attachment.id ? { ...item, localStatus: 'downloading' } : item
+      );
+      updateProject(selectedProject.id, { attachments: next });
+      setSelectedProject({ ...selectedProject, attachments: next });
+    }
+
+    const resolved = await ensureAttachmentAvailable(attachment);
+    if (!resolved) {
+      if (shouldDownload && selectedProject) {
+        const next = (selectedProject.attachments || []).map((item) =>
+          item.id === attachment.id ? { ...item, localStatus: 'missing' } : item
+        );
+        updateProject(selectedProject.id, { attachments: next });
+        setSelectedProject({ ...selectedProject, attachments: next });
+      }
+      const message = attachment.kind === 'file' ? t('attachments.missing') : t('attachments.fileNotSupported');
+      Alert.alert(t('attachments.title'), message);
+      return;
+    }
+    if (resolved.uri !== attachment.uri || resolved.localStatus !== attachment.localStatus) {
+      const next = (selectedProject?.attachments || []).map((item) =>
+        item.id === resolved.id ? { ...item, ...resolved } : item
+      );
+      if (selectedProject) {
+        updateProject(selectedProject.id, { attachments: next });
+        setSelectedProject({ ...selectedProject, attachments: next });
+      }
+    }
+
+    if (resolved.kind === 'link') {
+      Linking.openURL(resolved.uri).catch(console.error);
       return;
     }
 
@@ -333,9 +374,42 @@ export default function ProjectsScreen() {
       return false;
     });
     if (available) {
-      Sharing.shareAsync(attachment.uri).catch(console.error);
+      Sharing.shareAsync(resolved.uri).catch(console.error);
     } else {
-      Linking.openURL(attachment.uri).catch(console.error);
+      Linking.openURL(resolved.uri).catch(console.error);
+    }
+  };
+
+  const downloadAttachment = async (attachment: Attachment) => {
+    if (!selectedProject) return;
+    const shouldDownload = attachment.kind === 'file'
+      && attachment.cloudKey
+      && (attachment.localStatus === 'missing' || !attachment.uri);
+    if (shouldDownload) {
+      const next = (selectedProject.attachments || []).map((item) =>
+        item.id === attachment.id ? { ...item, localStatus: 'downloading' } : item
+      );
+      updateProject(selectedProject.id, { attachments: next });
+      setSelectedProject({ ...selectedProject, attachments: next });
+    }
+
+    const resolved = await ensureAttachmentAvailable(attachment);
+    if (!resolved) {
+      const next = (selectedProject.attachments || []).map((item) =>
+        item.id === attachment.id ? { ...item, localStatus: 'missing' } : item
+      );
+      updateProject(selectedProject.id, { attachments: next });
+      setSelectedProject({ ...selectedProject, attachments: next });
+      const message = attachment.kind === 'file' ? t('attachments.missing') : t('attachments.fileNotSupported');
+      Alert.alert(t('attachments.title'), message);
+      return;
+    }
+    if (resolved.uri !== attachment.uri || resolved.localStatus !== attachment.localStatus) {
+      const next = (selectedProject.attachments || []).map((item) =>
+        item.id === resolved.id ? { ...item, ...resolved } : item
+      );
+      updateProject(selectedProject.id, { attachments: next });
+      setSelectedProject({ ...selectedProject, attachments: next });
     }
   };
 
@@ -347,6 +421,25 @@ export default function ProjectsScreen() {
     });
     if (result.canceled) return;
     const asset = result.assets[0];
+    const size = asset.size;
+    if (typeof size === 'number') {
+      const validation = await validateAttachmentForUpload(
+        {
+          id: 'pending',
+          kind: 'file',
+          title: asset.name || 'file',
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        size
+      );
+      if (!validation.valid) {
+        Alert.alert(t('attachments.title'), resolveValidationMessage(validation.error));
+        return;
+      }
+    }
     const now = new Date().toISOString();
     const attachment: Attachment = {
       id: generateUUID(),
@@ -357,6 +450,7 @@ export default function ProjectsScreen() {
       size: asset.size,
       createdAt: now,
       updatedAt: now,
+      localStatus: 'available',
     };
     const next = [...(selectedProject.attachments || []), attachment];
     updateProject(selectedProject.id, { attachments: next });
@@ -821,23 +915,46 @@ export default function ProjectsScreen() {
                         <View style={[styles.attachmentsList, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
                           {((selectedProject.attachments || []) as Attachment[])
                             .filter((a) => !a.deletedAt)
-                            .map((attachment) => (
-                              <View key={attachment.id} style={[styles.attachmentRow, { borderBottomColor: tc.border }]}>
-                                <TouchableOpacity
-                                  style={styles.attachmentTitleWrap}
-                                  onPress={() => openAttachment(attachment)}
-                                >
-                                  <Text style={[styles.attachmentTitle, { color: tc.tint }]} numberOfLines={1}>
-                                    {attachment.title}
-                                  </Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => removeProjectAttachment(attachment.id)}>
-                                  <Text style={[styles.attachmentRemove, { color: tc.secondaryText }]}>
-                                    {t('attachments.remove')}
-                                  </Text>
-                                </TouchableOpacity>
-                              </View>
-                            ))}
+                            .map((attachment) => {
+                              const isMissing = attachment.kind === 'file'
+                                && (!attachment.uri || attachment.localStatus === 'missing');
+                              const canDownload = isMissing && Boolean(attachment.cloudKey);
+                              const isDownloading = attachment.localStatus === 'downloading';
+                              return (
+                                <View key={attachment.id} style={[styles.attachmentRow, { borderBottomColor: tc.border }]}>
+                                  <TouchableOpacity
+                                    style={styles.attachmentTitleWrap}
+                                    onPress={() => openAttachment(attachment)}
+                                    disabled={isDownloading}
+                                  >
+                                    <Text style={[styles.attachmentTitle, { color: tc.tint }]} numberOfLines={1}>
+                                      {attachment.title}
+                                    </Text>
+                                    <AttachmentProgressIndicator attachmentId={attachment.id} />
+                                  </TouchableOpacity>
+                                  {isDownloading ? (
+                                    <Text style={[styles.attachmentStatus, { color: tc.secondaryText }]}>
+                                      {t('common.loading')}
+                                    </Text>
+                                  ) : canDownload ? (
+                                    <TouchableOpacity onPress={() => downloadAttachment(attachment)}>
+                                      <Text style={[styles.attachmentDownload, { color: tc.tint }]}>
+                                        {t('attachments.download')}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ) : isMissing ? (
+                                    <Text style={[styles.attachmentStatus, { color: tc.secondaryText }]}>
+                                      {t('attachments.missing')}
+                                    </Text>
+                                  ) : null}
+                                  <TouchableOpacity onPress={() => removeProjectAttachment(attachment.id)}>
+                                    <Text style={[styles.attachmentRemove, { color: tc.secondaryText }]}>
+                                      {t('attachments.remove')}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                              );
+                            })}
                         </View>
                       )}
                     </View>
@@ -1563,6 +1680,16 @@ const styles = StyleSheet.create({
   attachmentTitle: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  attachmentDownload: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 10,
+  },
+  attachmentStatus: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginRight: 10,
   },
   attachmentRemove: {
     fontSize: 12,

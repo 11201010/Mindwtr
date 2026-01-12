@@ -10,6 +10,7 @@ import type {
 } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownText } from '../markdown-text';
+import { AttachmentProgressIndicator } from '../AttachmentProgressIndicator';
 
 type TaskEditViewTabProps = {
   t: (key: string) => string;
@@ -170,14 +171,38 @@ export function TaskEditViewTab({
                 key={attachment.id}
                 style={[styles.viewAttachmentCard, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
                 onPress={() => openAttachment(attachment)}
+                disabled={attachment.localStatus === 'downloading'}
               >
-                {isImageAttachment(attachment) ? (
-                  <Image source={{ uri: attachment.uri }} style={styles.viewAttachmentImage} />
-                ) : (
-                  <Text style={[styles.viewAttachmentText, { color: tc.text }]} numberOfLines={2}>
-                    {attachment.title}
-                  </Text>
-                )}
+                {(() => {
+                  const isMissing = attachment.kind === 'file'
+                    && (!attachment.uri || attachment.localStatus === 'missing');
+                  const canDownload = isMissing && Boolean(attachment.cloudKey);
+                  const isDownloading = attachment.localStatus === 'downloading';
+                  if (isImageAttachment(attachment) && !isMissing) {
+                    return <Image source={{ uri: attachment.uri }} style={styles.viewAttachmentImage} />;
+                  }
+                  return (
+                    <View>
+                      <Text style={[styles.viewAttachmentText, { color: tc.text }]} numberOfLines={2}>
+                        {attachment.title}
+                      </Text>
+                      {isDownloading ? (
+                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
+                          {t('common.loading')}
+                        </Text>
+                      ) : canDownload ? (
+                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
+                          {t('attachments.download')}
+                        </Text>
+                      ) : isMissing ? (
+                        <Text style={[styles.viewAttachmentSubtext, { color: tc.secondaryText }]}>
+                          {t('attachments.missing')}
+                        </Text>
+                      ) : null}
+                      <AttachmentProgressIndicator attachmentId={attachment.id} />
+                    </View>
+                  );
+                })()}
               </TouchableOpacity>
             ))}
           </View>

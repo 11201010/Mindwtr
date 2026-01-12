@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 
 type Flags = Record<string, string | boolean>;
 
@@ -107,6 +107,7 @@ async function main() {
     const windowMs = Number(process.env.MINDWTR_CLOUD_RATE_WINDOW_MS || 60_000);
     const maxPerWindow = Number(process.env.MINDWTR_CLOUD_RATE_MAX || 120);
     const maxBodyBytes = Number(process.env.MINDWTR_CLOUD_MAX_BODY_BYTES || 2_000_000);
+    const maxAttachmentBytes = Number(process.env.MINDWTR_CLOUD_MAX_ATTACHMENT_BYTES || 50_000_000);
     const encoder = new TextEncoder();
 
     console.log(`[mindwtr-cloud] dataDir: ${dataDir}`);
@@ -174,6 +175,77 @@ async function main() {
                     writeData(filePath, validated.data);
                     return jsonResponse({ ok: true });
                 }
+            }
+
+            if (pathname.startsWith('/v1/attachments/')) {
+                const token = getToken(req);
+                if (!token) return errorResponse('Unauthorized', 401);
+                const key = tokenToKey(token);
+                const now = Date.now();
+                const state = rateLimits.get(key);
+                if (state && now < state.resetAt) {
+                    state.count += 1;
+                    if (state.count > maxPerWindow) {
+                        const retryAfter = Math.ceil((state.resetAt - now) / 1000);
+                        return jsonResponse(
+                            { error: 'Rate limit exceeded', retryAfterSeconds: retryAfter },
+                            { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+                        );
+                    }
+                } else {
+                    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+                }
+
+                const relative = decodeURIComponent(pathname.slice('/v1/attachments/'.length));
+                if (!relative || relative.includes('..') || relative.includes('\\')) {
+                    return errorResponse('Invalid attachment path', 400);
+                }
+                const rootDir = resolve(join(dataDir, key, 'attachments'));
+                const filePath = resolve(join(rootDir, relative));
+                if (!filePath.startsWith(rootDir)) {
+                    return errorResponse('Invalid attachment path', 400);
+                }
+
+                if (req.method === 'GET') {
+                    if (!existsSync(filePath)) return errorResponse('Not found', 404);
+                    try {
+                        const file = readFileSync(filePath);
+                        const headers = new Headers();
+                        headers.set('Access-Control-Allow-Origin', corsOrigin);
+                        headers.set('Content-Type', 'application/octet-stream');
+                        return new Response(file, { status: 200, headers });
+                    } catch {
+                        return errorResponse('Failed to read attachment', 500);
+                    }
+                }
+
+                if (req.method === 'PUT') {
+                    const contentLength = Number(req.headers.get('content-length') || '0');
+                    if (contentLength && contentLength > maxAttachmentBytes) {
+                        return errorResponse('Payload too large', 413);
+                    }
+                    const body = new Uint8Array(await req.arrayBuffer());
+                    if (body.length > maxAttachmentBytes) {
+                        return errorResponse('Payload too large', 413);
+                    }
+                    mkdirSync(dirname(filePath), { recursive: true });
+                    writeFileSync(filePath, body);
+                    return jsonResponse({ ok: true });
+                }
+
+                if (req.method === 'DELETE') {
+                    if (!existsSync(filePath)) {
+                        return jsonResponse({ ok: true });
+                    }
+                    try {
+                        unlinkSync(filePath);
+                        return jsonResponse({ ok: true });
+                    } catch {
+                        return errorResponse('Failed to delete attachment', 500);
+                    }
+                }
+
+                return errorResponse('Method not allowed', 405);
             }
 
             return errorResponse('Not found', 404);

@@ -386,6 +386,11 @@ export const styles = StyleSheet.create({
         fontWeight: '600',
         textAlign: 'center',
     },
+    viewAttachmentSubtext: {
+        fontSize: 11,
+        marginTop: 6,
+        textAlign: 'center',
+    },
     moreOptionsButton: {
         borderWidth: 1,
         borderRadius: 12,
@@ -423,6 +428,16 @@ export const styles = StyleSheet.create({
     attachmentTitle: {
         fontSize: 13,
         fontWeight: '600',
+    },
+    attachmentDownload: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginRight: 10,
+    },
+    attachmentStatus: {
+        fontSize: 12,
+        fontWeight: '500',
+        marginRight: 10,
     },
     attachmentRemove: {
         fontSize: 12,

@@ -51,8 +51,8 @@ import { pickAndParseSyncFile, exportData } from '../../lib/storage-file';
 import { fetchExternalCalendarEvents, getExternalCalendars, saveExternalCalendars } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
 import { clearLog, getLogPath, logInfo } from '../../lib/app-log';
+import { performMobileSync } from '../../lib/sync-service';
 import {
-    performMobileSync,
     SYNC_PATH_KEY,
     SYNC_BACKEND_KEY,
     WEBDAV_URL_KEY,
@@ -60,7 +60,7 @@ import {
     WEBDAV_PASSWORD_KEY,
     CLOUD_URL_KEY,
     CLOUD_TOKEN_KEY,
-} from '../../lib/sync-service';
+} from '../../lib/sync-constants';
 
 type SettingsScreen =
     | 'main'

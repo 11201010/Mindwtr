@@ -1,5 +1,5 @@
 import type { AppData } from '@mindwtr/core';
-import { Database, ExternalLink, Info, RefreshCw } from 'lucide-react';
+import { Database, ExternalLink, Info, RefreshCw, Trash2 } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
 
@@ -39,6 +39,12 @@ type Labels = {
     lastSyncConflict: string;
     lastSyncError: string;
     lastSyncConflicts: string;
+    attachmentsCleanup: string;
+    attachmentsCleanupDesc: string;
+    attachmentsCleanupLastRun: string;
+    attachmentsCleanupNever: string;
+    attachmentsCleanupRun: string;
+    attachmentsCleanupRunning: string;
 };
 
 type SyncBackend = 'file' | 'webdav' | 'cloud';
@@ -80,6 +86,9 @@ type SettingsSyncPageProps = {
     lastSyncStats: AppData['settings']['lastSyncStats'] | null;
     conflictCount: number;
     lastSyncError?: string;
+    attachmentsLastCleanupDisplay: string;
+    onRunAttachmentsCleanup: () => Promise<void> | void;
+    isCleaningAttachments: boolean;
 };
 
 export function SettingsSyncPage({
@@ -119,6 +128,9 @@ export function SettingsSyncPage({
     lastSyncStats,
     conflictCount,
     lastSyncError,
+    attachmentsLastCleanupDisplay,
+    onRunAttachmentsCleanup,
+    isCleaningAttachments,
 }: SettingsSyncPageProps) {
     return (
         <div className="space-y-8">
@@ -199,6 +211,32 @@ export function SettingsSyncPage({
                     </div>
                 </section>
             )}
+
+            <section className="space-y-3">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Trash2 className="w-5 h-5" />
+                    {t.attachmentsCleanup}
+                </h2>
+                <div className="bg-card border border-border rounded-lg p-6 space-y-3">
+                    <p className="text-sm text-muted-foreground">{t.attachmentsCleanupDesc}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                        <div className="text-muted-foreground">
+                            {t.attachmentsCleanupLastRun}:{' '}
+                            <span className="font-medium text-foreground">
+                                {attachmentsLastCleanupDisplay || t.attachmentsCleanupNever}
+                            </span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onRunAttachmentsCleanup}
+                            className="px-3 py-1.5 rounded-md text-xs font-medium bg-muted text-foreground hover:bg-muted/80 transition-colors"
+                            disabled={!isTauri || isCleaningAttachments}
+                        >
+                            {isCleaningAttachments ? t.attachmentsCleanupRunning : t.attachmentsCleanupRun}
+                        </button>
+                    </div>
+                </div>
+            </section>
 
             <section className="space-y-3">
                 <h2 className="text-lg font-semibold flex items-center gap-2">

@@ -67,6 +67,77 @@ describe('Sync Logic', () => {
             expect((merged.tasks[0].attachments || []).map(a => a.id).sort()).toEqual(['att-incoming', 'att-local']);
         });
 
+        it('should preserve local file uri when incoming wins', () => {
+            const localAttachment: Attachment = {
+                id: 'att-1',
+                kind: 'file',
+                title: 'doc.txt',
+                uri: '/local/doc.txt',
+                localStatus: 'available',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-02T00:00:00.000Z',
+            };
+            const incomingAttachment: Attachment = {
+                id: 'att-1',
+                kind: 'file',
+                title: 'doc.txt',
+                uri: '/incoming/doc.txt',
+                cloudKey: 'attachments/att-1.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-03T00:00:00.000Z',
+            };
+
+            const localTask: Task = {
+                ...createMockTask('1', '2023-01-02'),
+                attachments: [localAttachment],
+            };
+            const incomingTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [incomingAttachment],
+            };
+
+            const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+            const attachment = merged.tasks[0].attachments?.find(a => a.id === 'att-1');
+
+            expect(attachment?.uri).toBe('/local/doc.txt');
+            expect(attachment?.localStatus).toBe('available');
+            expect(attachment?.cloudKey).toBe('attachments/att-1.txt');
+        });
+
+        it('should retain local cloudKey when incoming lacks it', () => {
+            const localAttachment: Attachment = {
+                id: 'att-2',
+                kind: 'file',
+                title: 'note.txt',
+                uri: '/local/note.txt',
+                cloudKey: 'attachments/att-2.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-02T00:00:00.000Z',
+            };
+            const incomingAttachment: Attachment = {
+                id: 'att-2',
+                kind: 'file',
+                title: 'note.txt',
+                uri: '',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-03T00:00:00.000Z',
+            };
+
+            const localTask: Task = {
+                ...createMockTask('1', '2023-01-02'),
+                attachments: [localAttachment],
+            };
+            const incomingTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [incomingAttachment],
+            };
+
+            const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+            const attachment = merged.tasks[0].attachments?.find(a => a.id === 'att-2');
+
+            expect(attachment?.cloudKey).toBe('attachments/att-2.txt');
+        });
+
         it('should preserve attachment deletions using attachment timestamps', () => {
             const localAttachment: Attachment = {
                 id: 'att-1',

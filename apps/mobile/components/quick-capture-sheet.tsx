@@ -390,6 +390,7 @@ export function QuickCaptureSheet({
         size: fileInfo?.exists && fileInfo.size ? fileInfo.size : undefined,
         createdAt: nowIso,
         updatedAt: nowIso,
+        localStatus: 'available',
       } : null;
 
       const taskId = generateUUID();
