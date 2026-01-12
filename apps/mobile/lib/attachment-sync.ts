@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import type { AppData, Attachment } from '@mindwtr/core';
 import {
+  validateAttachmentForUpload,
   cloudGetFile,
   cloudPutFile,
   computeSha256Hex,
@@ -35,6 +36,11 @@ const BASE64_LOOKUP = (() => {
 })();
 
 const downloadLocks = new Map<string, Promise<Attachment | null>>();
+
+const FILE_BACKEND_VALIDATION_CONFIG = {
+  maxFileSizeBytes: Number.POSITIVE_INFINITY,
+  blockedMimeTypes: [],
+};
 
 const bytesToBase64 = (bytes: Uint8Array): string => {
   let out = '';
@@ -268,6 +274,18 @@ const readFileAsBytes = async (uri: string): Promise<Uint8Array> => {
   return base64ToBytes(base64);
 };
 
+const getAttachmentByteSize = async (attachment: Attachment, uri: string): Promise<number | null> => {
+  if (typeof attachment.size === 'number') return attachment.size;
+  if (uri.startsWith('content://')) return attachment.size ?? null;
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    return typeof info.size === 'number' ? info.size : null;
+  } catch (error) {
+    console.warn('Failed to read attachment size', error);
+    return attachment.size ?? null;
+  }
+};
+
 const fileExists = async (uri: string): Promise<boolean> => {
   if (uri.startsWith('content://')) return true;
   try {
@@ -327,6 +345,11 @@ export const syncWebdavAttachments = async (
     if (!attachment.cloudKey && hasLocalPath && existsLocally && !isHttp) {
       try {
         const fileData = await readFileAsBytes(uri);
+        const validation = await validateAttachmentForUpload(attachment, fileData.byteLength);
+        if (!validation.valid) {
+          console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+          continue;
+        }
         const buffer = fileData.byteOffset === 0 && fileData.byteLength === fileData.buffer.byteLength
           ? fileData.buffer
           : fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
@@ -387,6 +410,11 @@ export const syncCloudAttachments = async (
     if (!attachment.cloudKey && hasLocalPath && existsLocally && !isHttp) {
       try {
         const fileData = await readFileAsBytes(uri);
+        const validation = await validateAttachmentForUpload(attachment, fileData.byteLength);
+        if (!validation.valid) {
+          console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+          continue;
+        }
         const buffer = fileData.byteOffset === 0 && fileData.byteLength === fileData.buffer.byteLength
           ? fileData.buffer
           : fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
@@ -450,6 +478,14 @@ export const syncFileAttachments = async (
       const cloudKey = buildCloudKey(attachment);
       const filename = cloudKey.split('/').pop() || `${attachment.id}${extractExtension(attachment.title)}`;
       try {
+        const size = await getAttachmentByteSize(attachment, uri);
+        if (size != null) {
+          const validation = await validateAttachmentForUpload(attachment, size, FILE_BACKEND_VALIDATION_CONFIG);
+          if (!validation.valid) {
+            console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+            continue;
+          }
+        }
         if (syncDir.type === 'file') {
           const targetUri = `${syncDir.attachmentsDirUri}${filename}`;
           await FileSystem.copyAsync({ from: uri, to: targetUri });

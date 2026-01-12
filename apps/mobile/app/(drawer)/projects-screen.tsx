@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pres
 import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore } from '@mindwtr/core';
+import { Area, Attachment, generateUUID, Project, PRESET_TAGS, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
 import { Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -46,6 +46,11 @@ export default function ProjectsScreen() {
   const [selectedTagFilter, setSelectedTagFilter] = useState(ALL_TAGS);
   const [showTagPicker, setShowTagPicker] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
+  const resolveValidationMessage = (error?: string) => {
+    if (error === 'file_too_large') return t('attachments.fileTooLarge');
+    if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
+    return t('attachments.fileNotSupported');
+  };
 
   const formatReviewDate = (dateStr?: string) => {
     if (!dateStr) return t('common.notSet');
@@ -415,6 +420,25 @@ export default function ProjectsScreen() {
     });
     if (result.canceled) return;
     const asset = result.assets[0];
+    const size = asset.size;
+    if (typeof size === 'number') {
+      const validation = await validateAttachmentForUpload(
+        {
+          id: 'pending',
+          kind: 'file',
+          title: asset.name || 'file',
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        size
+      );
+      if (!validation.valid) {
+        Alert.alert(t('attachments.title'), resolveValidationMessage(validation.error));
+        return;
+      }
+    }
     const now = new Date().toISOString();
     const attachment: Attachment = {
       id: generateUUID(),

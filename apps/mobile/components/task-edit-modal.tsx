@@ -26,6 +26,7 @@ import {
     safeParseDate,
     safeParseDueDate,
     resolveTextDirection,
+    validateAttachmentForUpload,
 } from '@mindwtr/core';
 import type { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -482,6 +483,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const attachments = (editedTask.attachments || []) as Attachment[];
     const visibleAttachments = attachments.filter((a) => !a.deletedAt);
 
+    const resolveValidationMessage = (error?: string) => {
+        if (error === 'file_too_large') return t('attachments.fileTooLarge');
+        if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
+        return t('attachments.fileNotSupported');
+    };
+
     const addFileAttachment = async () => {
         const result = await DocumentPicker.getDocumentAsync({
             copyToCacheDirectory: false,
@@ -489,6 +496,25 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         });
         if (result.canceled) return;
         const asset = result.assets[0];
+        const size = asset.size;
+        if (typeof size === 'number') {
+            const validation = await validateAttachmentForUpload(
+                {
+                    id: 'pending',
+                    kind: 'file',
+                    title: asset.name || 'file',
+                    uri: asset.uri,
+                    mimeType: asset.mimeType,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                },
+                size
+            );
+            if (!validation.valid) {
+                Alert.alert(t('attachments.title'), resolveValidationMessage(validation.error));
+                return;
+            }
+        }
         const now = new Date().toISOString();
         const attachment: Attachment = {
             id: generateUUID(),
@@ -526,6 +552,25 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         });
         if (result.canceled || !result.assets?.length) return;
         const asset = result.assets[0];
+        const size = (asset as { fileSize?: number }).fileSize ?? (asset as { size?: number }).size;
+        if (typeof size === 'number') {
+            const validation = await validateAttachmentForUpload(
+                {
+                    id: 'pending',
+                    kind: 'file',
+                    title: asset.fileName || asset.uri.split('/').pop() || 'image',
+                    uri: asset.uri,
+                    mimeType: asset.mimeType,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                },
+                size
+            );
+            if (!validation.valid) {
+                Alert.alert(t('attachments.title'), resolveValidationMessage(validation.error));
+                return;
+            }
+        }
         const now = new Date().toISOString();
         const attachment: Attachment = {
             id: generateUUID(),

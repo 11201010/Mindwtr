@@ -26,6 +26,7 @@ import {
     PRESET_TAGS,
     type ClarifyResponse,
     type AIProviderId,
+    validateAttachmentForUpload,
 } from '@mindwtr/core';
 import { cn } from '../lib/utils';
 import { PromptModal } from './PromptModal';
@@ -39,7 +40,7 @@ import { TaskItemFieldRenderer } from './Task/TaskItemFieldRenderer';
 import { TaskItemRecurrenceModal } from './Task/TaskItemRecurrenceModal';
 import { WEEKDAY_FULL_LABELS, WEEKDAY_ORDER } from './Task/recurrence-constants';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import { readFile, readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { readFile, readTextFile, BaseDirectory, size } from '@tauri-apps/plugin-fs';
 import { dataDir } from '@tauri-apps/api/path';
 
 const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
@@ -540,6 +541,12 @@ export const TaskItem = memo(function TaskItem({
         return convertFileSrc(raw);
     }, []);
 
+    const resolveValidationMessage = useCallback((error?: string) => {
+        if (error === 'file_too_large') return t('attachments.fileTooLarge');
+        if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
+        return t('attachments.fileNotSupported');
+    }, [t]);
+
     const resolveAudioBlobSource = useCallback(async (attachment: Attachment) => {
         if (!isTauriRuntime()) return null;
         const uri = attachment.uri.replace(/^file:\/\//i, '');
@@ -699,6 +706,26 @@ export const TaskItem = memo(function TaskItem({
             title: t('attachments.addFile'),
         });
         if (!selected || typeof selected !== 'string') return;
+        try {
+            const fileSize = await size(selected);
+            const validation = await validateAttachmentForUpload(
+                {
+                    id: 'pending',
+                    kind: 'file',
+                    title: selected.split(/[/\\]/).pop() || selected,
+                    uri: selected,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                },
+                fileSize
+            );
+            if (!validation.valid) {
+                setAttachmentError(resolveValidationMessage(validation.error));
+                return;
+            }
+        } catch (error) {
+            console.warn('Failed to validate attachment size', error);
+        }
         const now = new Date().toISOString();
         const title = selected.split(/[/\\]/).pop() || selected;
         const attachment: Attachment = {

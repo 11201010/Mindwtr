@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useTaskStore, Attachment, Task, type Project, type Area, generateUUID, safeFormatDate, safeParseDate, parseQuickAdd, PRESET_CONTEXTS } from '@mindwtr/core';
+import { useTaskStore, Attachment, Task, type Project, type Area, generateUUID, safeFormatDate, safeParseDate, parseQuickAdd, PRESET_CONTEXTS, validateAttachmentForUpload } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
 import { TaskInput } from '../Task/TaskInput';
 import { Plus, Folder, Trash2, ListOrdered, ChevronRight, ChevronDown, Archive as ArchiveIcon, RotateCcw, Paperclip, Link2, GripVertical, Star, AlertTriangle, CornerDownRight } from 'lucide-react';
@@ -13,6 +13,7 @@ import { PromptModal } from '../PromptModal';
 import { isTauriRuntime } from '../../lib/runtime';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
 import { invoke } from '@tauri-apps/api/core';
+import { size } from '@tauri-apps/plugin-fs';
 
 function toDateTimeLocalValue(dateStr: string | undefined): string {
     if (!dateStr) return '';
@@ -466,6 +467,11 @@ export function ProjectsView() {
         const taskContexts = tasks.flatMap((task) => task.contexts || []);
         return Array.from(new Set([...PRESET_CONTEXTS, ...taskContexts])).sort();
     }, [tasks]);
+    const resolveValidationMessage = (error?: string) => {
+        if (error === 'file_too_large') return t('attachments.fileTooLarge');
+        if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
+        return t('attachments.fileNotSupported');
+    };
 
     useEffect(() => {
         if (!selectedProject) {
@@ -507,6 +513,26 @@ export function ProjectsView() {
             title: t('attachments.addFile'),
         });
         if (!selected || typeof selected !== 'string') return;
+        try {
+            const fileSize = await size(selected);
+            const validation = await validateAttachmentForUpload(
+                {
+                    id: 'pending',
+                    kind: 'file',
+                    title: selected.split(/[/\\]/).pop() || selected,
+                    uri: selected,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                },
+                fileSize
+            );
+            if (!validation.valid) {
+                setAttachmentError(resolveValidationMessage(validation.error));
+                return;
+            }
+        } catch (error) {
+            console.warn('Failed to validate attachment size', error);
+        }
         const now = new Date().toISOString();
         const title = selected.split(/[/\\]/).pop() || selected;
         const attachment: Attachment = {

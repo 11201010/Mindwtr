@@ -5,6 +5,7 @@ import {
     useTaskStore,
     MergeStats,
     computeSha256Hex,
+    validateAttachmentForUpload,
     webdavGetJson,
     webdavPutJson,
     webdavGetFile,
@@ -71,6 +72,10 @@ const isSyncFilePath = (path: string) => {
 };
 
 const ATTACHMENTS_DIR_NAME = 'attachments';
+const FILE_BACKEND_VALIDATION_CONFIG = {
+    maxFileSizeBytes: Number.POSITIVE_INFINITY,
+    blockedMimeTypes: [],
+};
 
 const stripFileScheme = (uri: string): string => {
     if (!/^file:\/\//i.test(uri)) return uri;
@@ -271,6 +276,11 @@ async function syncAttachments(
             const cloudKey = buildCloudKey(attachment);
             try {
                 const fileData = await readLocalFile(localPath);
+                const validation = await validateAttachmentForUpload(attachment, fileData.length);
+                if (!validation.valid) {
+                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    continue;
+                }
                 await webdavPutFile(
                     `${baseSyncUrl}/${cloudKey}`,
                     fileData,
@@ -398,6 +408,11 @@ async function syncCloudAttachments(
             const cloudKey = buildCloudKey(attachment);
             try {
                 const fileData = await readLocalFile(localPath);
+                const validation = await validateAttachmentForUpload(attachment, fileData.length);
+                if (!validation.valid) {
+                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    continue;
+                }
                 await cloudPutFile(
                     `${baseSyncUrl}/${cloudKey}`,
                     fileData,
@@ -528,6 +543,11 @@ async function syncFileAttachments(
             const cloudKey = buildCloudKey(attachment);
             try {
                 const fileData = await readLocalFile(localPath);
+                const validation = await validateAttachmentForUpload(attachment, fileData.length, FILE_BACKEND_VALIDATION_CONFIG);
+                if (!validation.valid) {
+                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    continue;
+                }
                 const targetPath = await join(baseSyncDir, cloudKey);
                 await writeFile(targetPath, fileData);
                 attachment.cloudKey = cloudKey;
