@@ -73,11 +73,12 @@ jobs:
       - name: Ensure macOS SetFile is on PATH
         if: runner.os == 'macOS'
         run: |
-          TOOL_PATH="/Applications/Xcode.app/Contents/Developer/Tools"
-          if [ -d "$TOOL_PATH" ]; then
-            echo "$TOOL_PATH" >> "$GITHUB_PATH"
+          export DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
+          SETFILE_PATH="$(xcrun --find SetFile || true)"
+          if [ -n "$SETFILE_PATH" ]; then
+            echo "$(dirname "$SETFILE_PATH")" >> "$GITHUB_PATH"
           fi
-          which SetFile || xcrun --find SetFile || true
+          which SetFile || true
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -105,6 +106,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MACOSX_DEPLOYMENT_TARGET: "10.15"
           CMAKE_OSX_DEPLOYMENT_TARGET: "10.15"
+          DEVELOPER_DIR: "/Applications/Xcode_16.4.app/Contents/Developer"
 
       - name: Build Tauri app (default)
         if: matrix.rust_target == '' || matrix.rust_target == null
@@ -116,6 +118,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MACOSX_DEPLOYMENT_TARGET: "10.15"
           CMAKE_OSX_DEPLOYMENT_TARGET: "10.15"
+          DEVELOPER_DIR: "/Applications/Xcode_16.4.app/Contents/Developer"
 
       - name: Sign macOS app (ad-hoc)
         if: runner.os == 'macOS'
