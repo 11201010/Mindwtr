@@ -12,6 +12,9 @@ interface PickResult extends AppData {
     __fileUri?: string;
 }
 
+const SYNC_FILE_NAME = 'data.json';
+const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
+
 function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -93,6 +96,61 @@ export const pickAndParseSyncFile = async (): Promise<PickResult | null> => {
         };
     } catch (error) {
         console.error('Failed to import data:', error);
+        void logError(error, { scope: 'sync', extra: { operation: 'import' } });
+        throw error;
+    }
+};
+
+const findSyncFileInDirectory = async (directoryUri: string): Promise<string | null> => {
+    if (!StorageAccessFramework?.readDirectoryAsync) return null;
+    try {
+        const entries = await StorageAccessFramework.readDirectoryAsync(directoryUri);
+        const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
+            entry,
+            decoded: decodeURIComponent(entry),
+        }));
+        const matchEntry = decoded.find((item) =>
+            item.decoded.endsWith(`/${SYNC_FILE_NAME}`) ||
+            item.decoded.endsWith(`:${SYNC_FILE_NAME}`) ||
+            item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`) ||
+            item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
+        );
+        return matchEntry?.entry ?? null;
+    } catch (error) {
+        console.warn('Failed to read sync folder contents', error);
+        return null;
+    }
+};
+
+export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
+    if (Platform.OS !== 'android' || !StorageAccessFramework?.requestDirectoryPermissionsAsync) {
+        return pickAndParseSyncFile();
+    }
+    try {
+        const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (!permissions.granted) return null;
+        const directoryUri = permissions.directoryUri;
+        let fileUri = await findSyncFileInDirectory(directoryUri);
+        if (!fileUri && StorageAccessFramework?.createFileAsync) {
+            fileUri = await StorageAccessFramework.createFileAsync(directoryUri, SYNC_FILE_NAME, 'application/json');
+        }
+        if (!fileUri) {
+            throw new Error('Unable to create sync file in selected folder');
+        }
+        const fileContent = await readFileText(fileUri);
+        if (!fileContent) {
+            return {
+                tasks: [],
+                projects: [],
+                areas: [],
+                settings: {},
+                __fileUri: fileUri,
+            };
+        }
+        const data = parseAppData(fileContent);
+        return { ...data, __fileUri: fileUri };
+    } catch (error) {
+        console.error('Failed to import data from folder:', error);
         void logError(error, { scope: 'sync', extra: { operation: 'import' } });
         throw error;
     }

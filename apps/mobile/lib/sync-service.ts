@@ -20,6 +20,16 @@ const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
 
+const normalizeWebdavUrl = (rawUrl: string): string => {
+  const trimmed = rawUrl.replace(/\/+$/, '');
+  return trimmed.toLowerCase().endsWith('.json') ? trimmed : `${trimmed}/${SYNC_FILE_NAME}`;
+};
+
+const normalizeCloudUrl = (rawUrl: string): string => {
+  const trimmed = rawUrl.replace(/\/+$/, '');
+  return trimmed.toLowerCase().endsWith('/data') ? trimmed : `${trimmed}/data`;
+};
+
 const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
   if (!lastCleanupAt) return true;
   const parsed = Date.parse(lastCleanupAt);
@@ -92,6 +102,10 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         if (!fileSyncPath) {
           return { success: true };
         }
+        if (!fileSyncPath.startsWith('content://') && !isSyncFilePath(fileSyncPath)) {
+          const trimmed = fileSyncPath.replace(/\/+$/, '');
+          fileSyncPath = `${trimmed}/${SYNC_FILE_NAME}`;
+        }
       }
       const syncResult = await performSyncCycle({
         readLocal: async () => await mobileStorage.getData(),
@@ -99,22 +113,22 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           if (backend === 'webdav') {
             const url = await AsyncStorage.getItem(WEBDAV_URL_KEY);
             if (!url) throw new Error('WebDAV URL not configured');
-            syncUrl = url;
+            syncUrl = normalizeWebdavUrl(url);
             const username = (await AsyncStorage.getItem(WEBDAV_USERNAME_KEY)) || '';
             const password = (await AsyncStorage.getItem(WEBDAV_PASSWORD_KEY)) || '';
-            webdavConfig = { url, username, password };
-            return await webdavGetJson<AppData>(url, { username, password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
+            webdavConfig = { url: syncUrl, username, password };
+            return await webdavGetJson<AppData>(syncUrl, { username, password, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
           }
           if (backend === 'cloud') {
             const url = await AsyncStorage.getItem(CLOUD_URL_KEY);
             if (!url) throw new Error('Self-hosted URL not configured');
-            syncUrl = url;
+            syncUrl = normalizeCloudUrl(url);
             const token = (await AsyncStorage.getItem(CLOUD_TOKEN_KEY)) || '';
-            cloudConfig = { url, token };
-            return await cloudGetJson<AppData>(url, { token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
+            cloudConfig = { url: syncUrl, token };
+            return await cloudGetJson<AppData>(syncUrl, { token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
           }
           if (!fileSyncPath) {
-            throw new Error('No sync file configured');
+            throw new Error('No sync folder configured');
           }
           return await readSyncFile(fileSyncPath);
         },
@@ -134,7 +148,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
             await cloudPutJson(cloudConfig.url, sanitized, { token: cloudConfig.token, timeoutMs: DEFAULT_SYNC_TIMEOUT_MS });
             return;
           }
-          if (!fileSyncPath) throw new Error('No sync file configured');
+          if (!fileSyncPath) throw new Error('No sync folder configured');
           await writeSyncFile(fileSyncPath, sanitized);
         },
         onStep: (next) => {

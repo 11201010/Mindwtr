@@ -76,6 +76,16 @@ const isSyncFilePath = (path: string) => {
     return normalized.endsWith(`/${SYNC_FILE_NAME}`) || normalized.endsWith(`/${LEGACY_SYNC_FILE_NAME}`);
 };
 
+const normalizeWebdavUrl = (rawUrl: string): string => {
+    const trimmed = rawUrl.replace(/\/+$/, '');
+    return trimmed.toLowerCase().endsWith('.json') ? trimmed : `${trimmed}/${SYNC_FILE_NAME}`;
+};
+
+const normalizeCloudUrl = (rawUrl: string): string => {
+    const trimmed = rawUrl.replace(/\/+$/, '');
+    return trimmed.toLowerCase().endsWith('/data') ? trimmed : `${trimmed}/data`;
+};
+
 const ATTACHMENTS_DIR_NAME = 'attachments';
 const FILE_BACKEND_VALIDATION_CONFIG = {
     maxFileSizeBytes: Number.POSITIVE_INFINITY,
@@ -1111,18 +1121,20 @@ export class SyncService {
                         if (!url) {
                             throw new Error('WebDAV URL not configured');
                         }
-                        syncUrl = url;
+                        const normalizedUrl = normalizeWebdavUrl(url);
+                        syncUrl = normalizedUrl;
                         const fetcher = await getTauriFetch();
-                        return await webdavGetJson<AppData>(url, { username, password: password || '', fetcher });
+                        return await webdavGetJson<AppData>(normalizedUrl, { username, password: password || '', fetcher });
                     }
                     if (backend === 'cloud') {
                         const { url, token } = await SyncService.getCloudConfig();
                         if (!url) {
                             throw new Error('Self-hosted URL not configured');
                         }
-                        syncUrl = url;
+                        const normalizedUrl = normalizeCloudUrl(url);
+                        syncUrl = normalizedUrl;
                         const fetcher = await getTauriFetch();
-                        return await cloudGetJson<AppData>(url, { token, fetcher });
+                        return await cloudGetJson<AppData>(normalizedUrl, { token, fetcher });
                     }
                     if (!isTauriRuntime()) {
                         throw new Error('File sync is not available in the web app.');
@@ -1144,14 +1156,16 @@ export class SyncService {
                             return;
                         }
                         const { url, username, password } = await SyncService.getWebDavConfig();
+                        const normalizedUrl = normalizeWebdavUrl(url);
                         const fetcher = await getTauriFetch();
-                        await webdavPutJson(url, sanitized, { username, password: password || '', fetcher });
+                        await webdavPutJson(normalizedUrl, sanitized, { username, password: password || '', fetcher });
                         return;
                     }
                     if (backend === 'cloud') {
                         const { url, token } = await SyncService.getCloudConfig();
+                        const normalizedUrl = normalizeCloudUrl(url);
                         const fetcher = await getTauriFetch();
-                        await cloudPutJson(url, sanitized, { token, fetcher });
+                        await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
                         return;
                     }
                     SyncService.markSyncWrite(sanitized);

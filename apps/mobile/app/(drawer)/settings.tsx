@@ -47,7 +47,7 @@ import {
     type TimeEstimate,
     useTaskStore,
 } from '@mindwtr/core';
-import { pickAndParseSyncFile, exportData } from '../../lib/storage-file';
+import { pickAndParseSyncFile, pickAndParseSyncFolder, exportData } from '../../lib/storage-file';
 import { fetchExternalCalendarEvents, getExternalCalendars, saveExternalCalendars } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
 import { clearLog, getLogPath, logInfo } from '../../lib/app-log';
@@ -587,10 +587,10 @@ export default function SettingsPage() {
         }
     };
 
-    // Set sync directory by picking a file (we'll use the file's directory)
+    // Set sync folder (Android) or sync file (iOS)
     const handleSetSyncPath = async () => {
         try {
-            const result = await pickAndParseSyncFile();
+            const result = await pickAndParseSyncFolder();
             if (result) {
                 // Get the file URI that was picked
                 const fileUri = (result as { __fileUri: string }).__fileUri;
@@ -601,7 +601,7 @@ export default function SettingsPage() {
                     setSyncBackend('file');
                     Alert.alert(
                         localize('Success', '成功'),
-                        localize('Sync file set successfully', '同步文件已设置')
+                        localize('Sync folder set successfully', '同步文件夹已设置')
                     );
                 }
             }
@@ -649,7 +649,7 @@ export default function SettingsPage() {
                 if (!syncPath) {
                     Alert.alert(
                         localize('Notice', '提示'),
-                        localize('Please set a sync file first', '请先设置同步文件')
+                        localize('Please set a sync folder first', '请先设置同步文件夹')
                     );
                     return;
                 }
@@ -2451,8 +2451,8 @@ export default function SettingsPage() {
                                 </Text>
                                 <Text style={[styles.helpText, { color: tc.secondaryText }]}>
                                     {language === 'zh'
-                                        ? '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件"选中该文件\n3. 之后点击"同步"即可合并数据'
-                                        : translateText('1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select File" to choose that file\n3. Then tap "Sync" to merge data', language)}
+                                        ? '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件夹"授权该文件夹\n3. 之后点击"同步"即可合并数据'
+                                        : translateText('1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select Folder" to grant access to that folder\n3. Then tap "Sync" to merge data', language)}
                                 </Text>
                             </View>
 
@@ -2464,14 +2464,14 @@ export default function SettingsPage() {
                                 <View style={styles.settingRow}>
                                     <View style={styles.settingInfo}>
                                         <Text style={[styles.settingLabel, { color: tc.text }]}>
-                                            {localize('Sync File', '同步文件')}
+                                            {localize('Sync Folder', '同步文件夹')}
                                         </Text>
                                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
                                             {syncPath ? syncPath.split('/').pop() : localize('Not set', '未设置')}
                                         </Text>
                                     </View>
                                     <TouchableOpacity onPress={handleSetSyncPath}>
-                                        <Text style={styles.linkText}>{localize('Select File', '选择文件')}</Text>
+                                        <Text style={styles.linkText}>{localize('Select Folder', '选择文件夹')}</Text>
                                     </TouchableOpacity>
                                 </View>
 
@@ -2486,7 +2486,7 @@ export default function SettingsPage() {
                                             {localize('Sync', '同步')}
                                         </Text>
                                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                            {language === 'zh' ? '读取并合并同步文件' : translateText('Read and merge sync file', language)}
+                                            {language === 'zh' ? '读取并合并同步文件夹' : translateText('Read and merge sync folder', language)}
                                         </Text>
                                     </View>
                                     {isSyncing && <ActivityIndicator size="small" color="#3B82F6" />}
@@ -2532,7 +2532,7 @@ export default function SettingsPage() {
                                     <TextInput
                                         value={webdavUrl}
                                         onChangeText={setWebdavUrl}
-                                        placeholder="https://example.com/remote.php/dav/files/user/data.json"
+                                        placeholder="https://example.com/remote.php/dav/files/user/mindwtr"
                                         placeholderTextColor={tc.secondaryText}
                                         autoCapitalize="none"
                                         autoCorrect={false}
@@ -2540,6 +2540,9 @@ export default function SettingsPage() {
                                     />
                                     <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
                                         {t('settings.webdavHint')}
+                                    </Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {localize('Point to a folder — Mindwtr will store data.json inside.', '填写文件夹地址，Mindwtr 会在其中存放 data.json。')}
                                     </Text>
                                 </View>
 
@@ -2644,7 +2647,7 @@ export default function SettingsPage() {
                                     <TextInput
                                         value={cloudUrl}
                                         onChangeText={setCloudUrl}
-                                        placeholder="https://example.com/v1/data"
+                                        placeholder="https://example.com/v1"
                                         placeholderTextColor={tc.secondaryText}
                                         autoCapitalize="none"
                                         autoCorrect={false}
@@ -2652,6 +2655,9 @@ export default function SettingsPage() {
                                     />
                                     <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
                                         {t('settings.cloudHint')}
+                                    </Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {localize('Use the base URL — Mindwtr will append /data.', '填写基础地址，Mindwtr 会自动加上 /data。')}
                                     </Text>
                                 </View>
 
