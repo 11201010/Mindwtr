@@ -91,6 +91,16 @@ type SettingsSyncPageProps = {
     isCleaningAttachments: boolean;
 };
 
+const isValidHttpUrl = (value: string): boolean => {
+    if (!value.trim()) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+        return false;
+    }
+};
+
 export function SettingsSyncPage({
     t,
     isTauri,
@@ -132,6 +142,15 @@ export function SettingsSyncPage({
     onRunAttachmentsCleanup,
     isCleaningAttachments,
 }: SettingsSyncPageProps) {
+    const webdavUrlError = webdavUrl.trim() ? !isValidHttpUrl(webdavUrl.trim()) : false;
+    const cloudUrlError = cloudUrl.trim() ? !isValidHttpUrl(cloudUrl.trim()) : false;
+    const isSyncTargetValid =
+        syncBackend === 'file'
+            ? !!syncPath.trim()
+            : syncBackend === 'webdav'
+                ? !!webdavUrl.trim() && !webdavUrlError
+                : !!cloudUrl.trim() && !cloudUrlError;
+
     return (
         <div className="space-y-8">
             <section className="space-y-3">
@@ -325,9 +344,15 @@ export function SettingsSyncPage({
                                     value={webdavUrl}
                                     onChange={(e) => onWebdavUrlChange(e.target.value)}
                                     placeholder="https://example.com/remote.php/dav/files/user/data.json"
-                                    className="bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className={cn(
+                                        "bg-muted p-2 rounded text-sm font-mono border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                                        webdavUrlError ? "border-destructive" : "border-border",
+                                    )}
                                 />
                                 <p className="text-xs text-muted-foreground">{t.webdavHint}</p>
+                                {webdavUrlError && (
+                                    <p className="text-xs text-destructive">Enter a valid http(s) URL.</p>
+                                )}
                             </div>
 
                             <div className="grid sm:grid-cols-2 gap-2">
@@ -355,6 +380,7 @@ export function SettingsSyncPage({
                             <div className="flex justify-end">
                                 <button
                                     onClick={onSaveWebDav}
+                                    disabled={webdavUrlError}
                                     className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 whitespace-nowrap"
                                 >
                                     {t.webdavSave}
@@ -372,9 +398,15 @@ export function SettingsSyncPage({
                                     value={cloudUrl}
                                     onChange={(e) => onCloudUrlChange(e.target.value)}
                                     placeholder="https://example.com/v1/data"
-                                    className="bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className={cn(
+                                        "bg-muted p-2 rounded text-sm font-mono border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                                        cloudUrlError ? "border-destructive" : "border-border",
+                                    )}
                                 />
                                 <p className="text-xs text-muted-foreground">{t.cloudHint}</p>
+                                {cloudUrlError && (
+                                    <p className="text-xs text-destructive">Enter a valid http(s) URL.</p>
+                                )}
                             </div>
 
                             <div className="flex flex-col gap-2">
@@ -390,6 +422,7 @@ export function SettingsSyncPage({
                             <div className="flex justify-end">
                                 <button
                                     onClick={onSaveCloud}
+                                    disabled={cloudUrlError}
                                     className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 whitespace-nowrap"
                                 >
                                     {t.cloudSave}
@@ -398,11 +431,7 @@ export function SettingsSyncPage({
                         </div>
                     )}
 
-                    {(syncBackend === 'webdav'
-                        ? !!webdavUrl.trim()
-                        : syncBackend === 'cloud'
-                            ? !!cloudUrl.trim()
-                            : !!syncPath.trim()) && (
+                    {isSyncTargetValid && (
                         <div className="pt-2 flex items-center gap-3">
                             <button
                                 onClick={onSyncNow}
