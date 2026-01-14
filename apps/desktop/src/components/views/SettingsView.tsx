@@ -30,6 +30,7 @@ import { SettingsNotificationsPage } from './settings/SettingsNotificationsPage'
 import { SettingsCalendarPage } from './settings/SettingsCalendarPage';
 import { SettingsSyncPage } from './settings/SettingsSyncPage';
 import { SettingsAboutPage } from './settings/SettingsAboutPage';
+import { SettingsSidebar } from './settings/SettingsSidebar';
 import { useAiSettings } from './settings/useAiSettings';
 import { useCalendarSettings } from './settings/useCalendarSettings';
 import { useSyncSettings } from './settings/useSyncSettings';
@@ -1147,40 +1148,13 @@ export function SettingsView() {
             <div className="h-full overflow-y-auto">
             <div className="mx-auto max-w-6xl p-8">
                 <div className="grid grid-cols-12 gap-6">
-                    <aside className="col-span-12 lg:col-span-4 xl:col-span-3 space-y-4">
-                        <div>
-                            <h1 className="text-2xl font-semibold tracking-tight">{t.title}</h1>
-                            <p className="text-sm text-muted-foreground mt-1">{t.subtitle}</p>
-                        </div>
-                        <nav className="bg-card border border-border rounded-lg p-1">
-                            {navItems.map((item) => {
-                                const Icon = item.icon;
-                                const isActive = item.id === page;
-                                return (
-                                    <button
-                                        key={item.id}
-                                        onClick={() => setPage(item.id)}
-                                        className={cn(
-                                            "w-full flex items-start gap-3 px-3 py-2 rounded-md text-left transition-colors",
-                                            isActive
-                                                ? "bg-primary/10 text-primary"
-                                                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                                        )}
-                                    >
-                                        <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-                                        <div className="min-w-0">
-                                            <div className="text-sm font-medium leading-5">{item.label}</div>
-                                            {item.description && (
-                                                <div className={cn("text-xs mt-0.5", isActive ? "text-primary/80" : "text-muted-foreground")}>
-                                                    {item.description}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </button>
-                                );
-                            })}
-                        </nav>
-                    </aside>
+                    <SettingsSidebar
+                        title={t.title}
+                        subtitle={t.subtitle}
+                        items={navItems}
+                        activeId={page}
+                        onSelect={(id) => setPage(id as SettingsPage)}
+                    />
 
                     <main className="col-span-12 lg:col-span-8 xl:col-span-9">
                         <div className="space-y-6">
