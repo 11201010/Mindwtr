@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   purgedAt TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(projectId);
+CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updatedAt);
+CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deletedAt);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
