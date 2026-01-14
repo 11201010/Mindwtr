@@ -118,85 +118,7 @@ export function SettingsView() {
         return translated === key ? 'Select sync folder' : translated;
     }, [translate]);
 
-    const {
-        syncPath,
-        setSyncPath,
-        isSyncing,
-        syncError,
-        syncBackend,
-        webdavUrl,
-        setWebdavUrl,
-        webdavUsername,
-        setWebdavUsername,
-        webdavPassword,
-        setWebdavPassword,
-        webdavHasPassword,
-        cloudUrl,
-        setCloudUrl,
-        cloudToken,
-        setCloudToken,
-        handleSaveSyncPath,
-        handleChangeSyncLocation,
-        handleSetSyncBackend,
-        handleSaveWebDav,
-        handleSaveCloud,
-        handleSync,
-    } = useSyncSettings({
-        isTauri,
-        showSaved,
-        selectSyncFolderTitle,
-    });
-    const aiSettingsEnabled = page === 'ai';
-    const {
-        aiEnabled,
-        aiProvider,
-        aiModel,
-        aiModelOptions,
-        aiCopilotModel,
-        aiCopilotOptions,
-        aiReasoningEffort,
-        aiThinkingBudget,
-        anthropicThinkingEnabled,
-        aiApiKey,
-        speechEnabled,
-        speechProvider,
-        speechModel,
-        speechModelOptions,
-        speechLanguage,
-        speechMode,
-        speechFieldStrategy,
-        speechApiKey,
-        speechOfflineReady,
-        speechOfflineSize,
-        speechDownloadState,
-        speechDownloadError,
-        onUpdateAISettings,
-        onUpdateSpeechSettings,
-        onProviderChange,
-        onSpeechProviderChange,
-        onToggleAnthropicThinking,
-        onAiApiKeyChange,
-        onSpeechApiKeyChange,
-        onDownloadWhisperModel,
-        onDeleteWhisperModel,
-    } = useAiSettings({
-        isTauri,
-        settings,
-        updateSettings,
-        showSaved,
-        enabled: aiSettingsEnabled,
-    });
-    const {
-        externalCalendars,
-        newCalendarName,
-        newCalendarUrl,
-        calendarError,
-        setNewCalendarName,
-        setNewCalendarUrl,
-        handleAddCalendar,
-        handleToggleCalendar,
-        handleRemoveCalendar,
-    } = useCalendarSettings({ showSaved });
+    // Heavy settings hooks are only needed when their page is active.
     const [isCleaningAttachments, setIsCleaningAttachments] = useState(false);
 
 
@@ -504,8 +426,8 @@ export function SettingsView() {
     const canDownloadUpdate = Boolean(preferredDownloadUrl) && !isArchLinuxUpdate;
 
     const lastSyncAt = settings?.lastSyncAt;
-    const lastSyncStatus = settings?.lastSyncStatus;
     const lastSyncStats = settings?.lastSyncStats ?? null;
+    const lastSyncStatus = settings?.lastSyncStatus;
     const lastSyncDisplay = lastSyncAt ? safeFormatDate(lastSyncAt, 'PPpp', lastSyncAt) : t.lastSyncNever;
     const conflictCount = (lastSyncStats?.tasks.conflicts || 0) + (lastSyncStats?.projects.conflicts || 0);
     const weeklyReviewEnabled = settings?.weeklyReviewEnabled === true;
@@ -568,6 +490,191 @@ export function SettingsView() {
         { id: 'about', icon: Info, label: t.about },
     ], [t]);
 
+    const SyncPage = () => {
+        const {
+            syncPath,
+            setSyncPath,
+            isSyncing,
+            syncError,
+            syncBackend,
+            webdavUrl,
+            setWebdavUrl,
+            webdavUsername,
+            setWebdavUsername,
+            webdavPassword,
+            setWebdavPassword,
+            webdavHasPassword,
+            cloudUrl,
+            setCloudUrl,
+            cloudToken,
+            setCloudToken,
+            handleSaveSyncPath,
+            handleChangeSyncLocation,
+            handleSetSyncBackend,
+            handleSaveWebDav,
+            handleSaveCloud,
+            handleSync,
+        } = useSyncSettings({
+            isTauri,
+            showSaved,
+            selectSyncFolderTitle,
+        });
+
+        return (
+            <SettingsSyncPage
+                t={t}
+                isTauri={isTauri}
+                dataPath={dataPath}
+                dbPath={dbPath}
+                configPath={configPath}
+                loggingEnabled={loggingEnabled}
+                logPath={logPath}
+                onToggleLogging={toggleLogging}
+                onClearLog={handleClearLog}
+                syncBackend={syncBackend}
+                onSetSyncBackend={handleSetSyncBackend}
+                syncPath={syncPath}
+                onSyncPathChange={setSyncPath}
+                onSaveSyncPath={handleSaveSyncPath}
+                onBrowseSyncPath={handleChangeSyncLocation}
+                webdavUrl={webdavUrl}
+                webdavUsername={webdavUsername}
+                webdavPassword={webdavPassword}
+                webdavHasPassword={webdavHasPassword}
+                onWebdavUrlChange={setWebdavUrl}
+                onWebdavUsernameChange={setWebdavUsername}
+                onWebdavPasswordChange={setWebdavPassword}
+                onSaveWebDav={handleSaveWebDav}
+                cloudUrl={cloudUrl}
+                cloudToken={cloudToken}
+                onCloudUrlChange={setCloudUrl}
+                onCloudTokenChange={setCloudToken}
+                onSaveCloud={handleSaveCloud}
+                onSyncNow={handleSync}
+                isSyncing={isSyncing}
+                syncError={syncError}
+                lastSyncDisplay={lastSyncDisplay}
+                lastSyncStatus={lastSyncStatus}
+                lastSyncStats={lastSyncStats}
+                conflictCount={conflictCount}
+                lastSyncError={settings?.lastSyncError}
+                attachmentsLastCleanupDisplay={attachmentsLastCleanupDisplay}
+                onRunAttachmentsCleanup={handleAttachmentsCleanup}
+                isCleaningAttachments={isCleaningAttachments}
+            />
+        );
+    };
+
+    const AiPage = () => {
+        const {
+            aiEnabled,
+            aiProvider,
+            aiModel,
+            aiModelOptions,
+            aiCopilotModel,
+            aiCopilotOptions,
+            aiReasoningEffort,
+            aiThinkingBudget,
+            anthropicThinkingEnabled,
+            aiApiKey,
+            speechEnabled,
+            speechProvider,
+            speechModel,
+            speechModelOptions,
+            speechLanguage,
+            speechMode,
+            speechFieldStrategy,
+            speechApiKey,
+            speechOfflineReady,
+            speechOfflineSize,
+            speechDownloadState,
+            speechDownloadError,
+            onUpdateAISettings,
+            onUpdateSpeechSettings,
+            onProviderChange,
+            onSpeechProviderChange,
+            onToggleAnthropicThinking,
+            onAiApiKeyChange,
+            onSpeechApiKeyChange,
+            onDownloadWhisperModel,
+            onDeleteWhisperModel,
+        } = useAiSettings({
+            isTauri,
+            settings,
+            updateSettings,
+            showSaved,
+            enabled: true,
+        });
+
+        return (
+            <SettingsAiPage
+                t={t}
+                aiEnabled={aiEnabled}
+                aiProvider={aiProvider}
+                aiModel={aiModel}
+                aiModelOptions={aiModelOptions}
+                aiCopilotModel={aiCopilotModel}
+                aiCopilotOptions={aiCopilotOptions}
+                aiReasoningEffort={aiReasoningEffort}
+                aiThinkingBudget={aiThinkingBudget}
+                anthropicThinkingEnabled={anthropicThinkingEnabled}
+                anthropicThinkingOptions={anthropicThinkingOptions}
+                aiApiKey={aiApiKey}
+                speechEnabled={speechEnabled}
+                speechProvider={speechProvider}
+                speechModel={speechModel}
+                speechModelOptions={speechModelOptions}
+                speechLanguage={speechLanguage}
+                speechMode={speechMode}
+                speechFieldStrategy={speechFieldStrategy}
+                speechApiKey={speechApiKey}
+                speechOfflineReady={speechOfflineReady}
+                speechOfflineSize={speechOfflineSize}
+                speechDownloadState={speechDownloadState}
+                speechDownloadError={speechDownloadError}
+                onUpdateAISettings={onUpdateAISettings}
+                onUpdateSpeechSettings={onUpdateSpeechSettings}
+                onProviderChange={onProviderChange}
+                onSpeechProviderChange={onSpeechProviderChange}
+                onToggleAnthropicThinking={onToggleAnthropicThinking}
+                onAiApiKeyChange={onAiApiKeyChange}
+                onSpeechApiKeyChange={onSpeechApiKeyChange}
+                onDownloadWhisperModel={onDownloadWhisperModel}
+                onDeleteWhisperModel={onDeleteWhisperModel}
+            />
+        );
+    };
+
+    const CalendarPage = () => {
+        const {
+            externalCalendars,
+            newCalendarName,
+            newCalendarUrl,
+            calendarError,
+            setNewCalendarName,
+            setNewCalendarUrl,
+            handleAddCalendar,
+            handleToggleCalendar,
+            handleRemoveCalendar,
+        } = useCalendarSettings({ showSaved });
+
+        return (
+            <SettingsCalendarPage
+                t={t}
+                newCalendarName={newCalendarName}
+                newCalendarUrl={newCalendarUrl}
+                calendarError={calendarError}
+                externalCalendars={externalCalendars}
+                onCalendarNameChange={setNewCalendarName}
+                onCalendarUrlChange={setNewCalendarUrl}
+                onAddCalendar={handleAddCalendar}
+                onToggleCalendar={handleToggleCalendar}
+                onRemoveCalendar={handleRemoveCalendar}
+                maskCalendarUrl={maskCalendarUrl}
+            />
+        );
+    };
+
     const renderPage = () => {
         if (page === 'main') {
             return (
@@ -599,43 +706,7 @@ export function SettingsView() {
         }
 
         if (page === 'ai') {
-            return (
-                <SettingsAiPage
-                    t={t}
-                    aiEnabled={aiEnabled}
-                    aiProvider={aiProvider}
-                    aiModel={aiModel}
-                    aiModelOptions={aiModelOptions}
-                    aiCopilotModel={aiCopilotModel}
-                    aiCopilotOptions={aiCopilotOptions}
-                    aiReasoningEffort={aiReasoningEffort}
-                    aiThinkingBudget={aiThinkingBudget}
-                    anthropicThinkingEnabled={anthropicThinkingEnabled}
-                    anthropicThinkingOptions={anthropicThinkingOptions}
-                    aiApiKey={aiApiKey}
-                    speechEnabled={speechEnabled}
-                    speechProvider={speechProvider}
-                    speechModel={speechModel}
-                    speechModelOptions={speechModelOptions}
-                    speechLanguage={speechLanguage}
-                    speechMode={speechMode}
-                    speechFieldStrategy={speechFieldStrategy}
-                    speechApiKey={speechApiKey}
-                    speechOfflineReady={speechOfflineReady}
-                    speechOfflineSize={speechOfflineSize}
-                    speechDownloadState={speechDownloadState}
-                    speechDownloadError={speechDownloadError}
-                    onUpdateAISettings={onUpdateAISettings}
-                    onUpdateSpeechSettings={onUpdateSpeechSettings}
-                    onProviderChange={onProviderChange}
-                    onSpeechProviderChange={onSpeechProviderChange}
-                    onToggleAnthropicThinking={onToggleAnthropicThinking}
-                    onAiApiKeyChange={onAiApiKeyChange}
-                    onSpeechApiKeyChange={onSpeechApiKeyChange}
-                    onDownloadWhisperModel={onDownloadWhisperModel}
-                    onDeleteWhisperModel={onDeleteWhisperModel}
-                />
-            );
+            return <AiPage />;
         }
 
         if (page === 'notifications') {
@@ -658,67 +729,11 @@ export function SettingsView() {
         }
 
         if (page === 'calendar') {
-            return (
-                <SettingsCalendarPage
-                    t={t}
-                    newCalendarName={newCalendarName}
-                    newCalendarUrl={newCalendarUrl}
-                    calendarError={calendarError}
-                    externalCalendars={externalCalendars}
-                    onCalendarNameChange={setNewCalendarName}
-                    onCalendarUrlChange={setNewCalendarUrl}
-                    onAddCalendar={handleAddCalendar}
-                    onToggleCalendar={handleToggleCalendar}
-                    onRemoveCalendar={handleRemoveCalendar}
-                    maskCalendarUrl={maskCalendarUrl}
-                />
-            );
+            return <CalendarPage />;
         }
 
         if (page === 'sync') {
-            return (
-                <SettingsSyncPage
-                    t={t}
-                    isTauri={isTauri}
-                    dataPath={dataPath}
-                    dbPath={dbPath}
-                    configPath={configPath}
-                    loggingEnabled={loggingEnabled}
-                    logPath={logPath}
-                    onToggleLogging={toggleLogging}
-                    onClearLog={handleClearLog}
-                    syncBackend={syncBackend}
-                    onSetSyncBackend={handleSetSyncBackend}
-                    syncPath={syncPath}
-                    onSyncPathChange={setSyncPath}
-                    onSaveSyncPath={handleSaveSyncPath}
-                    onBrowseSyncPath={handleChangeSyncLocation}
-                    webdavUrl={webdavUrl}
-                    webdavUsername={webdavUsername}
-                    webdavPassword={webdavPassword}
-                    webdavHasPassword={webdavHasPassword}
-                    onWebdavUrlChange={setWebdavUrl}
-                    onWebdavUsernameChange={setWebdavUsername}
-                    onWebdavPasswordChange={setWebdavPassword}
-                    onSaveWebDav={handleSaveWebDav}
-                    cloudUrl={cloudUrl}
-                    cloudToken={cloudToken}
-                    onCloudUrlChange={setCloudUrl}
-                    onCloudTokenChange={setCloudToken}
-                    onSaveCloud={handleSaveCloud}
-                    onSyncNow={handleSync}
-                    isSyncing={isSyncing}
-                    syncError={syncError}
-                    lastSyncDisplay={lastSyncDisplay}
-                    lastSyncStatus={lastSyncStatus}
-                    lastSyncStats={lastSyncStats}
-                    conflictCount={conflictCount}
-                    lastSyncError={settings?.lastSyncError}
-                    attachmentsLastCleanupDisplay={attachmentsLastCleanupDisplay}
-                    onRunAttachmentsCleanup={handleAttachmentsCleanup}
-                    isCleaningAttachments={isCleaningAttachments}
-                />
-            );
+            return <SyncPage />;
         }
 
         if (page === 'about') {
