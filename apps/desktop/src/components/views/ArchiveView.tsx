@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { useTaskStore, sortTasksBy, safeFormatDate } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 
@@ -29,7 +30,8 @@ export function ArchiveView() {
     };
 
     return (
-        <div className="space-y-6">
+        <ErrorBoundary>
+            <div className="space-y-6">
             <header className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold tracking-tight">{t('archived.title')}</h2>
                 <div className="text-sm text-muted-foreground">
@@ -83,6 +85,7 @@ export function ArchiveView() {
                     ))
                 )}
             </div>
-        </div>
+            </div>
+        </ErrorBoundary>
     );
 }
