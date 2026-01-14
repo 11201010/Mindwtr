@@ -247,7 +247,6 @@ export function ReviewView() {
                 exitSelectionMode();
             }}
         />
-            </div>
         </ErrorBoundary>
     );
 }
