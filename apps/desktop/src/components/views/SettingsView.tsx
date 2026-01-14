@@ -196,224 +196,6 @@ export function SettingsView() {
     } = useCalendarSettings({ showSaved });
     const [isCleaningAttachments, setIsCleaningAttachments] = useState(false);
 
-    useEffect(() => {
-        const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-        if (
-            savedTheme === 'system'
-            || savedTheme === 'light'
-            || savedTheme === 'dark'
-            || savedTheme === 'eink'
-            || savedTheme === 'nord'
-            || savedTheme === 'sepia'
-        ) {
-            setThemeMode(savedTheme);
-        }
-
-        if (!isTauri) {
-            setAppVersion('web');
-            return;
-        }
-
-        import('@tauri-apps/api/app')
-            .then(({ getVersion }) => getVersion())
-            .then(setAppVersion)
-            .catch(console.error);
-
-        import('@tauri-apps/api/core')
-            .then(async ({ invoke }) => {
-                const [data, config, db, distro] = await Promise.all([
-                    invoke<string>('get_data_path_cmd'),
-                    invoke<string>('get_config_path_cmd'),
-                    invoke<string>('get_db_path_cmd'),
-                    invoke<LinuxDistroInfo | null>('get_linux_distro'),
-                ]);
-                setDataPath(data);
-                setConfigPath(config);
-                setDbPath(db);
-                setLinuxDistro(distro);
-            })
-            .catch(console.error);
-
-        getLogPath()
-            .then((path) => {
-                if (path) setLogPath(path);
-            })
-            .catch(console.error);
-    }, [isTauri]);
-
-    useEffect(() => {
-        if (!loggingEnabled) {
-            didWriteLogRef.current = false;
-            return;
-        }
-        if (didWriteLogRef.current) return;
-        didWriteLogRef.current = true;
-        logDiagnosticsEnabled().catch(console.warn);
-    }, [loggingEnabled]);
-
-    useEffect(() => {
-        const root = document.documentElement;
-        root.classList.remove('theme-eink', 'theme-nord', 'theme-sepia');
-
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        if (themeMode === 'system') {
-            root.classList.toggle('dark', prefersDark);
-        } else if (themeMode === 'dark' || themeMode === 'nord') {
-            root.classList.add('dark');
-        } else {
-            root.classList.remove('dark');
-        }
-
-        if (themeMode === 'eink') root.classList.add('theme-eink');
-        if (themeMode === 'nord') root.classList.add('theme-nord');
-        if (themeMode === 'sepia') root.classList.add('theme-sepia');
-
-        if (!isTauri) return;
-        const tauriTheme = themeMode === 'system'
-            ? null
-            : themeMode === 'dark' || themeMode === 'nord'
-                ? 'dark'
-                : 'light';
-        import('@tauri-apps/api/app')
-            .then(({ setTheme }) => setTheme(tauriTheme))
-            .catch(console.error);
-    }, [isTauri, themeMode]);
-
-    const saveThemePreference = (mode: ThemeMode) => {
-        localStorage.setItem(THEME_STORAGE_KEY, mode);
-        setThemeMode(mode);
-        showSaved();
-    };
-
-    const saveLanguagePreference = (lang: Language) => {
-        setLanguage(lang);
-        showSaved();
-    };
-
-    const handleKeybindingStyleChange = (style: 'vim' | 'emacs') => {
-        setKeybindingStyle(style);
-        showSaved();
-    };
-
-    const openLink = async (url: string) => {
-        if (isTauri) {
-            try {
-                const { open } = await import('@tauri-apps/plugin-shell');
-                await open(url);
-                return;
-            } catch (error) {
-                console.error('Failed to open external link:', error);
-            }
-        }
-
-        window.open(url, '_blank', 'noopener,noreferrer');
-    };
-
-    const handleAttachmentsCleanup = useCallback(async () => {
-        if (!isTauri) return;
-        try {
-            setIsCleaningAttachments(true);
-            await SyncService.cleanupAttachmentsNow();
-        } catch (error) {
-            console.error('Attachment cleanup failed:', error);
-        } finally {
-            setIsCleaningAttachments(false);
-        }
-    }, [isTauri]);
-
-    const toggleLogging = async () => {
-        const nextEnabled = !loggingEnabled;
-        await updateSettings({
-            diagnostics: {
-                ...(settings?.diagnostics ?? {}),
-                loggingEnabled: nextEnabled,
-            },
-        }).then(showSaved).catch(console.error);
-        if (nextEnabled) {
-            await logDiagnosticsEnabled();
-        }
-    };
-
-    const handleClearLog = async () => {
-        await clearLog();
-        showSaved();
-    };
-
-    const handleCheckUpdates = async () => {
-        setIsCheckingUpdate(true);
-        setUpdateInfo(null);
-        setUpdateError(null);
-        setUpdateNotice(null);
-        try {
-            const info = await checkForUpdates(appVersion);
-            if (!info || !info.hasUpdate) {
-                setUpdateNotice(t.upToDate);
-                return;
-            }
-            setUpdateInfo(info);
-            if (info.platform === 'linux' && linuxFlavor === 'arch') {
-                setDownloadNotice(t.downloadAURHint);
-            } else {
-                setDownloadNotice(null);
-            }
-            setIsDownloadingUpdate(false);
-            setShowUpdateModal(true);
-        } catch (error) {
-            console.error('Update check failed:', error);
-            setUpdateError(String(error));
-        } finally {
-            setIsCheckingUpdate(false);
-        }
-    };
-
-    const handleDownloadUpdate = async () => {
-        const targetUrl = preferredDownloadUrl;
-        if (updateInfo?.platform === 'linux' && linuxFlavor === 'arch') {
-            setDownloadNotice(t.downloadAURHint);
-            return;
-        }
-        if (!targetUrl) {
-            setDownloadNotice(t.downloadFailed);
-            return;
-        }
-        setIsDownloadingUpdate(true);
-        setDownloadNotice(t.downloadStarting);
-
-        try {
-            if (updateInfo?.assets?.length) {
-                const verified = await verifyDownloadChecksum(targetUrl, updateInfo.assets);
-                if (!verified) {
-                    setDownloadNotice(t.downloadFailed);
-                    setIsDownloadingUpdate(false);
-                    return;
-                }
-            }
-            if (isTauri) {
-                const { open } = await import('@tauri-apps/plugin-shell');
-                await open(targetUrl);
-            } else {
-                window.open(targetUrl, '_blank');
-            }
-            setDownloadNotice(t.downloadStarted);
-        } catch (error) {
-            console.error('Failed to open update URL:', error);
-            window.open(targetUrl, '_blank');
-            setDownloadNotice(t.downloadFailed);
-        }
-
-        if (isTauri) {
-            try {
-                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-                if (/linux/i.test(userAgent)) {
-                    setDownloadNotice(t.linuxUpdateHint);
-                }
-            } catch (error) {
-                console.error('Failed to detect platform:', error);
-            }
-        }
-
-    };
-
     const labelFallback = {
         en: {
             title: 'Settings',
@@ -839,6 +621,225 @@ export function SettingsView() {
         });
         return result;
     }, [labelsFallback, translate]);
+
+    useEffect(() => {
+        const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        if (
+            savedTheme === 'system'
+            || savedTheme === 'light'
+            || savedTheme === 'dark'
+            || savedTheme === 'eink'
+            || savedTheme === 'nord'
+            || savedTheme === 'sepia'
+        ) {
+            setThemeMode(savedTheme);
+        }
+
+        if (!isTauri) {
+            setAppVersion('web');
+            return;
+        }
+
+        import('@tauri-apps/api/app')
+            .then(({ getVersion }) => getVersion())
+            .then(setAppVersion)
+            .catch(console.error);
+
+        import('@tauri-apps/api/core')
+            .then(async ({ invoke }) => {
+                const [data, config, db, distro] = await Promise.all([
+                    invoke<string>('get_data_path_cmd'),
+                    invoke<string>('get_config_path_cmd'),
+                    invoke<string>('get_db_path_cmd'),
+                    invoke<LinuxDistroInfo | null>('get_linux_distro'),
+                ]);
+                setDataPath(data);
+                setConfigPath(config);
+                setDbPath(db);
+                setLinuxDistro(distro);
+            })
+            .catch(console.error);
+
+        getLogPath()
+            .then((path) => {
+                if (path) setLogPath(path);
+            })
+            .catch(console.error);
+    }, [isTauri]);
+
+    useEffect(() => {
+        if (!loggingEnabled) {
+            didWriteLogRef.current = false;
+            return;
+        }
+        if (didWriteLogRef.current) return;
+        didWriteLogRef.current = true;
+        logDiagnosticsEnabled().catch(console.warn);
+    }, [loggingEnabled]);
+
+    useEffect(() => {
+        const root = document.documentElement;
+        root.classList.remove('theme-eink', 'theme-nord', 'theme-sepia');
+
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (themeMode === 'system') {
+            root.classList.toggle('dark', prefersDark);
+        } else if (themeMode === 'dark' || themeMode === 'nord') {
+            root.classList.add('dark');
+        } else {
+            root.classList.remove('dark');
+        }
+
+        if (themeMode === 'eink') root.classList.add('theme-eink');
+        if (themeMode === 'nord') root.classList.add('theme-nord');
+        if (themeMode === 'sepia') root.classList.add('theme-sepia');
+
+        if (!isTauri) return;
+        const tauriTheme = themeMode === 'system'
+            ? null
+            : themeMode === 'dark' || themeMode === 'nord'
+                ? 'dark'
+                : 'light';
+        import('@tauri-apps/api/app')
+            .then(({ setTheme }) => setTheme(tauriTheme))
+            .catch(console.error);
+    }, [isTauri, themeMode]);
+
+    const saveThemePreference = (mode: ThemeMode) => {
+        localStorage.setItem(THEME_STORAGE_KEY, mode);
+        setThemeMode(mode);
+        showSaved();
+    };
+
+    const saveLanguagePreference = (lang: Language) => {
+        setLanguage(lang);
+        showSaved();
+    };
+
+    const handleKeybindingStyleChange = (style: 'vim' | 'emacs') => {
+        setKeybindingStyle(style);
+        showSaved();
+    };
+
+    const openLink = async (url: string) => {
+        if (isTauri) {
+            try {
+                const { open } = await import('@tauri-apps/plugin-shell');
+                await open(url);
+                return;
+            } catch (error) {
+                console.error('Failed to open external link:', error);
+            }
+        }
+
+        window.open(url, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleAttachmentsCleanup = useCallback(async () => {
+        if (!isTauri) return;
+        try {
+            setIsCleaningAttachments(true);
+            await SyncService.cleanupAttachmentsNow();
+        } catch (error) {
+            console.error('Attachment cleanup failed:', error);
+        } finally {
+            setIsCleaningAttachments(false);
+        }
+    }, [isTauri]);
+
+    const toggleLogging = async () => {
+        const nextEnabled = !loggingEnabled;
+        await updateSettings({
+            diagnostics: {
+                ...(settings?.diagnostics ?? {}),
+                loggingEnabled: nextEnabled,
+            },
+        }).then(showSaved).catch(console.error);
+        if (nextEnabled) {
+            await logDiagnosticsEnabled();
+        }
+    };
+
+    const handleClearLog = async () => {
+        await clearLog();
+        showSaved();
+    };
+
+    const handleCheckUpdates = async () => {
+        setIsCheckingUpdate(true);
+        setUpdateInfo(null);
+        setUpdateError(null);
+        setUpdateNotice(null);
+        try {
+            const info = await checkForUpdates(appVersion);
+            if (!info || !info.hasUpdate) {
+                setUpdateNotice(t.upToDate);
+                return;
+            }
+            setUpdateInfo(info);
+            if (info.platform === 'linux' && linuxFlavor === 'arch') {
+                setDownloadNotice(t.downloadAURHint);
+            } else {
+                setDownloadNotice(null);
+            }
+            setIsDownloadingUpdate(false);
+            setShowUpdateModal(true);
+        } catch (error) {
+            console.error('Update check failed:', error);
+            setUpdateError(String(error));
+        } finally {
+            setIsCheckingUpdate(false);
+        }
+    };
+
+    const handleDownloadUpdate = async () => {
+        const targetUrl = preferredDownloadUrl;
+        if (updateInfo?.platform === 'linux' && linuxFlavor === 'arch') {
+            setDownloadNotice(t.downloadAURHint);
+            return;
+        }
+        if (!targetUrl) {
+            setDownloadNotice(t.downloadFailed);
+            return;
+        }
+        setIsDownloadingUpdate(true);
+        setDownloadNotice(t.downloadStarting);
+
+        try {
+            if (updateInfo?.assets?.length) {
+                const verified = await verifyDownloadChecksum(targetUrl, updateInfo.assets);
+                if (!verified) {
+                    setDownloadNotice(t.downloadFailed);
+                    setIsDownloadingUpdate(false);
+                    return;
+                }
+            }
+            if (isTauri) {
+                const { open } = await import('@tauri-apps/plugin-shell');
+                await open(targetUrl);
+            } else {
+                window.open(targetUrl, '_blank');
+            }
+            setDownloadNotice(t.downloadStarted);
+        } catch (error) {
+            console.error('Failed to open update URL:', error);
+            window.open(targetUrl, '_blank');
+            setDownloadNotice(t.downloadFailed);
+        }
+
+        if (isTauri) {
+            try {
+                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+                if (/linux/i.test(userAgent)) {
+                    setDownloadNotice(t.linuxUpdateHint);
+                }
+            } catch (error) {
+                console.error('Failed to detect platform:', error);
+            }
+        }
+
+    };
+
     const attachmentsLastCleanupDisplay = useMemo(() => {
         if (!attachmentsLastCleanupAt) return '';
         return safeFormatDate(attachmentsLastCleanupAt, 'MMM d, HH:mm');
