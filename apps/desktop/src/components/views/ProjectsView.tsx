@@ -457,46 +457,46 @@ export function ProjectsView() {
 
     return (
         <ErrorBoundary>
-            <>
+            <div className="h-full">
                 <div className="flex h-full gap-6">
-            <ProjectsSidebar
-                t={t}
-                selectedArea={selectedArea}
-                selectedTag={selectedTag}
-                allAreasId={ALL_AREAS}
-                noAreaId={NO_AREA}
-                allTagsId={ALL_TAGS}
-                noTagsId={NO_TAGS}
-                areaOptions={areaOptions}
-                tagOptions={tagOptions}
-                isCreating={isCreating}
-                newProjectTitle={newProjectTitle}
-                onStartCreate={() => setIsCreating(true)}
-                onCancelCreate={() => setIsCreating(false)}
-                onCreateProject={handleCreateProject}
-                onChangeNewProjectTitle={setNewProjectTitle}
-                onSelectArea={setSelectedArea}
-                onSelectTag={setSelectedTag}
-                groupedActiveProjects={groupedActiveProjects}
-                groupedDeferredProjects={groupedDeferredProjects}
-                areaById={areaById}
-                collapsedAreas={collapsedAreas}
-                onToggleAreaCollapse={toggleAreaCollapse}
-                showDeferredProjects={showDeferredProjects}
-                onToggleDeferredProjects={() => setShowDeferredProjects((prev) => !prev)}
-                selectedProjectId={selectedProjectId}
-                onSelectProject={setSelectedProjectId}
-                getProjectColor={getProjectColor}
-                tasksByProject={tasksByProject}
-                projects={projects}
-                toggleProjectFocus={toggleProjectFocus}
-                reorderProjects={reorderProjects}
-            />
+                    <ProjectsSidebar
+                        t={t}
+                        selectedArea={selectedArea}
+                        selectedTag={selectedTag}
+                        allAreasId={ALL_AREAS}
+                        noAreaId={NO_AREA}
+                        allTagsId={ALL_TAGS}
+                        noTagsId={NO_TAGS}
+                        areaOptions={areaOptions}
+                        tagOptions={tagOptions}
+                        isCreating={isCreating}
+                        newProjectTitle={newProjectTitle}
+                        onStartCreate={() => setIsCreating(true)}
+                        onCancelCreate={() => setIsCreating(false)}
+                        onCreateProject={handleCreateProject}
+                        onChangeNewProjectTitle={setNewProjectTitle}
+                        onSelectArea={setSelectedArea}
+                        onSelectTag={setSelectedTag}
+                        groupedActiveProjects={groupedActiveProjects}
+                        groupedDeferredProjects={groupedDeferredProjects}
+                        areaById={areaById}
+                        collapsedAreas={collapsedAreas}
+                        onToggleAreaCollapse={toggleAreaCollapse}
+                        showDeferredProjects={showDeferredProjects}
+                        onToggleDeferredProjects={() => setShowDeferredProjects((prev) => !prev)}
+                        selectedProjectId={selectedProjectId}
+                        onSelectProject={setSelectedProjectId}
+                        getProjectColor={getProjectColor}
+                        tasksByProject={tasksByProject}
+                        projects={projects}
+                        toggleProjectFocus={toggleProjectFocus}
+                        reorderProjects={reorderProjects}
+                    />
 
-            {/* Project Details & Tasks */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
-                {selectedProject ? (
-                    <>
+                    {/* Project Details & Tasks */}
+                    <div className="flex-1 flex flex-col h-full overflow-hidden">
+                        {selectedProject ? (
+                            <>
                         <ProjectDetailsHeader
                             project={selectedProject}
                             projectColor={getProjectColor(selectedProject)}
@@ -603,23 +603,23 @@ export function ProjectsView() {
                             />
                         </div>
 
-			                        <div className="mb-6 bg-card border border-border rounded-lg p-3 space-y-2">
-			                            <label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
-			                                {t('projects.reviewAt')}
-		                            </label>
-	                            <input
-	                                key={selectedProject.id}
-	                                type="datetime-local"
-	                                defaultValue={toDateTimeLocalValue(selectedProject.reviewAt)}
-	                                onBlur={(e) => updateProject(selectedProject.id, { reviewAt: e.target.value || undefined })}
-	                                className="w-full text-sm bg-muted/50 border border-border rounded px-2 py-1"
-		                            />
-		                            <p className="text-xs text-muted-foreground">
-		                                {t('projects.reviewAtHint')}
-		                            </p>
-		                        </div>
+                                <div className="mb-6 bg-card border border-border rounded-lg p-3 space-y-2">
+                                    <label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
+                                        {t('projects.reviewAt')}
+                                    </label>
+                                    <input
+                                        key={selectedProject.id}
+                                        type="datetime-local"
+                                        defaultValue={toDateTimeLocalValue(selectedProject.reviewAt)}
+                                        onBlur={(e) => updateProject(selectedProject.id, { reviewAt: e.target.value || undefined })}
+                                        className="w-full text-sm bg-muted/50 border border-border rounded px-2 py-1"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        {t('projects.reviewAtHint')}
+                                    </p>
+                                </div>
 
-	                        <div className="mb-6">
+                                <div className="mb-6">
                             <form
                                 onSubmit={async (e) => {
                                     e.preventDefault();
@@ -659,123 +659,126 @@ export function ProjectsView() {
                             </form>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto pr-2">
-                            {orderedProjectTasks.length > 0 ? (
-                                <DndContext
-                                    sensors={taskSensors}
-                                    collisionDetection={closestCenter}
-                                    onDragEnd={handleTaskDragEnd}
-                                >
-                                    <SortableContext
-                                        items={orderedProjectTasks.map((task) => task.id)}
-                                        strategy={verticalListSortingStrategy}
-                                    >
-                                        <div className="space-y-2">
-                                            {orderedProjectTasks.map((task) => (
-                                                <SortableProjectTaskRow
-                                                    key={task.id}
-                                                    task={task}
-                                                    project={selectedProject}
-                                                />
-                                            ))}
+                                <div className="flex-1 overflow-y-auto pr-2">
+                                    {orderedProjectTasks.length > 0 ? (
+                                        <DndContext
+                                            sensors={taskSensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={handleTaskDragEnd}
+                                        >
+                                            <SortableContext
+                                                items={orderedProjectTasks.map((task) => task.id)}
+                                                strategy={verticalListSortingStrategy}
+                                            >
+                                                <div className="space-y-2">
+                                                    {orderedProjectTasks.map((task) => (
+                                                        <SortableProjectTaskRow
+                                                            key={task.id}
+                                                            task={task}
+                                                            project={selectedProject}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </SortableContext>
+                                        </DndContext>
+                                    ) : (
+                                        <div className="text-center text-muted-foreground py-12">
+                                            {t('projects.noActiveTasks')}
                                         </div>
-                                    </SortableContext>
-                                </DndContext>
-                            ) : (
-                                <div className="text-center text-muted-foreground py-12">
-                                    {t('projects.noActiveTasks')}
+                                    )}
                                 </div>
-                            )}
-                        </div>
-                    </>
-                ) : (
-                    <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                        <div className="text-center">
-                            <Folder className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                            <p>{t('projects.selectProject')}</p>
-                        </div>
+                            </>
+                        ) : (
+                            <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                                <div className="text-center">
+                                    <Folder className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                    <p>{t('projects.selectProject')}</p>
+                                </div>
+                            </div>
+                        )}
                     </div>
+                </div>
+
+                {showAreaManager && (
+                    <AreaManagerModal
+                        sortedAreas={sortedAreas}
+                        areaSensors={areaSensors}
+                        onDragEnd={handleAreaDragEnd}
+                        onDeleteArea={handleDeleteArea}
+                        onUpdateArea={updateArea}
+                        newAreaColor={newAreaColor}
+                        onChangeNewAreaColor={(event) => setNewAreaColor(event.target.value)}
+                        newAreaName={newAreaName}
+                        onChangeNewAreaName={(event) => setNewAreaName(event.target.value)}
+                        onCreateArea={() => {
+                            const name = newAreaName.trim();
+                            if (!name) return;
+                            addArea(name, { color: newAreaColor });
+                            setNewAreaName('');
+                        }}
+                        onSortByName={sortAreasByName}
+                        onSortByColor={sortAreasByColor}
+                        onClose={() => setShowAreaManager(false)}
+                        t={t}
+                    />
                 )}
+
+                <PromptModal
+                    isOpen={showLinkPrompt}
+                    title={t('attachments.addLink')}
+                    description={t('attachments.linkPlaceholder')}
+                    placeholder={t('attachments.linkPlaceholder')}
+                    defaultValue=""
+                    confirmLabel={t('common.save')}
+                    cancelLabel={t('common.cancel')}
+                    onCancel={() => setShowLinkPrompt(false)}
+                    onConfirm={(value) => {
+                        if (!selectedProject) return;
+                        const normalized = normalizeAttachmentInput(value);
+                        if (!normalized.uri) return;
+                        const now = new Date().toISOString();
+                        const attachment: Attachment = {
+                            id: generateUUID(),
+                            kind: normalized.kind,
+                            title: normalized.title,
+                            uri: normalized.uri,
+                            createdAt: now,
+                            updatedAt: now,
+                        };
+                        updateProject(selectedProject.id, { attachments: [...(selectedProject.attachments || []), attachment] });
+                        setShowLinkPrompt(false);
+                    }}
+                />
+
+                <PromptModal
+                    isOpen={showQuickAreaPrompt}
+                    title={t('projects.areaLabel')}
+                    description={t('projects.areaPlaceholder')}
+                    placeholder={t('projects.areaPlaceholder')}
+                    defaultValue=""
+                    confirmLabel={t('projects.create')}
+                    cancelLabel={t('common.cancel')}
+                    onCancel={() => {
+                        setShowQuickAreaPrompt(false);
+                        setPendingAreaAssignProjectId(null);
+                    }}
+                    onConfirm={async (value) => {
+                        const name = value.trim();
+                        if (!name) return;
+                        await addArea(name, { color: newAreaColor });
+                        const state = useTaskStore.getState();
+                        const matching = [...state.areas]
+                            .filter((area) => area.name.trim().toLowerCase() === name.toLowerCase())
+                            .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
+                        const created = matching[0];
+                        if (created && pendingAreaAssignProjectId) {
+                            updateProject(pendingAreaAssignProjectId, { areaId: created.id });
+                        }
+                        setShowQuickAreaPrompt(false);
+                        setPendingAreaAssignProjectId(null);
+                    }}
+                />
             </div>
-        </div>
-        {showAreaManager && (
-            <AreaManagerModal
-                sortedAreas={sortedAreas}
-                areaSensors={areaSensors}
-                onDragEnd={handleAreaDragEnd}
-                onDeleteArea={handleDeleteArea}
-                onUpdateArea={updateArea}
-                newAreaColor={newAreaColor}
-                onChangeNewAreaColor={(event) => setNewAreaColor(event.target.value)}
-                newAreaName={newAreaName}
-                onChangeNewAreaName={(event) => setNewAreaName(event.target.value)}
-                onCreateArea={() => {
-                    const name = newAreaName.trim();
-                    if (!name) return;
-                    addArea(name, { color: newAreaColor });
-                    setNewAreaName('');
-                }}
-                onSortByName={sortAreasByName}
-                onSortByColor={sortAreasByColor}
-                onClose={() => setShowAreaManager(false)}
-                t={t}
-            />
-        )}
-        <PromptModal
-            isOpen={showLinkPrompt}
-            title={t('attachments.addLink')}
-            description={t('attachments.linkPlaceholder')}
-            placeholder={t('attachments.linkPlaceholder')}
-            defaultValue=""
-            confirmLabel={t('common.save')}
-            cancelLabel={t('common.cancel')}
-            onCancel={() => setShowLinkPrompt(false)}
-            onConfirm={(value) => {
-                if (!selectedProject) return;
-                const normalized = normalizeAttachmentInput(value);
-                if (!normalized.uri) return;
-                const now = new Date().toISOString();
-                const attachment: Attachment = {
-                    id: generateUUID(),
-                    kind: normalized.kind,
-                    title: normalized.title,
-                    uri: normalized.uri,
-                    createdAt: now,
-                    updatedAt: now,
-                };
-                updateProject(selectedProject.id, { attachments: [...(selectedProject.attachments || []), attachment] });
-                setShowLinkPrompt(false);
-            }}
-        />
-        <PromptModal
-            isOpen={showQuickAreaPrompt}
-            title={t('projects.areaLabel')}
-            description={t('projects.areaPlaceholder')}
-            placeholder={t('projects.areaPlaceholder')}
-            defaultValue=""
-            confirmLabel={t('projects.create')}
-            cancelLabel={t('common.cancel')}
-            onCancel={() => {
-                setShowQuickAreaPrompt(false);
-                setPendingAreaAssignProjectId(null);
-            }}
-            onConfirm={async (value) => {
-                const name = value.trim();
-                if (!name) return;
-                await addArea(name, { color: newAreaColor });
-                const state = useTaskStore.getState();
-                const matching = [...state.areas]
-                    .filter((area) => area.name.trim().toLowerCase() === name.toLowerCase())
-                    .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
-                const created = matching[0];
-                if (created && pendingAreaAssignProjectId) {
-                    updateProject(pendingAreaAssignProjectId, { areaId: created.id });
-                }
-                setShowQuickAreaPrompt(false);
-                setPendingAreaAssignProjectId(null);
-            }}
-        />
-            </>
         </ErrorBoundary>
     );
 }

@@ -534,26 +534,31 @@ export function SettingsView() {
         })
     ), [locale]);
 
-    const pageTitle = page === 'gtd'
-        ? t.gtd
-        : page === 'notifications'
-            ? t.notifications
-            : page === 'ai'
-                ? t.ai
-            : page === 'sync'
-                ? t.sync
-                : page === 'calendar'
-                    ? t.calendar
-                    : page === 'about'
-                        ? t.about
-                        : t.general;
+    const pageTitle = useMemo(() => {
+        switch (page) {
+            case 'gtd':
+                return t.gtd;
+            case 'notifications':
+                return t.notifications;
+            case 'ai':
+                return t.ai;
+            case 'sync':
+                return t.sync;
+            case 'calendar':
+                return t.calendar;
+            case 'about':
+                return t.about;
+            default:
+                return t.general;
+        }
+    }, [page, t]);
 
-    const navItems: Array<{
+    const navItems = useMemo<Array<{
         id: SettingsPage;
         icon: ComponentType<{ className?: string }>;
         label: string;
         description?: string;
-    }> = [
+    }>>(() => [
         { id: 'main', icon: Monitor, label: t.general, description: `${t.appearance} • ${t.language} • ${t.keybindings}` },
         { id: 'gtd', icon: ListChecks, label: t.gtd, description: t.gtdDesc },
         { id: 'notifications', icon: Bell, label: t.notifications },
@@ -561,7 +566,7 @@ export function SettingsView() {
         { id: 'ai', icon: Sparkles, label: t.ai, description: t.aiDesc },
         { id: 'calendar', icon: CalendarDays, label: t.calendar },
         { id: 'about', icon: Info, label: t.about },
-    ];
+    ], [t]);
 
     const renderPage = () => {
         if (page === 'main') {
