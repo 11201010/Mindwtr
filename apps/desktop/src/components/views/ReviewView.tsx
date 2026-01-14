@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ErrorBoundary } from '../ErrorBoundary';
 
 import { createAIProvider, getStaleItems, isDueForReview, safeFormatDate, safeParseDate, safeParseDueDate, sortTasksBy, PRESET_CONTEXTS, type ReviewSuggestion, useTaskStore, type Project, type Task, type TaskStatus, type TaskSortBy, type AIProviderId } from '@mindwtr/core';
 import { Archive, ArrowRight, Calendar, Check, CheckSquare, Layers, RefreshCw, Sparkles, Star, X, type LucideIcon } from 'lucide-react';
@@ -1069,8 +1070,8 @@ export function ReviewView() {
     }, [batchUpdateTasks, selectedIdsArray, tasksById, t, exitSelectionMode]);
 
     return (
-        <>
-        <div className="space-y-6">
+        <ErrorBoundary>
+            <div className="space-y-6">
             <header className="flex items-center justify-between">
                 <div className="space-y-1">
                     <h2 className="text-3xl font-bold tracking-tight">
@@ -1236,6 +1237,7 @@ export function ReviewView() {
                 exitSelectionMode();
             }}
         />
-        </>
+            </div>
+        </ErrorBoundary>
     );
 }
