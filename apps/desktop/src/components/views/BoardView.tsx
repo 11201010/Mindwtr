@@ -177,13 +177,16 @@ export function BoardView() {
         });
     }, [hasProjectFilters, sortedTasks, boardFilters.selectedProjectIds]);
 
+    const sequentialProjectIds = React.useMemo(() => {
+        return new Set(projects.filter((p) => p.isSequential && !p.deletedAt).map((p) => p.id));
+    }, [projects]);
+
     const sequentialProjectFirstTasks = React.useMemo(() => {
-        const sequentialIds = new Set(projects.filter((p) => p.isSequential && !p.deletedAt).map((p) => p.id));
-        if (sequentialIds.size === 0) return new Set<string>();
+        if (sequentialProjectIds.size === 0) return new Set<string>();
         const tasksByProject = new Map<string, Task[]>();
         for (const task of filteredTasks) {
             if (task.deletedAt || task.status !== 'next' || !task.projectId) continue;
-            if (!sequentialIds.has(task.projectId)) continue;
+            if (!sequentialProjectIds.has(task.projectId)) continue;
             const list = tasksByProject.get(task.projectId) ?? [];
             list.push(task);
             tasksByProject.set(task.projectId, list);
@@ -206,7 +209,7 @@ export function BoardView() {
             if (firstTaskId) firstTaskIds.push(firstTaskId);
         });
         return new Set(firstTaskIds);
-    }, [filteredTasks, projects]);
+    }, [filteredTasks, sequentialProjectIds]);
 
     const sortByProjectOrder = React.useCallback((items: Task[]) => {
         return [...items].sort((a, b) => {
