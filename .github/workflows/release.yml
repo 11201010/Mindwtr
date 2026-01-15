@@ -475,6 +475,7 @@ jobs:
         with:
           identifier: dongdongbh.Mindwtr
           installers-regex: '_x64-setup\.exe$'
+          install-location: "%LocalAppData%\\Programs\\Mindwtr"
           token: ${{ secrets.PACKAGES_REPO_TOKEN }}
 
       - name: Commit and push
