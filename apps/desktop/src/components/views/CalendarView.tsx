@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, startOfMonth, startOfWeek, eachDayOfInterval } from 'date-fns';
 import { shallow, parseIcs, safeParseDate, safeParseDueDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore, type Task, isTaskInActiveProject } from '@mindwtr/core';
@@ -9,6 +9,7 @@ import { cn } from '../../lib/utils';
 import { reportError } from '../../lib/report-error';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
+import { TaskItem } from '../TaskItem';
 
 const dayKey = (date: Date) => format(date, 'yyyy-MM-dd');
 
@@ -94,6 +95,12 @@ export function CalendarView() {
 
     const getDeadlinesForDay = (date: Date) => deadlinesByDay.get(dayKey(date)) ?? [];
     const getScheduledForDay = (date: Date) => scheduledByDay.get(dayKey(date)) ?? [];
+    const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+    const openTask = openTaskId ? tasks.find((task) => task.id === openTaskId) ?? null : null;
+    const openProject = openTask?.projectId ? projectMap.get(openTask.projectId) : undefined;
+    const openTaskFromCalendar = useCallback((task: Task) => {
+        setOpenTaskId(task.id);
+    }, []);
 
     const getExternalEventsForDay = (date: Date) => {
         const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -467,7 +474,10 @@ export function CalendarView() {
                                             key={task.id}
                                             className="text-xs truncate px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20"
                                             title={task.title}
-                                            onClick={(e) => e.stopPropagation()}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                openTaskFromCalendar(task);
+                                            }}
                                         >
                                             {task.title}
                                         </div>
@@ -479,7 +489,7 @@ export function CalendarView() {
                                             title={task.title}
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                setSelectedDate(day);
+                                                openTaskFromCalendar(task);
                                             }}
                                         >
                                             {task.title}
@@ -585,9 +595,14 @@ export function CalendarView() {
                             <div className="text-xs font-medium text-muted-foreground">{t('calendar.deadline')}</div>
                             <div className="space-y-1">
                                 {getDeadlinesForDay(selectedDate).map((task) => (
-                                    <div key={task.id} className="text-sm truncate">
+                                    <button
+                                        key={task.id}
+                                        type="button"
+                                        onClick={() => openTaskFromCalendar(task)}
+                                        className="text-sm truncate text-left text-foreground hover:underline"
+                                    >
                                         {task.title}
-                                    </div>
+                                    </button>
                                 ))}
                                 {getDeadlinesForDay(selectedDate).length === 0 && (
                                     <div className="text-sm text-muted-foreground">{t('calendar.noTasks')}</div>
@@ -606,10 +621,14 @@ export function CalendarView() {
                                     const label = `${format(start, 'HH:mm')}-${format(end, 'HH:mm')}`;
                                     return (
                                         <div key={task.id} className="flex items-center justify-between gap-3">
-                                            <div className="min-w-0 text-sm truncate">
+                                            <button
+                                                type="button"
+                                                onClick={() => openTaskFromCalendar(task)}
+                                                className="min-w-0 text-sm truncate text-left text-foreground hover:underline"
+                                            >
                                                 <span className="text-muted-foreground mr-2">{label}</span>
                                                 {task.title}
-                                            </div>
+                                            </button>
                                             <div className="flex items-center gap-2">
                                                 {editingTimeTaskId === task.id ? (
                                                     <>
@@ -669,8 +688,35 @@ export function CalendarView() {
                     </div>
                 </div>
             )}
+            {openTask && (
+                <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+                    <div
+                        className="absolute inset-0"
+                        onClick={() => setOpenTaskId(null)}
+                    />
+                    <div className="relative w-full max-w-3xl bg-background border border-border rounded-xl shadow-xl p-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-lg font-semibold">{t('taskEdit.editTask') || 'Task'}</h3>
+                            <button
+                                type="button"
+                                onClick={() => setOpenTaskId(null)}
+                                className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground"
+                            >
+                                {t('common.close')}
+                            </button>
+                        </div>
+                        <TaskItem
+                            task={openTask}
+                            project={openProject}
+                            showQuickDone={false}
+                            readOnly={false}
+                            compactMetaEnabled={true}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
-            </div>
+        </div>
         </ErrorBoundary>
     );
 }
