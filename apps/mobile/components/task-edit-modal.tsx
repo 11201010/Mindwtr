@@ -919,6 +919,11 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
     const savedOrder = useMemo(() => settings.gtd?.taskEditor?.order ?? [], [settings.gtd?.taskEditor?.order]);
+    const isReference = (editedTask.status ?? task?.status) === 'reference';
+    const availableStatusOptions = useMemo(
+        () => (isReference ? STATUS_OPTIONS : STATUS_OPTIONS.filter((status) => status !== 'reference')),
+        [isReference]
+    );
     const disabledFields = useMemo(() => {
         const next = new Set<TaskEditorFieldId>();
         if (!prioritiesEnabled) next.add('priority');
@@ -942,21 +947,36 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         [taskEditorOrder]
     );
 
+    const referenceHiddenFields = useMemo(() => new Set<TaskEditorFieldId>([
+        'startTime',
+        'dueDate',
+        'reviewAt',
+        'recurrence',
+        'priority',
+        'timeEstimate',
+        'checklist',
+    ]), []);
+    const filterReferenceFields = useCallback(
+        (fields: TaskEditorFieldId[]) => (
+            isReference ? fields.filter((fieldId) => !referenceHiddenFields.has(fieldId)) : fields
+        ),
+        [isReference, referenceHiddenFields]
+    );
     const alwaysFields = useMemo(
-        () => orderFields(['status', 'project', 'area', 'dueDate']),
-        [orderFields]
+        () => filterReferenceFields(orderFields(['status', 'project', 'area', 'dueDate'])),
+        [filterReferenceFields, orderFields]
     );
     const schedulingFields = useMemo(
-        () => orderFields(['startTime', 'recurrence', 'reviewAt']),
-        [orderFields]
+        () => filterReferenceFields(orderFields(['startTime', 'recurrence', 'reviewAt'])),
+        [filterReferenceFields, orderFields]
     );
     const organizationFields = useMemo(
-        () => orderFields(['contexts', 'tags', 'priority', 'timeEstimate']),
-        [orderFields]
+        () => filterReferenceFields(orderFields(['contexts', 'tags', 'priority', 'timeEstimate'])),
+        [filterReferenceFields, orderFields]
     );
     const detailsFields = useMemo(
-        () => orderFields(['description', 'textDirection', 'checklist', 'attachments']),
-        [orderFields]
+        () => filterReferenceFields(orderFields(['description', 'textDirection', 'checklist', 'attachments'])),
+        [filterReferenceFields, orderFields]
     );
 
     const mergedTask = useMemo(() => ({
@@ -1143,6 +1163,27 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         onClose();
     };
 
+    const handleConvertToReference = useCallback(() => {
+        if (!task) return;
+        const referenceUpdate: Partial<Task> = {
+            status: 'reference',
+            startTime: undefined,
+            dueDate: undefined,
+            reviewAt: undefined,
+            recurrence: undefined,
+            priority: undefined,
+            timeEstimate: undefined,
+            checklist: undefined,
+            isFocusedToday: false,
+            pushCount: 0,
+        };
+        onSave(task.id, referenceUpdate);
+        setEditedTask((prev) => ({
+            ...prev,
+            ...referenceUpdate,
+        }));
+    }, [onSave, setEditedTask, task]);
+
     const getAIProvider = async () => {
         if (!aiEnabled) {
             Alert.alert(t('ai.disabledTitle'), t('ai.disabledBody'));
@@ -1305,7 +1346,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                     <View style={styles.formGroup}>
                         <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.statusLabel')}</Text>
                         <View style={styles.statusContainerCompact}>
-                            {STATUS_OPTIONS.map(status => (
+                            {availableStatusOptions.map(status => (
                                 <TouchableOpacity
                                     key={status}
                                     style={[styles.statusChipCompact, ...getStatusChipStyle(editedTask.status === status)]}
@@ -1977,6 +2018,8 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                     onShare={handleShare}
                     onDuplicate={handleDuplicateTask}
                     onDelete={handleDeleteTask}
+                    onConvertToReference={handleConvertToReference}
+                    showConvertToReference={!isReference}
                 />
 
                 <TaskEditTabs

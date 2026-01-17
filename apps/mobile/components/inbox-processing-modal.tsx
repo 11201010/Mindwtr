@@ -166,12 +166,14 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     });
   };
 
-  const handleNotActionable = (action: 'trash' | 'someday') => {
+  const handleNotActionable = (action: 'trash' | 'someday' | 'reference') => {
     if (!currentTask) return;
     if (action === 'trash') {
       deleteTask(currentTask.id);
     } else if (action === 'someday') {
       applyProcessingEdits({ status: 'someday' });
+    } else if (action === 'reference') {
+      applyProcessingEdits({ status: 'reference' });
     }
     moveToNext();
   };
@@ -571,6 +573,12 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
                       onPress={() => handleNotActionable('someday')}
                     >
                       <Text style={styles.buttonPrimaryText}>💭 {t('inbox.someday')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.button, { backgroundColor: '#3B82F6' }]}
+                      onPress={() => handleNotActionable('reference')}
+                    >
+                      <Text style={styles.buttonPrimaryText}>📚 {t('nav.reference')}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>

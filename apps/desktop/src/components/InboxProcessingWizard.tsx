@@ -1,4 +1,4 @@
-import { CheckCircle, Moon, Trash2, User, X } from 'lucide-react';
+import { BookOpen, CheckCircle, Moon, Trash2, User, X } from 'lucide-react';
 import type { Area, Project, Task } from '@mindwtr/core';
 
 import { cn } from '../lib/utils';
@@ -16,7 +16,7 @@ type InboxProcessingWizardProps = {
     setProcessingDescription: (value: string) => void;
     setIsProcessing: (value: boolean) => void;
     handleRefineNext: () => void;
-    handleNotActionable: (destination: 'trash' | 'someday') => void;
+    handleNotActionable: (destination: 'trash' | 'someday' | 'reference') => void;
     handleActionable: () => void;
     handleTwoMinDone: () => void;
     handleTwoMinNo: () => void;
@@ -199,6 +199,12 @@ export function InboxProcessingWizard({
                             className="flex-1 flex items-center justify-center gap-2 bg-purple-500/10 text-purple-600 py-2 rounded-lg font-medium hover:bg-purple-500/20"
                         >
                             <Moon className="w-4 h-4" /> {t('process.someday')}
+                        </button>
+                        <button
+                            onClick={() => handleNotActionable('reference')}
+                            className="flex-1 flex items-center justify-center gap-2 bg-blue-500/10 text-blue-600 py-2 rounded-lg font-medium hover:bg-blue-500/20"
+                        >
+                            <BookOpen className="w-4 h-4" /> {t('process.reference')}
                         </button>
                     </div>
                 </div>

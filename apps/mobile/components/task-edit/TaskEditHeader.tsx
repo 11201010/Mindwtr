@@ -10,9 +10,19 @@ type TaskEditHeaderProps = {
   onShare: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onConvertToReference?: () => void;
+  showConvertToReference?: boolean;
 };
 
-export function TaskEditHeader({ title, onDone, onShare, onDuplicate, onDelete }: TaskEditHeaderProps) {
+export function TaskEditHeader({
+  title,
+  onDone,
+  onShare,
+  onDuplicate,
+  onDelete,
+  onConvertToReference,
+  showConvertToReference = false,
+}: TaskEditHeaderProps) {
   const { t } = useLanguage();
   const tc = useThemeColors();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -59,6 +69,17 @@ export function TaskEditHeader({ title, onDone, onShare, onDuplicate, onDelete }
             >
               <Text style={[styles.menuItemText, { color: tc.text }]}>{t('taskEdit.duplicateTask')}</Text>
             </Pressable>
+            {showConvertToReference && onConvertToReference && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuVisible(false);
+                  onConvertToReference();
+                }}
+              >
+                <Text style={[styles.menuItemText, { color: tc.text }]}>{t('task.convertToReference')}</Text>
+              </Pressable>
+            )}
             <Pressable
               style={styles.menuItem}
               onPress={() => {

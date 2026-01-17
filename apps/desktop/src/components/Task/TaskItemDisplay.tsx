@@ -1,4 +1,4 @@
-import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, Pencil, RotateCcw, Copy, MapPin, Hourglass } from 'lucide-react';
+import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, Pencil, RotateCcw, Copy, MapPin, Hourglass, BookOpen } from 'lucide-react';
 import type { Area, Attachment, Project, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy } from '@mindwtr/core';
 import { getChecklistProgress, getTaskAgeLabel, getTaskStaleness, getTaskUrgency, hasTimeComponent, safeFormatDate, stripMarkdown, resolveTaskTextDirection } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
@@ -365,6 +365,17 @@ export function TaskItemDisplay({
                             >
                                 <Pencil className="w-4 h-4" />
                             </button>
+                            {task.status !== 'reference' && (
+                                <button
+                                    type="button"
+                                    onClick={() => onStatusChange('reference')}
+                                    aria-label={t('task.convertToReference')}
+                                    title={t('task.convertToReference')}
+                                    className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-500/10"
+                                >
+                                    <BookOpen className="w-4 h-4" />
+                                </button>
+                            )}
                             {showQuickDone && task.status !== 'done' && (
                                 <button
                                     type="button"
@@ -385,7 +396,9 @@ export function TaskItemDisplay({
                                 <option value="next">{t('status.next')}</option>
                                 <option value="waiting">{t('status.waiting')}</option>
                                 <option value="someday">{t('status.someday')}</option>
-                                <option value="reference">{t('status.reference')}</option>
+                                {task.status === 'reference' && (
+                                    <option value="reference">{t('status.reference')}</option>
+                                )}
                                 <option value="done">{t('status.done')}</option>
                             </select>
                             <button

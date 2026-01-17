@@ -224,7 +224,6 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                 if (t.deletedAt) return false;
 
                 if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-                if (statusFilter === 'reference' && t.projectId) return false;
                 // Respect statusFilter (handled above).
                 if (!allowDeferredProjectTasks && !isTaskInActiveProject(t, projectMap)) return false;
                 if (hideProjectTasksInDeferredList && t.projectId && projectMap.get(t.projectId)) return false;

@@ -94,6 +94,7 @@ export function TaskEditViewTab({
         : t('taskEdit.textDirection.auto');
 
   const statusLabel = mergedTask.status ? (t(`status.${mergedTask.status}`) || mergedTask.status) : undefined;
+  const isReference = mergedTask.status === 'reference';
   const priorityLabel = mergedTask.priority ? (t(`priority.${mergedTask.priority}`) || mergedTask.priority) : undefined;
   const timeEstimateLabel = mergedTask.timeEstimate
     ? (formatTimeEstimateLabel(mergedTask.timeEstimate as TimeEstimate) || String(mergedTask.timeEstimate))
@@ -112,13 +113,13 @@ export function TaskEditViewTab({
       nestedScrollEnabled={nestedScrollEnabled}
     >
       {renderViewRow(t('taskEdit.statusLabel'), statusLabel)}
-      {prioritiesEnabled ? renderViewRow(t('taskEdit.priorityLabel'), priorityLabel) : null}
+      {!isReference && prioritiesEnabled ? renderViewRow(t('taskEdit.priorityLabel'), priorityLabel) : null}
       {renderViewRow(t('taskEdit.projectLabel'), project?.title)}
       {!project?.id ? renderViewRow(t('taskEdit.areaLabel'), area?.name) : null}
-      {renderViewRow(t('taskEdit.startDateLabel'), mergedTask.startTime ? formatDate(mergedTask.startTime) : undefined)}
-      {renderViewRow(t('taskEdit.dueDateLabel'), mergedTask.dueDate ? formatDueDate(mergedTask.dueDate) : undefined)}
-      {renderViewRow(t('taskEdit.reviewDateLabel'), mergedTask.reviewAt ? formatDate(mergedTask.reviewAt) : undefined)}
-      {timeEstimatesEnabled ? renderViewRow(t('taskEdit.timeEstimateLabel'), timeEstimateLabel) : null}
+      {!isReference ? renderViewRow(t('taskEdit.startDateLabel'), mergedTask.startTime ? formatDate(mergedTask.startTime) : undefined) : null}
+      {!isReference ? renderViewRow(t('taskEdit.dueDateLabel'), mergedTask.dueDate ? formatDueDate(mergedTask.dueDate) : undefined) : null}
+      {!isReference ? renderViewRow(t('taskEdit.reviewDateLabel'), mergedTask.reviewAt ? formatDate(mergedTask.reviewAt) : undefined) : null}
+      {!isReference && timeEstimatesEnabled ? renderViewRow(t('taskEdit.timeEstimateLabel'), timeEstimateLabel) : null}
       {mergedTask.textDirection ? renderViewRow(t('taskEdit.textDirectionLabel'), textDirectionLabel) : null}
       {mergedTask.contexts?.length ? (
         <View style={styles.viewSection}>
@@ -133,7 +134,7 @@ export function TaskEditViewTab({
         </View>
       ) : null}
       {mergedTask.location ? renderViewRow(t('taskEdit.locationLabel'), mergedTask.location) : null}
-      {recurrenceLabel ? renderViewRow(t('taskEdit.recurrenceLabel'), recurrenceLabel) : null}
+      {!isReference && recurrenceLabel ? renderViewRow(t('taskEdit.recurrenceLabel'), recurrenceLabel) : null}
       {description ? (
         <View style={styles.viewSection}>
           <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.descriptionLabel')}</Text>
@@ -143,7 +144,7 @@ export function TaskEditViewTab({
           </View>
         </View>
       ) : null}
-      {checklist.length ? (
+      {!isReference && checklist.length ? (
         <View style={styles.viewSection}>
           <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.checklist')}</Text>
           <View style={styles.viewChecklist}>

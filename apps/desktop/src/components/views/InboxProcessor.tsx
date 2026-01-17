@@ -132,12 +132,14 @@ export function InboxProcessor({
         });
     }, [processingDescription, processingTask, processingTitle, updateTask]);
 
-    const handleNotActionable = useCallback((action: 'trash' | 'someday') => {
+    const handleNotActionable = useCallback((action: 'trash' | 'someday' | 'reference') => {
         if (!processingTask) return;
         if (action === 'trash') {
             deleteTask(processingTask.id);
-        } else {
+        } else if (action === 'someday') {
             applyProcessingEdits({ status: 'someday' });
+        } else {
+            applyProcessingEdits({ status: 'reference' });
         }
         processNext();
     }, [applyProcessingEdits, deleteTask, processNext, processingTask]);

@@ -42,21 +42,28 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
         };
     }
 
-    if (incomingStatus === 'reference') {
-        finalUpdates = {
-            ...finalUpdates,
-            status: incomingStatus,
-            projectId: undefined,
-            orderNum: undefined,
-        };
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updates, 'dueDate')) {
+    if (Object.prototype.hasOwnProperty.call(updates, 'dueDate') && incomingStatus !== 'reference') {
         const rescheduled = rescheduleTask(oldTask, updates.dueDate);
         finalUpdates = {
             ...finalUpdates,
             dueDate: rescheduled.dueDate,
             pushCount: rescheduled.pushCount,
+        };
+    }
+
+    if (incomingStatus === 'reference') {
+        finalUpdates = {
+            ...finalUpdates,
+            status: incomingStatus,
+            startTime: undefined,
+            dueDate: undefined,
+            reviewAt: undefined,
+            recurrence: undefined,
+            priority: undefined,
+            timeEstimate: undefined,
+            checklist: undefined,
+            isFocusedToday: false,
+            pushCount: 0,
         };
     }
 
@@ -692,11 +699,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const changeAt = Date.now();
         const resolvedStatus = (initialProps?.status ?? 'inbox') as TaskStatus;
         const hasOrderNum = Object.prototype.hasOwnProperty.call(initialProps ?? {}, 'orderNum');
-        const resolvedProjectId = resolvedStatus === 'reference' ? undefined : initialProps?.projectId;
+        const resolvedProjectId = initialProps?.projectId;
         const resolvedAreaId = resolvedProjectId ? undefined : initialProps?.areaId;
         const resolvedOrderNum = !hasOrderNum && resolvedProjectId
             ? getNextProjectOrder(resolvedProjectId, get()._allTasks)
             : initialProps?.orderNum;
+        const referenceClears = resolvedStatus === 'reference'
+            ? {
+                startTime: undefined,
+                dueDate: undefined,
+                reviewAt: undefined,
+                recurrence: undefined,
+                priority: undefined,
+                timeEstimate: undefined,
+                checklist: undefined,
+                isFocusedToday: false,
+                pushCount: 0,
+            }
+            : {};
         const newTask: Task = {
             id: uuidv4(),
             title,
@@ -708,9 +728,10 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             ...initialProps,
+            ...referenceClears,
             areaId: resolvedAreaId,
             projectId: resolvedProjectId,
-            orderNum: resolvedStatus === 'reference' ? undefined : resolvedOrderNum,
+            orderNum: resolvedOrderNum,
         };
 
         const newAllTasks = [...get()._allTasks, newTask];

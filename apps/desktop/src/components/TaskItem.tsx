@@ -337,6 +337,16 @@ export const TaskItem = memo(function TaskItem({
         if (settings?.features?.timeEstimates === false) next.add('timeEstimate');
         return next;
     }, [savedHidden, settings?.features?.priorities, settings?.features?.timeEstimates, taskEditorOrder]);
+    const isReference = editStatus === 'reference';
+    const referenceHiddenFields = useMemo(() => new Set<TaskEditorFieldId>([
+        'startTime',
+        'dueDate',
+        'reviewAt',
+        'recurrence',
+        'priority',
+        'timeEstimate',
+        'checklist',
+    ]), []);
 
     const hasValue = useCallback((fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
@@ -396,8 +406,11 @@ export const TaskItem = memo(function TaskItem({
     ]);
 
     const isFieldVisible = useCallback(
-        (fieldId: TaskEditorFieldId) => !hiddenSet.has(fieldId) || hasValue(fieldId),
-        [hasValue, hiddenSet]
+        (fieldId: TaskEditorFieldId) => {
+            if (isReference && referenceHiddenFields.has(fieldId)) return false;
+            return !hiddenSet.has(fieldId) || hasValue(fieldId);
+        },
+        [hasValue, hiddenSet, isReference, referenceHiddenFields]
     );
     const showProjectField = isFieldVisible('project');
     const showAreaField = isFieldVisible('area') && !editProjectId;
@@ -524,14 +537,14 @@ export const TaskItem = memo(function TaskItem({
                 recurrenceValue.rrule = editRecurrenceRRule;
             }
             const nextTextDirection = editTextDirection === 'auto' ? undefined : editTextDirection;
-            const nextProjectId = editStatus === 'reference' ? '' : editProjectId;
+            const resolvedProjectId = editProjectId || undefined;
             updateTask(task.id, {
                 title: editTitle,
                 status: editStatus,
                 dueDate: editDueDate || undefined,
                 startTime: editStartTime || undefined,
-                projectId: nextProjectId || undefined,
-                areaId: nextProjectId ? undefined : (editAreaId || undefined),
+                projectId: resolvedProjectId,
+                areaId: resolvedProjectId ? undefined : (editAreaId || undefined),
                 contexts: editContexts.split(',').map(c => c.trim()).filter(Boolean),
                 tags: editTags.split(',').map(c => c.trim()).filter(Boolean),
                 description: editDescription || undefined,

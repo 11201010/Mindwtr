@@ -27,7 +27,9 @@ export function TaskStatusBadge({ status, onUpdate }: TaskStatusBadgeProps) {
     const handlePress = () => {
         // Determine relevant options based on current status
         // Always showing full list for flexibility, but could prioritize
-        const options: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'];
+        const options: TaskStatus[] = status === 'reference'
+            ? ['inbox', 'next', 'waiting', 'someday', 'reference', 'done']
+            : ['inbox', 'next', 'waiting', 'someday', 'done'];
 
         if (Platform.OS === 'ios') {
             const labels = options.map(s => getStatusLabel(s));
@@ -53,7 +55,9 @@ export function TaskStatusBadge({ status, onUpdate }: TaskStatusBadgeProps) {
         setModalVisible(false);
     };
 
-    const ANDROID_OPTIONS: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'];
+    const ANDROID_OPTIONS: TaskStatus[] = status === 'reference'
+        ? ['inbox', 'next', 'waiting', 'someday', 'reference', 'done']
+        : ['inbox', 'next', 'waiting', 'someday', 'done'];
 
     return (
         <>

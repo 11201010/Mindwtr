@@ -267,7 +267,9 @@ export function SwipeableTaskItem({
         </Pressable>
     );
 
-    const quickStatusOptions: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'];
+    const quickStatusOptions: TaskStatus[] = task.status === 'reference'
+        ? ['inbox', 'next', 'waiting', 'someday', 'reference', 'done']
+        : ['inbox', 'next', 'waiting', 'someday', 'done'];
 
     const accessibilityLabel = [
         task.title,
