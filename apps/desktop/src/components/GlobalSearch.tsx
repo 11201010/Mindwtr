@@ -19,6 +19,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
     const [ftsLoading, setFtsLoading] = useState(false);
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
+    const resultsRef = useRef<HTMLDivElement>(null);
     const isOpenRef = useRef(false);
     const { _allTasks, projects, settings, updateSettings, setHighlightTask } = useTaskStore(
         (state) => ({
@@ -128,6 +129,15 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
     ].slice(0, 50); // Limit results
     const isTruncated = totalResults > results.length;
 
+    useEffect(() => {
+        if (!isOpen) return;
+        if (selectedIndex < 0 || selectedIndex >= results.length) return;
+        const container = resultsRef.current;
+        if (!container) return;
+        const target = container.querySelector<HTMLElement>(`[data-search-index="${selectedIndex}"]`);
+        target?.scrollIntoView({ block: 'nearest' });
+    }, [isOpen, selectedIndex, results.length]);
+
     const renderHighlighted = (text: string) => {
         if (!highlightRegex) return text;
         const parts = text.split(highlightRegex);
@@ -232,7 +242,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                     </div>
                 </div>
 
-                <div className="max-h-[60vh] overflow-y-auto p-2">
+                <div ref={resultsRef} className="max-h-[60vh] overflow-y-auto p-2">
                     {isTruncated && (
                         <div className="px-3 pb-2 text-xs text-muted-foreground">
                             {t('search.showingFirst')
@@ -266,6 +276,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                                 index === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
                             )}
                             onMouseEnter={() => setSelectedIndex(index)}
+                            data-search-index={index}
                         >
                             {result.type === 'project' ? (
                                 <FileText className="w-4 h-4 text-blue-500" />
