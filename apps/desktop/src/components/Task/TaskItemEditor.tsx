@@ -179,65 +179,66 @@ export function TaskItemEditor({
             className="flex flex-col gap-3 max-h-[80vh]"
         >
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
-            <div className="flex items-start gap-2">
-                <TaskInput
-                    autoFocus
-                    value={editTitle}
-                    onChange={(value) => {
-                        setEditTitle(value);
-                        resetCopilotDraft();
-                    }}
-                    projects={projects}
-                    contexts={inputContexts}
-                    onCreateProject={onCreateProject}
-                    placeholder={t('taskEdit.titleLabel')}
-                    className="w-full bg-transparent border-b border-primary/50 p-1 text-base font-medium focus:ring-0 focus:border-primary outline-none"
-                    dir={titleDirection}
-                />
-                {aiEnabled && (
-                    <div className="relative" ref={aiMenuRef}>
-                        <button
-                            type="button"
-                            onClick={() => setAiMenuOpen((prev) => !prev)}
-                            aria-label={t('taskEdit.aiAssistant') || 'AI assistant'}
-                            aria-expanded={aiMenuOpen}
-                            className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        >
-                            <Sparkles className="w-4 h-4" />
-                        </button>
-                        {aiMenuOpen && (
-                            <div className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-card shadow-lg overflow-hidden z-10">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setAiMenuOpen(false);
-                                        handleAIClarify();
-                                    }}
-                                    disabled={isAIWorking}
-                                    aria-busy={isAIWorking}
-                                    className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
-                                >
-                                    {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
-                                    {t('taskEdit.aiClarify')}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setAiMenuOpen(false);
-                                        handleAIBreakdown();
-                                    }}
-                                    disabled={isAIWorking}
-                                    aria-busy={isAIWorking}
-                                    className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
-                                >
-                                    {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
-                                    {t('taskEdit.aiBreakdown')}
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
+                <div className="flex items-start gap-2">
+                    <TaskInput
+                        autoFocus
+                        value={editTitle}
+                        onChange={(value) => {
+                            setEditTitle(value);
+                            resetCopilotDraft();
+                        }}
+                        projects={projects}
+                        contexts={inputContexts}
+                        onCreateProject={onCreateProject}
+                        placeholder={t('taskEdit.titleLabel')}
+                        className="w-full bg-transparent border-b border-primary/50 p-1 text-base font-medium focus:ring-0 focus:border-primary outline-none"
+                        containerClassName="flex-1 min-w-0"
+                        dir={titleDirection}
+                    />
+                    {aiEnabled && (
+                        <div className="relative" ref={aiMenuRef}>
+                            <button
+                                type="button"
+                                onClick={() => setAiMenuOpen((prev) => !prev)}
+                                aria-label={t('taskEdit.aiAssistant') || 'AI assistant'}
+                                aria-expanded={aiMenuOpen}
+                                className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40"
+                            >
+                                <Sparkles className="w-4 h-4" />
+                            </button>
+                            {aiMenuOpen && (
+                                <div className="absolute right-0 mt-2 w-44 rounded-md border border-border bg-card shadow-lg overflow-hidden z-10">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAiMenuOpen(false);
+                                            handleAIClarify();
+                                        }}
+                                        disabled={isAIWorking}
+                                        aria-busy={isAIWorking}
+                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                    >
+                                        {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
+                                        {t('taskEdit.aiClarify')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAiMenuOpen(false);
+                                            handleAIBreakdown();
+                                        }}
+                                        disabled={isAIWorking}
+                                        aria-busy={isAIWorking}
+                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                    >
+                                        {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
+                                        {t('taskEdit.aiBreakdown')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             {aiEnabled && copilotSuggestion && !copilotApplied && (
                 <button
                     type="button"
@@ -327,7 +328,7 @@ export function TaskItemEditor({
             )}
             <div className="flex flex-wrap gap-4">
                 {showProjectField && (
-                    <div className="flex flex-col gap-1 min-w-[200px]">
+                    <div className="flex flex-col gap-1 flex-1 min-w-0">
                         <label className="text-xs text-muted-foreground font-medium">{t('projects.title')}</label>
                         <ProjectSelector
                             projects={projects}
@@ -336,11 +337,12 @@ export function TaskItemEditor({
                             onCreateProject={onCreateProject}
                             placeholder={t('taskEdit.noProjectOption')}
                             noProjectLabel={t('taskEdit.noProjectOption')}
+                            className="w-full"
                         />
                     </div>
                 )}
                 {showAreaField && (
-                    <div className="flex flex-col gap-1 min-w-[200px]">
+                    <div className="flex flex-col gap-1 flex-1 min-w-0">
                         <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.areaLabel')}</label>
                         <AreaSelector
                             areas={sortedAreas}
@@ -349,6 +351,7 @@ export function TaskItemEditor({
                             onCreateArea={onCreateArea}
                             placeholder={t('taskEdit.noAreaOption')}
                             noAreaLabel={t('taskEdit.noAreaOption')}
+                            className="w-full"
                         />
                     </div>
                 )}

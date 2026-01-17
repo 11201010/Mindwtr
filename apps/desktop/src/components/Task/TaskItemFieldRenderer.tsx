@@ -423,7 +423,7 @@ export function TaskItemFieldRenderer({
                             value={editStatus}
                             aria-label={t('task.aria.status')}
                             onChange={(event) => setEditStatus(event.target.value as TaskStatus)}
-                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground w-full max-w-[min(18rem,40vw)]"
                         >
                             <option value="inbox">{t('status.inbox')}</option>
                             <option value="next">{t('status.next')}</option>

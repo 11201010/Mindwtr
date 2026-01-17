@@ -25,6 +25,7 @@ interface TaskInputProps {
     onCreateProject?: (title: string) => Promise<string | null>;
     placeholder?: string;
     className?: string;
+    containerClassName?: string;
     autoFocus?: boolean;
     inputRef?: RefObject<HTMLInputElement | null>;
     onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
@@ -55,6 +56,7 @@ export function TaskInput({
     onCreateProject,
     placeholder,
     className,
+    containerClassName,
     autoFocus,
     inputRef,
     onKeyDown,
@@ -170,7 +172,7 @@ export function TaskInput({
     };
 
     return (
-        <div className="relative">
+        <div className={cn('relative', containerClassName)}>
             <input
                 ref={mergedRef}
                 value={value}
