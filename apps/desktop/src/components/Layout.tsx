@@ -224,7 +224,11 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
             >
                 <div className={cn(
                     "mx-auto p-8 h-full",
-                    isFocusMode ? "max-w-[800px]" : (isWideView || ['board', 'calendar'].includes(currentView)) ? "max-w-full" : "max-w-4xl"
+                    isFocusMode
+                        ? "max-w-[800px]"
+                        : (isWideView || ['board', 'calendar'].includes(currentView))
+                            ? "w-full max-w-6xl"
+                            : "max-w-4xl"
                 )}>
                     {error && (
                         <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
