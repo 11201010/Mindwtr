@@ -190,9 +190,17 @@ export function TaskEditFormTab({
                         badge={countFilledFields(['startTime', 'recurrence', 'reviewAt'])}
                         defaultExpanded={countFilledFields(['startTime', 'recurrence', 'reviewAt']) > 0}
                     >
-                        {schedulingFields.map((fieldId) => (
-                            <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
-                        ))}
+                        {schedulingFields.length === 0 ? (
+                            <View style={[styles.emptySectionHint, { borderColor: tc.border, backgroundColor: tc.filterBg }]}>
+                                <Text style={[styles.emptySectionHintText, { color: tc.secondaryText }]}>
+                                    {t('taskEdit.schedulingEmpty')}
+                                </Text>
+                            </View>
+                        ) : (
+                            schedulingFields.map((fieldId) => (
+                                <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
+                            ))
+                        )}
                     </CollapsibleSection>
 
                     <CollapsibleSection
@@ -200,9 +208,17 @@ export function TaskEditFormTab({
                         badge={countFilledFields(['contexts', 'tags', 'priority', 'timeEstimate'])}
                         defaultExpanded={countFilledFields(['contexts', 'tags']) > 0}
                     >
-                        {organizationFields.map((fieldId) => (
-                            <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
-                        ))}
+                        {organizationFields.length === 0 ? (
+                            <View style={[styles.emptySectionHint, { borderColor: tc.border, backgroundColor: tc.filterBg }]}>
+                                <Text style={[styles.emptySectionHintText, { color: tc.secondaryText }]}>
+                                    {t('taskEdit.organizationEmpty')}
+                                </Text>
+                            </View>
+                        ) : (
+                            organizationFields.map((fieldId) => (
+                                <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
+                            ))
+                        )}
                     </CollapsibleSection>
 
                     <CollapsibleSection
@@ -210,9 +226,17 @@ export function TaskEditFormTab({
                         badge={countFilledFields(['description', 'checklist', 'attachments'])}
                         defaultExpanded={countFilledFields(['description', 'checklist', 'attachments']) > 0}
                     >
-                        {detailsFields.map((fieldId) => (
-                            <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
-                        ))}
+                        {detailsFields.length === 0 ? (
+                            <View style={[styles.emptySectionHint, { borderColor: tc.border, backgroundColor: tc.filterBg }]}>
+                                <Text style={[styles.emptySectionHintText, { color: tc.secondaryText }]}>
+                                    {t('taskEdit.detailsEmpty')}
+                                </Text>
+                            </View>
+                        ) : (
+                            detailsFields.map((fieldId) => (
+                                <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
+                            ))
+                        )}
                     </CollapsibleSection>
 
                     <View style={{ height: 100 }} />

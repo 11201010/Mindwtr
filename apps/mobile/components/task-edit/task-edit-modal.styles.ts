@@ -196,6 +196,16 @@ export const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '500',
     },
+    emptySectionHint: {
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    emptySectionHintText: {
+        fontSize: 12,
+        fontWeight: '500',
+    },
     copilotPill: {
         borderWidth: 1,
         borderRadius: 12,
