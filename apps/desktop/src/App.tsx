@@ -66,7 +66,6 @@ function App() {
                         event.preventDefault();
                         closingPromise = flushPendingSave()
                             .catch((error) => reportError('Save failed', error))
-                            .then(() => window.close())
                             .finally(() => {
                                 closingPromise = null;
                                 isClosing = false;
