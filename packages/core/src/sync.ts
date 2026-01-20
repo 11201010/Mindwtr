@@ -1,5 +1,5 @@
 
-import type { AppData, Attachment, Project, Task, Area } from './types';
+import type { AppData, Attachment, Project, Task, Area, Section } from './types';
 import { normalizeTaskForLoad } from './task-status';
 
 export interface EntityMergeStats {
@@ -69,6 +69,7 @@ export const appendSyncHistory = (
 export const normalizeAppData = (data: AppData): AppData => ({
     tasks: Array.isArray(data.tasks) ? data.tasks : [],
     projects: Array.isArray(data.projects) ? data.projects : [],
+    sections: Array.isArray(data.sections) ? data.sections : [],
     areas: Array.isArray(data.areas) ? data.areas : [],
     settings: data.settings ?? {},
 });
@@ -257,12 +258,14 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         ...local,
         tasks: (local.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
         projects: local.projects || [],
+        sections: local.sections || [],
         areas: local.areas || [],
     };
     const incomingNormalized: AppData = {
         ...incoming,
         tasks: (incoming.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
         projects: incoming.projects || [],
+        sections: incoming.sections || [],
         areas: incoming.areas || [],
     };
 
@@ -301,10 +304,13 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         return attachments ? { ...winner, attachments } : winner;
     });
 
+    const sectionsMerged = mergeEntities(localNormalized.sections, incomingNormalized.sections);
+
     return {
         data: {
             tasks: tasksResult.merged,
             projects: projectsResult.merged,
+            sections: sectionsMerged,
             areas: mergeAreas(localNormalized.areas, incomingNormalized.areas),
             settings: localNormalized.settings,
         },
@@ -326,7 +332,7 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
 
     io.onStep?.('read-remote');
     const remoteDataRaw = await io.readRemote();
-    const remoteData = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], areas: [], settings: {} });
+    const remoteData = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], sections: [], areas: [], settings: {} });
 
     io.onStep?.('merge');
     const mergeResult = mergeAppDataWithStats(localData, remoteData);

@@ -28,6 +28,7 @@ type Labels = {
     taskEditorLayoutReset: string;
     taskEditorFieldStatus: string;
     taskEditorFieldProject: string;
+    taskEditorFieldSection: string;
     taskEditorFieldArea: string;
     taskEditorFieldPriority: string;
     taskEditorFieldContexts: string;
@@ -95,6 +96,7 @@ export function SettingsGtdPage({
     const baseTaskEditorOrder: TaskEditorFieldId[] = [
         'status',
         'project',
+        'section',
         'area',
         'priority',
         'contexts',
@@ -113,6 +115,7 @@ export function SettingsGtdPage({
     const defaultVisibleFields = new Set<TaskEditorFieldId>([
         'status',
         'project',
+        'section',
         'area',
         'description',
         'checklist',
@@ -144,6 +147,8 @@ export function SettingsGtdPage({
                 return t.taskEditorFieldStatus;
             case 'project':
                 return t.taskEditorFieldProject;
+            case 'section':
+                return t.taskEditorFieldSection;
             case 'area':
                 return t.taskEditorFieldArea;
             case 'priority':
@@ -233,7 +238,7 @@ export function SettingsGtdPage({
     };
 
     const fieldGroups: { id: string; title: string; fields: TaskEditorFieldId[] }[] = [
-        { id: 'basic', title: translateText('Basic', language), fields: ['status', 'project', 'area', 'dueDate'] },
+        { id: 'basic', title: translateText('Basic', language), fields: ['status', 'project', 'section', 'area', 'dueDate'] },
         { id: 'scheduling', title: translateText('Scheduling', language), fields: ['startTime', 'recurrence', 'reviewAt'] },
         { id: 'organization', title: translateText('Organization', language), fields: ['contexts', 'tags', 'priority', 'timeEstimate'] },
         { id: 'details', title: translateText('Details', language), fields: ['description', 'textDirection', 'attachments', 'checklist'] },

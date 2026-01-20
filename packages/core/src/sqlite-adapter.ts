@@ -1,4 +1,4 @@
-import type { AppData, Area, Attachment, Project, Task } from './types';
+import type { AppData, Area, Attachment, Project, Task, Section } from './types';
 import type { TaskQueryOptions, SearchResults } from './storage';
 import { SQLITE_SCHEMA } from './sqlite-schema';
 import { normalizeTaskStatus } from './task-status';
@@ -110,6 +110,7 @@ export class SqliteAdapter {
         await this.ensureTaskOrderColumn();
         await this.ensureTaskTextDirectionColumn();
         await this.ensureTaskAreaColumn();
+        await this.ensureTaskSectionColumn();
         await this.ensureProjectOrderColumn();
         // FTS operations are optional - don't block startup if they fail
         try {
@@ -201,6 +202,15 @@ export class SqliteAdapter {
             await this.client.run('ALTER TABLE tasks ADD COLUMN areaId TEXT');
         }
         await this.client.run('CREATE INDEX IF NOT EXISTS idx_tasks_area_id ON tasks(areaId)');
+    }
+
+    private async ensureTaskSectionColumn() {
+        const columns = await this.client.all<{ name?: string }>('PRAGMA table_info(tasks)');
+        const hasSectionId = columns.some((col) => col.name === 'sectionId');
+        if (!hasSectionId) {
+            await this.client.run('ALTER TABLE tasks ADD COLUMN sectionId TEXT');
+        }
+        await this.client.run('CREATE INDEX IF NOT EXISTS idx_tasks_section_id ON tasks(sectionId)');
     }
 
     private async ensureProjectOrderColumn() {
@@ -318,6 +328,7 @@ export class SqliteAdapter {
             attachments: toAttachments(fromJson<unknown>(row.attachments, undefined)),
             location: row.location as string | undefined,
             projectId: row.projectId as string | undefined,
+            sectionId: row.sectionId as string | undefined,
             areaId: row.areaId as string | undefined,
             orderNum: row.orderNum === null || row.orderNum === undefined ? undefined : Number(row.orderNum),
             isFocusedToday: fromBool(row.isFocusedToday),
@@ -352,15 +363,31 @@ export class SqliteAdapter {
         };
     }
 
+    private mapSectionRow(row: Record<string, unknown>): Section {
+        return {
+            id: String(row.id),
+            projectId: String(row.projectId ?? ''),
+            title: String(row.title ?? ''),
+            description: row.description as string | undefined,
+            order: row.orderNum === null || row.orderNum === undefined ? 0 : Number(row.orderNum),
+            isCollapsed: fromBool(row.isCollapsed),
+            createdAt: String(row.createdAt ?? ''),
+            updatedAt: String(row.updatedAt ?? ''),
+            deletedAt: row.deletedAt as string | undefined,
+        };
+    }
+
     async getData(): Promise<AppData> {
         await this.ensureSchema();
         const tasksRows = await this.client.all<Record<string, unknown>>('SELECT * FROM tasks');
         const projectsRows = await this.client.all<Record<string, unknown>>('SELECT * FROM projects');
+        const sectionsRows = await this.client.all<Record<string, unknown>>('SELECT * FROM sections');
         const areasRows = await this.client.all<Record<string, unknown>>('SELECT * FROM areas');
         const settingsRow = await this.client.get<Record<string, unknown>>('SELECT data FROM settings WHERE id = 1');
 
         const tasks: Task[] = tasksRows.map((row) => this.mapTaskRow(row));
         const projects: Project[] = projectsRows.map((row) => this.mapProjectRow(row));
+        const sections: Section[] = sectionsRows.map((row) => this.mapSectionRow(row));
 
         const areas: Area[] = areasRows.map((row) => ({
             id: String(row.id),
@@ -374,7 +401,7 @@ export class SqliteAdapter {
 
         const settings = settingsRow?.data ? fromJson<AppData['settings']>(settingsRow.data, {}) : {};
 
-        return { tasks, projects, areas, settings };
+        return { tasks, projects, sections, areas, settings };
     }
 
     async queryTasks(options: TaskQueryOptions): Promise<Task[]> {
@@ -490,7 +517,7 @@ export class SqliteAdapter {
                 }
             };
 
-            const syncIds = async (table: 'tasks' | 'projects' | 'areas', ids: string[]) => {
+            const syncIds = async (table: 'tasks' | 'projects' | 'sections' | 'areas', ids: string[]) => {
                 const tempTable = `temp_${table}_ids_${Date.now()}`;
                 try {
                     await this.client.run(`CREATE TEMP TABLE ${tempTable} (id TEXT PRIMARY KEY)`);
@@ -509,6 +536,7 @@ export class SqliteAdapter {
 
             await syncIds('tasks', data.tasks.map((task) => task.id));
             await syncIds('projects', data.projects.map((project) => project.id));
+            await syncIds('sections', data.sections.map((section) => section.id));
             await syncIds('areas', data.areas.map((area) => area.id));
 
             await upsertBatch(
@@ -531,6 +559,7 @@ export class SqliteAdapter {
                     'attachments',
                     'location',
                     'projectId',
+                    'sectionId',
                     'areaId',
                     'orderNum',
                     'isFocusedToday',
@@ -560,6 +589,7 @@ export class SqliteAdapter {
                     toJson(task.attachments),
                     task.location ?? null,
                     task.projectId ?? null,
+                    task.sectionId ?? null,
                     task.areaId ?? null,
                     task.orderNum ?? null,
                     toBool(task.isFocusedToday),
@@ -587,6 +617,7 @@ export class SqliteAdapter {
                  attachments=excluded.attachments,
                  location=excluded.location,
                  projectId=excluded.projectId,
+                 sectionId=excluded.sectionId,
                  areaId=excluded.areaId,
                  orderNum=excluded.orderNum,
                  isFocusedToday=excluded.isFocusedToday,
@@ -649,6 +680,40 @@ export class SqliteAdapter {
                  reviewAt=excluded.reviewAt,
                  areaId=excluded.areaId,
                  areaTitle=excluded.areaTitle,
+                 createdAt=excluded.createdAt,
+                 updatedAt=excluded.updatedAt,
+                 deletedAt=excluded.deletedAt`,
+            );
+
+            await upsertBatch(
+                'sections',
+                [
+                    'id',
+                    'projectId',
+                    'title',
+                    'description',
+                    'orderNum',
+                    'isCollapsed',
+                    'createdAt',
+                    'updatedAt',
+                    'deletedAt',
+                ],
+                data.sections.map((section) => [
+                    section.id,
+                    section.projectId,
+                    section.title,
+                    section.description ?? null,
+                    Number.isFinite(section.order) ? section.order : 0,
+                    toBool(section.isCollapsed),
+                    section.createdAt,
+                    section.updatedAt,
+                    section.deletedAt ?? null,
+                ]),
+                `projectId=excluded.projectId,
+                 title=excluded.title,
+                 description=excluded.description,
+                 orderNum=excluded.orderNum,
+                 isCollapsed=excluded.isCollapsed,
                  createdAt=excluded.createdAt,
                  updatedAt=excluded.updatedAt,
                  deletedAt=excluded.deletedAt`,

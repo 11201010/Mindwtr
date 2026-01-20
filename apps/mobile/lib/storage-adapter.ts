@@ -200,7 +200,7 @@ const createStorage = (): StorageAdapter => {
         return {
             getData: async (): Promise<AppData> => {
                 if (typeof window === 'undefined') {
-                    return { tasks: [], projects: [], areas: [], settings: {} };
+                    return { tasks: [], projects: [], sections: [], areas: [], settings: {} };
                 }
                 let jsonValue = localStorage.getItem(DATA_KEY);
                 if (jsonValue == null) {
@@ -214,11 +214,12 @@ const createStorage = (): StorageAdapter => {
                     }
                 }
                 if (jsonValue == null) {
-                    return { tasks: [], projects: [], areas: [], settings: {} };
+                    return { tasks: [], projects: [], sections: [], areas: [], settings: {} };
                 }
                 try {
                     const data = JSON.parse(jsonValue) as AppData;
                     data.areas = Array.isArray(data.areas) ? data.areas : [];
+                    data.sections = Array.isArray(data.sections) ? data.sections : [];
                     return data;
                 } catch (e) {
                     // JSON parse error - data corrupted, throw so user is notified

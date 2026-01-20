@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   attachments TEXT,
   location TEXT,
   projectId TEXT,
+  sectionId TEXT,
   areaId TEXT,
   orderNum INTEGER,
   isFocusedToday INTEGER,
@@ -64,6 +65,18 @@ CREATE TABLE IF NOT EXISTS areas (
   orderNum INTEGER NOT NULL,
   createdAt TEXT,
   updatedAt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sections (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  orderNum INTEGER,
+  isCollapsed INTEGER,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  deletedAt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (

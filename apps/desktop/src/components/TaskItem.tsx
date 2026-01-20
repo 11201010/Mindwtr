@@ -9,6 +9,7 @@ import {
     parseRRuleString,
     getStatusColor,
     Project,
+    Section,
     PRESET_CONTEXTS,
     PRESET_TAGS,
 } from '@mindwtr/core';
@@ -73,6 +74,7 @@ export const TaskItem = memo(function TaskItem({
         deleteTask,
         moveTask,
         projects,
+        sections,
         areas,
         settings,
         duplicateTask,
@@ -81,12 +83,14 @@ export const TaskItem = memo(function TaskItem({
         setHighlightTask,
         addProject,
         addArea,
+        addSection,
     } = useTaskStore(
         (state) => ({
             updateTask: state.updateTask,
             deleteTask: state.deleteTask,
             moveTask: state.moveTask,
             projects: state.projects,
+            sections: state.sections,
             areas: state.areas,
             settings: state.settings,
             duplicateTask: state.duplicateTask,
@@ -95,6 +99,7 @@ export const TaskItem = memo(function TaskItem({
             setHighlightTask: state.setHighlightTask,
             addProject: state.addProject,
             addArea: state.addArea,
+            addSection: state.addSection,
         }),
         shallow
     );
@@ -141,6 +146,8 @@ export const TaskItem = memo(function TaskItem({
         setEditStartTime,
         editProjectId,
         setEditProjectId,
+        editSectionId,
+        setEditSectionId,
         editAreaId,
         setEditAreaId,
         editStatus,
@@ -217,6 +224,25 @@ export const TaskItem = memo(function TaskItem({
     }, [isHighlighted, setHighlightTask]);
 
     const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+    const sectionsByProject = useMemo(() => {
+        const map = new Map<string, Section[]>();
+        sections.forEach((section) => {
+            if (section.deletedAt) return;
+            const list = map.get(section.projectId) ?? [];
+            list.push(section);
+            map.set(section.projectId, list);
+        });
+        map.forEach((list, key) => {
+            list.sort((a, b) => {
+                const aOrder = Number.isFinite(a.order) ? a.order : 0;
+                const bOrder = Number.isFinite(b.order) ? b.order : 0;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return a.title.localeCompare(b.title);
+            });
+            map.set(key, list);
+        });
+        return map;
+    }, [sections]);
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
 
     const [projectContext, setProjectContext] = useState<{ projectTitle: string; projectTasks: string[] } | null>(null);
@@ -264,6 +290,18 @@ export const TaskItem = memo(function TaskItem({
         setPopularTagOptions(Array.from(new Set([...sortedTags, ...PRESET_TAGS])).slice(0, 8));
         setAllContexts(Array.from(contexts).sort());
     }, [editProjectId, isEditing, propProject, setEditAreaId, task.id, task.projectId]);
+
+    useEffect(() => {
+        const projectId = editProjectId || task.projectId || '';
+        if (!projectId) {
+            if (editSectionId) setEditSectionId('');
+            return;
+        }
+        const projectSections = sectionsByProject.get(projectId) ?? [];
+        if (editSectionId && !projectSections.some((section) => section.id === editSectionId)) {
+            setEditSectionId('');
+        }
+    }, [editProjectId, editSectionId, sectionsByProject, setEditSectionId, task.projectId]);
 
     const {
         aiEnabled,
@@ -329,6 +367,17 @@ export const TaskItem = memo(function TaskItem({
         const created = await addArea(trimmed, { color: DEFAULT_PROJECT_COLOR });
         return created?.id ?? null;
     }, [addArea, areas]);
+    const handleCreateSection = useCallback(async (title: string) => {
+        const trimmed = title.trim();
+        if (!trimmed) return null;
+        const projectId = editProjectId || task.projectId;
+        if (!projectId) return null;
+        const existing = (sectionsByProject.get(projectId) ?? [])
+            .find((section) => section.title.toLowerCase() === trimmed.toLowerCase());
+        if (existing) return existing.id;
+        const created = await addSection(projectId, trimmed);
+        return created?.id ?? null;
+    }, [addSection, editProjectId, sectionsByProject, task.projectId]);
     const visibleAttachments = (task.attachments || []).filter((a) => !a.deletedAt);
     const visibleEditAttachments = editAttachments.filter((a) => !a.deletedAt);
     const wasEditingRef = useRef(false);
@@ -372,6 +421,8 @@ export const TaskItem = memo(function TaskItem({
                 return task.status !== 'inbox';
             case 'project':
                 return Boolean(editProjectId || task.projectId);
+            case 'section':
+                return Boolean(editSectionId || task.sectionId);
             case 'area':
                 return Boolean(editAreaId || task.areaId);
             case 'priority':
@@ -411,12 +462,14 @@ export const TaskItem = memo(function TaskItem({
         editPriority,
         editRecurrence,
         editReviewAt,
+        editSectionId,
         editStartTime,
         editTags,
         editTimeEstimate,
         prioritiesEnabled,
         task.checklist,
         task.status,
+        task.sectionId,
         timeEstimatesEnabled,
         visibleEditAttachments.length,
         editAreaId,
@@ -432,7 +485,10 @@ export const TaskItem = memo(function TaskItem({
     );
     const showProjectField = isFieldVisible('project');
     const showAreaField = isFieldVisible('area') && !editProjectId;
+    const showSectionField = isFieldVisible('section') && !!editProjectId;
     const showDueDate = isFieldVisible('dueDate');
+    const activeProjectId = editProjectId || task.projectId || '';
+    const projectSections = activeProjectId ? (sectionsByProject.get(activeProjectId) ?? []) : [];
     const orderFields = useCallback(
         (fields: TaskEditorFieldId[]) => {
             const ordered = taskEditorOrder.filter((id) => fields.includes(id));
@@ -563,6 +619,7 @@ export const TaskItem = memo(function TaskItem({
                 dueDate: editDueDate || undefined,
                 startTime: editStartTime || undefined,
                 projectId: resolvedProjectId,
+                sectionId: resolvedProjectId ? (editSectionId || undefined) : undefined,
                 areaId: resolvedProjectId ? undefined : (editAreaId || undefined),
                 contexts: editContexts.split(',').map(c => c.trim()).filter(Boolean),
                 tags: editTags.split(',').map(c => c.trim()).filter(Boolean),
@@ -663,12 +720,17 @@ export const TaskItem = memo(function TaskItem({
                                 areas={areas}
                                 editProjectId={editProjectId}
                                 setEditProjectId={setEditProjectId}
+                                sections={projectSections}
+                                editSectionId={editSectionId}
+                                setEditSectionId={setEditSectionId}
                                 editAreaId={editAreaId}
                                 setEditAreaId={setEditAreaId}
                                 onCreateProject={handleCreateProject}
                                 onCreateArea={handleCreateArea}
+                                onCreateSection={handleCreateSection}
                                 showProjectField={showProjectField}
                                 showAreaField={showAreaField}
+                                showSectionField={showSectionField}
                                 showDueDate={showDueDate}
                                 editDueDate={editDueDate}
                                 setEditDueDate={setEditDueDate}
@@ -691,33 +753,33 @@ export const TaskItem = memo(function TaskItem({
                             />
                         </div>
                     ) : (
-            <TaskItemDisplay
-                task={task}
-                project={project}
-                area={taskArea}
-                projectColor={projectColor}
-                selectionMode={selectionMode}
-                isViewOpen={isViewOpen}
+                        <TaskItemDisplay
+                            task={task}
+                            project={project}
+                            area={taskArea}
+                            projectColor={projectColor}
+                            selectionMode={selectionMode}
+                            isViewOpen={isViewOpen}
                             onToggleSelect={onToggleSelect}
                             onToggleView={() => setIsViewOpen((prev) => !prev)}
                             onEdit={startEditing}
                             onDelete={() => deleteTask(task.id)}
                             onDuplicate={() => duplicateTask(task.id, false)}
-                onStatusChange={(status) => moveTask(task.id, status)}
-                onOpenProject={project ? handleOpenProject : undefined}
-                openAttachment={openAttachment}
-                visibleAttachments={visibleAttachments}
-                recurrenceRule={recurrenceRule}
-                recurrenceStrategy={recurrenceStrategy}
-                prioritiesEnabled={prioritiesEnabled}
-                timeEstimatesEnabled={timeEstimatesEnabled}
-                isStagnant={isStagnant}
-                showQuickDone={showQuickDone}
-                focusToggle={focusToggle}
-                readOnly={effectiveReadOnly}
-                compactMetaEnabled={compactMetaEnabled}
-                t={t}
-            />
+                            onStatusChange={(status) => moveTask(task.id, status)}
+                            onOpenProject={project ? handleOpenProject : undefined}
+                            openAttachment={openAttachment}
+                            visibleAttachments={visibleAttachments}
+                            recurrenceRule={recurrenceRule}
+                            recurrenceStrategy={recurrenceStrategy}
+                            prioritiesEnabled={prioritiesEnabled}
+                            timeEstimatesEnabled={timeEstimatesEnabled}
+                            isStagnant={isStagnant}
+                            showQuickDone={showQuickDone}
+                            focusToggle={focusToggle}
+                            readOnly={effectiveReadOnly}
+                            compactMetaEnabled={compactMetaEnabled}
+                            t={t}
+                        />
                     )}
                 </div>
             </div>
@@ -726,64 +788,64 @@ export const TaskItem = memo(function TaskItem({
                     t={t}
                     weekdayOrder={WEEKDAY_ORDER}
                     weekdayLabels={WEEKDAY_FULL_LABELS}
-                customInterval={customInterval}
-                customMode={customMode}
-                customOrdinal={customOrdinal}
-                customWeekday={customWeekday}
-                customMonthDay={customMonthDay}
-                onIntervalChange={(value) => setCustomInterval(value)}
-                onModeChange={(value) => setCustomMode(value)}
-                onOrdinalChange={(value) => setCustomOrdinal(value)}
-                onWeekdayChange={(value) => setCustomWeekday(value)}
-                onMonthDayChange={(value) => {
-                    const safe = Number.isFinite(value) ? Math.min(Math.max(value, 1), 31) : 1;
-                    setCustomMonthDay(safe);
+                    customInterval={customInterval}
+                    customMode={customMode}
+                    customOrdinal={customOrdinal}
+                    customWeekday={customWeekday}
+                    customMonthDay={customMonthDay}
+                    onIntervalChange={(value) => setCustomInterval(value)}
+                    onModeChange={(value) => setCustomMode(value)}
+                    onOrdinalChange={(value) => setCustomOrdinal(value)}
+                    onWeekdayChange={(value) => setCustomWeekday(value)}
+                    onMonthDayChange={(value) => {
+                        const safe = Number.isFinite(value) ? Math.min(Math.max(value, 1), 31) : 1;
+                        setCustomMonthDay(safe);
+                    }}
+                    onClose={() => setShowCustomRecurrence(false)}
+                    onApply={applyCustomRecurrence}
+                />
+            )}
+            <PromptModal
+                isOpen={showLinkPrompt}
+                title={t('attachments.addLink')}
+                description={t('attachments.linkPlaceholder')}
+                placeholder={t('attachments.linkPlaceholder')}
+                defaultValue=""
+                confirmLabel={t('common.save')}
+                cancelLabel={t('common.cancel')}
+                onCancel={() => setShowLinkPrompt(false)}
+                onConfirm={(value) => {
+                    const added = handleAddLinkAttachment(value);
+                    if (!added) return;
+                    setShowLinkPrompt(false);
                 }}
-                onClose={() => setShowCustomRecurrence(false)}
-                onApply={applyCustomRecurrence}
             />
-        )}
-        <PromptModal
-            isOpen={showLinkPrompt}
-            title={t('attachments.addLink')}
-            description={t('attachments.linkPlaceholder')}
-            placeholder={t('attachments.linkPlaceholder')}
-            defaultValue=""
-            confirmLabel={t('common.save')}
-            cancelLabel={t('common.cancel')}
-            onCancel={() => setShowLinkPrompt(false)}
-            onConfirm={(value) => {
-                            const added = handleAddLinkAttachment(value);
-                            if (!added) return;
-                            setShowLinkPrompt(false);
-                        }}
-                    />
-        <AudioAttachmentModal
-            attachment={audioAttachment}
-            audioSource={audioSource}
-            audioRef={audioRef}
-            audioError={audioError}
-            onClose={closeAudio}
-            onAudioError={handleAudioError}
-            onOpenExternally={openAudioExternally}
-            t={t}
-        />
-        <ImageAttachmentModal
-            attachment={imageAttachment}
-            imageSource={imageSource}
-            onClose={closeImage}
-            onOpenExternally={openImageExternally}
-            t={t}
-        />
-        <TextAttachmentModal
-            attachment={textAttachment}
-            textContent={textContent}
-            textLoading={textLoading}
-            textError={textError}
-            onClose={closeText}
-            onOpenExternally={openTextExternally}
-            t={t}
-        />
+            <AudioAttachmentModal
+                attachment={audioAttachment}
+                audioSource={audioSource}
+                audioRef={audioRef}
+                audioError={audioError}
+                onClose={closeAudio}
+                onAudioError={handleAudioError}
+                onOpenExternally={openAudioExternally}
+                t={t}
+            />
+            <ImageAttachmentModal
+                attachment={imageAttachment}
+                imageSource={imageSource}
+                onClose={closeImage}
+                onOpenExternally={openImageExternally}
+                t={t}
+            />
+            <TextAttachmentModal
+                attachment={textAttachment}
+                textContent={textContent}
+                textLoading={textLoading}
+                textError={textError}
+                onClose={closeText}
+                onOpenExternally={openTextExternally}
+                t={t}
+            />
         </>
     );
 });

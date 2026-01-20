@@ -30,6 +30,7 @@ export interface Recurrence {
 export type TaskEditorFieldId =
     | 'status'
     | 'project'
+    | 'section'
     | 'area'
     | 'priority'
     | 'contexts'
@@ -58,6 +59,18 @@ export interface Project {
     reviewAt?: string; // Tickler/review date (ISO string). If set, project is due for review at/after this time.
     areaId?: string;
     areaTitle?: string;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt?: string; // Soft-delete: if set, this item is considered deleted
+}
+
+export interface Section {
+    id: string;
+    projectId: string;
+    title: string;
+    description?: string;
+    order: number; // Sort order within a Project
+    isCollapsed?: boolean;
     createdAt: string;
     updatedAt: string;
     deletedAt?: string; // Soft-delete: if set, this item is considered deleted
@@ -125,6 +138,7 @@ export interface Task {
     attachments?: Attachment[];
     location?: string;
     projectId?: string;
+    sectionId?: string;
     areaId?: string;
     isFocusedToday?: boolean; // Marked as today's priority (Top 3 focus)
     timeEstimate?: TimeEstimate; // Estimated time to complete
@@ -150,6 +164,7 @@ import type { MergeStats, SyncHistoryEntry } from './sync';
 export interface AppData {
     tasks: Task[];
     projects: Project[];
+    sections: Section[];
     areas: Area[];
     settings: {
         gtd?: {

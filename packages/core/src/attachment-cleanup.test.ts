@@ -5,6 +5,7 @@ import type { AppData } from './types';
 const buildData = (): AppData => ({
     tasks: [],
     projects: [],
+    sections: [],
     areas: [],
     settings: {},
 });
@@ -132,6 +133,7 @@ describe('removeOrphanedAttachmentsFromData', () => {
                     ],
                 },
             ],
+            sections: [],
             areas: [],
             settings: {},
         };

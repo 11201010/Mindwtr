@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   attachments TEXT,
   location TEXT,
   projectId TEXT,
+  sectionId TEXT,
   areaId TEXT,
   orderNum INTEGER,
   isFocusedToday INTEGER,
@@ -105,6 +106,18 @@ CREATE TABLE IF NOT EXISTS areas (
   orderNum INTEGER NOT NULL,
   createdAt TEXT,
   updatedAt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sections (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  orderNum INTEGER,
+  isCollapsed INTEGER,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  deletedAt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -608,6 +621,7 @@ fn open_sqlite(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_tasks_purged_at_column(&conn)?;
     ensure_tasks_order_column(&conn)?;
     ensure_tasks_area_column(&conn)?;
+    ensure_tasks_section_column(&conn)?;
     ensure_projects_order_column(&conn)?;
     ensure_projects_area_order_index(&conn)?;
     ensure_fts_triggers(&conn)?;
@@ -668,6 +682,29 @@ fn ensure_tasks_area_column(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_area_id ON tasks(areaId)", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn ensure_tasks_section_column(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(tasks)")
+        .map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+    let mut has_section = false;
+    for col in columns {
+        if col.map_err(|e| e.to_string())? == "sectionId" {
+            has_section = true;
+            break;
+        }
+    }
+    if !has_section {
+        conn.execute("ALTER TABLE tasks ADD COLUMN sectionId TEXT", [])
+            .map_err(|e| e.to_string())?;
+    }
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_section_id ON tasks(sectionId)", [])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -941,6 +978,9 @@ fn row_to_task_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Error> 
     if let Ok(val) = row.get::<_, Option<String>>("projectId") {
         if let Some(v) = val { map.insert("projectId".to_string(), Value::String(v)); }
     }
+    if let Ok(val) = row.get::<_, Option<String>>("sectionId") {
+        if let Some(v) = val { map.insert("sectionId".to_string(), Value::String(v)); }
+    }
     if let Ok(val) = row.get::<_, Option<String>>("areaId") {
         if let Some(v) = val { map.insert("areaId".to_string(), Value::String(v)); }
     }
@@ -1010,11 +1050,34 @@ fn row_to_project_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
     Ok(Value::Object(map))
 }
 
+fn row_to_section_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Error> {
+    let mut map = serde_json::Map::new();
+    map.insert("id".to_string(), Value::String(row.get::<_, String>("id")?));
+    map.insert("projectId".to_string(), Value::String(row.get::<_, String>("projectId")?));
+    map.insert("title".to_string(), Value::String(row.get::<_, String>("title")?));
+    if let Ok(val) = row.get::<_, Option<String>>("description") {
+        if let Some(v) = val { map.insert("description".to_string(), Value::String(v)); }
+    }
+    if let Ok(val) = row.get::<_, Option<i64>>("orderNum") {
+        if let Some(v) = val { map.insert("order".to_string(), Value::Number(v.into())); }
+    }
+    if let Ok(val) = row.get::<_, i64>("isCollapsed") {
+        if val != 0 { map.insert("isCollapsed".to_string(), Value::Bool(true)); }
+    }
+    map.insert("createdAt".to_string(), Value::String(row.get::<_, String>("createdAt")?));
+    map.insert("updatedAt".to_string(), Value::String(row.get::<_, String>("updatedAt")?));
+    if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
+        if let Some(v) = val { map.insert("deletedAt".to_string(), Value::String(v)); }
+    }
+    Ok(Value::Object(map))
+}
+
 fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM tasks", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM projects", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM areas", []).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM sections", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM settings", []).map_err(|e| e.to_string())?;
 
     let tasks = data.get("tasks").and_then(|v| v.as_array()).cloned().unwrap_or_default();
@@ -1025,7 +1088,7 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
         let checklist_json = json_str(task.get("checklist"));
         let attachments_json = json_str(task.get("attachments"));
         tx.execute(
-            "INSERT INTO tasks (id, title, status, priority, taskMode, startTime, dueDate, recurrence, pushCount, tags, contexts, checklist, description, attachments, location, projectId, areaId, orderNum, isFocusedToday, timeEstimate, reviewAt, completedAt, createdAt, updatedAt, deletedAt, purgedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+            "INSERT INTO tasks (id, title, status, priority, taskMode, startTime, dueDate, recurrence, pushCount, tags, contexts, checklist, description, attachments, location, projectId, sectionId, areaId, orderNum, isFocusedToday, timeEstimate, reviewAt, completedAt, createdAt, updatedAt, deletedAt, purgedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             params![
                 task.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 task.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -1043,6 +1106,7 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
                 attachments_json,
                 task.get("location").and_then(|v| v.as_str()),
                 task.get("projectId").and_then(|v| v.as_str()),
+                task.get("sectionId").and_then(|v| v.as_str()),
                 task.get("areaId").and_then(|v| v.as_str()),
                 task.get("orderNum").and_then(|v| v.as_i64()),
                 task.get("isFocusedToday").and_then(|v| v.as_bool()).unwrap_or(false) as i32,
@@ -1103,6 +1167,25 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
         .map_err(|e| e.to_string())?;
     }
 
+    let sections = data.get("sections").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for section in sections {
+        tx.execute(
+            "INSERT INTO sections (id, projectId, title, description, orderNum, isCollapsed, createdAt, updatedAt, deletedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                section.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
+                section.get("projectId").and_then(|v| v.as_str()).unwrap_or_default(),
+                section.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
+                section.get("description").and_then(|v| v.as_str()),
+                section.get("order").and_then(|v| v.as_i64()),
+                section.get("isCollapsed").and_then(|v| v.as_bool()).unwrap_or(false) as i32,
+                section.get("createdAt").and_then(|v| v.as_str()).unwrap_or_default(),
+                section.get("updatedAt").and_then(|v| v.as_str()).unwrap_or_default(),
+                section.get("deletedAt").and_then(|v| v.as_str()),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     let settings_json = json_str(data.get("settings"));
     tx.execute(
         "INSERT INTO settings (id, data) VALUES (1, ?1)",
@@ -1135,6 +1218,17 @@ fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
     let mut projects: Vec<Value> = Vec::new();
     for row in project_rows {
         projects.push(row.map_err(|e| e.to_string())?);
+    }
+
+    let mut sections_stmt = conn
+        .prepare("SELECT * FROM sections")
+        .map_err(|e| e.to_string())?;
+    let section_rows = sections_stmt
+        .query_map([], |row| row_to_section_value(row))
+        .map_err(|e| e.to_string())?;
+    let mut sections: Vec<Value> = Vec::new();
+    for row in section_rows {
+        sections.push(row.map_err(|e| e.to_string())?);
     }
 
     let mut areas_stmt = conn
@@ -1176,6 +1270,7 @@ fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
         serde_json::json!({
             "tasks": tasks,
             "projects": projects,
+            "sections": sections,
             "areas": areas,
             "settings": Value::Object(settings_val),
         })

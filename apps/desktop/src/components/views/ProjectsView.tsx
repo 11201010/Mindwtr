@@ -1,14 +1,15 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { TaskItem } from '../TaskItem';
-import { shallow, useTaskStore, Attachment, Task, type Project, generateUUID, parseQuickAdd, validateAttachmentForUpload } from '@mindwtr/core';
-import { Folder } from 'lucide-react';
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { shallow, useTaskStore, Attachment, Task, type Project, type Section, generateUUID, parseQuickAdd, validateAttachmentForUpload } from '@mindwtr/core';
+import { ChevronDown, ChevronRight, FileText, Folder, Pencil, Plus, Trash2 } from 'lucide-react';
+import { DndContext, PointerSensor, useDroppable, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { useLanguage } from '../../contexts/language-context';
 import { PromptModal } from '../PromptModal';
 import { isTauriRuntime } from '../../lib/runtime';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
+import { cn } from '../../lib/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { size } from '@tauri-apps/plugin-fs';
 import { SortableProjectTaskRow } from './projects/SortableRows';
@@ -29,11 +30,19 @@ import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { useUiStore } from '../../store/ui-store';
 
+const SECTION_CONTAINER_PREFIX = 'section:';
+const NO_SECTION_CONTAINER = `${SECTION_CONTAINER_PREFIX}none`;
+const getSectionContainerId = (sectionId?: string | null) =>
+    sectionId ? `${SECTION_CONTAINER_PREFIX}${sectionId}` : NO_SECTION_CONTAINER;
+const getSectionIdFromContainer = (containerId: string) =>
+    containerId === NO_SECTION_CONTAINER ? null : containerId.replace(SECTION_CONTAINER_PREFIX, '');
+
 export function ProjectsView() {
     const perf = usePerformanceMonitor('ProjectsView');
     const {
         projects,
         tasks,
+        sections,
         areas,
         addArea,
         updateArea,
@@ -44,6 +53,10 @@ export function ProjectsView() {
         addProject,
         updateProject,
         deleteProject,
+        updateTask,
+        addSection,
+        updateSection,
+        deleteSection,
         addTask,
         toggleProjectFocus,
         queryTasks,
@@ -54,6 +67,7 @@ export function ProjectsView() {
         (state) => ({
             projects: state.projects,
             tasks: state.tasks,
+            sections: state.sections,
             areas: state.areas,
             addArea: state.addArea,
             updateArea: state.updateArea,
@@ -64,6 +78,10 @@ export function ProjectsView() {
             addProject: state.addProject,
             updateProject: state.updateProject,
             deleteProject: state.deleteProject,
+            updateTask: state.updateTask,
+            addSection: state.addSection,
+            updateSection: state.updateSection,
+            deleteSection: state.deleteSection,
             addTask: state.addTask,
             toggleProjectFocus: state.toggleProjectFocus,
             queryTasks: state.queryTasks,
@@ -93,6 +111,13 @@ export function ProjectsView() {
     const [newAreaColor, setNewAreaColor] = useState('#94a3b8');
     const [showQuickAreaPrompt, setShowQuickAreaPrompt] = useState(false);
     const [pendingAreaAssignProjectId, setPendingAreaAssignProjectId] = useState<string | null>(null);
+    const [showSectionPrompt, setShowSectionPrompt] = useState(false);
+    const [sectionDraft, setSectionDraft] = useState('');
+    const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+    const [sectionNotesOpen, setSectionNotesOpen] = useState<Record<string, boolean>>({});
+    const [showSectionTaskPrompt, setShowSectionTaskPrompt] = useState(false);
+    const [sectionTaskDraft, setSectionTaskDraft] = useState('');
+    const [sectionTaskTargetId, setSectionTaskTargetId] = useState<string | null>(null);
     const [tagDraft, setTagDraft] = useState('');
     const [editProjectTitle, setEditProjectTitle] = useState('');
     const [projectTaskTitle, setProjectTaskTitle] = useState('');
@@ -170,6 +195,47 @@ export function ProjectsView() {
         if (confirmed) {
             deleteArea(areaId);
         }
+    };
+
+    const handleAddSection = () => {
+        if (!selectedProject) return;
+        setEditingSectionId(null);
+        setSectionDraft('');
+        setShowSectionPrompt(true);
+    };
+
+    const handleRenameSection = (section: Section) => {
+        setEditingSectionId(section.id);
+        setSectionDraft(section.title);
+        setShowSectionPrompt(true);
+    };
+
+    const handleDeleteSection = async (section: Section) => {
+        const confirmed = isTauriRuntime()
+            ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
+                confirm(t('projects.deleteSectionConfirm'), {
+                    title: t('projects.sectionsLabel'),
+                    kind: 'warning',
+                }),
+            )
+            : window.confirm(t('projects.deleteSectionConfirm'));
+        if (confirmed) {
+            deleteSection(section.id);
+        }
+    };
+
+    const handleToggleSection = (section: Section) => {
+        updateSection(section.id, { isCollapsed: !section.isCollapsed });
+    };
+
+    const handleToggleSectionNotes = (sectionId: string) => {
+        setSectionNotesOpen((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
+    };
+
+    const handleOpenSectionTaskPrompt = (sectionId: string) => {
+        setSectionTaskTargetId(sectionId);
+        setSectionTaskDraft('');
+        setShowSectionTaskPrompt(true);
     };
 
     const sortAreasByName = () => reorderAreas(sortAreasByNameIds(sortedAreas));
@@ -322,9 +388,8 @@ export function ProjectsView() {
         };
     }, [selectedProjectId, queryTasks, lastDataChangeAt]);
 
-    const orderedProjectTasks = useMemo(() => {
-        if (!selectedProject) return projectTasks;
-        const sorted = [...projectTasks];
+    const sortProjectTasks = useCallback((items: Task[]) => {
+        const sorted = [...items];
         const hasOrder = sorted.some((task) => Number.isFinite(task.orderNum));
         sorted.sort((a, b) => {
             if (hasOrder) {
@@ -335,11 +400,64 @@ export function ProjectsView() {
             return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         });
         return sorted;
-    }, [projectTasks, selectedProject]);
+    }, []);
+
+    const orderedProjectTasks = useMemo(() => {
+        if (!selectedProject) return projectTasks;
+        return sortProjectTasks(projectTasks);
+    }, [projectTasks, selectedProject, sortProjectTasks]);
+
+    const projectSections = useMemo(() => {
+        if (!selectedProjectId) return [];
+        return sections
+            .filter((section) => section.projectId === selectedProjectId && !section.deletedAt)
+            .sort((a, b) => {
+                const aOrder = Number.isFinite(a.order) ? a.order : 0;
+                const bOrder = Number.isFinite(b.order) ? b.order : 0;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return a.title.localeCompare(b.title);
+            });
+    }, [sections, selectedProjectId]);
+
+    const sectionTaskGroups = useMemo(() => {
+        if (!selectedProjectId || projectSections.length === 0) {
+            return { sections: [] as Array<{ section: Section; tasks: Task[] }>, unsectioned: orderedProjectTasks };
+        }
+        const sectionIds = new Set(projectSections.map((section) => section.id));
+        const tasksBySection = new Map<string, Task[]>();
+        const unsectioned: Task[] = [];
+        projectTasks.forEach((task) => {
+            const sectionId = task.sectionId && sectionIds.has(task.sectionId) ? task.sectionId : null;
+            if (sectionId) {
+                const list = tasksBySection.get(sectionId) ?? [];
+                list.push(task);
+                tasksBySection.set(sectionId, list);
+            } else {
+                unsectioned.push(task);
+            }
+        });
+        const sectionsWithTasks = projectSections.map((section) => ({
+            section,
+            tasks: sortProjectTasks(tasksBySection.get(section.id) ?? []),
+        }));
+        return { sections: sectionsWithTasks, unsectioned: sortProjectTasks(unsectioned) };
+    }, [orderedProjectTasks, projectSections, projectTasks, selectedProjectId, sortProjectTasks]);
+
+    const orderedProjectTaskList = useMemo(() => {
+        if (projectSections.length === 0) return orderedProjectTasks;
+        const combined: Task[] = [];
+        sectionTaskGroups.sections.forEach((group) => {
+            combined.push(...group.tasks);
+        });
+        if (sectionTaskGroups.unsectioned.length > 0) {
+            combined.push(...sectionTaskGroups.unsectioned);
+        }
+        return combined;
+    }, [orderedProjectTasks, projectSections.length, sectionTaskGroups.sections, sectionTaskGroups.unsectioned]);
 
     useEffect(() => {
         if (!highlightTaskId) return;
-        const exists = orderedProjectTasks.some((task) => task.id === highlightTaskId)
+        const exists = orderedProjectTaskList.some((task) => task.id === highlightTaskId)
             || areaTasks.some((task) => task.id === highlightTaskId);
         if (!exists) return;
         const el = document.querySelector(`[data-task-id="${highlightTaskId}"]`) as HTMLElement | null;
@@ -348,17 +466,89 @@ export function ProjectsView() {
         }
         const timer = window.setTimeout(() => setHighlightTask(null), 4000);
         return () => window.clearTimeout(timer);
-    }, [highlightTaskId, orderedProjectTasks, areaTasks, setHighlightTask]);
+    }, [highlightTaskId, orderedProjectTaskList, areaTasks, setHighlightTask]);
 
-    const handleTaskDragEnd = (event: DragEndEvent) => {
+    const taskIdsByContainer = useMemo(() => {
+        const map = new Map<string, string[]>();
+        sectionTaskGroups.sections.forEach((group) => {
+            map.set(getSectionContainerId(group.section.id), group.tasks.map((task) => task.id));
+        });
+        map.set(NO_SECTION_CONTAINER, sectionTaskGroups.unsectioned.map((task) => task.id));
+        return map;
+    }, [sectionTaskGroups]);
+
+    const taskIdToContainer = useMemo(() => {
+        const map = new Map<string, string>();
+        sectionTaskGroups.sections.forEach((group) => {
+            const containerId = getSectionContainerId(group.section.id);
+            group.tasks.forEach((task) => map.set(task.id, containerId));
+        });
+        sectionTaskGroups.unsectioned.forEach((task) => map.set(task.id, NO_SECTION_CONTAINER));
+        return map;
+    }, [sectionTaskGroups]);
+
+    const handleTaskDragEnd = useCallback((event: DragEndEvent) => {
         if (!selectedProject) return;
         const { active, over } = event;
-        if (!over || active.id === over.id) return;
-        const oldIndex = orderedProjectTasks.findIndex((task) => task.id === active.id);
-        const newIndex = orderedProjectTasks.findIndex((task) => task.id === over.id);
-        if (oldIndex === -1 || newIndex === -1) return;
-        const reordered = arrayMove(orderedProjectTasks, oldIndex, newIndex).map((task) => task.id);
-        reorderProjectTasks(selectedProject.id, reordered);
+        if (!over) return;
+        const activeId = String(active.id);
+        const overId = String(over.id);
+        const sourceContainer = taskIdToContainer.get(activeId);
+        const destinationContainer =
+            taskIdToContainer.get(overId) ||
+            (taskIdsByContainer.has(overId) ? overId : undefined);
+        if (!sourceContainer || !destinationContainer) return;
+
+        const sourceItems = taskIdsByContainer.get(sourceContainer) ?? [];
+        const destinationItems = taskIdsByContainer.get(destinationContainer) ?? [];
+
+        if (sourceContainer === destinationContainer) {
+            const oldIndex = sourceItems.indexOf(activeId);
+            if (oldIndex === -1) return;
+            const newIndex = taskIdToContainer.has(overId)
+                ? sourceItems.indexOf(overId)
+                : sourceItems.length - 1;
+            if (newIndex === -1 || oldIndex === newIndex) return;
+            const reordered = arrayMove(sourceItems, oldIndex, newIndex);
+            reorderProjectTasks(selectedProject.id, reordered, getSectionIdFromContainer(sourceContainer));
+            return;
+        }
+
+        const sourceIndex = sourceItems.indexOf(activeId);
+        if (sourceIndex === -1) return;
+        const nextSourceItems = [...sourceItems];
+        nextSourceItems.splice(sourceIndex, 1);
+
+        const nextDestinationItems = [...destinationItems];
+        const overIndex = taskIdToContainer.has(overId) ? nextDestinationItems.indexOf(overId) : -1;
+        const insertIndex = overIndex === -1 ? nextDestinationItems.length : overIndex;
+        nextDestinationItems.splice(insertIndex, 0, activeId);
+
+        const nextSectionId = getSectionIdFromContainer(destinationContainer) ?? undefined;
+        updateTask(activeId, { sectionId: nextSectionId });
+        if (nextSourceItems.length > 0) {
+            reorderProjectTasks(selectedProject.id, nextSourceItems, getSectionIdFromContainer(sourceContainer));
+        }
+        reorderProjectTasks(selectedProject.id, nextDestinationItems, getSectionIdFromContainer(destinationContainer));
+    }, [reorderProjectTasks, selectedProject, taskIdToContainer, taskIdsByContainer, updateTask]);
+
+    const renderSortableTasks = (list: Task[]) => (
+        <SortableContext items={list.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+                {list.map((task) => (
+                    <SortableProjectTaskRow key={task.id} task={task} project={selectedProject!} />
+                ))}
+            </div>
+        </SortableContext>
+    );
+
+    const SectionDropZone = ({ id, className, children }: { id: string; className?: string; children: ReactNode }) => {
+        const { setNodeRef, isOver } = useDroppable({ id });
+        return (
+            <div ref={setNodeRef} className={cn(className, isOver && 'ring-2 ring-primary/40')}>
+                {children}
+            </div>
+        );
     };
     const visibleAttachments = (selectedProject?.attachments || []).filter((a) => !a.deletedAt);
     const projectProgress = useMemo(() => {
@@ -432,6 +622,35 @@ export function ProjectsView() {
     useEffect(() => {
         setProjectTaskTitle('');
     }, [selectedProject?.id]);
+
+    useEffect(() => {
+        setSectionNotesOpen({});
+        setShowSectionTaskPrompt(false);
+        setSectionTaskTargetId(null);
+    }, [selectedProjectId]);
+
+    const handleAddTaskForProject = useCallback(
+        async (value: string, sectionId?: string | null) => {
+            if (!selectedProject) return;
+            const { title: parsedTitle, props, projectTitle } = parseQuickAdd(value, projects);
+            const finalTitle = (parsedTitle || value).trim();
+            if (!finalTitle) return;
+            const initialProps: Partial<Task> = { projectId: selectedProject.id, status: 'next', ...props };
+            if (!props.status) initialProps.status = 'next';
+            if (!props.projectId) initialProps.projectId = selectedProject.id;
+            if (!initialProps.projectId && projectTitle) {
+                const created = await addProject(projectTitle, '#94a3b8');
+                initialProps.projectId = created.id;
+            }
+            if (sectionId && initialProps.projectId === selectedProject.id) {
+                initialProps.sectionId = sectionId;
+            } else {
+                initialProps.sectionId = undefined;
+            }
+            await addTask(finalTitle, initialProps);
+        },
+        [addProject, addTask, projects, selectedProject]
+    );
 
     const openAttachment = async (attachment: Attachment) => {
         const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(attachment.uri);
@@ -615,16 +834,7 @@ export function ProjectsView() {
                                     projectTaskTitle={projectTaskTitle}
                                     onProjectTaskTitleChange={setProjectTaskTitle}
                                     onSubmitProjectTask={async (value) => {
-                                        const { title: parsedTitle, props, projectTitle } = parseQuickAdd(value, projects);
-                                        const finalTitle = parsedTitle || value;
-                                        const initialProps: Partial<Task> = { projectId: selectedProject.id, status: 'next', ...props };
-                                        if (!props.status) initialProps.status = 'next';
-                                        if (!props.projectId) initialProps.projectId = selectedProject.id;
-                                        if (!initialProps.projectId && projectTitle) {
-                                            const created = await addProject(projectTitle, '#94a3b8');
-                                            initialProps.projectId = created.id;
-                                        }
-                                        await addTask(finalTitle, initialProps);
+                                        await handleAddTaskForProject(value);
                                         setProjectTaskTitle('');
                                     }}
                                     projects={projects}
@@ -636,32 +846,156 @@ export function ProjectsView() {
                                 />
 
                                 <div className="flex-1 overflow-y-auto pr-2">
-                                    {orderedProjectTasks.length > 0 ? (
-                                        <DndContext
-                                            sensors={taskSensors}
-                                            collisionDetection={closestCenter}
-                                            onDragEnd={handleTaskDragEnd}
-                                        >
-                                            <SortableContext
-                                                items={orderedProjectTasks.map((task) => task.id)}
-                                                strategy={verticalListSortingStrategy}
-                                            >
-                                                <div className="space-y-2">
-                                                    {orderedProjectTasks.map((task) => (
-                                                        <SortableProjectTaskRow
-                                                            key={task.id}
-                                                            task={task}
-                                                            project={selectedProject}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            </SortableContext>
-                                        </DndContext>
-                                    ) : (
-                                        <div className="text-center text-muted-foreground py-12">
-                                            {t('projects.noActiveTasks')}
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                                            {t('projects.sectionsLabel')}
                                         </div>
-                                    )}
+                                        <button
+                                            type="button"
+                                            onClick={handleAddSection}
+                                            className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" />
+                                            {t('projects.addSection')}
+                                        </button>
+                                    </div>
+                                    <DndContext
+                                        sensors={taskSensors}
+                                        collisionDetection={closestCenter}
+                                        onDragEnd={handleTaskDragEnd}
+                                    >
+                                        {projectSections.length === 0 ? (
+                                            <SectionDropZone id={NO_SECTION_CONTAINER} className="min-h-[120px]">
+                                                {orderedProjectTasks.length > 0 ? (
+                                                    renderSortableTasks(orderedProjectTasks)
+                                                ) : (
+                                                    <div className="text-center text-muted-foreground py-12">
+                                                        {t('projects.noActiveTasks')}
+                                                    </div>
+                                                )}
+                                            </SectionDropZone>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                {sectionTaskGroups.sections.map((group) => {
+                                                    const isCollapsed = group.section.isCollapsed;
+                                                    const taskCount = group.tasks.length;
+                                                    const hasNotes = Boolean(group.section.description?.trim());
+                                                    const notesOpen = sectionNotesOpen[group.section.id] ?? false;
+                                                    return (
+                                                        <SectionDropZone
+                                                            key={group.section.id}
+                                                            id={getSectionContainerId(group.section.id)}
+                                                            className="border border-border rounded-lg bg-card/40"
+                                                        >
+                                                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleToggleSection(group.section)}
+                                                                    className="flex items-center gap-2 text-sm font-semibold"
+                                                                >
+                                                                    {isCollapsed ? (
+                                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                                    ) : (
+                                                                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                                                    )}
+                                                                    <span>{group.section.title}</span>
+                                                                    <span className="text-xs text-muted-foreground">{taskCount}</span>
+                                                                </button>
+                                                                <div className="flex items-center gap-2">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleOpenSectionTaskPrompt(group.section.id)}
+                                                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                                                        aria-label={t('projects.addTask')}
+                                                                    >
+                                                                        <Plus className="h-3.5 w-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleToggleSectionNotes(group.section.id)}
+                                                                        className={cn(
+                                                                            'p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground',
+                                                                            (hasNotes || notesOpen) && 'text-primary'
+                                                                        )}
+                                                                        aria-label={t('projects.sectionNotes')}
+                                                                    >
+                                                                        <FileText className="h-3.5 w-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleRenameSection(group.section)}
+                                                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                                                        aria-label={t('common.edit')}
+                                                                    >
+                                                                        <Pencil className="h-3.5 w-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleDeleteSection(group.section)}
+                                                                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                                                        aria-label={t('common.delete')}
+                                                                    >
+                                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            {notesOpen && (
+                                                                <div className="px-3 py-2 border-b border-border/60">
+                                                                    <textarea
+                                                                        className="w-full min-h-[90px] p-2 text-xs bg-transparent border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
+                                                                        placeholder={t('projects.sectionNotesPlaceholder')}
+                                                                        defaultValue={group.section.description || ''}
+                                                                        onBlur={(event) => {
+                                                                            const nextValue = event.target.value.trimEnd();
+                                                                            updateSection(group.section.id, { description: nextValue || undefined });
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                            )}
+                                                            {!isCollapsed && (
+                                                                <div className="p-3">
+                                                                    {taskCount > 0 ? (
+                                                                        renderSortableTasks(group.tasks)
+                                                                    ) : (
+                                                                        <div className="text-xs text-muted-foreground py-2">
+                                                                            {t('projects.noActiveTasks')}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </SectionDropZone>
+                                                    );
+                                                })}
+                                                <SectionDropZone
+                                                    id={NO_SECTION_CONTAINER}
+                                                    className="border border-dashed border-border rounded-lg bg-card/20"
+                                                >
+                                                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                                                        <div className="flex items-center gap-2 text-sm font-semibold">
+                                                            <span>{t('projects.noSection')}</span>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                {sectionTaskGroups.unsectioned.length}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-3">
+                                                        {sectionTaskGroups.unsectioned.length > 0 ? (
+                                                            renderSortableTasks(sectionTaskGroups.unsectioned)
+                                                        ) : (
+                                                            <div className="text-xs text-muted-foreground py-2">
+                                                                {t('projects.noActiveTasks')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </SectionDropZone>
+                                                {sectionTaskGroups.sections.length === 0 && sectionTaskGroups.unsectioned.length === 0 && (
+                                                    <div className="text-center text-muted-foreground py-12">
+                                                        {t('projects.noActiveTasks')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </DndContext>
                                 </div>
                             </>
                         ) : selectedArea !== ALL_AREAS ? (
@@ -727,6 +1061,56 @@ export function ProjectsView() {
                         t={t}
                     />
                 )}
+
+                <PromptModal
+                    isOpen={showSectionPrompt}
+                    title={editingSectionId ? t('projects.sectionsLabel') : t('projects.addSection')}
+                    description={t('projects.sectionPlaceholder')}
+                    placeholder={t('projects.sectionPlaceholder')}
+                    defaultValue={sectionDraft}
+                    confirmLabel={editingSectionId ? t('common.save') : t('projects.create')}
+                    cancelLabel={t('common.cancel')}
+                    onCancel={() => {
+                        setShowSectionPrompt(false);
+                        setEditingSectionId(null);
+                        setSectionDraft('');
+                    }}
+                    onConfirm={(value) => {
+                        if (!selectedProject) return;
+                        const trimmed = value.trim();
+                        if (!trimmed) return;
+                        if (editingSectionId) {
+                            updateSection(editingSectionId, { title: trimmed });
+                        } else {
+                            addSection(selectedProject.id, trimmed);
+                        }
+                        setShowSectionPrompt(false);
+                        setEditingSectionId(null);
+                        setSectionDraft('');
+                    }}
+                />
+
+                <PromptModal
+                    isOpen={showSectionTaskPrompt}
+                    title={t('projects.addTask')}
+                    description={t('projects.addTaskPlaceholder')}
+                    placeholder={t('projects.addTaskPlaceholder')}
+                    defaultValue={sectionTaskDraft}
+                    confirmLabel={t('projects.addTask')}
+                    cancelLabel={t('common.cancel')}
+                    onCancel={() => {
+                        setShowSectionTaskPrompt(false);
+                        setSectionTaskTargetId(null);
+                        setSectionTaskDraft('');
+                    }}
+                    onConfirm={async (value) => {
+                        if (!sectionTaskTargetId) return;
+                        await handleAddTaskForProject(value, sectionTaskTargetId);
+                        setShowSectionTaskPrompt(false);
+                        setSectionTaskTargetId(null);
+                        setSectionTaskDraft('');
+                    }}
+                />
 
                 <PromptModal
                     isOpen={showLinkPrompt}

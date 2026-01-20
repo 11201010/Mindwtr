@@ -5,9 +5,9 @@ const DATA_KEY = 'mindwtr-data';
 
 export const webStorage: StorageAdapter = {
     getData: async (): Promise<AppData> => {
-        if (typeof window === 'undefined') return { tasks: [], projects: [], areas: [], settings: {} };
+        if (typeof window === 'undefined') return { tasks: [], projects: [], sections: [], areas: [], settings: {} };
         const jsonValue = localStorage.getItem(DATA_KEY);
-        if (jsonValue == null) return { tasks: [], projects: [], areas: [], settings: {} };
+        if (jsonValue == null) return { tasks: [], projects: [], sections: [], areas: [], settings: {} };
 
         try {
             const data = JSON.parse(jsonValue);
@@ -15,6 +15,7 @@ export const webStorage: StorageAdapter = {
                 throw new Error('Invalid data format');
             }
             data.areas = Array.isArray(data.areas) ? data.areas : [];
+            data.sections = Array.isArray(data.sections) ? data.sections : [];
             return data;
         } catch (error) {
             reportError('Failed to load local data', error);

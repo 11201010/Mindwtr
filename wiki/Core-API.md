@@ -214,7 +214,7 @@ toggleProjectFocus(id: string): Promise<void>;
 
 // Reorder
 reorderProjects(orderedIds: string[], areaId?: string): Promise<void>;
-reorderProjectTasks(projectId: string, orderedIds: string[]): Promise<void>;
+reorderProjectTasks(projectId: string, orderedIds: string[], sectionId?: string | null): Promise<void>;
 ```
 
 #### Area Operations

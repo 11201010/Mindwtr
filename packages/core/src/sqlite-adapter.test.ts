@@ -84,6 +84,7 @@ describeBun('SqliteAdapter', () => {
                     updatedAt: now,
                 },
             ],
+            sections: [],
             areas: [
                 {
                     id: 'area-1',
@@ -101,6 +102,7 @@ describeBun('SqliteAdapter', () => {
 
         expect(loaded.tasks).toHaveLength(1);
         expect(loaded.projects).toHaveLength(1);
+        expect(loaded.sections).toHaveLength(0);
         expect(loaded.areas).toHaveLength(1);
         expect(loaded.settings.gtd?.autoArchiveDays).toBe(7);
 

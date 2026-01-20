@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
-import { hasTimeComponent, safeFormatDate, safeParseDate, resolveTextDirection, type Area, type ClarifyResponse, type Project, type TaskEditorFieldId, type TextDirection, type TimeEstimate } from '@mindwtr/core';
+import { hasTimeComponent, safeFormatDate, safeParseDate, resolveTextDirection, type Area, type ClarifyResponse, type Project, type Section, type TaskEditorFieldId, type TextDirection, type TimeEstimate } from '@mindwtr/core';
 import { AreaSelector } from '../ui/AreaSelector';
 import { ProjectSelector } from '../ui/ProjectSelector';
+import { SectionSelector } from '../ui/SectionSelector';
 import { TaskInput } from './TaskInput';
 
 interface TaskItemEditorProps {
@@ -30,15 +31,20 @@ interface TaskItemEditorProps {
     onApplyAISuggestion: () => void;
     onDismissClarify: () => void;
     projects: Project[];
+    sections: Section[];
     areas: Area[];
     editProjectId: string;
     setEditProjectId: (value: string) => void;
+    editSectionId: string;
+    setEditSectionId: (value: string) => void;
     editAreaId: string;
     setEditAreaId: (value: string) => void;
     onCreateProject: (title: string) => Promise<string | null>;
     onCreateArea?: (name: string) => Promise<string | null>;
+    onCreateSection?: (title: string) => Promise<string | null>;
     showProjectField: boolean;
     showAreaField: boolean;
+    showSectionField: boolean;
     showDueDate: boolean;
     editDueDate: string;
     setEditDueDate: (value: string) => void;
@@ -86,15 +92,20 @@ export function TaskItemEditor({
     onApplyAISuggestion,
     onDismissClarify,
     projects,
+    sections,
     areas,
     editProjectId,
     setEditProjectId,
+    editSectionId,
+    setEditSectionId,
     editAreaId,
     setEditAreaId,
     onCreateProject,
     onCreateArea,
+    onCreateSection,
     showProjectField,
     showAreaField,
+    showSectionField,
     showDueDate,
     editDueDate,
     setEditDueDate,
@@ -337,6 +348,20 @@ export function TaskItemEditor({
                             onCreateProject={onCreateProject}
                             placeholder={t('taskEdit.noProjectOption')}
                             noProjectLabel={t('taskEdit.noProjectOption')}
+                            className="w-full"
+                        />
+                    </div>
+                )}
+                {showSectionField && (
+                    <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.sectionLabel')}</label>
+                        <SectionSelector
+                            sections={sections}
+                            value={editSectionId}
+                            onChange={setEditSectionId}
+                            onCreateSection={onCreateSection}
+                            placeholder={t('taskEdit.noSectionOption')}
+                            noSectionLabel={t('taskEdit.noSectionOption')}
                             className="w-full"
                         />
                     </div>

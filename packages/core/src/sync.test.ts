@@ -28,6 +28,7 @@ describe('Sync Logic', () => {
     const mockAppData = (tasks: Task[] = [], projects: Project[] = []): AppData => ({
         tasks,
         projects,
+        sections: [],
         areas: [],
         settings: {}
     });
