@@ -20,15 +20,15 @@ module.exports = function withAndroidManifestFixes(config) {
 
     application.activity.forEach((activity) => {
       if (activity.$ && activity.$['android:name'] === MLKIT_ACTIVITY) {
-        // Remove/override forced orientation for large screens.
-        activity.$['android:screenOrientation'] = 'unspecified';
-        const existing = activity.$['tools:replace'];
-        if (existing) {
-          activity.$['tools:replace'] = Array.isArray(existing)
-            ? [...existing, 'android:screenOrientation']
-            : `${existing},android:screenOrientation`;
+        // Remove forced orientation for large screens.
+        delete activity.$['android:screenOrientation'];
+        const existingRemove = activity.$['tools:remove'];
+        if (existingRemove) {
+          activity.$['tools:remove'] = Array.isArray(existingRemove)
+            ? [...existingRemove, 'android:screenOrientation']
+            : `${existingRemove},android:screenOrientation`;
         } else {
-          activity.$['tools:replace'] = 'android:screenOrientation';
+          activity.$['tools:remove'] = 'android:screenOrientation';
         }
       }
     });
