@@ -17,6 +17,8 @@ export default function ReferenceScreen() {
         statusFilter="reference"
         title={title === 'nav.reference' ? 'Reference' : title}
         emptyText={emptyText}
+        allowAdd={false}
+        showQuickAddHelp={false}
       />
     </View>
   );
