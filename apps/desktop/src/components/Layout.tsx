@@ -96,11 +96,13 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                     isCollapsed ? "w-16 p-2" : "w-64 p-4"
                 )}>
                 <div className={cn("flex items-center gap-2 px-2 mb-4", isCollapsed && "justify-center")}>
-                    <img
-                        src="/logo.png"
-                        alt="Mindwtr"
-                        className="w-8 h-8 rounded-lg"
-                    />
+                    {!isCollapsed && (
+                        <img
+                            src="/logo.png"
+                            alt="Mindwtr"
+                            className="w-8 h-8 rounded-lg"
+                        />
+                    )}
                     {!isCollapsed && <h1 className="text-xl font-bold">{t('app.name')}</h1>}
                     <button
                         onClick={toggleSidebar}
@@ -133,67 +135,69 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                     )}
                 </button>
 
-                {savedSearches.length > 0 && (
-                    <div className={cn("mb-4 space-y-1", isCollapsed && "mb-2")}>
-                        {!isCollapsed && (
-                            <div className="px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                {t('search.savedSearches')}
-                            </div>
-                        )}
-                        {savedSearches.map((search) => (
+                <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                    {savedSearches.length > 0 && (
+                        <div className={cn("mb-4 space-y-1", isCollapsed && "mb-2")}>
+                            {!isCollapsed && (
+                                <div className="px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                    {t('search.savedSearches')}
+                                </div>
+                            )}
+                            {savedSearches.map((search) => (
+                                <button
+                                    key={search.id}
+                                    onClick={() => onViewChange(`savedSearch:${search.id}`)}
+                                    className={cn(
+                                        "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
+                                        currentView === `savedSearch:${search.id}`
+                                            ? "bg-primary text-primary-foreground"
+                                            : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+                                        isCollapsed && "justify-center px-2"
+                                    )}
+                                    title={search.name}
+                                >
+                                    <Search className="w-4 h-4" />
+                                    {!isCollapsed && <span className="truncate">{search.name}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    <nav className="space-y-1 pb-4" data-sidebar-nav>
+                        {navItems.map((item) => (
                             <button
-                                key={search.id}
-                                onClick={() => onViewChange(`savedSearch:${search.id}`)}
-                            className={cn(
-                                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
-                                    currentView === `savedSearch:${search.id}`
+                                key={item.id}
+                                onClick={() => onViewChange(item.id)}
+                                data-sidebar-item
+                                data-view={item.id}
+                                className={cn(
+                                    "w-full flex items-center rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
+                                    currentView === item.id
                                         ? "bg-primary text-primary-foreground"
                                         : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
-                                isCollapsed && "justify-center px-2"
+                                    isCollapsed ? "justify-center px-2 py-2" : "justify-between px-3 py-2"
                                 )}
-                                title={search.name}
+                                aria-current={currentView === item.id ? 'page' : undefined}
+                                title={t(item.labelKey)}
                             >
-                                <Search className="w-4 h-4" />
-                                {!isCollapsed && <span className="truncate">{search.name}</span>}
+                                <div className={cn("flex items-center gap-3", isCollapsed && "gap-0")}>
+                                    <item.icon className="w-4 h-4" />
+                                    {!isCollapsed && t(item.labelKey)}
+                                </div>
+                                {!isCollapsed && item.count !== undefined && item.count > 0 && (
+                                    <span className={cn(
+                                        "text-xs px-2 py-0.5 rounded-full",
+                                        currentView === item.id
+                                            ? "bg-primary-foreground/20 text-primary-foreground"
+                                            : "bg-muted text-muted-foreground"
+                                    )}>
+                                        {item.count}
+                                    </span>
+                                )}
                             </button>
                         ))}
-                    </div>
-                )}
-
-                <nav className="space-y-1 flex-1" data-sidebar-nav>
-                    {navItems.map((item) => (
-                        <button
-                            key={item.id}
-                            onClick={() => onViewChange(item.id)}
-                            data-sidebar-item
-                            data-view={item.id}
-                            className={cn(
-                                "w-full flex items-center rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
-                                currentView === item.id
-                                    ? "bg-primary text-primary-foreground"
-                                    : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
-                                isCollapsed ? "justify-center px-2 py-2" : "justify-between px-3 py-2"
-                            )}
-                            aria-current={currentView === item.id ? 'page' : undefined}
-                            title={t(item.labelKey)}
-                        >
-                            <div className={cn("flex items-center gap-3", isCollapsed && "gap-0")}>
-                                <item.icon className="w-4 h-4" />
-                                {!isCollapsed && t(item.labelKey)}
-                            </div>
-                            {!isCollapsed && item.count !== undefined && item.count > 0 && (
-                                <span className={cn(
-                                    "text-xs px-2 py-0.5 rounded-full",
-                                    currentView === item.id
-                                        ? "bg-primary-foreground/20 text-primary-foreground"
-                                        : "bg-muted text-muted-foreground"
-                                )}>
-                                    {item.count}
-                                </span>
-                            )}
-                        </button>
-                    ))}
-                </nav>
+                    </nav>
+                </div>
 
                 <div className="mt-auto pt-4 border-t border-border space-y-1">
                     <button

@@ -19,8 +19,8 @@ import {
 import { useKeybindings } from '../../contexts/keybinding-context';
 import { useLanguage, type Language } from '../../contexts/language-context';
 import { isTauriRuntime } from '../../lib/runtime';
-import { SyncService } from '../../lib/sync-service';
 import { reportError } from '../../lib/report-error';
+import { SyncService } from '../../lib/sync-service';
 import { clearLog, getLogPath, logDiagnosticsEnabled } from '../../lib/app-log';
 import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL, verifyDownloadChecksum } from '../../lib/update-service';
 import { labelFallback, labelKeyOverrides, type SettingsLabels } from './settings/labels';
@@ -86,6 +86,15 @@ export function SettingsView() {
     const settings = useTaskStore((state) => state.settings) ?? ({} as AppData['settings']);
     const updateSettings = useTaskStore((state) => state.updateSettings);
     const isTauri = isTauriRuntime();
+    const isLinux = useMemo(() => {
+        if (!isTauri) return false;
+        try {
+            return /linux/i.test(navigator.userAgent);
+        } catch {
+            return false;
+        }
+    }, [isTauri]);
+    const windowDecorationsEnabled = settings?.window?.decorations !== false;
 
     const [saved, setSaved] = useState(false);
     const [appVersion, setAppVersion] = useState('0.1.0');
@@ -254,6 +263,22 @@ export function SettingsView() {
         setLanguage(lang);
         showSaved();
     };
+
+    const handleWindowDecorationsChange = useCallback((enabled: boolean) => {
+        updateSettings({
+            window: {
+                ...(settings?.window ?? {}),
+                decorations: enabled,
+            },
+        })
+            .then(showSaved)
+            .catch((error) => reportError('Failed to update window decorations', error));
+
+        if (!isTauri || !isLinux) return;
+        import('@tauri-apps/api/window')
+            .then(({ getCurrentWindow }) => getCurrentWindow().setDecorations(enabled))
+            .catch((error) => reportError('Failed to set window decorations', error));
+    }, [isLinux, isTauri, settings?.window, showSaved, updateSettings]);
 
     const handleKeybindingStyleChange = (style: 'vim' | 'emacs') => {
         setKeybindingStyle(style);
@@ -717,6 +742,9 @@ export function SettingsView() {
                     onKeybindingStyleChange={handleKeybindingStyleChange}
                     onOpenHelp={openHelp}
                     languages={LANGUAGES}
+                    showWindowDecorations={isLinux}
+                    windowDecorationsEnabled={windowDecorationsEnabled}
+                    onWindowDecorationsChange={handleWindowDecorationsChange}
                 />
             );
         }

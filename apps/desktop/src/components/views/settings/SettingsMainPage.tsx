@@ -17,6 +17,8 @@ type Labels = {
     keybindingVim: string;
     keybindingEmacs: string;
     viewShortcuts: string;
+    windowDecorations: string;
+    windowDecorationsDesc: string;
 };
 
 type LanguageOption = { id: Language; native: string };
@@ -31,6 +33,9 @@ type SettingsMainPageProps = {
     onKeybindingStyleChange: (style: 'vim' | 'emacs') => void;
     onOpenHelp: () => void;
     languages: LanguageOption[];
+    showWindowDecorations?: boolean;
+    windowDecorationsEnabled?: boolean;
+    onWindowDecorationsChange?: (enabled: boolean) => void;
 };
 
 export function SettingsMainPage({
@@ -43,6 +48,9 @@ export function SettingsMainPage({
     onKeybindingStyleChange,
     onOpenHelp,
     languages,
+    showWindowDecorations = false,
+    windowDecorationsEnabled = true,
+    onWindowDecorationsChange,
 }: SettingsMainPageProps) {
     return (
         <div className="space-y-6">
@@ -116,6 +124,29 @@ export function SettingsMainPage({
                         </button>
                     </div>
                 </div>
+
+                {showWindowDecorations && (
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.windowDecorations}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.windowDecorationsDesc}</div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => onWindowDecorationsChange?.(!windowDecorationsEnabled)}
+                            className={`inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                windowDecorationsEnabled ? 'bg-primary' : 'bg-muted'
+                            }`}
+                            aria-pressed={windowDecorationsEnabled}
+                        >
+                            <span
+                                className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                                    windowDecorationsEnabled ? 'translate-x-5' : 'translate-x-1'
+                                }`}
+                            />
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

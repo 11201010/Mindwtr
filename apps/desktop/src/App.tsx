@@ -28,6 +28,7 @@ function App() {
     const [isNavigating, startTransition] = useTransition();
     const fetchData = useTaskStore((state) => state.fetchData);
     const setError = useTaskStore((state) => state.setError);
+    const windowDecorations = useTaskStore((state) => state.settings?.window?.decorations);
     const { t } = useLanguage();
     const isActiveRef = useRef(true);
     const lastAutoSyncRef = useRef(0);
@@ -198,6 +199,22 @@ function App() {
             SyncService.stopFileWatcher().catch((error) => reportError('File watcher failed', error));
         };
     }, [fetchData, setError]);
+
+    useEffect(() => {
+        if (!isTauriRuntime()) return;
+        if (windowDecorations === undefined) return;
+        if (!/linux/i.test(navigator.userAgent || '')) return;
+        let cancelled = false;
+        import('@tauri-apps/api/window')
+            .then(({ getCurrentWindow }) => {
+                if (cancelled) return;
+                return getCurrentWindow().setDecorations(windowDecorations);
+            })
+            .catch((error) => console.error('Failed to set window decorations', error));
+        return () => {
+            cancelled = true;
+        };
+    }, [windowDecorations]);
 
     useEffect(() => {
         if (import.meta.env.MODE === 'test' || import.meta.env.VITEST || process.env.NODE_ENV === 'test') return;

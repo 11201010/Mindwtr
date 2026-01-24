@@ -195,6 +195,9 @@ export interface AppData {
         weekStart?: 'monday' | 'sunday';
         dateFormat?: string;
         keybindingStyle?: 'vim' | 'emacs';
+        window?: {
+            decorations?: boolean;
+        };
         notificationsEnabled?: boolean;
         reviewAtNotificationsEnabled?: boolean;
         dailyDigestMorningEnabled?: boolean;

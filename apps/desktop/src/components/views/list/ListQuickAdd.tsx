@@ -40,6 +40,12 @@ export function ListQuickAdd({
                     onChange(next);
                     onResetCopilot();
                 }}
+                onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        inputRef.current?.blur();
+                    }
+                }}
                 placeholder={`${t('nav.addTask')}... ${t('quickAdd.example')}`}
                 className="w-full bg-card border border-border rounded-lg py-3 pl-4 pr-20 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
             />

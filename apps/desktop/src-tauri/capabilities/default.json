@@ -9,6 +9,7 @@
     "core:default",
     "core:app:allow-set-app-theme",
     "core:window:allow-close",
+    "core:window:allow-set-decorations",
     "dialog:default",
     "fs:default",
     "fs:allow-mkdir",
