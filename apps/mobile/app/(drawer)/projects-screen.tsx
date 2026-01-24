@@ -1,6 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList } from 'react-native';
-import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Area, Attachment, generateUUID, Project, PRESET_TAGS, Task, TaskStatus, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
@@ -49,6 +48,7 @@ export default function ProjectsScreen() {
   const [showAreaManager, setShowAreaManager] = useState(false);
   const [newAreaName, setNewAreaName] = useState('');
   const [newAreaColor, setNewAreaColor] = useState('#3b82f6');
+  const [expandedAreaColorId, setExpandedAreaColorId] = useState<string | null>(null);
   const { projectId, taskId } = useLocalSearchParams<{ projectId?: string; taskId?: string }>();
   const lastOpenedTaskIdRef = useRef<string | null>(null);
   const ALL_TAGS = '__all__';
@@ -61,6 +61,10 @@ export default function ProjectsScreen() {
   const [showAreaFilter, setShowAreaFilter] = useState(false);
   const [showTagFilter, setShowTagFilter] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
+  const windowHeight = Dimensions.get('window').height;
+  const pickerCardMaxHeight = Math.min(windowHeight * 0.8, 560);
+  const areaListMaxHeight = Math.min(windowHeight * 0.4, 280);
+  const areaManagerListMaxHeight = Math.min(windowHeight * 0.45, 320);
   const resolveValidationMessage = (error?: string) => {
     if (error === 'file_too_large') return t('attachments.fileTooLarge');
     if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
@@ -1160,8 +1164,9 @@ export default function ProjectsScreen() {
         animationType="fade"
         onRequestClose={() => setShowAreaPicker(false)}
       >
-        <Pressable style={styles.overlay} onPress={() => setShowAreaPicker(false)}>
-          <Pressable style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]} onPress={(e) => e.stopPropagation()}>
+        <View style={styles.overlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setShowAreaPicker(false)} />
+          <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border, maxHeight: pickerCardMaxHeight }]}>
             <Text style={[styles.linkModalTitle, { color: tc.text }]}>{t('projects.areaLabel')}</Text>
             <TouchableOpacity
               style={[styles.pickerRow, { borderColor: tc.border }]}
@@ -1185,23 +1190,25 @@ export default function ProjectsScreen() {
             >
               <Text style={[styles.pickerRowText, { color: tc.text }]}>{t('projects.noArea')}</Text>
             </TouchableOpacity>
-            {sortedAreas.map((area) => (
-              <TouchableOpacity
-                key={area.id}
-                style={[styles.pickerRow, { borderColor: tc.border }]}
-                onPress={() => {
-                  if (!selectedProject) return;
-                  updateProject(selectedProject.id, { areaId: area.id });
-                  setSelectedProject({ ...selectedProject, areaId: area.id });
-                  setShowAreaPicker(false);
-                }}
-              >
-                <View style={[styles.areaDot, { backgroundColor: area.color || tc.tint }]} />
-                <Text style={[styles.pickerRowText, { color: tc.text }]}>{area.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </Pressable>
-        </Pressable>
+            <ScrollView style={{ maxHeight: areaListMaxHeight }}>
+              {sortedAreas.map((area) => (
+                <TouchableOpacity
+                  key={area.id}
+                  style={[styles.pickerRow, { borderColor: tc.border }]}
+                  onPress={() => {
+                    if (!selectedProject) return;
+                    updateProject(selectedProject.id, { areaId: area.id });
+                    setSelectedProject({ ...selectedProject, areaId: area.id });
+                    setShowAreaPicker(false);
+                  }}
+                >
+                  <View style={[styles.areaDot, { backgroundColor: area.color || tc.tint }]} />
+                  <Text style={[styles.pickerRowText, { color: tc.text }]}>{area.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
       <Modal
         visible={showAreaManager}
@@ -1209,15 +1216,18 @@ export default function ProjectsScreen() {
         animationType="fade"
         onRequestClose={() => {
           setShowAreaManager(false);
+          setExpandedAreaColorId(null);
         }}
       >
-        <Pressable
-          style={styles.overlay}
-          onPress={() => {
-            setShowAreaManager(false);
-          }}
-        >
-          <Pressable style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]} onPress={(e) => e.stopPropagation()}>
+        <View style={styles.overlay}>
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => {
+              setShowAreaManager(false);
+              setExpandedAreaColorId(null);
+            }}
+          />
+          <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border, maxHeight: pickerCardMaxHeight }]}>
             <View style={styles.areaManagerHeader}>
               <Text style={[styles.linkModalTitle, { color: tc.text }]}>{t('projects.areaLabel')}</Text>
               <View style={styles.areaSortButtons}>
@@ -1232,59 +1242,68 @@ export default function ProjectsScreen() {
             {sortedAreas.length === 0 ? (
               <Text style={[styles.helperText, { color: tc.secondaryText }]}>{t('projects.noArea')}</Text>
             ) : (
-              <View style={styles.areaManagerList}>
-                <DraggableFlatList<Area>
-                  data={sortedAreas}
-                  keyExtractor={(area: Area) => area.id}
-                  activationDistance={8}
-                  onDragEnd={({ data }: { data: Area[] }) => reorderAreas(data.map((area) => area.id))}
-                  renderItem={({ item, drag, isActive }: RenderItemParams<Area>) => {
-                    const area = item;
+              <ScrollView
+                style={{ maxHeight: areaManagerListMaxHeight, minHeight: 120 }}
+                contentContainerStyle={[styles.areaManagerList, { flexGrow: 1 }]}
+                showsVerticalScrollIndicator
+                nestedScrollEnabled
+              >
+                  {sortedAreas.map((area) => {
                     const inUse = (areaUsage.get(area.id) || 0) > 0;
+                    const isExpanded = expandedAreaColorId === area.id;
                     return (
-                      <View style={[styles.areaManagerItem, isActive && { opacity: 0.7 }]}>
+                      <View key={area.id} style={styles.areaManagerItem}>
                         <View style={[styles.areaManagerRow, { borderColor: tc.border }]}>
                           <View style={styles.areaManagerInfo}>
                             <View style={[styles.areaDot, { backgroundColor: area.color || tc.tint }]} />
                             <Text style={[styles.areaManagerText, { color: tc.text }]}>{area.name}</Text>
                           </View>
-                          <TouchableOpacity onLongPress={drag} delayLongPress={150} style={styles.dragHandle}>
-                            <Text style={[styles.dragHandleText, { color: tc.secondaryText }]}>≡</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            disabled={inUse}
-                            onPress={() => {
-                              if (inUse) {
-                                Alert.alert(t('common.notice') || 'Notice', t('projects.areaInUse') || 'Area has projects.');
-                                return;
-                              }
-                              deleteArea(area.id);
-                            }}
-                            style={[styles.areaDeleteButton, inUse && styles.areaDeleteButtonDisabled]}
-                          >
-                            <Text style={[styles.areaDeleteText, { color: inUse ? tc.secondaryText : '#EF4444' }]}>
-                              {t('common.delete')}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.areaColorPickerRow}>
-                          {colors.map((color) => (
+                          <View style={styles.areaManagerActions}>
                             <TouchableOpacity
-                              key={`${area.id}-${color}`}
-                              style={[
-                                styles.colorOption,
-                                { backgroundColor: color },
-                                (area.color || tc.tint) === color && styles.colorOptionSelected,
-                              ]}
-                              onPress={() => updateArea(area.id, { color })}
-                            />
-                          ))}
+                              onPress={() => setExpandedAreaColorId(isExpanded ? null : area.id)}
+                              style={[styles.colorToggleButton, { borderColor: tc.border }]}
+                            >
+                              <View style={[styles.colorOption, { backgroundColor: area.color || tc.tint }]} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              disabled={inUse}
+                              onPress={() => {
+                                if (inUse) {
+                                  Alert.alert(t('common.notice') || 'Notice', t('projects.areaInUse') || 'Area has projects.');
+                                  return;
+                                }
+                                deleteArea(area.id);
+                              }}
+                              style={[styles.areaDeleteButton, inUse && styles.areaDeleteButtonDisabled]}
+                            >
+                              <Text style={[styles.areaDeleteText, { color: inUse ? tc.secondaryText : '#EF4444' }]}>
+                                {t('common.delete')}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
+                        {isExpanded ? (
+                          <View style={styles.areaColorPickerRow}>
+                            {colors.map((color) => (
+                              <TouchableOpacity
+                                key={`${area.id}-${color}`}
+                                style={[
+                                  styles.colorOption,
+                                  { backgroundColor: color },
+                                  (area.color || tc.tint) === color && styles.colorOptionSelected,
+                                ]}
+                                onPress={() => {
+                                  updateArea(area.id, { color });
+                                  setExpandedAreaColorId(null);
+                                }}
+                              />
+                            ))}
+                          </View>
+                        ) : null}
                       </View>
                     );
-                  }}
-                />
-              </View>
+                  })}
+              </ScrollView>
             )}
             <TextInput
               value={newAreaName}
@@ -1308,7 +1327,10 @@ export default function ProjectsScreen() {
             </View>
             <View style={styles.linkModalButtons}>
               <TouchableOpacity
-                onPress={() => setShowAreaManager(false)}
+                onPress={() => {
+                  setShowAreaManager(false);
+                  setExpandedAreaColorId(null);
+                }}
                 style={styles.linkModalButton}
               >
                 <Text style={[styles.linkModalButtonText, { color: tc.secondaryText }]}>{t('common.cancel')}</Text>
@@ -1320,6 +1342,7 @@ export default function ProjectsScreen() {
                   addArea(name, { color: newAreaColor });
                   setShowAreaManager(false);
                   setNewAreaName('');
+                  setExpandedAreaColorId(null);
                 }}
                 disabled={!newAreaName.trim()}
                 style={[styles.linkModalButton, !newAreaName.trim() && styles.linkModalButtonDisabled]}
@@ -1327,8 +1350,8 @@ export default function ProjectsScreen() {
                 <Text style={[styles.linkModalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
       <Modal
         visible={showTagPicker}
@@ -1515,16 +1538,6 @@ const styles = StyleSheet.create({
   projectMeta: {
     fontSize: 12,
     color: '#666',
-  },
-  dragHandle: {
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    marginLeft: 4,
-    borderRadius: 6,
-  },
-  dragHandleText: {
-    fontSize: 16,
-    fontWeight: '700',
   },
   deleteButton: {
     width: 32,
@@ -1817,7 +1830,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   areaManagerList: {
-    marginBottom: 12,
+    paddingBottom: 8,
   },
   areaManagerHeader: {
     flexDirection: 'row',
@@ -1855,8 +1868,14 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     paddingLeft: 28,
     gap: 10,
+    flexWrap: 'wrap',
   },
   areaManagerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  areaManagerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -1870,6 +1889,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginRight: 8,
+  },
+  colorToggleButton: {
+    padding: 6,
+    borderRadius: 8,
+    borderWidth: 1,
   },
   areaOrderButton: {
     paddingHorizontal: 6,
