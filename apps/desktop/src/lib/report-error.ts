@@ -1,5 +1,6 @@
 import { useTaskStore } from '@mindwtr/core';
 import { useUiStore } from '../store/ui-store';
+import { logError } from './app-log';
 
 type ReportErrorOptions = {
     category?: 'network' | 'validation' | 'permissions' | 'storage' | 'sync' | 'unknown';
@@ -14,5 +15,5 @@ export const reportError = (label: string, error: unknown, options?: ReportError
     if (options?.toast !== false) {
         useUiStore.getState().showToast(fullMessage, 'error');
     }
-    console.error(error);
+    void logError(error, { scope: 'ui', step: label });
 };

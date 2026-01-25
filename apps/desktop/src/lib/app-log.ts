@@ -8,7 +8,7 @@ const LOG_FILE = `${LOG_DIR}/mindwtr.log`;
 
 type LogEntry = {
     ts: string;
-    level: 'info' | 'error';
+    level: 'info' | 'warn' | 'error';
     scope: string;
     message: string;
     backend?: string;
@@ -136,7 +136,6 @@ async function appendLogLine(entry: LogEntry, options?: AppendLogOptions): Promi
             return await getLogPath();
         }
     } catch (error) {
-        console.warn('Failed to write log', error);
         return null;
     }
 }
@@ -147,7 +146,6 @@ export async function getLogPath(): Promise<string | null> {
         const baseDir = await dataDir();
         return await join(baseDir, 'mindwtr', 'logs', 'mindwtr.log');
     } catch (error) {
-        console.warn('Failed to resolve log path', error);
         return null;
     }
 }
@@ -161,7 +159,6 @@ export async function clearLog(): Promise<void> {
         try {
             await remove(LOG_FILE, { baseDir: BaseDirectory.Data, recursive: false });
         } catch (removeError) {
-            console.warn('Failed to clear log', removeError);
         }
     }
 }
@@ -198,6 +195,21 @@ export async function logInfo(
         ts: new Date().toISOString(),
         level: 'info',
         scope: context?.scope ?? 'info',
+        message: safeMessage,
+        context: sanitizeContext(context?.extra),
+    });
+}
+
+export async function logWarn(
+    message: string,
+    context?: { scope?: string; extra?: Record<string, string> }
+): Promise<string | null> {
+    if (!isLoggingEnabled()) return null;
+    const safeMessage = redactSensitiveText(message);
+    return appendLogLine({
+        ts: new Date().toISOString(),
+        level: 'warn',
+        scope: context?.scope ?? 'warn',
         message: safeMessage,
         context: sanitizeContext(context?.extra),
     });

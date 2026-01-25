@@ -9,6 +9,7 @@ import {
 } from '@mindwtr/core';
 import { isTauriRuntime } from '../../lib/runtime';
 import { buildAIConfig, buildCopilotConfig, loadAIKey } from '../../lib/ai-config';
+import { logWarn } from '../../lib/app-log';
 
 type TaskItemAiContext = {
     projectTitle: string;
@@ -174,7 +175,10 @@ export function useTaskItemAi({
                 taskId,
             });
         } catch (error) {
-            console.warn('AI debug log failed', error);
+            void logWarn('AI debug log failed', {
+                scope: 'ai',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         }
     }, [aiProvider, settings?.ai?.model, taskId]);
 
@@ -266,7 +270,10 @@ export function useTaskItemAi({
             const message = error instanceof Error ? error.message : String(error);
             setAiError(message);
             await logAIDebug('clarify', message);
-            console.warn(error);
+            void logWarn('AI suggestions failed', {
+                scope: 'ai',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         } finally {
             setIsAIWorking(false);
         }
@@ -294,7 +301,10 @@ export function useTaskItemAi({
             const message = error instanceof Error ? error.message : String(error);
             setAiError(message);
             await logAIDebug('breakdown', message);
-            console.warn(error);
+            void logWarn('AI breakdown failed', {
+                scope: 'ai',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         } finally {
             setIsAIWorking(false);
         }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { SyncService } from '../../../lib/sync-service';
 import { useUiStore } from '../../../store/ui-store';
+import { logError } from '../../../lib/app-log';
 
 export type SyncBackend = 'off' | 'file' | 'webdav' | 'cloud';
 
@@ -28,13 +29,13 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             .then(setSyncPath)
             .catch((error) => {
                 setSyncError('Failed to load sync path.');
-                console.error(error);
+                void logError(error, { scope: 'sync', step: 'loadPath' });
             });
         SyncService.getSyncBackend()
             .then(setSyncBackend)
             .catch((error) => {
                 setSyncError('Failed to load sync backend.');
-                console.error(error);
+                void logError(error, { scope: 'sync', step: 'loadBackend' });
             });
         SyncService.getWebDavConfig({ silent: true })
             .then((cfg) => {
@@ -45,7 +46,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             })
             .catch((error) => {
                 setSyncError('Failed to load WebDAV config.');
-                console.error(error);
+                void logError(error, { scope: 'sync', step: 'loadWebDav' });
             });
         SyncService.getCloudConfig({ silent: true })
             .then((cfg) => {
@@ -54,7 +55,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             })
             .catch((error) => {
                 setSyncError('Failed to load Cloud config.');
-                console.error(error);
+                void logError(error, { scope: 'sync', step: 'loadCloud' });
             });
     }, []);
 
@@ -86,7 +87,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             }
         } catch (error) {
             setSyncError('Failed to change sync location.');
-            console.error(error);
+            void logError(error, { scope: 'sync', step: 'changeLocation' });
         }
     }, [isTauri, selectSyncFolderTitle, showSaved]);
 
@@ -151,7 +152,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
                 showToast(result.error, 'error');
             }
         } catch (error) {
-            console.error(error);
+            void logError(error, { scope: 'sync', step: 'perform' });
             setSyncError(String(error));
             showToast(String(error), 'error');
         } finally {

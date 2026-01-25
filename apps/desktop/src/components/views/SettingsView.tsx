@@ -21,7 +21,7 @@ import { useLanguage, type Language } from '../../contexts/language-context';
 import { isTauriRuntime } from '../../lib/runtime';
 import { reportError } from '../../lib/report-error';
 import { SyncService } from '../../lib/sync-service';
-import { clearLog, getLogPath, logDiagnosticsEnabled } from '../../lib/app-log';
+import { clearLog, getLogPath, logDiagnosticsEnabled, logWarn } from '../../lib/app-log';
 import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL, verifyDownloadChecksum } from '../../lib/update-service';
 import { labelFallback, labelKeyOverrides, type SettingsLabels } from './settings/labels';
 import { SettingsUpdateModal } from './settings/SettingsUpdateModal';
@@ -222,7 +222,12 @@ export function SettingsView() {
         }
         if (didWriteLogRef.current) return;
         didWriteLogRef.current = true;
-        logDiagnosticsEnabled().catch(console.warn);
+        logDiagnosticsEnabled().catch((error) => {
+            void logWarn('Failed to log diagnostics', {
+                scope: 'diagnostics',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
+        });
     }, [loggingEnabled]);
 
     useEffect(() => {

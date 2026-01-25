@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { logWarn } from '../lib/app-log';
 
 export interface PerformanceMetrics {
     mountTime: number;
@@ -35,7 +36,9 @@ export function usePerformanceMonitor(componentName: string, enabled?: boolean) 
             metricsRef.current.firstRenderTime = mountDuration;
             metricsRef.current.mountTime = mountDuration;
             if (mountDuration > 50) {
-                console.warn(`[Perf] ${componentName} slow mount: ${mountDuration.toFixed(2)}ms`);
+                void logWarn(`[Perf] ${componentName} slow mount: ${mountDuration.toFixed(2)}ms`, {
+                    scope: 'perf',
+                });
             }
         } else {
             metricsRef.current.updateCount += 1;
@@ -61,7 +64,9 @@ export function usePerformanceMonitor(componentName: string, enabled?: boolean) 
         const result = fn();
         const duration = performance.now() - start;
         if (duration > 10) {
-            console.warn(`[Perf] ${componentName}.${label}: ${duration.toFixed(2)}ms`);
+            void logWarn(`[Perf] ${componentName}.${label}: ${duration.toFixed(2)}ms`, {
+                scope: 'perf',
+            });
         }
         return result;
     };

@@ -38,6 +38,7 @@ import { useTaskItemRecurrence } from './Task/useTaskItemRecurrence';
 import { useTaskItemAi } from './Task/useTaskItemAi';
 import { useTaskItemEditState } from './Task/useTaskItemEditState';
 import { useUiStore } from '../store/ui-store';
+import { logError } from '../lib/app-log';
 
 interface TaskItemProps {
     task: Task;
@@ -620,7 +621,7 @@ export const TaskItem = memo(function TaskItem({
                 const created = await addProject(projectTitle, DEFAULT_PROJECT_COLOR);
                 resolvedProjectId = created?.id;
             } catch (error) {
-                console.error('Failed to create project from quick add', error);
+                void logError(error, { scope: 'task', step: 'quickAddProject' });
             }
         }
         if (!resolvedProjectId) {

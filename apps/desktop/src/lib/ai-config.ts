@@ -1,6 +1,7 @@
 import type { AIProviderId } from '@mindwtr/core';
 import { buildAIConfig, buildCopilotConfig, getAIKeyStorageKey } from '@mindwtr/core';
 import { isTauriRuntime } from './runtime';
+import { logError } from './app-log';
 
 const AI_SECRET_KEY = 'mindwtr-ai-key-secret';
 
@@ -107,7 +108,7 @@ export async function loadAIKey(provider: AIProviderId): Promise<string> {
             const value = await invoke<string | null>('get_ai_key', { provider });
             if (typeof value === 'string') return value;
         } catch (error) {
-            console.error('Failed to load AI key from secure storage:', error);
+            void logError(error, { scope: 'ai', step: 'loadKey' });
             return '';
         }
     }
@@ -121,7 +122,7 @@ export async function saveAIKey(provider: AIProviderId, value: string): Promise<
             await invoke('set_ai_key', { provider, value: value || null });
             return;
         } catch (error) {
-            console.error('Failed to save AI key to secure storage:', error);
+            void logError(error, { scope: 'ai', step: 'saveKey' });
             return;
         }
     }

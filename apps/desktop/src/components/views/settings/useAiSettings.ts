@@ -13,6 +13,7 @@ import { BaseDirectory, exists, mkdir, remove, size, writeFile } from '@tauri-ap
 import { dataDir, join } from '@tauri-apps/api/path';
 import { loadAIKey, saveAIKey } from '../../../lib/ai-config';
 import { reportError } from '../../../lib/report-error';
+import { logWarn } from '../../../lib/app-log';
 import {
     DEFAULT_WHISPER_MODEL,
     GEMINI_SPEECH_MODELS,
@@ -290,7 +291,10 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
             setSpeechOfflinePath(null);
             updateSpeechSettings({ offlineModelPath: undefined });
         } catch (error) {
-            console.warn('Whisper model delete failed', error);
+            void logWarn('Whisper model delete failed', {
+                scope: 'ai',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
             setSpeechDownloadError(error instanceof Error ? error.message : String(error));
             setSpeechDownloadState('error');
         }

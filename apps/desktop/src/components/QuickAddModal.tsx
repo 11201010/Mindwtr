@@ -16,6 +16,7 @@ import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
 import { isTauriRuntime } from '../lib/runtime';
 import { reportError } from '../lib/report-error';
+import { logWarn } from '../lib/app-log';
 import { loadAIKey } from '../lib/ai-config';
 import { encodeWav, resampleAudio } from '../lib/audio-utils';
 import { processAudioCapture, type SpeechToTextResult } from '../lib/speech-to-text';
@@ -358,7 +359,10 @@ export function QuickAddModal() {
 
             if (!saveTask) {
                 remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
-                    console.warn('Audio cleanup failed', error);
+                    void logWarn('Audio cleanup failed', {
+                        scope: 'audio',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    });
                 });
                 return;
             }
@@ -428,11 +432,17 @@ export function QuickAddModal() {
                     }
                 )
                     .then((result) => applySpeechResult(taskId, result))
-                    .catch((error) => console.warn('Speech-to-text failed', error))
+                    .catch((error) => void logWarn('Speech-to-text failed', {
+                        scope: 'audio',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    }))
                     .finally(() => {
                         if (!saveAudioAttachments) {
                             remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
-                                console.warn('Audio cleanup failed', error);
+                                void logWarn('Audio cleanup failed', {
+                                    scope: 'audio',
+                                    extra: { error: error instanceof Error ? error.message : String(error) },
+                                });
                             });
                         }
                     });
@@ -446,17 +456,28 @@ export function QuickAddModal() {
                         .then((bytes) => (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)))
                         .then((bytes) => runSpeech(bytes))
                         .catch((error) => {
-                            console.warn('Failed to load audio for transcription', error);
+                            void logWarn('Failed to load audio for transcription', {
+                                scope: 'audio',
+                                extra: { error: error instanceof Error ? error.message : String(error) },
+                            });
                             if (!saveAudioAttachments) {
                                 remove(relativePath, { baseDir: BaseDirectory.Data }).catch((cleanupError) => {
-                                    console.warn('Audio cleanup failed', cleanupError);
+                                    void logWarn('Audio cleanup failed', {
+                                        scope: 'audio',
+                                        extra: {
+                                            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                                        },
+                                    });
                                 });
                             }
                         });
                 }
             } else if (!saveAudioAttachments) {
                 remove(relativePath, { baseDir: BaseDirectory.Data }).catch((error) => {
-                    console.warn('Audio cleanup failed', error);
+                    void logWarn('Audio cleanup failed', {
+                        scope: 'audio',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    });
                 });
             }
         } catch (error) {

@@ -4,6 +4,7 @@ import { useLanguage } from './language-context';
 import { KeybindingHelpModal } from '../components/KeybindingHelpModal';
 import { isTauriRuntime } from '../lib/runtime';
 import { reportError } from '../lib/report-error';
+import { logWarn } from '../lib/app-log';
 import { useUiStore } from '../store/ui-store';
 
 export type KeybindingStyle = 'vim' | 'emacs';
@@ -145,7 +146,10 @@ export function KeybindingProvider({
             const isFullscreen = await current.isFullscreen();
             await current.setFullscreen(!isFullscreen);
         } catch (error) {
-            console.warn('Failed to toggle fullscreen', error);
+            void logWarn('Failed to toggle fullscreen', {
+                scope: 'keybinding',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         }
     }, []);
 

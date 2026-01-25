@@ -1,4 +1,5 @@
 import type { PerformanceMetrics } from '../hooks/usePerformanceMonitor';
+import { logWarn } from '../lib/app-log';
 
 export interface PerformanceBudget {
     mountTime: number;
@@ -53,7 +54,10 @@ export function checkBudget(
     }
 
     if (violations.length > 0) {
-        console.error(`[Budget] ${componentName} budget violations:`, violations);
+        void logWarn(`[Budget] ${componentName} budget violations`, {
+            scope: 'perf',
+            extra: { violations: violations.join('; ') },
+        });
         return false;
     }
 

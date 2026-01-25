@@ -21,6 +21,7 @@ import { QuickAddModal } from './components/QuickAddModal';
 import { startDesktopNotifications, stopDesktopNotifications } from './lib/notification-service';
 import { SyncService } from './lib/sync-service';
 import { isTauriRuntime } from './lib/runtime';
+import { logError } from './lib/app-log';
 
 function App() {
     const [currentView, setCurrentView] = useState('inbox');
@@ -47,7 +48,7 @@ function App() {
         const reportError = (label: string, error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
             setError(`${label}: ${message}`);
-            console.error(error);
+            void logError(error, { scope: 'app', step: label });
         };
 
         const handleUnload = () => {
@@ -211,7 +212,7 @@ function App() {
                 if (cancelled) return;
                 return getCurrentWindow().setDecorations(windowDecorations);
             })
-            .catch((error) => console.error('Failed to set window decorations', error));
+            .catch((error) => void logError(error, { scope: 'window', step: 'setDecorations' }));
         return () => {
             cancelled = true;
         };

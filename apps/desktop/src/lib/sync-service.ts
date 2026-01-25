@@ -29,7 +29,7 @@ import {
 } from '@mindwtr/core';
 import { isTauriRuntime } from './runtime';
 import { reportError } from './report-error';
-import { logInfo, logSyncError, sanitizeLogMessage } from './app-log';
+import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { webStorage } from './storage-adapter-web';
 
 type SyncBackend = 'off' | 'file' | 'webdav' | 'cloud';
@@ -70,6 +70,13 @@ const hashString = (value: string): string => {
         hash |= 0;
     }
     return hash.toString(16);
+};
+
+const logSyncWarning = (message: string, error?: unknown) => {
+    const extra = error
+        ? { error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)) }
+        : undefined;
+    void logWarn(message, { scope: 'sync', extra });
 };
 
 const normalizePath = (input: string) => input.replace(/\\/g, '/').toLowerCase();
@@ -194,11 +201,11 @@ const cleanupAttachmentTempFiles = async (): Promise<void> => {
             try {
                 await remove(`${ATTACHMENTS_DIR_NAME}/${name}`, { baseDir: BaseDirectory.Data });
             } catch (error) {
-                console.warn('Failed to remove temp attachment file', error);
+                logSyncWarning('Failed to remove temp attachment file', error);
             }
         }
     } catch (error) {
-        console.warn('Failed to scan temp attachment files', error);
+        logSyncWarning('Failed to scan temp attachment files', error);
     }
 };
 
@@ -253,7 +260,7 @@ const deleteAttachmentFile = async (attachment: Attachment): Promise<void> => {
             await remove(rawUri);
         }
     } catch (error) {
-        console.warn(`Failed to delete attachment file ${attachment.title}`, error);
+        logSyncWarning(`Failed to delete attachment file ${attachment.title}`, error);
     }
 };
 
@@ -315,7 +322,7 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
                     await remove(targetPath);
                 }
             } catch (error) {
-                console.warn(`Failed to delete remote attachment ${attachment.title}`, error);
+                logSyncWarning(`Failed to delete remote attachment ${attachment.title}`, error);
             }
         }
     }
@@ -407,7 +414,7 @@ async function getTauriFetch(): Promise<typeof fetch | undefined> {
         const mod = await import('@tauri-apps/plugin-http');
         return mod.fetch;
     } catch (error) {
-        console.warn('Failed to load tauri http fetch', error);
+        logSyncWarning('Failed to load tauri http fetch', error);
         return undefined;
     }
 }
@@ -432,13 +439,13 @@ async function syncAttachments(
             fetcher,
         });
     } catch (error) {
-        console.warn('Failed to ensure WebDAV attachments directory', error);
+        logSyncWarning('Failed to ensure WebDAV attachments directory', error);
     }
 
     try {
         await mkdir(ATTACHMENTS_DIR_NAME, { baseDir: BaseDirectory.Data, recursive: true });
     } catch (error) {
-        console.warn('Failed to ensure local attachments directory', error);
+        logSyncWarning('Failed to ensure local attachments directory', error);
     }
 
     const baseDataDir = await dataDir();
@@ -471,7 +478,7 @@ async function syncAttachments(
             }
             return await exists(path);
         } catch (error) {
-            console.warn('Failed to check attachment file', error);
+            logSyncWarning('Failed to check attachment file', error);
             return false;
         }
     };
@@ -500,7 +507,7 @@ async function syncAttachments(
                 const fileData = await readLocalFile(localPath);
                 const validation = await validateAttachmentForUpload(attachment, fileData.length);
                 if (!validation.valid) {
-                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
                     continue;
                 }
                 reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
@@ -528,7 +535,7 @@ async function syncAttachments(
                     'failed',
                     error instanceof Error ? error.message : String(error)
                 );
-                console.warn(`Failed to upload attachment ${attachment.title}`, error);
+                logSyncWarning(`Failed to upload attachment ${attachment.title}`, error);
             }
         }
 
@@ -571,7 +578,7 @@ async function syncAttachments(
                     'failed',
                     error instanceof Error ? error.message : String(error)
                 );
-                console.warn(`Failed to download attachment ${attachment.title}`, error);
+                logSyncWarning(`Failed to download attachment ${attachment.title}`, error);
             }
         }
     }
@@ -594,7 +601,7 @@ async function syncCloudAttachments(
     try {
         await mkdir(ATTACHMENTS_DIR_NAME, { baseDir: BaseDirectory.Data, recursive: true });
     } catch (error) {
-        console.warn('Failed to ensure local attachments directory', error);
+        logSyncWarning('Failed to ensure local attachments directory', error);
     }
 
     const baseDataDir = await dataDir();
@@ -627,7 +634,7 @@ async function syncCloudAttachments(
             }
             return await exists(path);
         } catch (error) {
-            console.warn('Failed to check attachment file', error);
+            logSyncWarning('Failed to check attachment file', error);
             return false;
         }
     };
@@ -656,7 +663,7 @@ async function syncCloudAttachments(
                 const fileData = await readLocalFile(localPath);
                 const validation = await validateAttachmentForUpload(attachment, fileData.length);
                 if (!validation.valid) {
-                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
                     continue;
                 }
                 reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
@@ -683,7 +690,7 @@ async function syncCloudAttachments(
                     'failed',
                     error instanceof Error ? error.message : String(error)
                 );
-                console.warn(`Failed to upload attachment ${attachment.title}`, error);
+                logSyncWarning(`Failed to upload attachment ${attachment.title}`, error);
             }
         }
 
@@ -725,7 +732,7 @@ async function syncCloudAttachments(
                     'failed',
                     error instanceof Error ? error.message : String(error)
                 );
-                console.warn(`Failed to download attachment ${attachment.title}`, error);
+                logSyncWarning(`Failed to download attachment ${attachment.title}`, error);
             }
         }
     }
@@ -747,13 +754,13 @@ async function syncFileAttachments(
     try {
         await mkdir(attachmentsDir, { recursive: true });
     } catch (error) {
-        console.warn('Failed to ensure sync attachments directory', error);
+        logSyncWarning('Failed to ensure sync attachments directory', error);
     }
 
     try {
         await mkdir(ATTACHMENTS_DIR_NAME, { baseDir: BaseDirectory.Data, recursive: true });
     } catch (error) {
-        console.warn('Failed to ensure local attachments directory', error);
+        logSyncWarning('Failed to ensure local attachments directory', error);
     }
 
     const baseDataDir = await dataDir();
@@ -786,7 +793,7 @@ async function syncFileAttachments(
             }
             return await exists(path);
         } catch (error) {
-            console.warn('Failed to check attachment file', error);
+            logSyncWarning('Failed to check attachment file', error);
             return false;
         }
     };
@@ -815,7 +822,7 @@ async function syncFileAttachments(
                 const fileData = await readLocalFile(localPath);
                 const validation = await validateAttachmentForUpload(attachment, fileData.length, FILE_BACKEND_VALIDATION_CONFIG);
                 if (!validation.valid) {
-                    console.warn(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
                     continue;
                 }
                 const targetPath = await join(baseSyncDir, cloudKey);
@@ -828,7 +835,7 @@ async function syncFileAttachments(
                 attachment.localStatus = 'available';
                 didMutate = true;
             } catch (error) {
-                console.warn(`Failed to copy attachment ${attachment.title} to sync folder`, error);
+                logSyncWarning(`Failed to copy attachment ${attachment.title} to sync folder`, error);
             }
         }
 
@@ -856,7 +863,7 @@ async function syncFileAttachments(
             } catch (error) {
                 attachment.localStatus = 'missing';
                 didMutate = true;
-                console.warn(`Failed to copy attachment ${attachment.title} from sync folder`, error);
+                logSyncWarning(`Failed to copy attachment ${attachment.title} from sync folder`, error);
             }
         }
     }
@@ -1111,7 +1118,7 @@ export class SyncService {
                 SyncService.performSync().catch((error) => reportError('Sync failed', error));
             }, 750);
         } catch (error) {
-            console.warn('Failed to process external sync change', error);
+            logSyncWarning('Failed to process external sync change', error);
         }
     }
 
@@ -1160,7 +1167,7 @@ export class SyncService {
             SyncService.fileWatcherPath = watchPath;
             SyncService.fileWatcherBackend = backend;
         } catch (error) {
-            console.warn('Failed to start sync file watcher', error);
+            logSyncWarning('Failed to start sync file watcher', error);
         }
     }
 
@@ -1169,7 +1176,7 @@ export class SyncService {
             try {
                 SyncService.fileWatcherStop();
             } catch (error) {
-                console.warn('Failed to stop sync watcher', error);
+                logSyncWarning('Failed to stop sync watcher', error);
             }
         }
         SyncService.fileWatcherStop = null;
@@ -1343,7 +1350,7 @@ export class SyncService {
                         }
                     }
                 } catch (error) {
-                    console.warn('Attachment sync warning', error);
+                    logSyncWarning('Attachment sync warning', error);
                 }
             }
 
@@ -1368,7 +1375,7 @@ export class SyncService {
                     lastSyncError: undefined,
                 });
             } catch (error) {
-                console.warn('Failed to persist sync status', error);
+                logSyncWarning('Failed to persist sync status', error);
             }
 
             useTaskStore.getState().setError(null);
@@ -1376,7 +1383,7 @@ export class SyncService {
         };
 
         const resultPromise = runSync().catch(async (error) => {
-            console.error('Sync failed', error);
+            logSyncWarning('Sync failed', error);
             const now = new Date().toISOString();
             const logPath = await logSyncError(error, {
                 backend,
@@ -1404,7 +1411,7 @@ export class SyncService {
                     lastSyncHistory: nextHistory,
                 });
             } catch (e) {
-                console.error('Failed to persist sync error', e);
+                logSyncWarning('Failed to persist sync error', e);
             }
             return { success: false, error: `${safeMessage}${logHint}` };
         });

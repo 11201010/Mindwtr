@@ -29,6 +29,7 @@ import {
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { useUiStore } from '../../store/ui-store';
+import { logWarn } from '../../lib/app-log';
 
 const SECTION_CONTAINER_PREFIX = 'section:';
 const NO_SECTION_CONTAINER = `${SECTION_CONTAINER_PREFIX}none`;
@@ -657,7 +658,10 @@ export function ProjectsView() {
                 await invoke('open_path', { path: attachment.uri });
                 return;
             } catch (error) {
-                console.warn('Failed to open attachment', error);
+                void logWarn('Failed to open attachment', {
+                    scope: 'attachment',
+                    extra: { error: error instanceof Error ? error.message : String(error) },
+                });
             }
         }
         window.open(normalized, '_blank');
@@ -695,7 +699,10 @@ export function ProjectsView() {
                 return;
             }
         } catch (error) {
-            console.warn('Failed to validate attachment size', error);
+            void logWarn('Failed to validate attachment size', {
+                scope: 'attachment',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         }
         const now = new Date().toISOString();
         const title = selected.split(/[/\\]/).pop() || selected;

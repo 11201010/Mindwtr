@@ -5,6 +5,7 @@ import { dataDir } from '@tauri-apps/api/path';
 import { BaseDirectory, readFile, readTextFile, size } from '@tauri-apps/plugin-fs';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
 import { isTauriRuntime } from '../../lib/runtime';
+import { logWarn } from '../../lib/app-log';
 import {
     isAudioAttachment,
     isImageAttachment,
@@ -52,7 +53,10 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
             const blob = new Blob([buffer], { type: mimeType });
             return URL.createObjectURL(blob);
         } catch (error) {
-            console.warn('Failed to load audio bytes', error);
+            void logWarn('Failed to load audio bytes', {
+                scope: 'attachment',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
             return null;
         }
     }, []);
@@ -82,7 +86,10 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
                 await invoke('open_path', { path: uri });
                 return;
             } catch (error) {
-                console.warn('Failed to open attachment', error);
+                void logWarn('Failed to open attachment', {
+                    scope: 'attachment',
+                    extra: { error: error instanceof Error ? error.message : String(error) },
+                });
                 const message = error instanceof Error ? error.message : String(error);
                 setAttachmentError(message || t('attachments.fileNotSupported'));
             }
@@ -187,7 +194,10 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
                     setTextContent(content);
                 })
                 .catch((error) => {
-                    console.warn('Failed to read text attachment', error);
+                    void logWarn('Failed to read text attachment', {
+                        scope: 'attachment',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    });
                     const message = error instanceof Error ? error.message : String(error);
                     setTextError(message || t('attachments.fileNotSupported'));
                 })
@@ -235,7 +245,10 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
                 return;
             }
         } catch (error) {
-            console.warn('Failed to validate attachment size', error);
+            void logWarn('Failed to validate attachment size', {
+                scope: 'attachment',
+                extra: { error: error instanceof Error ? error.message : String(error) },
+            });
         }
         const now = new Date().toISOString();
         const title = selected.split(/[/\\]/).pop() || selected;
