@@ -239,4 +239,4 @@ Sync via File (Dropbox, etc.) or WebDAV (Nextcloud, etc.) can be configured in S
 
 ## Development
 
-For developers, see the [Development Guide](docs/development.md).
+For developers, see the [Contributing Guide](docs/CONTRIBUTING.md).
