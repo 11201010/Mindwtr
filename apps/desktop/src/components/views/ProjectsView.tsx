@@ -763,141 +763,142 @@ export function ProjectsView() {
                     />
 
                     {/* Project Details & Tasks */}
-                    <div className="flex-1 flex flex-col h-full overflow-hidden">
+                    <div className="flex-1 flex flex-col h-full min-h-0">
                         {selectedProject ? (
                             <>
-                                <ProjectDetailsHeader
-                                    project={selectedProject}
-                                    projectColor={getProjectColorForTask(selectedProject)}
-                                    editTitle={editProjectTitle}
-                                    onEditTitleChange={setEditProjectTitle}
-                                    onCommitTitle={handleCommitProjectTitle}
-                                    onResetTitle={handleResetProjectTitle}
-                                    onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
-                                    onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
-                                    onArchive={handleArchiveProject}
-                                    onReactivate={() => updateProject(selectedProject.id, { status: 'active' })}
-                                    onDelete={handleDeleteProject}
-                                    projectProgress={projectProgress}
-                                    t={t}
-                                />
+                                <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-4">
+                                    <ProjectDetailsHeader
+                                        project={selectedProject}
+                                        projectColor={getProjectColorForTask(selectedProject)}
+                                        editTitle={editProjectTitle}
+                                        onEditTitleChange={setEditProjectTitle}
+                                        onCommitTitle={handleCommitProjectTitle}
+                                        onResetTitle={handleResetProjectTitle}
+                                        onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
+                                        onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
+                                        onArchive={handleArchiveProject}
+                                        onReactivate={() => updateProject(selectedProject.id, { status: 'active' })}
+                                        onDelete={handleDeleteProject}
+                                        projectProgress={projectProgress}
+                                        t={t}
+                                    />
 
-                                <ProjectNotesSection
-                                    project={selectedProject}
-                                    notesExpanded={notesExpanded}
-                                    onToggleNotes={() => {
-                                        setNotesExpanded(!notesExpanded);
-                                        setShowNotesPreview(false);
-                                    }}
-                                    showNotesPreview={showNotesPreview}
-                                    onTogglePreview={() => setShowNotesPreview((value) => !value)}
-                                    onAddFile={addProjectFileAttachment}
-                                    onAddLink={addProjectLinkAttachment}
-                                    visibleAttachments={visibleAttachments}
-                                    attachmentError={attachmentError}
-                                    onOpenAttachment={openAttachment}
-                                    onRemoveAttachment={removeProjectAttachment}
-                                    onUpdateNotes={(value) => updateProject(selectedProject.id, { supportNotes: value })}
-                                    t={t}
-                                />
+                                    <ProjectNotesSection
+                                        project={selectedProject}
+                                        notesExpanded={notesExpanded}
+                                        onToggleNotes={() => {
+                                            setNotesExpanded(!notesExpanded);
+                                            setShowNotesPreview(false);
+                                        }}
+                                        showNotesPreview={showNotesPreview}
+                                        onTogglePreview={() => setShowNotesPreview((value) => !value)}
+                                        onAddFile={addProjectFileAttachment}
+                                        onAddLink={addProjectLinkAttachment}
+                                        visibleAttachments={visibleAttachments}
+                                        attachmentError={attachmentError}
+                                        onOpenAttachment={openAttachment}
+                                        onRemoveAttachment={removeProjectAttachment}
+                                        onUpdateNotes={(value) => updateProject(selectedProject.id, { supportNotes: value })}
+                                        t={t}
+                                    />
 
-                                <ProjectDetailsFields
-                                    project={selectedProject}
-                                    selectedAreaId={
-                                        selectedProject.areaId && areaById.has(selectedProject.areaId)
-                                            ? selectedProject.areaId
-                                            : NO_AREA
-                                    }
-                                    sortedAreas={sortedAreas}
-                                    noAreaId={NO_AREA}
-                                    t={t}
-                                    tagDraft={tagDraft}
-                                    onTagDraftChange={setTagDraft}
-                                    onCommitTags={() => {
-                                        const tags = parseTagInput(tagDraft);
-                                        updateProject(selectedProject.id, { tagIds: tags });
-                                    }}
-                                    onNewArea={() => {
-                                        setPendingAreaAssignProjectId(selectedProject.id);
-                                        setShowQuickAreaPrompt(true);
-                                    }}
-                                    onManageAreas={() => setShowAreaManager(true)}
-                                    onAreaChange={(value) => {
-                                        updateProject(selectedProject.id, { areaId: value === NO_AREA ? undefined : value });
-                                    }}
-                                    reviewAtValue={toDateTimeLocalValue(selectedProject.reviewAt)}
-                                    onReviewAtChange={(value) => updateProject(selectedProject.id, { reviewAt: value || undefined })}
-                                    projectTaskTitle={projectTaskTitle}
-                                    onProjectTaskTitleChange={setProjectTaskTitle}
-                                    onSubmitProjectTask={async (value) => {
-                                        await handleAddTaskForProject(value);
-                                        setProjectTaskTitle('');
-                                    }}
-                                    projects={projects}
-                                    contexts={allContexts}
-                                    onCreateProject={async (title) => {
-                                        const created = await addProject(title, '#94a3b8');
-                                        return created.id;
-                                    }}
-                                />
+                                    <ProjectDetailsFields
+                                        project={selectedProject}
+                                        selectedAreaId={
+                                            selectedProject.areaId && areaById.has(selectedProject.areaId)
+                                                ? selectedProject.areaId
+                                                : NO_AREA
+                                        }
+                                        sortedAreas={sortedAreas}
+                                        noAreaId={NO_AREA}
+                                        t={t}
+                                        tagDraft={tagDraft}
+                                        onTagDraftChange={setTagDraft}
+                                        onCommitTags={() => {
+                                            const tags = parseTagInput(tagDraft);
+                                            updateProject(selectedProject.id, { tagIds: tags });
+                                        }}
+                                        onNewArea={() => {
+                                            setPendingAreaAssignProjectId(selectedProject.id);
+                                            setShowQuickAreaPrompt(true);
+                                        }}
+                                        onManageAreas={() => setShowAreaManager(true)}
+                                        onAreaChange={(value) => {
+                                            updateProject(selectedProject.id, { areaId: value === NO_AREA ? undefined : value });
+                                        }}
+                                        reviewAtValue={toDateTimeLocalValue(selectedProject.reviewAt)}
+                                        onReviewAtChange={(value) => updateProject(selectedProject.id, { reviewAt: value || undefined })}
+                                        projectTaskTitle={projectTaskTitle}
+                                        onProjectTaskTitleChange={setProjectTaskTitle}
+                                        onSubmitProjectTask={async (value) => {
+                                            await handleAddTaskForProject(value);
+                                            setProjectTaskTitle('');
+                                        }}
+                                        projects={projects}
+                                        contexts={allContexts}
+                                        onCreateProject={async (title) => {
+                                            const created = await addProject(title, '#94a3b8');
+                                            return created.id;
+                                        }}
+                                    />
 
-                                <div className="flex-1 overflow-y-auto pr-2">
-                                    <div className="flex items-center justify-between mb-3">
-                                        <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                                            {t('projects.sectionsLabel')}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-3">
+                                            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                                                {t('projects.sectionsLabel')}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleAddSection}
+                                                className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                            >
+                                                <Plus className="h-3.5 w-3.5" />
+                                                {t('projects.addSection')}
+                                            </button>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleAddSection}
-                                            className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                        <DndContext
+                                            sensors={taskSensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={handleTaskDragEnd}
                                         >
-                                            <Plus className="h-3.5 w-3.5" />
-                                            {t('projects.addSection')}
-                                        </button>
-                                    </div>
-                                    <DndContext
-                                        sensors={taskSensors}
-                                        collisionDetection={closestCenter}
-                                        onDragEnd={handleTaskDragEnd}
-                                    >
-                                        {projectSections.length === 0 ? (
-                                            <SectionDropZone id={NO_SECTION_CONTAINER} className="min-h-[120px]">
-                                                {orderedProjectTasks.length > 0 ? (
-                                                    renderSortableTasks(orderedProjectTasks)
-                                                ) : (
-                                                    <div className="text-center text-muted-foreground py-12">
-                                                        {t('projects.noActiveTasks')}
-                                                    </div>
-                                                )}
-                                            </SectionDropZone>
-                                        ) : (
-                                            <div className="space-y-4">
-                                                {sectionTaskGroups.sections.map((group) => {
-                                                    const isCollapsed = group.section.isCollapsed;
-                                                    const taskCount = group.tasks.length;
-                                                    const hasNotes = Boolean(group.section.description?.trim());
-                                                    const notesOpen = sectionNotesOpen[group.section.id] ?? false;
-                                                    return (
-                                                        <SectionDropZone
-                                                            key={group.section.id}
-                                                            id={getSectionContainerId(group.section.id)}
-                                                            className="border border-border rounded-lg bg-card/40"
-                                                        >
-                                                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleToggleSection(group.section)}
-                                                                    className="flex items-center gap-2 text-sm font-semibold"
-                                                                >
-                                                                    {isCollapsed ? (
-                                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                                                                    ) : (
-                                                                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                                                                    )}
-                                                                    <span>{group.section.title}</span>
-                                                                    <span className="text-xs text-muted-foreground">{taskCount}</span>
-                                                                </button>
-                                                                <div className="flex items-center gap-2">
+                                            {projectSections.length === 0 ? (
+                                                <SectionDropZone id={NO_SECTION_CONTAINER} className="min-h-[120px]">
+                                                    {orderedProjectTasks.length > 0 ? (
+                                                        renderSortableTasks(orderedProjectTasks)
+                                                    ) : (
+                                                        <div className="text-center text-muted-foreground py-12">
+                                                            {t('projects.noActiveTasks')}
+                                                        </div>
+                                                    )}
+                                                </SectionDropZone>
+                                            ) : (
+                                                <div className="space-y-4">
+                                                    {sectionTaskGroups.sections.map((group) => {
+                                                        const isCollapsed = group.section.isCollapsed;
+                                                        const taskCount = group.tasks.length;
+                                                        const hasNotes = Boolean(group.section.description?.trim());
+                                                        const notesOpen = sectionNotesOpen[group.section.id] ?? false;
+                                                        return (
+                                                            <SectionDropZone
+                                                                key={group.section.id}
+                                                                id={getSectionContainerId(group.section.id)}
+                                                                className="border border-border rounded-lg bg-card/40"
+                                                            >
+                                                                <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleToggleSection(group.section)}
+                                                                        className="flex items-center gap-2 text-sm font-semibold"
+                                                                    >
+                                                                        {isCollapsed ? (
+                                                                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                                        ) : (
+                                                                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                                                        )}
+                                                                        <span>{group.section.title}</span>
+                                                                        <span className="text-xs text-muted-foreground">{taskCount}</span>
+                                                                    </button>
+                                                                    <div className="flex items-center gap-2">
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => handleOpenSectionTaskPrompt(group.section.id)}
@@ -992,6 +993,7 @@ export function ProjectsView() {
                                             </div>
                                         )}
                                     </DndContext>
+                                </div>
                                 </div>
                             </>
                         ) : selectedArea !== ALL_AREAS ? (

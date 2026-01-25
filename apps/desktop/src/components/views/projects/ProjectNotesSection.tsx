@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Link2, Paperclip } from 'lucide-react';
 import type { Attachment, Project } from '@mindwtr/core';
 import { Markdown } from '../../Markdown';
@@ -34,6 +35,16 @@ export function ProjectNotesSection({
     onUpdateNotes,
     t,
 }: ProjectNotesSectionProps) {
+    const [draftNotes, setDraftNotes] = useState(project.supportNotes || '');
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+    useEffect(() => {
+        setDraftNotes(project.supportNotes || '');
+        if (textareaRef.current) {
+            textareaRef.current.scrollTop = 0;
+        }
+    }, [project.id, project.supportNotes]);
+
     return (
         <div className="mb-6 border rounded-lg overflow-hidden bg-card">
             <button
@@ -76,14 +87,19 @@ export function ProjectNotesSection({
 
                     {showNotesPreview ? (
                         <div className="text-xs bg-muted/30 border border-border rounded px-2 py-2">
-                            <Markdown markdown={project.supportNotes || ''} />
+                            <Markdown markdown={draftNotes} />
                         </div>
                     ) : (
                         <textarea
+                            ref={textareaRef}
                             className="w-full min-h-[120px] p-3 text-sm bg-transparent border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
                             placeholder={t('projects.notesPlaceholder')}
-                            defaultValue={project.supportNotes || ''}
-                            onBlur={(event) => onUpdateNotes(event.target.value)}
+                            value={draftNotes}
+                            onChange={(event) => setDraftNotes(event.target.value)}
+                            onBlur={(event) => {
+                                onUpdateNotes(event.target.value);
+                                event.currentTarget.scrollTop = 0;
+                            }}
                         />
                     )}
 
