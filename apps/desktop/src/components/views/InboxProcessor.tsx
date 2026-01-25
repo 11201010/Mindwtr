@@ -37,6 +37,7 @@ export function InboxProcessor({
     const [processingStep, setProcessingStep] = useState<ProcessingStep>('actionable');
     const [stepHistory, setStepHistory] = useState<ProcessingStep[]>([]);
     const [selectedContexts, setSelectedContexts] = useState<string[]>([]);
+    const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [delegateWho, setDelegateWho] = useState('');
     const [delegateFollowUp, setDelegateFollowUp] = useState('');
     const [projectSearch, setProjectSearch] = useState('');
@@ -90,6 +91,7 @@ export function InboxProcessor({
         setProcessingStep('actionable');
         setStepHistory([]);
         setSelectedContexts([]);
+        setSelectedTags([]);
         setDelegateWho('');
         setDelegateFollowUp('');
         setProjectSearch('');
@@ -110,6 +112,7 @@ export function InboxProcessor({
         setProcessingStep('refine');
         setStepHistory([]);
         setSelectedContexts(task.contexts ?? []);
+        setSelectedTags(task.tags ?? []);
         setCustomContext('');
         setProjectSearch('');
         setProcessingTitle(task.title);
@@ -256,23 +259,43 @@ export function InboxProcessor({
 
     const handleDefer = () => {
         setSelectedContexts(processingTask?.contexts ?? []);
+        setSelectedTags(processingTask?.tags ?? []);
         goToStep('context');
     };
 
+    const toggleTag = (tag: string) => {
+        setSelectedTags((prev) =>
+            prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]
+        );
+    };
+
     const toggleContext = (ctx: string) => {
+        if (ctx.startsWith('#')) {
+            toggleTag(ctx);
+            return;
+        }
         setSelectedContexts((prev) =>
             prev.includes(ctx) ? prev.filter((item) => item !== ctx) : [...prev, ctx]
         );
     };
 
     const addCustomContext = () => {
-        if (customContext.trim()) {
-            const ctx = `@${customContext.trim().replace(/^@/, '')}`;
-            if (!selectedContexts.includes(ctx)) {
-                setSelectedContexts((prev) => [...prev, ctx]);
+        const trimmed = customContext.trim();
+        if (!trimmed) return;
+        const raw = trimmed.replace(/^@/, '');
+        if (raw.startsWith('#')) {
+            const tag = `#${raw.replace(/^#+/, '').trim()}`;
+            if (tag.length > 1 && !selectedTags.includes(tag)) {
+                setSelectedTags((prev) => [...prev, tag]);
             }
             setCustomContext('');
+            return;
         }
+        const ctx = `@${raw.replace(/^@/, '').trim()}`;
+        if (ctx.length > 1 && !selectedContexts.includes(ctx)) {
+            setSelectedContexts((prev) => [...prev, ctx]);
+        }
+        setCustomContext('');
     };
 
     const normalizeTimeInput = (value: string): string | null => {
@@ -332,6 +355,7 @@ export function InboxProcessor({
             applyProcessingEdits({
                 status: 'next',
                 contexts: selectedContexts,
+                tags: selectedTags,
                 projectId: projectId || undefined,
                 ...(scheduleEnabled && scheduleDate
                     ? { startTime: scheduleTime ? `${scheduleDate}T${scheduleTime}` : scheduleDate }
@@ -356,6 +380,7 @@ export function InboxProcessor({
             title: nextAction,
             status: 'next',
             contexts: selectedContexts,
+            tags: selectedTags,
             projectId: project.id,
             ...(scheduleEnabled && scheduleDate
                 ? { startTime: scheduleTime ? `${scheduleDate}T${scheduleTime}` : scheduleDate }
@@ -405,11 +430,13 @@ export function InboxProcessor({
                 handleSendDelegateRequest={handleSendDelegateRequest}
                 handleConfirmWaiting={handleConfirmWaiting}
                 selectedContexts={selectedContexts}
+                selectedTags={selectedTags}
                 allContexts={allContexts}
                 customContext={customContext}
                 setCustomContext={setCustomContext}
                 addCustomContext={addCustomContext}
                 toggleContext={toggleContext}
+                toggleTag={toggleTag}
                 handleConfirmContexts={handleConfirmContexts}
                 convertToProject={convertToProject}
                 setConvertToProject={setConvertToProject}

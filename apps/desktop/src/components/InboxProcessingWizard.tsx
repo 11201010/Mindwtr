@@ -33,11 +33,13 @@ type InboxProcessingWizardProps = {
     handleSendDelegateRequest: () => void;
     handleConfirmWaiting: () => void;
     selectedContexts: string[];
+    selectedTags: string[];
     allContexts: string[];
     customContext: string;
     setCustomContext: (value: string) => void;
     addCustomContext: () => void;
     toggleContext: (ctx: string) => void;
+    toggleTag: (tag: string) => void;
     handleConfirmContexts: () => void;
     convertToProject: boolean;
     setConvertToProject: (value: boolean) => void;
@@ -93,11 +95,13 @@ export function InboxProcessingWizard({
     handleSendDelegateRequest,
     handleConfirmWaiting,
     selectedContexts,
+    selectedTags,
     allContexts,
     customContext,
     setCustomContext,
     addCustomContext,
     toggleContext,
+    toggleTag,
     handleConfirmContexts,
     convertToProject,
     setConvertToProject,
@@ -384,13 +388,22 @@ export function InboxProcessingWizard({
                         {t('process.contextDesc')} {t('process.selectMultipleHint')}
                     </p>
 
-                    {selectedContexts.length > 0 && (
+                    {(selectedContexts.length > 0 || selectedTags.length > 0) && (
                         <div className="flex flex-wrap gap-2 justify-center p-3 bg-primary/10 rounded-lg">
                             <span className="text-xs text-primary font-medium">{t('process.selectedLabel')}</span>
                             {selectedContexts.map(ctx => (
                                 <span key={ctx} className="px-2 py-1 bg-primary text-primary-foreground rounded-full text-xs">
                                     {ctx}
                                 </span>
+                            ))}
+                            {selectedTags.map(tag => (
+                                <button
+                                    key={tag}
+                                    onClick={() => toggleTag(tag)}
+                                    className="px-2 py-1 bg-emerald-500 text-white rounded-full text-xs"
+                                >
+                                    {tag}
+                                </button>
                             ))}
                         </div>
                     )}
