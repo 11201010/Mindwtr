@@ -36,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
             }
 
             return (
-                <div className="min-h-screen flex items-center justify-center bg-background">
+                <div className="min-h-screen flex items-center justify-center bg-background" role="alert" aria-live="assertive">
                     <div className="max-w-md p-8 text-center space-y-4">
                         <div className="text-6xl">💥</div>
                         <h1 className="text-2xl font-bold text-foreground">Something went wrong</h1>

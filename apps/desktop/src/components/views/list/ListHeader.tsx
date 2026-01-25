@@ -42,7 +42,7 @@ export function ListHeader({
                 {showNextCount && <span className="ml-2 text-lg font-normal text-muted-foreground">({nextCount})</span>}
             </h2>
             <div className="flex items-center gap-3">
-                <span className="text-muted-foreground text-sm">
+                <span className="text-muted-foreground text-sm" aria-live="polite">
                     {taskCount} {t('common.tasks')}
                     {hasFilters && (
                         <span className="ml-1 text-primary">• {filterSummaryLabel}{filterSummarySuffix}</span>

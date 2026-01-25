@@ -239,7 +239,11 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                             : "max-w-4xl"
                 )}>
                     {error && (
-                        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        <div
+                            role="alert"
+                            aria-live="assertive"
+                            className="mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                        >
                             <span>{error}</span>
                             <button
                                 type="button"
