@@ -110,6 +110,26 @@ describe('TaskStore', () => {
         expect(mockStorage.saveData).toHaveBeenCalledTimes(1);
     });
 
+    it('should persist the latest snapshot after rapid edits', async () => {
+        const { addTask, addProject, updateTask } = useTaskStore.getState();
+
+        addTask('Alpha');
+        const taskId = useTaskStore.getState().tasks[0].id;
+        const project = await addProject('Project Alpha', '#123456');
+        expect(project).not.toBeNull();
+        if (!project) return;
+
+        updateTask(taskId, { title: 'Alpha Updated', projectId: project.id });
+        await flushPendingSave();
+
+        const saveCalls = (mockStorage.saveData as unknown as { mock: { calls: any[][] } }).mock.calls;
+        const saved = saveCalls[saveCalls.length - 1]?.[0];
+        expect(saved.projects).toHaveLength(1);
+        expect(saved.tasks).toHaveLength(1);
+        expect(saved.tasks[0].title).toBe('Alpha Updated');
+        expect(saved.tasks[0].projectId).toBe(project.id);
+    });
+
     it('should add a project', () => {
         const { addProject } = useTaskStore.getState();
         addProject('New Project', '#ff0000');
