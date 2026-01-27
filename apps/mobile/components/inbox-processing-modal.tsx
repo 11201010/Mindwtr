@@ -33,6 +33,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const [processingTitle, setProcessingTitle] = useState('');
   const [processingDescription, setProcessingDescription] = useState('');
   const [processingTitleFocused, setProcessingTitleFocused] = useState(false);
+  const titleInputRef = useRef<TextInput | null>(null);
   const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [isAIWorking, setIsAIWorking] = useState(false);
@@ -83,7 +84,13 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     return projects.some((project) => project.title.toLowerCase() === query);
   }, [projects, projectSearch]);
 
+  const resetTitleFocus = () => {
+    setProcessingTitleFocused(false);
+    titleInputRef.current?.blur();
+  };
+
   const resetProcessingState = () => {
+    resetTitleFocus();
     setCurrentIndex(0);
     setProcessingStep('refine');
     setSkippedIds(new Set());
@@ -132,6 +139,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     setSelectedTags(firstTask?.tags ?? []);
     setNewContext('');
     setProjectSearch('');
+    resetTitleFocus();
     setProcessingTitle(firstTask?.title ?? '');
     setProcessingDescription(firstTask?.description ?? '');
   }, [visible, inboxTasks]);
@@ -162,6 +170,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
       setSelectedContexts(nextTask?.contexts ?? []);
       setNewContext('');
       setProjectSearch('');
+      resetTitleFocus();
       setProcessingTitle(nextTask?.title ?? '');
       setProcessingDescription(nextTask?.description ?? '');
     }
@@ -188,6 +197,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     setSelectedTags(nextTask?.tags ?? []);
     setNewContext('');
     setProjectSearch('');
+    resetTitleFocus();
     setProcessingTitle(nextTask?.title ?? '');
     setProcessingDescription(nextTask?.description ?? '');
   };
@@ -503,6 +513,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
               <View style={styles.refineContainer}>
                 <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.titleLabel')}</Text>
                 <TextInput
+                  ref={titleInputRef}
                   style={[styles.refineTitleInput, titleDirectionStyle, { borderColor: tc.border, color: tc.text, backgroundColor: tc.cardBg }]}
                   value={processingTitle}
                   onChangeText={setProcessingTitle}
