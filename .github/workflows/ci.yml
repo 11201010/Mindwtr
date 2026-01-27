@@ -21,7 +21,9 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: |
+          set -e
+          bun install || (echo "bun install failed, clearing cache and retrying..." && (bun pm cache rm || bun pm cache clean || true) && bun install)
 
       - name: TypeScript check
         run: cd packages/core && bun run tsc --noEmit
@@ -94,6 +96,10 @@ jobs:
 
       - name: Expo Doctor check
         run: cd apps/mobile && bunx expo-doctor
+        continue-on-error: true
+
+      - name: Mobile tests
+        run: bun run --filter mobile test
         continue-on-error: true
 
   # Lint check
