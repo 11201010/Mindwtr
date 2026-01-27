@@ -117,9 +117,6 @@ export function SettingsView() {
 
     const [saved, setSaved] = useState(false);
     const [appVersion, setAppVersion] = useState('0.1.0');
-    const [dataPath, setDataPath] = useState('');
-    const [dbPath, setDbPath] = useState('');
-    const [configPath, setConfigPath] = useState('');
     const [logPath, setLogPath] = useState('');
     const notificationsEnabled = settings?.notificationsEnabled !== false;
     const reviewAtNotificationsEnabled = settings?.reviewAtNotificationsEnabled !== false;
@@ -222,16 +219,8 @@ export function SettingsView() {
 
             import('@tauri-apps/api/core')
                 .then(async ({ invoke }) => {
-                    const [data, config, db, distro] = await Promise.all([
-                        invoke<string>('get_data_path_cmd'),
-                        invoke<string>('get_config_path_cmd'),
-                        invoke<string>('get_db_path_cmd'),
-                        invoke<LinuxDistroInfo | null>('get_linux_distro'),
-                    ]);
+                    const distro = await invoke<LinuxDistroInfo | null>('get_linux_distro');
                     if (cancelled) return;
-                    setDataPath(data);
-                    setConfigPath(config);
-                    setDbPath(db);
                     setLinuxDistro(distro);
                 })
                 .catch((error) => reportError('Failed to read system paths', error));
@@ -388,17 +377,22 @@ export function SettingsView() {
     };
 
     const openLink = async (url: string) => {
+        const nextUrl = url.trim();
+        let openError: unknown = null;
         if (isTauri) {
             try {
                 const { open } = await import('@tauri-apps/plugin-shell');
-                await open(url);
+                await open(nextUrl);
                 return;
             } catch (error) {
-                reportError('Failed to open external link', error);
+                openError = error;
             }
         }
 
-        window.open(url, '_blank', 'noopener,noreferrer');
+        const opened = window.open(nextUrl, '_blank', 'noopener,noreferrer');
+        if (!opened) {
+            reportError('Failed to open external link', openError ?? new Error('Popup blocked'));
+        }
     };
 
     const handleAttachmentsCleanup = useCallback(async () => {
@@ -912,10 +906,6 @@ export function SettingsView() {
             return (
                 <SettingsAboutPage
                     t={t}
-                    isTauri={isTauri}
-                    dataPath={dataPath}
-                    dbPath={dbPath}
-                    configPath={configPath}
                     appVersion={appVersion}
                     onOpenLink={openLink}
                     onCheckUpdates={handleCheckUpdates}

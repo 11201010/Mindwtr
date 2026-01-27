@@ -3184,24 +3184,6 @@ export default function SettingsPage() {
                                 {Constants.expoConfig?.version ?? '0.1.0'}
                             </Text>
                         </View>
-                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{localize('License', '许可证')}</Text>
-                            <Text style={[styles.settingValue, { color: tc.secondaryText }]}>AGPL-3.0</Text>
-                        </View>
-                        <TouchableOpacity
-                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={() => openLink('https://dongdongbh.tech')}
-                        >
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{localize('Website', '网站')}</Text>
-                            <Text style={styles.linkText}>dongdongbh.tech</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={() => openLink('https://github.com/dongdongbh/Mindwtr')}
-                        >
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>GitHub</Text>
-                            <Text style={styles.linkText}>Mindwtr</Text>
-                        </TouchableOpacity>
                         <TouchableOpacity
                             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
                             onPress={handleCheckUpdates}
@@ -3218,6 +3200,42 @@ export default function SettingsPage() {
                                 </Text>
                             )}
                         </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => openLink('https://github.com/dongdongbh/Mindwtr/wiki')}
+                        >
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>{localize('Documentation', '文档')}</Text>
+                            <Text style={styles.linkText}>GitHub Wiki</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => openLink('https://ko-fi.com/dongdongbh')}
+                        >
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                {localize('Support Project', '支持项目')}
+                            </Text>
+                            <Text style={styles.linkText}>Ko-fi</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => openLink('https://github.com/dongdongbh/Mindwtr')}
+                        >
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>GitHub</Text>
+                            <Text style={styles.linkText}>Mindwtr</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                            onPress={() => openLink('https://dongdongbh.tech')}
+                        >
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                {localize('Developer Website', '开发者网站')}
+                            </Text>
+                            <Text style={styles.linkText}>dongdongbh.tech</Text>
+                        </TouchableOpacity>
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>{localize('License', '许可证')}</Text>
+                            <Text style={[styles.settingValue, { color: tc.secondaryText }]}>AGPL-3.0</Text>
+                        </View>
                     </View>
                 </ScrollView>
             </SafeAreaView>
