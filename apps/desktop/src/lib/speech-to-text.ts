@@ -77,7 +77,18 @@ const parseJsonResponse = (text: string): SpeechToTextResult => {
 const resolveLanguage = (value?: string) => {
     if (!value) return 'auto';
     const trimmed = value.trim();
-    return trimmed.length ? trimmed : 'auto';
+    if (!trimmed) return 'auto';
+    const normalized = trimmed.toLowerCase();
+    if (normalized === 'auto') return 'auto';
+    const base = normalized.split(/[-_]/)[0];
+    const map: Record<string, string> = {
+        english: 'en',
+        en: 'en',
+        spanish: 'es',
+        espanol: 'es',
+        es: 'es',
+    };
+    return map[base] ?? base;
 };
 
 const buildSmartPrompt = ({
