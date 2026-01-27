@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, TextInput, Platform, Alert, Share, ActivityIndicator, type TextStyle } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, TextInput, Platform, Alert, Share, ActivityIndicator, Dimensions, type TextStyle } from 'react-native';
 
 import { useTaskStore, PRESET_CONTEXTS, PRESET_TAGS, createAIProvider, safeFormatDate, safeParseDate, resolveTextDirection, type Task, type AIProviderId } from '@mindwtr/core';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -476,6 +476,10 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const currentProject = currentTask.projectId
     ? projects.find((p) => p.id === currentTask.projectId) ?? null
     : null;
+  const displayDescription = processingDescription || currentTask.description || '';
+  const windowHeight = Dimensions.get('window').height;
+  const taskDisplayMaxHeight = Math.max(220, Math.floor(windowHeight * 0.44));
+  const descriptionMaxHeight = Math.max(120, Math.floor(windowHeight * 0.28));
 
   return (
     <>
@@ -508,7 +512,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
             </TouchableOpacity>
           </View>
 
-          <View style={styles.taskDisplay}>
+          <View style={[styles.taskDisplay, { maxHeight: taskDisplayMaxHeight }]}>
             {processingStep === 'refine' ? (
               <View style={styles.refineContainer}>
                 <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.titleLabel')}</Text>
@@ -539,14 +543,16 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
                 <Text style={[styles.taskTitle, titleDirectionStyle, { color: tc.text }]}>
                   {processingTitle || currentTask.title}
                 </Text>
-                {processingDescription ? (
-                  <Text style={[styles.taskDescription, { color: tc.secondaryText }]}>
-                    {processingDescription}
-                  </Text>
-                ) : currentTask.description ? (
-                  <Text style={[styles.taskDescription, { color: tc.secondaryText }]}>
-                    {currentTask.description}
-                  </Text>
+                {displayDescription ? (
+                  <ScrollView
+                    nestedScrollEnabled
+                    style={[styles.descriptionScroll, { maxHeight: descriptionMaxHeight }]}
+                    contentContainerStyle={styles.descriptionScrollContent}
+                  >
+                    <Text style={[styles.taskDescription, { color: tc.secondaryText }]}>
+                      {displayDescription}
+                    </Text>
+                  </ScrollView>
                 ) : null}
               </>
             )}
@@ -1124,6 +1130,7 @@ const styles = StyleSheet.create({
   taskDisplay: {
     padding: 20,
     borderBottomWidth: 0,
+    flexShrink: 1,
   },
   loadingContainer: {
     flex: 1,
@@ -1142,7 +1149,13 @@ const styles = StyleSheet.create({
   },
   taskDescription: {
     fontSize: 14,
+    marginBottom: 0,
+  },
+  descriptionScroll: {
     marginBottom: 6,
+  },
+  descriptionScrollContent: {
+    paddingBottom: 4,
   },
   taskMetaRow: {
     flexDirection: 'row',
