@@ -2336,6 +2336,15 @@ fn write_sync_file(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
     Ok(true)
 }
 
+#[tauri::command]
+fn set_tray_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_visible(visible).map_err(|e| e.to_string())
+    } else {
+        Err("Tray icon not found".to_string())
+    }
+}
+
 fn sanitize_json_text(raw: &str) -> String {
     // Strip BOM and trailing NULs (can occur with partial writes / filesystem quirks).
     let mut text = raw.trim_start_matches('\u{FEFF}').trim_end().to_string();
@@ -2476,7 +2485,7 @@ pub fn run() {
             let tray_icon = Image::from_bytes(include_bytes!("../icons/tray.png"))
                 .unwrap_or_else(|_| handle.default_window_icon().unwrap().clone());
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
@@ -2545,6 +2554,7 @@ pub fn run() {
             open_path,
             read_sync_file,
             write_sync_file,
+            set_tray_visible,
             get_linux_distro,
             start_audio_recording,
             stop_audio_recording,

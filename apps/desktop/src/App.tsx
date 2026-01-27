@@ -33,6 +33,7 @@ function App() {
     const setError = useTaskStore((state) => state.setError);
     const windowDecorations = useTaskStore((state) => state.settings?.window?.decorations);
     const closeBehavior = useTaskStore((state) => state.settings?.window?.closeBehavior ?? 'ask');
+    const showTray = useTaskStore((state) => state.settings?.window?.showTray);
     const updateSettings = useTaskStore((state) => state.updateSettings);
     const { t } = useLanguage();
     const isActiveRef = useRef(true);
@@ -241,6 +242,11 @@ function App() {
                     return;
                 }
                 if (closeBehavior === 'tray') {
+                    // If tray is hidden, quit instead of trying to hide to an invisible tray
+                    if (showTray === false) {
+                        await quitApp().catch((error) => reportCloseError('Quit failed', error));
+                        return;
+                    }
                     await hideToTray().catch((error) => reportCloseError('Hide failed', error));
                     return;
                 }
@@ -256,7 +262,7 @@ function App() {
         return () => {
             if (unlisten) unlisten();
         };
-    }, [closeBehavior, closePromptOpen, hideToTray, quitApp, setError]);
+    }, [closeBehavior, closePromptOpen, hideToTray, quitApp, setError, showTray]);
 
     useEffect(() => {
         if (!isTauriRuntime()) return;
@@ -273,6 +279,21 @@ function App() {
             cancelled = true;
         };
     }, [windowDecorations]);
+
+    useEffect(() => {
+        if (!isTauriRuntime()) return;
+        if (showTray === undefined) return;
+        let cancelled = false;
+        import('@tauri-apps/api/core')
+            .then(async ({ invoke }) => {
+                if (cancelled) return;
+                await invoke('set_tray_visible', { visible: showTray !== false });
+            })
+            .catch((error) => void logError(error, { scope: 'tray', step: 'setVisible' }));
+        return () => {
+            cancelled = true;
+        };
+    }, [showTray]);
 
     useEffect(() => {
         if (import.meta.env.MODE === 'test' || import.meta.env.VITEST || process.env.NODE_ENV === 'test') return;

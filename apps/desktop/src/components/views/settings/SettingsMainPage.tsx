@@ -24,6 +24,8 @@ type Labels = {
     closeBehaviorAsk: string;
     closeBehaviorTray: string;
     closeBehaviorQuit: string;
+    showTray: string;
+    showTrayDesc: string;
 };
 
 type LanguageOption = { id: Language; native: string };
@@ -44,6 +46,9 @@ type SettingsMainPageProps = {
     showCloseBehavior?: boolean;
     closeBehavior?: 'ask' | 'tray' | 'quit';
     onCloseBehaviorChange?: (behavior: 'ask' | 'tray' | 'quit') => void;
+    showTrayToggle?: boolean;
+    trayVisible?: boolean;
+    onTrayVisibleChange?: (visible: boolean) => void;
 };
 
 export function SettingsMainPage({
@@ -62,6 +67,9 @@ export function SettingsMainPage({
     showCloseBehavior = false,
     closeBehavior = 'ask',
     onCloseBehaviorChange,
+    showTrayToggle = false,
+    trayVisible = true,
+    onTrayVisibleChange,
 }: SettingsMainPageProps) {
     return (
         <div className="space-y-6">
@@ -176,6 +184,29 @@ export function SettingsMainPage({
                                 <option value="quit">{t.closeBehaviorQuit}</option>
                             </select>
                         </div>
+                    </div>
+                )}
+
+                {showTrayToggle && (
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.showTray}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.showTrayDesc}</div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => onTrayVisibleChange?.(!trayVisible)}
+                            className={`inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                trayVisible ? 'bg-primary' : 'bg-muted'
+                            }`}
+                            aria-pressed={trayVisible}
+                        >
+                            <span
+                                className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                                    trayVisible ? 'translate-x-5' : 'translate-x-1'
+                                }`}
+                            />
+                        </button>
                     </div>
                 )}
             </div>

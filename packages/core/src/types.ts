@@ -198,6 +198,7 @@ export interface AppData {
         window?: {
             decorations?: boolean;
             closeBehavior?: 'ask' | 'tray' | 'quit';
+            showTray?: boolean;
         };
         notificationsEnabled?: boolean;
         reviewAtNotificationsEnabled?: boolean;
