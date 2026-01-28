@@ -102,34 +102,3 @@ jobs:
           name: release-linux
           path: release-artifacts/*
           if-no-files-found: warn
-
-      - name: Update PKGBUILD version
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "Updating PKGBUILD to version $VERSION"
-          sed -i "s/^pkgver=.*/pkgver=$VERSION/" aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" aur/PKGBUILD
-        shell: bash
-
-      - name: Update .SRCINFO
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          docker run --rm \
-            -v "$PWD/aur:/aur" \
-            -w /aur \
-            archlinux:latest \
-            bash -lc "pacman -Sy --noconfirm --needed base-devel git && useradd -m builder && chown -R builder:builder /aur && su builder -c 'makepkg --printsrcinfo > .SRCINFO'"
-        shell: bash
-
-      - name: Publish to AUR
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: KSXGitHub/github-actions-deploy-aur@v3
-        with:
-          pkgname: mindwtr-bin
-          pkgbuild: ./aur/PKGBUILD
-          commit_username: ${{ secrets.AUR_USERNAME }}
-          commit_email: ${{ secrets.AUR_EMAIL }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update to ${{ github.ref_name }}
-          updpkgsums: true

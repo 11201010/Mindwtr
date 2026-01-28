@@ -340,3 +340,40 @@ jobs:
           fi
           git commit -m "update: Mindwtr ${{ steps.version.outputs.version }}"
           git push
+
+  update-aur:
+    needs: release
+    runs-on: ubuntu-latest
+    name: Update AUR
+    if: startsWith(github.ref, 'refs/tags/') && needs.release.result == 'success'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Update PKGBUILD version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Updating PKGBUILD to version $VERSION"
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" aur/PKGBUILD
+        shell: bash
+
+      - name: Update .SRCINFO
+        run: |
+          docker run --rm \
+            -v "$PWD/aur:/aur" \
+            -w /aur \
+            archlinux:latest \
+            bash -lc "pacman -Sy --noconfirm --needed base-devel git && useradd -m builder && chown -R builder:builder /aur && su builder -c 'makepkg --printsrcinfo > .SRCINFO'"
+        shell: bash
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: mindwtr-bin
+          pkgbuild: ./aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ github.ref_name }}
+          updpkgsums: true
