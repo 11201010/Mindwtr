@@ -59,6 +59,8 @@ export interface Project {
     reviewAt?: string; // Tickler/review date (ISO string). If set, project is due for review at/after this time.
     areaId?: string;
     areaTitle?: string;
+    rev?: number; // Monotonic revision counter for sync conflict resolution
+    revBy?: string; // Device identifier that issued the revision
     createdAt: string;
     updatedAt: string;
     deletedAt?: string; // Soft-delete: if set, this item is considered deleted
@@ -71,6 +73,8 @@ export interface Section {
     description?: string;
     order: number; // Sort order within a Project
     isCollapsed?: boolean;
+    rev?: number; // Monotonic revision counter for sync conflict resolution
+    revBy?: string; // Device identifier that issued the revision
     createdAt: string;
     updatedAt: string;
     deletedAt?: string; // Soft-delete: if set, this item is considered deleted
@@ -82,6 +86,8 @@ export interface Area {
     color?: string; // Hex code
     icon?: string; // Emoji or icon name
     order: number; // For sorting in the sidebar
+    rev?: number; // Monotonic revision counter for sync conflict resolution
+    revBy?: string; // Device identifier that issued the revision
     createdAt?: string;
     updatedAt?: string;
 }
@@ -144,6 +150,8 @@ export interface Task {
     timeEstimate?: TimeEstimate; // Estimated time to complete
     reviewAt?: string; // Tickler/review date (ISO string). If set, task is due for review at/after this time.
     completedAt?: string; // ISO timestamp when task was last completed/archived.
+    rev?: number; // Monotonic revision counter for sync conflict resolution
+    revBy?: string; // Device identifier that issued the revision
     createdAt: string;
     updatedAt: string;
     deletedAt?: string; // Soft-delete: if set, this item is considered deleted
@@ -238,6 +246,7 @@ export interface AppData {
         diagnostics?: {
             loggingEnabled?: boolean;
         };
+        deviceId?: string;
         migrations?: {
             version?: number;
             lastAutoArchiveAt?: string;

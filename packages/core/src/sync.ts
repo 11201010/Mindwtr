@@ -157,10 +157,23 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const incomingTime = incomingItem.updatedAt ? new Date(incomingItem.updatedAt).getTime() : 0;
         const safeLocalTime = isNaN(localTime) ? 0 : localTime;
         const safeIncomingTime = isNaN(incomingTime) ? 0 : incomingTime;
+        const localRev = typeof (localItem as any).rev === 'number' && Number.isFinite((localItem as any).rev)
+            ? (localItem as any).rev as number
+            : 0;
+        const incomingRev = typeof (incomingItem as any).rev === 'number' && Number.isFinite((incomingItem as any).rev)
+            ? (incomingItem as any).rev as number
+            : 0;
+        const localRevBy = typeof (localItem as any).revBy === 'string' ? (localItem as any).revBy as string : '';
+        const incomingRevBy = typeof (incomingItem as any).revBy === 'string' ? (incomingItem as any).revBy as string : '';
+        const hasRevision = localRev > 0 || incomingRev > 0 || !!localRevBy || !!incomingRevBy;
+        const localDeleted = !!localItem.deletedAt;
+        const incomingDeleted = !!incomingItem.deletedAt;
+        const revDiff = localRev - incomingRev;
+        const revByDiff = localRevBy !== incomingRevBy;
 
-        const differs =
-            safeLocalTime !== safeIncomingTime ||
-            !!localItem.deletedAt !== !!incomingItem.deletedAt;
+        const differs = hasRevision
+            ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted
+            : safeLocalTime !== safeIncomingTime || localDeleted !== incomingDeleted;
 
         if (differs) {
             stats.conflicts += 1;
@@ -174,9 +187,19 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         }
         const withinSkew = Math.abs(timeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
         let winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
-        const localDeleted = !!localItem.deletedAt;
-        const incomingDeleted = !!incomingItem.deletedAt;
-        if (localDeleted !== incomingDeleted) {
+        if (hasRevision) {
+            if (revDiff !== 0) {
+                winner = revDiff > 0 ? localItem : incomingItem;
+            } else if (localDeleted !== incomingDeleted) {
+                winner = localDeleted ? localItem : incomingItem;
+            } else if (revByDiff && localRevBy && incomingRevBy) {
+                winner = incomingRevBy.localeCompare(localRevBy) > 0 ? incomingItem : localItem;
+            } else if (safeIncomingTime !== safeLocalTime) {
+                winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
+            } else {
+                winner = incomingItem;
+            }
+        } else if (localDeleted !== incomingDeleted) {
             const deletedItem = localDeleted ? localItem : incomingItem;
             const liveItem = localDeleted ? incomingItem : localItem;
             const deletedTimeRaw = deletedItem.deletedAt ? new Date(deletedItem.deletedAt).getTime() : 0;
@@ -227,6 +250,11 @@ function mergeAreas(local: Area[], incoming: Area[]): Area[] {
         const parsed = timestamp ? new Date(timestamp).getTime() : 0;
         return Number.isFinite(parsed) ? parsed : 0;
     };
+    const resolveRev = (area?: Area): number => {
+        const value = area?.rev;
+        return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    };
+    const resolveRevBy = (area?: Area): string => (typeof area?.revBy === 'string' ? area.revBy : '');
 
     for (const id of allIds) {
         const localArea = localMap.get(id);
@@ -242,9 +270,21 @@ function mergeAreas(local: Area[], incoming: Area[]): Area[] {
         }
         if (!localArea || !incomingArea) continue;
 
-        const localTime = resolveTime(localArea);
-        const incomingTime = resolveTime(incomingArea);
-        const winner = incomingTime > localTime ? incomingArea : localArea;
+        const localRev = resolveRev(localArea);
+        const incomingRev = resolveRev(incomingArea);
+        const localRevBy = resolveRevBy(localArea);
+        const incomingRevBy = resolveRevBy(incomingArea);
+        const hasRevision = localRev > 0 || incomingRev > 0 || !!localRevBy || !!incomingRevBy;
+        let winner = localArea;
+        if (hasRevision && localRev !== incomingRev) {
+            winner = localRev > incomingRev ? localArea : incomingArea;
+        } else if (hasRevision && localRevBy !== incomingRevBy && localRevBy && incomingRevBy) {
+            winner = incomingRevBy.localeCompare(localRevBy) > 0 ? incomingArea : localArea;
+        } else {
+            const localTime = resolveTime(localArea);
+            const incomingTime = resolveTime(incomingArea);
+            winner = incomingTime > localTime ? incomingArea : localArea;
+        }
         merged.push(winner);
     }
 

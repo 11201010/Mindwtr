@@ -65,6 +65,12 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
         typeof task.textDirection === 'string' && ['auto', 'ltr', 'rtl'].includes(task.textDirection)
             ? task.textDirection
             : undefined;
+    const rev = typeof (task as any).rev === 'number' && Number.isFinite((task as any).rev)
+        ? (task as any).rev as number
+        : 0;
+    const revBy = typeof (task as any).revBy === 'string'
+        ? (task as any).revBy as string
+        : undefined;
     const next: Task = {
         ...rest,
         createdAt: createdAtIso,
@@ -72,6 +78,8 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
         status: normalizedStatus,
         projectId,
         areaId,
+        rev,
+        ...(revBy ? { revBy } : {}),
         ...(textDirection ? { textDirection } : {}),
         ...(hasValidPushCount ? {} : { pushCount: 0 }),
     };

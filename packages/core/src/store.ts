@@ -12,6 +12,26 @@ import { logError } from './logger';
 
 let storage: StorageAdapter = noopStorage;
 
+const normalizeRevision = (value?: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+const ensureDeviceId = (settings: AppData['settings']): { settings: AppData['settings']; deviceId: string; updated: boolean } => {
+    if (settings.deviceId) {
+        return { settings, deviceId: settings.deviceId, updated: false };
+    }
+    const deviceId = uuidv4();
+    return { settings: { ...settings, deviceId }, deviceId, updated: true };
+};
+
+const nextRevisionForItem = (currentRev: number | undefined, settings: AppData['settings']) => {
+    const { settings: nextSettings, deviceId, updated } = ensureDeviceId(settings);
+    return {
+        rev: normalizeRevision(currentRev) + 1,
+        revBy: deviceId,
+        settings: nextSettings,
+        settingsUpdated: updated,
+    };
+};
+
 export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: string): { updatedTask: Task; nextRecurringTask: Task | null } {
     let normalizedUpdates = updates;
     if (Object.prototype.hasOwnProperty.call(updates, 'textDirection') && updates.textDirection === undefined) {
@@ -483,6 +503,11 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             let nextSettings = didSettingsUpdate
                 ? { ...settings, migrations: nextMigrationState }
                 : settings;
+            const deviceState = ensureDeviceId(nextSettings);
+            nextSettings = deviceState.settings;
+            if (deviceState.updated) {
+                didSettingsUpdate = true;
+            }
 
             const taskEditorDefaultsVersion = nextSettings.gtd?.taskEditor?.defaultsVersion ?? 0;
             if (taskEditorDefaultsVersion < TASK_EDITOR_DEFAULTS_VERSION) {
@@ -533,6 +558,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                         completedAt: Number.isFinite(completedAt) ? task.completedAt : task.updatedAt || nowIso,
                         isFocusedToday: false,
                         updatedAt: nowIso,
+                        rev: normalizeRevision(task.rev) + 1,
+                        revBy: nextSettings.deviceId,
                     };
                 });
             }
@@ -771,6 +798,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         let snapshot: AppData | null = null;
 
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
+            const deviceId = deviceState.deviceId;
             const resolvedOrderNum = !hasOrderNum && resolvedProjectId
                 ? getNextProjectOrder(resolvedProjectId, state._allTasks, state.lastDataChangeAt)
                 : initialProps?.orderNum;
@@ -782,6 +811,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 tags: [],
                 contexts: [],
                 pushCount: 0,
+                rev: 1,
+                revBy: deviceId,
                 createdAt: now,
                 updatedAt: now,
                 ...initialProps,
@@ -794,8 +825,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
 
             const newAllTasks = [...state._allTasks, newTask];
             const newVisibleTasks = updateVisibleTasks(state.tasks, null, newTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
 
         if (snapshot) {
@@ -815,6 +854,11 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const oldTask = state._allTasks.find((t) => t.id === id);
             if (!oldTask) return state;
+            const deviceState = ensureDeviceId(state.settings);
+            const nextRevision = {
+                rev: normalizeRevision(oldTask.rev) + 1,
+                revBy: deviceState.deviceId,
+            };
 
             let adjustedUpdates = updates;
             if (Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
@@ -863,7 +907,11 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 }
             }
 
-            const { updatedTask, nextRecurringTask } = applyTaskUpdates(oldTask, adjustedUpdates, now);
+            const { updatedTask, nextRecurringTask } = applyTaskUpdates(
+                oldTask,
+                { ...adjustedUpdates, ...nextRevision },
+                now
+            );
 
             const updatedAllTasks = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
@@ -875,8 +923,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             if (nextRecurringTask) {
                 updatedVisibleTasks = updateVisibleTasks(updatedVisibleTasks, null, nextRecurringTask);
             }
-            snapshot = buildSaveSnapshot(state, { tasks: updatedAllTasks });
-            return { tasks: updatedVisibleTasks, _allTasks: updatedAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: updatedAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: updatedVisibleTasks,
+                _allTasks: updatedAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
 
         if (snapshot) {
@@ -895,15 +951,30 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
             if (!oldTask) return state;
-            const updatedTask = { ...oldTask, deletedAt: now, updatedAt: now };
+            const deviceState = ensureDeviceId(state.settings);
+            const updatedTask = {
+                ...oldTask,
+                deletedAt: now,
+                updatedAt: now,
+                rev: normalizeRevision(oldTask.rev) + 1,
+                revBy: deviceState.deviceId,
+            };
             // Update in full data (set tombstone)
             const newAllTasks = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
             );
             // Filter for UI state (hide deleted)
             const newVisibleTasks = updateVisibleTasks(state.tasks, oldTask, updatedTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -920,19 +991,30 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
             if (!oldTask) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const updatedTask = {
                 ...oldTask,
                 deletedAt: undefined,
                 purgedAt: undefined,
                 status: oldTask.status === 'archived' ? 'inbox' : oldTask.status,
                 updatedAt: now,
+                rev: normalizeRevision(oldTask.rev) + 1,
+                revBy: deviceState.deviceId,
             };
             const newAllTasks = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
             );
             const newVisibleTasks = updateVisibleTasks(state.tasks, oldTask, updatedTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -975,14 +1057,29 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             const newAllTasks = state._allTasks.map((task) =>
                 task.deletedAt
-                    ? { ...task, purgedAt: now, updatedAt: now }
+                    ? {
+                        ...task,
+                        purgedAt: now,
+                        updatedAt: now,
+                        rev: normalizeRevision(task.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
                     : task
             );
             const newVisibleTasks = newAllTasks.filter((task) => !task.deletedAt && task.status !== 'archived');
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -999,6 +1096,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const sourceTask = state._allTasks.find((task) => task.id === id && !task.deletedAt);
             if (!sourceTask) return state;
+            const deviceState = ensureDeviceId(state.settings);
 
             const duplicatedChecklist = (sourceTask.checklist || []).map((item) => ({
                 ...item,
@@ -1030,6 +1128,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 deletedAt: undefined,
                 createdAt: now,
                 updatedAt: now,
+                rev: 1,
+                revBy: deviceState.deviceId,
                 orderNum: sourceTask.projectId
                     ? getNextProjectOrder(sourceTask.projectId, state._allTasks, state.lastDataChangeAt)
                     : undefined,
@@ -1037,8 +1137,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
 
             const newAllTasks = [...state._allTasks, newTask];
             const newVisibleTasks = updateVisibleTasks(state.tasks, null, newTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1055,6 +1163,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const sourceTask = state._allTasks.find((task) => task.id === id && !task.deletedAt);
             if (!sourceTask || !sourceTask.checklist || sourceTask.checklist.length === 0) return state;
+            const deviceState = ensureDeviceId(state.settings);
 
             const resetChecklist = sourceTask.checklist.map((item) => ({
                 ...item,
@@ -1070,12 +1179,22 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 completedAt: wasDone ? undefined : sourceTask.completedAt,
                 isFocusedToday: wasDone ? false : sourceTask.isFocusedToday,
                 updatedAt: now,
+                rev: normalizeRevision(sourceTask.rev) + 1,
+                revBy: deviceState.deviceId,
             };
 
             const newAllTasks = state._allTasks.map((task) => (task.id === id ? updatedTask : task));
             const newVisibleTasks = updateVisibleTasks(state.tasks, sourceTask, updatedTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1104,11 +1223,20 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         let snapshot: AppData | null = null;
 
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             let newVisibleTasks = state.tasks;
             const newAllTasks = state._allTasks.map((task) => {
                 const updates = updatesById.get(task.id);
                 if (!updates) return task;
-                const { updatedTask, nextRecurringTask } = applyTaskUpdates(task, updates, now);
+                const { updatedTask, nextRecurringTask } = applyTaskUpdates(
+                    task,
+                    {
+                        ...updates,
+                        rev: normalizeRevision(task.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    },
+                    now
+                );
                 if (nextRecurringTask) nextRecurringTasks.push(nextRecurringTask);
                 newVisibleTasks = updateVisibleTasks(newVisibleTasks, task, updatedTask);
                 return updatedTask;
@@ -1126,10 +1254,15 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 projects: state._allProjects,
                 sections: state._allSections,
                 areas: state._allAreas,
-                settings: state.settings,
+                settings: deviceState.updated ? deviceState.settings : state.settings,
             };
 
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
 
         if (snapshot) {
@@ -1148,15 +1281,30 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const idSet = new Set(ids);
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             let newVisibleTasks = state.tasks;
             const newAllTasks = state._allTasks.map((task) => {
                 if (!idSet.has(task.id)) return task;
-                const updatedTask = { ...task, deletedAt: now, updatedAt: now };
+                const updatedTask = {
+                    ...task,
+                    deletedAt: now,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
                 newVisibleTasks = updateVisibleTasks(newVisibleTasks, task, updatedTask);
                 return updatedTask;
             });
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1209,6 +1357,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 existingProject = duplicate;
                 return state;
             }
+            const deviceState = ensureDeviceId(state.settings);
             const targetAreaId = initialProps?.areaId;
             const maxOrder = state._allProjects
                 .filter((project) => (project.areaId ?? undefined) === (targetAreaId ?? undefined))
@@ -1221,6 +1370,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 color,
                 order: baseOrder,
                 status: 'active',
+                rev: 1,
+                revBy: deviceState.deviceId,
                 createdAt: now,
                 updatedAt: now,
                 ...initialProps,
@@ -1229,8 +1380,16 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             createdProject = newProject;
             const newAllProjects = [...state._allProjects, newProject];
             const newVisibleProjects = [...state.projects, newProject];
-            snapshot = buildSaveSnapshot(state, { projects: newAllProjects });
-            return { projects: newVisibleProjects, _allProjects: newAllProjects, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                projects: newVisibleProjects,
+                _allProjects: newAllProjects,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (existingProject) {
             return existingProject;
@@ -1254,6 +1413,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const allProjects = state._allProjects;
             const oldProject = allProjects.find(p => p.id === id);
             if (!oldProject) return state;
+            const deviceState = ensureDeviceId(state.settings);
 
             const incomingStatus = updates.status ?? oldProject.status;
             const statusChanged = incomingStatus !== oldProject.status;
@@ -1274,6 +1434,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                             completedAt: task.completedAt || now,
                             isFocusedToday: false,
                             updatedAt: now,
+                            rev: normalizeRevision(task.rev) + 1,
+                            revBy: deviceState.deviceId,
                         };
                     }
                     return task;
@@ -1299,19 +1461,32 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             };
 
             const newAllProjects = allProjects.map(project =>
-                project.id === id ? { ...project, ...finalProjectUpdates, updatedAt: now } : project
+                project.id === id
+                    ? {
+                        ...project,
+                        ...finalProjectUpdates,
+                        updatedAt: now,
+                        rev: normalizeRevision(project.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
+                    : project
             );
 
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter(t => !t.deletedAt && t.status !== 'archived');
 
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks, projects: newAllProjects });
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
             return {
                 projects: newVisibleProjects,
                 _allProjects: newAllProjects,
                 tasks: newVisibleTasks,
                 _allTasks: newAllTasks,
                 lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
 
@@ -1329,19 +1504,41 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             // Soft-delete project
             const newAllProjects = state._allProjects.map((project) =>
-                project.id === id ? { ...project, deletedAt: now, updatedAt: now } : project
+                project.id === id
+                    ? {
+                        ...project,
+                        deletedAt: now,
+                        updatedAt: now,
+                        rev: normalizeRevision(project.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
+                    : project
             );
             const newAllSections = state._allSections.map((section) =>
                 section.projectId === id && !section.deletedAt
-                    ? { ...section, deletedAt: now, updatedAt: now }
+                    ? {
+                        ...section,
+                        deletedAt: now,
+                        updatedAt: now,
+                        rev: normalizeRevision(section.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
                     : section
             );
             // Also soft-delete tasks that belonged to this project
             const newAllTasks = state._allTasks.map(task =>
                 task.projectId === id && !task.deletedAt
-                    ? { ...task, deletedAt: now, updatedAt: now, sectionId: undefined }
+                    ? {
+                        ...task,
+                        deletedAt: now,
+                        updatedAt: now,
+                        sectionId: undefined,
+                        rev: normalizeRevision(task.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
                     : task
             );
             // Filter for UI state
@@ -1352,6 +1549,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 sections: newAllSections,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
                 projects: newVisibleProjects,
@@ -1361,6 +1559,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 _allTasks: newAllTasks,
                 _allSections: newAllSections,
                 lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
         if (snapshot) {
@@ -1382,6 +1581,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const project = allProjects.find(p => p.id === id);
             if (!project) return state;
             if (project.status !== 'active' && !project.isFocused) return state;
+            const deviceState = ensureDeviceId(state.settings);
 
             // If turning on focus, check if we already have 5 focused
             const focusedCount = allProjects.filter(p => p.isFocused && !p.deletedAt).length;
@@ -1393,11 +1593,27 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             }
 
             const newAllProjects = allProjects.map(p =>
-                p.id === id ? { ...p, isFocused: !p.isFocused, updatedAt: now } : p
+                p.id === id
+                    ? {
+                        ...p,
+                        isFocused: !p.isFocused,
+                        updatedAt: now,
+                        rev: normalizeRevision(p.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
+                    : p
             );
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
-            snapshot = buildSaveSnapshot(state, { projects: newAllProjects });
-            return { projects: newVisibleProjects, _allProjects: newAllProjects, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                projects: newVisibleProjects,
+                _allProjects: newAllProjects,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1414,6 +1630,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         set((state) => {
             const projectExists = state._allProjects.some((project) => project.id === projectId && !project.deletedAt);
             if (!projectExists) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const allSections = state._allSections;
             const maxOrder = allSections
                 .filter((section) => section.projectId === projectId && !section.deletedAt)
@@ -1426,14 +1643,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 description: initialProps?.description,
                 order: baseOrder,
                 isCollapsed: initialProps?.isCollapsed ?? false,
+                rev: 1,
+                revBy: deviceState.deviceId,
                 createdAt: initialProps?.createdAt ?? now,
                 updatedAt: now,
             };
             createdSection = newSection;
             const newAllSections = [...allSections, newSection];
             const newVisibleSections = [...state.sections, newSection];
-            snapshot = buildSaveSnapshot(state, { sections: newAllSections });
-            return { sections: newVisibleSections, _allSections: newAllSections, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                sections: newAllSections,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                sections: newVisibleSections,
+                _allSections: newAllSections,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1449,6 +1676,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const allSections = state._allSections;
             const section = allSections.find((item) => item.id === id);
             if (!section) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const nextTitle = updates.title !== undefined ? updates.title.trim() : section.title;
             if (!nextTitle) return state;
             const { projectId: _ignored, ...restUpdates } = updates;
@@ -1459,12 +1687,22 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                         ...restUpdates,
                         title: nextTitle,
                         updatedAt: now,
+                        rev: normalizeRevision(item.rev) + 1,
+                        revBy: deviceState.deviceId,
                     }
                     : item
             );
             const newVisibleSections = newAllSections.filter((item) => !item.deletedAt);
-            snapshot = buildSaveSnapshot(state, { sections: newAllSections });
-            return { sections: newVisibleSections, _allSections: newAllSections, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                sections: newAllSections,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                sections: newVisibleSections,
+                _allSections: newAllSections,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1479,24 +1717,42 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const allSections = state._allSections;
             const section = allSections.find((item) => item.id === id);
             if (!section) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const newAllSections = allSections.map((item) =>
                 item.id === id
-                    ? { ...item, deletedAt: now, updatedAt: now }
+                    ? {
+                        ...item,
+                        deletedAt: now,
+                        updatedAt: now,
+                        rev: normalizeRevision(item.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
                     : item
             );
             const newAllTasks = state._allTasks.map((task) => {
                 if (task.sectionId !== id) return task;
-                return { ...task, sectionId: undefined, updatedAt: now };
+                return {
+                    ...task,
+                    sectionId: undefined,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
             const newVisibleSections = newAllSections.filter((item) => !item.deletedAt);
             const newVisibleTasks = newAllTasks.filter((task) => !task.deletedAt && task.status !== 'archived');
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks, sections: newAllSections });
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                sections: newAllSections,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
             return {
                 sections: newVisibleSections,
                 _allSections: newAllSections,
                 tasks: newVisibleTasks,
                 _allTasks: newAllTasks,
                 lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
         if (snapshot) {
@@ -1520,6 +1776,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 existingAreaId = existing.id;
                 return state;
             }
+            const deviceState = ensureDeviceId(state.settings);
             const maxOrder = allAreas.reduce(
                 (max, area) => Math.max(max, Number.isFinite(area.order) ? area.order : -1),
                 -1
@@ -1530,14 +1787,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 name: trimmedName,
                 ...initialProps,
                 order: baseOrder,
+                rev: 1,
+                revBy: deviceState.deviceId,
                 createdAt: initialProps?.createdAt ?? now,
                 updatedAt: now,
             };
             createdArea = newArea;
             const newAllAreas = [...allAreas, newArea].sort((a, b) => a.order - b.order);
             derivedCache = null;
-            snapshot = buildSaveSnapshot(state, { areas: newAllAreas });
-            return { areas: newAllAreas, _allAreas: newAllAreas, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                areas: newAllAreas,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                areas: newAllAreas,
+                _allAreas: newAllAreas,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (existingAreaId) {
             if (initialProps && Object.keys(initialProps).length > 0) {
@@ -1557,6 +1824,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const allAreas = state._allAreas;
             const area = allAreas.find(a => a.id === id);
             if (!area) return state;
+            const deviceState = ensureDeviceId(state.settings);
             if (updates.name) {
                 const trimmedName = updates.name.trim();
                 if (!trimmedName) return state;
@@ -1564,24 +1832,42 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 const existing = allAreas.find((a) => a.id !== id && a?.name?.trim().toLowerCase() === normalized);
                 if (existing) {
                     const now = new Date().toISOString();
-                    const mergedArea: Area = { ...existing, ...updates, name: trimmedName, updatedAt: now };
+                    const mergedArea: Area = {
+                        ...existing,
+                        ...updates,
+                        name: trimmedName,
+                        updatedAt: now,
+                        rev: normalizeRevision(existing.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    };
                     const newAllAreas = allAreas
                         .filter((a) => a.id !== id && a.id !== existing.id)
                         .concat(mergedArea)
                         .sort((a, b) => a.order - b.order);
                     const newAllProjects = state._allProjects.map((project) => {
                         if (project.areaId !== id) return project;
-                        return { ...project, areaId: existing.id, updatedAt: now };
+                        return {
+                            ...project,
+                            areaId: existing.id,
+                            updatedAt: now,
+                            rev: normalizeRevision(project.rev) + 1,
+                            revBy: deviceState.deviceId,
+                        };
                     });
                     const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
                     derivedCache = null;
-                    snapshot = buildSaveSnapshot(state, { areas: newAllAreas, projects: newAllProjects });
+                    snapshot = buildSaveSnapshot(state, {
+                        areas: newAllAreas,
+                        projects: newAllProjects,
+                        ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                    });
                     return {
                         areas: newAllAreas,
                         _allAreas: newAllAreas,
                         projects: newVisibleProjects,
                         _allProjects: newAllProjects,
                         lastDataChangeAt: Date.now(),
+                        ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                     };
                 }
             }
@@ -1590,11 +1876,29 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const nextOrder = Number.isFinite(updates.order) ? (updates.order as number) : area.order;
             const nextName = updates.name ? updates.name.trim() : area.name;
             const newAllAreas = allAreas
-                .map(a => (a.id === id ? { ...a, ...updates, name: nextName, order: nextOrder, updatedAt: now } : a))
+                .map(a => (a.id === id
+                    ? {
+                        ...a,
+                        ...updates,
+                        name: nextName,
+                        order: nextOrder,
+                        updatedAt: now,
+                        rev: normalizeRevision(a.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    }
+                    : a))
                 .sort((a, b) => a.order - b.order);
             derivedCache = null;
-            snapshot = buildSaveSnapshot(state, { areas: newAllAreas });
-            return { areas: newAllAreas, _allAreas: newAllAreas, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                areas: newAllAreas,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                areas: newAllAreas,
+                _allAreas: newAllAreas,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1609,14 +1913,28 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const allAreas = state._allAreas;
             const areaExists = allAreas.some(a => a.id === id);
             if (!areaExists) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const newAllAreas = allAreas.filter(a => a.id !== id).sort((a, b) => a.order - b.order);
             const newAllProjects = state._allProjects.map((project) => {
                 if (project.areaId !== id) return project;
-                return { ...project, areaId: undefined, areaTitle: undefined, updatedAt: now };
+                return {
+                    ...project,
+                    areaId: undefined,
+                    areaTitle: undefined,
+                    updatedAt: now,
+                    rev: normalizeRevision(project.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
             const newAllTasks = state._allTasks.map((task) => {
                 if (task.areaId !== id) return task;
-                return { ...task, areaId: undefined, updatedAt: now };
+                return {
+                    ...task,
+                    areaId: undefined,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter((task) => !task.deletedAt && task.status !== 'archived');
@@ -1625,6 +1943,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 tasks: newAllTasks,
                 projects: newAllProjects,
                 areas: newAllAreas,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
                 areas: newAllAreas,
@@ -1634,6 +1953,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 tasks: newVisibleTasks,
                 _allTasks: newAllTasks,
                 lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
         if (snapshot) {
@@ -1649,6 +1969,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
             const areaById = new Map(allAreas.map(area => [area.id, area]));
             const seen = new Set<string>();
             const now = new Date().toISOString();
+            const deviceState = ensureDeviceId(state.settings);
 
             const reordered: Area[] = [];
             orderedIds.forEach((id, index) => {
@@ -1667,10 +1988,22 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                     updatedAt: now,
                 }));
 
-            const newAllAreas = [...reordered, ...remaining];
+            const newAllAreas = [...reordered, ...remaining].map((area) => ({
+                ...area,
+                rev: normalizeRevision(area.rev) + 1,
+                revBy: deviceState.deviceId,
+            }));
             derivedCache = null;
-            snapshot = buildSaveSnapshot(state, { areas: newAllAreas });
-            return { areas: newAllAreas, _allAreas: newAllAreas, lastDataChangeAt: Date.now() };
+            snapshot = buildSaveSnapshot(state, {
+                areas: newAllAreas,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                areas: newAllAreas,
+                _allAreas: newAllAreas,
+                lastDataChangeAt: Date.now(),
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1684,6 +2017,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const targetAreaId = areaId ?? undefined;
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             const allProjects = state._allProjects;
             const isInArea = (project: Project) => (project.areaId ?? undefined) === targetAreaId && !project.deletedAt;
 
@@ -1703,12 +2037,26 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 if (!isInArea(project)) return project;
                 const nextOrder = orderById.get(project.id);
                 if (!Number.isFinite(nextOrder)) return project;
-                return { ...project, order: nextOrder as number, updatedAt: now };
+                return {
+                    ...project,
+                    order: nextOrder as number,
+                    updatedAt: now,
+                    rev: normalizeRevision(project.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
 
             const newVisibleProjects = newAllProjects.filter((p) => !p.deletedAt);
-            snapshot = buildSaveSnapshot(state, { projects: newAllProjects });
-            return { projects: newVisibleProjects, _allProjects: newAllProjects, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                projects: newVisibleProjects,
+                _allProjects: newAllProjects,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1721,6 +2069,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             const allTasks = state._allTasks;
             const hasSectionFilter = sectionId !== undefined;
             const isInProject = (task: Task) => {
@@ -1753,12 +2102,26 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 if (!isInProject(task)) return task;
                 const nextOrder = orderById.get(task.id);
                 if (!Number.isFinite(nextOrder)) return task;
-                return { ...task, orderNum: nextOrder as number, updatedAt: now };
+                return {
+                    ...task,
+                    orderNum: nextOrder as number,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
 
             const newVisibleTasks = newAllTasks.filter((task) => !task.deletedAt && task.status !== 'archived');
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -1772,30 +2135,48 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
         set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
             const newAllTasks = state._allTasks.map((task) => {
                 if (!task.tags || task.tags.length === 0) return task;
                 const filtered = task.tags.filter((tag) => normalizeTagId(tag) !== normalizedTarget);
                 if (filtered.length === task.tags.length) return task;
-                return { ...task, tags: filtered, updatedAt: now };
+                return {
+                    ...task,
+                    tags: filtered,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
 
             const newAllProjects = state._allProjects.map((project) => {
                 if (!project.tagIds || project.tagIds.length === 0) return project;
                 const filtered = project.tagIds.filter((tag) => normalizeTagId(tag) !== normalizedTarget);
                 if (filtered.length === project.tagIds.length) return project;
-                return { ...project, tagIds: filtered, updatedAt: now };
+                return {
+                    ...project,
+                    tagIds: filtered,
+                    updatedAt: now,
+                    rev: normalizeRevision(project.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
             });
 
             const newVisibleTasks = newAllTasks.filter((t) => !t.deletedAt && t.status !== 'archived');
             const newVisibleProjects = newAllProjects.filter((p) => !p.deletedAt);
 
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks, projects: newAllProjects });
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
             return {
                 tasks: newVisibleTasks,
                 projects: newVisibleProjects,
                 _allTasks: newAllTasks,
                 _allProjects: newAllProjects,
                 lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
         if (snapshot) {
@@ -1811,7 +2192,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         const archiveDaysUpdate = updates.gtd?.autoArchiveDays !== undefined;
         let snapshot: AppData | null = null;
         set((state) => {
-            const newSettings = { ...state.settings, ...updates };
+            const deviceState = ensureDeviceId(state.settings);
+            const newSettings = { ...deviceState.settings, ...updates };
             if (archiveDaysUpdate) {
                 const configuredArchiveDays = newSettings.gtd?.autoArchiveDays;
                 const archiveDays = Number.isFinite(configuredArchiveDays)
@@ -1839,6 +2221,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                             isFocusedToday: false,
                             updatedAt: nowIso,
                             completedAt: Number.isFinite(completedAt) ? task.completedAt : task.updatedAt || nowIso,
+                            rev: normalizeRevision(task.rev) + 1,
+                            revBy: deviceState.deviceId,
                         };
                     });
                 }
