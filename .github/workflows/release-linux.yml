@@ -2,7 +2,17 @@ name: Release Linux
 
 on:
   workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.2.3)'
+        required: false
+        type: string
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.2.3)'
+        required: false
+        type: string
 
 permissions:
   contents: write
