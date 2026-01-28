@@ -7,21 +7,22 @@
   <project_license>AGPL-3.0-only</project_license>
   <developer_name>Dongda Li</developer_name>
   <icon type="stock">tech.dongdongbh.mindwtr</icon>
+  <icon type="remote" width="128" height="128">https://dl.flathub.org/media/tech/dongdongbh/mindwtr/dd897208451c32f7836577749bd31a39/icons/128x128/tech.dongdongbh.mindwtr.png</icon>
   <description>
     <p>Mindwtr is a privacy-focused, local-first GTD app for desktop.</p>
   </description>
   <screenshots>
     <screenshot type="default">
       <caption>Inbox view</caption>
-      <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/inbox_d.png</image>
+      <image>https://dl.flathub.org/media/tech/dongdongbh/mindwtr/dd897208451c32f7836577749bd31a39/screenshots/image-1_orig.png</image>
     </screenshot>
     <screenshot>
       <caption>Inbox view (light)</caption>
-      <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/inbox_l.png</image>
+      <image>https://dl.flathub.org/media/tech/dongdongbh/mindwtr/dd897208451c32f7836577749bd31a39/screenshots/image-2_orig.png</image>
     </screenshot>
     <screenshot>
       <caption>Settings</caption>
-      <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/setting.png</image>
+      <image>https://dl.flathub.org/media/tech/dongdongbh/mindwtr/dd897208451c32f7836577749bd31a39/screenshots/image-3_orig.png</image>
     </screenshot>
   </screenshots>
   <categories>
