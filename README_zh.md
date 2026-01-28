@@ -116,6 +116,10 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
     <img src="https://img.shields.io/winget/v/dongdongbh.Mindwtr?label=Winget&logo=windows&logoColor=white&color=00D2FF" alt="Winget Version">
   </a>
 
+  <a href="https://apps.microsoft.com/detail/9n0v5b0b6frx?cid=DevShareMCLPCS&hl=en-US&gl=US">
+    <img src="https://img.shields.io/badge/Microsoft_Store-Install-0078D6?logo=microsoft&logoColor=white" alt="Microsoft Store">
+  </a>
+
   <a href="https://github.com/dongdongbh/homebrew-mindwtr">
     <img src="https://img.shields.io/scoop/v/mindwtr?bucket=https://github.com/dongdongbh/homebrew-mindwtr&label=Scoop&logo=scoop&logoColor=white&color=E6E6E6" alt="Scoop Version">
   </a>
@@ -126,6 +130,10 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
 
   <a href="https://aur.archlinux.org/packages/mindwtr-bin">
     <img src="https://img.shields.io/aur/version/mindwtr-bin?logo=arch-linux&logoColor=white&color=1793d1&label=AUR" alt="AUR Version">
+  </a>
+
+  <a href="https://snapcraft.io/mindwtr">
+    <img src="https://img.shields.io/badge/Snapcraft-Install-82BEA0?logo=snapcraft&logoColor=white" alt="Snapcraft">
   </a>
 </p>
 
