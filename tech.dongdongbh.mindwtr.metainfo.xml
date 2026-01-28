@@ -11,12 +11,15 @@
   </description>
   <screenshots>
     <screenshot type="default">
+      <caption>Inbox view</caption>
       <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/inbox_d.png</image>
     </screenshot>
     <screenshot>
+      <caption>Inbox view (light)</caption>
       <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/inbox_l.png</image>
     </screenshot>
     <screenshot>
+      <caption>Settings</caption>
       <image>https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/apps/desktop/screenshots/setting.png</image>
     </screenshot>
   </screenshots>
