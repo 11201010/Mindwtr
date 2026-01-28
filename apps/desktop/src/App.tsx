@@ -421,6 +421,7 @@ function App() {
                                             closeBehavior: 'tray',
                                         },
                                     });
+                                    await flushPendingSave();
                                 }
                                 setClosePromptOpen(false);
                                 await hideToTray();
@@ -439,6 +440,7 @@ function App() {
                                             closeBehavior: 'quit',
                                         },
                                     });
+                                    await flushPendingSave();
                                 }
                                 setClosePromptOpen(false);
                                 await quitApp();
