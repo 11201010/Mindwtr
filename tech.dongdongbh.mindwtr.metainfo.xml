@@ -9,11 +9,24 @@
   <description>
     <p>Mindwtr is a privacy-focused, local-first GTD app for desktop.</p>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>file:///app/share/metainfo/screenshots/mindwtr-1.png</image>
+    </screenshot>
+  </screenshots>
   <categories>
     <category>Office</category>
     <category>Utility</category>
   </categories>
   <launchable type="desktop-id">tech.dongdongbh.mindwtr.desktop</launchable>
   <url type="homepage">https://github.com/dongdongbh/Mindwtr</url>
+  <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
+  <releases>
+    <release version="0.6.3" date="2026-01-28">
+      <description>
+        <p>Bug fixes and sync improvements.</p>
+      </description>
+    </release>
+  </releases>
   <content_rating type="oars-1.1" />
 </component>
