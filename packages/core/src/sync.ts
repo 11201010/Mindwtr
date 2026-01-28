@@ -174,20 +174,24 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         }
         const withinSkew = Math.abs(timeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
         let winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
-        if (withinSkew) {
-            const localDeleted = !!localItem.deletedAt;
-            const incomingDeleted = !!incomingItem.deletedAt;
-            if (localDeleted !== incomingDeleted) {
-                const deletedItem = localDeleted ? localItem : incomingItem;
-                const liveItem = localDeleted ? incomingItem : localItem;
-                const deletedTimeRaw = deletedItem.deletedAt ? new Date(deletedItem.deletedAt).getTime() : 0;
-                const liveTimeRaw = liveItem.updatedAt ? new Date(liveItem.updatedAt).getTime() : 0;
-                const deletedTime = Number.isFinite(deletedTimeRaw) ? deletedTimeRaw : 0;
-                const liveTime = Number.isFinite(liveTimeRaw) ? liveTimeRaw : 0;
-                winner = deletedTime >= liveTime ? deletedItem : liveItem;
-            } else if (safeIncomingTime === safeLocalTime) {
-                winner = incomingItem;
+        const localDeleted = !!localItem.deletedAt;
+        const incomingDeleted = !!incomingItem.deletedAt;
+        if (localDeleted !== incomingDeleted) {
+            const deletedItem = localDeleted ? localItem : incomingItem;
+            const liveItem = localDeleted ? incomingItem : localItem;
+            const deletedTimeRaw = deletedItem.deletedAt ? new Date(deletedItem.deletedAt).getTime() : 0;
+            const liveTimeRaw = liveItem.updatedAt ? new Date(liveItem.updatedAt).getTime() : 0;
+            const deletedTime = Number.isFinite(deletedTimeRaw) ? deletedTimeRaw : 0;
+            const liveTime = Number.isFinite(liveTimeRaw) ? liveTimeRaw : 0;
+            const deleteShouldWin = deletedTime + CLOCK_SKEW_THRESHOLD_MS >= liveTime;
+
+            if (withinSkew) {
+                winner = deleteShouldWin ? deletedItem : liveItem;
+            } else if (deleteShouldWin) {
+                winner = deletedItem;
             }
+        } else if (withinSkew && safeIncomingTime === safeLocalTime) {
+            winner = incomingItem;
         }
         if (winner === incomingItem) stats.resolvedUsingIncoming += 1;
         else stats.resolvedUsingLocal += 1;
