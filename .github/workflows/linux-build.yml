@@ -19,6 +19,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
