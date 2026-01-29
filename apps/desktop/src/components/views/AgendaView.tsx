@@ -459,7 +459,7 @@ export function AgendaView() {
                         title={showListDetails ? (t('list.details') || 'Details on') : (t('list.detailsOff') || 'Details off')}
                     >
                         <List className="w-3.5 h-3.5" />
-                        {showListDetails ? (t('list.details') || 'Details') : (t('list.compact') || 'Compact')}
+                        {showListDetails ? (t('list.details') || 'Details') : (t('list.detailsOff') || 'Details off')}
                     </button>
                 </div>
             </header>
