@@ -524,6 +524,12 @@ export default function SettingsPage() {
         return new File(base, model.fileName).uri;
     };
 
+    const isWhisperTargetPath = (uri: string, fileName: string) => {
+        const baseName = Paths.basename(uri);
+        if (baseName !== fileName) return false;
+        return uri.includes('/whisper-models/') || uri.includes('\\whisper-models\\');
+    };
+
     const applyWhisperModel = (modelId: string) => {
         updateSpeechSettings({ model: modelId, offlineModelPath: resolveWhisperModelPath(modelId) });
     };
@@ -551,6 +557,16 @@ export default function SettingsPage() {
 
     const handleDownloadWhisperModel = async () => {
         if (!selectedWhisperModel) return;
+        if (isExpoGo) {
+            const message = localize(
+                'Whisper downloads require a dev build or production build (not Expo Go).',
+                'Whisper 下载需要开发版或正式版构建（Expo Go 不支持）。'
+            );
+            setWhisperDownloadError(message);
+            setWhisperDownloadState('error');
+            Alert.alert(t('settings.speechOfflineDownloadError'), message);
+            return;
+        }
         setWhisperDownloadError('');
         setWhisperDownloadState('downloading');
         const clearSuccess = () => {
@@ -585,10 +601,12 @@ export default function SettingsPage() {
                     }
                     const conflictInfo = safePathInfo(targetFile.uri);
                     if (conflictInfo?.exists && conflictInfo.isDirectory) {
-                        try {
-                            new Directory(targetFile.uri).delete();
-                        } catch (deleteError) {
-                            logSettingsWarn('Whisper model directory cleanup failed', deleteError);
+                        if (isWhisperTargetPath(targetFile.uri, fileName)) {
+                            try {
+                                new Directory(targetFile.uri).delete();
+                            } catch (deleteError) {
+                                logSettingsWarn('Whisper model directory cleanup failed', deleteError);
+                            }
                         }
                     }
                     const postCleanupInfo = safePathInfo(targetFile.uri);
