@@ -27,6 +27,8 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                     style: { color: '#F8FAFC', fontSize: 12, marginTop: index === 0 ? 10 : 6 },
                     maxLines: 1,
                     truncate: 'END',
+                    clickAction: 'COMPLETE_TASK',
+                    clickActionData: { taskId: item.id },
                 })
             );
         });

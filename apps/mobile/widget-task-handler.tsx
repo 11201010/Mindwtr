@@ -1,7 +1,7 @@
 import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerWidgetTaskHandler, type WidgetTaskHandler } from 'react-native-android-widget';
-import type { AppData } from '@mindwtr/core';
+import { applyTaskUpdates, generateUUID, type AppData } from '@mindwtr/core';
 
 import { buildTasksWidgetTree } from './components/TasksWidget';
 import {
@@ -11,8 +11,55 @@ import {
     WIDGET_LANGUAGE_KEY,
 } from './lib/widget-data';
 import { logWarn } from './lib/app-log';
+import { mobileStorage } from './lib/storage-adapter';
 
 const DEFAULT_DATA: AppData = { tasks: [], projects: [], sections: [], areas: [], settings: {} };
+const COMPLETE_TASK_ACTION = 'COMPLETE_TASK';
+
+const ensureDeviceId = (settings: AppData['settings']) => {
+    if (settings.deviceId) {
+        return { settings, deviceId: settings.deviceId, updated: false };
+    }
+    const deviceId = generateUUID();
+    return { settings: { ...settings, deviceId }, deviceId, updated: true };
+};
+
+const completeTaskFromWidget = async (taskId: string): Promise<AppData | null> => {
+    try {
+        const data = await mobileStorage.getData();
+        const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        const targetIndex = tasks.findIndex((task) => task.id === taskId && !task.deletedAt);
+        if (targetIndex < 0) return null;
+        const target = tasks[targetIndex];
+        if (target.status === 'done' || target.status === 'archived') return data;
+        const now = new Date().toISOString();
+        const { settings, deviceId, updated } = ensureDeviceId(data.settings ?? {});
+        const { updatedTask, nextRecurringTask } = applyTaskUpdates(
+            target,
+            {
+                status: 'done',
+                rev: (Number.isFinite(target.rev) ? (target.rev as number) : 0) + 1,
+                revBy: deviceId,
+            },
+            now
+        );
+        const nextTasks = tasks.map((task) => (task.id === taskId ? updatedTask : task));
+        if (nextRecurringTask) nextTasks.push(nextRecurringTask);
+        const nextData: AppData = {
+            ...data,
+            tasks: nextTasks,
+            settings: updated ? settings : data.settings,
+        };
+        await mobileStorage.saveData(nextData);
+        return nextData;
+    } catch (error) {
+        void logWarn('[RNWidget] Failed to complete task from widget', {
+            scope: 'widget',
+            extra: { error: error instanceof Error ? error.message : String(error), taskId },
+        });
+        return null;
+    }
+};
 
 async function loadWidgetContext() {
     try {
@@ -43,8 +90,17 @@ async function loadWidgetContext() {
     }
 }
 
-const widgetTaskHandler: WidgetTaskHandler = async ({ renderWidget, widgetInfo }) => {
-    const { data, language } = await loadWidgetContext();
+const widgetTaskHandler: WidgetTaskHandler = async ({ renderWidget, widgetInfo, widgetAction, clickAction, clickActionData }) => {
+    let { data, language } = await loadWidgetContext();
+    if (widgetAction === 'WIDGET_CLICK' && clickAction === COMPLETE_TASK_ACTION) {
+        const taskId = typeof clickActionData?.taskId === 'string' ? clickActionData.taskId : '';
+        if (taskId) {
+            const updatedData = await completeTaskFromWidget(taskId);
+            if (updatedData) {
+                data = updatedData;
+            }
+        }
+    }
     const tasksPayload = buildWidgetPayload(data, language);
     try {
         renderWidget(buildTasksWidgetTree(tasksPayload));
