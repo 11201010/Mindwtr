@@ -1,7 +1,7 @@
 import type { DbClient } from './db.js';
 import { parseJson } from './db.js';
 
-export type TaskStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'done' | 'archived';
+export type TaskStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'reference' | 'done' | 'archived';
 export type Task = {
   id: string;
   title: string;
@@ -50,6 +50,7 @@ const STATUS_TOKENS: Record<string, TaskStatus> = {
   next: 'next',
   waiting: 'waiting',
   someday: 'someday',
+  reference: 'reference',
   done: 'done',
   archived: 'archived',
 };
