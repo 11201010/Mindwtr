@@ -324,7 +324,13 @@ export class SqliteAdapter {
             if (!needsTaskRebuild && !needsProjectRebuild) return;
 
             const lockOwner = await this.acquireFtsLock();
-            if (!lockOwner) return;
+            if (!lockOwner) {
+                logWarn('FTS rebuild skipped: lock unavailable', {
+                    scope: 'sqlite',
+                    category: 'fts',
+                });
+                return;
+            }
 
             try {
                 await this.client.run('BEGIN');
