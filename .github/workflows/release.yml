@@ -218,14 +218,6 @@ jobs:
           INSTALLER_URL="https://github.com/${REPO}/releases/download/${TAG}/mindwtr_${VERSION}_x64-setup.exe"
           MANIFEST_DIR="winget-pkgs/manifests/d/dongdongbh/Mindwtr/${VERSION}"
 
-  update-linux-repos:
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success'
-    uses: ./.github/workflows/publish-repo.yml
-    secrets: inherit
-    with:
-      tag: ${{ github.ref_name }}
-
           mkdir -p "$MANIFEST_DIR"
 
           cat <<EOF | sed 's/^          //' > "$MANIFEST_DIR/dongdongbh.Mindwtr.installer.yaml"
@@ -363,6 +355,14 @@ jobs:
           fi
           git commit -m "update: Mindwtr ${{ steps.version.outputs.version }}"
           git push
+
+  update-linux-repos:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success'
+    uses: ./.github/workflows/publish-repo.yml
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}
 
   update-aur:
     needs: release
