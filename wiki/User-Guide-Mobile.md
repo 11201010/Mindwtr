@@ -1,6 +1,6 @@
 # User Guide: Mobile
 
-The Mindwtr mobile app is built with React Native and Expo, providing a native experience on Android and iOS.
+The Mindwtr mobile app is built with React Native and Expo. Android is fully supported; iOS is currently available via simulator builds.
 
 ## Overview
 

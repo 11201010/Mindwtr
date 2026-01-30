@@ -12,8 +12,8 @@ Welcome to Mindwtr! This guide will help you get up and running quickly.
 | **Debian/Ubuntu** | Add the APT repo (recommended) or download `.deb` from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
 | **Fedora/RHEL**   | Add the DNF repo (recommended) or download `.rpm` from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
 | **AppImage**      | Download `.AppImage`, `chmod +x`, and run                                                           |
-| **Windows**       | Download `.msi` or `.exe` installer from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
-| **macOS**         | Download `.dmg` from [Releases](https://github.com/dongdongbh/Mindwtr/releases)                     |
+| **Windows**       | Microsoft Store or `winget install dongdongbh.Mindwtr` (or `.msi`/`.exe` from [Releases](https://github.com/dongdongbh/Mindwtr/releases)) |
+| **macOS**         | `brew install --cask mindwtr` (or `.dmg` from [Releases](https://github.com/dongdongbh/Mindwtr/releases)) |
 
 > **Note:** On macOS, if you see "damaged" or "unidentified developer" warning:
 > ```bash
@@ -26,7 +26,7 @@ See [[Desktop Installation]] for detailed instructions.
 
 | Platform    | Installation                                                                 |
 | ----------- | ---------------------------------------------------------------------------- |
-| **Android** | Download APK from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
+| **Android** | Google Play or APK from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
 | **iOS**     | Simulator builds only (requires Apple Developer account)                     |
 
 See [[Mobile Installation]] for detailed instructions.

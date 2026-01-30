@@ -79,7 +79,12 @@ For other distributions, use the AppImage or build from source (see [[Developer 
 
 ## Windows
 
-### Winget (Recommended)
+### Microsoft Store (Recommended)
+
+Install from the Microsoft Store:
+https://apps.microsoft.com/detail/9n0v5b0b6frx?ocid=webpdpshare
+
+### Winget
 
 Winget is built into Windows 10 and 11. Install Mindwtr with:
 
@@ -87,7 +92,7 @@ Winget is built into Windows 10 and 11. Install Mindwtr with:
 winget install dongdongbh.Mindwtr
 ```
 
-### Alternative: Scoop
+### Scoop
 
 If you use Scoop:
 
@@ -148,11 +153,11 @@ Alternatively:
 
 After installation, your data is stored at:
 
-| Platform    | Location                                          |
-| ----------- | ------------------------------------------------- |
-| **Linux**   | `~/.local/share/mindwtr/data.json`                |
-| **Windows** | `%APPDATA%/mindwtr/data.json`                     |
-| **macOS**   | `~/Library/Application Support/mindwtr/data.json` |
+| Platform    | SQLite DB                                     | Sync JSON                                    |
+| ----------- | --------------------------------------------- | -------------------------------------------- |
+| **Linux**   | `~/.local/share/mindwtr/mindwtr.db`            | `~/.local/share/mindwtr/data.json`           |
+| **Windows** | `%APPDATA%/mindwtr/mindwtr.db`                 | `%APPDATA%/mindwtr/data.json`                |
+| **macOS**   | `~/Library/Application Support/mindwtr/mindwtr.db` | `~/Library/Application Support/mindwtr/data.json` |
 
 Config is stored separately:
 

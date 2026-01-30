@@ -1,17 +1,17 @@
 # Mobile Installation
 
-Detailed installation instructions for Android and iOS.
+Detailed installation instructions for Android and iOS (simulator builds).
 
 ---
 
 ## Android
 
-### Google Play
+### Google Play (Recommended)
 
 Mindwtr is available on Google Play:
 https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr
 
-### Download APK
+### Download APK (Alternative)
 
 1. Go to [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases)
 2. Download the latest arm64 APK (e.g., `mindwtr-0.4.3-arm64-v8a.apk` or `app-arm64-v8a-release.apk`)

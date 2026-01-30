@@ -8,7 +8,7 @@ Frequently asked questions about Mindwtr.
 
 ### What is Mindwtr?
 
-Mindwtr is a cross-platform Getting Things Done (GTD) productivity app that helps you capture, clarify, organize, and engage with your tasks. Available for desktop (Windows, macOS, Linux) and mobile (Android, iOS).
+Mindwtr is a cross-platform Getting Things Done (GTD) productivity app that helps you capture, clarify, organize, and engage with your tasks. Available for desktop (Windows, macOS, Linux) and mobile (Android, iOS simulator builds).
 
 ### Is Mindwtr free?
 
@@ -207,6 +207,8 @@ Yes! Mindwtr sends desktop notifications for:
 
 You can snooze notifications for later.
 
+**macOS** will prompt for permission the first time you enable notifications. On **Linux**, ensure a notification daemon is running.
+
 ### macOS says the app is "damaged"
 
 Run this command in Terminal:
@@ -222,7 +224,7 @@ This clears the quarantine flag. The app is not notarized with Apple.
 
 ### Which platforms are supported?
 
-- **Android:** Full support via APK download
+- **Android:** Full support via Google Play or APK download
 - **iOS:** iOS builds require an Apple Developer account ($99/year). Currently available as simulator builds only. If you want iOS builds, please consider [sponsoring the developer](https://github.com/sponsors/dongdongbh) so we can fund the Apple Developer account.
 
 ### Why does editing feel different on desktop and mobile?
@@ -235,7 +237,7 @@ These patterns keep the app fast and familiar on each platform.
 
 ### How do I install on Android?
 
-Download the APK from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases) and open it. Enable "Install from unknown sources" if prompted. See [[Mobile Installation]].
+Install from Google Play or download the APK from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases). Enable "Install from unknown sources" if prompted. See [[Mobile Installation]].
 
 ### How do I capture from other apps?
 

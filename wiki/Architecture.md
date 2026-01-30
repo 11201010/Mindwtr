@@ -149,7 +149,7 @@ apps/desktop/
 ### Data Flow
 
 ```
-User Action → React Component → Zustand Store (@mindwtr/core) → Storage Adapter → Tauri FS → JSON File
+User Action → React Component → Zustand Store (@mindwtr/core) → Storage Adapter → SQLite + data.json
 ```
 
 ### Tauri Commands

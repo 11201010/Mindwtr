@@ -36,7 +36,7 @@ Mindwtr is **simple by default and powerful when needed**. We focus on reducing 
   - [[Desktop Installation]] — Install on Linux, Windows, macOS
   - [[Desktop Keyboard Shortcuts]] — Vim and Emacs keybindings
 - [[User Guide Mobile]] — Complete mobile app documentation
-  - [[Mobile Installation]] — Install on Android and iOS
+  - [[Mobile Installation]] — Install on Android (iOS simulator builds)
 - [[Docker Deployment]] — Run PWA and Cloud Server with Docker
 
 ### GTD Methodology
