@@ -522,9 +522,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
                 didSettingsUpdate = true;
             }
 
-            let allTasks = (shouldRunMigrations || shouldRunAutoArchive)
-                ? rawTasks.map((task) => normalizeTaskForLoad(task, nowIso))
-                : rawTasks;
+            let allTasks = rawTasks.map((task) => normalizeTaskForLoad(task, nowIso));
 
             // Auto-archive stale completed items to keep day-to-day UI fast/clean.
             const configuredArchiveDays = settings.gtd?.autoArchiveDays;
