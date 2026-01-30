@@ -181,11 +181,7 @@ jobs:
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
         run: |
-          $msix = "mindwtr_${{ steps.version.outputs.version }}_x64.msix"
-          $msstoreInput = "msstore-input"
-          New-Item -ItemType Directory -Force -Path $msstoreInput | Out-Null
-          Copy-Item $msix -Destination $msstoreInput
-
+          $msix = (Resolve-Path "mindwtr_${{ steps.version.outputs.version }}_x64.msix").Path
           $tenantId = $env:MS_TENANT_ID.Trim()
           $sellerId = $env:MS_SELLER_ID.Trim()
           $clientId = $env:MS_CLIENT_ID.Trim()
@@ -197,14 +193,7 @@ jobs:
             --clientId $clientId `
             --clientSecret $clientSecret
 
-          $msixInputDir = (Resolve-Path $msstoreInput).Path
-          $projectDir = (Resolve-Path "msix-staging").Path
-          $publishArgs = @(
-            "publish", $projectDir,
-            "--inputDirectory", $msixInputDir,
-            "--appId", $env:MS_IDENTITY_NAME
-          )
-          & msstore @publishArgs
+          & msstore publish $msix -v --appId $env:MS_IDENTITY_NAME
 
       - name: Collect Windows artifacts
         shell: pwsh
