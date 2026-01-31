@@ -23,6 +23,7 @@ import { startDesktopNotifications, stopDesktopNotifications } from './lib/notif
 import { SyncService } from './lib/sync-service';
 import { isFlatpakRuntime, isTauriRuntime } from './lib/runtime';
 import { logError } from './lib/app-log';
+import { useUiStore } from './store/ui-store';
 
 function App() {
     const [currentView, setCurrentView] = useState('inbox');
@@ -35,6 +36,7 @@ function App() {
     const closeBehavior = useTaskStore((state) => state.settings?.window?.closeBehavior ?? 'ask');
     const showTray = useTaskStore((state) => state.settings?.window?.showTray);
     const updateSettings = useTaskStore((state) => state.updateSettings);
+    const showToast = useUiStore((state) => state.showToast);
     const isFlatpak = isFlatpakRuntime();
     const { t } = useLanguage();
     const isActiveRef = useRef(true);
@@ -152,7 +154,7 @@ function App() {
                 if (shouldAlert) {
                     lastSyncErrorRef.current = result.error;
                     lastSyncErrorAtRef.current = nowMs;
-                    window.alert(`Sync failed:\n${result.error}`);
+                    showToast(`Sync failed: ${result.error}`, 'error', 6000);
                 }
             }
         };
