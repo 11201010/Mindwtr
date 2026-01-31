@@ -56,6 +56,9 @@ Tauri v2 desktop app for the Mindwtr productivity system.
 - 🦀 **Rust backend** for fast file operations
 - 🖥️ **Native dialogs** via system webview
 
+### Security Note
+- CSP is disabled for the trusted local UI (`src-tauri/tauri.conf.json`). Avoid loading untrusted remote content in the webview.
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (for building Tauri)
