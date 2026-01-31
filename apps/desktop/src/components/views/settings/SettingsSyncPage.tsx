@@ -186,6 +186,7 @@ export function SettingsSyncPage({
         return t.lastSyncError;
     };
     const [syncOptionsOpen, setSyncOptionsOpen] = useState(false);
+    const [syncHistoryOpen, setSyncHistoryOpen] = useState(false);
 
     const renderSyncToggle = (
         key: keyof NonNullable<AppData['settings']['syncPreferences']>,
@@ -479,23 +480,35 @@ export function SettingsSyncPage({
                         )}
                         {historyEntries.length > 0 && (
                             <div className="pt-2 space-y-1">
-                                <div className="text-xs font-medium text-muted-foreground">{t.syncHistory}</div>
-                                {historyEntries.map((entry) => {
-                                    const timestamp = safeFormatDate(entry.at, 'PPpp', entry.at);
-                                    const statusLabel = formatHistoryStatus(entry.status);
-                                    const parts = [
-                                        entry.conflicts ? `${t.lastSyncConflicts}: ${entry.conflicts}` : null,
-                                        entry.maxClockSkewMs > 0 ? `${t.lastSyncSkew}: ${formatClockSkew(entry.maxClockSkewMs)}` : null,
-                                        entry.timestampAdjustments > 0 ? `${t.lastSyncAdjusted}: ${entry.timestampAdjustments}` : null,
-                                    ].filter(Boolean);
-                                    return (
-                                        <div key={`${entry.at}-${entry.status}`} className="text-xs text-muted-foreground">
-                                            <span className="text-foreground">{timestamp}</span> • {statusLabel}
-                                            {parts.length > 0 && ` • ${parts.join(' • ')}`}
-                                            {entry.status === 'error' && entry.error && ` • ${entry.error}`}
-                                        </div>
-                                    );
-                                })}
+                                <button
+                                    type="button"
+                                    onClick={() => setSyncHistoryOpen((prev) => !prev)}
+                                    className="w-full flex items-center justify-between text-left"
+                                    aria-expanded={syncHistoryOpen}
+                                >
+                                    <span className="text-xs font-medium text-muted-foreground">{t.syncHistory}</span>
+                                    <span className="text-muted-foreground">{syncHistoryOpen ? '▾' : '▸'}</span>
+                                </button>
+                                {syncHistoryOpen && (
+                                    <div className="space-y-1">
+                                        {historyEntries.map((entry) => {
+                                            const timestamp = safeFormatDate(entry.at, 'PPpp', entry.at);
+                                            const statusLabel = formatHistoryStatus(entry.status);
+                                            const parts = [
+                                                entry.conflicts ? `${t.lastSyncConflicts}: ${entry.conflicts}` : null,
+                                                entry.maxClockSkewMs > 0 ? `${t.lastSyncSkew}: ${formatClockSkew(entry.maxClockSkewMs)}` : null,
+                                                entry.timestampAdjustments > 0 ? `${t.lastSyncAdjusted}: ${entry.timestampAdjustments}` : null,
+                                            ].filter(Boolean);
+                                            return (
+                                                <div key={`${entry.at}-${entry.status}`} className="text-xs text-muted-foreground">
+                                                    <span className="text-foreground">{timestamp}</span> • {statusLabel}
+                                                    {parts.length > 0 && ` • ${parts.join(' • ')}`}
+                                                    {entry.status === 'error' && entry.error && ` • ${entry.error}`}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
