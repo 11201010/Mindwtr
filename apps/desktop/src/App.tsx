@@ -195,13 +195,15 @@ function App() {
         // Auto-sync on data changes with debounce
         const storeUnsubscribe = useTaskStore.subscribe((state, prevState) => {
             if (state.lastDataChangeAt === prevState.lastDataChangeAt) return;
+            const hadTimer = !!syncDebounceTimerRef.current;
             if (syncDebounceTimerRef.current) {
                 clearTimeout(syncDebounceTimerRef.current);
             }
+            const debounceMs = hadTimer ? 5000 : 2000;
             syncDebounceTimerRef.current = setTimeout(() => {
                 if (!isActiveRef.current) return;
                 queueSync().catch((error) => reportError('Sync failed', error));
-            }, 5000);
+            }, debounceMs);
         });
 
         // Background/on-resume sync (focus/blur) and initial auto-sync

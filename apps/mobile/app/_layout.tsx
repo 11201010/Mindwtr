@@ -118,13 +118,15 @@ function RootLayoutContent() {
     const unsubscribe = useTaskStore.subscribe((state, prevState) => {
       if (state.lastDataChangeAt === prevState.lastDataChangeAt) return;
       // Debounce sync: wait 5 seconds after last change
+      const hadTimer = !!syncDebounceTimer.current;
       if (syncDebounceTimer.current) {
         clearTimeout(syncDebounceTimer.current);
       }
+      const debounceMs = hadTimer ? 5000 : 2000;
       syncDebounceTimer.current = setTimeout(() => {
         if (!isActive.current) return;
-        requestSync(5_000);
-      }, 5000);
+        requestSync(debounceMs);
+      }, debounceMs);
     });
 
     return () => {
