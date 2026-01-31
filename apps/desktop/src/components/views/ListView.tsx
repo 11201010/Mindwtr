@@ -888,6 +888,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                                             showQuickDone={showQuickDone}
                                             readOnly={readOnly}
                                             compactMetaEnabled={showListDetails}
+                                            showProjectBadgeInActions={false}
                                         />
                                     </div>
                                 </div>
@@ -909,6 +910,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                                 showQuickDone={showQuickDone}
                                 readOnly={readOnly}
                                 compactMetaEnabled={showListDetails}
+                                showProjectBadgeInActions={false}
                             />
                         ))}
                     </div>
