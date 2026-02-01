@@ -233,33 +233,6 @@ jobs:
           }
           "published=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Update Microsoft Store metadata
-        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' && steps.msstore_status.outputs.skip != 'true' && steps.msstore_publish.outputs.published != 'true'
-        shell: pwsh
-        env:
-          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
-        run: |
-          if (-not (Test-Path "metadata/metadata.json")) {
-            Write-Error "metadata/metadata.json not found. Commit the metadata file before releasing."
-          }
-          $metadata = Get-Content -Raw "metadata/metadata.json"
-          $updateOutput = & msstore submission updateMetadata $env:MS_STORE_APP_ID $metadata 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            if ($updateOutput -match 'InvalidState' -or $updateOutput -match 'certification' -or $updateOutput -match 'Pending Submission') {
-              Write-Warning "Store submission is in certification. Skipping metadata update."
-              exit 0
-            }
-            throw "Metadata update failed: $updateOutput"
-          }
-          $publishOutput = & msstore submission publish $env:MS_STORE_APP_ID 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            if ($publishOutput -match 'InvalidState' -or $publishOutput -match 'certification' -or $publishOutput -match 'Pending Submission') {
-              Write-Warning "Store submission is in certification. Skipping metadata publish."
-              exit 0
-            }
-            throw "Metadata publish failed: $publishOutput"
-          }
-
       - name: Collect Windows artifacts
         shell: pwsh
         run: |
