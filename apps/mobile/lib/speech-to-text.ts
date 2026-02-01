@@ -71,14 +71,19 @@ const getRNFSModule = (): RNFSModule | null => {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const mod = require('react-native-fs') as RNFSModule;
-    const hasFileType = !!mod && 'RNFSFileTypeRegular' in (mod as unknown as Record<string, unknown>);
-    if (!hasFileType) {
+    const hasCoreFs = !!mod
+      && typeof (mod as unknown as { writeFile?: unknown }).writeFile === 'function'
+      && typeof (mod as unknown as { appendFile?: unknown }).appendFile === 'function'
+      && typeof (mod as unknown as { readFile?: unknown }).readFile === 'function'
+      && typeof (mod as unknown as { exists?: unknown }).exists === 'function'
+      && typeof (mod as unknown as { unlink?: unknown }).unlink === 'function';
+    if (!hasCoreFs) {
       rnfsModuleCache = null;
       return null;
     }
     rnfsModuleCache = mod;
     return mod;
-  } catch {
+  } catch (error) {
     rnfsModuleCache = null;
     return null;
   }
@@ -857,6 +862,7 @@ const extractWhisperText = (result: unknown): string => {
   return '';
 };
 
+
 export const startWhisperRealtimeCapture = async (
   audioOutputPath: string,
   config: SpeechToTextConfig
@@ -886,6 +892,7 @@ export const startWhisperRealtimeCapture = async (
       audioSource: 6,
     },
     transcribeOptions: effectiveLanguage !== 'auto' ? { language: effectiveLanguage } : undefined,
+    promptPreviousSlices: false,
   };
 
   void logInfo('Whisper transcription started', {
@@ -898,7 +905,7 @@ export const startWhisperRealtimeCapture = async (
   });
 
   const audioStream = new AudioPcmStreamAdapter();
-  const transcriptParts: string[] = [];
+  const transcriptBySlice = new Map<number, string>();
   let completed = false;
   let hasActivated = false;
   let resolveResult: (value: SpeechToTextResult) => void = () => {};
@@ -912,7 +919,11 @@ export const startWhisperRealtimeCapture = async (
   const finalize = () => {
     if (completed) return;
     completed = true;
-    const text = transcriptParts.join(' ').replace(/\s+/g, ' ').trim();
+    const sorted = [...transcriptBySlice.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, value]) => value.trim())
+      .filter(Boolean);
+    const text = sorted.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) {
       void logWarn('Whisper returned empty transcript', {
         scope: 'speech',
@@ -941,8 +952,13 @@ export const startWhisperRealtimeCapture = async (
       onTranscribe: (event: RealtimeTranscriberEvent) => {
         if (completed) return;
         const nextText = extractWhisperText(event.data ?? {}).trim();
-        if (nextText && transcriptParts[transcriptParts.length - 1] !== nextText) {
-          transcriptParts.push(nextText);
+        if (!nextText) return;
+        const normalized = nextText.replace(/\s+/g, ' ').trim();
+        if (!normalized) return;
+        const sliceIndex = typeof event.sliceIndex === 'number' ? event.sliceIndex : 0;
+        const prev = transcriptBySlice.get(sliceIndex) ?? '';
+        if (!prev || normalized.length > prev.length) {
+          transcriptBySlice.set(sliceIndex, normalized);
         }
       },
       onError: (error: string) => {
@@ -1029,14 +1045,28 @@ const transcribeWhisper = async (audioUri: string, config: SpeechToTextConfig) =
       language: effectiveLanguage,
     },
   });
-  const { promise } = context.transcribe(audioUri, options);
-  const result = await promise;
+  const normalizedUri = audioUri.startsWith('file://')
+    ? audioUri.replace(/^file:\/\//, '')
+    : audioUri.startsWith('file:/')
+      ? audioUri.replace(/^file:\//, '/')
+      : audioUri;
+  let result: unknown;
+  try {
+    result = await context.transcribe(normalizedUri, options).promise;
+  } catch (error) {
+    if (normalizedUri !== audioUri) {
+      result = await context.transcribe(audioUri, options).promise;
+    } else {
+      throw error;
+    }
+  }
   let text = extractWhisperText(result).trim();
-  if (!text && audioUri.startsWith('file://')) {
-    const stripped = audioUri.replace(/^file:\/\//, '');
-    if (stripped !== audioUri) {
-      const retry = await context.transcribe(stripped, options).promise;
+  if (!text && normalizedUri !== audioUri) {
+    try {
+      const retry = await context.transcribe(audioUri, options).promise;
       text = extractWhisperText(retry).trim();
+    } catch {
+      // Ignore retry errors after a successful primary transcription.
     }
   }
   if (!text) {

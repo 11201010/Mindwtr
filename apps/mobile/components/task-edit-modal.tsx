@@ -718,11 +718,6 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         } catch (error) {
             logTaskWarn('Stop audio failed', error);
         }
-        try {
-            audioPlayer.replace(null);
-        } catch (error) {
-            logTaskWarn('Unload audio failed', error);
-        }
     }, [audioPlayer]);
 
     const normalizeAudioUri = useCallback((uri: string) => {

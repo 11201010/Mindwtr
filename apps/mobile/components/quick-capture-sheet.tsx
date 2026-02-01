@@ -474,7 +474,6 @@ export function QuickCaptureSheet({
         ? (whisperResolved?.exists ? whisperResolved.path : modelPath)
         : undefined;
       const useWhisperRealtime = speech?.enabled && provider === 'whisper' && whisperModelReady;
-
       if (useWhisperRealtime) {
         try {
           const now = new Date();
@@ -548,7 +547,6 @@ export function QuickCaptureSheet({
     ensureAudioDirectory,
     recording,
     recordingBusy,
-    buildWhisperDiagnostics,
     resolveWhisperModel,
     settings.ai?.speechToText,
     stripFileScheme,
@@ -677,9 +675,40 @@ export function QuickCaptureSheet({
         }
 
         if (speechReady) {
-          currentRecording.result
+          const timeZone = typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone
+            : undefined;
+          void logInfo('Whisper offline transcription starting', {
+            scope: 'speech',
+            extra: {
+              provider,
+              model,
+              mode: speech?.mode ?? 'smart_parse',
+              fieldStrategy: speech?.fieldStrategy ?? 'smart',
+              language: speech?.language ?? 'auto',
+              source: 'wav',
+            },
+          });
+          const transcriptionUri = stripFileScheme(attachment?.uri ?? finalFile.uri);
+          void processAudioCapture(transcriptionUri, {
+            provider,
+            apiKey,
+            model,
+            modelPath: resolvedModelPath,
+            language: speech?.language,
+            mode: speech?.mode ?? 'smart_parse',
+            fieldStrategy: speech?.fieldStrategy ?? 'smart',
+            parseModel: provider === 'openai' && settings.ai?.provider === 'openai' ? settings.ai?.model : undefined,
+            now: new Date(),
+            timeZone,
+          })
             .then((result) => applySpeechResult(taskId, result))
-            .catch((error) => logCaptureWarn('Speech-to-text failed', error))
+            .catch((error) => {
+              logCaptureWarn('Whisper offline transcription failed, using realtime result', error);
+              return currentRecording.result
+                .then((result) => applySpeechResult(taskId, result))
+                .catch((realtimeError) => logCaptureWarn('Speech-to-text failed', realtimeError));
+            })
             .finally(() => {
               if (!saveAudioAttachments) {
                 safeDeleteFile(finalFile, 'whisper_cleanup');
@@ -752,9 +781,10 @@ export function QuickCaptureSheet({
         ? (whisperResolved?.exists ? whisperResolved.path : modelPath)
         : undefined;
 
+      const allowWhisperOffline = provider !== 'whisper' || currentRecording.kind === 'whisper';
       const speechReady = speech?.enabled
         ? provider === 'whisper'
-          ? whisperModelReady
+          ? whisperModelReady && allowWhisperOffline
           : Boolean(apiKey)
         : false;
       const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false || !speechReady;
@@ -765,6 +795,7 @@ export function QuickCaptureSheet({
           speechReady: String(Boolean(speechReady)),
           saveAudioAttachments: String(Boolean(saveAudioAttachments)),
           settingSaveAudio: String(settings.gtd?.saveAudioAttachments ?? 'unset'),
+          recordingKind: currentRecording.kind,
         },
       });
 
@@ -822,6 +853,8 @@ export function QuickCaptureSheet({
             hasModelFile: String(whisperModelReady),
             hasApiKey: String(Boolean(apiKey)),
             mode: speech?.mode ?? 'smart_parse',
+            recordingKind: currentRecording.kind,
+            whisperOfflineDisabled: String(provider === 'whisper' && !allowWhisperOffline),
             ...(diag ?? {}),
           },
         });
@@ -875,6 +908,7 @@ export function QuickCaptureSheet({
     audioRecorder,
     applySpeechResult,
     buildTaskProps,
+    buildWhisperDiagnostics,
     ensureAudioDirectory,
     handleClose,
     initialProps?.attachments,
@@ -884,6 +918,7 @@ export function QuickCaptureSheet({
     settings.ai?.model,
     settings.ai?.provider,
     settings.ai?.speechToText,
+    stripFileScheme,
     t,
   ]);
 
