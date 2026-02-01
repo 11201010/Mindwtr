@@ -42,8 +42,32 @@ jobs:
             --clientId $env:MS_CLIENT_ID `
             --clientSecret $env:MS_CLIENT_SECRET
 
+      - name: Check Microsoft Store submission status
+        id: msstore_status
+        shell: pwsh
+        run: |
+          $statusOutput = msstore submission status $env:MS_STORE_APP_ID 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to check submission status. Continuing: $statusOutput"
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          $blocked = $statusOutput -match 'CommitStarted' -or
+            $statusOutput -match 'PreProcessing' -or
+            $statusOutput -match 'Certification' -or
+            $statusOutput -match 'PendingCommit' -or
+            $statusOutput -match 'InProgress' -or
+            $statusOutput -match 'Pending Submission'
+          if ($blocked) {
+            Write-Warning "Store submission in progress. Skipping metadata update. Status: $statusOutput"
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Update store metadata
         shell: pwsh
+        if: steps.msstore_status.outputs.skip != 'true'
         run: |
           if (-not (Test-Path "metadata/metadata.json")) {
             Write-Error "metadata/metadata.json not found. Run the base metadata workflow first."
@@ -60,6 +84,7 @@ jobs:
 
       - name: Publish metadata update
         shell: pwsh
+        if: steps.msstore_status.outputs.skip != 'true'
         run: |
           $publishOutput = msstore submission publish $env:MS_STORE_APP_ID 2>&1
           if ($LASTEXITCODE -ne 0) {
