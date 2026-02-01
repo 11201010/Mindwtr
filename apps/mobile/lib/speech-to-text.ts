@@ -36,6 +36,7 @@ export type SpeechToTextConfig = {
 export type WhisperRealtimeHandle = {
   stop: () => Promise<void>;
   result: Promise<SpeechToTextResult>;
+  hasRealtimeTranscript: boolean;
 };
 
 type FetchOptions = {
@@ -49,6 +50,8 @@ const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const IS_EXPO_GO = Constants.appOwnership === 'expo';
+const WHISPER_ANDROID_MAX_THREADS = 1;
+const WHISPER_ANDROID_N_PROCESSORS = 1;
 
 type WhisperContextLike = {
   transcribe: (uri: string, options?: Record<string, unknown>) => { promise: Promise<unknown> };
@@ -115,6 +118,18 @@ const getWhisperModule = () => {
       }
     }
   }
+};
+
+const buildWhisperTranscribeOptions = (language: string): Record<string, unknown> => {
+  const options: Record<string, unknown> = {};
+  if (language !== 'auto') {
+    options.language = language;
+  }
+  if (Platform.OS === 'android') {
+    options.maxThreads = WHISPER_ANDROID_MAX_THREADS;
+    options.nProcessors = WHISPER_ANDROID_N_PROCESSORS;
+  }
+  return options;
 };
 
 const bytesToBase64 = (bytes: Uint8Array) => {
@@ -862,7 +877,6 @@ const extractWhisperText = (result: unknown): string => {
   return '';
 };
 
-
 export const startWhisperRealtimeCapture = async (
   audioOutputPath: string,
   config: SpeechToTextConfig
@@ -881,6 +895,7 @@ export const startWhisperRealtimeCapture = async (
   const context = await getWhisperContext(resolved.path, config.model);
   const language = resolveLanguage(config.language);
   const effectiveLanguage = config.model?.endsWith('.en') && language === 'auto' ? 'en' : language;
+  const transcribeOptions = buildWhisperTranscribeOptions(effectiveLanguage);
   const options: Record<string, unknown> = {
     audioOutputPath,
     audioSliceSec: WHISPER_REALTIME_SLICE_SEC,
@@ -891,7 +906,7 @@ export const startWhisperRealtimeCapture = async (
       bufferSize: WHISPER_REALTIME_BUFFER_SIZE,
       audioSource: 6,
     },
-    transcribeOptions: effectiveLanguage !== 'auto' ? { language: effectiveLanguage } : undefined,
+    transcribeOptions: Object.keys(transcribeOptions).length ? transcribeOptions : undefined,
     promptPreviousSlices: false,
   };
 
@@ -905,6 +920,7 @@ export const startWhisperRealtimeCapture = async (
   });
 
   const audioStream = new AudioPcmStreamAdapter();
+  const enableRealtimeTranscript = Platform.OS !== 'android';
   const transcriptBySlice = new Map<number, string>();
   let completed = false;
   let hasActivated = false;
@@ -919,6 +935,10 @@ export const startWhisperRealtimeCapture = async (
   const finalize = () => {
     if (completed) return;
     completed = true;
+    if (!enableRealtimeTranscript) {
+      resolveResult({ transcript: '' });
+      return;
+    }
     const sorted = [...transcriptBySlice.entries()]
       .sort(([a], [b]) => a - b)
       .map(([, value]) => value.trim())
@@ -949,18 +969,21 @@ export const startWhisperRealtimeCapture = async (
     { whisperContext: context, audioStream, fs: RNFS },
     options,
     {
-      onTranscribe: (event: RealtimeTranscriberEvent) => {
-        if (completed) return;
-        const nextText = extractWhisperText(event.data ?? {}).trim();
-        if (!nextText) return;
-        const normalized = nextText.replace(/\s+/g, ' ').trim();
-        if (!normalized) return;
-        const sliceIndex = typeof event.sliceIndex === 'number' ? event.sliceIndex : 0;
-        const prev = transcriptBySlice.get(sliceIndex) ?? '';
-        if (!prev || normalized.length > prev.length) {
-          transcriptBySlice.set(sliceIndex, normalized);
+      onBeginTranscribe: enableRealtimeTranscript ? undefined : async () => false,
+      onTranscribe: enableRealtimeTranscript
+        ? (event: RealtimeTranscriberEvent) => {
+          if (completed) return;
+          const nextText = extractWhisperText(event.data ?? {}).trim();
+          if (!nextText) return;
+          const normalized = nextText.replace(/\s+/g, ' ').trim();
+          if (!normalized) return;
+          const sliceIndex = typeof event.sliceIndex === 'number' ? event.sliceIndex : 0;
+          const prev = transcriptBySlice.get(sliceIndex) ?? '';
+          if (!prev || normalized.length > prev.length) {
+            transcriptBySlice.set(sliceIndex, normalized);
+          }
         }
-      },
+        : undefined,
       onError: (error: string) => {
         if (completed) return;
         completed = true;
@@ -983,7 +1006,7 @@ export const startWhisperRealtimeCapture = async (
     await realtime.start();
   } catch (error) {
     try {
-      realtime.destroy();
+      await realtime.release();
     } catch {
       // Ignore cleanup failures after a failed start.
     }
@@ -1001,15 +1024,15 @@ export const startWhisperRealtimeCapture = async (
       });
     } finally {
       try {
-        realtime.destroy();
+        await realtime.release();
       } catch {
-        // Ignore destroy failures.
+        // Ignore release failures.
       }
       finalize();
     }
   };
 
-  return { stop, result };
+  return { stop, result, hasRealtimeTranscript: enableRealtimeTranscript };
 };
 
 export const preloadWhisperContext = async (config: {
@@ -1033,10 +1056,7 @@ const transcribeWhisper = async (audioUri: string, config: SpeechToTextConfig) =
   const context = await getWhisperContext(resolved.path, config.model);
   const language = resolveLanguage(config.language);
   const effectiveLanguage = config.model?.endsWith('.en') && language === 'auto' ? 'en' : language;
-  const options: Record<string, unknown> = {};
-  if (effectiveLanguage !== 'auto') {
-    options.language = effectiveLanguage;
-  }
+  const options = buildWhisperTranscribeOptions(effectiveLanguage);
   void logInfo('Whisper transcription started', {
     scope: 'speech',
     extra: {

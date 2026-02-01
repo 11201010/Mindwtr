@@ -39,6 +39,12 @@ declare module 'whisper.rn/realtime-transcription' {
   };
 
   export type RealtimeTranscriberCallbacks = {
+    onBeginTranscribe?: (sliceInfo: {
+      audioData: Uint8Array;
+      sliceIndex: number;
+      duration: number;
+      vadEvent?: unknown;
+    }) => Promise<boolean> | boolean;
     onTranscribe?: (event: RealtimeTranscriberEvent) => void;
     onError?: (error: string) => void;
     onStatusChange?: (isActive: boolean) => void;
@@ -59,7 +65,7 @@ declare module 'whisper.rn/realtime-transcription' {
     );
     start(): Promise<void>;
     stop(): Promise<void>;
-    destroy(): void;
+    release(): Promise<void>;
   }
 }
 

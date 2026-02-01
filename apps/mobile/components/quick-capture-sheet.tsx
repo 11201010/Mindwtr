@@ -38,7 +38,13 @@ const logCaptureError = (message: string, error?: unknown) => {
 
 type RecordingState =
   | { kind: 'expo' }
-  | { kind: 'whisper'; stop: () => Promise<void>; result: Promise<SpeechToTextResult>; file: File };
+  | {
+      kind: 'whisper';
+      stop: () => Promise<void>;
+      result: Promise<SpeechToTextResult>;
+      file: File;
+      allowRealtimeFallback: boolean;
+    };
 
 export function QuickCaptureSheet({
   visible,
@@ -523,7 +529,13 @@ export function QuickCaptureSheet({
               hasModelPath: String(Boolean(resolvedModelPath)),
             },
           });
-          setRecording({ kind: 'whisper', stop: handle.stop, result: handle.result, file: outputFile });
+          setRecording({
+            kind: 'whisper',
+            stop: handle.stop,
+            result: handle.result,
+            file: outputFile,
+            allowRealtimeFallback: handle.hasRealtimeTranscript,
+          });
           setRecordingReady(true);
           return;
         } catch (error) {
@@ -568,7 +580,9 @@ export function QuickCaptureSheet({
           logCaptureWarn('Failed to stop whisper recording', error);
         }
         if (!saveTask) {
-          void currentRecording.result.catch((error) => logCaptureWarn('Speech-to-text failed', error));
+          if (currentRecording.allowRealtimeFallback) {
+            void currentRecording.result.catch((error) => logCaptureWarn('Speech-to-text failed', error));
+          }
           try {
             safeDeleteFile(currentRecording.file, 'whisper_cancel');
           } catch (error) {
@@ -704,6 +718,10 @@ export function QuickCaptureSheet({
           })
             .then((result) => applySpeechResult(taskId, result))
             .catch((error) => {
+              if (!currentRecording.allowRealtimeFallback) {
+                logCaptureWarn('Whisper offline transcription failed', error);
+                return undefined;
+              }
               logCaptureWarn('Whisper offline transcription failed, using realtime result', error);
               return currentRecording.result
                 .then((result) => applySpeechResult(taskId, result))
@@ -748,9 +766,9 @@ export function QuickCaptureSheet({
           sourceFile.move(destinationFile);
           finalFile = destinationFile;
         } catch (error) {
-            logCaptureWarn('Move recording failed, falling back to copy', error);
-            try {
-              sourceFile.copy(destinationFile);
+          logCaptureWarn('Move recording failed, falling back to copy', error);
+          try {
+            sourceFile.copy(destinationFile);
             safeDeleteFile(sourceFile, 'recording_copy_cleanup');
             finalFile = destinationFile;
           } catch (copyError) {
