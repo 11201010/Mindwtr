@@ -12,13 +12,59 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const resolveTimeoutMs = (value?: number) =>
     typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
 
+async function buildOpenAIError(response: Response): Promise<Error> {
+    const status = response.status;
+    let message = '';
+    let code = '';
+    let type = '';
+    let raw = '';
+    try {
+        const data = await response.json() as { error?: { message?: string; code?: string; type?: string } };
+        if (data?.error) {
+            message = data.error.message ?? '';
+            code = data.error.code ?? '';
+            type = data.error.type ?? '';
+        } else {
+            raw = JSON.stringify(data);
+        }
+    } catch {
+        try {
+            raw = await response.text();
+        } catch {
+            raw = '';
+        }
+    }
+
+    if (status === 401) {
+        return new Error('OpenAI API key is invalid or missing.');
+    }
+    if (status === 403) {
+        return new Error('OpenAI access denied for this model or key.');
+    }
+    if (status === 404) {
+        return new Error('OpenAI model not found or unavailable for this key.');
+    }
+    if (status === 429) {
+        return new Error('OpenAI rate limit or quota exceeded. Please try again later.');
+    }
+
+    const parts = [
+        `OpenAI request failed (${status})`,
+        code ? `[${code}]` : '',
+        type ? `(${type})` : '',
+        message ? `: ${message}` : '',
+        !message && raw ? `: ${raw}` : '',
+    ].filter(Boolean);
+    return new Error(parts.join(' ').trim());
+}
+
 async function requestOpenAI(config: AIProviderConfig, prompt: { system: string; user: string }, options?: AIRequestOptions) {
     if (!config.apiKey) {
         throw new Error('OpenAI API key is required.');
     }
     const url = config.endpoint || OPENAI_BASE_URL;
-    const reasoning = config.model.startsWith('gpt-5') && config.reasoningEffort
-        ? { effort: config.reasoningEffort }
+    const reasoningEffort = config.model.startsWith('gpt-5') && config.reasoningEffort
+        ? config.reasoningEffort
         : undefined;
 
     const body = {
@@ -29,7 +75,7 @@ async function requestOpenAI(config: AIProviderConfig, prompt: { system: string;
         ],
         temperature: 0.2,
         response_format: { type: 'json_object' },
-        ...(reasoning ? { reasoning } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     };
 
     await rateLimit('openai');
@@ -64,7 +110,7 @@ async function requestOpenAI(config: AIProviderConfig, prompt: { system: string;
                 await sleep(400 * Math.pow(2, attempt));
                 continue;
             }
-            throw new Error('OpenAI request failed. Please try again.');
+            throw await buildOpenAIError(response);
         }
         break;
     }
