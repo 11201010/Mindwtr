@@ -67,6 +67,8 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                 padding: 12,
                 backgroundColor: '#111827',
             },
+            clickAction: 'OPEN_URI',
+            clickActionData: { uri: 'mindwtr:///focus' },
         },
         ...children
     );
