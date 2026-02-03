@@ -2176,6 +2176,11 @@ fn webdav_put_json(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_webdav_password(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD)?.unwrap_or_default())
+}
+
+#[tauri::command]
 fn get_cloud_config(app: tauri::AppHandle) -> Result<Value, String> {
     let mut config = read_config(&app);
     let mut token = get_keyring_secret(&app, KEYRING_CLOUD_TOKEN)?;
@@ -2569,6 +2574,7 @@ pub fn run() {
             get_sync_backend,
             set_sync_backend,
             get_webdav_config,
+            get_webdav_password,
             set_webdav_config,
             webdav_get_json,
             webdav_put_json,

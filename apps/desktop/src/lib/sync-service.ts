@@ -336,6 +336,7 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
     }
 
     const fetcher = await getTauriFetch();
+    const webdavPassword = webdavConfig ? await resolveWebdavPassword(webdavConfig) : '';
 
     for (const attachment of orphaned) {
         await deleteAttachmentFile(attachment);
@@ -345,7 +346,7 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
                     const baseUrl = getBaseSyncUrl(webdavConfig.url);
                     await webdavDeleteFile(`${baseUrl}/${attachment.cloudKey}`, {
                         username: webdavConfig.username,
-                        password: webdavConfig.password || '',
+                        password: webdavPassword,
                         fetcher,
                     });
                 } else if (backend === 'cloud' && cloudConfig?.url) {
@@ -497,6 +498,18 @@ async function getTauriFetch(): Promise<typeof fetch | undefined> {
     }
 }
 
+async function resolveWebdavPassword(config: WebDavConfig): Promise<string> {
+    if (typeof config.password === 'string') return config.password;
+    if (config.hasPassword === false) return '';
+    if (!isTauriRuntime()) return '';
+    try {
+        return await tauriInvoke<string>('get_webdav_password');
+    } catch (error) {
+        logSyncWarning('Failed to load WebDAV password', error);
+        return '';
+    }
+}
+
 async function syncAttachments(
     appData: AppData,
     webDavConfig: WebDavConfig,
@@ -508,12 +521,13 @@ async function syncAttachments(
     const fetcher = await getTauriFetch();
     const { BaseDirectory, exists, mkdir, readFile, writeFile, rename, remove } = await import('@tauri-apps/plugin-fs');
     const { dataDir, join } = await import('@tauri-apps/api/path');
+    const password = await resolveWebdavPassword(webDavConfig);
 
     const attachmentsDirUrl = `${baseSyncUrl}/${ATTACHMENTS_DIR_NAME}`;
     try {
         await webdavMakeDirectory(attachmentsDirUrl, {
             username: webDavConfig.username,
-            password: webDavConfig.password || '',
+            password,
             fetcher,
         });
     } catch (error) {
@@ -595,7 +609,7 @@ async function syncAttachments(
                     attachment.mimeType || 'application/octet-stream',
                     {
                         username: webDavConfig.username,
-                        password: webDavConfig.password || '',
+                        password,
                         fetcher,
                         onProgress: (loaded, total) => reportProgress(attachment.id, 'upload', loaded, total, 'active'),
                     }
@@ -625,7 +639,7 @@ async function syncAttachments(
                 const fileData = await withRetry(() =>
                     webdavGetFile(downloadUrl, {
                         username: webDavConfig.username,
-                        password: webDavConfig.password || '',
+                        password,
                         fetcher,
                         onProgress: (loaded, total) => reportProgress(attachment.id, 'download', loaded, total, 'active'),
                     })
