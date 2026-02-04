@@ -239,6 +239,7 @@ jobs:
         env:
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
         run: |
+          "MSSTORE_SKIP_PUBLISH=false" | Out-File -FilePath $env:GITHUB_ENV -Append
           if (-not (Test-Path "metadata/metadata.json")) {
             Write-Warning "metadata/metadata.json not found. Skipping store metadata update."
             exit 0
@@ -312,12 +313,24 @@ jobs:
             break
           }
           if (-not $success) {
+            if ($updateOutput -match '504' -or $updateOutput -match 'Gateway' -or $updateOutput -match 'timeout' -or $updateOutput -match 'timed out' -or $updateOutput -match 'Error while creating submission' -or $updateOutput -match '<!DOCTYPE html') {
+              Write-Warning "Partner Center timeout. Checking for pending submission..."
+              $statusAfter = msstore submission status $env:MS_STORE_APP_ID 2>&1
+              Write-Host $statusAfter
+              if ($statusAfter -match 'Could not find a Pending Submission') {
+                Write-Warning "No pending submission found; skipping Microsoft Store publish."
+                "MSSTORE_SKIP_PUBLISH=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+                exit 0
+              }
+              Write-Warning "Pending submission detected; continuing to publish."
+              exit 0
+            }
             throw "Metadata update failed after $maxRetries attempts: $updateOutput"
           }
 
       - name: Publish to Microsoft Store
         id: msstore_publish
-        if: (startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true) && steps.msstore_status.outputs.skip != 'true'
+        if: (startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true) && steps.msstore_status.outputs.skip != 'true' && env.MSSTORE_SKIP_PUBLISH != 'true'
         shell: pwsh
         env:
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
