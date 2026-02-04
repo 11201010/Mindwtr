@@ -287,22 +287,9 @@ jobs:
           Write-Host $metadataJson.Substring(0, [Math]::Min(1500, $metadataJson.Length))
           Write-Host "Metadata JSON size: $($metadataJson.Length) chars"
           Write-Host "Updating metadata..."
-          $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { (Get-Location).Path }
-          $stdoutFile = Join-Path $tempDir "msstore-metadata-stdout.txt"
-          $stderrFile = Join-Path $tempDir "msstore-metadata-stderr.txt"
-          $proc = Start-Process -FilePath "msstore" `
-            -ArgumentList @("submission", "updateMetadata", $env:MS_STORE_APP_ID, $metadataJson, "--verbose") `
-            -RedirectStandardOutput $stdoutFile `
-            -RedirectStandardError $stderrFile `
-            -NoNewWindow `
-            -PassThru `
-            -Wait
-          $stdout = if (Test-Path $stdoutFile) { Get-Content -Raw $stdoutFile -ErrorAction SilentlyContinue } else { "" }
-          $stderr = if (Test-Path $stderrFile) { Get-Content -Raw $stderrFile -ErrorAction SilentlyContinue } else { "" }
-          if ($stdout) { Write-Host $stdout }
-          if ($stderr) { Write-Host "STDERR: $stderr" }
-          $updateOutput = ($stdout + $stderr).Trim()
-          if ($proc.ExitCode -ne 0) {
+          $updateOutput = & msstore submission updateMetadata $env:MS_STORE_APP_ID $metadataJson --verbose 2>&1
+          if ($updateOutput) { Write-Host $updateOutput }
+          if ($LASTEXITCODE -ne 0) {
             if ($updateOutput -match 'InvalidState' -or $updateOutput -match 'certification' -or $updateOutput -match 'Pending Submission') {
               Write-Warning "Store submission is in certification. Skipping metadata update."
               exit 0
