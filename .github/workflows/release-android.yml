@@ -70,10 +70,10 @@ jobs:
             echo "Failed to create Google Play edit" >&2
             exit 1
           fi
-          TRACK_JSON=$(curl -s \
+          TRACKS_JSON=$(curl -s \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
-            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID/tracks/production")
-          MAX_CODE=$(echo "$TRACK_JSON" | jq '[.releases[].versionCodes[]?] | map(tonumber) | max // 0')
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID/tracks")
+          MAX_CODE=$(echo "$TRACKS_JSON" | jq '[(.tracks // [])[].releases[].versionCodes[]?] | map(tonumber) | max // 0')
           curl -s -X DELETE \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID" >/dev/null
