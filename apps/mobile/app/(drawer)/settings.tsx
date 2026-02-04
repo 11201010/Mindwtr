@@ -478,8 +478,14 @@ export default function SettingsPage() {
     useLayoutEffect(() => {
         navigation.setOptions({
             headerLeft: (props: HeaderBackButtonProps) => (
-                <HeaderBackButton {...props} onPress={handleHeaderBack} />
+                <HeaderBackButton
+                    {...props}
+                    labelVisible={false}
+                    onPress={handleHeaderBack}
+                />
             ),
+            headerBackTitleVisible: false,
+            headerBackTitle: '',
         });
     }, [navigation, handleHeaderBack]);
 
