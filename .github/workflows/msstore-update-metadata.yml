@@ -129,6 +129,9 @@ jobs:
           $stdout = $process.StandardOutput.ReadToEnd()
           $stderr = $process.StandardError.ReadToEnd()
           $process.WaitForExit()
+          Write-Host "Updating metadata..."
+          if ($stdout) { Write-Host $stdout }
+          if ($stderr) { Write-Host "STDERR: $stderr" }
           $updateOutput = ($stdout + $stderr).Trim()
           if ($process.ExitCode -ne 0) {
             if ($updateOutput -match 'InvalidState' -or $updateOutput -match 'certification' -or $updateOutput -match 'Pending Submission') {
