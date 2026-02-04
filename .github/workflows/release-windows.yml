@@ -342,9 +342,6 @@ jobs:
                   $baseListing.$field = & $ensureArray $baseListing.$field
                 }
               }
-              if ($baseListing.PSObject.Properties.Name -contains 'Images') {
-                $baseListing.PSObject.Properties.Remove('Images')
-              }
             }
           }
           $metadataJson = $metadata | ConvertTo-Json -Depth 100 -Compress
