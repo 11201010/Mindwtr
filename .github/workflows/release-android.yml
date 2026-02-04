@@ -73,7 +73,18 @@ jobs:
           TRACKS_JSON=$(curl -s \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID/tracks")
-          MAX_CODE=$(echo "$TRACKS_JSON" | jq '[(.tracks // [])[].releases[].versionCodes[]?] | map(tonumber) | max // 0')
+          if [ -z "$TRACKS_JSON" ]; then
+            echo "Failed to fetch Google Play tracks (empty response)" >&2
+            exit 1
+          fi
+          if echo "$TRACKS_JSON" | jq -e '.error' >/dev/null; then
+            echo "Failed to fetch Google Play tracks: $TRACKS_JSON" >&2
+            exit 1
+          fi
+          MAX_CODE=$(echo "$TRACKS_JSON" | jq -r '[(.tracks // [])[]? | (.releases // [])[]? | (.versionCodes // [])[]? | tonumber] | max // 0')
+          if [ -z "$MAX_CODE" ] || [ "$MAX_CODE" = "null" ]; then
+            MAX_CODE=0
+          fi
           curl -s -X DELETE \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID" >/dev/null
