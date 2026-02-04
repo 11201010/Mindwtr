@@ -116,7 +116,7 @@ jobs:
             }
           }
           $tempMetadataPath = "metadata-cleaned.json"
-          $metadata | ConvertTo-Json -Depth 100 | Out-File -FilePath $tempMetadataPath -Encoding UTF8
+          $metadata | ConvertTo-Json -Depth 100 | Set-Content -Path $tempMetadataPath -Encoding UTF8NoBOM
           $updateOutput = msstore submission updateMetadata $env:MS_STORE_APP_ID $tempMetadataPath 2>&1
           if ($LASTEXITCODE -ne 0) {
             if ($updateOutput -match 'InvalidState' -or $updateOutput -match 'certification' -or $updateOutput -match 'Pending Submission') {
