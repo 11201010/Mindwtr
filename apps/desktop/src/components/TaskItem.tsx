@@ -62,6 +62,7 @@ interface TaskItemProps {
     readOnly?: boolean;
     compactMetaEnabled?: boolean;
     enableDoubleClickEdit?: boolean;
+    showHoverHint?: boolean;
 }
 
 export const TaskItem = memo(function TaskItem({
@@ -81,6 +82,7 @@ export const TaskItem = memo(function TaskItem({
     readOnly = false,
     compactMetaEnabled = true,
     enableDoubleClickEdit = false,
+    showHoverHint = true,
 }: TaskItemProps) {
     const {
         updateTask,
@@ -960,6 +962,7 @@ export const TaskItem = memo(function TaskItem({
                             dense={isCompact}
                             actionsOverlay={actionsOverlay}
                             dragHandle={dragHandle}
+                            showHoverHint={showHoverHint}
                             t={t}
                         />
                     )}

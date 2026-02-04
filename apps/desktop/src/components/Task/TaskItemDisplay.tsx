@@ -47,6 +47,7 @@ interface TaskItemDisplayProps {
     dense?: boolean;
     actionsOverlay?: boolean;
     dragHandle?: ReactNode;
+    showHoverHint?: boolean;
     t: (key: string) => string;
 }
 
@@ -90,6 +91,7 @@ export function TaskItemDisplay({
     dense = false,
     actionsOverlay = false,
     dragHandle,
+    showHoverHint = true,
     t,
 }: TaskItemDisplayProps) {
     const {
@@ -111,12 +113,14 @@ export function TaskItemDisplay({
         && (project || area || (task.contexts?.length ?? 0) > 0);
     const resolvedDirection = resolveTaskTextDirection(task);
     const isRtl = resolvedDirection === 'rtl';
-    const hoverHintText = (() => {
-        const hint = t('task.hoverHint');
-        return hint === 'task.hoverHint'
-            ? 'Click to toggle details / Double-click to edit'
-            : hint;
-    })();
+    const hoverHintText = showHoverHint
+        ? (() => {
+            const hint = t('task.hoverHint');
+            return hint === 'task.hoverHint'
+                ? 'Click to toggle details / Double-click to edit'
+                : hint;
+        })()
+        : '';
     const handleProjectClick = (event: MouseEvent<HTMLSpanElement>, projectId: string) => {
         event.stopPropagation();
         onOpenProject?.(projectId);
@@ -170,7 +174,7 @@ export function TaskItemDisplay({
         <div className={cn("flex-1 min-w-0 flex items-start gap-3", actionsOverlay && "relative")}>
             {overlayDragHandle && (
                 <div
-                    className="absolute left-0 top-2 flex items-center -translate-x-2"
+                    className="absolute left-0 top-2 flex items-center -translate-x-2 z-10"
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     {dragHandle}
@@ -178,7 +182,7 @@ export function TaskItemDisplay({
             )}
             {overlayQuickDone && (
                 <div
-                    className="absolute left-4 top-2 flex items-center"
+                    className="absolute left-4 top-2 flex items-center z-10"
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     <button
@@ -224,7 +228,7 @@ export function TaskItemDisplay({
                         selectionMode ? "cursor-pointer hover:bg-muted/40" : "cursor-default",
                     )}
                 >
-                    {!selectionMode && !readOnly && (
+                    {!selectionMode && !readOnly && showHoverHint && (
                         <span
                             className={cn(
                                 "pointer-events-none absolute right-2 top-1 text-[10px] text-muted-foreground/70 opacity-0 transition-opacity group-hover/content:opacity-100",

@@ -118,6 +118,7 @@ function DraggableTask({ task }: { task: Task }) {
                     showStatusSelect={false}
                     showProjectBadgeInActions={false}
                     actionsOverlay
+                    showHoverHint={false}
                     enableDoubleClickEdit
                 />
             </div>
@@ -132,6 +133,7 @@ function DraggableTask({ task }: { task: Task }) {
                 showStatusSelect={false}
                 showProjectBadgeInActions={false}
                 actionsOverlay
+                showHoverHint={false}
                 dragHandle={(
                     <button
                         type="button"
@@ -501,6 +503,7 @@ export function BoardView() {
                                     showStatusSelect={false}
                                     showProjectBadgeInActions={false}
                                     actionsOverlay
+                                    showHoverHint={false}
                                 />
                             </div>
                         ) : null}
