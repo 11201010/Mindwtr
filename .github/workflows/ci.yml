@@ -47,6 +47,16 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
+
+      - name: Ensure Rust toolchain (retry)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command: |
+            rustup toolchain install stable --profile minimal --no-self-update
+            rustup default stable
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0"
