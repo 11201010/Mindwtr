@@ -120,6 +120,15 @@ const setWebdavDownloadBackoff = (attachmentId: string, error: unknown): void =>
     webdavAttachmentDownloadBackoff.set(attachmentId, Date.now() + WEBDAV_ATTACHMENT_ERROR_BACKOFF_MS);
 };
 
+const pruneWebdavDownloadBackoff = (): void => {
+    const now = Date.now();
+    for (const [id, blockedUntil] of webdavAttachmentDownloadBackoff) {
+        if (blockedUntil <= now) {
+            webdavAttachmentDownloadBackoff.delete(id);
+        }
+    }
+};
+
 const isWebdavRateLimitedError = (error: unknown): boolean => {
     const status = getErrorStatus(error);
     if (status === 429 || status === 503) return true;
@@ -620,6 +629,8 @@ async function syncAttachments(
             attachmentsById.set(attachment.id, attachment);
         }
     }
+
+    pruneWebdavDownloadBackoff();
 
     logSyncInfo('WebDAV attachment sync start', { count: String(attachmentsById.size) });
 
