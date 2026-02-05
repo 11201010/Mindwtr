@@ -191,9 +191,9 @@ async function rescheduleDailyDigest(api: NotificationsApi) {
         data: { kind: 'daily-digest', when: 'morning' },
       } as any,
       trigger: {
-        type: api.SchedulableTriggerInputTypes.DAILY,
         hour,
         minute,
+        repeats: true,
       } as any,
     }, 'daily digest (morning)');
     if (id) {
@@ -210,9 +210,9 @@ async function rescheduleDailyDigest(api: NotificationsApi) {
         data: { kind: 'daily-digest', when: 'evening' },
       } as any,
       trigger: {
-        type: api.SchedulableTriggerInputTypes.DAILY,
         hour,
         minute,
+        repeats: true,
       } as any,
     }, 'daily digest (evening)');
     if (id) {
@@ -255,10 +255,10 @@ async function rescheduleWeeklyReview(api: NotificationsApi) {
       data: { kind: 'weekly-review', weekday },
     } as any,
     trigger: {
-      type: api.SchedulableTriggerInputTypes.WEEKLY,
       weekday,
       hour,
       minute,
+      repeats: true,
     } as any,
   }, 'weekly review');
 }
