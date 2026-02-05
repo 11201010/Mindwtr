@@ -2,6 +2,7 @@ export * from './types';
 export * from './storage';
 export * from './store';
 export * from './sync';
+export * from './sync-helpers';
 export * from './task-utils';
 export * from './contexts';
 export * from './i18n';

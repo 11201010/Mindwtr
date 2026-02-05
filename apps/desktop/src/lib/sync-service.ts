@@ -24,6 +24,9 @@ import {
     flushPendingSave,
     performSyncCycle,
     normalizeAppData,
+    normalizeWebdavUrl,
+    normalizeCloudUrl,
+    sanitizeAppDataForRemote,
     withRetry,
     CLOCK_SKEW_THRESHOLD_MS,
     appendSyncHistory,
@@ -199,16 +202,6 @@ const buildStoreSnapshot = (): AppData => {
 };
 
 const cloneAppData = (data: AppData): AppData => JSON.parse(JSON.stringify(data)) as AppData;
-
-const normalizeWebdavUrl = (rawUrl: string): string => {
-    const trimmed = rawUrl.replace(/\/+$/, '');
-    return trimmed.toLowerCase().endsWith('.json') ? trimmed : `${trimmed}/${SYNC_FILE_NAME}`;
-};
-
-const normalizeCloudUrl = (rawUrl: string): string => {
-    const trimmed = rawUrl.replace(/\/+$/, '');
-    return trimmed.toLowerCase().endsWith('/data') ? trimmed : `${trimmed}/data`;
-};
 
 const ATTACHMENTS_DIR_NAME = 'attachments';
 const LOCAL_ATTACHMENTS_DIR = `mindwtr/${ATTACHMENTS_DIR_NAME}`;
@@ -484,71 +477,6 @@ const getFileSyncDir = (syncPath: string): string => {
         return lastSlash > -1 ? trimmed.slice(0, lastSlash) : '';
     }
     return trimmed;
-};
-
-const sanitizeAppDataForRemote = (data: AppData): AppData => {
-    const sanitizeAttachments = (attachments?: Attachment[]): Attachment[] | undefined => {
-        if (!attachments) return attachments;
-        return attachments.map((attachment) => {
-            if (attachment.kind !== 'file') return attachment;
-            return {
-                ...attachment,
-                uri: '',
-                localStatus: undefined,
-            };
-        });
-    };
-
-    const sanitizeSettingsForRemote = (settings: AppData['settings']): AppData['settings'] => {
-        const prefs = settings.syncPreferences ?? {};
-        const next: AppData['settings'] = { ...settings };
-
-        if (prefs.appearance !== true) {
-            next.theme = undefined;
-            next.appearance = undefined;
-            next.keybindingStyle = undefined;
-        }
-
-        if (prefs.language !== true) {
-            next.language = undefined;
-            next.weekStart = undefined;
-            next.dateFormat = undefined;
-        }
-
-        if (prefs.externalCalendars !== true) {
-            next.externalCalendars = undefined;
-        }
-
-        if (prefs.ai !== true) {
-            next.ai = undefined;
-        } else if (next.ai) {
-            next.ai = {
-                ...next.ai,
-                apiKey: undefined,
-                speechToText: next.ai.speechToText
-                    ? {
-                        ...next.ai.speechToText,
-                        offlineModelPath: undefined,
-                    }
-                    : next.ai.speechToText,
-            };
-        }
-
-        return next;
-    };
-
-    return {
-        ...data,
-        tasks: data.tasks.map((task) => ({
-            ...task,
-            attachments: sanitizeAttachments(task.attachments),
-        })),
-        projects: data.projects.map((project) => ({
-            ...project,
-            attachments: sanitizeAttachments(project.attachments),
-        })),
-        settings: sanitizeSettingsForRemote(data.settings),
-    };
 };
 
 async function tauriInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

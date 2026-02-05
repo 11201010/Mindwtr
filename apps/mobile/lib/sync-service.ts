@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry } from '@mindwtr/core';
+import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFile, writeSyncFile } from './storage-file';
-import { getBaseSyncUrl, getCloudBaseUrl, sanitizeAppDataForRemote, syncCloudAttachments, syncFileAttachments, syncWebdavAttachments, cleanupAttachmentTempFiles } from './attachment-sync';
+import { getBaseSyncUrl, getCloudBaseUrl, syncCloudAttachments, syncFileAttachments, syncWebdavAttachments, cleanupAttachmentTempFiles } from './attachment-sync';
 import { getExternalCalendars, saveExternalCalendars } from './external-calendar';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
@@ -59,16 +59,6 @@ const persistExternalCalendars = async (data: AppData): Promise<void> => {
   } catch (error) {
     logSyncWarning('Failed to save external calendars from sync', error);
   }
-};
-
-const normalizeWebdavUrl = (rawUrl: string): string => {
-  const trimmed = rawUrl.replace(/\/+$/, '');
-  return trimmed.toLowerCase().endsWith('.json') ? trimmed : `${trimmed}/${SYNC_FILE_NAME}`;
-};
-
-const normalizeCloudUrl = (rawUrl: string): string => {
-  const trimmed = rawUrl.replace(/\/+$/, '');
-  return trimmed.toLowerCase().endsWith('/data') ? trimmed : `${trimmed}/data`;
 };
 
 const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
