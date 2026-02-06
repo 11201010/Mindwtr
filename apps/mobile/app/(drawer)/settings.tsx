@@ -52,7 +52,7 @@ import {
 import { pickAndParseSyncFile, pickAndParseSyncFolder, exportData } from '../../lib/storage-file';
 import { fetchExternalCalendarEvents, getExternalCalendars, saveExternalCalendars } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
-import { clearLog, getLogPath, logError, logWarn } from '../../lib/app-log';
+import { clearLog, ensureLogFilePath, logError, logInfo, logWarn } from '../../lib/app-log';
 import { performMobileSync } from '../../lib/sync-service';
 import { requestNotificationPermission, startMobileNotifications } from '../../lib/notification-service';
 import {
@@ -1115,17 +1115,18 @@ export default function SettingsPage() {
                 loggingEnabled: value,
             },
         })
+            .then(async () => {
+                if (!value) return;
+                const ensuredPath = await ensureLogFilePath();
+                if (!ensuredPath) return;
+                await logInfo('Debug logging enabled', { scope: 'diagnostics' });
+            })
             .catch(logSettingsError);
     };
 
     const handleShareLog = async () => {
-        const path = await getLogPath();
+        const path = await ensureLogFilePath();
         if (!path) {
-            Alert.alert(t('settings.debugLogging'), t('settings.logMissing'));
-            return;
-        }
-        const logFile = new File(path);
-        if (!logFile.exists) {
             Alert.alert(t('settings.debugLogging'), t('settings.logMissing'));
             return;
         }
@@ -1134,7 +1135,7 @@ export default function SettingsPage() {
             Alert.alert(t('settings.debugLogging'), t('settings.shareUnavailable'));
             return;
         }
-        await Sharing.shareAsync(logFile.uri, { mimeType: 'text/plain' });
+        await Sharing.shareAsync(path, { mimeType: 'text/plain' });
     };
 
     const handleClearLog = async () => {

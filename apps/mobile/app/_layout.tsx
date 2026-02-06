@@ -14,7 +14,7 @@ import { ThemeProvider, useTheme } from '../contexts/theme-context';
 import { LanguageProvider, useLanguage } from '../contexts/language-context';
 import { setStorageAdapter, useTaskStore, flushPendingSave, isSupportedLanguage } from '@mindwtr/core';
 import { mobileStorage } from '../lib/storage-adapter';
-import { startMobileNotifications, stopMobileNotifications } from '../lib/notification-service';
+import { setNotificationOpenHandler, startMobileNotifications, stopMobileNotifications } from '../lib/notification-service';
 import { performMobileSync } from '../lib/sync-service';
 import { updateAndroidWidgetFromStore } from '../lib/widget-service';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -107,6 +107,15 @@ function RootLayoutContent() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    setNotificationOpenHandler(() => {
+      router.push('/review');
+    });
+    return () => {
+      setNotificationOpenHandler(null);
+    };
+  }, [router]);
 
   const requestSync = useCallback((minIntervalMs = 5_000) => {
     syncPending.current = true;

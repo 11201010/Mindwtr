@@ -25,6 +25,14 @@ type NotificationResponse = {
 type Subscription = { remove: () => void };
 
 type ScheduledEntry = { scheduledAtIso: string; notificationId: string };
+type NotificationOpenPayload = {
+  notificationId?: string;
+  actionIdentifier?: string;
+  taskId?: string;
+  projectId?: string;
+  kind?: string;
+};
+type NotificationOpenHandler = (payload: NotificationOpenPayload) => void;
 
 const scheduledByTask = new Map<string, ScheduledEntry>();
 const taskIdByNotificationId = new Map<string, string>();
@@ -37,6 +45,8 @@ let started = false;
 let responseSubscription: Subscription | null = null;
 let storeSubscription: (() => void) | null = null;
 let rescheduleTimer: ReturnType<typeof setTimeout> | null = null;
+let notificationOpenHandler: NotificationOpenHandler | null = null;
+let lastHandledNotificationResponseKey: string | null = null;
 
 let Notifications: NotificationsApi | null = null;
 const ANDROID_NOTIFICATION_CHANNEL_ID = 'mindwtr-reminders';
@@ -52,6 +62,10 @@ const clearRescheduleTimer = () => {
     rescheduleTimer = null;
   }
 };
+
+export function setNotificationOpenHandler(handler: NotificationOpenHandler | null): void {
+  notificationOpenHandler = handler;
+}
 
 const normalizeNotificationData = (data?: Record<string, unknown>): Record<string, unknown> | undefined => {
   if (!data) return undefined;
@@ -454,6 +468,49 @@ async function snoozeTask(api: NotificationsApi, taskId: string, minutes: number
   await scheduleForTask(api, task, snoozeAt);
 }
 
+function isDismissAction(actionIdentifier?: string): boolean {
+  if (!actionIdentifier) return false;
+  return actionIdentifier.toUpperCase().includes('DISMISS');
+}
+
+function getResponseKey(response: NotificationResponse): string {
+  const notificationId = response.notification?.request?.identifier ?? 'unknown';
+  const actionIdentifier = response.actionIdentifier ?? 'default';
+  return `${notificationId}:${actionIdentifier}`;
+}
+
+function handleNotificationResponse(api: NotificationsApi, response: NotificationResponse): void {
+  const responseKey = getResponseKey(response);
+  if (lastHandledNotificationResponseKey === responseKey) return;
+  lastHandledNotificationResponseKey = responseKey;
+
+  const notificationId = response.notification?.request?.identifier;
+  const data = response.notification?.request?.content?.data as Record<string, unknown> | undefined;
+  const taskId = (typeof data?.taskId === 'string' ? data.taskId : undefined)
+    ?? (notificationId ? taskIdByNotificationId.get(notificationId) : undefined);
+
+  if (response.actionIdentifier === 'snooze10' && taskId) {
+    snoozeTask(api, taskId, 10).catch((error) => logNotificationError('Failed to snooze task', error));
+    return;
+  }
+  if (isDismissAction(response.actionIdentifier)) return;
+  if (!notificationOpenHandler) return;
+
+  const projectId = typeof data?.projectId === 'string' ? data.projectId : undefined;
+  const kind = typeof data?.kind === 'string' ? data.kind : undefined;
+  try {
+    notificationOpenHandler({
+      notificationId,
+      actionIdentifier: response.actionIdentifier,
+      taskId,
+      projectId,
+      kind,
+    });
+  } catch (error) {
+    logNotificationError('Failed to handle notification open', error);
+  }
+}
+
 export async function startMobileNotifications() {
   if (started) return;
   started = true;
@@ -535,13 +592,16 @@ export async function startMobileNotifications() {
 
   responseSubscription?.remove();
   responseSubscription = api.addNotificationResponseReceivedListener((response: NotificationResponse) => {
-    const notificationId = response.notification?.request?.identifier;
-    const taskId = (response.notification?.request?.content?.data as any)?.taskId as string | undefined
-      ?? (notificationId ? taskIdByNotificationId.get(notificationId) : undefined);
-    if (response.actionIdentifier === 'snooze10' && taskId) {
-      snoozeTask(api, taskId, 10).catch((error) => logNotificationError('Failed to snooze task', error));
-    }
+    handleNotificationResponse(api, response);
   });
+  if (typeof api.getLastNotificationResponseAsync === 'function') {
+    api.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (!response) return;
+        handleNotificationResponse(api, response as NotificationResponse);
+      })
+      .catch((error) => logNotificationError('Failed to read last notification response', error));
+  }
 }
 
 export async function stopMobileNotifications() {
@@ -573,5 +633,6 @@ export async function stopMobileNotifications() {
   scheduledWeeklyReviewId = null;
   digestConfigKey = null;
   weeklyReviewConfigKey = null;
+  lastHandledNotificationResponseKey = null;
   started = false;
 }

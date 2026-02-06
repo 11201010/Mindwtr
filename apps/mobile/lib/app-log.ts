@@ -173,6 +173,18 @@ export async function getLogPath(): Promise<string | null> {
   return LOG_FILE?.uri ?? null;
 }
 
+export async function ensureLogFilePath(): Promise<string | null> {
+  if (!LOG_FILE) return null;
+  try {
+    await ensureLogDir();
+    if (!ensureLogFile()) return null;
+    if (!LOG_FILE.exists) return null;
+    return LOG_FILE.uri;
+  } catch {
+    return null;
+  }
+}
+
 export async function clearLog(): Promise<void> {
   if (!LOG_FILE) return;
   try {
