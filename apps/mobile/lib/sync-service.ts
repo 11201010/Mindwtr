@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync } from '@mindwtr/core';
+import { AppData, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, mergeAppData } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFile, writeSyncFile } from './storage-file';
@@ -60,6 +60,17 @@ const injectExternalCalendars = async (data: AppData): Promise<AppData> =>
 
 const persistExternalCalendars = async (data: AppData): Promise<void> =>
   persistExternalCalendarsForSync(data, externalCalendarProvider);
+
+const getInMemoryAppDataSnapshot = (): AppData => {
+  const state = useTaskStore.getState();
+  return {
+    tasks: state._allTasks ?? state.tasks ?? [],
+    projects: state._allProjects ?? state.projects ?? [],
+    sections: state._allSections ?? state.sections ?? [],
+    areas: state._allAreas ?? state.areas ?? [],
+    settings: state.settings ?? {},
+  };
+};
 
 const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
   if (!lastCleanupAt) return true;
@@ -160,7 +171,8 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       step = 'attachments_prepare';
       logSyncInfo('Sync step', { step });
       try {
-        const localData = await mobileStorage.getData();
+        const persistedData = await mobileStorage.getData();
+        const localData = mergeAppData(persistedData, getInMemoryAppDataSnapshot());
         let preMutated = false;
         if (backend === 'webdav' && webdavConfig?.url) {
           const baseSyncUrl = getBaseSyncUrl(webdavConfig.url);
@@ -180,7 +192,8 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       }
       const syncResult = await performSyncCycle({
         readLocal: async () => {
-          const baseData = await mobileStorage.getData();
+          const persistedData = await mobileStorage.getData();
+          const baseData = mergeAppData(persistedData, getInMemoryAppDataSnapshot());
           return await injectExternalCalendars(baseData);
         },
         readRemote: async () => {
