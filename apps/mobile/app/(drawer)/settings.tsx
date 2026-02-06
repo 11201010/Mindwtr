@@ -1052,9 +1052,12 @@ export default function SettingsPage() {
 
             const result = await performMobileSync(syncBackend === 'file' ? syncPath || undefined : undefined);
             if (result.success) {
+                const conflictCount = (result.stats?.tasks.conflicts || 0) + (result.stats?.projects.conflicts || 0);
                 Alert.alert(
                     localize('Success', '成功'),
-                    localize('Sync completed!', '同步完成！')
+                    conflictCount > 0
+                        ? localize(`Sync completed with ${conflictCount} conflicts (resolved automatically).`, `同步完成，发现 ${conflictCount} 个冲突（已自动处理）。`)
+                        : localize('Sync completed!', '同步完成！')
                 );
             } else {
                 throw new Error(result.error || 'Unknown error');
