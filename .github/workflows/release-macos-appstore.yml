@@ -159,6 +159,7 @@ jobs:
 
       - name: Upload to App Store Connect
         env:
+          MAS_APP_PASSWORD: ${{ secrets.MAS_APP_PASSWORD }}
           MAS_APPLE_ID: ${{ secrets.MAS_APPLE_ID }}
           MAS_APPLE_PASSWORD: ${{ secrets.MAS_APPLE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -166,9 +167,9 @@ jobs:
         run: |
           set -euo pipefail
           UPLOAD_APPLE_ID="${MAS_APPLE_ID:-${APPLE_ID:-}}"
-          UPLOAD_APPLE_PASSWORD="${MAS_APPLE_PASSWORD:-${APPLE_PASSWORD:-}}"
+          UPLOAD_APPLE_PASSWORD="${MAS_APP_PASSWORD:-${MAS_APPLE_PASSWORD:-${APPLE_PASSWORD:-}}}"
           if [ -z "${UPLOAD_APPLE_ID:-}" ] || [ -z "${UPLOAD_APPLE_PASSWORD:-}" ]; then
-            echo "::error::Missing upload credentials. Set MAS_APPLE_ID/MAS_APPLE_PASSWORD or APPLE_ID/APPLE_PASSWORD."
+            echo "::error::Missing upload credentials. Set MAS_APPLE_ID + MAS_APP_PASSWORD (or MAS_APPLE_PASSWORD / APPLE_PASSWORD)."
             exit 1
           fi
           if [ -z "${PKG_PATH:-}" ] || [ ! -f "$PKG_PATH" ]; then
