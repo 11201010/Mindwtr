@@ -70,21 +70,25 @@ export const flushPendingSave = async (): Promise<void> => {
         const dataToSave = pendingData;
         const onErrorCallbacks = pendingOnError;
         pendingOnError = [];
-        saveInFlight = storage.saveData(dataToSave).then(() => {
-            savedVersion = targetVersion;
-        }).catch((e) => {
-            logError('Failed to flush pending save', { scope: 'store', category: 'storage', error: e });
-            if (onErrorCallbacks.length > 0) {
-                onErrorCallbacks.forEach((callback) => callback('Failed to save data'));
-            }
-            try {
-                useTaskStore.getState().setError('Failed to save data');
-            } catch {
-                // Ignore if store is not initialized yet
-            }
-        }).finally(() => {
-            saveInFlight = null;
-        });
+        saveInFlight = Promise.resolve()
+            .then(() => storage.saveData(dataToSave))
+            .then(() => {
+                savedVersion = targetVersion;
+            })
+            .catch((e) => {
+                logError('Failed to flush pending save', { scope: 'store', category: 'storage', error: e });
+                if (onErrorCallbacks.length > 0) {
+                    onErrorCallbacks.forEach((callback) => callback('Failed to save data'));
+                }
+                try {
+                    useTaskStore.getState().setError('Failed to save data');
+                } catch {
+                    // Ignore if store is not initialized yet
+                }
+            })
+            .finally(() => {
+                saveInFlight = null;
+            });
         await saveInFlight;
     }
 };
