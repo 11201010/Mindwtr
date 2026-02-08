@@ -22,7 +22,15 @@ export const toStableJson = (value: unknown): string => {
     return JSON.stringify(normalize(value));
 };
 
-export const hashString = (value: string): string => {
+export const hashString = async (value: string): Promise<string> => {
+    if (globalThis.crypto?.subtle) {
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+        return Array.from(new Uint8Array(digest))
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    // Fallback for runtimes without Web Crypto.
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
         hash = Math.imul(31, hash) + value.charCodeAt(i);

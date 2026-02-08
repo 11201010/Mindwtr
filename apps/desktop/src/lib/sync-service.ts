@@ -1216,8 +1216,8 @@ export class SyncService {
         }
     }
 
-    private static markSyncWrite(data: AppData) {
-        const hash = hashString(toStableJson(data));
+    private static async markSyncWrite(data: AppData) {
+        const hash = await hashString(toStableJson(data));
         SyncService.lastWrittenHash = hash;
         SyncService.ignoreFileEventsUntil = Date.now() + 2000;
     }
@@ -1232,7 +1232,7 @@ export class SyncService {
         try {
             const syncData = await tauriInvoke<AppData>('read_sync_file');
             const normalized = normalizeAppData(syncData);
-            const hash = hashString(toStableJson(normalized));
+            const hash = await hashString(toStableJson(normalized));
             if (hash === SyncService.lastWrittenHash) {
                 return;
             }
@@ -1476,7 +1476,7 @@ export class SyncService {
                         await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
                         return;
                     }
-                    SyncService.markSyncWrite(sanitized);
+                    await SyncService.markSyncWrite(sanitized);
                     await tauriInvoke('write_sync_file', { data: sanitized });
                 },
                 onStep: (next) => {
@@ -1518,15 +1518,19 @@ export class SyncService {
                         const config = await SyncService.getWebDavConfig();
                         const baseUrl = config.url ? getBaseSyncUrl(config.url) : '';
                         if (baseUrl) {
-                            const mutated = await syncAttachments(mergedData, config, baseUrl);
+                            const candidateData = cloneAppData(mergedData);
+                            const mutated = await syncAttachments(candidateData, config, baseUrl);
                             if (mutated) {
+                                mergedData = candidateData;
                                 await tauriInvoke('save_data', { data: mergedData });
                             }
                         }
                     } else if (backend === 'file') {
                         if (fileBaseDir) {
-                            const mutated = await syncFileAttachments(mergedData, fileBaseDir);
+                            const candidateData = cloneAppData(mergedData);
+                            const mutated = await syncFileAttachments(candidateData, fileBaseDir);
                             if (mutated) {
+                                mergedData = candidateData;
                                 await tauriInvoke('save_data', { data: mergedData });
                             }
                         }
@@ -1534,8 +1538,10 @@ export class SyncService {
                         const config = cloudConfig ?? await SyncService.getCloudConfig();
                         const baseUrl = config.url ? getCloudBaseUrl(config.url) : '';
                         if (baseUrl) {
-                            const mutated = await syncCloudAttachments(mergedData, config, baseUrl);
+                            const candidateData = cloneAppData(mergedData);
+                            const mutated = await syncCloudAttachments(candidateData, config, baseUrl);
                             if (mutated) {
+                                mergedData = candidateData;
                                 await tauriInvoke('save_data', { data: mergedData });
                             }
                         }
