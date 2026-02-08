@@ -814,6 +814,7 @@ export default function SettingsPage() {
     const GITHUB_RELEASES_API = 'https://api.github.com/repos/dongdongbh/Mindwtr/releases/latest';
     const GITHUB_RELEASES_URL = 'https://github.com/dongdongbh/Mindwtr/releases/latest';
     const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr';
+    const PLAY_STORE_LOOKUP_URL = 'https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr&hl=en_US&gl=US';
     const PLAY_STORE_MARKET_URL = 'market://details?id=tech.dongdongbh.mindwtr';
 
     const persistUpdateBadge = useCallback(async (next: boolean, latestVersion?: string) => {
@@ -842,6 +843,42 @@ export default function SettingsPage() {
         }
         return response.json();
     }, [GITHUB_RELEASES_API]);
+
+    const parsePlayStoreVersion = useCallback((html: string): string | null => {
+        const patterns = [
+            /"softwareVersion"\s*:\s*"([^"]+)"/i,
+            /\\"softwareVersion\\"\s*:\s*\\"([^"]+)\\"/i,
+            /itemprop="softwareVersion"[^>]*>\s*([^<]+)\s*</i,
+        ];
+        for (const pattern of patterns) {
+            const match = html.match(pattern);
+            const candidate = match?.[1]?.trim();
+            if (!candidate) continue;
+            const versionMatch = candidate.match(/\d+(?:\.\d+){1,3}/);
+            if (versionMatch?.[0]) {
+                return versionMatch[0];
+            }
+        }
+        return null;
+    }, []);
+
+    const fetchLatestPlayStoreVersion = useCallback(async () => {
+        const response = await fetch(PLAY_STORE_LOOKUP_URL, {
+            headers: {
+                'Accept': 'text/html',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`Play Store request failed: ${response.status}`);
+        }
+        const html = await response.text();
+        const version = parsePlayStoreVersion(html);
+        if (!version) {
+            throw new Error('Unable to parse Play Store version');
+        }
+        return version;
+    }, [PLAY_STORE_LOOKUP_URL, parsePlayStoreVersion]);
 
     useEffect(() => {
         let cancelled = false;
@@ -873,8 +910,9 @@ export default function SettingsPage() {
                 const lastCheck = Number(lastCheckRaw || 0);
                 if (Date.now() - lastCheck < UPDATE_BADGE_INTERVAL_MS) return;
                 await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
-                const release = await fetchLatestRelease();
-                const latestVersion = release.tag_name?.replace(/^v/, '') || '0.0.0';
+                const latestVersion = Platform.OS === 'android'
+                    ? await fetchLatestPlayStoreVersion()
+                    : (await fetchLatestRelease()).tag_name?.replace(/^v/, '') || '0.0.0';
                 const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
                 if (cancelled) return;
                 await persistUpdateBadge(hasUpdate, hasUpdate ? latestVersion : undefined);
@@ -886,29 +924,41 @@ export default function SettingsPage() {
         return () => {
             cancelled = true;
         };
-    }, [currentVersion, fetchLatestRelease, isExpoGo, persistUpdateBadge]);
+    }, [currentVersion, fetchLatestPlayStoreVersion, fetchLatestRelease, isExpoGo, persistUpdateBadge]);
 
     const handleCheckUpdates = async () => {
         setIsCheckingUpdate(true);
         try {
+            await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
+
             if (Platform.OS === 'android') {
                 const canOpenMarket = await Linking.canOpenURL(PLAY_STORE_MARKET_URL);
                 const targetUrl = canOpenMarket ? PLAY_STORE_MARKET_URL : PLAY_STORE_URL;
-                Alert.alert(
-                    localize('Check for Updates', '检查更新'),
-                    localize(
-                        'Updates on Android are managed by Google Play. Open the Play Store listing?',
-                        'Android 更新由 Google Play 管理。是否打开应用页面？'
-                    ),
-                    [
-                        { text: localize('Later', '稍后'), style: 'cancel' },
-                        { text: localize('Open', '打开'), onPress: () => Linking.openURL(targetUrl) }
-                    ]
-                );
+                const latestVersion = await fetchLatestPlayStoreVersion();
+                const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+                if (hasUpdate) {
+                    Alert.alert(
+                        localize('Update Available', '有可用更新'),
+                        localize(
+                            `v${currentVersion} → v${latestVersion}\n\nUpdate is available on Google Play. Open app listing now?`,
+                            `v${currentVersion} → v${latestVersion}\n\nGoogle Play 已提供更新，是否立即打开应用页面？`
+                        ),
+                        [
+                            { text: localize('Later', '稍后'), style: 'cancel' },
+                            { text: localize('Open', '打开'), onPress: () => Linking.openURL(targetUrl) }
+                        ]
+                    );
+                    await persistUpdateBadge(true, latestVersion);
+                } else {
+                    Alert.alert(
+                        localize('Up to Date', '已是最新'),
+                        localize('You are using the latest Google Play version!', '您正在使用 Google Play 最新版本！')
+                    );
+                    await persistUpdateBadge(false);
+                }
                 return;
             }
 
-            await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
             const release = await fetchLatestRelease();
             const latestVersion = release.tag_name?.replace(/^v/, '') || '0.0.0';
 
