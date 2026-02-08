@@ -134,15 +134,28 @@ class LocalSyncAbort extends Error {
     }
 }
 
-const buildStoreSnapshot = (): AppData => {
+// Sync should start from persisted data so startup sync cannot overwrite settings with an unhydrated store snapshot.
+const readLocalDataForSync = async (): Promise<AppData> => {
+    if (isTauriRuntime()) {
+        try {
+            const persisted = await tauriInvoke<AppData>('get_data');
+            return normalizeAppData(persisted);
+        } catch (error) {
+            logSyncWarning('Failed to read persisted local data for sync; using in-memory snapshot', error);
+        }
+    } else {
+        const persisted = await webStorage.getData();
+        return normalizeAppData(persisted);
+    }
+
     const state = useTaskStore.getState();
-    return {
+    return normalizeAppData({
         tasks: [...state._allTasks],
         projects: [...state._allProjects],
         sections: [...state._allSections],
         areas: [...state._allAreas],
         settings: state.settings ?? {},
-    };
+    });
 };
 
 const LOCAL_ATTACHMENTS_DIR = `mindwtr/${ATTACHMENTS_DIR_NAME}`;
@@ -1372,7 +1385,7 @@ export class SyncService {
             if (isTauriRuntime() && (backend === 'webdav' || backend === 'file' || backend === 'cloud')) {
                 setStep('attachments_prepare');
                 try {
-                    const localData = cloneAppData(buildStoreSnapshot());
+                    const localData = await readLocalDataForSync();
                     let preMutated = false;
                     if (backend === 'webdav' && webdavConfig?.url) {
                         const baseUrl = getBaseSyncUrl(webdavConfig.url);
@@ -1396,9 +1409,7 @@ export class SyncService {
             }
             const syncResult = await performSyncCycle({
                 readLocal: async () => {
-                    const baseData = isTauriRuntime()
-                        ? cloneAppData(buildStoreSnapshot())
-                        : await webStorage.getData();
+                    const baseData = await readLocalDataForSync();
                     const data = await injectExternalCalendars(baseData);
                     localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
                     return data;
