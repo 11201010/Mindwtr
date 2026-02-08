@@ -124,19 +124,29 @@ jobs:
             JWT_SIGNATURE="$(printf '%s' "$JWT_UNSIGNED" | openssl dgst -binary -sha256 -sign "$KEY_PATH" | b64url)"
             ASC_TOKEN="${JWT_UNSIGNED}.${JWT_SIGNATURE}"
 
-            APP_LOOKUP_URL="https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]=${EXPECTED_BUNDLE_ID}&limit=1"
-            APP_LOOKUP_JSON="$(curl -fsSL -H "Authorization: Bearer ${ASC_TOKEN}" "$APP_LOOKUP_URL")"
+            APP_LOOKUP_JSON="$(curl -fsSLG \
+              -H "Authorization: Bearer ${ASC_TOKEN}" \
+              --data-urlencode "filter[bundleId]=${EXPECTED_BUNDLE_ID}" \
+              --data-urlencode "limit=1" \
+              "https://api.appstoreconnect.apple.com/v1/apps")"
             APPSTORE_APP_ID="$(printf '%s' "$APP_LOOKUP_JSON" | jq -r '.data[0].id // empty')"
 
             if [ -n "${APPSTORE_APP_ID}" ]; then
-              NEXT_URL="https://api.appstoreconnect.apple.com/v1/builds?filter[app]=${APPSTORE_APP_ID}&limit=200"
-              while [ -n "${NEXT_URL}" ]; do
-                BUILDS_JSON="$(curl -fsSL -H "Authorization: Bearer ${ASC_TOKEN}" "$NEXT_URL")"
+              BUILDS_JSON="$(curl -fsSLG \
+                -H "Authorization: Bearer ${ASC_TOKEN}" \
+                --data-urlencode "filter[app]=${APPSTORE_APP_ID}" \
+                --data-urlencode "limit=200" \
+                "https://api.appstoreconnect.apple.com/v1/builds")"
+              while : ; do
                 PAGE_MAX="$(printf '%s' "$BUILDS_JSON" | jq -r '[.data[]?.attributes.version | select(type=="string") | select(test("^[0-9]+$")) | tonumber] | max // 0')"
                 if [ "${PAGE_MAX}" -gt "${REMOTE_MAX_BUILD}" ]; then
                   REMOTE_MAX_BUILD="${PAGE_MAX}"
                 fi
                 NEXT_URL="$(printf '%s' "$BUILDS_JSON" | jq -r '.links.next // empty')"
+                if [ -z "${NEXT_URL}" ]; then
+                  break
+                fi
+                BUILDS_JSON="$(curl -fsSLg -H "Authorization: Bearer ${ASC_TOKEN}" "$NEXT_URL")"
               done
             else
               echo "::warning::App Store Connect app lookup returned no app for bundle id ${EXPECTED_BUNDLE_ID}."
