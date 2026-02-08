@@ -68,6 +68,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
         'contexts',
         'search',
         'agenda',
+        'tutorial',
     ]);
     const isWideView = wideViews.has(currentView);
     const fullWidthViews = new Set([

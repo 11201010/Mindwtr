@@ -514,7 +514,10 @@ export function ProjectsView() {
     const renderProjectSections = (renderTasks: (list: Task[]) => ReactNode) => {
         if (projectSections.length === 0) {
             return (
-                <SectionDropZone id={NO_SECTION_CONTAINER} className="min-h-[120px]">
+                <SectionDropZone
+                    id={NO_SECTION_CONTAINER}
+                    className="min-h-[120px] rounded-xl border border-dashed border-border/80 bg-muted/20 p-4"
+                >
                     {orderedProjectTasks.length > 0 ? (
                         renderTasks(orderedProjectTasks)
                     ) : (
@@ -526,7 +529,7 @@ export function ProjectsView() {
             );
         }
         return (
-            <div className="space-y-4">
+            <div className="space-y-3">
                 {sectionTaskGroups.sections.map((group) => {
                     const isCollapsed = group.section.isCollapsed;
                     const taskCount = group.tasks.length;
@@ -536,9 +539,9 @@ export function ProjectsView() {
                         <SectionDropZone
                             key={group.section.id}
                             id={getSectionContainerId(group.section.id)}
-                            className="border border-border rounded-lg bg-card/40"
+                            className="rounded-xl border border-border/70 bg-background/40"
                         >
-                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
                                 <button
                                     type="button"
                                     onClick={() => handleToggleSection(group.section)}
@@ -556,7 +559,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleOpenSectionTaskPrompt(group.section.id)}
-                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('projects.addTask')}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
@@ -565,7 +568,7 @@ export function ProjectsView() {
                                         type="button"
                                         onClick={() => handleToggleSectionNotes(group.section.id)}
                                         className={cn(
-                                            'p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground',
+                                            'h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center',
                                             (hasNotes || notesOpen) && 'text-primary'
                                         )}
                                         aria-label={t('projects.sectionNotes')}
@@ -575,7 +578,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleRenameSection(group.section)}
-                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('common.edit')}
                                     >
                                         <Pencil className="h-3.5 w-3.5" />
@@ -583,7 +586,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleDeleteSection(group.section)}
-                                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                        className="h-7 w-7 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center"
                                         aria-label={t('common.delete')}
                                     >
                                         <Trash2 className="h-3.5 w-3.5" />
@@ -591,9 +594,9 @@ export function ProjectsView() {
                                 </div>
                             </div>
                             {notesOpen && (
-                                <div className="px-3 py-2 border-b border-border/60">
+                                <div className="px-3 py-2 border-b border-border/60 bg-muted/10">
                                     <textarea
-                                        className="w-full min-h-[90px] p-2 text-xs bg-transparent border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
+                                        className="w-full min-h-[90px] p-2 text-xs bg-background/40 border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
                                         placeholder={t('projects.sectionNotesPlaceholder')}
                                         defaultValue={group.section.description || ''}
                                         onBlur={(event) => {
@@ -619,9 +622,9 @@ export function ProjectsView() {
                 })}
                 <SectionDropZone
                     id={NO_SECTION_CONTAINER}
-                    className="border border-dashed border-border rounded-lg bg-card/20"
+                    className="rounded-xl border border-dashed border-border/80 bg-muted/20"
                 >
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
                         <div className="flex items-center gap-2 text-sm font-semibold">
                             <span>{t('projects.noSection')}</span>
                             <span className="text-xs text-muted-foreground">
@@ -855,8 +858,8 @@ export function ProjectsView() {
 
     return (
         <ErrorBoundary>
-            <div className="h-full">
-                <div className="flex h-full gap-6 w-full max-w-[calc(72rem+16rem+1.5rem)] mx-auto">
+            <div className="h-full px-4 py-3">
+                <div className="flex h-full gap-6 w-full max-w-[calc(18rem+1100px+1.5rem)] mx-auto">
                     <ProjectsSidebar
                         t={t}
                         areaFilterLabel={areaFilterLabel ?? undefined}
@@ -891,20 +894,17 @@ export function ProjectsView() {
                     />
 
                     {/* Project Details & Tasks */}
-                    <div className="flex-1 min-w-0 h-full">
-                        <div className="flex flex-col h-full min-h-0 w-full">
+                    <div className="flex-1 min-w-0 h-full flex">
+                        <div className="flex flex-col h-full min-h-0 w-full max-w-[1100px] rounded-2xl border border-border/70 bg-card/40">
                             {selectedProject ? (
-                                <>
-                                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-4">
-                                        <ProjectDetailsHeader
-                                            project={selectedProject}
-                                            projectColor={getProjectColorForTask(selectedProject)}
-                                            editTitle={editProjectTitle}
+                                <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+                                    <ProjectDetailsHeader
+                                        project={selectedProject}
+                                        projectColor={getProjectColorForTask(selectedProject)}
+                                        editTitle={editProjectTitle}
                                         onEditTitleChange={setEditProjectTitle}
                                         onCommitTitle={handleCommitProjectTitle}
                                         onResetTitle={handleResetProjectTitle}
-                                        onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
-                                        onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
                                         onDuplicate={() => handleDuplicateProject(selectedProject.id)}
                                         onArchive={handleArchiveProject}
                                         onReactivate={() => updateProject(selectedProject.id, { status: 'active' })}
@@ -917,13 +917,13 @@ export function ProjectsView() {
                                     <ProjectNotesSection
                                         project={selectedProject}
                                         notesExpanded={notesExpanded}
-                                    onToggleNotes={() => {
-                                        setNotesExpanded((prev) => {
-                                            const next = !prev;
-                                            if (next) setShowNotesPreview(true);
-                                            return next;
-                                        });
-                                    }}
+                                        onToggleNotes={() => {
+                                            setNotesExpanded((prev) => {
+                                                const next = !prev;
+                                                if (next) setShowNotesPreview(true);
+                                                return next;
+                                            });
+                                        }}
                                         showNotesPreview={showNotesPreview}
                                         onTogglePreview={() => setShowNotesPreview((value) => !value)}
                                         onAddFile={addProjectFileAttachment}
@@ -961,6 +961,10 @@ export function ProjectsView() {
                                         onAreaChange={(value) => {
                                             updateProject(selectedProject.id, { areaId: value === NO_AREA ? undefined : value });
                                         }}
+                                        isSequential={selectedProject.isSequential}
+                                        onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
+                                        status={selectedProject.status}
+                                        onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
                                         reviewAtValue={toDateTimeLocalValue(selectedProject.reviewAt)}
                                         onReviewAtChange={(value) => updateProject(selectedProject.id, { reviewAt: value || undefined })}
                                         projectTaskTitle={projectTaskTitle}
@@ -977,7 +981,7 @@ export function ProjectsView() {
                                         }}
                                     />
 
-                                    <div>
+                                    <div className="pb-2">
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="text-xs uppercase tracking-wider text-muted-foreground">
                                                 {t('projects.sectionsLabel')}
@@ -985,7 +989,7 @@ export function ProjectsView() {
                                             <button
                                                 type="button"
                                                 onClick={handleAddSection}
-                                                className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md border border-border bg-muted/40 hover:bg-muted transition-colors"
                                             >
                                                 <Plus className="h-3.5 w-3.5" />
                                                 {t('projects.addSection')}
@@ -994,11 +998,10 @@ export function ProjectsView() {
                                         {tasksContent}
                                     </div>
                                 </div>
-                                </>
                             ) : (
-                                <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                                    <div className="text-center">
-                                        <Folder className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                <div className="flex-1 flex items-center justify-center text-muted-foreground p-6">
+                                    <div className="text-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-10 py-12">
+                                        <Folder className="w-12 h-12 mx-auto mb-4 opacity-25" />
                                         <p>{t('projects.selectProject')}</p>
                                     </div>
                                 </div>
