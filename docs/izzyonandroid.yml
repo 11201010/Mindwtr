@@ -1,0 +1,20 @@
+repo_url: https://github.com/dongdongbh/Mindwtr
+repo_name: Mindwtr
+
+build:
+  - cd apps/mobile
+  - ./scripts/fdroid_prep.sh
+  - cd ../..
+  - npm install
+  - cd apps/mobile
+  - FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a ./scripts/android_build.sh
+
+artifacts:
+  - apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk
+
+notes:
+  - FOSS mode strips non-free Expo dependencies via scripts/fdroid_prep.sh.
+  - scripts/fdroid_prep.sh mutates apps/mobile/package.json; run from a clean checkout/CI workspace.
+  - SKIP_FDROID_PREP=1 avoids running prep twice after explicit pre-install prep.
+  - FOSS mode removes android.permission.SYSTEM_ALERT_WINDOW and legacy storage permissions via config plugin.
+  - FOSS mode disables Gradle dependenciesInfo inclusion in APK/AAB.

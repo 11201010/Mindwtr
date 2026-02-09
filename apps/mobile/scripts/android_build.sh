@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/build}"
 cd "$ROOT_DIR"
 
-if [[ "${FOSS_BUILD}" == "1" ]]; then
+if [[ "${FOSS_BUILD}" == "1" && "${SKIP_FDROID_PREP:-0}" != "1" ]]; then
   ./scripts/fdroid_prep.sh
 fi
 
@@ -73,7 +73,8 @@ from pathlib import Path
 
 path = Path("android/app/build.gradle")
 text = path.read_text()
-block = """
+
+excludes_block = """
 
 configurations.all {
     exclude group: 'com.google.android.gms'
@@ -83,9 +84,23 @@ configurations.all {
 }
 """
 
+dependencies_info_block = """
+
+android {
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+}
+"""
+
 if "exclude group: 'com.google.firebase'" not in text:
-    text = text.rstrip() + block
-    path.write_text(text)
+    text = text.rstrip() + excludes_block
+
+if "dependenciesInfo {" not in text:
+    text = text.rstrip() + dependencies_info_block
+
+path.write_text(text)
 PY
 fi
 

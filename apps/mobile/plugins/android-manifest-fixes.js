@@ -2,6 +2,11 @@ const { withAndroidManifest } = require('@expo/config-plugins');
 
 const MLKIT_ACTIVITY = 'com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity';
 const GMS_MODULE_DEPENDENCIES_SERVICE = 'com.google.android.gms.metadata.ModuleDependencies';
+const FOSS_PERMISSIONS_TO_REMOVE = [
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.READ_EXTERNAL_STORAGE',
+  'android.permission.WRITE_EXTERNAL_STORAGE',
+];
 const isFossBuild = process.env.FOSS_BUILD === '1' || process.env.FOSS_BUILD === 'true';
 
 module.exports = function withAndroidManifestFixes(config) {
@@ -71,6 +76,26 @@ module.exports = function withAndroidManifestFixes(config) {
           },
         });
       }
+
+      if (!Array.isArray(manifest.manifest['uses-permission'])) {
+        manifest.manifest['uses-permission'] = [];
+      }
+      const permissions = manifest.manifest['uses-permission'];
+      FOSS_PERMISSIONS_TO_REMOVE.forEach((permissionName) => {
+        const existingPermission = permissions.find(
+          (permission) => permission?.$?.['android:name'] === permissionName
+        );
+        if (existingPermission?.$) {
+          existingPermission.$['tools:node'] = 'remove';
+          return;
+        }
+        permissions.push({
+          $: {
+            'android:name': permissionName,
+            'tools:node': 'remove',
+          },
+        });
+      });
     }
 
     return config;

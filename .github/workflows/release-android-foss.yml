@@ -40,16 +40,13 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Prepare FOSS dependency manifest
+        run: |
+          cd apps/mobile
+          ./scripts/fdroid_prep.sh
 
       - name: Install dependencies
-        run: bun install
-
-      - name: Setup EAS CLI
-        run: npm install -g eas-cli
+        run: npm install
 
       - name: Resolve version
         id: version
@@ -65,25 +62,40 @@ jobs:
           fi
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare FOSS Android build
+      - name: Build FOSS Android APK (Gradle, arm64-v8a only)
         run: |
           cd apps/mobile
-          FOSS_BUILD=1 ./scripts/fdroid_prep.sh
-          bun install
-
-      - name: Build FOSS Android APK (local EAS)
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cd apps/mobile
-          FOSS_BUILD=1 MINDWTR_ANDROID_ARCHS=arm64-v8a eas build --platform android --profile production-apk --local --non-interactive --output ./build/mindwtr-${VERSION}-foss.apk
+          FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a ./scripts/android_build.sh
           ls -la ./build
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Verify FOSS permission cleanup
+        run: |
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No arm64 FOSS APK produced" >&2
+            exit 1
+          fi
+          for perm in \
+            android.permission.SYSTEM_ALERT_WINDOW \
+            android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.WRITE_EXTERNAL_STORAGE; do
+            if unzip -p "${APK_PATH}" AndroidManifest.xml | strings | grep -q "${perm}"; then
+              echo "${perm} still present in APK manifest" >&2
+              exit 1
+            fi
+          done
+          echo "Verified FOSS-only permissions were removed from APK manifest."
 
       - name: Collect Android FOSS artifacts
         run: |
+          VERSION=${{ steps.version.outputs.version }}
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No arm64 FOSS APK found for collection" >&2
+            exit 1
+          fi
           mkdir -p release-artifacts
-          cp apps/mobile/build/mindwtr-*-foss.apk release-artifacts/
+          cp "${APK_PATH}" "release-artifacts/mindwtr-${VERSION}-foss.apk"
           ls -la release-artifacts
 
       - name: Upload Android FOSS artifacts

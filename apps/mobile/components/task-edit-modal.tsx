@@ -700,10 +700,14 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             return;
         }
 
-        const permission = await imagePicker.getMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            const requested = await imagePicker.requestMediaLibraryPermissionsAsync();
-            if (!requested.granted) return;
+        // Android can use the system picker flow without requesting legacy media permissions.
+        // Keep the explicit permission request on iOS where Photos permission is required.
+        if (Platform.OS === 'ios') {
+            const permission = await imagePicker.getMediaLibraryPermissionsAsync();
+            if (!permission.granted) {
+                const requested = await imagePicker.requestMediaLibraryPermissionsAsync();
+                if (!requested.granted) return;
+            }
         }
         const result = await imagePicker.launchImageLibraryAsync({
             mediaTypes: imagePicker.MediaTypeOptions.Images,
