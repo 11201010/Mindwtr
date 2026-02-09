@@ -2,19 +2,20 @@ repo_url: https://github.com/dongdongbh/Mindwtr
 repo_name: Mindwtr
 
 build:
-  - cd apps/mobile
-  - ./scripts/fdroid_prep.sh
-  - cd ../..
-  - npm install
-  - cd apps/mobile
-  - FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a ./scripts/android_build.sh
+  - cd packages/core && npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund
+  - cd apps/mobile && ./scripts/fdroid_prep.sh
+  - cd apps/mobile && npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund
+  - cd apps/mobile && FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a bash ./scripts/android_build.sh
 
 artifacts:
   - apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk
 
 notes:
   - FOSS mode strips non-free Expo dependencies via scripts/fdroid_prep.sh.
+  - scripts/fdroid_prep.sh rewrites @mindwtr/core from workspace:* to file:../../packages/core for npm compatibility.
+  - Install packages/core first because @mindwtr/core is a symlinked local package in this flow.
   - scripts/fdroid_prep.sh mutates apps/mobile/package.json; run from a clean checkout/CI workspace.
   - SKIP_FDROID_PREP=1 avoids running prep twice after explicit pre-install prep.
-  - FOSS mode removes android.permission.SYSTEM_ALERT_WINDOW and legacy storage permissions via config plugin.
+  - Android manifest fixes remove unused CAMERA, SYSTEM_ALERT_WINDOW, and legacy storage permissions.
+  - RECORD_AUDIO is intentionally kept for voice notes.
   - FOSS mode disables Gradle dependenciesInfo inclusion in APK/AAB.

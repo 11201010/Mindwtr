@@ -131,6 +131,39 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Verify Android APK permissions
+        run: |
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No APK produced for permission verification" >&2
+            exit 1
+          fi
+          AAPT_BIN="$(command -v aapt || true)"
+          if [[ -z "${AAPT_BIN}" ]]; then
+            AAPT_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [[ -z "${AAPT_BIN}" ]]; then
+            echo "aapt not found; cannot verify APK permissions" >&2
+            exit 1
+          fi
+          PERMS_DUMP="$(mktemp)"
+          "${AAPT_BIN}" dump permissions "${APK_PATH}" | tee "${PERMS_DUMP}"
+          for perm in \
+            android.permission.CAMERA \
+            android.permission.SYSTEM_ALERT_WINDOW \
+            android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.WRITE_EXTERNAL_STORAGE; do
+            if grep -q "name='${perm}'" "${PERMS_DUMP}"; then
+              echo "${perm} still present in APK manifest" >&2
+              exit 1
+            fi
+          done
+          if ! grep -q "name='android.permission.RECORD_AUDIO'" "${PERMS_DUMP}"; then
+            echo "android.permission.RECORD_AUDIO missing in APK manifest" >&2
+            exit 1
+          fi
+          echo "Verified APK permissions: CAMERA/storage/alert removed; RECORD_AUDIO present."
+
       - name: Prepare Google Play release notes
         run: |
           VERSION=${{ steps.version.outputs.version }}

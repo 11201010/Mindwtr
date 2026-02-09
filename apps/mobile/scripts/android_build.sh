@@ -5,8 +5,13 @@ ARCHS="${ARCHS:-arm64-v8a,armeabi-v7a}"
 export FOSS_BUILD="${FOSS_BUILD:-0}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "${ROOT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/build}"
 cd "$ROOT_DIR"
+
+# Metro in this monorepo checks for a repo-level node_modules path even when
+# dependencies are installed per-package for F-Droid-style builds.
+mkdir -p "${REPO_ROOT}/node_modules"
 
 if [[ "${FOSS_BUILD}" == "1" && "${SKIP_FDROID_PREP:-0}" != "1" ]]; then
   ./scripts/fdroid_prep.sh

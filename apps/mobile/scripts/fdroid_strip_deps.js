@@ -19,6 +19,12 @@ for (const dep of removeDeps) {
   }
 }
 
+if (pkg.dependencies && pkg.dependencies['@mindwtr/core'] === 'workspace:*') {
+  pkg.dependencies['@mindwtr/core'] = 'file:../../packages/core';
+  changed = true;
+  console.log('[fdroid] rewrote @mindwtr/core to file:../../packages/core for npm compatibility');
+}
+
 if (changed) {
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
   console.log('[fdroid] stripped deps:', removeDeps.join(', '));
