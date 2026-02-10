@@ -1,6 +1,8 @@
 import { Link, Tabs } from 'expo-router';
+import { CommonActions } from '@react-navigation/native';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Search, Inbox, ArrowRightCircle, Folder, Menu, Mic, Plus } from 'lucide-react-native';
-import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, TouchableOpacity, View, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallback, useRef, useState } from 'react';
 
@@ -10,6 +12,134 @@ import { useLanguage } from '../../../contexts/language-context';
 import { QuickCaptureSheet } from '@/components/quick-capture-sheet';
 import { QuickCaptureProvider } from '../../../contexts/quick-capture-context';
 import { useTaskStore, type Task } from '@mindwtr/core';
+
+function NativeTabBar({
+  state,
+  descriptors,
+  navigation,
+  iconTint,
+  inactiveTint,
+  activeIndicator,
+  tc,
+  tabBarHeight,
+  androidNavInset,
+  iconLift,
+  openQuickCapture,
+  defaultAutoRecord,
+}: BottomTabBarProps & {
+  iconTint: string;
+  inactiveTint: string;
+  activeIndicator: string;
+  tc: { cardBg: string; border: string; onTint: string; tint: string };
+  tabBarHeight: number;
+  androidNavInset: number;
+  iconLift: number;
+  openQuickCapture: (options?: { initialValue?: string; initialProps?: Partial<Task>; autoRecord?: boolean }) => void;
+  defaultAutoRecord: boolean;
+}) {
+  const longPressRef = useRef(false);
+  const visibleTabNames = new Set(['inbox', 'focus', 'capture', 'projects', 'menu']);
+  const visibleRoutes = state.routes.filter((route) => visibleTabNames.has(route.name));
+
+  return (
+    <View
+      style={[
+        styles.nativeTabBar,
+        {
+          backgroundColor: tc.cardBg,
+          borderTopColor: tc.border,
+          height: tabBarHeight,
+          paddingBottom: androidNavInset,
+        },
+      ]}
+    >
+      {visibleRoutes.map((route) => {
+        const focused = state.routes[state.index]?.key === route.key;
+        const descriptor = descriptors[route.key];
+        const options = descriptor.options;
+
+        if (route.name === 'capture') {
+          return (
+            <TouchableOpacity
+              key={route.key}
+              onPress={() => {
+                if (longPressRef.current) {
+                  longPressRef.current = false;
+                  return;
+                }
+                openQuickCapture({ autoRecord: defaultAutoRecord });
+              }}
+              onLongPress={() => {
+                longPressRef.current = true;
+                openQuickCapture({ autoRecord: !defaultAutoRecord });
+                setTimeout(() => {
+                  longPressRef.current = false;
+                }, 400);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={defaultAutoRecord ? 'Audio capture' : 'Add task'}
+              style={[styles.nativeTabItem, { paddingTop: iconLift }]}
+            >
+              <View style={[styles.captureButtonInner, { backgroundColor: tc.tint }]}>
+                {defaultAutoRecord ? (
+                  <Mic size={24} color={tc.onTint} strokeWidth={2.5} />
+                ) : (
+                  <Plus size={24} color={tc.onTint} strokeWidth={3} />
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        }
+
+        const onPress = () => {
+          const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+          });
+          if (focused || event.defaultPrevented) return;
+          navigation.dispatch({
+            ...CommonActions.navigate(route),
+            target: state.key,
+          });
+        };
+
+        const onLongPress = () => {
+          navigation.emit({ type: 'tabLongPress', target: route.key });
+        };
+
+        const tabIcon = options.tabBarIcon?.({
+          focused,
+          color: focused ? iconTint : inactiveTint,
+          size: focused ? 26 : 24,
+        });
+
+        return (
+          <TouchableOpacity
+            key={route.key}
+            accessibilityRole="button"
+            accessibilityState={focused ? { selected: true } : {}}
+            accessibilityLabel={options.tabBarAccessibilityLabel}
+            testID={options.tabBarButtonTestID}
+            onPress={onPress}
+            onLongPress={onLongPress}
+            style={[styles.nativeTabItem, { paddingTop: iconLift }]}
+          >
+            <View style={styles.nativeTabIconWrap}>
+              {tabIcon}
+              <View
+                style={[
+                  styles.nativeTabIndicator,
+                  { backgroundColor: focused ? activeIndicator : 'transparent' },
+                ]}
+              />
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function TabLayout() {
   const tc = useThemeColors();
@@ -58,6 +188,20 @@ export default function TabLayout() {
     <QuickCaptureProvider value={{ openQuickCapture }}>
       <Tabs
         initialRouteName="inbox"
+        tabBar={(props) => (
+          <NativeTabBar
+            {...props}
+            iconTint={iconTint}
+            inactiveTint={inactiveTint}
+            activeIndicator={activeIndicator}
+            tc={{ cardBg: tc.cardBg, border: tc.border, onTint: tc.onTint, tint: tc.tint }}
+            tabBarHeight={tabBarHeight}
+            androidNavInset={androidNavInset}
+            iconLift={iconLift}
+            openQuickCapture={openQuickCapture}
+            defaultAutoRecord={defaultAutoRecord}
+          />
+        )}
         screenOptions={({ route }) => ({
         tabBarActiveTintColor: iconTint,
         tabBarInactiveTintColor: inactiveTint,
@@ -93,33 +237,6 @@ export default function TabLayout() {
             indicatorHeight={2}
           />
         ),
-        tabBarItemStyle: {
-          flex: 1,
-          borderRadius: 0,
-          marginHorizontal: 0,
-          marginVertical: 0,
-          paddingVertical: 0,
-          height: tabBarHeight,
-          paddingBottom: androidNavInset,
-          paddingTop: iconLift,
-          justifyContent: 'center',
-          alignItems: 'center',
-        },
-        tabBarStyle: {
-          backgroundColor: tc.cardBg,
-          borderTopColor: tc.border,
-          paddingTop: 0,
-          paddingBottom: 0,
-          height: tabBarHeight,
-          paddingHorizontal: 0,
-          alignItems: 'stretch',
-          ...Platform.select({
-            ios: {
-              position: 'absolute',
-            },
-            default: {},
-          }),
-        },
       })}
       >
         <Tabs.Screen
@@ -212,6 +329,26 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  nativeTabBar: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    alignItems: 'stretch',
+  },
+  nativeTabItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nativeTabIconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  nativeTabIndicator: {
+    marginTop: 4,
+    width: 18,
+    height: 2,
+    borderRadius: 999,
+  },
   headerIconButton: {
     marginRight: 16,
     padding: 4,
