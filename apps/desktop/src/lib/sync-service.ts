@@ -1674,7 +1674,15 @@ export class SyncService {
 
         if (SyncService.syncQueued) {
             SyncService.syncQueued = false;
-            void SyncService.performSync();
+            void SyncService.performSync()
+                .then((queuedResult) => {
+                    if (!queuedResult.success) {
+                        logSyncWarning('Queued sync failed', queuedResult.error);
+                    }
+                })
+                .catch((error) => {
+                    logSyncWarning('Queued sync crashed', error);
+                });
         }
 
         return result;

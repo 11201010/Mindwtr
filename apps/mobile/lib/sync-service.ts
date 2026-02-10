@@ -496,7 +496,15 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
     syncInFlight = null;
     if (syncQueued) {
       syncQueued = false;
-      void performMobileSync(syncPathOverride);
+      void performMobileSync(syncPathOverride)
+        .then((queuedResult) => {
+          if (!queuedResult.success) {
+            logSyncWarning('[Mobile] Queued sync failed', queuedResult.error);
+          }
+        })
+        .catch((error) => {
+          logSyncWarning('[Mobile] Queued sync crashed', error);
+        });
     }
   }
 }
