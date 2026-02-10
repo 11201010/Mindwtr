@@ -39,4 +39,19 @@ describe('cloud server utils', () => {
         expect(parsed.__mindwtrError.message).toBe('Payload too large');
         expect(parsed.__mindwtrError.status).toBe(413);
     });
+
+    test('normalizes attachment paths with allowlist and segment checks', () => {
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder/file.txt')).toBe('folder/file.txt');
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('/folder/file.txt/')).toBe('folder/file.txt');
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('%252e%252e/secret')).toBeNull();
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('../secret')).toBeNull();
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder\\\\file.txt')).toBeNull();
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder/file?.txt')).toBeNull();
+    });
+
+    test('checks whether resolved path stays inside root directory', () => {
+        expect(__cloudTestUtils.isPathWithinRoot('/data/ns/attachments/file.txt', '/data/ns/attachments')).toBe(true);
+        expect(__cloudTestUtils.isPathWithinRoot('/data/ns/attachments', '/data/ns/attachments')).toBe(true);
+        expect(__cloudTestUtils.isPathWithinRoot('/data/ns/attachments-evil/file.txt', '/data/ns/attachments')).toBe(false);
+    });
 });
