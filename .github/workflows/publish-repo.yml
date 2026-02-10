@@ -49,11 +49,27 @@ jobs:
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Download Release Assets
-        uses: robinraju/release-downloader@v1
-        with:
-          repository: ${{ github.repository }}
-          tag: ${{ env.RELEASE_TAG || github.ref_name }}
-          fileName: "*"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG:-${GITHUB_REF_NAME}}"
+          MAX_RETRIES=5
+          for attempt in $(seq 1 "${MAX_RETRIES}"); do
+            echo "Downloading release assets for ${TAG} (attempt ${attempt}/${MAX_RETRIES})"
+            if gh release download "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "*" \
+              --clobber; then
+              echo "Release assets downloaded successfully."
+              break
+            fi
+            if [ "${attempt}" -eq "${MAX_RETRIES}" ]; then
+              echo "Failed to download release assets after ${MAX_RETRIES} attempts." >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Prepare Repo Directories
         run: |
