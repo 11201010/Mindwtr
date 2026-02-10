@@ -48,6 +48,13 @@ const persistExternalCalendars = async (data: AppData): Promise<void> =>
 
 const cloneAppData = (data: AppData): AppData => JSON.parse(JSON.stringify(data)) as AppData;
 
+class LocalSyncAbort extends Error {
+  constructor() {
+    super('Local changes detected during sync');
+    this.name = 'LocalSyncAbort';
+  }
+}
+
 const getInMemoryAppDataSnapshot = (): AppData => {
   const state = useTaskStore.getState();
   return cloneAppData({
@@ -152,6 +159,13 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
     let step = 'init';
     let syncUrl: string | undefined;
     let wroteLocal = false;
+    let localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
+    const ensureLocalSnapshotFresh = () => {
+      if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
+        syncQueued = true;
+        throw new LocalSyncAbort();
+      }
+    };
     try {
       let webdavConfig: { url: string; username: string; password: string } | null = null;
       let cloudConfig: { url: string; token: string } | null = null;
@@ -159,6 +173,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       let preSyncedLocalData: AppData | null = null;
       step = 'flush';
       await flushPendingSave();
+      localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
       if (backend === 'file') {
         fileSyncPath = syncPathOverride || await AsyncStorage.getItem(SYNC_PATH_KEY);
         if (!fileSyncPath) {
@@ -202,10 +217,14 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           preMutated = await syncFileAttachments(localData, fileSyncPath);
         }
         if (preMutated) {
+          ensureLocalSnapshotFresh();
           // Keep pre-sync attachment mutations in memory until the main merge/write succeeds.
           preSyncedLocalData = localData;
         }
       } catch (error) {
+        if (error instanceof LocalSyncAbort) {
+          throw error;
+        }
         logSyncWarning('Attachment pre-sync warning', error);
       }
       const syncResult = await performSyncCycle({
@@ -214,7 +233,9 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           const baseData = preSyncedLocalData
             ? mergeAppData(preSyncedLocalData, inMemorySnapshot)
             : mergeAppData(await mobileStorage.getData(), inMemorySnapshot);
-          return await injectExternalCalendars(baseData);
+          const data = await injectExternalCalendars(baseData);
+          localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
+          return data;
         },
         readRemote: async () => {
           if (backend === 'webdav' && webdavConfig?.url) {
@@ -240,10 +261,12 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           return await readSyncFile(fileSyncPath);
         },
         writeLocal: async (data) => {
+          ensureLocalSnapshotFresh();
           await mobileStorage.saveData(data);
           wroteLocal = true;
         },
         writeRemote: async (data) => {
+          ensureLocalSnapshotFresh();
           const sanitized = sanitizeAppDataForRemote(data);
           if (backend === 'webdav') {
             if (!webdavConfig?.url) throw new Error('WebDAV URL not configured');
@@ -309,6 +332,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       }
 
       let mergedData = syncResult.data;
+      ensureLocalSnapshotFresh();
       await persistExternalCalendars(mergedData);
 
       const webdavConfigValue = webdavConfig as { url: string; username: string; password: string } | null;
@@ -317,10 +341,12 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       if (backend === 'webdav' && webdavConfigValue?.url) {
         step = 'attachments';
         logSyncInfo('Sync step', { step });
+        ensureLocalSnapshotFresh();
         const baseSyncUrl = getBaseSyncUrl(webdavConfigValue.url);
         const candidateData = cloneAppData(mergedData);
         const mutated = await syncWebdavAttachments(candidateData, webdavConfigValue, baseSyncUrl);
         if (mutated) {
+          ensureLocalSnapshotFresh();
           mergedData = candidateData;
           await mobileStorage.saveData(mergedData);
           wroteLocal = true;
@@ -330,10 +356,12 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       if (backend === 'cloud' && cloudConfigValue?.url) {
         step = 'attachments';
         logSyncInfo('Sync step', { step });
+        ensureLocalSnapshotFresh();
         const baseSyncUrl = getCloudBaseUrl(cloudConfigValue.url);
         const candidateData = cloneAppData(mergedData);
         const mutated = await syncCloudAttachments(candidateData, cloudConfigValue, baseSyncUrl);
         if (mutated) {
+          ensureLocalSnapshotFresh();
           mergedData = candidateData;
           await mobileStorage.saveData(mergedData);
           wroteLocal = true;
@@ -343,9 +371,11 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       if (backend === 'file' && fileSyncPath) {
         step = 'attachments';
         logSyncInfo('Sync step', { step });
+        ensureLocalSnapshotFresh();
         const candidateData = cloneAppData(mergedData);
         const mutated = await syncFileAttachments(candidateData, fileSyncPath);
         if (mutated) {
+          ensureLocalSnapshotFresh();
           mergedData = candidateData;
           await mobileStorage.saveData(mergedData);
           wroteLocal = true;
@@ -357,6 +387,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       if (shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt)) {
         step = 'attachments_cleanup';
         logSyncInfo('Sync step', { step });
+        ensureLocalSnapshotFresh();
         const orphaned = findOrphanedAttachments(mergedData);
         const deletedAttachments = findDeletedAttachmentsForFileCleanupLocal(mergedData);
         const cleanupTargets = new Map<string, Attachment>();
@@ -371,6 +402,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
             : null;
 
           for (const attachment of cleanupTargets.values()) {
+            ensureLocalSnapshotFresh();
             await deleteAttachmentFile(attachment.uri);
             if (attachment.cloudKey) {
               try {
@@ -404,11 +436,13 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           ...mergedData.settings.attachments,
           lastCleanupAt: new Date().toISOString(),
         };
+        ensureLocalSnapshotFresh();
         await mobileStorage.saveData(mergedData);
         wroteLocal = true;
       }
 
       step = 'refresh';
+      ensureLocalSnapshotFresh();
       await useTaskStore.getState().fetchData();
       const now = new Date().toISOString();
       try {
@@ -422,6 +456,9 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       }
       return { success: true, stats: syncResult.stats };
     } catch (error) {
+      if (error instanceof LocalSyncAbort) {
+        return { success: true };
+      }
       const now = new Date().toISOString();
       const logPath = await logSyncError(error, { backend, step, url: syncUrl });
       const logHint = logPath ? ` (log: ${logPath})` : '';
