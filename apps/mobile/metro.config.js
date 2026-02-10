@@ -4,9 +4,15 @@ const fs = require('fs');
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
+const projectNodeModulesRoot = path.resolve(projectRoot, 'node_modules');
+const coreNodeModulesRoot = path.resolve(workspaceRoot, 'packages/core/node_modules');
+const workspaceNodeModulesRoot = path.resolve(workspaceRoot, 'node_modules');
 const workspaceBabelRuntimeRoot = path.resolve(workspaceRoot, 'node_modules/@babel/runtime');
-const projectReactRoot = path.resolve(projectRoot, 'node_modules/react');
-const projectReactNativeRoot = path.resolve(projectRoot, 'node_modules/react-native');
+const projectReactRoot = path.resolve(projectNodeModulesRoot, 'react');
+const projectReactNativeRoot = path.resolve(projectNodeModulesRoot, 'react-native');
+const zustandRoot = fs.existsSync(path.resolve(projectNodeModulesRoot, 'zustand'))
+    ? path.resolve(projectNodeModulesRoot, 'zustand')
+    : path.resolve(coreNodeModulesRoot, 'zustand');
 
 const config = getDefaultConfig(projectRoot);
 
@@ -31,8 +37,9 @@ config.resolver.blockList = [
 
 // 2. Let Metro know where to resolve packages and in what order
 config.resolver.nodeModulesPaths = [
-    path.resolve(projectRoot, 'node_modules'),
-    path.resolve(workspaceRoot, 'node_modules'),
+    projectNodeModulesRoot,
+    coreNodeModulesRoot,
+    workspaceNodeModulesRoot,
 ];
 config.resolver.disableHierarchicalLookup = true;
 
@@ -40,6 +47,7 @@ config.resolver.disableHierarchicalLookup = true;
 config.resolver.extraNodeModules = {
     react: projectReactRoot,
     'react-native': projectReactNativeRoot,
+    zustand: zustandRoot,
     '@babel/runtime': workspaceBabelRuntimeRoot,
 };
 
@@ -68,7 +76,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (moduleName === 'react' || moduleName.startsWith('react/')) {
         try {
             const resolved = require.resolve(moduleName, {
-                paths: [path.resolve(projectRoot, 'node_modules')],
+                paths: [projectNodeModulesRoot],
             });
             return {
                 filePath: resolved,
@@ -82,7 +90,21 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (moduleName === 'react-native' || moduleName.startsWith('react-native/')) {
         try {
             const resolved = require.resolve(moduleName, {
-                paths: [path.resolve(projectRoot, 'node_modules')],
+                paths: [projectNodeModulesRoot],
+            });
+            return {
+                filePath: resolved,
+                type: 'sourceFile',
+            };
+        } catch {
+            // Fall through to Metro default resolver.
+        }
+    }
+
+    if (moduleName === 'zustand' || moduleName.startsWith('zustand/')) {
+        try {
+            const resolved = require.resolve(moduleName, {
+                paths: [projectNodeModulesRoot, coreNodeModulesRoot, workspaceNodeModulesRoot],
             });
             return {
                 filePath: resolved,

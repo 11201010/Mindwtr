@@ -21,6 +21,9 @@ jobs:
   android-foss:
     runs-on: ubuntu-latest
     name: Android FOSS Build
+    env:
+      # Keep Metro/JS bundling stable on CI during release builds.
+      NODE_OPTIONS: --max-old-space-size=6144
 
     steps:
       - name: Checkout code

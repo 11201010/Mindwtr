@@ -88,6 +88,14 @@ else
   echo "reactNativeArchitectures=${ARCHS}" >> android/gradle.properties
 fi
 
+# CI memory stability: ensure Gradle daemon has enough heap/metaspace for
+# createBundleReleaseJsAndAssets in monorepo builds.
+if grep -q "^org\\.gradle\\.jvmargs=" android/gradle.properties; then
+  sed -i "s#^org\\.gradle\\.jvmargs=.*#org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8#" android/gradle.properties
+else
+  echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" >> android/gradle.properties
+fi
+
 if ! grep -q "splits {\\s*abi" android/app/build.gradle; then
   python3 - <<'PY'
 from pathlib import Path
@@ -161,6 +169,8 @@ if [[ "${PREP_ONLY}" == "1" ]]; then
 fi
 
 cd android
+# JS bundling memory headroom for Gradle's Node subprocess.
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}"
 ./gradlew assembleRelease -PreactNativeArchitectures="${ARCHS}"
 
 APK_DIR="${ROOT_DIR}/android/app/build/outputs/apk/release"
