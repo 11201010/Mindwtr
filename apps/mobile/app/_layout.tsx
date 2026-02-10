@@ -192,7 +192,10 @@ function RootLayoutContent() {
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (!isActive.current) return;
-      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      const previousState = appState.current;
+      const wasInactiveOrBackground = previousState === 'inactive' || previousState === 'background';
+      const nextInactiveOrBackground = nextAppState === 'inactive' || nextAppState === 'background';
+      if (wasInactiveOrBackground && nextAppState === 'active') {
         // Coming back to foreground - sync to get latest data
         const now = Date.now();
         if (now - lastAutoSyncAt.current > 30_000) {
@@ -207,7 +210,7 @@ function RootLayoutContent() {
           updateAndroidWidgetFromStore().catch(logAppError);
         }, 800);
       }
-      if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
+      if (previousState === 'active' && nextInactiveOrBackground) {
         // Going to background - flush saves and sync
         if (syncDebounceTimer.current) {
           clearTimeout(syncDebounceTimer.current);
@@ -215,7 +218,7 @@ function RootLayoutContent() {
         }
         requestSync(0);
       }
-      if (appState.current?.match(/inactive|background/) && nextAppState === 'active') {
+      if (wasInactiveOrBackground && nextAppState === 'active') {
         if (backgroundSyncPending.current) {
           backgroundSyncPending.current = false;
           requestSync(0);
