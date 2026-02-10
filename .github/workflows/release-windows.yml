@@ -399,13 +399,75 @@ jobs:
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
         run: |
           $msix = (Resolve-Path "mindwtr_${{ steps.version.outputs.version }}_x64.msix").Path
-          $publishOutput = & msstore publish $msix -id $env:MS_STORE_APP_ID 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            if ($publishOutput -match '(?i)(InvalidState|Certification|InCertification|CommitStarted|PreProcessing|PendingCommit|InProgress|Pending[\s_-]*Submission|Another\s+submission|already\s+.*submission)') {
-              Write-Warning "Store submission is already in certification. Skipping publish."
+          $isStoreBusy = {
+            param([string]$text)
+            if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+            return $text -match '(?i)(InvalidState|CommitStarted|PreProcessing|Certification|InCertification|PendingCommit|InProgress|Pending[\s_-]*Submission|Another\s+submission|already\s+.*submission)'
+          }
+          $isTransientStoreError = {
+            param([string]$text)
+            if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+            return $text -match '(?i)(\b50[0-9]\b|Gateway Timeout|Service unavailable|OriginTimeout|Azure Front Door|timed out|timeout|temporar(y|ily)|try again)'
+          }
+
+          $maxRetries = 5
+          $delaySeconds = 30
+          $published = $false
+          $publishOutput = ''
+
+          for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            Write-Host "Publishing to Microsoft Store (attempt $attempt of $maxRetries)..."
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = 'msstore'
+            $psi.ArgumentList.Add('publish')
+            $psi.ArgumentList.Add($msix)
+            $psi.ArgumentList.Add('-id')
+            $psi.ArgumentList.Add($env:MS_STORE_APP_ID)
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.UseShellExecute = $false
+            $process = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(900000)) {
+              $process.Kill()
+              $publishOutput = "Publish timed out after 15 minutes"
+              $exitCode = 124
+            } else {
+              $stdout = $stdoutTask.GetAwaiter().GetResult()
+              $stderr = $stderrTask.GetAwaiter().GetResult()
+              $publishOutput = ($stdout + $stderr).Trim()
+              $exitCode = $process.ExitCode
+            }
+
+            if ($exitCode -eq 0) {
+              $published = $true
+              break
+            }
+
+            if (& $isStoreBusy $publishOutput) {
+              Write-Warning "Store submission is already in certification/in-progress. Skipping publish."
               exit 0
             }
-            throw "Store publish failed: $publishOutput"
+
+            $statusRecheckOutput = & msstore submission status $env:MS_STORE_APP_ID 2>&1
+            if ($LASTEXITCODE -eq 0 -and (& $isStoreBusy ($statusRecheckOutput | Out-String))) {
+              Write-Warning "Store submission moved into certification/in-progress state. Skipping publish. Status: $statusRecheckOutput"
+              exit 0
+            }
+
+            if ((& $isTransientStoreError $publishOutput) -and $attempt -lt $maxRetries) {
+              Write-Warning "Transient Store API error detected. Retrying in $delaySeconds seconds..."
+              Start-Sleep -Seconds $delaySeconds
+              $delaySeconds = [Math]::Min($delaySeconds * 2, 240)
+              continue
+            }
+
+            break
+          }
+
+          if (-not $published) {
+            throw "Store publish failed after $maxRetries attempts: $publishOutput"
           }
 
       - name: Collect Windows artifacts
