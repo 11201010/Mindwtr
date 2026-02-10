@@ -224,6 +224,21 @@ const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
     return Date.now() - parsed >= CLEANUP_INTERVAL_MS;
 };
 
+const collectAttachmentsById = (appData: AppData): Map<string, Attachment> => {
+    const attachmentsById = new Map<string, Attachment>();
+    for (const task of appData.tasks) {
+        for (const attachment of task.attachments || []) {
+            attachmentsById.set(attachment.id, attachment);
+        }
+    }
+    for (const project of appData.projects) {
+        for (const attachment of project.attachments || []) {
+            attachmentsById.set(attachment.id, attachment);
+        }
+    }
+    return attachmentsById;
+};
+
 const deleteAttachmentFile = async (attachment: Attachment): Promise<void> => {
     if (!attachment.uri) return;
     const rawUri = stripFileScheme(attachment.uri);
@@ -407,17 +422,7 @@ async function syncAttachments(
     const baseDataDir = await dataDir();
     const workingData = cloneAppData(appData);
 
-    const attachmentsById = new Map<string, Attachment>();
-    for (const task of workingData.tasks) {
-        for (const attachment of task.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
-    for (const project of workingData.projects) {
-        for (const attachment of project.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
+    const attachmentsById = collectAttachmentsById(workingData);
 
     pruneWebdavDownloadBackoff();
 
@@ -716,17 +721,7 @@ async function syncCloudAttachments(
 
     const baseDataDir = await dataDir();
 
-    const attachmentsById = new Map<string, Attachment>();
-    for (const task of appData.tasks) {
-        for (const attachment of task.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
-    for (const project of appData.projects) {
-        for (const attachment of project.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
+    const attachmentsById = collectAttachmentsById(appData);
 
     const readLocalFile = async (path: string): Promise<Uint8Array> => {
         if (path.startsWith(baseDataDir)) {
@@ -891,17 +886,7 @@ async function syncFileAttachments(
 
     const baseDataDir = await dataDir();
 
-    const attachmentsById = new Map<string, Attachment>();
-    for (const task of appData.tasks) {
-        for (const attachment of task.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
-    for (const project of appData.projects) {
-        for (const attachment of project.attachments || []) {
-            attachmentsById.set(attachment.id, attachment);
-        }
-    }
+    const attachmentsById = collectAttachmentsById(appData);
 
     const readLocalFile = async (path: string): Promise<Uint8Array> => {
         if (path.startsWith(baseDataDir)) {
