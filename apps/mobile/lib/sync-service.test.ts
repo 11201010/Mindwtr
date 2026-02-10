@@ -13,8 +13,8 @@ describe('mobile sync-service test utils', () => {
     expect(resolveBackend('webdav')).toBe('webdav');
     expect(resolveBackend('cloud')).toBe('cloud');
     expect(resolveBackend('off')).toBe('off');
-    expect(resolveBackend('invalid')).toBe('file');
-    expect(resolveBackend(null)).toBe('file');
+    expect(resolveBackend('invalid')).toBe('off');
+    expect(resolveBackend(null)).toBe('off');
   });
 
   it('formats WebDAV unauthorized errors with actionable text', () => {

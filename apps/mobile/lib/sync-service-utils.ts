@@ -78,6 +78,6 @@ export const resolveBackend = (value: string | null): SyncBackend => {
     case 'file':
       return value;
     default:
-      return 'file';
+      return 'off';
   }
 };
