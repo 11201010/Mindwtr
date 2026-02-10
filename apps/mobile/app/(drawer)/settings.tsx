@@ -890,6 +890,9 @@ export default function SettingsPage() {
             /\\"softwareVersion\\"\s*:\s*\\"([^"]+)\\"/i,
             /itemprop="softwareVersion"[^>]*>\s*([^<]+)\s*</i,
             /"versionName"\s*:\s*"([^"]+)"/i,
+            // New Play Store payload format (AF_initDataCallback ds:5)
+            /"141"\s*:\s*\[\[\["([^"]+)"/i,
+            /\\"141\\"\s*:\s*\[\[\[\\"([^"]+)/i,
         ];
         for (const pattern of patterns) {
             const match = html.match(pattern);
