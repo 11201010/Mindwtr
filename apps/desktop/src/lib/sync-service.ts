@@ -68,6 +68,7 @@ const CLOUD_TOKEN_KEY = 'mindwtr-cloud-token';
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
 const WEBDAV_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
+const CLOUD_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
 const WEBDAV_ATTACHMENT_MIN_INTERVAL_MS = 400;
 const WEBDAV_ATTACHMENT_COOLDOWN_MS = 60_000;
 const WEBDAV_ATTACHMENT_MAX_DOWNLOADS_PER_SYNC = 10;
@@ -768,14 +769,28 @@ async function syncCloudAttachments(
                     continue;
                 }
                 reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
-                await cloudPutFile(
-                    `${baseSyncUrl}/${cloudKey}`,
-                    fileData,
-                    attachment.mimeType || 'application/octet-stream',
+                await withRetry(
+                    () => cloudPutFile(
+                        `${baseSyncUrl}/${cloudKey}`,
+                        fileData,
+                        attachment.mimeType || 'application/octet-stream',
+                        {
+                            token: cloudConfig.token,
+                            fetcher,
+                            timeoutMs: UPLOAD_TIMEOUT_MS,
+                            onProgress: (loaded, total) => reportProgress(attachment.id, 'upload', loaded, total, 'active'),
+                        }
+                    ),
                     {
-                        token: cloudConfig.token,
-                        fetcher,
-                        onProgress: (loaded, total) => reportProgress(attachment.id, 'upload', loaded, total, 'active'),
+                        ...CLOUD_ATTACHMENT_RETRY_OPTIONS,
+                        onRetry: (error, attempt, delayMs) => {
+                            logSyncInfo('Retrying cloud attachment upload', {
+                                id: attachment.id,
+                                attempt: String(attempt + 1),
+                                delayMs: String(delayMs),
+                                error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)),
+                            });
+                        },
                     }
                 );
                 attachment.cloudKey = cloudKey;
