@@ -5,6 +5,7 @@ description = "A complete Getting Things Done (GTD) productivity system - Mind L
 authors = ["DongDong"]
 license = "AGPL-3.0-only"
 repository = "https://github.com/dongdongbh/Mindwtr"
+homepage = "https://dongdongbh.tech"
 edition = "2021"
 rust-version = "1.77.2"
 

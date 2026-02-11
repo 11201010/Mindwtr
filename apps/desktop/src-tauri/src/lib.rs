@@ -35,7 +35,9 @@ const KEYRING_CLOUD_TOKEN: &str = "cloud_token";
 const KEYRING_AI_OPENAI: &str = "ai_key_openai";
 const KEYRING_AI_ANTHROPIC: &str = "ai_key_anthropic";
 const KEYRING_AI_GEMINI: &str = "ai_key_gemini";
+#[cfg(target_os = "macos")]
 const MENU_HELP_DOCS_ID: &str = "help_docs";
+#[cfg(target_os = "macos")]
 const MENU_HELP_ISSUES_ID: &str = "help_report_issue";
 
 const SQLITE_SCHEMA: &str = r#"
@@ -2468,24 +2470,23 @@ fn diagnostics_enabled() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(QuickAddPending(AtomicBool::new(false)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .menu(|handle| {
             let menu = Menu::default(handle)?;
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(help_submenu) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
-                    let docs_item = MenuItem::with_id(handle, MENU_HELP_DOCS_ID, "Mindwtr Help", true, None::<&str>)?;
-                    let issues_item = MenuItem::with_id(handle, MENU_HELP_ISSUES_ID, "Report an Issue", true, None::<&str>)?;
-                    help_submenu.append_items(&[&docs_item, &issues_item])?;
-                    let _ = help_submenu.set_as_help_menu_for_nsapp();
-                }
+            if let Some(help_submenu) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
+                let docs_item = MenuItem::with_id(handle, MENU_HELP_DOCS_ID, "Mindwtr Help", true, None::<&str>)?;
+                let issues_item = MenuItem::with_id(handle, MENU_HELP_ISSUES_ID, "Report an Issue", true, None::<&str>)?;
+                help_submenu.append_items(&[&docs_item, &issues_item])?;
+                let _ = help_submenu.set_as_help_menu_for_nsapp();
             }
             Ok(menu)
         })
@@ -2497,7 +2498,8 @@ pub fn run() {
                 let _ = open::that("https://github.com/dongdongbh/Mindwtr/issues");
             }
             _ => {}
-        })
+        });
+    builder
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -2512,6 +2514,10 @@ pub fn run() {
             ensure_data_file(&app.handle()).ok();
             let diagnostics_enabled = diagnostics_enabled();
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
+                    let _ = window.set_icon(icon);
+                }
                 if cfg!(target_os = "linux") && is_niri_session() {
                     let _ = window.set_decorations(false);
                 }
