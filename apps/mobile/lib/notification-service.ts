@@ -33,6 +33,13 @@ type NotificationOpenPayload = {
   kind?: string;
 };
 type NotificationOpenHandler = (payload: NotificationOpenPayload) => void;
+type ScheduledNotificationRequest = {
+  identifier?: string;
+  trigger?: unknown;
+  content?: {
+    data?: Record<string, unknown>;
+  };
+};
 
 const scheduledByTask = new Map<string, ScheduledEntry>();
 const taskIdByNotificationId = new Map<string, string>();
@@ -45,6 +52,7 @@ let started = false;
 let responseSubscription: Subscription | null = null;
 let storeSubscription: (() => void) | null = null;
 let rescheduleTimer: ReturnType<typeof setTimeout> | null = null;
+let rescheduleQueue: Promise<void> = Promise.resolve();
 let notificationOpenHandler: NotificationOpenHandler | null = null;
 let lastHandledNotificationResponseKey: string | null = null;
 
@@ -74,6 +82,44 @@ const logNotificationError = (message: string, error?: unknown) => {
   const extra = error ? { error: error instanceof Error ? error.message : String(error) } : undefined;
   void logWarn(`[Notifications] ${message}`, { scope: 'notifications', extra });
 };
+
+const triggerMatches = (api: NotificationsApi, trigger: unknown, kind: 'daily' | 'weekly'): boolean => {
+  if (!trigger || typeof trigger !== 'object') return false;
+  const triggerRecord = trigger as Record<string, unknown>;
+  const rawType = triggerRecord.type;
+
+  if (typeof rawType === 'string' || typeof rawType === 'number') {
+    const expected = kind === 'daily'
+      ? api.SchedulableTriggerInputTypes.DAILY
+      : api.SchedulableTriggerInputTypes.WEEKLY;
+    return String(rawType).toLowerCase() === String(expected).toLowerCase();
+  }
+
+  // Fallback for platform-specific trigger objects missing an explicit "type".
+  const hasHour = typeof triggerRecord.hour === 'number';
+  const hasMinute = typeof triggerRecord.minute === 'number';
+  const hasWeekday = typeof triggerRecord.weekday === 'number';
+  if (!hasHour || !hasMinute) return false;
+  return kind === 'daily' ? !hasWeekday : hasWeekday;
+};
+
+async function getScheduledIdsByTriggerKind(api: NotificationsApi, kind: 'daily' | 'weekly'): Promise<string[]> {
+  if (typeof api.getAllScheduledNotificationsAsync !== 'function') return [];
+  try {
+    const scheduled = await api.getAllScheduledNotificationsAsync();
+    if (!Array.isArray(scheduled)) return [];
+    const ids: string[] = [];
+    for (const entry of scheduled as ScheduledNotificationRequest[]) {
+      if (typeof entry.identifier !== 'string') continue;
+      if (!triggerMatches(api, entry.trigger, kind)) continue;
+      ids.push(entry.identifier);
+    }
+    return ids;
+  } catch (error) {
+    logNotificationError(`Failed to load scheduled ${kind} notifications`, error);
+    return [];
+  }
+}
 
 const clearRescheduleTimer = () => {
   if (rescheduleTimer) {
@@ -191,9 +237,11 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 async function cancelDailyDigests(api: NotificationsApi) {
+  const scheduledDailyIds = await getScheduledIdsByTriggerKind(api, 'daily');
   const ids = new Set<string>([
     DIGEST_MORNING_NOTIFICATION_ID,
     DIGEST_EVENING_NOTIFICATION_ID,
+    ...scheduledDailyIds,
     ...scheduledDigestByKind.values(),
   ]);
   for (const id of ids) {
@@ -203,8 +251,17 @@ async function cancelDailyDigests(api: NotificationsApi) {
 }
 
 async function cancelWeeklyReview(api: NotificationsApi) {
-  const id = scheduledWeeklyReviewId || WEEKLY_REVIEW_NOTIFICATION_ID;
-  await api.cancelScheduledNotificationAsync(id).catch((error) => logNotificationError('Failed to cancel weekly review', error));
+  const scheduledWeeklyIds = await getScheduledIdsByTriggerKind(api, 'weekly');
+  const ids = new Set<string>([
+    WEEKLY_REVIEW_NOTIFICATION_ID,
+    ...scheduledWeeklyIds,
+  ]);
+  if (scheduledWeeklyReviewId) {
+    ids.add(scheduledWeeklyReviewId);
+  }
+  for (const id of ids) {
+    await api.cancelScheduledNotificationAsync(id).catch((error) => logNotificationError('Failed to cancel weekly review', error));
+  }
   scheduledWeeklyReviewId = null;
 }
 
@@ -545,6 +602,21 @@ async function clearLastNotificationResponse(api: NotificationsApi): Promise<voi
   await clearFn().catch((error) => logNotificationError('Failed to clear last notification response', error));
 }
 
+async function runRescheduleCycle(api: NotificationsApi): Promise<void> {
+  await rescheduleAll(api);
+  await rescheduleDailyDigest(api);
+  await rescheduleWeeklyReview(api);
+}
+
+function enqueueReschedule(api: NotificationsApi): void {
+  rescheduleQueue = rescheduleQueue
+    .catch(() => undefined)
+    .then(async () => {
+      await runRescheduleCycle(api);
+    })
+    .catch((error) => logNotificationError('Failed to reschedule notifications', error));
+}
+
 export async function startMobileNotifications() {
   if (started) return;
   started = true;
@@ -615,18 +687,14 @@ export async function startMobileNotifications() {
     },
   ]).catch((error) => logNotificationError('Failed to register project notification category', error));
 
-  await rescheduleAll(api);
-  await rescheduleDailyDigest(api);
-  await rescheduleWeeklyReview(api);
+  await runRescheduleCycle(api);
 
   storeSubscription?.();
   storeSubscription = useTaskStore.subscribe(() => {
     clearRescheduleTimer();
     rescheduleTimer = setTimeout(() => {
       rescheduleTimer = null;
-      rescheduleAll(api).catch((error) => logNotificationError('Failed to reschedule', error));
-      rescheduleDailyDigest(api).catch((error) => logNotificationError('Failed to reschedule daily digest', error));
-      rescheduleWeeklyReview(api).catch((error) => logNotificationError('Failed to reschedule weekly review', error));
+      enqueueReschedule(api);
     }, 500);
   });
 
@@ -679,5 +747,6 @@ export async function stopMobileNotifications() {
   digestConfigKey = null;
   weeklyReviewConfigKey = null;
   lastHandledNotificationResponseKey = null;
+  rescheduleQueue = Promise.resolve();
   started = false;
 }
