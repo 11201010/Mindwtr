@@ -794,6 +794,8 @@ export function mergeAppData(local: AppData, incoming: AppData): AppData {
 }
 
 export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult> {
+    const nowIso = io.now ? io.now() : new Date().toISOString();
+
     io.onStep?.('read-local');
     const localDataRaw = await io.readLocal();
     const localShapeErrors = validateSyncPayloadShape(localDataRaw, 'local');
@@ -801,7 +803,8 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         const sample = localShapeErrors.slice(0, 3).join('; ');
         throw new Error(`Invalid local sync payload: ${sample}`);
     }
-    const localData = normalizeAppData(localDataRaw);
+    const localNormalized = normalizeAppData(localDataRaw);
+    const localData = purgeExpiredTombstones(localNormalized, nowIso, io.tombstoneRetentionDays).data;
 
     io.onStep?.('read-remote');
     const remoteDataRaw = await io.readRemote();
@@ -819,7 +822,8 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
             throw new Error(`Invalid remote sync payload: ${sample}`);
         }
     }
-    const remoteData = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], sections: [], areas: [], settings: {} });
+    const remoteNormalized = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], sections: [], areas: [], settings: {} });
+    const remoteData = purgeExpiredTombstones(remoteNormalized, nowIso, io.tombstoneRetentionDays).data;
 
     io.onStep?.('merge');
     const mergeResult = mergeAppDataWithStats(localData, remoteData);
@@ -828,7 +832,6 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         + (mergeResult.stats.sections.conflicts || 0)
         + (mergeResult.stats.areas.conflicts || 0);
     const nextSyncStatus: SyncCycleResult['status'] = conflictCount > 0 ? 'conflict' : 'success';
-    const nowIso = io.now ? io.now() : new Date().toISOString();
     const conflictIds = [
         ...(mergeResult.stats.tasks.conflictIds || []),
         ...(mergeResult.stats.projects.conflictIds || []),

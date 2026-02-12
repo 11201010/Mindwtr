@@ -841,6 +841,30 @@ describe('Sync Logic', () => {
             expect(keptTask!.attachments).toBeUndefined();
         });
 
+        it('drops expired remote tombstones before merge so live tasks are preserved', async () => {
+            let saved: AppData | null = null;
+            const localLiveTask = createMockTask('task-1', '2025-10-01T00:00:00.000Z');
+            const remoteExpiredTombstone = {
+                ...createMockTask('task-1', '2025-11-01T00:00:00.000Z', '2025-11-01T00:00:00.000Z'),
+                purgedAt: '2025-11-01T00:00:00.000Z',
+            } as Task;
+
+            await performSyncCycle({
+                readLocal: async () => mockAppData([localLiveTask]),
+                readRemote: async () => mockAppData([remoteExpiredTombstone]),
+                writeLocal: async (data) => {
+                    saved = data;
+                },
+                writeRemote: async () => undefined,
+                now: () => '2026-03-15T00:00:00.000Z',
+            });
+
+            expect(saved).not.toBeNull();
+            expect(saved!.tasks).toHaveLength(1);
+            expect(saved!.tasks[0].id).toBe('task-1');
+            expect(saved!.tasks[0].deletedAt).toBeUndefined();
+        });
+
         it('respects custom tombstone retention window', async () => {
             let saved: AppData | null = null;
             const oldPurgedTask = {
