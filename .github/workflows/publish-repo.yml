@@ -103,6 +103,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y createrepo-c
           createrepo_c .
+          if [ -f repodata/repomd.xml ]; then
+            gpg --batch --yes --armor --detach-sign -o repodata/repomd.xml.asc repodata/repomd.xml
+          else
+            echo "repodata/repomd.xml not found after createrepo_c" >&2
+            exit 1
+          fi
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
