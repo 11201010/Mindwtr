@@ -11,6 +11,7 @@ const baseSection: Section = {
     id: 'section-1',
     projectId: 'project-1',
     title: 'Section 1',
+    order: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -18,6 +19,10 @@ const baseSection: Section = {
 const baseProject: Project = {
     id: 'project-1',
     title: 'Project 1',
+    status: 'active',
+    color: '#94a3b8',
+    order: 0,
+    tagIds: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
 };
