@@ -1,6 +1,5 @@
 import { useState, memo, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import {
-    shallow,
     useTaskStore,
     Task,
     TaskEditorFieldId,
@@ -84,57 +83,31 @@ export const TaskItem = memo(function TaskItem({
     showHoverHint = true,
     editorPresentation = 'inline',
 }: TaskItemProps) {
-    const {
-        updateTask,
-        deleteTask,
-        moveTask,
-        projects,
-        sections,
-        areas,
-        settings,
-        duplicateTask,
-        resetTaskChecklist,
-        restoreTask,
-        highlightTaskId,
-        setHighlightTask,
-        addProject,
-        addArea,
-        addSection,
-        lockEditing,
-        unlockEditing,
-    } = useTaskStore(
-        (state) => ({
-            updateTask: state.updateTask,
-            deleteTask: state.deleteTask,
-            moveTask: state.moveTask,
-            projects: state.projects,
-            sections: state.sections,
-            areas: state.areas,
-            settings: state.settings,
-            duplicateTask: state.duplicateTask,
-            resetTaskChecklist: state.resetTaskChecklist,
-            restoreTask: state.restoreTask,
-            highlightTaskId: state.highlightTaskId,
-            setHighlightTask: state.setHighlightTask,
-            addProject: state.addProject,
-            addArea: state.addArea,
-            addSection: state.addSection,
-            lockEditing: state.lockEditing,
-            unlockEditing: state.unlockEditing,
-        }),
-        shallow
+    const updateTask = useTaskStore((state) => state.updateTask);
+    const deleteTask = useTaskStore((state) => state.deleteTask);
+    const moveTask = useTaskStore((state) => state.moveTask);
+    const projects = useTaskStore((state) => state.projects);
+    const sections = useTaskStore((state) => state.sections);
+    const areas = useTaskStore((state) => state.areas);
+    const settings = useTaskStore((state) => state.settings);
+    const duplicateTask = useTaskStore((state) => state.duplicateTask);
+    const resetTaskChecklist = useTaskStore((state) => state.resetTaskChecklist);
+    const restoreTask = useTaskStore((state) => state.restoreTask);
+    const highlightTaskId = useTaskStore((state) => state.highlightTaskId);
+    const setHighlightTask = useTaskStore((state) => state.setHighlightTask);
+    const addProject = useTaskStore((state) => state.addProject);
+    const addArea = useTaskStore((state) => state.addArea);
+    const addSection = useTaskStore((state) => state.addSection);
+    const lockEditing = useTaskStore((state) => state.lockEditing);
+    const unlockEditing = useTaskStore((state) => state.unlockEditing);
+    const setProjectView = useUiStore((state) => state.setProjectView);
+    const setSelectedProjectId = useCallback(
+        (value: string | null) => setProjectView({ selectedProjectId: value }),
+        [setProjectView]
     );
-    const {
-        setSelectedProjectId,
-        editingTaskId,
-        setEditingTaskId,
-        showToast,
-    } = useUiStore((state) => ({
-        setSelectedProjectId: (value: string | null) => state.setProjectView({ selectedProjectId: value }),
-        editingTaskId: state.editingTaskId,
-        setEditingTaskId: state.setEditingTaskId,
-        showToast: state.showToast,
-    }));
+    const editingTaskId = useUiStore((state) => state.editingTaskId);
+    const setEditingTaskId = useUiStore((state) => state.setEditingTaskId);
+    const showToast = useUiStore((state) => state.showToast);
     const { t } = useLanguage();
     const [isEditing, setIsEditing] = useState(false);
     const [autoFocusTitle, setAutoFocusTitle] = useState(false);
