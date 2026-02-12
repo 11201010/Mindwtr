@@ -265,4 +265,62 @@ describe('cloud server api', () => {
             expect(taskIds.has(id)).toBe(true);
         }
     });
+
+    test('merges /v1/data payload with existing server state', async () => {
+        const base = {
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {},
+        };
+        const taskA = {
+            id: 'task-a',
+            title: 'Task A',
+            status: 'inbox',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+        const taskB = {
+            id: 'task-b',
+            title: 'Task B',
+            status: 'inbox',
+            createdAt: '2026-01-01T00:01:00.000Z',
+            updatedAt: '2026-01-01T00:01:00.000Z',
+        };
+
+        const firstPut = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [taskA],
+            }),
+        });
+        expect(firstPut.status).toBe(200);
+
+        const secondPut = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [taskB],
+            }),
+        });
+        expect(secondPut.status).toBe(200);
+
+        const getResponse = await fetch(`${baseUrl}/v1/data`, {
+            headers: authHeaders,
+        });
+        expect(getResponse.status).toBe(200);
+        const body = await getResponse.json();
+        const taskIds = new Set((body.tasks as Array<{ id: string }>).map((task) => task.id));
+        expect(taskIds.has(taskA.id)).toBe(true);
+        expect(taskIds.has(taskB.id)).toBe(true);
+    });
 });

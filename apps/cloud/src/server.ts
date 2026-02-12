@@ -5,6 +5,7 @@ import { dirname, join, resolve, sep } from 'path';
 import {
     applyTaskUpdates,
     generateUUID,
+    mergeAppData,
     parseQuickAdd,
     searchAll,
     type AppData,
@@ -704,7 +705,10 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                     const validated = validateAppData(body);
                     if (!validated.ok) return errorResponse(validated.error, 400);
                     return await withWriteLock(key, async () => {
-                        writeData(filePath, validated.data);
+                        const existingData = loadAppData(filePath);
+                        const incomingData = validated.data as AppData;
+                        const mergedData = mergeAppData(existingData, incomingData);
+                        writeData(filePath, mergedData);
                         return jsonResponse({ ok: true });
                     });
                 }
