@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions, Platform, Keyboard, ActionSheetIOS } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Area, Attachment, generateUUID, Project, PRESET_TAGS, Task, TaskStatus, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
@@ -73,6 +73,7 @@ export default function ProjectsScreen() {
   const pickerCardMaxHeight = Math.min(windowHeight * 0.8, 560);
   const areaListMaxHeight = Math.min(windowHeight * 0.4, 280);
   const areaManagerListMaxHeight = Math.min(windowHeight * 0.45, 320);
+  const overlayModalPresentation = Platform.OS === 'ios' ? 'overFullScreen' : 'fullScreen';
   const resolveValidationMessage = (error?: string) => {
     if (error === 'file_too_large') return t('attachments.fileTooLarge');
     if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
@@ -413,6 +414,203 @@ export default function ProjectsScreen() {
         }
       ]
     );
+  };
+
+  const openAreaPicker = () => {
+    Keyboard.dismiss();
+    setShowStatusMenu(false);
+    if (Platform.OS === 'ios' && selectedProject) {
+      const manageAreasLabel = (() => {
+        const translated = t('projects.manageAreas');
+        return translated === 'projects.manageAreas' ? 'Manage areas' : translated;
+      })();
+      const openIOSAreaManager = () => {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: [
+              t('common.cancel'),
+              `${t('common.add')} ${t('projects.areaLabel')}`,
+              t('projects.sortByName'),
+              t('projects.sortByColor'),
+              t('common.delete'),
+            ],
+            cancelButtonIndex: 0,
+            title: manageAreasLabel,
+          },
+          (manageIndex) => {
+            if (manageIndex === 0) return;
+            if (manageIndex === 1) {
+              Alert.prompt(
+                t('projects.areaLabel'),
+                `${t('common.add')} ${t('projects.areaLabel')}`,
+                [
+                  { text: t('common.cancel'), style: 'cancel' },
+                  {
+                    text: t('common.save'),
+                    onPress: async (value?: string) => {
+                      const name = (value ?? '').trim();
+                      if (!name) return;
+                      try {
+                        const created = await addArea(name, { color: colors[0] });
+                        if (!created) return;
+                        updateProject(selectedProject.id, { areaId: created.id });
+                        setSelectedProject({ ...selectedProject, areaId: created.id });
+                      } catch (error) {
+                        logProjectError('Failed to create area from iOS manager', error);
+                      }
+                    },
+                  },
+                ],
+                'plain-text'
+              );
+              return;
+            }
+            if (manageIndex === 2) {
+              sortAreasByName();
+              return;
+            }
+            if (manageIndex === 3) {
+              sortAreasByColor();
+              return;
+            }
+            const deletableAreas = sortedAreas.filter((area) => (areaUsage.get(area.id) || 0) === 0);
+            if (deletableAreas.length === 0) {
+              Alert.alert(t('common.notice') || 'Notice', t('projects.areaInUse') || 'Area has projects.');
+              return;
+            }
+            ActionSheetIOS.showActionSheetWithOptions(
+              {
+                options: [t('common.cancel'), ...deletableAreas.map((area) => `${t('common.delete')} ${area.name}`)],
+                cancelButtonIndex: 0,
+                destructiveButtonIndex: deletableAreas.length > 0 ? 1 : undefined,
+                title: t('common.delete'),
+              },
+              (deleteIndex) => {
+                if (deleteIndex <= 0) return;
+                const target = deletableAreas[deleteIndex - 1];
+                if (!target) return;
+                deleteArea(target.id);
+              }
+            );
+          }
+        );
+      };
+      const options = [
+        t('common.cancel'),
+        t('projects.noArea'),
+        `${t('common.add')} ${t('projects.areaLabel')}`,
+        manageAreasLabel,
+        ...sortedAreas.map((area) => area.name),
+      ];
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: 0,
+          title: t('projects.areaLabel'),
+        },
+        (buttonIndex) => {
+          if (!selectedProject) return;
+          if (buttonIndex === 0) return;
+          if (buttonIndex === 1) {
+            updateProject(selectedProject.id, { areaId: undefined });
+            setSelectedProject({ ...selectedProject, areaId: undefined });
+            return;
+          }
+          if (buttonIndex === 2) {
+            Alert.prompt(
+              t('projects.areaLabel'),
+              `${t('common.add')} ${t('projects.areaLabel')}`,
+              [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('common.save'),
+                  onPress: async (value?: string) => {
+                    const name = (value ?? '').trim();
+                    if (!name) return;
+                    try {
+                      const created = await addArea(name, { color: colors[0] });
+                      if (!created) return;
+                      updateProject(selectedProject.id, { areaId: created.id });
+                      setSelectedProject({ ...selectedProject, areaId: created.id });
+                    } catch (error) {
+                      logProjectError('Failed to create area from iOS action sheet', error);
+                    }
+                  },
+                },
+              ],
+              'plain-text'
+            );
+            return;
+          }
+          if (buttonIndex === 3) {
+            openIOSAreaManager();
+            return;
+          }
+          const pickedArea = sortedAreas[buttonIndex - 4];
+          if (!pickedArea) return;
+          updateProject(selectedProject.id, { areaId: pickedArea.id });
+          setSelectedProject({ ...selectedProject, areaId: pickedArea.id });
+        }
+      );
+      return;
+    }
+    setShowAreaPicker(true);
+  };
+
+  const openTagPicker = () => {
+    Keyboard.dismiss();
+    setShowStatusMenu(false);
+    if (Platform.OS === 'ios' && selectedProject) {
+      const existingTags = selectedProject.tagIds || [];
+      const tagOptions = projectTagOptions.slice(0, 25);
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: [
+            t('common.cancel'),
+            `${t('common.add')} ${t('taskEdit.tagsLabel')}`,
+            t('common.clear'),
+            ...tagOptions.map((tag) => (existingTags.includes(tag) ? `✓ ${tag}` : tag)),
+          ],
+          cancelButtonIndex: 0,
+          title: t('taskEdit.tagsLabel'),
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) return;
+          if (buttonIndex === 1) {
+            Alert.prompt(
+              t('taskEdit.tagsLabel'),
+              `${t('common.add')} ${t('taskEdit.tagsLabel')}`,
+              [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('common.save'),
+                  onPress: (value?: string) => {
+                    const normalized = normalizeTag(value ?? '');
+                    if (!normalized) return;
+                    const next = Array.from(new Set([...(selectedProject.tagIds || []), normalized]));
+                    updateProject(selectedProject.id, { tagIds: next });
+                    setSelectedProject({ ...selectedProject, tagIds: next });
+                  },
+                },
+              ],
+              'plain-text'
+            );
+            return;
+          }
+          if (buttonIndex === 2) {
+            updateProject(selectedProject.id, { tagIds: [] });
+            setSelectedProject({ ...selectedProject, tagIds: [] });
+            return;
+          }
+          const pickedTag = tagOptions[buttonIndex - 3];
+          if (!pickedTag) return;
+          toggleProjectTag(pickedTag);
+        }
+      );
+      return;
+    }
+    setTagDraft('');
+    setShowTagPicker(true);
   };
 
   const updateAttachmentStatus = (
@@ -940,7 +1138,7 @@ export default function ProjectsScreen() {
                       </Text>
                       <TouchableOpacity
                         style={[styles.reviewButton, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                        onPress={() => setShowAreaPicker(true)}
+                        onPress={openAreaPicker}
                       >
                         <Text style={{ color: tc.text }}>
                           {selectedProject.areaId && areaById.has(selectedProject.areaId)
@@ -956,7 +1154,7 @@ export default function ProjectsScreen() {
                       </Text>
                       <TouchableOpacity
                         style={[styles.reviewButton, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                        onPress={() => setShowTagPicker(true)}
+                        onPress={openTagPicker}
                       >
                         <Text style={{ color: tc.text }}>
                           {selectedProject.tagIds?.length ? selectedProject.tagIds.join(', ') : t('common.none')}
@@ -1153,6 +1351,7 @@ export default function ProjectsScreen() {
         visible={linkModalVisible}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setLinkModalVisible(false)}
       >
         <View style={styles.overlay}>
@@ -1192,6 +1391,7 @@ export default function ProjectsScreen() {
         visible={showAreaPicker}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setShowAreaPicker(false)}
       >
         <Pressable style={styles.overlay} onPress={() => setShowAreaPicker(false)}>
@@ -1243,6 +1443,7 @@ export default function ProjectsScreen() {
         visible={showAreaManager}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => {
           setShowAreaManager(false);
           setExpandedAreaColorId(null);
@@ -1385,6 +1586,7 @@ export default function ProjectsScreen() {
         visible={showTagPicker}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setShowTagPicker(false)}
       >
         <Pressable style={styles.overlay} onPress={() => setShowTagPicker(false)}>
