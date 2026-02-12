@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEventHandler, RefObject } from 'react';
 import type { Area, Project } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
@@ -71,6 +71,7 @@ export function TaskInput({
 }: TaskInputProps) {
     const localRef = useRef<HTMLInputElement>(null);
     const mergedRef = inputRef ?? localRef;
+    const listboxId = useId();
     const [trigger, setTrigger] = useState<TriggerState | null>(null);
     const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -188,6 +189,9 @@ export function TaskInput({
         onKeyDown?.(event);
     };
 
+    const hasOptions = trigger && options.length > 0;
+    const activeDescendantId = hasOptions ? `${listboxId}-option-${selectedIndex}` : undefined;
+
     return (
         <div className={cn('relative', containerClassName)}>
             <input
@@ -213,15 +217,28 @@ export function TaskInput({
                     window.setTimeout(() => closeTrigger(), 250);
                 }}
                 placeholder={placeholder}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={Boolean(hasOptions)}
+                aria-controls={hasOptions ? listboxId : undefined}
+                aria-owns={hasOptions ? listboxId : undefined}
+                aria-activedescendant={activeDescendantId}
                 className={cn(className, dir === 'rtl' && 'text-right')}
                 dir={dir}
             />
-            {trigger && options.length > 0 && (
-                <div className="absolute z-20 mt-2 w-64 rounded-md border border-border bg-popover shadow-lg p-1 text-xs">
+            {hasOptions && (
+                <div
+                    id={listboxId}
+                    role="listbox"
+                    className="absolute z-20 mt-2 w-64 rounded-md border border-border bg-popover shadow-lg p-1 text-xs"
+                >
                     {options.map((option, index) => (
                         <button
+                            id={`${listboxId}-option-${index}`}
                             key={`${option.kind}-${option.value}-${index}`}
                             type="button"
+                            role="option"
+                            aria-selected={index === selectedIndex}
                             onClick={() => void applyOption(option)}
                             className={cn(
                                 'w-full text-left px-2 py-1 rounded hover:bg-muted/50',
