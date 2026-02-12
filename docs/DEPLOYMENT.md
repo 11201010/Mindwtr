@@ -1,22 +1,12 @@
 # Deployment
 
-## Desktop
+Deployment runbooks and production checklists are maintained in the project wiki:
 
-- Build with Tauri (Rust + WebView).
-- Requires platform toolchains (Xcode on macOS, MSVC on Windows).
+- https://github.com/dongdongbh/Mindwtr/wiki
 
-## Mobile
+Recommended pages:
 
-- Expo + EAS builds.
-- Uses SQLite + JSON fallback for data.
-
-## Self-hosted Sync
-
-- `apps/cloud` provides a lightweight JSON sync endpoint.
-- Docker setup lives in `/docker`.
-
-## PWA / Web
-
-- `apps/desktop` can be built as a web bundle and served by Nginx.
-- Ensure SPA fallback (`try_files $uri /index.html`) is enabled.
-
+- Desktop Release and Distribution
+- Mobile EAS Build and Submission
+- Cloud Service Deployment
+- Production Validation Checklist

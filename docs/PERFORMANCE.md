@@ -1,20 +1,11 @@
 # Performance Guide
 
-## Hot paths
+Detailed performance notes are tracked in the project wiki:
 
-- Task list filtering/sorting (desktop + mobile).
-- Project/task ordering updates.
-- Sync and attachment reconciliation.
+- https://github.com/dongdongbh/Mindwtr/wiki
 
-## Known optimizations
+Recommended pages:
 
-- SQLite indexes for status/project/updatedAt.
-- Batched upserts for bulk writes.
-- Memoized selectors for expensive derived data.
-- Windowed list rendering with dynamic row measurement for large task lists.
-
-## Tips
-
-- Use `useMemo` for derived sets (contexts/tags).
-- Prefer list virtualization for large task lists.
-- Avoid deep cloning large arrays on each save.
+- Performance Hot Paths
+- Profiling Workflow
+- Desktop and Mobile Optimization Checklist
