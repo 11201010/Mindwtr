@@ -126,6 +126,41 @@ describe('Sync Logic', () => {
             expect(attachment?.cloudKey).toBe('attachments/att-1.txt');
         });
 
+        it('marks attachment as available when local URI exists without localStatus', () => {
+            const localAttachment: Attachment = {
+                id: 'att-available',
+                kind: 'file',
+                title: 'doc.txt',
+                uri: '/local/doc.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-02T00:00:00.000Z',
+            };
+            const incomingAttachment: Attachment = {
+                id: 'att-available',
+                kind: 'file',
+                title: 'doc.txt',
+                uri: '',
+                cloudKey: 'attachments/att-available.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-03T00:00:00.000Z',
+            };
+
+            const localTask: Task = {
+                ...createMockTask('1', '2023-01-02'),
+                attachments: [localAttachment],
+            };
+            const incomingTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [incomingAttachment],
+            };
+
+            const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+            const attachment = merged.tasks[0].attachments?.find((item) => item.id === 'att-available');
+
+            expect(attachment?.uri).toBe('/local/doc.txt');
+            expect(attachment?.localStatus).toBe('available');
+        });
+
         it('should retain local cloudKey when incoming lacks it', () => {
             const localAttachment: Attachment = {
                 id: 'att-2',

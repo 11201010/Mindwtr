@@ -728,7 +728,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
                     ? localAttachment.uri
                     : (attachment.uri || incomingAttachment?.uri || localAttachment.uri),
                 localStatus: localUriAvailable
-                    ? localAttachment.localStatus
+                    ? (localAttachment.localStatus || 'available')
                     : (attachment.localStatus || incomingAttachment?.localStatus || localAttachment.localStatus),
             };
         });
