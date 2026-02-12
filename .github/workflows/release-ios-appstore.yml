@@ -122,35 +122,14 @@ jobs:
               echo "::warning::IOS_ASC_ISSUER_ID format looks invalid after trimming (expected UUID)."
             fi
             KEY_PATH="$RUNNER_TEMP/ios-asc-key.p8"
-            if printf '%s' "$IOS_ASC_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY"; then
-              # Support both multiline PEM and single-line PEM with '\n' escapes
-              printf '%b' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' > "$KEY_PATH"
-            else
-              if ! printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 --decode > "$KEY_PATH" 2>/dev/null; then
-                printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 -D > "$KEY_PATH"
-              fi
-            fi
+            bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$KEY_PATH"
 
             if ! openssl pkey -in "$KEY_PATH" -noout >/dev/null 2>&1; then
               echo "::warning::IOS_ASC_PRIVATE_KEY is not a valid .p8 key; skipping remote max build lookup."
               REMOTE_LOOKUP_STATUS="invalid_key"
             else
-              api_get() {
-                local out_file="$1"
-                shift
-                local tmp_body="$RUNNER_TEMP/asc-api-$(date +%s)-$RANDOM.json"
-                local http_code
-                http_code="$(curl -sS -w '%{http_code}' -o "$tmp_body" "$@" || true)"
-                if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ]; then
-                  mv "$tmp_body" "$out_file"
-                  return 0
-                fi
-                local preview
-                preview="$(tr '\n' ' ' < "$tmp_body" | head -c 240)"
-                rm -f "$tmp_body"
-                echo "::warning::App Store Connect API request failed (HTTP ${http_code}): ${preview}"
-                return 1
-              }
+              ASC_API_TMP_PREFIX="asc-api"
+              source scripts/ci/asc-api-utils.sh
 
               if ! ASC_TOKEN="$(
                 node scripts/ci/generate-asc-jwt.js "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$KEY_PATH"
@@ -550,13 +529,7 @@ jobs:
           ASC_KEY_ID="$(printf '%s' "$IOS_ASC_KEY_ID" | tr -d '\r\n\t ')"
           ASC_ISSUER_ID="$(printf '%s' "$IOS_ASC_ISSUER_ID" | tr -d '\r\n\t ')"
           ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-review-check.p8"
-          if printf '%s' "$IOS_ASC_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY"; then
-            printf '%b' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' > "$ASC_KEY_PATH"
-          else
-            if ! printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 --decode > "$ASC_KEY_PATH" 2>/dev/null; then
-              printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 -D > "$ASC_KEY_PATH"
-            fi
-          fi
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
 
           if ! openssl pkey -in "$ASC_KEY_PATH" -noout >/dev/null 2>&1; then
             echo "::warning::submit_for_review requested, but IOS_ASC_PRIVATE_KEY is invalid. Disabling review submission."
@@ -564,22 +537,8 @@ jobs:
             exit 0
           fi
 
-          api_get() {
-            local out_file="$1"
-            shift
-            local tmp_body="$RUNNER_TEMP/asc-review-$(date +%s)-$RANDOM.json"
-            local http_code
-            http_code="$(curl -sS -w '%{http_code}' -o "$tmp_body" "$@" || true)"
-            if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ]; then
-              mv "$tmp_body" "$out_file"
-              return 0
-            fi
-            local preview
-            preview="$(tr '\n' ' ' < "$tmp_body" | head -c 240)"
-            rm -f "$tmp_body"
-            echo "::warning::App Store Connect API request failed (HTTP ${http_code}): ${preview}"
-            return 1
-          }
+          ASC_API_TMP_PREFIX="asc-review"
+          source scripts/ci/asc-api-utils.sh
 
           if ! ASC_TOKEN="$(
             node scripts/ci/generate-asc-jwt.js "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$ASC_KEY_PATH"
@@ -645,13 +604,7 @@ jobs:
           set -euo pipefail
 
           ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-fastlane.p8"
-          if printf '%s' "$IOS_ASC_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY"; then
-            printf '%b' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' > "$ASC_KEY_PATH"
-          else
-            if ! printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 --decode > "$ASC_KEY_PATH" 2>/dev/null; then
-              printf '%s' "$IOS_ASC_PRIVATE_KEY" | tr -d '\r' | base64 -D > "$ASC_KEY_PATH"
-            fi
-          fi
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
 
           mkdir -p fastlane
           cat <<'EOF' > fastlane/Fastfile

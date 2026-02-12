@@ -53,6 +53,15 @@ jobs:
           fi
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
+      - name: Set release tag (push)
+        if: github.event_name == 'push'
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
       - name: Download Release Assets
         env:
           GH_TOKEN: ${{ github.token }}
