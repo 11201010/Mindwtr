@@ -15,7 +15,7 @@ const buildData = (): AppData => ({
 });
 
 describe('findOrphanedAttachments', () => {
-    it('keeps deleted attachments on active tasks as tombstones for sync', () => {
+    it('treats deleted attachments on active tasks as orphaned cleanup candidates', () => {
         const data = buildData();
         data.tasks.push({
             id: 't1',
@@ -38,7 +38,7 @@ describe('findOrphanedAttachments', () => {
         });
 
         const orphaned = findOrphanedAttachments(data);
-        expect(orphaned).toHaveLength(0);
+        expect(orphaned.map((attachment) => attachment.id)).toEqual(['a1']);
     });
 
     it('detects attachments on deleted tasks', () => {

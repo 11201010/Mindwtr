@@ -14,8 +14,7 @@ export function findOrphanedAttachments(appData: AppData): Attachment[] {
         const taskDeleted = Boolean(task.deletedAt);
         for (const attachment of task.attachments || []) {
             allAttachments.set(attachment.id, attachment);
-            // Keep attachment tombstones on active entities so deletion can sync across devices.
-            if (!taskDeleted) {
+            if (!taskDeleted && !attachment.deletedAt) {
                 activeReferenceIds.add(attachment.id);
             }
         }
@@ -25,7 +24,7 @@ export function findOrphanedAttachments(appData: AppData): Attachment[] {
         const projectDeleted = Boolean(project.deletedAt);
         for (const attachment of project.attachments || []) {
             allAttachments.set(attachment.id, attachment);
-            if (!projectDeleted) {
+            if (!projectDeleted && !attachment.deletedAt) {
                 activeReferenceIds.add(attachment.id);
             }
         }
