@@ -22,6 +22,9 @@ const OFFLINE_ERROR_PATTERNS = [
   /network is unreachable/i,
   /no route to host/i,
   /software caused connection abort/i,
+  /econnreset/i,
+  /econnaborted/i,
+  /etimedout/i,
   /failed to connect to/i,
 ];
 

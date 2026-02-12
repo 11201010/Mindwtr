@@ -35,6 +35,8 @@ describe('mobile sync-service test utils', () => {
     expect(isLikelyOfflineSyncError('TypeError: Network request failed')).toBe(true);
     expect(isLikelyOfflineSyncError('java.net.UnknownHostException: Unable to resolve host')).toBe(true);
     expect(isLikelyOfflineSyncError('Software caused connection abort')).toBe(true);
+    expect(isLikelyOfflineSyncError('request failed: ECONNRESET')).toBe(true);
+    expect(isLikelyOfflineSyncError('AxiosError: connect ETIMEDOUT')).toBe(true);
     expect(isLikelyOfflineSyncError('WebDAV unauthorized (401). Check folder URL')).toBe(false);
   });
 });
