@@ -24,6 +24,7 @@ import {
     cloudDeleteFile,
     flushPendingSave,
     performSyncCycle,
+    mergeAppData,
     normalizeAppData,
     normalizeWebdavUrl,
     normalizeCloudUrl,
@@ -177,6 +178,17 @@ const readLocalDataForSync = async (): Promise<AppData> => {
         projects: [...state._allProjects],
         sections: [...state._allSections],
         areas: [...state._allAreas],
+        settings: state.settings ?? {},
+    });
+};
+
+const getInMemoryAppDataSnapshot = (): AppData => {
+    const state = useTaskStore.getState();
+    return cloneAppData({
+        tasks: state._allTasks ?? state.tasks ?? [],
+        projects: state._allProjects ?? state.projects ?? [],
+        sections: state._allSections ?? state.sections ?? [],
+        areas: state._allAreas ?? state.areas ?? [],
         settings: state.settings ?? {},
     });
 };
@@ -1445,6 +1457,7 @@ export class SyncService {
             const cloudConfig = backend === 'cloud' ? await SyncService.getCloudConfig() : null;
             const syncPath = backend === 'file' ? await SyncService.getSyncPath() : '';
             const fileBaseDir = backend === 'file' ? getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME) : '';
+            let preSyncedLocalData: AppData | null = null;
             const ensureLocalSnapshotFresh = () => {
                 if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
                     SyncService.syncQueued = true;
@@ -1471,6 +1484,7 @@ export class SyncService {
                     if (preMutated) {
                         ensureLocalSnapshotFresh();
                         await tauriInvoke('save_data', { data: localData });
+                        preSyncedLocalData = localData;
                     }
                 } catch (error) {
                     if (error instanceof LocalSyncAbort) {
@@ -1481,7 +1495,10 @@ export class SyncService {
             }
             const syncResult = await performSyncCycle({
                 readLocal: async () => {
-                    const baseData = await readLocalDataForSync();
+                    const inMemorySnapshot = getInMemoryAppDataSnapshot();
+                    const baseData = preSyncedLocalData
+                        ? mergeAppData(preSyncedLocalData, inMemorySnapshot)
+                        : mergeAppData(await readLocalDataForSync(), inMemorySnapshot);
                     const data = await injectExternalCalendars(baseData);
                     localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
                     return data;
