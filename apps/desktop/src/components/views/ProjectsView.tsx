@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, Attachment, Task, type Project, type Section, generateUUID, parseQuickAdd } from '@mindwtr/core';
+import { useTaskStore, Attachment, Task, type Project, type Section, generateUUID, parseQuickAdd } from '@mindwtr/core';
 import { ChevronDown, ChevronRight, FileText, Folder, Pencil, Plus, Trash2 } from 'lucide-react';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -35,69 +35,38 @@ import { useProjectSectionActions } from './projects/useProjectSectionActions';
 
 export function ProjectsView() {
     const perf = usePerformanceMonitor('ProjectsView');
-    const {
-        projects,
-        tasks,
-        sections,
-        areas,
-        addArea,
-        updateArea,
-        deleteArea,
-        reorderAreas,
-        reorderProjects,
-        reorderProjectTasks,
-        addProject,
-        updateProject,
-        deleteProject,
-        duplicateProject,
-        updateTask,
-        addSection,
-        updateSection,
-        deleteSection,
-        addTask,
-        toggleProjectFocus,
-        _allTasks,
-        highlightTaskId,
-        setHighlightTask,
-        settings,
-    } = useTaskStore(
-        (state) => ({
-            projects: state.projects,
-            tasks: state.tasks,
-            sections: state.sections,
-            areas: state.areas,
-            addArea: state.addArea,
-            updateArea: state.updateArea,
-            deleteArea: state.deleteArea,
-            reorderAreas: state.reorderAreas,
-            reorderProjects: state.reorderProjects,
-            reorderProjectTasks: state.reorderProjectTasks,
-            addProject: state.addProject,
-            updateProject: state.updateProject,
-            deleteProject: state.deleteProject,
-            duplicateProject: state.duplicateProject,
-            updateTask: state.updateTask,
-            addSection: state.addSection,
-            updateSection: state.updateSection,
-            deleteSection: state.deleteSection,
-            addTask: state.addTask,
-            toggleProjectFocus: state.toggleProjectFocus,
-            _allTasks: state._allTasks,
-            highlightTaskId: state.highlightTaskId,
-            setHighlightTask: state.setHighlightTask,
-            settings: state.settings,
-        }),
-        shallow
-    );
+    const projects = useTaskStore((state) => state.projects);
+    const tasks = useTaskStore((state) => state.tasks);
+    const sections = useTaskStore((state) => state.sections);
+    const areas = useTaskStore((state) => state.areas);
+    const addArea = useTaskStore((state) => state.addArea);
+    const updateArea = useTaskStore((state) => state.updateArea);
+    const deleteArea = useTaskStore((state) => state.deleteArea);
+    const reorderAreas = useTaskStore((state) => state.reorderAreas);
+    const reorderProjects = useTaskStore((state) => state.reorderProjects);
+    const reorderProjectTasks = useTaskStore((state) => state.reorderProjectTasks);
+    const addProject = useTaskStore((state) => state.addProject);
+    const updateProject = useTaskStore((state) => state.updateProject);
+    const deleteProject = useTaskStore((state) => state.deleteProject);
+    const duplicateProject = useTaskStore((state) => state.duplicateProject);
+    const updateTask = useTaskStore((state) => state.updateTask);
+    const addSection = useTaskStore((state) => state.addSection);
+    const updateSection = useTaskStore((state) => state.updateSection);
+    const deleteSection = useTaskStore((state) => state.deleteSection);
+    const addTask = useTaskStore((state) => state.addTask);
+    const toggleProjectFocus = useTaskStore((state) => state.toggleProjectFocus);
+    const allTasks = useTaskStore((state) => state._allTasks);
+    const highlightTaskId = useTaskStore((state) => state.highlightTaskId);
+    const setHighlightTask = useTaskStore((state) => state.setHighlightTask);
+    const settings = useTaskStore((state) => state.settings);
     const getDerivedState = useTaskStore((state) => state.getDerivedState);
     const { allContexts } = getDerivedState();
     const { t } = useLanguage();
-    const { selectedProjectId, setSelectedProjectId } = useUiStore(
-        (state) => ({
-            selectedProjectId: state.projectView.selectedProjectId,
-            setSelectedProjectId: (value: string | null) => state.setProjectView({ selectedProjectId: value }),
-        }),
-        shallow
+    const selectedProjectId = useUiStore((state) => state.projectView.selectedProjectId);
+    const setProjectView = useUiStore((state) => state.setProjectView);
+    const setSelectedProjectId = useCallback(
+        (value: string | null) => setProjectView({ selectedProjectId: value }),
+        [setProjectView]
     );
     const [isCreating, setIsCreating] = useState(false);
     const [newProjectTitle, setNewProjectTitle] = useState('');
@@ -309,8 +278,8 @@ export function ProjectsView() {
     }, [selectedProject?.id, selectedProject?.title]);
     const projectAllTasks = useMemo(() => {
         if (!selectedProjectId) return [];
-        return _allTasks.filter((task) => !task.deletedAt && task.projectId === selectedProjectId);
-    }, [selectedProjectId, _allTasks]);
+        return allTasks.filter((task) => !task.deletedAt && task.projectId === selectedProjectId);
+    }, [allTasks, selectedProjectId]);
     const projectTasks = useMemo(() => (
         projectAllTasks.filter((task) => task.status !== 'done' && task.status !== 'reference' && task.status !== 'archived')
     ), [projectAllTasks]);
