@@ -483,7 +483,7 @@ const toComparableValue = (value: unknown): unknown => {
     if (value && typeof value === 'object') {
         const record = value as Record<string, unknown>;
         const comparable: Record<string, unknown> = {};
-        for (const key of Object.keys(record).sort((a, b) => a.localeCompare(b))) {
+        for (const key of Object.keys(record).sort()) {
             if (CONTENT_DIFF_IGNORED_KEYS.has(key)) continue;
             if (key === 'uri' && record.kind === 'file') continue;
             comparable[key] = toComparableValue(record[key]);
@@ -503,7 +503,7 @@ const chooseDeterministicWinner = <T>(localItem: T, incomingItem: T): T => {
     const localSignature = toComparableSignature(localItem);
     const incomingSignature = toComparableSignature(incomingItem);
     if (localSignature === incomingSignature) return incomingItem;
-    return incomingSignature.localeCompare(localSignature) > 0 ? incomingItem : localItem;
+    return incomingSignature > localSignature ? incomingItem : localItem;
 };
 
 function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; deletedAt?: string }>(
