@@ -45,6 +45,8 @@ export type Project = {
   deletedAt?: string;
 };
 
+type ProjectRef = Pick<Project, 'id' | 'title'>;
+
 const STATUS_TOKENS: Record<string, TaskStatus> = {
   inbox: 'inbox',
   next: 'next',
@@ -67,7 +69,7 @@ const generateUUID = (): string => {
   return `mcp_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 };
 
-export const parseQuickAdd = (input: string, projects: Project[]): { title: string; props: Partial<Task> } => {
+export const parseQuickAdd = (input: string, projects: ProjectRef[]): { title: string; props: Partial<Task> } => {
   let working = input.trim();
   const props: Partial<Task> = {};
   const contexts = new Set<string>();
@@ -186,15 +188,23 @@ const BASE_TASK_COLUMNS = [
   'purgedAt',
 ];
 
+const taskColumnsCache = new WeakMap<DbClient, { hasOrderNum: boolean; selectColumns: string[] }>();
+
 const getTaskColumns = (db: DbClient) => {
+  const cached = taskColumnsCache.get(db);
+  if (cached) return cached;
   try {
     const columns = db.prepare('PRAGMA table_info(tasks)').all();
     const names = new Set<string>(columns.map((col: any) => String(col.name)));
     const hasOrderNum = names.has('orderNum');
     const selectColumns = BASE_TASK_COLUMNS.filter((name) => hasOrderNum || name !== 'orderNum');
-    return { hasOrderNum, selectColumns };
+    const resolved = { hasOrderNum, selectColumns };
+    taskColumnsCache.set(db, resolved);
+    return resolved;
   } catch {
-    return { hasOrderNum: true, selectColumns: BASE_TASK_COLUMNS };
+    const fallback = { hasOrderNum: true, selectColumns: BASE_TASK_COLUMNS };
+    taskColumnsCache.set(db, fallback);
+    return fallback;
   }
 };
 
@@ -308,16 +318,31 @@ const BASE_PROJECT_COLUMNS = [
   'deletedAt',
 ];
 
+const projectColumnsCache = new WeakMap<DbClient, { hasOrderNum: boolean; selectColumns: string[] }>();
+
 const getProjectColumns = (db: DbClient) => {
+  const cached = projectColumnsCache.get(db);
+  if (cached) return cached;
   try {
     const columns = db.prepare('PRAGMA table_info(projects)').all();
     const names = new Set<string>(columns.map((col: any) => String(col.name)));
     const hasOrderNum = names.has('orderNum');
     const selectColumns = BASE_PROJECT_COLUMNS.filter((name) => hasOrderNum || name !== 'orderNum');
-    return { hasOrderNum, selectColumns };
+    const resolved = { hasOrderNum, selectColumns };
+    projectColumnsCache.set(db, resolved);
+    return resolved;
   } catch {
-    return { hasOrderNum: true, selectColumns: BASE_PROJECT_COLUMNS };
+    const fallback = { hasOrderNum: true, selectColumns: BASE_PROJECT_COLUMNS };
+    projectColumnsCache.set(db, fallback);
+    return fallback;
   }
+};
+
+const listProjectRefsForQuickAdd = (db: DbClient): ProjectRef[] => {
+  const rows = db.prepare('SELECT id, title FROM projects WHERE deletedAt IS NULL').all();
+  return rows
+    .filter((row: any) => typeof row.id === 'string' && typeof row.title === 'string')
+    .map((row: any) => ({ id: row.id, title: row.title }));
 };
 
 export function listProjects(db: DbClient): Project[] {
@@ -349,7 +374,7 @@ export function addTask(db: DbClient, input: AddTaskInput): TaskRow {
   let props: Partial<Task> = {};
 
   if (input.quickAdd) {
-    const projects = listProjects(db);
+    const projects = listProjectRefsForQuickAdd(db);
     const quick = parseQuickAdd(input.quickAdd, projects);
     title = quick.title || title || input.quickAdd;
     props = quick.props;

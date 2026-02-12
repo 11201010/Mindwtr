@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { listTasks, parseQuickAdd, type Project } from './queries.js';
+import { addTask, listTasks, parseQuickAdd, type Project } from './queries.js';
 import type { DbClient } from './db.js';
 
 const createMockDb = (rows: any[] = []): { db: DbClient; calls: { sql: string; params: any[] }[] } => {
@@ -56,5 +56,37 @@ describe('mcp queries', () => {
         expect(queryCall).toBeTruthy();
         expect(queryCall?.params[0]).toBe('%100\\%\\_done\\\\now%');
         expect(queryCall?.params[1]).toBe('%100\\%\\_done\\\\now%');
+    });
+
+    test('listTasks caches task column introspection per db client', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([
+            {
+                id: 't1',
+                title: 'Task',
+                status: 'inbox',
+                createdAt: now,
+                updatedAt: now,
+                isFocusedToday: 0,
+            },
+        ]);
+
+        listTasks(db, { includeDeleted: false });
+        listTasks(db, { includeDeleted: false });
+
+        const pragmaCalls = calls.filter((call) => call.sql.startsWith('PRAGMA table_info(tasks)'));
+        expect(pragmaCalls).toHaveLength(1);
+    });
+
+    test('addTask quickAdd uses lightweight project lookup', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([{ id: 'p1', title: 'Home', createdAt: now, updatedAt: now }]);
+
+        const created = addTask(db, { quickAdd: 'Buy milk +Home' });
+
+        expect(created.title).toBe('Buy milk');
+        expect(created.projectId).toBe('p1');
+        const projectLookup = calls.find((call) => call.sql.startsWith('SELECT id, title FROM projects WHERE deletedAt IS NULL'));
+        expect(projectLookup).toBeTruthy();
     });
 });
