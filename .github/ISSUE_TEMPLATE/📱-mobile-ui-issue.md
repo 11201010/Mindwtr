@@ -18,6 +18,14 @@ assignees: ''
 ### 📝 Description
 What UI/UX issue are you seeing?
 
+### 🧭 UI Type
+- [ ] Layout / spacing
+- [ ] Keyboard overlap / input focus
+- [ ] Tap target / gesture handling
+- [ ] Modal / sheet behavior
+- [ ] Navigation / back behavior
+- [ ] Theme / visual rendering
+
 ### 🔄 Steps to Reproduce
 1. 
 2. 
@@ -28,3 +36,7 @@ What did you expect instead?
 
 ### 📸 Screenshots / Screen Recording
 Please attach screenshots or a short recording if possible.
+
+### 📎 Extra Device Info (optional but helpful)
+- Display size / font scale:
+- Orientation:

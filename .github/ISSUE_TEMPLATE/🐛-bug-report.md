@@ -7,6 +7,8 @@ assignees: ''
 
 ---
 
+> If this is mainly a sync/data integrity problem, please use the **Sync / Data Issue** template for faster triage.
+
 ### 💻 Platform
 - [ ] Desktop (Linux - Arch/Hyprland/Niri/Other)
 - [ ] Desktop (macOS)
@@ -14,10 +16,28 @@ assignees: ''
 - [ ] Mobile (Android)
 - [ ] Mobile (iOS)
 
+### 🧭 Affected Area
+- [ ] Sync / data consistency
+- [ ] UI / interaction
+- [ ] Projects / areas / sections
+- [ ] Search / filter
+- [ ] Settings / preferences
+- [ ] Notifications / reminders
+- [ ] Recurrence / calendar
+- [ ] Attachments
+- [ ] Audio / transcription
+- [ ] Other
+
 ### ℹ️ Environment
 - **App Version:** (e.g. v0.1.0 or Commit Hash)
 - **OS Version:** (e.g. Arch Linux Kernel 6.6, Android 14)
 - **Device:** (If mobile)
+
+### 🚨 Impact
+- [ ] Blocks core workflow
+- [ ] Data loss or data mismatch
+- [ ] Crash / freeze
+- [ ] Visual issue only
 
 ### 📝 Description
 A clear and concise description of what the bug is.
@@ -30,6 +50,10 @@ A clear and concise description of what the bug is.
 
 ### 🎯 Expected Behavior
 A clear and concise description of what you expected to happen.
+
+### 🧪 Regression?
+- [ ] This worked in a previous version
+- **Last known working version (if known):**
 
 ### 📸 Screenshots / Logs
 If applicable, add screenshots or paste relevant logs.

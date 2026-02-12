@@ -23,6 +23,11 @@ Paste the exact error text, stack trace, or diagnostics ID shown in the app.
 ### 🔄 What were you doing?
 Describe the action right before the error appeared.
 
+### ♻️ Frequency
+- [ ] Happened once
+- [ ] Happens sometimes
+- [ ] Happens every time
+
 ### 📎 Logs / Attachments
 Attach logs if available:
 https://github.com/dongdongbh/Mindwtr/wiki/Diagnostics-and-Logs
