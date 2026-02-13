@@ -224,6 +224,7 @@ scoop install mindwtr
 </a>
 
 Install from the Mac App Store: [Mindwtr on Mac App Store](https://apps.apple.com/app/mindwtr/id6758597144).
+TestFlight beta (macOS): [Join the beta](https://testflight.apple.com/join/7SMJCTSR).
 
 **Homebrew:**
 <a href="https://github.com/dongdongbh/homebrew-mindwtr">
