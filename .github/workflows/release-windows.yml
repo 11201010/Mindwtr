@@ -367,6 +367,52 @@ jobs:
           if (Test-Path "metadata/metadata.json") {
             Write-Host "Applying metadata from metadata/metadata.json..."
             $metadata = Get-Content -Raw "metadata/metadata.json" | ConvertFrom-Json
+
+            function Normalize-StoreListingText {
+              param([string]$Text)
+              if ([string]::IsNullOrWhiteSpace($Text)) {
+                return $Text
+              }
+
+              $normalized = $Text -replace "`r`n?", "`n"
+
+              # Fix hard wraps that split short words (e.g., Lo\ncal-First) and CJK punctuation/characters.
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '([A-Za-zÀ-ÖØ-öø-ÿ]{1,2})\n([a-zà-öø-ÿ])',
+                '$1$2'
+              )
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '([\p{IsCJKUnifiedIdeographs}])\n([，。！？、；：）】》」』\p{IsCJKUnifiedIdeographs}])',
+                '$1$2'
+              )
+
+              # Convert single line breaks to spaces, while preserving paragraph breaks and bullet lines.
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '(?<!\n)\n(?!\n|[•*\-]|\d+[.)]\s)',
+                ' '
+              )
+
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, ' {2,}', ' ')
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, '\s+([,.;:!?])', '$1')
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, '\s+([，。！？、；：）】》」』])', '$1')
+              return $normalized.Trim()
+            }
+
+            if ($metadata.PSObject.Properties.Name -contains 'Listings' -and $metadata.Listings) {
+              foreach ($listingProp in $metadata.Listings.PSObject.Properties) {
+                if (-not $listingProp.Value) { continue }
+                if (-not ($listingProp.Value.PSObject.Properties.Name -contains 'BaseListing')) { continue }
+                $baseListing = $listingProp.Value.BaseListing
+                if (-not $baseListing) { continue }
+                if ($baseListing.PSObject.Properties.Name -contains 'Description') {
+                  $baseListing.Description = Normalize-StoreListingText -Text ([string]$baseListing.Description)
+                }
+              }
+            }
+
             $fieldMap = @{
               listings = 'Listings'
               applicationCategory = 'ApplicationCategory'
