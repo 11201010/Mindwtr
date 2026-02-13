@@ -14,6 +14,10 @@ on:
         description: Submit build for review after upload
         required: false
         default: 'true'
+      testflight_group:
+        description: TestFlight external group for review-blocked uploads
+        required: false
+        default: 'external_testing'
 
 permissions:
   contents: read
@@ -268,12 +272,22 @@ jobs:
           PKG_PATH="$PKG_DIR/Mindwtr-mac-appstore.pkg"
           mkdir -p "$PKG_DIR"
 
+          APP_INFO_PLIST="$APP_PATH/Contents/Info.plist"
+          APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_INFO_PLIST")"
+          APP_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO_PLIST")"
+          if [ -z "${APP_VERSION:-}" ] || [ -z "${APP_BUILD_NUMBER:-}" ]; then
+            echo "::error::Failed to resolve app version/build from $APP_INFO_PLIST"
+            exit 1
+          fi
+
           xcrun productbuild \
             --keychain "$KEYCHAIN_PATH" \
             --component "$APP_PATH" /Applications \
             --sign "$INSTALLER_IDENTITY" \
             "$PKG_PATH"
 
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=$APP_BUILD_NUMBER" >> "$GITHUB_ENV"
           echo "PKG_PATH=$PKG_PATH" >> "$GITHUB_ENV"
           ls -la "$PKG_DIR"
 
@@ -392,14 +406,17 @@ jobs:
           set -euo pipefail
 
           EFFECTIVE_SUBMIT_FOR_REVIEW="${REQUESTED_SUBMIT_FOR_REVIEW:-true}"
-          if [ "$EFFECTIVE_SUBMIT_FOR_REVIEW" != "true" ]; then
-            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
-            echo "Review submission disabled by input."
-            exit 0
+          REQUESTED_SUBMIT_FOR_REVIEW="$EFFECTIVE_SUBMIT_FOR_REVIEW"
+          if [ "$REQUESTED_SUBMIT_FOR_REVIEW" != "true" ]; then
+            REQUESTED_SUBMIT_FOR_REVIEW="false"
+            EFFECTIVE_SUBMIT_FOR_REVIEW="false"
+            echo "Review submission disabled by input; checking App Store review state for TestFlight external routing."
           fi
+          echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=false" >> "$GITHUB_ENV"
+          echo "SKIP_APP_VERSION_UPDATE_FOR_UPLOAD=false" >> "$GITHUB_ENV"
 
           if [ -z "${IOS_ASC_KEY_ID:-}" ] || [ -z "${IOS_ASC_ISSUER_ID:-}" ] || [ -z "${IOS_ASC_PRIVATE_KEY:-}" ]; then
-            echo "::warning::submit_for_review requested, but App Store Connect API secrets are missing. Disabling review submission."
+            echo "::warning::App Store Connect API secrets are missing. Disabling review submission and TestFlight external routing."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -410,7 +427,7 @@ jobs:
           bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
 
           if ! openssl pkey -in "$ASC_KEY_PATH" -noout >/dev/null 2>&1; then
-            echo "::warning::submit_for_review requested, but IOS_ASC_PRIVATE_KEY is invalid. Disabling review submission."
+            echo "::warning::IOS_ASC_PRIVATE_KEY is invalid. Disabling review submission and TestFlight external routing."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -421,7 +438,7 @@ jobs:
           if ! ASC_TOKEN="$(
             node scripts/ci/generate-asc-jwt.js "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$ASC_KEY_PATH"
           )"; then
-            echo "::warning::submit_for_review requested, but failed to generate App Store Connect JWT. Disabling review submission."
+            echo "::warning::Failed to generate App Store Connect JWT. Disabling review submission and TestFlight external routing."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -437,7 +454,7 @@ jobs:
           fi
 
           if [ -z "${APPSTORE_APP_ID_RESOLVED}" ]; then
-            echo "::warning::submit_for_review requested, but app lookup returned no App Store Connect app. Disabling review submission."
+            echo "::warning::App lookup returned no App Store Connect app. Disabling review submission and TestFlight external routing."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -449,7 +466,7 @@ jobs:
             --data-urlencode "filter[platform]=MAC_OS" \
             --data-urlencode "limit=1" \
             "https://api.appstoreconnect.apple.com/v1/apps/${APPSTORE_APP_ID_RESOLVED}/appStoreVersions"; then
-            echo "::warning::submit_for_review requested, but review-state lookup failed. Disabling review submission."
+            echo "::warning::Review-state lookup failed. Disabling review submission and TestFlight external routing."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -460,11 +477,18 @@ jobs:
           if [ -n "${ACTIVE_REVIEW_ID}" ]; then
             echo "::warning::Found existing macOS App Store submission in state ${ACTIVE_REVIEW_STATE:-unknown} (version ${ACTIVE_REVIEW_VERSION:-unknown}). Upload will proceed, but review submission is disabled."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=true" >> "$GITHUB_ENV"
+            echo "SKIP_APP_VERSION_UPDATE_FOR_UPLOAD=true" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          echo "EFFECTIVE_SUBMIT_FOR_REVIEW=true" >> "$GITHUB_ENV"
-          echo "No active App Store review submission found; review submission remains enabled."
+          if [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ]; then
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=true" >> "$GITHUB_ENV"
+            echo "No active App Store review submission found; review submission remains enabled."
+          else
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            echo "No active App Store review submission found; submit_for_review remains disabled."
+          fi
 
       - name: Upload package to App Store Connect
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.upload || 'true') == 'true') }}
@@ -473,6 +497,7 @@ jobs:
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
           IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
           SUBMIT_FOR_REVIEW: ${{ env.EFFECTIVE_SUBMIT_FOR_REVIEW || 'false' }}
+          SKIP_APP_VERSION_UPDATE: ${{ env.SKIP_APP_VERSION_UPDATE_FOR_UPLOAD || 'false' }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           FASTLANE_HIDE_CHANGELOG: "1"
           FASTLANE_OPT_OUT_USAGE: "1"
@@ -509,7 +534,7 @@ jobs:
                 pkg: ENV.fetch("PKG_PATH"),
                 metadata_path: ENV.fetch("FASTLANE_METADATA_PATH"),
                 skip_screenshots: true,
-                skip_app_version_update: false,
+                skip_app_version_update: ENV.fetch("SKIP_APP_VERSION_UPDATE", "false") == "true",
                 force: true,
                 run_precheck_before_submit: false,
                 submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
@@ -520,6 +545,56 @@ jobs:
           EOF
 
           ASC_KEY_PATH="$ASC_KEY_PATH" fastlane mac upload_app_store
+
+      - name: Distribute upload to TestFlight external group when review is active
+        if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.upload || 'true') == 'true')) && env.ENABLE_TESTFLIGHT_EXTERNAL_RELEASE == 'true' }}
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.testflight_group || 'external_testing') || 'external_testing' }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          FASTLANE_HIDE_CHANGELOG: "1"
+          FASTLANE_OPT_OUT_USAGE: "1"
+          CI: "true"
+        run: |
+          set -euo pipefail
+
+          ASC_KEY_PATH="$RUNNER_TEMP/macos-asc-key-fastlane-testflight.p8"
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
+
+          mkdir -p fastlane
+          cat <<'EOF' > fastlane/Fastfile
+          opt_out_usage
+
+          lane :distribute_external_group do
+            api_key = app_store_connect_api_key(
+              key_id: ENV.fetch("IOS_ASC_KEY_ID"),
+              issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID"),
+              key_filepath: ENV.fetch("ASC_KEY_PATH"),
+              duration: 1200,
+              in_house: false
+            )
+
+            upload_to_testflight(
+              api_key: api_key,
+              app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
+              app_platform: "osx",
+              distribute_only: true,
+              app_version: ENV.fetch("APP_VERSION"),
+              build_number: ENV.fetch("APP_BUILD_NUMBER"),
+              distribute_external: true,
+              groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
+              notify_external_testers: false,
+              skip_submission: true,
+              skip_waiting_for_build_processing: false,
+              wait_processing_timeout_duration: 1800
+            )
+          end
+          EOF
+
+          echo "Distributing macOS build ${APP_VERSION} (${APP_BUILD_NUMBER}) to TestFlight group: ${TESTFLIGHT_EXTERNAL_GROUP}"
+          ASC_KEY_PATH="$ASC_KEY_PATH" fastlane distribute_external_group
 
       - name: Cleanup signing files
         if: always()
