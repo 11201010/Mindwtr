@@ -100,6 +100,31 @@ const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
 const isValidTimestamp = (value: unknown): value is string =>
     typeof value === 'string' && Number.isFinite(Date.parse(value));
 
+const normalizeRevisionMetadata = <T extends Record<string, unknown>>(item: T): T => {
+    const normalized = { ...item } as Record<string, unknown>;
+    const rawRev = normalized.rev;
+    if (
+        typeof rawRev !== 'number'
+        || !Number.isFinite(rawRev)
+        || !Number.isInteger(rawRev)
+        || rawRev < 0
+    ) {
+        delete normalized.rev;
+    }
+    const rawRevBy = normalized.revBy;
+    if (typeof rawRevBy === 'string') {
+        const trimmed = rawRevBy.trim();
+        if (trimmed.length > 0) {
+            normalized.revBy = trimmed;
+        } else {
+            delete normalized.revBy;
+        }
+    } else {
+        delete normalized.revBy;
+    }
+    return normalized as T;
+};
+
 const validateRevisionFields = (
     item: Record<string, unknown>,
     label: string,
@@ -716,17 +741,17 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
     const nowIso = new Date().toISOString();
     const localNormalized: AppData = {
         ...local,
-        tasks: (local.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
-        projects: local.projects || [],
-        sections: local.sections || [],
-        areas: local.areas || [],
+        tasks: (local.tasks || []).map((t) => normalizeRevisionMetadata(normalizeTaskForLoad(t, nowIso))),
+        projects: (local.projects || []).map((project) => normalizeRevisionMetadata(project)),
+        sections: (local.sections || []).map((section) => normalizeRevisionMetadata(section)),
+        areas: (local.areas || []).map((area) => normalizeRevisionMetadata(area)),
     };
     const incomingNormalized: AppData = {
         ...incoming,
-        tasks: (incoming.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
-        projects: incoming.projects || [],
-        sections: incoming.sections || [],
-        areas: incoming.areas || [],
+        tasks: (incoming.tasks || []).map((t) => normalizeRevisionMetadata(normalizeTaskForLoad(t, nowIso))),
+        projects: (incoming.projects || []).map((project) => normalizeRevisionMetadata(project)),
+        sections: (incoming.sections || []).map((section) => normalizeRevisionMetadata(section)),
+        areas: (incoming.areas || []).map((area) => normalizeRevisionMetadata(area)),
     };
 
     const mergeAttachments = (local?: Attachment[], incoming?: Attachment[]): Attachment[] | undefined => {

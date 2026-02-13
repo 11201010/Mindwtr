@@ -821,6 +821,68 @@ describe('Sync Logic', () => {
             expect(saved!.tasks[0].revBy).toBeUndefined();
         });
 
+        it('drops invalid revBy values from projects, sections, and areas', async () => {
+            let saved: AppData | null = null;
+            const localData: AppData = {
+                tasks: [],
+                projects: [
+                    {
+                        ...createMockProject('project-local', '2024-01-01T00:00:00.000Z'),
+                        revBy: '',
+                    },
+                ],
+                sections: [
+                    {
+                        ...createMockSection('section-local', 'project-local', '2024-01-01T00:00:00.000Z'),
+                        revBy: '   ',
+                    },
+                ],
+                areas: [
+                    {
+                        ...createMockArea('area-local', '2024-01-01T00:00:00.000Z'),
+                        revBy: '',
+                    },
+                ],
+                settings: {},
+            };
+            const incomingData: AppData = {
+                tasks: [],
+                projects: [
+                    {
+                        ...createMockProject('project-incoming', '2024-01-01T00:00:00.000Z'),
+                        revBy: '   ',
+                    },
+                ],
+                sections: [
+                    {
+                        ...createMockSection('section-incoming', 'project-incoming', '2024-01-01T00:00:00.000Z'),
+                        revBy: '',
+                    },
+                ],
+                areas: [
+                    {
+                        ...createMockArea('area-incoming', '2024-01-01T00:00:00.000Z'),
+                        revBy: '',
+                    },
+                ],
+                settings: {},
+            };
+
+            await performSyncCycle({
+                readLocal: async () => localData,
+                readRemote: async () => incomingData,
+                writeLocal: async (data) => {
+                    saved = data;
+                },
+                writeRemote: async () => undefined,
+            });
+
+            expect(saved).not.toBeNull();
+            expect(saved!.projects.every((project) => project.revBy === undefined)).toBe(true);
+            expect(saved!.sections.every((section) => section.revBy === undefined)).toBe(true);
+            expect(saved!.areas.every((area) => area.revBy === undefined)).toBe(true);
+        });
+
         it('purges expired task tombstones and deleted attachment tombstones by default', async () => {
             let saved: AppData | null = null;
             const oldPurgedTask = {
