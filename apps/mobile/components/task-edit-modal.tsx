@@ -1480,6 +1480,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const [containerWidth, setContainerWidth] = useState(0);
     const scrollX = useRef(new Animated.Value(0)).current;
     const scrollRef = useRef<ScrollView | null>(null);
+    const [scrollTaskFormToEnd, setScrollTaskFormToEnd] = useState<(() => void) | null>(null);
+    const registerScrollTaskFormToEnd = useCallback((handler: (() => void) | null) => {
+        setScrollTaskFormToEnd(() => handler);
+    }, []);
 
     const scrollToTab = useCallback((mode: TaskEditTab, animated = true) => {
         if (!containerWidth) return;
@@ -2461,6 +2465,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                             item.isCompleted && styles.completedText,
                                         ]}
                                         value={item.title}
+                                        onFocus={() => {
+                                            if (Platform.OS !== 'android') return;
+                                            setTimeout(() => {
+                                                scrollTaskFormToEnd?.();
+                                            }, 120);
+                                        }}
                                         onChangeText={(text) => {
                                             const newChecklist = (editedTask.checklist || []).map((item, i) =>
                                                 i === index ? { ...item, title: text } : item
@@ -2623,6 +2633,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                             textDirectionStyle={textDirectionStyle}
                             titleDraft={titleDraft}
                             onTitleDraftChange={handleTitleDraftChange}
+                            registerScrollToEnd={registerScrollTaskFormToEnd}
                         />
                         <View style={[styles.tabPage, { width: containerWidth || '100%' }]}>
                             <TaskEditViewTab

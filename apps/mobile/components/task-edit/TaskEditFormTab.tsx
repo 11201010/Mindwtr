@@ -39,6 +39,7 @@ type TaskEditFormTabProps = {
     textDirectionStyle: Record<string, any>;
     titleDraft: string;
     onTitleDraftChange: (text: string) => void;
+    registerScrollToEnd?: (handler: (() => void) | null) => void;
 };
 
 export function TaskEditFormTab({
@@ -73,8 +74,18 @@ export function TaskEditFormTab({
     textDirectionStyle,
     titleDraft,
     onTitleDraftChange,
+    registerScrollToEnd,
 }: TaskEditFormTabProps) {
     const [titleFocused, setTitleFocused] = React.useState(false);
+    const formScrollRef = React.useRef<ScrollView | null>(null);
+
+    React.useEffect(() => {
+        if (!registerScrollToEnd) return;
+        registerScrollToEnd(() => {
+            formScrollRef.current?.scrollToEnd({ animated: true });
+        });
+        return () => registerScrollToEnd(null);
+    }, [registerScrollToEnd]);
     const countFilledFields = (fieldIds: TaskEditorFieldId[]): number => {
         return fieldIds.filter((fieldId) => {
             switch (fieldId) {
@@ -114,6 +125,7 @@ export function TaskEditFormTab({
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
             >
                 <ScrollView
+                    ref={formScrollRef}
                     style={styles.content}
                     contentContainerStyle={styles.contentContainer}
                     keyboardShouldPersistTaps="handled"
