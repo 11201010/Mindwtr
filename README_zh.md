@@ -227,11 +227,10 @@ scoop install mindwtr
 TestFlight 测试版（macOS）：[加入测试版](https://testflight.apple.com/join/7SMJCTSR)。
 
 **Homebrew：**
-<a href="https://github.com/dongdongbh/homebrew-mindwtr">
-  <img src="https://img.shields.io/badge/Homebrew-Install-orange?logo=homebrew&logoColor=white" alt="Homebrew">
+<a href="https://formulae.brew.sh/cask/mindwtr">
+  <img src="https://img.shields.io/homebrew/cask/v/mindwtr?label=Homebrew&logo=homebrew&logoColor=white" alt="Homebrew Cask Version">
 </a>
 ```bash
-brew tap dongdongbh/mindwtr
 brew install --cask mindwtr
 ```
 
