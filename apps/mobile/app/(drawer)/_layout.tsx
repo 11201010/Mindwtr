@@ -30,7 +30,13 @@ export default function AppLayout() {
       <Stack.Screen name="projects-screen" options={{ title: t('projects.title') }} />
       <Stack.Screen name="archived" options={{ title: t('archived.title') || 'Archived' }} />
       <Stack.Screen name="trash" options={{ title: t('trash.title') || 'Trash' }} />
-      <Stack.Screen name="settings" options={{ title: t('settings.title') }} />
+      <Stack.Screen
+        name="settings"
+        options={{
+          title: t('settings.title'),
+          headerBackButtonMenuEnabled: false,
+        }}
+      />
       <Stack.Screen name="saved-search/[id]" options={{ title: t('search.title') }} />
     </Stack>
   );

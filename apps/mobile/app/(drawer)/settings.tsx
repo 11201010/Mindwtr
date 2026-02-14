@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Constants from 'expo-constants';
 import {
     View,
@@ -25,7 +25,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { useNavigation } from 'expo-router';
+import { usePreventRemove } from '@react-navigation/native';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage, Language } from '../../contexts/language-context';
 
@@ -183,7 +183,6 @@ const isValidHttpUrl = (value: string): boolean => {
 };
 
 export default function SettingsPage() {
-    const navigation = useNavigation();
     const { themeMode, setThemeMode } = useTheme();
     const { language, setLanguage, t } = useLanguage();
     const localize = (enText: string, zhText?: string) =>
@@ -523,20 +522,9 @@ export default function SettingsPage() {
         return false;
     }, [currentScreen, setCurrentScreenWithAnimation]);
 
-    useLayoutEffect(() => {
-        navigation.setOptions({
-            headerBackTitleVisible: false,
-            headerBackTitle: '',
-        });
-    }, [navigation]);
-
-    useEffect(() => {
-        const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-            if (!handleSettingsBack()) return;
-            event.preventDefault();
-        });
-        return unsubscribe;
-    }, [navigation, handleSettingsBack]);
+    usePreventRemove(currentScreen !== 'main', () => {
+        handleSettingsBack();
+    });
 
     // Handle Android hardware back button
     useEffect(() => {
