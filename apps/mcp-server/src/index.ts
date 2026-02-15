@@ -89,8 +89,11 @@ const server = new McpServer({
   version: '0.1.0',
 });
 
+const taskStatusSchema = z.enum(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived']);
+const taskStatusOrAllSchema = z.enum(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived', 'all']);
+
 const listTasksSchema = z.object({
-  status: z.string().optional(),
+  status: taskStatusOrAllSchema.optional(),
   projectId: z.string().optional(),
   includeDeleted: z.boolean().optional(),
   limit: z.number().int().optional(),
@@ -106,7 +109,7 @@ const listTasksSchema = z.object({
 const addTaskSchema = z.object({
   title: z.string().optional().describe('Task title'),
   quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
-  status: z.string().optional().describe('Task status: inbox, next, waiting, someday, done, archived'),
+  status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
   dueDate: z.string().optional().describe('Due date in ISO format'),
   startTime: z.string().optional().describe('Start time in ISO format'),
@@ -128,7 +131,7 @@ const completeTaskSchema = z.object({
 const updateTaskSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
-  status: z.string().optional(),
+  status: taskStatusSchema.optional(),
   projectId: z.string().nullable().optional(),
   dueDate: z.string().nullable().optional(),
   startTime: z.string().nullable().optional(),
@@ -165,9 +168,6 @@ server.registerTool(
   async (input) => {
     const tasks = await service.listTasks({
       ...input,
-      status: input.status as any,
-      sortBy: input.sortBy as any,
-      sortOrder: input.sortOrder as any,
     });
     return {
       content: [{ type: 'text', text: JSON.stringify({ tasks }, null, 2) }],
@@ -200,7 +200,6 @@ server.registerTool(
     validateAddTask(input);
     const task = await service.addTask({
       ...input,
-      status: input.status as any,
     });
     return {
       content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
@@ -218,7 +217,6 @@ server.registerTool(
     if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
     const task = await service.updateTask({
       ...input,
-      status: input.status as any,
     });
     return {
       content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
