@@ -695,13 +695,6 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
     return { merged, stats };
 }
 
-function mergeEntities<T extends { id: string; updatedAt: string; deletedAt?: string }>(
-    local: T[],
-    incoming: T[]
-): T[] {
-    return mergeEntitiesWithStats(local, incoming).merged;
-}
-
 const normalizeAreaForMerge = (area: Area, nowIso: string): Area & { createdAt: string; updatedAt: string } => {
     const createdAt = area.createdAt || area.updatedAt || nowIso;
     const updatedAt = area.updatedAt || area.createdAt || nowIso;
