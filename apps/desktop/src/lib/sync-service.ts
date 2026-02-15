@@ -38,6 +38,9 @@ import {
     createWebdavDownloadBackoff,
     isWebdavRateLimitedError,
     getErrorStatus,
+    LocalSyncAbort,
+    getInMemoryAppDataSnapshot,
+    shouldRunAttachmentCleanup,
 } from '@mindwtr/core';
 import { isTauriRuntime } from './runtime';
 import { reportError } from './report-error';
@@ -151,13 +154,6 @@ const injectExternalCalendars = async (data: AppData): Promise<AppData> =>
 const persistExternalCalendars = async (data: AppData): Promise<void> =>
     persistExternalCalendarsForSync(data, externalCalendarProvider);
 
-class LocalSyncAbort extends Error {
-    constructor() {
-        super('Local changes detected during sync');
-        this.name = 'LocalSyncAbort';
-    }
-}
-
 // Sync should start from persisted data so startup sync cannot overwrite settings with an unhydrated store snapshot.
 const readLocalDataForSync = async (): Promise<AppData> => {
     if (isTauriRuntimeEnv()) {
@@ -178,17 +174,6 @@ const readLocalDataForSync = async (): Promise<AppData> => {
         projects: [...state._allProjects],
         sections: [...state._allSections],
         areas: [...state._allAreas],
-        settings: state.settings ?? {},
-    });
-};
-
-const getInMemoryAppDataSnapshot = (): AppData => {
-    const state = useTaskStore.getState();
-    return cloneAppData({
-        tasks: state._allTasks ?? state.tasks ?? [],
-        projects: state._allProjects ?? state.projects ?? [],
-        sections: state._allSections ?? state.sections ?? [],
-        areas: state._allAreas ?? state.areas ?? [],
         settings: state.settings ?? {},
     });
 };
@@ -248,13 +233,6 @@ const reportProgress = (
         status,
         error,
     });
-};
-
-const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
-    if (!lastCleanupAt) return true;
-    const parsed = Date.parse(lastCleanupAt);
-    if (Number.isNaN(parsed)) return true;
-    return Date.now() - parsed >= CLEANUP_INTERVAL_MS;
 };
 
 const collectAttachmentsById = (appData: AppData): Map<string, Attachment> => {
@@ -1670,7 +1648,7 @@ export class SyncService {
 
             await cleanupAttachmentTempFiles();
 
-            if (isTauriRuntimeEnv() && shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt)) {
+            if (isTauriRuntimeEnv() && shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt, CLEANUP_INTERVAL_MS)) {
                 setStep('attachments_cleanup');
                 ensureLocalSnapshotFresh();
                 mergedData = await cleanupOrphanedAttachments(mergedData, backend);

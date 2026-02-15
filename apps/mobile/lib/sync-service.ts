@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppData, Attachment, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, mergeAppData, cloneAppData } from '@mindwtr/core';
+import { AppData, Attachment, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, mergeAppData, cloneAppData, LocalSyncAbort, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFile, resolveSyncFileUri, writeSyncFile } from './storage-file';
@@ -57,31 +57,6 @@ const getCachedConfigValue = async (key: string): Promise<string | null> => {
   const value = await AsyncStorage.getItem(key);
   syncConfigCache.set(key, { value, readAt: now });
   return value;
-};
-
-class LocalSyncAbort extends Error {
-  constructor() {
-    super('Local changes detected during sync');
-    this.name = 'LocalSyncAbort';
-  }
-}
-
-const getInMemoryAppDataSnapshot = (): AppData => {
-  const state = useTaskStore.getState();
-  return cloneAppData({
-    tasks: state._allTasks ?? state.tasks ?? [],
-    projects: state._allProjects ?? state.projects ?? [],
-    sections: state._allSections ?? state.sections ?? [],
-    areas: state._allAreas ?? state.areas ?? [],
-    settings: state.settings ?? {},
-  });
-};
-
-const shouldRunAttachmentCleanup = (lastCleanupAt?: string): boolean => {
-  if (!lastCleanupAt) return true;
-  const parsed = Date.parse(lastCleanupAt);
-  if (Number.isNaN(parsed)) return true;
-  return Date.now() - parsed >= CLEANUP_INTERVAL_MS;
 };
 
 const getAttachmentsArray = (attachments: Attachment[] | undefined): Attachment[] => (
@@ -449,7 +424,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
 
       await cleanupAttachmentTempFiles();
 
-      if (shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt)) {
+      if (shouldRunAttachmentCleanup(mergedData.settings.attachments?.lastCleanupAt, CLEANUP_INTERVAL_MS)) {
         step = 'attachments_cleanup';
         logSyncInfo('Sync step', { step });
         ensureLocalSnapshotFresh();
