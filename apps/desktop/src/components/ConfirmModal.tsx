@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ConfirmModalProps {
     isOpen: boolean;
@@ -46,8 +47,9 @@ export function ConfirmModal({
     }, [isOpen]);
 
     if (!isOpen) return null;
+    if (typeof document === 'undefined') return null;
 
-    return (
+    return createPortal(
         <div
             className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50"
             role="dialog"
@@ -116,5 +118,7 @@ export function ConfirmModal({
                 </div>
             </div>
         </div>
+        ,
+        document.body,
     );
 }
