@@ -225,7 +225,23 @@ export function InboxProcessor({
         });
     }, []);
 
-    const handleActionable = () => goToStep(twoMinuteFirst ? 'decide' : 'twomin');
+    const continueFromProjectCheck = useCallback(() => {
+        goToStep(twoMinuteFirst ? 'decide' : 'twomin');
+    }, [goToStep, twoMinuteFirst]);
+
+    const handleActionable = () => goToStep('projectcheck');
+
+    const handleProjectCheckNo = useCallback(() => {
+        continueFromProjectCheck();
+    }, [continueFromProjectCheck]);
+
+    const handleProjectCheckYes = useCallback(() => {
+        setConvertToProject(true);
+        const baseTitle = processingTitle.trim() || processingTask?.title || '';
+        setProjectTitleDraft(baseTitle);
+        setNextActionDraft('');
+        goToStep('project');
+    }, [goToStep, processingTask?.title, processingTitle]);
 
     const handleTwoMinDone = () => {
         if (processingTask) {
@@ -457,6 +473,8 @@ export function InboxProcessor({
                 handleSkip={handleSkip}
                 handleNotActionable={handleNotActionable}
                 handleActionable={handleActionable}
+                handleProjectCheckNo={handleProjectCheckNo}
+                handleProjectCheckYes={handleProjectCheckYes}
                 handleTwoMinDone={handleTwoMinDone}
                 handleTwoMinNo={handleTwoMinNo}
                 handleDefer={handleDefer}

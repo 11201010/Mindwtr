@@ -4,7 +4,7 @@ import type { Area, Project, Task } from '@mindwtr/core';
 import { cn } from '../lib/utils';
 import { ProjectSelector } from './ui/ProjectSelector';
 
-export type ProcessingStep = 'refine' | 'actionable' | 'twomin' | 'decide' | 'context' | 'project' | 'delegate';
+export type ProcessingStep = 'refine' | 'actionable' | 'projectcheck' | 'twomin' | 'decide' | 'context' | 'project' | 'delegate';
 
 type InboxProcessingWizardProps = {
     t: (key: string) => string;
@@ -22,6 +22,8 @@ type InboxProcessingWizardProps = {
     handleSkip: () => void;
     handleNotActionable: (destination: 'trash' | 'someday' | 'reference') => void;
     handleActionable: () => void;
+    handleProjectCheckNo: () => void;
+    handleProjectCheckYes: () => void;
     handleTwoMinDone: () => void;
     handleTwoMinNo: () => void;
     handleDefer: () => void;
@@ -88,6 +90,8 @@ export function InboxProcessingWizard({
     handleSkip,
     handleNotActionable,
     handleActionable,
+    handleProjectCheckNo,
+    handleProjectCheckYes,
     handleTwoMinDone,
     handleTwoMinNo,
     handleDefer,
@@ -146,6 +150,7 @@ export function InboxProcessingWizard({
     const stepLabel: Record<ProcessingStep, string> = {
         refine: t('process.refineTitle'),
         actionable: t('process.actionable'),
+        projectcheck: t('process.moreThanOneStep'),
         twomin: t('process.twoMin'),
         decide: t('process.nextStep'),
         context: t('process.context'),
@@ -321,6 +326,28 @@ export function InboxProcessingWizard({
                     >
                         {t('process.yesActionable')} <CheckCircle className="w-4 h-4" />
                     </button>
+                </div>
+            )}
+
+            {processingStep === 'projectcheck' && (
+                <div className="space-y-4">
+                    <p className="text-center text-sm text-muted-foreground">
+                        {t('process.moreThanOneStepDesc')}
+                    </p>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={handleProjectCheckYes}
+                            className="flex-1 bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:bg-primary/90"
+                        >
+                            {t('process.moreThanOneStepYes')}
+                        </button>
+                        <button
+                            onClick={handleProjectCheckNo}
+                            className="flex-1 bg-muted py-3 rounded-lg font-medium hover:bg-muted/80"
+                        >
+                            {t('process.moreThanOneStepNo')}
+                        </button>
+                    </div>
                 </div>
             )}
 
