@@ -22,6 +22,8 @@ const createdProject: Project = {
     title: 'Plan launch',
     color: '#94a3b8',
     status: 'active',
+    order: 0,
+    tagIds: [],
     createdAt: nowIso,
     updatedAt: nowIso,
 };
