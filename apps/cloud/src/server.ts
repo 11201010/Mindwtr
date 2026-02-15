@@ -428,7 +428,7 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
     const writeLocks = new Map<string, Promise<void>>();
     const withWriteLock = async <T>(key: string, fn: () => Promise<T>) => {
         const current = writeLocks.get(key) ?? Promise.resolve();
-        const run = current.then(() => fn());
+        const run = current.then(() => fn(), () => fn());
         writeLocks.set(key, run.then(() => undefined, () => undefined));
         return run;
     };
