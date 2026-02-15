@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     name: Linux Build + Snap + AUR
     timeout-minutes: 90
 
@@ -34,7 +34,17 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+          WEBKIT_DEV_PKG="libwebkit2gtk-4.0-dev"
+          if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then
+            WEBKIT_DEV_PKG="libwebkit2gtk-4.1-dev"
+          fi
+          sudo apt-get install -y \
+            "$WEBKIT_DEV_PKG" \
+            libgtk-3-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev
         shell: bash
 
       - name: Setup Rust
@@ -80,12 +90,43 @@ jobs:
 
       - name: Collect Linux artifacts
         run: |
+          set -euo pipefail
           mkdir -p release-artifacts
-          for f in $(find apps/desktop/src-tauri/target -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm"); do
-            base=$(basename "$f")
-            lower=$(echo "$base" | tr 'A-Z' 'a-z')
+
+          APPIMAGE_PATH="$(find apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' | head -n 1 || true)"
+          if [ -n "${APPIMAGE_PATH:-}" ]; then
+            TAG_INPUT="${{ inputs.tag || github.event.inputs.tag }}"
+            TAG="${TAG_INPUT:-${GITHUB_REF#refs/tags/}}"
+            VERSION="${TAG#v}"
+
+            if [ -z "${VERSION}" ] || [ "${VERSION}" = "${TAG}" ]; then
+              APPIMAGE_BASE="$(basename "$APPIMAGE_PATH")"
+              VERSION_FROM_FILE="$(echo "$APPIMAGE_BASE" | sed -E 's/^[^_]+_([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)_.+\.AppImage$/\1/')"
+              if [ -n "${VERSION_FROM_FILE}" ] && [ "${VERSION_FROM_FILE}" != "${APPIMAGE_BASE}" ]; then
+                VERSION="${VERSION_FROM_FILE}"
+              fi
+            fi
+
+            if [ -z "${VERSION:-}" ]; then
+              echo "Failed to resolve AppImage version for naming." >&2
+              exit 1
+            fi
+
+            ARCH="$(uname -m)"
+            case "$ARCH" in
+              amd64) ARCH="x86_64" ;;
+              arm64) ARCH="aarch64" ;;
+            esac
+
+            cp "$APPIMAGE_PATH" "release-artifacts/Mindwtr-${VERSION}-${ARCH}.AppImage"
+          fi
+
+          find apps/desktop/src-tauri/target -type f \( -name "*.deb" -o -name "*.rpm" \) -print0 | while IFS= read -r -d '' f; do
+            base="$(basename "$f")"
+            lower="$(echo "$base" | tr 'A-Z' 'a-z')"
             cp "$f" "release-artifacts/$lower"
           done
+
           ls -la release-artifacts/ || true
         shell: bash
 
