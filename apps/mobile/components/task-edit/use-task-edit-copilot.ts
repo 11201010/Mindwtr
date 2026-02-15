@@ -52,9 +52,15 @@ export function useTaskEditCopilot({
     const tagOptionsRef = useRef<string[]>([]);
 
     useEffect(() => {
-        loadAIKey(aiProvider).then(setAiKey).catch((error) => {
-            void logError(error, { scope: 'ai', extra: { message: 'Failed to load AI key' } });
-        });
+        Promise.resolve()
+            .then(() => loadAIKey(aiProvider))
+            .then((value) => {
+                setAiKey(typeof value === 'string' ? value : '');
+            })
+            .catch((error) => {
+                void logError(error, { scope: 'ai', extra: { message: 'Failed to load AI key' } });
+                setAiKey('');
+            });
     }, [aiProvider]);
 
     useEffect(() => {

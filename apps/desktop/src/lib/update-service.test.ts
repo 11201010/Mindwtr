@@ -7,10 +7,12 @@ const jsonResponse = (body: unknown, status = 200): Response =>
         headers: { 'Content-Type': 'application/json' },
     });
 
+const originalFetch = globalThis.fetch;
+
 describe('update-service channel selection', () => {
     afterEach(() => {
         vi.restoreAllMocks();
-        vi.unstubAllGlobals();
+        globalThis.fetch = originalFetch;
     });
 
     it('keeps mac app store installs on app store version even if github is newer', async () => {
@@ -31,7 +33,7 @@ describe('update-service channel selection', () => {
             }
             return jsonResponse({}, 404);
         });
-        vi.stubGlobal('fetch', fetchMock);
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
 
         const result = await checkForUpdates('1.0.0', { installSource: 'mac-app-store' });
 
@@ -57,7 +59,7 @@ describe('update-service channel selection', () => {
             }
             return jsonResponse({}, 404);
         });
-        vi.stubGlobal('fetch', fetchMock);
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
 
         const result = await checkForUpdates('1.0.0', { installSource: 'mac-app-store' });
 
@@ -82,7 +84,7 @@ describe('update-service channel selection', () => {
             }
             return jsonResponse({}, 404);
         });
-        vi.stubGlobal('fetch', fetchMock);
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
 
         const result = await checkForUpdates('1.0.0', { installSource: 'homebrew' });
 
