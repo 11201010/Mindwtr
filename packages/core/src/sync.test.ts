@@ -89,7 +89,7 @@ describe('Sync Logic', () => {
             expect((merged.tasks[0].attachments || []).map(a => a.id).sort()).toEqual(['att-incoming', 'att-local']);
         });
 
-        it('should preserve local file uri when incoming wins', () => {
+        it('uses winner attachment uri when incoming wins and has a usable uri', () => {
             const localAttachment: Attachment = {
                 id: 'att-1',
                 kind: 'file',
@@ -121,7 +121,7 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
             const attachment = merged.tasks[0].attachments?.find(a => a.id === 'att-1');
 
-            expect(attachment?.uri).toBe('/local/doc.txt');
+            expect(attachment?.uri).toBe('/incoming/doc.txt');
             expect(attachment?.localStatus).toBe('available');
             expect(attachment?.cloudKey).toBe('attachments/att-1.txt');
         });
@@ -227,6 +227,32 @@ describe('Sync Logic', () => {
             const attachment = merged.tasks[0].attachments?.find((item) => item.id === 'att-missing');
             expect(attachment?.uri).toBe('/incoming/doc.txt');
             expect(attachment?.cloudKey).toBe('attachments/att-missing.txt');
+        });
+
+        it('enriches incoming-only attachments with localStatus when uri exists', () => {
+            const incomingAttachment: Attachment = {
+                id: 'att-incoming-only',
+                kind: 'file',
+                title: 'incoming-only.txt',
+                uri: '/incoming/incoming-only.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-03T00:00:00.000Z',
+            };
+
+            const localTask: Task = {
+                ...createMockTask('1', '2023-01-02'),
+                attachments: [],
+            };
+            const incomingTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [incomingAttachment],
+            };
+
+            const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+            const attachment = merged.tasks[0].attachments?.find((item) => item.id === 'att-incoming-only');
+
+            expect(attachment?.uri).toBe('/incoming/incoming-only.txt');
+            expect(attachment?.localStatus).toBe('available');
         });
 
         it('should preserve attachment deletions using attachment timestamps', () => {

@@ -763,34 +763,66 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         const localList = local || [];
         const incomingList = incoming || [];
         if (localList.length === 0 && incomingList.length === 0) return undefined;
-        const merged = mergeEntities(localList, incomingList);
-        if (merged.length === 0) return undefined;
-        if (localList.length === 0) return merged;
-
         const localById = new Map(localList.map((item) => [item.id, item]));
         const incomingById = new Map(incomingList.map((item) => [item.id, item]));
-        return merged.map((attachment) => {
-            const localAttachment = localById.get(attachment.id);
-            if (!localAttachment) return attachment;
-            if (attachment.kind !== 'file' || localAttachment.kind !== 'file') {
-                return attachment;
+        const hasAvailableUri = (attachment?: Attachment): boolean => {
+            return attachment?.kind === 'file'
+                && attachment.localStatus !== 'missing'
+                && typeof attachment.uri === 'string'
+                && attachment.uri.trim().length > 0;
+        };
+
+        const merged = mergeEntitiesWithStats(localList, incomingList, (localAttachment, incomingAttachment, winner) => {
+            if (winner.kind !== 'file' || localAttachment.kind !== 'file' || incomingAttachment.kind !== 'file') {
+                return winner;
             }
+
+            const winnerIsIncoming = winner === incomingAttachment;
+            const winnerHasUri = hasAvailableUri(winner);
+            const localHasUri = hasAvailableUri(localAttachment);
+            const incomingHasUri = hasAvailableUri(incomingAttachment);
+
+            let uri = winner.uri;
+            let localStatus = winner.localStatus;
+
+            if (winnerHasUri) {
+                uri = winner.uri;
+                localStatus = winner.localStatus || 'available';
+            } else if (winnerIsIncoming && localHasUri) {
+                uri = localAttachment.uri;
+                localStatus = localAttachment.localStatus || 'available';
+            } else if (!winnerIsIncoming && incomingHasUri) {
+                uri = incomingAttachment.uri;
+                localStatus = incomingAttachment.localStatus || 'available';
+            } else if ((localStatus === undefined || localStatus === null) && typeof uri === 'string' && uri.trim().length > 0) {
+                localStatus = 'available';
+            }
+
+            return {
+                ...winner,
+                cloudKey: winner.cloudKey || localAttachment.cloudKey || incomingAttachment.cloudKey,
+                fileHash: winner.fileHash || localAttachment.fileHash || incomingAttachment.fileHash,
+                uri,
+                localStatus,
+            };
+        }).merged;
+
+        const normalized = merged.map((attachment) => {
+            if (attachment.kind !== 'file') return attachment;
+            const localAttachment = localById.get(attachment.id);
             const incomingAttachment = incomingById.get(attachment.id);
-            const localUriAvailable = localAttachment.localStatus !== 'missing'
-                && typeof localAttachment.uri === 'string'
-                && localAttachment.uri.trim().length > 0;
+            const localFile = localAttachment?.kind === 'file' ? localAttachment : undefined;
+            const incomingFile = incomingAttachment?.kind === 'file' ? incomingAttachment : undefined;
+            const uriAvailable = hasAvailableUri(attachment);
             return {
                 ...attachment,
-                cloudKey: attachment.cloudKey || localAttachment.cloudKey || incomingAttachment?.cloudKey,
-                fileHash: attachment.fileHash || localAttachment.fileHash || incomingAttachment?.fileHash,
-                uri: localUriAvailable
-                    ? localAttachment.uri
-                    : (attachment.uri || incomingAttachment?.uri || localAttachment.uri),
-                localStatus: localUriAvailable
-                    ? (localAttachment.localStatus || 'available')
-                    : (attachment.localStatus || incomingAttachment?.localStatus || localAttachment.localStatus),
+                cloudKey: attachment.cloudKey || localFile?.cloudKey || incomingFile?.cloudKey,
+                fileHash: attachment.fileHash || localFile?.fileHash || incomingFile?.fileHash,
+                localStatus: attachment.localStatus ?? (uriAvailable ? 'available' : undefined),
             };
         });
+
+        return normalized.length > 0 ? normalized : undefined;
     };
 
     const tasksResult = mergeEntitiesWithStats(localNormalized.tasks, incomingNormalized.tasks, (localTask: Task, incomingTask: Task, winner: Task) => {
