@@ -98,6 +98,7 @@ export interface Area {
     revBy?: string; // Device identifier that issued the revision
     createdAt?: string;
     updatedAt?: string;
+    deletedAt?: string; // Soft-delete tombstone for cross-device area deletion
 }
 
 export type AttachmentKind = 'file' | 'link';
@@ -205,6 +206,7 @@ export interface AppData {
         features?: {
             priorities?: boolean;
             timeEstimates?: boolean;
+            pomodoro?: boolean;
         };
         appearance?: {
             density?: 'comfortable' | 'compact';
@@ -235,6 +237,7 @@ export interface AppData {
             enabled?: boolean;
             provider?: 'gemini' | 'openai' | 'anthropic';
             apiKey?: string;
+            baseUrl?: string;
             model?: string;
             reasoningEffort?: 'low' | 'medium' | 'high';
             thinkingBudget?: number;
@@ -267,6 +270,7 @@ export interface AppData {
         migrations?: {
             version?: number;
             lastAutoArchiveAt?: string;
+            lastTombstoneCleanupAt?: string;
         };
     };
 }

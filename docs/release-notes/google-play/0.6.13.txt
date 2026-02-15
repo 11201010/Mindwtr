@@ -1,0 +1,18 @@
+<en-US>
+- Improved sync reliability and conflict safety across desktop and mobile.
+- Hardened cloud attachment security with safer path handling and rate limits.
+- Added task delete confirmation + undo on desktop, better accessibility labels, and mobile touch target improvements.
+- Added broad sync/cloud test coverage and internal refactors for stability.
+</en-US>
+<zh-CN>
+- 提升桌面端与移动端的同步可靠性与冲突处理安全性。
+- 加强云端附件安全（更严格路径处理与接口限流）。
+- 桌面端新增任务删除确认与撤销，改进无障碍标签；移动端优化触控点击区域。
+- 增加同步/云端测试覆盖并完成多项稳定性重构。
+</zh-CN>
+<es-ES>
+- Se mejoró la fiabilidad del sync y la seguridad de resolución de conflictos en escritorio y móvil.
+- Se reforzó la seguridad de adjuntos en la nube con rutas más seguras y límites de tasa.
+- Se añadió confirmación + deshacer al borrar tareas en escritorio, mejores etiquetas de accesibilidad y mejoras de áreas táctiles en móvil.
+- Se amplió la cobertura de pruebas de sync/nube y se realizaron refactors de estabilidad.
+</es-ES>

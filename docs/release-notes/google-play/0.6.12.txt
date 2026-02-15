@@ -1,0 +1,15 @@
+<en-US>
+- Fixed a Play Store Android startup crash (`undefined is not a function`) in release builds.
+- Improved tab bar startup stability on native devices.
+- Added retry handling for Linux repo release-asset download in CI.
+</en-US>
+<zh-CN>
+- 修复了 Play 商店 Android 发行版启动时的 `undefined is not a function` 崩溃问题。
+- 提升了原生设备上底部标签栏的启动稳定性。
+- 为 Linux 仓库发布资产下载增加了 CI 重试机制。
+</zh-CN>
+<es-ES>
+- Se corrigió un fallo de inicio en Android de Play Store (`undefined is not a function`) en builds de release.
+- Se mejoró la estabilidad de inicio de la barra de pestañas en dispositivos nativos.
+- Se añadió reintento en CI para la descarga de assets del repositorio Linux.
+</es-ES>

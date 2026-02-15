@@ -30,9 +30,27 @@ export function findOrphanedAttachments(appData: AppData): Attachment[] {
         }
     }
 
-    return Array.from(allAttachments.values()).filter(
-        (attachment) => attachment.deletedAt || !activeReferenceIds.has(attachment.id)
-    );
+    return Array.from(allAttachments.values()).filter((attachment) => !activeReferenceIds.has(attachment.id));
+}
+
+export function findDeletedAttachmentsForFileCleanup(appData: AppData): Attachment[] {
+    const deleted = new Map<string, Attachment>();
+
+    for (const task of appData.tasks) {
+        for (const attachment of task.attachments || []) {
+            if (!attachment.deletedAt) continue;
+            deleted.set(attachment.id, attachment);
+        }
+    }
+
+    for (const project of appData.projects) {
+        for (const attachment of project.attachments || []) {
+            if (!attachment.deletedAt) continue;
+            deleted.set(attachment.id, attachment);
+        }
+    }
+
+    return Array.from(deleted.values());
 }
 
 export function removeOrphanedAttachmentsFromData(appData: AppData): AppData {

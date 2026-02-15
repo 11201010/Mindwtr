@@ -13,8 +13,8 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
 [![CI](https://github.com/dongdongbh/Mindwtr/actions/workflows/ci.yml/badge.svg)](https://github.com/dongdongbh/Mindwtr/actions/workflows/ci.yml)
 [![GitHub license](https://img.shields.io/github/license/dongdongbh/Mindwtr?color=brightgreen)](LICENSE)
 [![GitHub downloads](https://img.shields.io/github/downloads/dongdongbh/Mindwtr/total)](https://github.com/dongdongbh/Mindwtr/releases)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/MrrkRsm8)
-[![X Share](https://img.shields.io/badge/X-Share-111111?logo=X&logoColor=white)](https://x.com/intent/post?text=Mindwtr%20https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dongdongbh/Mindwtr)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ahhFxuDBb4)
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-ff5f5f?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/dongdongbh)
 [![Ko-fi](https://img.shields.io/badge/Sponsor-Ko--fi-29abe0?logo=kofi&logoColor=white)](https://ko-fi.com/D1D01T20WK)
 
@@ -32,6 +32,13 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
          alt="Google Play"
          style="height: 56px"
          height="56" />
+  </a>
+  <a href="https://apps.apple.com/app/mindwtr/id6758597144" target="_blank">
+    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
+         align="center"
+         alt="Download on the App Store"
+         style="height: 50px"
+         height="50" />
   </a>
   <a href="https://snapcraft.io/mindwtr" target="_blank">
     <img alt="Get it from the Snap Store"
@@ -92,11 +99,12 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - 📎 **Attachments** - Files and links on tasks
 - ✏️ **Markdown Notes** - Rich text descriptions with preview
 - 🗂️ **Project States** - Active, Waiting, Someday, Archived
-- ♾️ **Fluid Recurrence** - Strict dates or “X days after completion”
+- ♾️ **Fluid Recurrence** - Next date is calculated after completion
 - ♻️ **Reusable Lists** - Duplicate tasks or reset checklists
 - ✅ **Checklist Mode** - Fast list-style checking for checklist tasks
 - ✅ **Audio Capture** - Quick voice capture with automatic transcription and task creation
 - 🧭 **Copilot Suggestions** - Optional context/tag/time hints while typing
+- 🍅 **Pomodoro Focus (Optional)** - 15/3, 25/5, 50/10 timer panel in Focus view
 - 🔔 **Notifications** - Due date reminders with snooze
 - 📊 **Daily Digest** - Morning briefing + evening review
 - 📅 **Weekly Review** - Customizable weekly reminder
@@ -115,12 +123,24 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 
 ### Cross-Platform
 - 🖥️ **Desktop** - Tauri v2 (macOS, Linux, Windows)
-- 📱 **Mobile** - React Native/Expo (iOS via TestFlight, Android)
+- 📱 **Mobile** - React Native/Expo (iOS via App Store/TestFlight, Android)
 - 📲 **Android Widget** - Home screen focus/next widget
 - ⌨️ **Keyboard Shortcuts** - Vim and Emacs presets
 - 🎨 **Themes** - Light/Dark
 - 🌍 **i18n** - English, Chinese, Spanish, Hindi, Arabic, German, Russian, Japanese, French, Portuguese, Korean, Italian, Turkish
 - 🐳 **Docker** - Run the PWA + self-hosted sync server with Docker
+
+## Requirements
+
+### End Users
+- Desktop builds from package managers/app stores do not require Bun or Node.js.
+- Mobile users can install from App Store / Google Play directly.
+
+### Building From Source
+- **Bun**: `>= 1.1` (workspace install, scripts, tests)
+- **Node.js**: `>= 18` (recommended for tooling compatibility)
+- **Rust toolchain** + platform WebView dependencies (for Tauri desktop builds)
+- **Android Studio/SDK** and/or **Xcode** (for React Native mobile builds)
 
 ## Installation
 
@@ -198,22 +218,23 @@ scoop install mindwtr
 
 ### Desktop (macOS)
 
-**Homebrew (recommended):**
-<a href="https://github.com/dongdongbh/homebrew-mindwtr">
-  <img src="https://img.shields.io/badge/Homebrew-Install-orange?logo=homebrew&logoColor=white" alt="Homebrew">
+**Mac App Store (recommended):**
+<a href="https://apps.apple.com/app/mindwtr/id6758597144">
+  <img src="https://tools.applemediaservices.com/api/badges/download-on-the-mac-app-store/black/en-us?size=250x83" alt="Download on the Mac App Store">
+</a>
+
+Install from the Mac App Store: [Mindwtr on Mac App Store](https://apps.apple.com/app/mindwtr/id6758597144).
+TestFlight beta (macOS): [Join the beta](https://testflight.apple.com/join/7SMJCTSR).
+
+**Homebrew:**
+<a href="https://formulae.brew.sh/cask/mindwtr">
+  <img src="https://img.shields.io/homebrew/cask/v/mindwtr?label=Homebrew&logo=homebrew&logoColor=white" alt="Homebrew Cask Version">
 </a>
 ```bash
-brew tap dongdongbh/mindwtr
 brew install --cask mindwtr
 ```
 
 **Other methods:** `.dmg` from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases).
-
-> **Note:** If macOS says the app is "damaged" or from an "unidentified developer", run:
-> ```bash
-> xattr -cr /Applications/Mindwtr.app
-> ```
-> Then open the app normally. This is required because the app is not notarized with Apple.
 
 ### Mobile
 
@@ -225,7 +246,12 @@ brew install --cask mindwtr
 Other methods: APK from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases).
 
 **iOS:**
-Available on TestFlight: [Join the beta](https://testflight.apple.com/join/7SMJCTSR).
+<a href="https://apps.apple.com/app/mindwtr/id6758597144">
+  <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store">
+</a>
+
+Available on the App Store: [Mindwtr for iOS](https://apps.apple.com/app/mindwtr/id6758597144).
+TestFlight beta: [Join the beta](https://testflight.apple.com/join/7SMJCTSR).
 
 However, maintaining the iOS version on the App Store requires a substantial annual fee (see the [Apple Developer Program](https://developer.apple.com/support/enrollment/)), which I currently cover out of pocket.
 
@@ -240,11 +266,29 @@ Install guides:
 - 🚀 [Getting Started](https://github.com/dongdongbh/Mindwtr/wiki/Getting-Started)
 - 📚 [All platforms & package managers](https://github.com/dongdongbh/Mindwtr/wiki)
 
+## Community
+
+Mindwtr is shaped by its users and contributors. Thank you for helping improve it.
+
+### :hearts: Contributing & Support
+
+If you want to get involved, start with [CONTRIBUTING.md](CONTRIBUTING.md).
+
+You can help in several ways:
+
+1. **Spread the word:** Share Mindwtr with friends and communities, and support it on [Product Hunt](https://www.producthunt.com/products/mindwtr) and [AlternativeTo](https://alternativeto.net/software/mindwtr/).
+2. **Leave store reviews:** A good rating/review on the [App Store](https://apps.apple.com/app/mindwtr/id6758597144), [Google Play](https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr), or [Microsoft Store](https://apps.microsoft.com/detail/9n0v5b0b6frx?ocid=webpdpshare) helps a lot.
+3. **Share on social platforms:** Post about Mindwtr on [X](https://twitter.com/intent/tweet?text=I%20like%20Mindwtr%20https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr), [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr&title=I%20like%20Mindwtr), or [LinkedIn](https://www.linkedin.com/shareArticle?mini=true&url=https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr&title=I%20like%20Mindwtr).
+4. **Report bugs and request features:** Open issues on [GitHub Issues](https://github.com/dongdongbh/Mindwtr/issues).
+5. **Join the community chat:** Come to [Discord](https://discord.gg/ahhFxuDBb4).
+6. **Contribute code/docs:** Open a pull request and follow the [contribution guide](docs/CONTRIBUTING.md) and commit conventions.
+7. **Sponsor the project:** Support ongoing development via [GitHub Sponsors](https://github.com/sponsors/dongdongbh) or [Ko-fi](https://ko-fi.com/D1D01T20WK).
+
 ## Roadmap
 
 - 📦 Add to Flathub
-- 🤖 Add to F-Droid
-- 📱 iOS release
+- 📱 Improve iOS experience
+- 🔗 Obsidian integration (task deep links)
 - ✉️ Email to Inbox
 
 ## Documentation

@@ -17,10 +17,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-linux-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   linux:
     runs-on: ubuntu-22.04
     name: Linux Build + Snap + AUR
+    timeout-minutes: 90
 
     steps:
       - name: Checkout code
@@ -46,7 +51,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install
@@ -84,7 +89,7 @@ jobs:
         shell: bash
 
       - name: Build Snap
-        uses: snapcore/action-build@v1
+        uses: snapcore/action-build@v1.3.0
         id: snap_build
 
       - name: Add Snap to artifacts
@@ -96,7 +101,7 @@ jobs:
 
       - name: Publish Snap (stable)
         if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch'
-        uses: snapcore/action-publish@v1
+        uses: snapcore/action-publish@v1.2.0
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
         with:

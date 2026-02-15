@@ -1,6 +1,6 @@
 # User Guide: Mobile
 
-The Mindwtr mobile app is built with React Native and Expo. Android is fully supported; iOS is currently available via simulator builds.
+The Mindwtr mobile app is built with React Native and Expo. Android is fully supported; iOS is available on the App Store and via TestFlight beta.
 
 ## Overview
 
@@ -197,6 +197,7 @@ Your primary dashboard for doing.
 - **Context filter** — Tap a context chip to filter the Next list.
 - **Swipe to Focus** — Swipe a task right to toggle "Focus" status (moves it to Today).
 - **Quick Status** — Tap the status badge to change status.
+- **Pomodoro (Optional)** — Enable in **Settings → GTD → Features → Pomodoro timer** to show a focus/break timer panel linked to your current task.
 
 ---
 
@@ -226,6 +227,12 @@ The editor starts minimal. Tap **More options** to reveal advanced fields; any f
 
 Description markdown supports unordered lists and task checkboxes (`- item`, `[ ] item`, `[x] item`).
 Markdown checkbox lines can populate checklist items when you save.
+
+Recurring tasks support two strategies:
+- **Strict** (fixed cadence)
+- **Repeat after completion** (next date from completion time)
+
+Use the recurrence field in the task editor, then toggle **Repeat after completion** when needed.
 
 ### Attachments
 

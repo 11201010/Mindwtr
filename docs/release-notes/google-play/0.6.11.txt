@@ -1,0 +1,15 @@
+<en-US>
+- Fixed Android startup crashes reported in 0.6.10 and hardened app initialization reliability.
+- Fixed unwanted launch-to-Review behavior caused by stale notification responses.
+- Improved cross-device attachment cleanup/deletion sync reliability and added area-grouped References.
+</en-US>
+<zh-CN>
+- 修复了 0.6.10 中反馈的 Android 启动崩溃问题，并加强了应用初始化稳定性。
+- 修复了由旧通知响应导致的启动后误跳转到「回顾」页面问题。
+- 提升附件清理与跨设备删除同步可靠性，并新增按 Area 分组的参考资料视图。
+</zh-CN>
+<es-ES>
+- Se corrigieron fallos de inicio en Android reportados en 0.6.10 y se reforzó la estabilidad de inicialización.
+- Se corrigió la apertura no deseada en Review causada por respuestas antiguas de notificaciones.
+- Se mejoró la fiabilidad de limpieza/sincronización de adjuntos y se añadieron referencias agrupadas por Área.
+</es-ES>

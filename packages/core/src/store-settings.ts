@@ -1,5 +1,6 @@
 import { safeParseDate } from './date';
 import { logWarn } from './logger';
+import { purgeExpiredTombstones } from './sync';
 import { normalizeTaskForLoad } from './task-status';
 import type { StorageAdapter } from './storage';
 import type { AppData, Area, Project, TaskEditorFieldId } from './types';
@@ -18,6 +19,7 @@ import { generateUUID as uuidv4 } from './uuid';
 const MIGRATION_VERSION = 1;
 // Run auto-archive at most twice a day to keep background work bounded.
 const AUTO_ARCHIVE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const TOMBSTONE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TASK_EDITOR_DEFAULTS_VERSION = 3;
 const TASK_EDITOR_ALWAYS_VISIBLE: TaskEditorFieldId[] = ['status', 'project', 'description', 'checklist', 'contexts'];
 const STORAGE_TIMEOUT_MS = 15_000;
@@ -27,6 +29,16 @@ let derivedCache: DerivedCache | null = null;
 export const clearDerivedCache = () => {
     derivedCache = null;
 };
+
+function shouldPromoteScheduledTask(task: AppData['tasks'][number], nowMs: number): boolean {
+    if (task.deletedAt || task.purgedAt) return false;
+    if (task.status === 'next' || task.status === 'done' || task.status === 'archived' || task.status === 'reference') return false;
+    const startMs = safeParseDate(task.startTime)?.getTime() ?? NaN;
+    if (Number.isFinite(startMs) && startMs <= nowMs) return true;
+    const dueMs = safeParseDate(task.dueDate)?.getTime() ?? NaN;
+    if (Number.isFinite(dueMs) && dueMs <= nowMs) return true;
+    return false;
+}
 
 type SettingsActionContext = {
     set: (partial: Partial<TaskStore> | ((state: TaskStore) => Partial<TaskStore> | TaskStore)) => void;
@@ -82,6 +94,8 @@ export const createSettingsActions = ({
             const shouldRunMigrations = (migrations.version ?? 0) < MIGRATION_VERSION;
             const lastAutoArchiveAt = safeParseDate(migrations.lastAutoArchiveAt)?.getTime() ?? 0;
             const shouldRunAutoArchive = Date.now() - lastAutoArchiveAt > AUTO_ARCHIVE_INTERVAL_MS;
+            const lastTombstoneCleanupAt = safeParseDate(migrations.lastTombstoneCleanupAt)?.getTime() ?? 0;
+            const shouldRunTombstoneCleanup = Date.now() - lastTombstoneCleanupAt > TOMBSTONE_CLEANUP_INTERVAL_MS;
             const nextMigrationState = { ...migrations };
             let didSettingsUpdate = false;
 
@@ -91,6 +105,10 @@ export const createSettingsActions = ({
             }
             if (shouldRunAutoArchive) {
                 nextMigrationState.lastAutoArchiveAt = nowIso;
+                didSettingsUpdate = true;
+            }
+            if (shouldRunTombstoneCleanup) {
+                nextMigrationState.lastTombstoneCleanupAt = nowIso;
                 didSettingsUpdate = true;
             }
 
@@ -155,6 +173,19 @@ export const createSettingsActions = ({
                     };
                 });
             }
+            const nowMs = Date.now();
+            let didPromoteScheduled = false;
+            allTasks = allTasks.map((task) => {
+                if (!shouldPromoteScheduledTask(task, nowMs)) return task;
+                didPromoteScheduled = true;
+                return {
+                    ...task,
+                    status: 'next',
+                    updatedAt: nowIso,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: nextSettings.deviceId,
+                };
+            });
             let didProjectOrderMigration = false;
             let didAreaMigration = false;
             let allProjects = rawProjects;
@@ -210,6 +241,7 @@ export const createSettingsActions = ({
                 const nameSet = new Set<string>();
                 let hasDuplicateNames = false;
                 for (const area of allAreas) {
+                    if (area.deletedAt) continue;
                     const normalizedName = typeof area?.name === 'string' ? area.name.trim().toLowerCase() : '';
                     if (!normalizedName) continue;
                     if (nameSet.has(normalizedName)) {
@@ -224,6 +256,10 @@ export const createSettingsActions = ({
                     const areaIdRemap = new Map<string, string>();
                     const uniqueAreas: Area[] = [];
                     allAreas.forEach((area) => {
+                        if (area.deletedAt) {
+                            uniqueAreas.push(area);
+                            return;
+                        }
                         const normalizedName = typeof area?.name === 'string' ? area.name.trim().toLowerCase() : '';
                         if (!normalizedName) {
                             uniqueAreas.push(area);
@@ -258,7 +294,8 @@ export const createSettingsActions = ({
                         didAreaMigration = true;
                         return id;
                     };
-                    const areaIdExists = (areaId?: string) => Boolean(areaId && allAreas.some((area) => area.id === areaId));
+                    const areaIdExists = (areaId?: string) =>
+                        Boolean(areaId && allAreas.some((area) => area.id === areaId && !area.deletedAt));
                     allProjects = allProjects.map((project) => {
                         const remappedAreaId = project.areaId ? areaIdRemap.get(project.areaId) : undefined;
                         if (remappedAreaId && remappedAreaId !== project.areaId) {
@@ -294,6 +331,10 @@ export const createSettingsActions = ({
                 const areaIdRemap = new Map<string, string>();
                 const uniqueAreas: Area[] = [];
                 allAreas.forEach((area) => {
+                    if (area.deletedAt) {
+                        uniqueAreas.push(area);
+                        return;
+                    }
                     const normalizedName = typeof area?.name === 'string' ? area.name.trim().toLowerCase() : '';
                     if (!normalizedName) {
                         uniqueAreas.push(area);
@@ -327,25 +368,52 @@ export const createSettingsActions = ({
                     });
                 }
             }
+            let didTombstoneCleanup = false;
+            if (shouldRunTombstoneCleanup) {
+                const cleanup = purgeExpiredTombstones(
+                    {
+                        tasks: allTasks,
+                        projects: allProjects,
+                        sections: allSections,
+                        areas: allAreas,
+                        settings: nextSettings,
+                    },
+                    nowIso
+                );
+                allTasks = cleanup.data.tasks;
+                allProjects = cleanup.data.projects;
+                if (cleanup.removedTaskTombstones > 0 || cleanup.removedAttachmentTombstones > 0) {
+                    didTombstoneCleanup = true;
+                    logWarn('Purged expired tombstones during data fetch', {
+                        scope: 'store',
+                        category: 'storage',
+                        context: {
+                            removedTaskTombstones: cleanup.removedTaskTombstones,
+                            removedAttachmentTombstones: cleanup.removedAttachmentTombstones,
+                        },
+                    });
+                }
+            }
             // Filter out soft-deleted and archived items for day-to-day UI display
             const visibleTasks = allTasks.filter(t => !t.deletedAt && t.status !== 'archived');
             const visibleProjects = allProjects.filter(p => !p.deletedAt);
             const visibleSections = allSections.filter((section) => !section.deletedAt);
+            const visibleAreas = allAreas.filter((area) => !area.deletedAt);
             set({
                 tasks: visibleTasks,
                 projects: visibleProjects,
                 sections: visibleSections,
-                areas: allAreas,
+                areas: visibleAreas,
                 settings: nextSettings,
                 _allTasks: allTasks,
                 _allProjects: allProjects,
                 _allSections: allSections,
                 _allAreas: allAreas,
                 isLoading: false,
-                lastDataChangeAt: didAutoArchive ? Date.now() : get().lastDataChangeAt,
+                lastDataChangeAt: didAutoArchive || didPromoteScheduled || didTombstoneCleanup ? Date.now() : get().lastDataChangeAt,
             });
 
-            if (didAutoArchive || didAreaMigration || didProjectOrderMigration || didSettingsUpdate) {
+            if (didAutoArchive || didPromoteScheduled || didTombstoneCleanup || didAreaMigration || didProjectOrderMigration || didSettingsUpdate) {
                 debouncedSave(
                     { tasks: allTasks, projects: allProjects, sections: allSections, areas: allAreas, settings: nextSettings },
                     (msg) => set({ error: msg })
@@ -455,17 +523,12 @@ export const createSettingsActions = ({
 
     getDerivedState: () => {
         const state = get();
-        if (
-            derivedCache
-            && derivedCache.tasksRef === state.tasks
-            && derivedCache.projectsRef === state.projects
-        ) {
+        if (derivedCache && derivedCache.lastDataChangeAt === state.lastDataChangeAt) {
             return derivedCache.value;
         }
         const derived = computeDerivedState(state.tasks, state.projects);
         derivedCache = {
-            tasksRef: state.tasks,
-            projectsRef: state.projects,
+            lastDataChangeAt: state.lastDataChangeAt,
             value: derived,
         };
         return derived;

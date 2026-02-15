@@ -1,8 +1,6 @@
-import { Check, Link2, Paperclip, Plus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     buildRRuleString,
-    generateUUID,
     hasTimeComponent,
     parseRRuleString,
     safeFormatDate,
@@ -22,6 +20,8 @@ import { cn } from '../../lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WeekdaySelector } from './TaskForm/WeekdaySelector';
+import { AttachmentsField } from './TaskForm/AttachmentsField';
+import { ChecklistField } from './TaskForm/ChecklistField';
 
 export type MonthlyRecurrenceInfo = {
     pattern: 'date' | 'custom';
@@ -78,22 +78,6 @@ type TaskItemFieldRendererProps = {
     fieldId: TaskEditorFieldId;
     data: TaskItemFieldRendererData;
     handlers: TaskItemFieldRendererHandlers;
-};
-
-const areChecklistsEqual = (a: Task['checklist'], b: Task['checklist']): boolean => {
-    if (a === b) return true;
-    const listA = a || [];
-    const listB = b || [];
-    if (listA.length !== listB.length) return false;
-    for (let i = 0; i < listA.length; i += 1) {
-        const itemA = listA[i];
-        const itemB = listB[i];
-        if (!itemA || !itemB) return false;
-        if (itemA.id !== itemB.id) return false;
-        if (itemA.title !== itemB.title) return false;
-        if (itemA.isCompleted !== itemB.isCompleted) return false;
-    }
-    return true;
 };
 
 export function TaskItemFieldRenderer({
@@ -159,51 +143,6 @@ export function TaskItemFieldRenderer({
         editTextDirection
     );
     const isRtl = resolvedDirection === 'rtl';
-
-    const [checklistDraft, setChecklistDraft] = useState<Task['checklist']>(task.checklist || []);
-    const checklistDraftRef = useRef<Task['checklist']>(task.checklist || []);
-    const checklistDirtyRef = useRef(false);
-    const checklistInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-
-    useEffect(() => {
-        setChecklistDraft(task.checklist || []);
-        checklistDraftRef.current = task.checklist || [];
-        checklistDirtyRef.current = false;
-        checklistInputRefs.current = [];
-    }, [task.id]);
-
-    useEffect(() => {
-        if (checklistDirtyRef.current) return;
-        const incoming = task.checklist || [];
-        if (areChecklistsEqual(incoming, checklistDraftRef.current)) return;
-        setChecklistDraft(incoming);
-        checklistDraftRef.current = incoming;
-    }, [task.checklist]);
-
-    const updateChecklistDraft = useCallback((next: Task['checklist']) => {
-        setChecklistDraft(next);
-        checklistDraftRef.current = next;
-        checklistDirtyRef.current = true;
-    }, []);
-
-    const commitChecklistDraft = useCallback((next?: Task['checklist']) => {
-        const payload = next ?? checklistDraftRef.current;
-        if (!checklistDirtyRef.current && next === undefined) return;
-        checklistDirtyRef.current = false;
-        updateTask(taskId, { checklist: payload });
-    }, [taskId, updateTask]);
-
-    useEffect(() => () => {
-        if (checklistDirtyRef.current) {
-            updateTask(taskId, { checklist: checklistDraftRef.current });
-        }
-    }, [taskId, updateTask]);
-
-    const focusChecklistIndex = useCallback((index: number) => {
-        window.requestAnimationFrame(() => {
-            checklistInputRefs.current[index]?.focus();
-        });
-    }, []);
 
     switch (fieldId) {
         case 'description':
@@ -307,61 +246,15 @@ export function TaskItemFieldRenderer({
             );
         case 'attachments':
             return (
-                <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                        <label className="text-xs text-muted-foreground font-medium">{t('attachments.title')}</label>
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={addFileAttachment}
-                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
-                            >
-                                <Paperclip className="w-3 h-3" />
-                                {t('attachments.addFile')}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={addLinkAttachment}
-                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors flex items-center gap-1"
-                            >
-                                <Link2 className="w-3 h-3" />
-                                {t('attachments.addLink')}
-                            </button>
-                        </div>
-                    </div>
-                    {attachmentError && (
-                        <div role="alert" className="text-xs text-red-400">{attachmentError}</div>
-                    )}
-                    {visibleEditAttachments.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">{t('common.none')}</p>
-                    ) : (
-                        <div className="space-y-1">
-                            {visibleEditAttachments.map((attachment) => (
-                                <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs">
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            openAttachment(attachment);
-                                        }}
-                                        className="truncate text-primary hover:underline"
-                                        title={attachment.title}
-                                    >
-                                        {attachment.title}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => removeAttachment(attachment.id)}
-                                        className="text-muted-foreground hover:text-foreground"
-                                    >
-                                        {t('attachments.remove')}
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                <AttachmentsField
+                    t={t}
+                    attachmentError={attachmentError}
+                    visibleEditAttachments={visibleEditAttachments}
+                    addFileAttachment={addFileAttachment}
+                    addLinkAttachment={addLinkAttachment}
+                    openAttachment={openAttachment}
+                    removeAttachment={removeAttachment}
+                />
             );
         case 'startTime':
             {
@@ -538,16 +431,29 @@ export function TaskItemFieldRenderer({
             return (
                 <div className="flex flex-col gap-1 w-full">
                     <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.recurrenceLabel')}</label>
-                    <select
-                        value={editRecurrence}
-                        aria-label={t('task.aria.recurrence')}
-                        onChange={(e) => {
-                            const value = e.target.value as RecurrenceRule | '';
-                            setEditRecurrence(value);
-                            if (value === 'weekly') {
-                                const parsed = parseRRuleString(editRecurrenceRRule);
-                                if (!editRecurrenceRRule || parsed.rule !== 'weekly') {
-                                    setEditRecurrenceRRule(buildRRuleString('weekly'));
+                        <select
+                            value={editRecurrence}
+                            aria-label={t('task.aria.recurrence')}
+                            onChange={(e) => {
+                                const value = e.target.value as RecurrenceRule | '';
+                                setEditRecurrence(value);
+                                if (value === 'daily') {
+                                    const parsed = parseRRuleString(editRecurrenceRRule);
+                                    if (!editRecurrenceRRule || parsed.rule !== 'daily') {
+                                        setEditRecurrenceRRule(buildRRuleString('daily'));
+                                    }
+                                }
+                                if (value === 'weekly') {
+                                    const parsed = parseRRuleString(editRecurrenceRRule);
+                                    if (!editRecurrenceRRule || parsed.rule !== 'weekly') {
+                                        setEditRecurrenceRRule(buildRRuleString('weekly'));
+                                    }
+                                }
+                                if (value === 'monthly') {
+                                    const parsed = parseRRuleString(editRecurrenceRRule);
+                                    if (!editRecurrenceRRule || parsed.rule !== 'monthly') {
+                                        setEditRecurrenceRRule(buildRRuleString('monthly'));
+                                    }
                                 }
                             }
                             if (value === 'monthly') {
@@ -568,17 +474,37 @@ export function TaskItemFieldRenderer({
                         <option value="monthly">{t('recurrence.monthly')}</option>
                         <option value="yearly">{t('recurrence.yearly')}</option>
                     </select>
-                    {editRecurrence && (
-                        <label className="flex items-center gap-2 pt-1 text-[10px] text-muted-foreground">
-                            <input
-                                type="checkbox"
-                                checked={editRecurrenceStrategy === 'fluid'}
-                                onChange={(e) => setEditRecurrenceStrategy(e.target.checked ? 'fluid' : 'strict')}
-                                className="accent-primary"
-                            />
-                            {t('recurrence.afterCompletion')}
-                        </label>
-                    )}
+                        {editRecurrence === 'daily' && (
+                            <div className="flex items-center gap-2 pt-1">
+                                <span className="text-[10px] text-muted-foreground">{t('recurrence.repeatEvery')}</span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    value={Math.max(parseRRuleString(editRecurrenceRRule).interval ?? 1, 1)}
+                                    onChange={(event) => {
+                                        const intervalValue = Number(event.target.valueAsNumber);
+                                        const safeInterval = Number.isFinite(intervalValue) && intervalValue > 0
+                                            ? Math.min(Math.round(intervalValue), 365)
+                                            : 1;
+                                        setEditRecurrenceRRule(buildRRuleString('daily', undefined, safeInterval));
+                                    }}
+                                    className="w-20 text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                />
+                                <span className="text-[10px] text-muted-foreground">{t('recurrence.dayUnit')}</span>
+                            </div>
+                        )}
+                        {editRecurrence && (
+                            <label className="flex items-center gap-2 pt-1 text-[10px] text-muted-foreground">
+                                <input
+                                    type="checkbox"
+                                    checked={editRecurrenceStrategy === 'fluid'}
+                                    onChange={(e) => setEditRecurrenceStrategy(e.target.checked ? 'fluid' : 'strict')}
+                                    className="accent-primary"
+                                />
+                                {t('recurrence.afterCompletion')}
+                            </label>
+                        )}
                     {editRecurrence === 'weekly' && (
                         <div className="pt-1">
                             <span className="text-[10px] text-muted-foreground">Repeat on</span>
@@ -733,163 +659,13 @@ export function TaskItemFieldRenderer({
             );
         case 'checklist':
             return (
-                <div className="flex flex-col gap-2 w-full pt-2 border-t border-border/50">
-                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.checklist')}</label>
-                    <div className="space-y-2 pr-3">
-                        {(checklistDraft || []).map((item, index) => (
-                            <div key={item.id || index} className="flex items-center gap-2 group/item">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const newList = (checklistDraft || []).map((entry, i) =>
-                                            i === index ? { ...entry, isCompleted: !entry.isCompleted } : entry
-                                        );
-                                        setChecklistDraft(newList);
-                                        checklistDraftRef.current = newList;
-                                        checklistDirtyRef.current = false;
-                                        updateTask(taskId, { checklist: newList });
-                                    }}
-                                    className={cn(
-                                        "w-4 h-4 border rounded flex items-center justify-center transition-colors",
-                                        item.isCompleted
-                                            ? "bg-primary border-primary text-primary-foreground"
-                                            : "border-muted-foreground hover:border-primary"
-                                    )}
-                                >
-                                    {item.isCompleted && <Check className="w-3 h-3" />}
-                                </button>
-                                <input
-                                    type="text"
-                                    value={item.title}
-                                    ref={(node) => {
-                                        checklistInputRefs.current[index] = node;
-                                    }}
-                                    onChange={(e) => {
-                                        const newList = (checklistDraft || []).map((entry, i) =>
-                                            i === index ? { ...entry, title: e.target.value } : entry
-                                        );
-                                        updateChecklistDraft(newList);
-                                    }}
-                                    onBlur={() => {
-                                        commitChecklistDraft();
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            const newItem = {
-                                                id: generateUUID(),
-                                                title: '',
-                                                isCompleted: false,
-                                            };
-                                            const nextList = [...(checklistDraft || [])];
-                                            nextList.splice(index + 1, 0, newItem);
-                                            setChecklistDraft(nextList);
-                                            checklistDraftRef.current = nextList;
-                                            checklistDirtyRef.current = false;
-                                            updateTask(taskId, { checklist: nextList });
-                                            focusChecklistIndex(index + 1);
-                                            return;
-                                        }
-                                        if (e.key === 'Backspace' && item.title.length === 0) {
-                                            e.preventDefault();
-                                            const nextList = (checklistDraft || []).filter((_, i) => i !== index);
-                                            setChecklistDraft(nextList);
-                                            checklistDraftRef.current = nextList;
-                                            checklistDirtyRef.current = false;
-                                            updateTask(taskId, { checklist: nextList });
-                                            const nextIndex = Math.max(0, index - 1);
-                                            if (nextList.length > 0) {
-                                                focusChecklistIndex(nextIndex);
-                                            }
-                                            return;
-                                        }
-                                        if (e.key === 'Tab') {
-                                            e.stopPropagation();
-                                            const nextIndex = e.shiftKey ? index - 1 : index + 1;
-                                            if (nextIndex >= 0 && nextIndex < (checklistDraft || []).length) {
-                                                e.preventDefault();
-                                                focusChecklistIndex(nextIndex);
-                                            } else {
-                                                commitChecklistDraft();
-                                            }
-                                        }
-                                    }}
-                                    className={cn(
-                                        "flex-1 bg-transparent text-sm focus:outline-none border-b border-transparent focus:border-primary/50 px-1",
-                                        item.isCompleted && "text-muted-foreground line-through"
-                                    )}
-                                    placeholder={t('taskEdit.itemNamePlaceholder')}
-                                />
-                                <button
-                                    type="button"
-                                    tabIndex={-1}
-                                    onClick={() => {
-                                        const newList = (checklistDraft || []).filter((_, i) => i !== index);
-                                        setChecklistDraft(newList);
-                                        checklistDraftRef.current = newList;
-                                        checklistDirtyRef.current = false;
-                                        updateTask(taskId, { checklist: newList });
-                                    }}
-                                    aria-label={t('common.delete')}
-                                    className="opacity-0 group-hover/item:opacity-100 text-muted-foreground hover:text-destructive p-1"
-                                >
-                                    <Trash2 className="w-3 h-3" />
-                                </button>
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            tabIndex={-1}
-                            onClick={() => {
-                                const newItem = {
-                                    id: generateUUID(),
-                                    title: '',
-                                    isCompleted: false,
-                                };
-                                const nextList = [...(checklistDraft || []), newItem];
-                                setChecklistDraft(nextList);
-                                checklistDraftRef.current = nextList;
-                                checklistDirtyRef.current = false;
-                                updateTask(taskId, { checklist: nextList });
-                                focusChecklistIndex(nextList.length - 1);
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    const newItem = {
-                                        id: generateUUID(),
-                                        title: '',
-                                        isCompleted: false,
-                                    };
-                                    const nextList = [...(checklistDraft || []), newItem];
-                                    setChecklistDraft(nextList);
-                                    checklistDraftRef.current = nextList;
-                                    checklistDirtyRef.current = false;
-                                    updateTask(taskId, { checklist: nextList });
-                                    focusChecklistIndex(nextList.length - 1);
-                                }
-                            }}
-                            className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1"
-                        >
-                            <Plus className="w-3 h-3" />
-                            {t('taskEdit.addItem')}
-                        </button>
-                        {(checklistDraft || []).length > 0 && (
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    tabIndex={-1}
-                                    onClick={() => resetTaskChecklist(taskId)}
-                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
-                                >
-                                    {t('taskEdit.resetChecklist')}
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                <ChecklistField
+                    t={t}
+                    taskId={taskId}
+                    checklist={task.checklist}
+                    updateTask={updateTask}
+                    resetTaskChecklist={resetTaskChecklist}
+                />
             );
         default:
             return null;

@@ -59,10 +59,11 @@ async function buildOpenAIError(response: Response): Promise<Error> {
 }
 
 async function requestOpenAI(config: AIProviderConfig, prompt: { system: string; user: string }, options?: AIRequestOptions) {
-    if (!config.apiKey) {
+    const url = config.endpoint || OPENAI_BASE_URL;
+    const apiKey = String(config.apiKey || '').trim();
+    if (!apiKey && url === OPENAI_BASE_URL) {
         throw new Error('OpenAI API key is required.');
     }
-    const url = config.endpoint || OPENAI_BASE_URL;
     const reasoningEffort = config.model.startsWith('gpt-5') && config.reasoningEffort
         ? config.reasoningEffort
         : undefined;
@@ -78,6 +79,13 @@ async function requestOpenAI(config: AIProviderConfig, prompt: { system: string;
         ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     };
 
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+        headers.Authorization = `Bearer ${apiKey}`;
+    }
+
     await rateLimit('openai');
 
     let response: Response | null = null;
@@ -87,10 +95,7 @@ async function requestOpenAI(config: AIProviderConfig, prompt: { system: string;
                 url,
                 {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${config.apiKey}`,
-                    },
+                    headers,
                     body: JSON.stringify(body),
                 },
                 resolveTimeoutMs(config.timeoutMs),

@@ -1,0 +1,4 @@
+- Se mejoro la seguridad del sync y la resolucion deterministica de conflictos para reducir riesgos de perdida de datos.
+- El procesamiento de bandeja en movil ahora usa una sola pagina con quick-add y tokens mas rapidos.
+- Mejor UX en edicion/revision movil con encabezados mas seguros, mejor comportamiento de selector de fecha y objetivos tactiles mas grandes.
+- Mejoras de rendimiento/fiabilidad en bloqueos SQLite, rutas criticas de sync y deteccion de errores offline.

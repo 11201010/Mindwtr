@@ -22,7 +22,16 @@ import { isFlatpakRuntime, isTauriRuntime } from '../../lib/runtime';
 import { reportError } from '../../lib/report-error';
 import { SyncService } from '../../lib/sync-service';
 import { clearLog, getLogPath } from '../../lib/app-log';
-import { checkForUpdates, type UpdateInfo, GITHUB_RELEASES_URL, MS_STORE_URL, verifyDownloadChecksum } from '../../lib/update-service';
+import {
+    checkForUpdates,
+    compareVersions,
+    normalizeInstallSource,
+    type UpdateInfo,
+    type InstallSource,
+    GITHUB_RELEASES_URL,
+    MS_STORE_URL,
+    verifyDownloadChecksum,
+} from '../../lib/update-service';
 import { labelFallback, labelKeyOverrides, type SettingsLabels } from './settings/labels';
 import { SettingsUpdateModal } from './settings/SettingsUpdateModal';
 import { SettingsSidebar } from './settings/SettingsSidebar';
@@ -67,20 +76,6 @@ const LANGUAGES: { id: Language; label: string; native: string }[] = [
     { id: 'tr', label: 'Turkish', native: 'Türkçe' },
 ];
 
-const compareVersions = (v1: string, v2: string): number => {
-    const clean1 = v1.replace(/^v/, '');
-    const clean2 = v2.replace(/^v/, '');
-    const parts1 = clean1.split('.').map(Number);
-    const parts2 = clean2.split('.').map(Number);
-    for (let i = 0; i < Math.max(parts1.length, parts2.length); i += 1) {
-        const p1 = parts1[i] || 0;
-        const p2 = parts2[i] || 0;
-        if (p1 > p2) return 1;
-        if (p1 < p2) return -1;
-    }
-    return 0;
-};
-
 const maskCalendarUrl = (url: string): string => {
     const trimmed = url.trim();
     if (!trimmed) return '';
@@ -114,15 +109,7 @@ export function SettingsView() {
             return false;
         }
     }, [isTauri]);
-    const isWindows = useMemo(() => {
-        if (!isTauri) return false;
-        try {
-            return /win/i.test(navigator.userAgent);
-        } catch {
-            return false;
-        }
-    }, [isTauri]);
-    const [windowsUpdateChannel, setWindowsUpdateChannel] = useState<'store' | 'direct' | 'unknown'>('unknown');
+    const [installSource, setInstallSource] = useState<InstallSource>('unknown');
     const windowDecorationsEnabled = settings?.window?.decorations !== false;
     const closeBehavior = settings?.window?.closeBehavior ?? 'ask';
     const trayVisible = settings?.window?.showTray !== false;
@@ -173,34 +160,36 @@ export function SettingsView() {
     }, []);
 
     useEffect(() => {
-        if (!isTauri || !isWindows) {
-            setWindowsUpdateChannel('direct');
+        if (!isTauri) {
+            setInstallSource('github-release');
             return;
         }
         let cancelled = false;
         (async () => {
             try {
                 const { invoke } = await import('@tauri-apps/api/core');
-                const isStore = await invoke<boolean>('is_windows_store_install');
+                const rawSource = await invoke<string>('get_install_source');
+                const source = normalizeInstallSource(rawSource);
                 if (!cancelled) {
-                    setWindowsUpdateChannel(isStore ? 'store' : 'direct');
+                    setInstallSource(source);
                 }
             } catch (error) {
                 if (!cancelled) {
-                    setWindowsUpdateChannel('direct');
+                    setInstallSource('unknown');
                 }
-                reportError('Failed to detect Windows update channel', error);
+                reportError('Failed to detect install source', error);
             }
         })();
         return () => {
             cancelled = true;
         };
-    }, [isTauri, isWindows]);
+    }, [isTauri]);
 
     const {
         aiEnabled,
         aiProvider,
         aiModel,
+        aiBaseUrl,
         aiModelOptions,
         aiCopilotModel,
         aiCopilotOptions,
@@ -317,17 +306,6 @@ export function SettingsView() {
 
     useEffect(() => {
         if (!isTauri || !appVersion || appVersion === 'web') return;
-        if (isWindows && windowsUpdateChannel === 'unknown') return;
-        if (isWindows && windowsUpdateChannel === 'store') {
-            setHasUpdateBadge(false);
-            try {
-                localStorage.setItem(UPDATE_BADGE_AVAILABLE_KEY, 'false');
-                localStorage.removeItem(UPDATE_BADGE_LATEST_KEY);
-            } catch (error) {
-                reportError('Failed to clear update badge state', error);
-            }
-            return;
-        }
         try {
             const storedAvailable = localStorage.getItem(UPDATE_BADGE_AVAILABLE_KEY);
             const storedLatest = localStorage.getItem(UPDATE_BADGE_LATEST_KEY);
@@ -343,12 +321,10 @@ export function SettingsView() {
         } catch (error) {
             reportError('Failed to read update badge state', error);
         }
-    }, [appVersion, isTauri, isWindows, windowsUpdateChannel]);
+    }, [appVersion, installSource, isTauri]);
 
     useEffect(() => {
         if (!isTauri || !appVersion || appVersion === 'web') return;
-        if (isWindows && windowsUpdateChannel === 'unknown') return;
-        if (isWindows && windowsUpdateChannel === 'store') return;
         let lastCheck = 0;
         try {
             lastCheck = Number(localStorage.getItem(UPDATE_BADGE_LAST_CHECK_KEY) || 0);
@@ -364,7 +340,7 @@ export function SettingsView() {
         let cancelled = false;
         (async () => {
             try {
-                const info = await checkForUpdates(appVersion);
+                const info = await checkForUpdates(appVersion, { installSource });
                 if (cancelled) return;
                 if (info.hasUpdate) {
                     persistUpdateBadge(true, info.latestVersion);
@@ -378,7 +354,7 @@ export function SettingsView() {
         return () => {
             cancelled = true;
         };
-    }, [appVersion, isTauri, isWindows, windowsUpdateChannel, persistUpdateBadge]);
+    }, [appVersion, installSource, isTauri, persistUpdateBadge]);
 
     useEffect(() => {
         if (!loggingEnabled) {
@@ -474,14 +450,14 @@ export function SettingsView() {
         showSaved();
     };
 
-    const openLink = async (url: string) => {
+    const openLink = async (url: string): Promise<boolean> => {
         const nextUrl = url.trim();
         let openError: unknown = null;
         if (isTauri) {
             try {
                 const { open } = await import('@tauri-apps/plugin-shell');
                 await open(nextUrl);
-                return;
+                return true;
             } catch (error) {
                 openError = error;
             }
@@ -490,7 +466,9 @@ export function SettingsView() {
         const opened = window.open(nextUrl, '_blank', 'noopener,noreferrer');
         if (!opened) {
             reportError('Failed to open external link', openError ?? new Error('Popup blocked'));
+            return false;
         }
+        return true;
     };
 
     const handleAttachmentsCleanup = useCallback(async () => {
@@ -526,32 +504,12 @@ export function SettingsView() {
         setUpdateError(null);
         setUpdateNotice(null);
         try {
-            if (isWindows) {
-                let channel = windowsUpdateChannel;
-                if (channel === 'unknown' && isTauri) {
-                    try {
-                        const { invoke } = await import('@tauri-apps/api/core');
-                        const isStore = await invoke<boolean>('is_windows_store_install');
-                        channel = isStore ? 'store' : 'direct';
-                        setWindowsUpdateChannel(channel);
-                    } catch (error) {
-                        reportError('Failed to detect Windows update channel', error);
-                        channel = 'direct';
-                        setWindowsUpdateChannel('direct');
-                    }
-                }
-                if (channel === 'store') {
-                    await openLink(MS_STORE_URL);
-                    setUpdateNotice(t.storeUpdateHint);
-                    return;
-                }
-            }
             try {
                 localStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
             } catch (error) {
                 reportError('Failed to persist update check timestamp', error);
             }
-            const info = await checkForUpdates(appVersion);
+            const info = await checkForUpdates(appVersion, { installSource });
             if (!info || !info.hasUpdate) {
                 setUpdateNotice(t.upToDate);
                 persistUpdateBadge(false);
@@ -576,8 +534,28 @@ export function SettingsView() {
 
     const handleDownloadUpdate = async () => {
         const targetUrl = preferredDownloadUrl;
+        if (installSource === 'microsoft-store') {
+            await openLink(MS_STORE_URL);
+            setDownloadNotice(t.storeUpdateHint);
+            return;
+        }
+        if (installSource === 'mac-app-store') {
+            const opened = await openLink(updateInfo?.releaseUrl || 'https://apps.apple.com/app/mindwtr/id6758597144');
+            setDownloadNotice(opened ? 'Update via App Store.' : t.downloadFailed);
+            return;
+        }
+        if (installSource === 'homebrew') {
+            await openLink(updateInfo?.releaseUrl || 'https://formulae.brew.sh/cask/mindwtr');
+            setDownloadNotice('Update via Homebrew: brew update && brew upgrade --cask mindwtr');
+            return;
+        }
+        if (installSource === 'winget') {
+            await openLink(updateInfo?.releaseUrl || 'https://github.com/microsoft/winget-pkgs/tree/master/manifests/d/dongdongbh/Mindwtr');
+            setDownloadNotice('Update via winget: winget upgrade --id dongdongbh.Mindwtr --exact');
+            return;
+        }
         if (updateInfo?.platform === 'linux' && linuxFlavor === 'arch') {
-            setDownloadNotice(t.downloadAURHint);
+            setDownloadNotice(getLinuxPostDownloadNotice());
             return;
         }
         if (!targetUrl) {
@@ -588,38 +566,35 @@ export function SettingsView() {
         setDownloadNotice(t.downloadStarting);
 
         try {
+            let checksumStatus: 'verified' | 'unavailable' | 'mismatch' = 'unavailable';
             if (updateInfo?.assets?.length) {
-                const verified = await verifyDownloadChecksum(targetUrl, updateInfo.assets);
-                if (!verified) {
-                    setDownloadNotice(t.downloadFailed);
-                    setIsDownloadingUpdate(false);
+                try {
+                    checksumStatus = await verifyDownloadChecksum(targetUrl, updateInfo.assets);
+                } catch (error) {
+                    reportError('Checksum verification failed unexpectedly', error);
+                    checksumStatus = 'unavailable';
+                }
+                if (checksumStatus === 'mismatch') {
+                    setDownloadNotice(t.downloadChecksumMismatch);
                     return;
                 }
             }
-            if (isTauri) {
-                const { open } = await import('@tauri-apps/plugin-shell');
-                await open(targetUrl);
-            } else {
-                window.open(targetUrl, '_blank');
+            const opened = await openLink(targetUrl);
+            if (!opened) {
+                setDownloadNotice(t.downloadFailed);
+                return;
             }
-            setDownloadNotice(t.downloadStarted);
+            if (updateInfo?.platform === 'linux') {
+                setDownloadNotice(getLinuxPostDownloadNotice());
+            } else {
+                setDownloadNotice(t.downloadStarted);
+            }
         } catch (error) {
             reportError('Failed to open update URL', error);
-            window.open(targetUrl, '_blank');
             setDownloadNotice(t.downloadFailed);
+        } finally {
+            setIsDownloadingUpdate(false);
         }
-
-        if (isTauri) {
-            try {
-                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-                if (/linux/i.test(userAgent)) {
-                    setDownloadNotice(t.linuxUpdateHint);
-                }
-            } catch (error) {
-                reportError('Failed to detect platform', error);
-            }
-        }
-
     };
 
     const attachmentsLastCleanupDisplay = useMemo(() => {
@@ -647,8 +622,33 @@ export function SettingsView() {
         return 'other';
     }, [linuxDistro]);
 
+    const getLinuxPostDownloadNotice = useCallback((): string => {
+        if (linuxFlavor === 'arch') {
+            return `${t.downloadAURHint}: yay -Syu mindwtr-bin / paru -Syu mindwtr-bin`;
+        }
+        if (linuxFlavor === 'debian') {
+            return `${t.linuxUpdateHint} APT repo update: sudo apt update && sudo apt install --only-upgrade mindwtr. Local file install: sudo apt install ./<downloaded-file>.deb`;
+        }
+        if (linuxFlavor === 'rpm') {
+            return `${t.linuxUpdateHint} Repo update: sudo dnf upgrade mindwtr. Local file install: sudo dnf install ./<downloaded-file>.rpm`;
+        }
+        return `${t.linuxUpdateHint} AppImage tip: chmod +x <downloaded-file>.AppImage && ./<downloaded-file>.AppImage`;
+    }, [linuxFlavor, t.downloadAURHint, t.linuxUpdateHint]);
+
     const recommendedDownload = useMemo(() => {
         if (!updateInfo) return null;
+        if (installSource === 'homebrew') {
+            return { label: 'Homebrew' };
+        }
+        if (installSource === 'winget') {
+            return { label: 'winget' };
+        }
+        if (installSource === 'mac-app-store') {
+            return { label: 'App Store' };
+        }
+        if (installSource === 'microsoft-store') {
+            return { label: 'Microsoft Store' };
+        }
         const assets = updateInfo.assets || [];
         const findAsset = (patterns: RegExp[]) => assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name)));
 
@@ -679,10 +679,13 @@ export function SettingsView() {
         }
 
         return null;
-    }, [updateInfo, linuxFlavor]);
+    }, [installSource, linuxFlavor, updateInfo]);
 
     const preferredDownloadUrl = useMemo(() => {
         if (!updateInfo) return null;
+        if (installSource === 'homebrew' || installSource === 'winget' || installSource === 'mac-app-store' || installSource === 'microsoft-store') {
+            return null;
+        }
         if (updateInfo.platform === 'linux') {
             if (linuxFlavor === 'arch') return null;
             if (linuxFlavor === 'debian' || linuxFlavor === 'rpm') {
@@ -690,10 +693,15 @@ export function SettingsView() {
             }
         }
         return recommendedDownload?.url ?? updateInfo.downloadUrl ?? updateInfo.releaseUrl ?? GITHUB_RELEASES_URL;
-    }, [updateInfo, linuxFlavor, recommendedDownload]);
+    }, [installSource, linuxFlavor, recommendedDownload, updateInfo]);
 
     const isArchLinuxUpdate = updateInfo?.platform === 'linux' && linuxFlavor === 'arch';
-    const canDownloadUpdate = Boolean(preferredDownloadUrl) && !isArchLinuxUpdate;
+    const canDownloadUpdate = useMemo(() => {
+        if (installSource === 'homebrew' || installSource === 'winget' || installSource === 'mac-app-store' || installSource === 'microsoft-store') {
+            return true;
+        }
+        return Boolean(preferredDownloadUrl) && !isArchLinuxUpdate;
+    }, [installSource, isArchLinuxUpdate, preferredDownloadUrl]);
 
     const lastSyncAt = settings?.lastSyncAt;
     const lastSyncStats = settings?.lastSyncStats ?? null;
@@ -755,103 +763,53 @@ export function SettingsView() {
         badge?: boolean;
         badgeLabel?: string;
     }>>(() => [
-        { id: 'main', icon: Monitor, label: t.general, description: `${t.appearance} • ${t.language} • ${t.keybindings}` },
-        { id: 'gtd', icon: ListChecks, label: t.gtd, description: t.gtdDesc },
-        { id: 'notifications', icon: Bell, label: t.notifications },
-        { id: 'sync', icon: Database, label: t.sync },
-        { id: 'ai', icon: Sparkles, label: t.ai, description: t.aiDesc },
-        { id: 'calendar', icon: CalendarDays, label: t.calendar },
-        { id: 'about', icon: Info, label: t.about, badge: hasUpdateBadge, badgeLabel: t.updateAvailable },
+        { id: 'main', icon: Monitor, label: t.general, keywords: [t.appearance, t.density, t.language, t.weekStart, t.keybindings, t.windowDecorations, t.closeBehavior, t.showTray, 'theme', 'dark mode', 'light mode'] },
+        { id: 'gtd', icon: ListChecks, label: t.gtd, keywords: ['auto-archive', 'priorities', 'time estimates', 'pomodoro', 'capture', 'inbox processing', '2-minute rule', 'task editor'] },
+        { id: 'notifications', icon: Bell, label: t.notifications, keywords: ['review reminders', 'weekly review', 'daily digest', 'morning', 'evening'] },
+        { id: 'sync', icon: Database, label: t.sync, keywords: ['file sync', 'WebDAV', 'cloud', 'sync now', 'attachments', 'diagnostics', 'logging'] },
+        { id: 'ai', icon: Sparkles, label: t.ai, keywords: ['OpenAI', 'Gemini', 'Anthropic', 'API key', 'speech', 'whisper', 'copilot', 'model'] },
+        { id: 'calendar', icon: CalendarDays, label: t.calendar, keywords: ['external calendar', 'iCal', 'subscription', 'URL'] },
+        { id: 'about', icon: Info, label: t.about, badge: hasUpdateBadge, badgeLabel: t.updateAvailable, keywords: ['version', 'update', 'license', 'sponsor'] },
     ], [hasUpdateBadge, t]);
 
-    const SyncPage = () => {
-        const {
-            syncPath,
-            setSyncPath,
-            isSyncing,
-            syncQueued,
-            syncLastResult,
-            syncLastResultAt,
-            syncError,
-            syncBackend,
-            webdavUrl,
-            setWebdavUrl,
-            webdavUsername,
-            setWebdavUsername,
-            webdavPassword,
-            setWebdavPassword,
-            webdavHasPassword,
-            isSavingWebDav,
-            cloudUrl,
-            setCloudUrl,
-            cloudToken,
-            setCloudToken,
-            handleSaveSyncPath,
-            handleChangeSyncLocation,
-            handleSetSyncBackend,
-            handleSaveWebDav,
-            handleSaveCloud,
-            handleSync,
-        } = useSyncSettings({
-            isTauri,
-            showSaved,
-            selectSyncFolderTitle,
-        });
-        const syncPreferences = settings?.syncPreferences ?? {};
-        const handleUpdateSyncPreferences = useCallback((updates: Partial<NonNullable<AppData['settings']['syncPreferences']>>) => {
-            updateSettings({ syncPreferences: { ...syncPreferences, ...updates } })
-                .then(showSaved)
-                .catch((error) => reportError('Failed to update sync preferences', error));
-        }, [syncPreferences, showSaved, updateSettings]);
-
-        return (
-            <SettingsSyncPage
-                t={t}
-                isTauri={isTauri}
-                loggingEnabled={loggingEnabled}
-                logPath={logPath}
-                onToggleLogging={toggleLogging}
-                onClearLog={handleClearLog}
-                syncBackend={syncBackend}
-                onSetSyncBackend={handleSetSyncBackend}
-                syncPath={syncPath}
-                onSyncPathChange={setSyncPath}
-                onSaveSyncPath={handleSaveSyncPath}
-                onBrowseSyncPath={handleChangeSyncLocation}
-                webdavUrl={webdavUrl}
-                webdavUsername={webdavUsername}
-                webdavPassword={webdavPassword}
-                webdavHasPassword={webdavHasPassword}
-                isSavingWebDav={isSavingWebDav}
-                onWebdavUrlChange={setWebdavUrl}
-                onWebdavUsernameChange={setWebdavUsername}
-                onWebdavPasswordChange={setWebdavPassword}
-                onSaveWebDav={handleSaveWebDav}
-                cloudUrl={cloudUrl}
-                cloudToken={cloudToken}
-                onCloudUrlChange={setCloudUrl}
-                onCloudTokenChange={setCloudToken}
-                onSaveCloud={handleSaveCloud}
-                onSyncNow={handleSync}
-                isSyncing={isSyncing}
-                syncQueued={syncQueued}
-                syncLastResult={syncLastResult}
-                syncLastResultAt={syncLastResultAt}
-                syncError={syncError}
-                syncPreferences={syncPreferences}
-                onUpdateSyncPreferences={handleUpdateSyncPreferences}
-                lastSyncDisplay={lastSyncDisplay}
-                lastSyncStatus={lastSyncStatus}
-                lastSyncStats={lastSyncStats}
-                lastSyncHistory={lastSyncHistory}
-                conflictCount={conflictCount}
-                lastSyncError={settings?.lastSyncError}
-                attachmentsLastCleanupDisplay={attachmentsLastCleanupDisplay}
-                onRunAttachmentsCleanup={handleAttachmentsCleanup}
-                isCleaningAttachments={isCleaningAttachments}
-            />
-        );
-    };
+    const {
+        syncPath,
+        setSyncPath,
+        isSyncing,
+        syncQueued,
+        syncLastResult,
+        syncLastResultAt,
+        syncError,
+        syncBackend,
+        webdavUrl,
+        setWebdavUrl,
+        webdavUsername,
+        setWebdavUsername,
+        webdavPassword,
+        setWebdavPassword,
+        webdavHasPassword,
+        isSavingWebDav,
+        cloudUrl,
+        setCloudUrl,
+        cloudToken,
+        setCloudToken,
+        handleSaveSyncPath,
+        handleChangeSyncLocation,
+        handleSetSyncBackend,
+        handleSaveWebDav,
+        handleSaveCloud,
+        handleSync,
+    } = useSyncSettings({
+        isTauri,
+        showSaved,
+        selectSyncFolderTitle,
+    });
+    const syncPreferences = settings?.syncPreferences ?? {};
+    const handleUpdateSyncPreferences = useCallback((updates: Partial<NonNullable<AppData['settings']['syncPreferences']>>) => {
+        updateSettings({ syncPreferences: { ...syncPreferences, ...updates } })
+            .then(showSaved)
+            .catch((error) => reportError('Failed to update sync preferences', error));
+    }, [syncPreferences, showSaved, updateSettings]);
 
     const CalendarPage = () => {
         const {
@@ -933,6 +891,7 @@ export function SettingsView() {
                     aiEnabled={aiEnabled}
                     aiProvider={aiProvider}
                     aiModel={aiModel}
+                    aiBaseUrl={aiBaseUrl}
                     aiModelOptions={aiModelOptions}
                     aiCopilotModel={aiCopilotModel}
                     aiCopilotOptions={aiCopilotOptions}
@@ -991,11 +950,57 @@ export function SettingsView() {
         }
 
         if (page === 'sync') {
-            return <SyncPage />;
+            return (
+                <SettingsSyncPage
+                    t={t}
+                    isTauri={isTauri}
+                    loggingEnabled={loggingEnabled}
+                    logPath={logPath}
+                    onToggleLogging={toggleLogging}
+                    onClearLog={handleClearLog}
+                    syncBackend={syncBackend}
+                    onSetSyncBackend={handleSetSyncBackend}
+                    syncPath={syncPath}
+                    onSyncPathChange={setSyncPath}
+                    onSaveSyncPath={handleSaveSyncPath}
+                    onBrowseSyncPath={handleChangeSyncLocation}
+                    webdavUrl={webdavUrl}
+                    webdavUsername={webdavUsername}
+                    webdavPassword={webdavPassword}
+                    webdavHasPassword={webdavHasPassword}
+                    isSavingWebDav={isSavingWebDav}
+                    onWebdavUrlChange={setWebdavUrl}
+                    onWebdavUsernameChange={setWebdavUsername}
+                    onWebdavPasswordChange={setWebdavPassword}
+                    onSaveWebDav={handleSaveWebDav}
+                    cloudUrl={cloudUrl}
+                    cloudToken={cloudToken}
+                    onCloudUrlChange={setCloudUrl}
+                    onCloudTokenChange={setCloudToken}
+                    onSaveCloud={handleSaveCloud}
+                    onSyncNow={handleSync}
+                    isSyncing={isSyncing}
+                    syncQueued={syncQueued}
+                    syncLastResult={syncLastResult}
+                    syncLastResultAt={syncLastResultAt}
+                    syncError={syncError}
+                    syncPreferences={syncPreferences}
+                    onUpdateSyncPreferences={handleUpdateSyncPreferences}
+                    lastSyncDisplay={lastSyncDisplay}
+                    lastSyncStatus={lastSyncStatus}
+                    lastSyncStats={lastSyncStats}
+                    lastSyncHistory={lastSyncHistory}
+                    conflictCount={conflictCount}
+                    lastSyncError={settings?.lastSyncError}
+                    attachmentsLastCleanupDisplay={attachmentsLastCleanupDisplay}
+                    onRunAttachmentsCleanup={handleAttachmentsCleanup}
+                    isCleaningAttachments={isCleaningAttachments}
+                />
+            );
         }
 
         if (page === 'about') {
-            const updateActionLabel = isWindows && windowsUpdateChannel === 'store'
+            const updateActionLabel = installSource === 'microsoft-store'
                 ? t.checkStoreUpdates
                 : t.checkForUpdates;
             return (
@@ -1018,8 +1023,8 @@ export function SettingsView() {
     return (
         <ErrorBoundary>
             <div className="h-full overflow-y-auto">
-            <div className="mx-auto max-w-6xl p-8">
-                <div className="grid grid-cols-12 gap-6">
+            <div className="h-full px-4 py-3">
+                <div className="mx-auto flex h-full w-full max-w-[calc(12rem+920px+1.5rem)] flex-col gap-6 lg:flex-row">
                     <SettingsSidebar
                         title={t.title}
                         subtitle={t.subtitle}
@@ -1028,7 +1033,7 @@ export function SettingsView() {
                         onSelect={(id) => setPage(id as SettingsPage)}
                     />
 
-                    <main className="col-span-12 lg:col-span-8 xl:col-span-9">
+                    <main className="min-w-0 flex-1 lg:max-w-[920px]">
                         <div className="space-y-6">
                             <header className="flex items-start justify-between gap-4">
                                 <div>

@@ -1,0 +1,734 @@
+name: Release iOS App Store
+
+on:
+  workflow_call:
+    inputs:
+      upload:
+        description: Upload to App Store Connect
+        required: false
+        type: string
+        default: 'true'
+      submit_for_review:
+        description: Submit build for review after upload
+        required: false
+        type: string
+        default: 'true'
+      testflight_group:
+        description: TestFlight external group for review-blocked uploads
+        required: false
+        type: string
+        default: 'external_testing'
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload to App Store Connect
+        required: false
+        default: 'true'
+      submit_for_review:
+        description: Submit build for review after upload
+        required: false
+        default: 'false'
+      testflight_group:
+        description: TestFlight external group for review-blocked uploads
+        required: false
+        default: 'external_testing'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ios-appstore-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ios-appstore:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      EXPECTED_TEAM_ID: 5X9JC5PL7T
+      EXPECTED_BUNDLE_ID: tech.dongdongbh.mindwtr
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install Fastlane
+        run: gem install fastlane --no-document
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_26_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "${XCODE_26_PATH:-}" ]; then
+            sudo xcode-select -s "$XCODE_26_PATH"
+          fi
+          xcodebuild -version
+          if ! xcodebuild -showsdks | grep -q "iphoneos26"; then
+            echo "::error::iOS 26 SDK not found on runner. Current SDKs:"
+            xcodebuild -showsdks
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.x"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Validate required secrets
+        env:
+          IOS_DISTRIBUTION_CERT: ${{ secrets.IOS_DISTRIBUTION_CERT }}
+          IOS_DISTRIBUTION_CERT_PWD: ${{ secrets.IOS_DISTRIBUTION_CERT_PWD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in IOS_DISTRIBUTION_CERT IOS_DISTRIBUTION_CERT_PWD IOS_PROVISIONING_PROFILE; do
+            if [ -z "${!key:-}" ]; then
+              echo "::error::Missing required secret: $key"
+              missing=1
+            fi
+          done
+          for key in IOS_ASC_KEY_ID IOS_ASC_ISSUER_ID IOS_ASC_PRIVATE_KEY; do
+            if [ -z "${!key:-}" ]; then
+              echo "::error::Missing required App Store Connect API secret: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Resolve iOS version metadata
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(jq -r '.expo.version // empty' apps/mobile/app.json)"
+          APP_BUILD_NUMBER_BASE="$(jq -r '.expo.ios.buildNumber // "0"' apps/mobile/app.json)"
+          if [ -z "${APP_VERSION}" ]; then
+            echo "::error::Missing expo.version in apps/mobile/app.json"
+            exit 1
+          fi
+
+          APPSTORE_APP_ID=""
+          REMOTE_MAX_BUILD=0
+          REMOTE_LOOKUP_STATUS="skipped"
+          if [ -n "${IOS_ASC_KEY_ID:-}" ] && [ -n "${IOS_ASC_ISSUER_ID:-}" ] && [ -n "${IOS_ASC_PRIVATE_KEY:-}" ]; then
+            ASC_KEY_ID="$(printf '%s' "$IOS_ASC_KEY_ID" | tr -d '\r\n\t ')"
+            ASC_ISSUER_ID="$(printf '%s' "$IOS_ASC_ISSUER_ID" | tr -d '\r\n\t ')"
+            if ! printf '%s' "$ASC_KEY_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
+              echo "::warning::IOS_ASC_KEY_ID format looks invalid after trimming (expected 10 chars, e.g. ABCD123456)."
+            fi
+            if ! printf '%s' "$ASC_ISSUER_ID" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+              echo "::warning::IOS_ASC_ISSUER_ID format looks invalid after trimming (expected UUID)."
+            fi
+            KEY_PATH="$RUNNER_TEMP/ios-asc-key.p8"
+            bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$KEY_PATH"
+
+            if ! openssl pkey -in "$KEY_PATH" -noout >/dev/null 2>&1; then
+              echo "::warning::IOS_ASC_PRIVATE_KEY is not a valid .p8 key; skipping remote max build lookup."
+              REMOTE_LOOKUP_STATUS="invalid_key"
+            else
+              ASC_API_TMP_PREFIX="asc-api"
+              source scripts/ci/asc-api-utils.sh
+
+              if ! ASC_TOKEN="$(
+                node scripts/ci/generate-asc-jwt.js "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$KEY_PATH"
+              )"; then
+                echo "::warning::Failed to generate App Store Connect JWT from IOS_ASC_* secrets."
+                REMOTE_LOOKUP_STATUS="invalid_jwt"
+              fi
+
+              APP_LOOKUP_JSON_FILE="$RUNNER_TEMP/asc-app-lookup.json"
+              if [ "${REMOTE_LOOKUP_STATUS}" != "invalid_jwt" ]; then
+                if api_get "$APP_LOOKUP_JSON_FILE" -G \
+                  -H "Authorization: Bearer ${ASC_TOKEN}" \
+                  --data-urlencode "filter[bundleId]=${EXPECTED_BUNDLE_ID}" \
+                  --data-urlencode "limit=1" \
+                  "https://api.appstoreconnect.apple.com/v1/apps"; then
+                  APPSTORE_APP_ID="$(jq -r '.data[0].id // empty' "$APP_LOOKUP_JSON_FILE")"
+                  if [ -n "${APPSTORE_APP_ID}" ]; then
+                    BUILDS_JSON_FILE="$RUNNER_TEMP/asc-builds-page.json"
+                    if api_get "$BUILDS_JSON_FILE" -G \
+                      -H "Authorization: Bearer ${ASC_TOKEN}" \
+                      --data-urlencode "filter[app]=${APPSTORE_APP_ID}" \
+                      --data-urlencode "limit=200" \
+                      "https://api.appstoreconnect.apple.com/v1/builds"; then
+                      while : ; do
+                        PAGE_MAX="$(jq -r '[.data[]?.attributes.version | select(type=="string") | select(test("^[0-9]+$")) | tonumber] | max // 0' "$BUILDS_JSON_FILE")"
+                        if [ "${PAGE_MAX}" -gt "${REMOTE_MAX_BUILD}" ]; then
+                          REMOTE_MAX_BUILD="${PAGE_MAX}"
+                        fi
+                        NEXT_URL="$(jq -r '.links.next // empty' "$BUILDS_JSON_FILE")"
+                        if [ -z "${NEXT_URL}" ]; then
+                          REMOTE_LOOKUP_STATUS="ok"
+                          break
+                        fi
+                        if ! api_get "$BUILDS_JSON_FILE" -g -H "Authorization: Bearer ${ASC_TOKEN}" "$NEXT_URL"; then
+                          REMOTE_LOOKUP_STATUS="api_error"
+                          break
+                        fi
+                      done
+                    else
+                      REMOTE_LOOKUP_STATUS="api_error"
+                    fi
+                  else
+                    echo "::warning::App Store Connect app lookup returned no app for bundle id ${EXPECTED_BUNDLE_ID}."
+                    REMOTE_LOOKUP_STATUS="no_app"
+                  fi
+                else
+                  REMOTE_LOOKUP_STATUS="api_error"
+                fi
+              fi
+            fi
+          else
+            echo "::warning::Remote max build lookup skipped. Set IOS_ASC_KEY_ID / IOS_ASC_ISSUER_ID / IOS_ASC_PRIVATE_KEY secrets."
+          fi
+
+          LOCAL_MIN_BUILD=1
+          if [[ "${APP_BUILD_NUMBER_BASE}" =~ ^[0-9]+$ ]]; then
+            LOCAL_MIN_BUILD="$((APP_BUILD_NUMBER_BASE + 1))"
+          fi
+          REMOTE_MIN_BUILD="$((REMOTE_MAX_BUILD + 1))"
+          FINAL_BUILD_NUMBER="${LOCAL_MIN_BUILD}"
+          if [ "${REMOTE_MIN_BUILD}" -gt "${FINAL_BUILD_NUMBER}" ]; then
+            FINAL_BUILD_NUMBER="${REMOTE_MIN_BUILD}"
+          fi
+
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${FINAL_BUILD_NUMBER}" >> "$GITHUB_ENV"
+          echo "APPSTORE_APP_ID=${APPSTORE_APP_ID:-}" >> "$GITHUB_ENV"
+          echo "Resolved iOS build number: ${FINAL_BUILD_NUMBER} (remote max: ${REMOTE_MAX_BUILD}, remote lookup: ${REMOTE_LOOKUP_STATUS}, local base: ${APP_BUILD_NUMBER_BASE})"
+
+      - name: Import iOS distribution certificate
+        env:
+          IOS_DISTRIBUTION_CERT: ${{ secrets.IOS_DISTRIBUTION_CERT }}
+          IOS_DISTRIBUTION_CERT_PWD: ${{ secrets.IOS_DISTRIBUTION_CERT_PWD }}
+          IOS_SIGNING_IDENTITY: ${{ secrets.IOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/mindwtr-ios.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/ios-distribution.p12"
+
+          bash scripts/ci/decode-base64-to-file.sh "$IOS_DISTRIBUTION_CERT" "$CERT_PATH"
+          if ! openssl pkcs12 -in "$CERT_PATH" -passin "pass:${IOS_DISTRIBUTION_CERT_PWD}" -nokeys -clcerts >/dev/null 2>&1; then
+            echo "::error::Unable to open IOS_DISTRIBUTION_CERT with IOS_DISTRIBUTION_CERT_PWD."
+            exit 1
+          fi
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+          if [ -f "$LOGIN_KEYCHAIN" ]; then
+            security list-keychains -d user -s "$KEYCHAIN_PATH" "$LOGIN_KEYCHAIN" "/Library/Keychains/System.keychain"
+          else
+            security list-keychains -d user -s "$KEYCHAIN_PATH" "/Library/Keychains/System.keychain"
+          fi
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$IOS_DISTRIBUTION_CERT_PWD" -A -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign:,xcodebuild:,security: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          RESOLVED_IDENTITY="${IOS_SIGNING_IDENTITY:-}"
+          if [ -z "${RESOLVED_IDENTITY}" ]; then
+            RESOLVED_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(Apple Distribution:.*\)".*/\1/p' | head -n 1)"
+          fi
+          if [ -z "${RESOLVED_IDENTITY}" ]; then
+            echo "::error::Could not resolve Apple Distribution identity from imported certificate."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "IOS_SIGNING_IDENTITY=$RESOLVED_IDENTITY" >> "$GITHUB_ENV"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+
+      - name: Install and validate provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+
+
+          PROFILE_PATH="$RUNNER_TEMP/mindwtr-ios.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/mindwtr-ios-profile.plist"
+          bash scripts/ci/decode-base64-to-file.sh "$IOS_PROVISIONING_PROFILE" "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")"
+          PROFILE_TEAM_ID="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$PROFILE_PLIST")"
+          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$PROFILE_PLIST")"
+
+          if [ "$PROFILE_TEAM_ID" != "$EXPECTED_TEAM_ID" ]; then
+            echo "::error::Profile TeamIdentifier ($PROFILE_TEAM_ID) does not match expected team ($EXPECTED_TEAM_ID)."
+            exit 1
+          fi
+
+          EXPECTED_APP_ID="${EXPECTED_TEAM_ID}.${EXPECTED_BUNDLE_ID}"
+          WILDCARD_APP_ID="${EXPECTED_TEAM_ID}.*"
+          if [ "$PROFILE_APP_ID" != "$EXPECTED_APP_ID" ] && [ "$PROFILE_APP_ID" != "$WILDCARD_APP_ID" ]; then
+            echo "::error::Profile application-identifier ($PROFILE_APP_ID) does not match expected ($EXPECTED_APP_ID)."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "PROFILE_TEAM_ID=$PROFILE_TEAM_ID" >> "$GITHUB_ENV"
+
+      - name: Generate iOS native project if missing
+        run: |
+          set -euo pipefail
+          if [ ! -d apps/mobile/ios ]; then
+            cd apps/mobile
+            npx expo prebuild --platform ios --non-interactive --no-install
+          fi
+
+      - name: Install CocoaPods dependencies
+        run: |
+          set -euo pipefail
+          if [ ! -d apps/mobile/ios ]; then
+            echo "::error::apps/mobile/ios still missing after prebuild."
+            exit 1
+          fi
+          cd apps/mobile/ios
+          pod install
+
+      - name: Apply iOS version and build number
+        run: |
+          set -euo pipefail
+          APP_INFO_PLIST="apps/mobile/ios/Mindwtr/Info.plist"
+          if [ ! -f "$APP_INFO_PLIST" ]; then
+            echo "::error::Info.plist not found at $APP_INFO_PLIST"
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_INFO_PLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$APP_INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD_NUMBER" "$APP_INFO_PLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_BUILD_NUMBER" "$APP_INFO_PLIST"
+          echo "Info.plist version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_INFO_PLIST")"
+          echo "Info.plist build: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_INFO_PLIST")"
+
+      - name: Prepare ExportOptions.plist
+        env:
+          IOS_EXPORT_OPTIONS: ${{ secrets.IOS_EXPORT_OPTIONS }}
+        run: |
+          set -euo pipefail
+
+
+          EXPORT_OPTIONS_PATH="$RUNNER_TEMP/ExportOptions.plist"
+          if [ -n "${IOS_EXPORT_OPTIONS:-}" ]; then
+            bash scripts/ci/decode-base64-to-file.sh "$IOS_EXPORT_OPTIONS" "$EXPORT_OPTIONS_PATH"
+          else
+            {
+              printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+              printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+              printf '%s\n' '<plist version="1.0">'
+              printf '%s\n' '<dict>'
+              printf '%s\n' '    <key>method</key>'
+              printf '%s\n' '    <string>app-store</string>'
+              printf '%s\n' '    <key>destination</key>'
+              printf '%s\n' '    <string>export</string>'
+              printf '%s\n' '    <key>signingStyle</key>'
+              printf '%s\n' '    <string>manual</string>'
+              printf '%s\n' '    <key>teamID</key>'
+              printf '    <string>%s</string>\n' "$PROFILE_TEAM_ID"
+              printf '%s\n' '    <key>provisioningProfiles</key>'
+              printf '%s\n' '    <dict>'
+              printf '        <key>%s</key>\n' "$EXPECTED_BUNDLE_ID"
+              printf '        <string>%s</string>\n' "$PROFILE_NAME"
+              printf '%s\n' '    </dict>'
+              printf '%s\n' '    <key>stripSwiftSymbols</key>'
+              printf '%s\n' '    <true/>'
+              printf '%s\n' '    <key>uploadSymbols</key>'
+              printf '%s\n' '    <true/>'
+              printf '%s\n' '</dict>'
+              printf '%s\n' '</plist>'
+            } > "$EXPORT_OPTIONS_PATH"
+          fi
+          echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive iOS app
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/Mindwtr.xcarchive"
+          xcodebuild \
+            -workspace "apps/mobile/ios/Mindwtr.xcworkspace" \
+            -scheme "Mindwtr" \
+            -configuration "Release" \
+            -sdk "iphoneos" \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$PROFILE_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$EXPECTED_BUNDLE_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="$APP_BUILD_NUMBER" \
+            clean archive
+          ARCHIVE_INFO_PLIST="$ARCHIVE_PATH/Products/Applications/Mindwtr.app/Info.plist"
+          if [ ! -f "$ARCHIVE_INFO_PLIST" ]; then
+            echo "::error::Archived app Info.plist not found: $ARCHIVE_INFO_PLIST"
+            exit 1
+          fi
+          ARCHIVE_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$ARCHIVE_INFO_PLIST")"
+          ARCHIVE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ARCHIVE_INFO_PLIST")"
+          echo "Archived app version: ${ARCHIVE_VERSION}"
+          echo "Archived app build: ${ARCHIVE_BUILD_NUMBER}"
+          if [ "$ARCHIVE_BUILD_NUMBER" != "$APP_BUILD_NUMBER" ]; then
+            echo "::error::Archive build number mismatch (expected $APP_BUILD_NUMBER, got $ARCHIVE_BUILD_NUMBER)."
+            exit 1
+          fi
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+
+      - name: Export IPA
+        run: |
+          set -euo pipefail
+          EXPORT_PATH="$RUNNER_TEMP/ios-export"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
+          IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' | head -n 1)"
+          if [ -z "${IPA_PATH:-}" ]; then
+            echo "::error::IPA was not generated."
+            exit 1
+          fi
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          ls -la "$EXPORT_PATH"
+
+      - name: Prepare Fastlane metadata
+        if: ${{ (inputs.upload || 'true') == 'true' }}
+        env:
+          RELEASE_BODY: ${{ github.event.release.body || '' }}
+          APP_SUPPORT_URL: "https://github.com/dongdongbh/Mindwtr/issues"
+          APP_MARKETING_URL: "https://github.com/dongdongbh/Mindwtr"
+        run: |
+          set -euo pipefail
+
+          FASTLANE_METADATA_DIR="$RUNNER_TEMP/fastlane_metadata"
+          rm -rf "$FASTLANE_METADATA_DIR"
+          mkdir -p "$FASTLANE_METADATA_DIR"
+          if [ -f "metadata/copyright.txt" ]; then
+            cp "metadata/copyright.txt" "$FASTLANE_METADATA_DIR/copyright.txt"
+          fi
+
+          map_metadata() {
+            local src_locale="$1"
+            local dst_locale="$2"
+            local src_dir="metadata/$src_locale"
+            local dst_dir="$FASTLANE_METADATA_DIR/$dst_locale"
+
+            if [ ! -d "$src_dir" ]; then
+              echo "Skipping $src_locale (missing metadata folder)"
+              return
+            fi
+
+            mkdir -p "$dst_dir"
+
+            if [ -f "$src_dir/description.txt" ]; then
+              cp "$src_dir/description.txt" "$dst_dir/description.txt"
+            elif [ -f "$src_dir/full_description.txt" ]; then
+              cp "$src_dir/full_description.txt" "$dst_dir/description.txt"
+            fi
+            if [ -f "$src_dir/name.txt" ]; then
+              cp "$src_dir/name.txt" "$dst_dir/name.txt"
+            elif [ -f "$src_dir/title.txt" ]; then
+              cp "$src_dir/title.txt" "$dst_dir/name.txt"
+            fi
+            if [ -f "$src_dir/subtitle.txt" ]; then
+              cp "$src_dir/subtitle.txt" "$dst_dir/subtitle.txt"
+            elif [ -f "$src_dir/short_description.txt" ]; then
+              cp "$src_dir/short_description.txt" "$dst_dir/subtitle.txt"
+            fi
+            if [ -f "$src_dir/keywords.txt" ]; then
+              cp "$src_dir/keywords.txt" "$dst_dir/keywords.txt"
+            fi
+            if [ -f "$src_dir/support_url.txt" ]; then
+              cp "$src_dir/support_url.txt" "$dst_dir/support_url.txt"
+            elif [ -n "${APP_SUPPORT_URL:-}" ]; then
+              printf '%s\n' "$APP_SUPPORT_URL" > "$dst_dir/support_url.txt"
+            fi
+            if [ -f "$src_dir/marketing_url.txt" ]; then
+              cp "$src_dir/marketing_url.txt" "$dst_dir/marketing_url.txt"
+            elif [ -n "${APP_MARKETING_URL:-}" ]; then
+              printf '%s\n' "$APP_MARKETING_URL" > "$dst_dir/marketing_url.txt"
+            fi
+
+            if [ -f "$src_dir/release_notes.txt" ]; then
+              cp "$src_dir/release_notes.txt" "$dst_dir/release_notes.txt"
+              echo "Release notes source for $src_locale: release_notes.txt"
+              return
+            fi
+
+            if [ -d "$src_dir/changelogs" ]; then
+              local latest_log=""
+              latest_log="$(
+                ls -1 "$src_dir/changelogs" 2>/dev/null \
+                  | sed -E 's/\.txt$//' \
+                  | grep -E '^[0-9]+$' \
+                  | sort -n \
+                  | tail -n 1 || true
+              )"
+              if [ -n "$latest_log" ] && [ -f "$src_dir/changelogs/${latest_log}.txt" ]; then
+                cp "$src_dir/changelogs/${latest_log}.txt" "$dst_dir/release_notes.txt"
+                echo "Release notes source for $src_locale: changelogs/${latest_log}.txt"
+                return
+              fi
+            fi
+
+            if [ -n "${RELEASE_BODY:-}" ]; then
+              printf '%s\n' "$RELEASE_BODY" > "$dst_dir/release_notes.txt"
+              echo "Release notes source for $src_locale: github release body"
+              return
+            fi
+
+            echo "No release notes found for $src_locale"
+          }
+
+          map_metadata "en-US" "en-US"
+          map_metadata "es-ES" "es-ES"
+          map_metadata "zh-CN" "zh-Hans"
+
+          echo "FASTLANE_METADATA_PATH=$FASTLANE_METADATA_DIR" >> "$GITHUB_ENV"
+          echo "Generated fastlane metadata files:"
+          find "$FASTLANE_METADATA_DIR" -type f | sort
+
+      - name: Resolve App Store review submission flag
+        if: ${{ (inputs.upload || 'true') == 'true' }}
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+          REQUESTED_SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review || 'true' }}
+        run: |
+          set -euo pipefail
+
+          EFFECTIVE_SUBMIT_FOR_REVIEW="${REQUESTED_SUBMIT_FOR_REVIEW:-false}"
+          REQUESTED_SUBMIT_FOR_REVIEW="$EFFECTIVE_SUBMIT_FOR_REVIEW"
+          if [ "$REQUESTED_SUBMIT_FOR_REVIEW" != "true" ]; then
+            REQUESTED_SUBMIT_FOR_REVIEW="false"
+            EFFECTIVE_SUBMIT_FOR_REVIEW="false"
+            echo "Review submission disabled by input; checking App Store review state for TestFlight external routing."
+          fi
+          echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=false" >> "$GITHUB_ENV"
+
+          if [ -z "${IOS_ASC_KEY_ID:-}" ] || [ -z "${IOS_ASC_ISSUER_ID:-}" ] || [ -z "${IOS_ASC_PRIVATE_KEY:-}" ]; then
+            echo "::warning::App Store Connect API secrets are missing. Disabling review submission and TestFlight external routing."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ASC_KEY_ID="$(printf '%s' "$IOS_ASC_KEY_ID" | tr -d '\r\n\t ')"
+          ASC_ISSUER_ID="$(printf '%s' "$IOS_ASC_ISSUER_ID" | tr -d '\r\n\t ')"
+          ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-review-check.p8"
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
+
+          if ! openssl pkey -in "$ASC_KEY_PATH" -noout >/dev/null 2>&1; then
+            echo "::warning::IOS_ASC_PRIVATE_KEY is invalid. Disabling review submission and TestFlight external routing."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ASC_API_TMP_PREFIX="asc-review"
+          source scripts/ci/asc-api-utils.sh
+
+          if ! ASC_TOKEN="$(
+            node scripts/ci/generate-asc-jwt.js "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$ASC_KEY_PATH"
+          )"; then
+            echo "::warning::Failed to generate App Store Connect JWT. Disabling review submission and TestFlight external routing."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          APPSTORE_APP_ID_RESOLVED="${APPSTORE_APP_ID:-}"
+          if [ -z "${APPSTORE_APP_ID_RESOLVED}" ]; then
+            APP_LOOKUP_JSON_FILE="$RUNNER_TEMP/asc-review-app-lookup.json"
+            if api_get "$APP_LOOKUP_JSON_FILE" -G \
+              -H "Authorization: Bearer ${ASC_TOKEN}" \
+              --data-urlencode "filter[bundleId]=${EXPECTED_BUNDLE_ID}" \
+              --data-urlencode "limit=1" \
+              "https://api.appstoreconnect.apple.com/v1/apps"; then
+              APPSTORE_APP_ID_RESOLVED="$(jq -r '.data[0].id // empty' "$APP_LOOKUP_JSON_FILE")"
+            fi
+          fi
+
+          if [ -z "${APPSTORE_APP_ID_RESOLVED}" ]; then
+            echo "::warning::App lookup returned no App Store Connect app. Disabling review submission and TestFlight external routing."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          REVIEW_JSON_FILE="$RUNNER_TEMP/asc-review-versions.json"
+          if ! api_get "$REVIEW_JSON_FILE" -G \
+            -H "Authorization: Bearer ${ASC_TOKEN}" \
+            --data-urlencode "filter[appStoreState]=WAITING_FOR_REVIEW,IN_REVIEW" \
+            --data-urlencode "filter[platform]=IOS" \
+            --data-urlencode "limit=1" \
+            "https://api.appstoreconnect.apple.com/v1/apps/${APPSTORE_APP_ID_RESOLVED}/appStoreVersions"; then
+            echo "::warning::Review-state lookup failed. Disabling review submission and TestFlight external routing."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ACTIVE_REVIEW_ID="$(jq -r '.data[0].id // empty' "$REVIEW_JSON_FILE")"
+          ACTIVE_REVIEW_VERSION="$(jq -r '.data[0].attributes.versionString // empty' "$REVIEW_JSON_FILE")"
+          ACTIVE_REVIEW_STATE="$(jq -r '.data[0].attributes.appStoreState // empty' "$REVIEW_JSON_FILE")"
+          if [ -n "${ACTIVE_REVIEW_ID}" ]; then
+            echo "::warning::Found existing iOS App Store submission in state ${ACTIVE_REVIEW_STATE:-unknown} (version ${ACTIVE_REVIEW_VERSION:-unknown}). Upload will proceed, but review submission is disabled."
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ]; then
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=true" >> "$GITHUB_ENV"
+            echo "No active App Store review submission found; review submission remains enabled."
+          else
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            echo "No active App Store review submission found; submit_for_review remains disabled."
+          fi
+
+      - name: Upload IPA to App Store Connect
+        if: ${{ (inputs.upload || 'true') == 'true' }}
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+          SUBMIT_FOR_REVIEW: ${{ env.EFFECTIVE_SUBMIT_FOR_REVIEW || 'false' }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          FASTLANE_HIDE_CHANGELOG: "1"
+          FASTLANE_OPT_OUT_USAGE: "1"
+          CI: "true"
+        run: |
+          set -euo pipefail
+
+          ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-fastlane.p8"
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
+
+          mkdir -p fastlane
+          cat <<'EOF' > fastlane/Fastfile
+          opt_out_usage
+          default_platform(:ios)
+
+          platform :ios do
+            lane :upload_app_store do
+              api_key = app_store_connect_api_key(
+                key_id: ENV.fetch("IOS_ASC_KEY_ID"),
+                issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID"),
+                key_filepath: ENV.fetch("ASC_KEY_PATH"),
+                duration: 1200,
+                in_house: false
+              )
+
+              deliver(
+                api_key: api_key,
+                ipa: ENV.fetch("IPA_PATH"),
+                metadata_path: ENV.fetch("FASTLANE_METADATA_PATH"),
+                skip_screenshots: true,
+                skip_app_version_update: true,
+                force: true,
+                run_precheck_before_submit: false,
+                submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
+                automatic_release: false
+              )
+            end
+          end
+          EOF
+
+          ASC_KEY_PATH="$ASC_KEY_PATH" fastlane ios upload_app_store
+
+      - name: Distribute upload to TestFlight external group when review is active
+        if: ${{ (inputs.upload || 'true') == 'true' && env.ENABLE_TESTFLIGHT_EXTERNAL_RELEASE == 'true' }}
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ inputs.testflight_group || 'external_testing' }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          FASTLANE_HIDE_CHANGELOG: "1"
+          FASTLANE_OPT_OUT_USAGE: "1"
+          CI: "true"
+        run: |
+          set -euo pipefail
+
+          ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-fastlane-testflight.p8"
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
+
+          mkdir -p fastlane
+          cat <<'EOF' > fastlane/Fastfile
+          opt_out_usage
+          default_platform(:ios)
+
+          platform :ios do
+            lane :distribute_external_group do
+              api_key = app_store_connect_api_key(
+                key_id: ENV.fetch("IOS_ASC_KEY_ID"),
+                issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID"),
+                key_filepath: ENV.fetch("ASC_KEY_PATH"),
+                duration: 1200,
+                in_house: false
+              )
+
+              upload_to_testflight(
+                api_key: api_key,
+                app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
+                app_platform: "ios",
+                distribute_only: true,
+                app_version: ENV.fetch("APP_VERSION"),
+                build_number: ENV.fetch("APP_BUILD_NUMBER"),
+                distribute_external: true,
+                groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
+                notify_external_testers: false,
+                skip_submission: true,
+                skip_waiting_for_build_processing: false,
+                wait_processing_timeout_duration: 1800
+              )
+            end
+          end
+          EOF
+
+          echo "Distributing iOS build ${APP_VERSION} (${APP_BUILD_NUMBER}) to TestFlight group: ${TESTFLIGHT_EXTERNAL_GROUP}"
+          ASC_KEY_PATH="$ASC_KEY_PATH" fastlane ios distribute_external_group
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindwtr-ios-appstore-ipa
+          path: ${{ env.IPA_PATH }}
+          if-no-files-found: error
+
+      - name: Cleanup signing files
+        if: always()
+        run: |
+          rm -rf fastlane || true
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "${KEYCHAIN_PATH}" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi

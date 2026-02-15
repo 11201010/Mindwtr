@@ -1,0 +1,4 @@
+- Improved sync reliability and conflict safety across desktop and mobile.
+- Hardened cloud attachment security with safer path handling and attachment endpoint rate limits.
+- Added desktop task delete confirmation + undo, accessibility label improvements, and better mobile touch targets.
+- Expanded sync/cloud integration test coverage and refactored large sync/UI modules for maintainability.

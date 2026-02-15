@@ -84,7 +84,7 @@ export function ContextsView() {
                         onClick={() => setSelectedContext(null)}
                         className={cn(
                             "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                            selectedContext === null ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
+                            selectedContext === null ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                         )}
                     >
                         <Tag className="w-4 h-4" />
@@ -98,7 +98,7 @@ export function ContextsView() {
                         onClick={() => setSelectedContext(NO_CONTEXT_TOKEN)}
                         className={cn(
                             "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                            selectedContext === NO_CONTEXT_TOKEN ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
+                            selectedContext === NO_CONTEXT_TOKEN ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                         )}
                     >
                         <Tag className="w-4 h-4" />
@@ -114,7 +114,7 @@ export function ContextsView() {
                             onClick={() => setSelectedContext(context)}
                             className={cn(
                                 "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                                selectedContext === context ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
+                                selectedContext === context ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                             )}
                         >
                             <span className="text-muted-foreground">@</span>
@@ -162,7 +162,7 @@ export function ContextsView() {
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                <div className="flex-1 overflow-y-auto divide-y divide-border/30 pr-2">
                     {filteredTasks.length > 0 ? (
                         filteredTasks.map(task => (
                             <TaskItem key={task.id} task={task} showProjectBadgeInActions={false} />

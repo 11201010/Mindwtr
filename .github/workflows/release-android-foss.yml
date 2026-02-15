@@ -17,10 +17,18 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-android-foss-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   android-foss:
     runs-on: ubuntu-latest
     name: Android FOSS Build
+    timeout-minutes: 90
+    env:
+      # Keep Metro/JS bundling stable on CI during release builds.
+      NODE_OPTIONS: --max-old-space-size=6144
 
     steps:
       - name: Checkout code
@@ -40,16 +48,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Prepare FOSS dependency manifest
+        working-directory: apps/mobile
+        run: ./scripts/fdroid_prep.sh
 
-      - name: Install dependencies
-        run: bun install
+      - name: Install core dependencies
+        working-directory: packages/core
+        run: npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund
 
-      - name: Setup EAS CLI
-        run: npm install -g eas-cli
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund
 
       - name: Resolve version
         id: version
@@ -65,25 +74,121 @@ jobs:
           fi
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare FOSS Android build
+      - name: Build FOSS Android APK (Gradle, arm64-v8a only)
+        working-directory: apps/mobile
         run: |
-          cd apps/mobile
-          FOSS_BUILD=1 ./scripts/fdroid_prep.sh
-          bun install
-
-      - name: Build FOSS Android APK (local EAS)
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cd apps/mobile
-          FOSS_BUILD=1 MINDWTR_ANDROID_ARCHS=arm64-v8a,armeabi-v7a eas build --platform android --profile production-apk --local --non-interactive --output ./build/mindwtr-${VERSION}-foss.apk
+          UNSIGNED_APK=1 FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a bash ./scripts/android_build.sh
           ls -la ./build
+
+      - name: Sign FOSS APK with release key
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for required in \
+            ANDROID_RELEASE_KEYSTORE_BASE64 \
+            ANDROID_RELEASE_KEY_ALIAS \
+            ANDROID_RELEASE_STORE_PASSWORD \
+            ANDROID_RELEASE_KEY_PASSWORD; do
+            if [[ -z "${!required:-}" ]]; then
+              echo "::error::Missing required secret: ${required}" >&2
+              exit 1
+            fi
+          done
+
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No arm64 FOSS APK produced for signing" >&2
+            exit 1
+          fi
+
+          APKSIGNER_BIN="$(command -v apksigner || true)"
+          ZIPALIGN_BIN="$(command -v zipalign || true)"
+          if [[ -z "${APKSIGNER_BIN}" ]]; then
+            APKSIGNER_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [[ -z "${ZIPALIGN_BIN}" ]]; then
+            ZIPALIGN_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/zipalign 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [[ -z "${APKSIGNER_BIN}" || -z "${ZIPALIGN_BIN}" ]]; then
+            echo "apksigner/zipalign not found in Android SDK build-tools" >&2
+            exit 1
+          fi
+
+          KEYSTORE_PATH="${RUNNER_TEMP}/android-release.keystore"
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+
+          UNSIGNED_APK="${RUNNER_TEMP}/mindwtr-foss-unsigned.apk"
+          ALIGNED_APK="${RUNNER_TEMP}/mindwtr-foss-aligned.apk"
+          SIGNED_APK="${RUNNER_TEMP}/mindwtr-foss-signed.apk"
+
+          cp "${APK_PATH}" "${UNSIGNED_APK}"
+          "${ZIPALIGN_BIN}" -f -p 4 "${UNSIGNED_APK}" "${ALIGNED_APK}"
+
+          "${APKSIGNER_BIN}" sign \
+            --ks "${KEYSTORE_PATH}" \
+            --ks-key-alias "${ANDROID_RELEASE_KEY_ALIAS}" \
+            --ks-pass "pass:${ANDROID_RELEASE_STORE_PASSWORD}" \
+            --key-pass "pass:${ANDROID_RELEASE_KEY_PASSWORD}" \
+            --out "${SIGNED_APK}" \
+            "${ALIGNED_APK}"
+
+          mv "${SIGNED_APK}" "${APK_PATH}"
+
+          SIG_REPORT="${RUNNER_TEMP}/mindwtr-foss-signature.txt"
+          "${APKSIGNER_BIN}" verify --verbose --print-certs "${APK_PATH}" | tee "${SIG_REPORT}"
+          if grep -q "CN=Android Debug" "${SIG_REPORT}"; then
+            echo "Debug certificate detected in final APK signer chain" >&2
+            exit 1
+          fi
+          echo "FOSS APK signed with release key."
+
+      - name: Verify FOSS permission cleanup
+        run: |
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No arm64 FOSS APK produced" >&2
+            exit 1
+          fi
+          AAPT_BIN="$(command -v aapt || true)"
+          if [[ -z "${AAPT_BIN}" ]]; then
+            AAPT_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [[ -z "${AAPT_BIN}" ]]; then
+            echo "aapt not found; cannot verify APK permissions" >&2
+            exit 1
+          fi
+          PERMS_DUMP="$(mktemp)"
+          "${AAPT_BIN}" dump permissions "${APK_PATH}" | tee "${PERMS_DUMP}"
+          for perm in \
+            android.permission.CAMERA \
+            android.permission.SYSTEM_ALERT_WINDOW \
+            android.permission.READ_EXTERNAL_STORAGE \
+            android.permission.WRITE_EXTERNAL_STORAGE; do
+            if grep -q "name='${perm}'" "${PERMS_DUMP}"; then
+              echo "${perm} still present in APK manifest" >&2
+              exit 1
+            fi
+          done
+          if ! grep -q "name='android.permission.RECORD_AUDIO'" "${PERMS_DUMP}"; then
+            echo "android.permission.RECORD_AUDIO missing in APK manifest" >&2
+            exit 1
+          fi
+          echo "Verified APK permissions: CAMERA/storage/alert removed; RECORD_AUDIO present."
 
       - name: Collect Android FOSS artifacts
         run: |
+          VERSION=${{ steps.version.outputs.version }}
+          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "No arm64 FOSS APK found for collection" >&2
+            exit 1
+          fi
           mkdir -p release-artifacts
-          cp apps/mobile/build/mindwtr-*-foss.apk release-artifacts/
+          cp "${APK_PATH}" "release-artifacts/mindwtr-${VERSION}-foss.apk"
           ls -la release-artifacts
 
       - name: Upload Android FOSS artifacts

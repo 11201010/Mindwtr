@@ -1,0 +1,4 @@
+- Se agrego soporte para endpoints AI locales compatibles con OpenAI mediante URL base personalizada.
+- Se reforzaron los merges de sync/cloud para reducir problemas de integridad de datos entre dispositivos.
+- Se mejoro la UX movil con visibilidad del checklist sobre teclado, navegacion mas estable y ajustes en revision/calendario.
+- Se mejoro la fiabilidad de automatizacion MCP con mutaciones transaccionales, validacion tipada y busqueda FTS.

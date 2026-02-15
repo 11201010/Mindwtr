@@ -11,6 +11,8 @@ type Labels = {
     aiProviderGemini: string;
     aiProviderAnthropic: string;
     aiModel: string;
+    aiBaseUrl: string;
+    aiBaseUrlHint: string;
     aiCopilotModel: string;
     aiCopilotHint: string;
     aiReasoning: string;
@@ -64,6 +66,7 @@ type SettingsAiPageProps = {
     aiProvider: AIProviderId;
     aiModel: string;
     aiModelOptions: string[];
+    aiBaseUrl: string;
     aiCopilotModel: string;
     aiCopilotOptions: string[];
     aiReasoningEffort: AIReasoningEffort;
@@ -100,6 +103,7 @@ export function SettingsAiPage({
     aiProvider,
     aiModel,
     aiModelOptions,
+    aiBaseUrl,
     aiCopilotModel,
     aiCopilotOptions,
     aiReasoningEffort,
@@ -185,17 +189,19 @@ export function SettingsAiPage({
 
                             <div className="flex items-center justify-between gap-4">
                                 <div className="text-sm font-medium">{t.aiModel}</div>
-                                <select
+                                <input
+                                    type="text"
                                     value={aiModel}
                                     onChange={(e) => onUpdateAISettings({ model: e.target.value })}
-                                    className="text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                    list="ai-model-options"
+                                    className="min-w-[200px] text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 >
+                                </input>
+                                <datalist id="ai-model-options">
                                     {aiModelOptions.map((option) => (
-                                        <option key={option} value={option}>
-                                            {option}
-                                        </option>
+                                        <option key={option} value={option} />
                                     ))}
-                                </select>
+                                </datalist>
                             </div>
 
                             <div className="flex items-center justify-between gap-4">
@@ -203,17 +209,19 @@ export function SettingsAiPage({
                                     <div className="text-sm font-medium">{t.aiCopilotModel}</div>
                                     <div className="text-xs text-muted-foreground">{t.aiCopilotHint}</div>
                                 </div>
-                                <select
+                                <input
+                                    type="text"
                                     value={aiCopilotModel}
                                     onChange={(e) => onUpdateAISettings({ copilotModel: e.target.value })}
-                                    className="text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                    list="ai-copilot-model-options"
+                                    className="min-w-[200px] text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 >
+                                </input>
+                                <datalist id="ai-copilot-model-options">
                                     {aiCopilotOptions.map((option) => (
-                                        <option key={option} value={option}>
-                                            {option}
-                                        </option>
+                                        <option key={option} value={option} />
                                     ))}
-                                </select>
+                                </datalist>
                             </div>
 
                             {aiProvider === 'openai' && (
@@ -231,6 +239,23 @@ export function SettingsAiPage({
                                         <option value="medium">{t.aiEffortMedium}</option>
                                         <option value="high">{t.aiEffortHigh}</option>
                                     </select>
+                                </div>
+                            )}
+
+                            {aiProvider === 'openai' && (
+                                <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                                    <div className="text-sm font-medium">{t.aiBaseUrl}</div>
+                                    <input
+                                        type="text"
+                                        value={aiBaseUrl}
+                                        onChange={(e) => onUpdateAISettings({ baseUrl: e.target.value })}
+                                        placeholder="http://localhost:11434/v1"
+                                        className="w-full text-sm bg-muted/50 text-foreground border border-border rounded px-2 py-2 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                        autoCapitalize="off"
+                                        autoCorrect="off"
+                                        spellCheck={false}
+                                    />
+                                    <div className="text-xs text-muted-foreground">{t.aiBaseUrlHint}</div>
                                 </div>
                             )}
 

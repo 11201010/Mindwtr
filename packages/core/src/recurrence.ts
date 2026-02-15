@@ -263,7 +263,8 @@ function nextMonthlyByDay(base: Date, byDay: RecurrenceByDay[], interval: number
         .map(parseOrdinalByDay)
         .filter((item): item is { weekday: RecurrenceWeekday; ordinal?: number } => Boolean(item));
     const safeInterval = interval > 0 ? interval : 1;
-    for (let offset = 0; offset <= safeInterval * 12; offset += safeInterval) {
+    const startOffset = safeInterval === 1 ? 0 : safeInterval;
+    for (let offset = startOffset; offset <= safeInterval * 12; offset += safeInterval) {
         const monthDate = addMonths(base, offset);
         const year = monthDate.getFullYear();
         const month = monthDate.getMonth();
@@ -285,7 +286,7 @@ function nextMonthlyByDay(base: Date, byDay: RecurrenceByDay[], interval: number
             }
         });
         const filtered = monthCandidates
-            .filter((date) => date > base)
+            .filter((date) => (offset === 0 ? date > base : true))
             .sort((a, b) => a.getTime() - b.getTime());
         if (filtered.length > 0) {
             return filtered[0];

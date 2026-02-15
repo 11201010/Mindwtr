@@ -39,7 +39,7 @@ export function ReviewTaskList({
 
     if (!shouldVirtualize) {
         return (
-            <div className="space-y-3">
+            <div className="divide-y divide-border/30">
                 {tasks.map((task) => (
                     <TaskItem
                         key={task.id}
@@ -74,7 +74,7 @@ export function ReviewTaskList({
                                 transform: `translateY(${virtualRow.start}px)`,
                             }}
                         >
-                            <div className="pb-3">
+                            <div className="pb-1.5">
                                 <TaskItem
                                     task={task}
                                     project={task.projectId ? projectMap[task.projectId] : undefined}
@@ -83,6 +83,7 @@ export function ReviewTaskList({
                                     isMultiSelected={multiSelectedIds.has(task.id)}
                                     onToggleSelect={() => onToggleSelect(task.id)}
                                 />
+                                <div className="mx-3 mt-1 h-px bg-border/30" />
                             </div>
                         </div>
                     );

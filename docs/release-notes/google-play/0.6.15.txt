@@ -1,0 +1,18 @@
+<en-US>
+- Improved Android task editing: checklist title input now stays visible above the keyboard.
+- Better Android UI polish: status bar theming and mobile workflow refinements for inbox/review.
+- Improved sync safety and merge correctness across devices, including stronger conflict handling and data-integrity checks.
+- Faster, safer local automation: MCP server search now uses FTS with stronger mutation safety.
+</en-US>
+<zh-CN>
+- 改进 Android 任务编辑：清单标题输入框在键盘弹出时可保持可见。
+- 提升 Android 界面细节：状态栏主题显示更一致，并优化了移动端收件箱/回顾流程。
+- 提升多设备同步安全与合并正确性，包括更稳健的冲突处理与数据完整性校验。
+- 本地自动化更快更稳：MCP 服务端搜索改用 FTS，并强化了写入安全性。
+</zh-CN>
+<es-ES>
+- Mejoramos la edición de tareas en Android: el título de checklist ahora se mantiene visible sobre el teclado.
+- Mejor pulido visual en Android: tema de barra de estado más consistente y mejoras en flujos móviles de bandeja/revisión.
+- Mayor seguridad de sync y corrección de merge entre dispositivos, con mejor manejo de conflictos y validaciones de integridad.
+- Automatización local más rápida y segura: búsqueda MCP con FTS y mutaciones más robustas.
+</es-ES>

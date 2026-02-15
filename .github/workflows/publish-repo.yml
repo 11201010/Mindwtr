@@ -18,9 +18,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publish-repo-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-repo:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -48,12 +53,37 @@ jobs:
           fi
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
+      - name: Set release tag (push)
+        if: github.event_name == 'push'
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
       - name: Download Release Assets
-        uses: robinraju/release-downloader@v1
-        with:
-          repository: ${{ github.repository }}
-          tag: ${{ env.RELEASE_TAG || github.ref_name }}
-          fileName: "*"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG:-${GITHUB_REF_NAME}}"
+          MAX_RETRIES=5
+          for attempt in $(seq 1 "${MAX_RETRIES}"); do
+            echo "Downloading release assets for ${TAG} (attempt ${attempt}/${MAX_RETRIES})"
+            if gh release download "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "*" \
+              --clobber; then
+              echo "Release assets downloaded successfully."
+              break
+            fi
+            if [ "${attempt}" -eq "${MAX_RETRIES}" ]; then
+              echo "Failed to download release assets after ${MAX_RETRIES} attempts." >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Prepare Repo Directories
         run: |
@@ -82,9 +112,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y createrepo-c
           createrepo_c .
+          if [ -f repodata/repomd.xml ]; then
+            gpg --batch --yes --armor --detach-sign -o repodata/repomd.xml.asc repodata/repomd.xml
+          else
+            echo "repodata/repomd.xml not found after createrepo_c" >&2
+            exit 1
+          fi
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build_repo

@@ -1,4 +1,4 @@
-import { BookOpen, CheckCircle, Moon, Trash2, User, X, ChevronLeft } from 'lucide-react';
+import { ArrowRight, BookOpen, CheckCircle, ChevronLeft, Clock, Trash2, User, X } from 'lucide-react';
 import type { Area, Project, Task } from '@mindwtr/core';
 
 import { cn } from '../lib/utils';
@@ -137,10 +137,21 @@ export function InboxProcessingWizard({
         ? projects.find((project) => project.id === selectedProjectId) ?? null
         : null;
 
+    const stepLabel: Record<ProcessingStep, string> = {
+        refine: t('process.refineTitle'),
+        actionable: t('process.actionable'),
+        twomin: t('process.twoMin'),
+        decide: t('process.nextStep'),
+        context: t('process.context'),
+        project: t('process.project'),
+        delegate: t('process.delegateTitle'),
+    };
+
     return (
-        <div className="bg-card border border-border rounded-xl p-6 space-y-4 animate-in fade-in">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+        <div className="bg-card border border-border rounded-xl animate-in fade-in overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3.5">
+                <div className="flex items-center gap-2.5">
                     {canGoBack && (
                         <button
                             type="button"
@@ -151,133 +162,141 @@ export function InboxProcessingWizard({
                             <ChevronLeft className="w-4 h-4" />
                         </button>
                     )}
-                    <h3 className="font-semibold text-lg">📋 {t('process.title')}</h3>
+                    <h3 className="font-semibold text-[15px]">📋 {t('process.title')}</h3>
+                    <span className="text-[11px] font-medium text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
+                        {remainingCount} {t('process.remaining')}
+                    </span>
                 </div>
                 <div className="flex items-center gap-3">
                     <button
                         type="button"
                         onClick={handleSkip}
-                        className="text-xs text-muted-foreground hover:text-foreground"
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
-                        {t('inbox.skip')} →
+                        {t('inbox.skip')} <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                     <button
                         onClick={() => setIsProcessing(false)}
                         className="text-muted-foreground hover:text-foreground"
                     >
-                        <X className="w-5 h-5" />
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
             </div>
 
+            <div className="h-px bg-border" />
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5">
+                {/* Step indicator */}
+                <div className="flex items-center justify-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    <span className="text-xs font-medium text-primary">{stepLabel[processingStep]}</span>
+                </div>
+
+                {/* Task title */}
+                <p className="text-center font-medium text-base leading-snug">
+                    {processingTitle || processingTask.title}
+                </p>
+
             {processingStep === 'refine' ? (
-                <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-                    <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.titleLabel')}</label>
-                        <input
-                            value={processingTitle}
-                            onChange={(e) => setProcessingTitle(e.target.value)}
-                            className="w-full bg-card border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary"
-                        />
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
-                        <textarea
-                            value={processingDescription}
-                            onChange={(e) => setProcessingDescription(e.target.value)}
-                            placeholder={t('taskEdit.descriptionPlaceholder')}
-                            className="w-full bg-card border border-border rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary resize-none"
-                            rows={3}
-                        />
-                    </div>
-                    {showProjectInRefine && (
+                <div className="space-y-3">
+                    <p className="text-center text-sm text-muted-foreground">{t('process.refineDesc')}</p>
+                    <div className="space-y-3">
                         <div className="space-y-1">
-                            <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.projectLabel')}</label>
-                            <ProjectSelector
-                                projects={projects}
-                                value={selectedProjectId ?? ''}
-                                onChange={(value) => setSelectedProjectId(value || null)}
-                                onCreateProject={async (title) => {
-                                    const created = await addProject(title, '#94a3b8');
-                                    return created?.id ?? null;
-                                }}
-                                placeholder={t('process.project')}
-                                noProjectLabel={t('process.noProject')}
+                            <label className="text-[11px] text-muted-foreground font-medium">{t('taskEdit.titleLabel')}</label>
+                            <input
+                                value={processingTitle}
+                                onChange={(e) => setProcessingTitle(e.target.value)}
+                                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/40 focus:outline-none"
                             />
                         </div>
-                    )}
-                </div>
-            ) : (
-                <div className="bg-muted/50 rounded-lg p-4 space-y-1">
-                    <p className="font-medium">{processingTitle || processingTask.title}</p>
-                    {processingDescription && (
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{processingDescription}</p>
-                    )}
-                </div>
-            )}
-
-            {processingStep === 'refine' && (
-                <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.refineTitle')}</p>
-                    <p className="text-center text-sm text-muted-foreground">{t('process.refineDesc')}</p>
-                    <div className="flex gap-3">
-                        <button
-                            onClick={handleRefineNext}
-                            className="flex-1 bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:bg-primary/90"
-                        >
-                            {t('process.refineNext')}
-                        </button>
-                        <button
-                            onClick={() => handleNotActionable('trash')}
-                            className="flex-1 flex items-center justify-center gap-2 bg-destructive/10 text-destructive py-3 rounded-lg font-medium hover:bg-destructive/20"
-                        >
-                            <Trash2 className="w-4 h-4" /> {t('process.refineDelete')}
-                        </button>
+                        <div className="space-y-1">
+                            <label className="text-[11px] text-muted-foreground font-medium">{t('taskEdit.descriptionLabel')}</label>
+                            <textarea
+                                value={processingDescription}
+                                onChange={(e) => setProcessingDescription(e.target.value)}
+                                placeholder={t('taskEdit.descriptionPlaceholder')}
+                                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/40 focus:outline-none resize-none"
+                                rows={2}
+                            />
+                        </div>
+                        {showProjectInRefine && (
+                            <div className="space-y-1">
+                                <label className="text-[11px] text-muted-foreground font-medium">{t('taskEdit.projectLabel')}</label>
+                                <ProjectSelector
+                                    projects={projects}
+                                    value={selectedProjectId ?? ''}
+                                    onChange={(value) => setSelectedProjectId(value || null)}
+                                    onCreateProject={async (title) => {
+                                        const created = await addProject(title, '#94a3b8');
+                                        return created?.id ?? null;
+                                    }}
+                                    placeholder={t('process.project')}
+                                    noProjectLabel={t('process.noProject')}
+                                />
+                            </div>
+                        )}
                     </div>
                 </div>
+            ) : null}
+
+            {processingStep === 'refine' && (
+                <>
+                    <div className="h-px bg-border -mx-6" />
+                    <div className="flex items-center justify-between -mx-6 -mb-5 px-5 py-3.5">
+                        <button
+                            onClick={() => handleNotActionable('trash')}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-destructive/10 text-destructive text-sm font-medium hover:bg-destructive/20 transition-colors"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" /> {t('process.refineDelete')}
+                        </button>
+                        <button
+                            onClick={handleRefineNext}
+                            className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors"
+                        >
+                            {t('process.refineNext')} <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </>
             )}
 
             {processingStep === 'actionable' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.actionable')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.actionableDesc')}
                     </p>
-                    <div className="flex gap-3">
-                        <button
-                            onClick={handleActionable}
-                            className="flex-1 bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:bg-primary/90"
-                        >
-                            {t('process.yesActionable')}
-                        </button>
-                    </div>
-                    <p className="text-xs text-muted-foreground text-center pt-2">{t('process.ifNotActionable')}</p>
-                    <div className="flex gap-3">
+                    <div className="flex gap-2">
                         <button
                             onClick={() => handleNotActionable('trash')}
-                            className="flex-1 flex items-center justify-center gap-2 bg-destructive/10 text-destructive py-2 rounded-lg font-medium hover:bg-destructive/20"
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-destructive/10 text-destructive py-2.5 rounded-lg text-xs font-medium hover:bg-destructive/20 transition-colors"
                         >
-                            <Trash2 className="w-4 h-4" /> {t('process.trash')}
+                            <Trash2 className="w-3.5 h-3.5" /> {t('process.trash')}
                         </button>
                         <button
                             onClick={() => handleNotActionable('someday')}
-                            className="flex-1 flex items-center justify-center gap-2 bg-purple-500/10 text-purple-600 py-2 rounded-lg font-medium hover:bg-purple-500/20"
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-purple-500/10 text-purple-400 py-2.5 rounded-lg text-xs font-medium hover:bg-purple-500/20 transition-colors"
                         >
-                            <Moon className="w-4 h-4" /> {t('process.someday')}
+                            <Clock className="w-3.5 h-3.5" /> {t('process.someday')}
                         </button>
                         <button
                             onClick={() => handleNotActionable('reference')}
-                            className="flex-1 flex items-center justify-center gap-2 bg-blue-500/10 text-blue-600 py-2 rounded-lg font-medium hover:bg-blue-500/20"
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-cyan-500/10 text-cyan-400 py-2.5 rounded-lg text-xs font-medium hover:bg-cyan-500/20 transition-colors"
                         >
-                            <BookOpen className="w-4 h-4" /> {t('process.reference')}
+                            <BookOpen className="w-3.5 h-3.5" /> {t('process.reference')}
                         </button>
                     </div>
+                    <button
+                        onClick={handleActionable}
+                        className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground py-3 rounded-lg font-semibold hover:bg-primary/90 transition-colors"
+                    >
+                        {t('process.yesActionable')} <CheckCircle className="w-4 h-4" />
+                    </button>
                 </div>
             )}
 
             {processingStep === 'twomin' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.twoMin')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.twoMinDesc')}
                     </p>
@@ -300,7 +319,6 @@ export function InboxProcessingWizard({
 
             {processingStep === 'decide' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.nextStep')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.nextStepDesc')}
                     </p>
@@ -345,7 +363,6 @@ export function InboxProcessingWizard({
 
             {processingStep === 'delegate' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">👤 {t('process.delegateTitle')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.delegateDesc')}
                     </p>
@@ -393,7 +410,6 @@ export function InboxProcessingWizard({
 
             {processingStep === 'context' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.context')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.contextDesc')} {t('process.selectMultipleHint')}
                     </p>
@@ -470,7 +486,6 @@ export function InboxProcessingWizard({
 
             {processingStep === 'project' && (
                 <div className="space-y-4">
-                    <p className="text-center font-medium">{t('process.project')}</p>
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.projectDesc')}
                     </p>
@@ -609,9 +624,7 @@ export function InboxProcessingWizard({
                 </div>
             )}
 
-            <p className="text-xs text-center text-muted-foreground pt-2">
-                {remainingCount} {t('process.remaining')}
-            </p>
+            </div>
         </div>
     );
 }

@@ -1,0 +1,21 @@
+Mindwtr es un sistema completo de productividad basado en Getting Things Done (GTD), diseñado para lograr un estado de "Mind Like Water". Construido para velocidad y privacidad, te ofrece una forma potente y sin distracciones de capturar y organizar tu vida, sin suscripciones en la nube.
+
+DISENADO PARA EL ENFOQUE
+Mindwtr es simple por defecto y potente cuando lo necesitas. Ya sea para capturar una idea rapida o planificar un proyecto complejo, la interfaz no se interpone.
+
+FLUJO GTD PRINCIPAL
+- Capturar: Anade tareas al Inbox en cuanto aparecen.
+- Aclarar: Procesa tu inbox rapidamente con la regla de 2 minutos.
+- Organizar: Ordena tareas en Proyectos, Contextos (@work, @home) y Areas.
+- Revisar: Mantente al dia con la Revision Semanal integrada.
+- Ejecutar: Filtra Next Actions por contexto o energia para saber que hacer ahora.
+
+FUNCIONES POTENTES
+- Vista Focus: Un panel unificado con Agenda y Next Actions.
+- Tableros Kanban: Visualiza proyectos con arrastrar y soltar.
+- Local-First: Tus datos viven en tu dispositivo. Sin login ni rastreo.
+- Soporte Markdown: Anade notas y descripciones enriquecidas.
+- Sync flexible: Sincroniza con escritorio via File Sync (iCloud Drive, Syncthing) o WebDAV (Nextcloud).
+
+ENFOQUE EN PRIVACIDAD
+Creemos que tus tareas son asunto privado. Mindwtr funciona completamente offline, no rastrea tus datos y no requiere cuenta.

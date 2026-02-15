@@ -50,7 +50,7 @@ export const VirtualTaskRow = React.memo(function VirtualTaskRow({
 
     return (
         <div ref={rowRef} style={{ position: 'absolute', top, left: 0, right: 0 }}>
-            <div className={cn(dense ? "pb-2" : "pb-3")}>
+            <div className={cn(dense ? "pb-1" : "pb-1.5")}>
                 <TaskItem
                     key={task.id}
                     task={task}
@@ -64,6 +64,7 @@ export const VirtualTaskRow = React.memo(function VirtualTaskRow({
                     readOnly={readOnly}
                     compactMetaEnabled={compactMetaEnabled}
                 />
+                <div className="mx-3 mt-1 h-px bg-border/30" />
             </div>
         </div>
     );

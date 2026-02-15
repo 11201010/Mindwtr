@@ -270,9 +270,9 @@
 
 @layer components {
   .metadata-badge {
-    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium;
-    background-color: hsl(var(--badge-info-bg));
-    color: hsl(var(--badge-info-fg));
+    @apply inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium tracking-wide;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
   }
 
   .metadata-badge__dot {

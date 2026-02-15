@@ -72,23 +72,27 @@ export function ReviewView() {
                 nextProjectMap[project.id] = project;
             });
 
-            const nextActiveTasks: Task[] = [];
+            const nextVisibleTasks: Task[] = [];
+            const nextOpenTasks: Task[] = [];
             tasks.forEach((task) => {
                 nextTasksById[task.id] = task;
                 if (task.deletedAt) return;
                 if (task.status === 'reference') return;
                 if (!isTaskInActiveProject(task, nextProjectMap)) return;
                 if (!taskMatchesAreaFilter(task, resolvedAreaFilter, projectMapById, areaById)) return;
-                nextActiveTasks.push(task);
-                nextStatusCounts.all += 1;
+                nextVisibleTasks.push(task);
+                if (task.status !== 'done') {
+                    nextOpenTasks.push(task);
+                    nextStatusCounts.all += 1;
+                }
                 if (nextStatusCounts[task.status] !== undefined) {
                     nextStatusCounts[task.status] += 1;
                 }
             });
 
             const list = filterStatus === 'all'
-                ? nextActiveTasks
-                : nextActiveTasks.filter((task) => task.status === filterStatus);
+                ? nextOpenTasks
+                : nextVisibleTasks.filter((task) => task.status === filterStatus);
 
             return {
                 projectMap: nextProjectMap,

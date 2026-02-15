@@ -1,9 +1,15 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { logError } from '../lib/app-log';
+import { useLanguage } from '../contexts/language-context';
 
 interface Props {
     children: ReactNode;
     fallback?: ReactNode;
+    strings?: {
+        title: string;
+        message: string;
+        retry: string;
+    };
 }
 
 interface State {
@@ -11,7 +17,7 @@ interface State {
     error: Error | null;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
+class BaseErrorBoundary extends Component<Props, State> {
     public state: State = {
         hasError: false,
         error: null,
@@ -38,9 +44,9 @@ export class ErrorBoundary extends Component<Props, State> {
                 <div className="min-h-screen flex items-center justify-center bg-background" role="alert" aria-live="assertive">
                     <div className="max-w-md p-8 text-center space-y-4">
                         <div className="text-6xl">💥</div>
-                        <h1 className="text-2xl font-bold text-foreground">Something went wrong</h1>
+                        <h1 className="text-2xl font-bold text-foreground">{this.props.strings?.title ?? 'Something went wrong'}</h1>
                         <p className="text-muted-foreground">
-                            The app encountered an unexpected error. Please try refreshing the page.
+                            {this.props.strings?.message ?? 'The app encountered an unexpected error.'}
                         </p>
                         <div className="bg-muted p-4 rounded-lg text-left">
                             <p className="text-sm font-mono text-destructive">
@@ -51,7 +57,7 @@ export class ErrorBoundary extends Component<Props, State> {
                             onClick={() => window.location.reload()}
                             className="bg-primary text-primary-foreground px-6 py-2 rounded-lg font-medium hover:bg-primary/90"
                         >
-                            Refresh Page
+                            {this.props.strings?.retry ?? 'Try again'}
                         </button>
                     </div>
                 </div>
@@ -60,4 +66,20 @@ export class ErrorBoundary extends Component<Props, State> {
 
         return this.props.children;
     }
+}
+
+export function ErrorBoundary({ children, fallback }: Omit<Props, 'strings'>) {
+    const { t } = useLanguage();
+    return (
+        <BaseErrorBoundary
+            fallback={fallback}
+            strings={{
+                title: t('errorBoundary.title'),
+                message: t('errorBoundary.message'),
+                retry: t('errorBoundary.retry'),
+            }}
+        >
+            {children}
+        </BaseErrorBoundary>
+    );
 }

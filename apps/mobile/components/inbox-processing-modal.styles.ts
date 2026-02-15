@@ -22,7 +22,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   headerClose: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
   },
   progressContainer: {
@@ -44,7 +44,8 @@ export const styles = StyleSheet.create({
     borderRadius: 2,
   },
   skipBtn: {
-    fontSize: 14,
+    fontSize: 16,
+    fontWeight: '600',
     color: '#3B82F6',
   },
   taskDisplay: {
@@ -65,11 +66,26 @@ export const styles = StyleSheet.create({
   },
   processingHeader: {
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minHeight: 60,
+  },
+  headerActionButton: {
+    minWidth: 72,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  headerActionButtonLeft: {
+    alignItems: 'flex-start',
+  },
+  headerActionButtonRight: {
+    alignItems: 'flex-end',
+  },
+  headerActionSpacer: {
+    minWidth: 72,
   },
   loadingText: {
     fontSize: 14,
@@ -134,7 +150,6 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
   },
   stepContainer: {
-    padding: 20,
     flex: 1,
   },
   stepContent: {
@@ -262,6 +277,26 @@ export const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 12,
   },
+  selectedTokensRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  selectedTokenChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  selectedContextChip: {
+    backgroundColor: '#3B82F6',
+  },
+  selectedTagChip: {
+    backgroundColor: '#8B5CF6',
+  },
+  selectedTokenText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+  },
   customContextContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -287,6 +322,38 @@ export const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
+  },
+  tokenSuggestionsContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 8,
+    gap: 6,
+  },
+  tokenSuggestionChip: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  tokenSuggestionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tokenSectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  tokenChipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  suggestionChip: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   contextWrap: {
     flexDirection: 'row',
@@ -343,5 +410,34 @@ export const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  singlePageScroll: {
+    flex: 1,
+  },
+  singlePageContent: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+  },
+  bottomActionBar: {
+    borderTopWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  bottomNextButton: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomNextButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  singleSection: {
+    borderBottomWidth: 1,
+    paddingBottom: 18,
+    marginBottom: 18,
   },
 });

@@ -38,7 +38,7 @@ export function normalizeTaskStatus(value: unknown): TaskStatus {
 
 export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toISOString()): Task {
     const normalizedStatus = normalizeTaskStatus((task as any).status);
-    const { ...rest } = task as Task;
+    const { rev: _legacyRev, revBy: _legacyRevBy, ...rest } = task as Task & { rev?: unknown; revBy?: unknown };
 
     let createdAtIso = typeof task.createdAt === 'string' ? task.createdAt : nowIso;
     const createdAtMs = Date.parse(createdAtIso);
@@ -65,11 +65,16 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
         typeof task.textDirection === 'string' && ['auto', 'ltr', 'rtl'].includes(task.textDirection)
             ? task.textDirection
             : undefined;
-    const rev = typeof (task as any).rev === 'number' && Number.isFinite((task as any).rev)
-        ? (task as any).rev as number
+    const rawRev = (task as any).rev;
+    const rev = typeof rawRev === 'number'
+        && Number.isFinite(rawRev)
+        && Number.isInteger(rawRev)
+        && rawRev >= 0
+        ? rawRev
         : 0;
-    const revBy = typeof (task as any).revBy === 'string'
-        ? (task as any).revBy as string
+    const rawRevBy = (task as any).revBy;
+    const revBy = typeof rawRevBy === 'string' && rawRevBy.trim().length > 0
+        ? rawRevBy.trim()
         : undefined;
     const next: Task = {
         ...rest,

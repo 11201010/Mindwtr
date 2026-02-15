@@ -1,0 +1,3 @@
+- Se estabilizo la navegacion atras y el gesto edge-swipe en iOS en pantallas de Ajustes y menu.
+- Se mejoro la seguridad del sync entre dispositivos y la correccion del merge con validaciones de integridad mas fuertes.
+- Se agrego soporte para endpoints AI locales compatibles con OpenAI mediante URL base personalizada.

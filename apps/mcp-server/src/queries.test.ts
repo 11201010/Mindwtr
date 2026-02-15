@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { listTasks, parseQuickAdd, type Project } from './queries.js';
+import { addTask, deleteTask, listTasks, parseQuickAdd, updateTask, type Project } from './queries.js';
 import type { DbClient } from './db.js';
 
-const createMockDb = (rows: any[] = []): { db: DbClient; calls: { sql: string; params: any[] }[] } => {
+const createMockDb = (
+    rows: any[] = [],
+    options: { hasTasksFts?: boolean } = {},
+): { db: DbClient; calls: { sql: string; params: any[] }[] } => {
     const calls: { sql: string; params: any[] }[] = [];
     const db: DbClient = {
         prepare: (sql: string) => ({
@@ -10,6 +13,9 @@ const createMockDb = (rows: any[] = []): { db: DbClient; calls: { sql: string; p
                 calls.push({ sql, params });
                 if (sql.startsWith('PRAGMA table_info(tasks)')) {
                     return [{ name: 'id' }, { name: 'title' }, { name: 'updatedAt' }, { name: 'status' }];
+                }
+                if (sql.includes("FROM sqlite_master")) {
+                    return options.hasTasksFts ? [{ name: 'tasks_fts' }] : [];
                 }
                 return rows;
             },
@@ -52,9 +58,105 @@ describe('mcp queries', () => {
 
         const tasks = listTasks(db, { search: '100%_done\\now', includeDeleted: false });
         expect(tasks).toHaveLength(1);
-        const queryCall = calls.find((call) => call.sql.startsWith('SELECT'));
+        const queryCall = calls.find((call) => call.sql.startsWith('SELECT') && call.sql.includes('FROM tasks '));
         expect(queryCall).toBeTruthy();
         expect(queryCall?.params[0]).toBe('%100\\%\\_done\\\\now%');
         expect(queryCall?.params[1]).toBe('%100\\%\\_done\\\\now%');
+    });
+
+    test('listTasks uses FTS search when tasks_fts is available', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb(
+            [
+                {
+                    id: 't1',
+                    title: 'Task',
+                    status: 'inbox',
+                    createdAt: now,
+                    updatedAt: now,
+                    isFocusedToday: 0,
+                },
+            ],
+            { hasTasksFts: true },
+        );
+
+        listTasks(db, { search: 'project alpha', includeDeleted: false });
+        const queryCall = calls.find((call) => call.sql.startsWith('SELECT') && call.sql.includes('FROM tasks '));
+        expect(queryCall).toBeTruthy();
+        expect(queryCall?.sql.includes('tasks_fts MATCH ?')).toBe(true);
+        expect(queryCall?.params[0]).toBe('project* alpha*');
+    });
+
+    test('listTasks caches task column introspection per db client', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([
+            {
+                id: 't1',
+                title: 'Task',
+                status: 'inbox',
+                createdAt: now,
+                updatedAt: now,
+                isFocusedToday: 0,
+            },
+        ]);
+
+        listTasks(db, { includeDeleted: false });
+        listTasks(db, { includeDeleted: false });
+
+        const pragmaCalls = calls.filter((call) => call.sql.startsWith('PRAGMA table_info(tasks)'));
+        expect(pragmaCalls).toHaveLength(1);
+    });
+
+    test('addTask quickAdd uses lightweight project lookup', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([{ id: 'p1', title: 'Home', createdAt: now, updatedAt: now }]);
+
+        const created = addTask(db, { quickAdd: 'Buy milk +Home' });
+
+        expect(created.title).toBe('Buy milk');
+        expect(created.projectId).toBe('p1');
+        const projectLookup = calls.find((call) => call.sql.startsWith('SELECT id, title FROM projects WHERE deletedAt IS NULL'));
+        expect(projectLookup).toBeTruthy();
+    });
+
+    test('wraps addTask in a transaction', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([{ id: 'p1', title: 'Home', createdAt: now, updatedAt: now }]);
+
+        addTask(db, { title: 'Task in tx' });
+
+        expect(calls.some((call) => call.sql === 'BEGIN IMMEDIATE')).toBe(true);
+        expect(calls.some((call) => call.sql === 'COMMIT')).toBe(true);
+    });
+
+    test('rolls back addTask transaction on error', () => {
+        const { db, calls } = createMockDb([]);
+
+        expect(() => addTask(db, { title: '   ' })).toThrow('Task title is required.');
+
+        expect(calls.some((call) => call.sql === 'BEGIN IMMEDIATE')).toBe(true);
+        expect(calls.some((call) => call.sql === 'ROLLBACK')).toBe(true);
+    });
+
+    test('wraps updateTask and deleteTask in transactions', () => {
+        const now = '2026-02-01T00:00:00.000Z';
+        const { db, calls } = createMockDb([
+            {
+                id: 't1',
+                title: 'Task',
+                status: 'inbox',
+                createdAt: now,
+                updatedAt: now,
+                isFocusedToday: 0,
+            },
+        ]);
+
+        updateTask(db, { id: 't1', title: 'Updated' });
+        deleteTask(db, { id: 't1' });
+
+        const beginCount = calls.filter((call) => call.sql === 'BEGIN IMMEDIATE').length;
+        const commitCount = calls.filter((call) => call.sql === 'COMMIT').length;
+        expect(beginCount).toBe(2);
+        expect(commitCount).toBe(2);
     });
 });

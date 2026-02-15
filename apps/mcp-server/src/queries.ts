@@ -1,3 +1,4 @@
+import { parseQuickAdd as parseQuickAddCore, type Project as CoreProject } from '@mindwtr/core';
 import type { DbClient } from './db.js';
 import { parseJson } from './db.js';
 
@@ -45,6 +46,8 @@ export type Project = {
   deletedAt?: string;
 };
 
+type ProjectRef = Pick<Project, 'id' | 'title'>;
+
 const STATUS_TOKENS: Record<string, TaskStatus> = {
   inbox: 'inbox',
   next: 'next',
@@ -67,59 +70,12 @@ const generateUUID = (): string => {
   return `mcp_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 };
 
-export const parseQuickAdd = (input: string, projects: Project[]): { title: string; props: Partial<Task> } => {
-  let working = input.trim();
-  const props: Partial<Task> = {};
-  const contexts = new Set<string>();
-  const tags = new Set<string>();
-
-  const contextMatches = working.match(/@[\w-]+/g) || [];
-  contextMatches.forEach((ctx) => contexts.add(ctx));
-  contextMatches.forEach((ctx) => { working = working.replace(ctx, '').trim(); });
-
-  const tagMatches = working.match(/#[\w-]+/g) || [];
-  tagMatches.forEach((tag) => tags.add(tag));
-  tagMatches.forEach((tag) => { working = working.replace(tag, '').trim(); });
-
-  const noteMatch = working.match(/\/note:([^/]+?)(?=\s\/|$)/i);
-  if (noteMatch) {
-    props.description = noteMatch[1].trim();
-    working = working.replace(noteMatch[0], '').trim();
-  }
-
-  const dueMatch = working.match(/\/due:([^/]+?)(?=\s\/|$)/i);
-  if (dueMatch) {
-    const parsed = new Date(dueMatch[1].trim());
-    if (!Number.isNaN(parsed.getTime())) {
-      props.dueDate = parsed.toISOString();
-    }
-    working = working.replace(dueMatch[0], '').trim();
-  }
-
-  const statusMatch = working.match(/\/(inbox|next|waiting|someday|done|archived)\b/i);
-  if (statusMatch) {
-    props.status = normalizeTaskStatus(statusMatch[1]);
-    working = working.replace(statusMatch[0], '').trim();
-  }
-
-  const projectIdMatch = working.match(/\/project:([^\s/]+)/i);
-  if (projectIdMatch) {
-    props.projectId = projectIdMatch[1];
-    working = working.replace(projectIdMatch[0], '').trim();
-  } else {
-    const plusMatch = working.match(/(?:^|\s)\+([^\s/]+(?:\s+(?![@#+/])[^/\s]+)*)/);
-    if (plusMatch) {
-      const title = plusMatch[1].replace(/\s+/g, ' ').trim();
-      const project = projects.find((p) => p.title.toLowerCase() === title.toLowerCase());
-      if (project) props.projectId = project.id;
-      working = working.replace(plusMatch[0], '').trim();
-    }
-  }
-
-  if (contexts.size) props.contexts = Array.from(contexts);
-  if (tags.size) props.tags = Array.from(tags);
-
-  return { title: working.trim(), props };
+export const parseQuickAdd = (input: string, projects: ProjectRef[]): { title: string; props: Partial<Task> } => {
+  const parsed = parseQuickAddCore(input, projects as unknown as CoreProject[]);
+  return {
+    title: parsed.title,
+    props: parsed.props as Partial<Task>,
+  };
 };
 
 export type ListTasksInput = {
@@ -186,16 +142,53 @@ const BASE_TASK_COLUMNS = [
   'purgedAt',
 ];
 
+const taskColumnsCache = new WeakMap<DbClient, { hasOrderNum: boolean; selectColumns: string[] }>();
+const tasksFtsCache = new WeakMap<DbClient, boolean>();
+
 const getTaskColumns = (db: DbClient) => {
+  const cached = taskColumnsCache.get(db);
+  if (cached) return cached;
   try {
     const columns = db.prepare('PRAGMA table_info(tasks)').all();
     const names = new Set<string>(columns.map((col: any) => String(col.name)));
     const hasOrderNum = names.has('orderNum');
     const selectColumns = BASE_TASK_COLUMNS.filter((name) => hasOrderNum || name !== 'orderNum');
-    return { hasOrderNum, selectColumns };
+    const resolved = { hasOrderNum, selectColumns };
+    taskColumnsCache.set(db, resolved);
+    return resolved;
   } catch {
-    return { hasOrderNum: true, selectColumns: BASE_TASK_COLUMNS };
+    const fallback = { hasOrderNum: true, selectColumns: BASE_TASK_COLUMNS };
+    taskColumnsCache.set(db, fallback);
+    return fallback;
   }
+};
+
+const hasTasksFts = (db: DbClient): boolean => {
+  const cached = tasksFtsCache.get(db);
+  if (cached !== undefined) return cached;
+  try {
+    const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks_fts'").all();
+    const hasFts = rows.some((row: any) => row?.name === 'tasks_fts');
+    tasksFtsCache.set(db, hasFts);
+    return hasFts;
+  } catch {
+    tasksFtsCache.set(db, false);
+    return false;
+  }
+};
+
+const buildTasksFtsQuery = (search: string): string | null => {
+  const cleaned = String(search || '')
+    .replace(/[^\p{L}\p{N}#@]+/gu, ' ')
+    .trim();
+  if (!cleaned) return null;
+  const reservedTokens = new Set(['AND', 'OR', 'NOT', 'NEAR']);
+  const tokens = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !reservedTokens.has(token.toUpperCase()));
+  if (tokens.length === 0) return null;
+  return tokens.map((token) => `${token}*`).join(' ');
 };
 
 function mapTaskRow(row: any): TaskRow {
@@ -244,11 +237,17 @@ export function listTasks(db: DbClient, input: ListTasksInput): TaskRow[] {
     params.push(input.projectId);
   }
   if (input.search) {
-    where.push("(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
-    // Escape SQL wildcards (%, _, \) in search input
-    const escaped = input.search.replace(/[\\%_]/g, '\\$&');
-    const pattern = `%${escaped}%`;
-    params.push(pattern, pattern);
+    const ftsQuery = buildTasksFtsQuery(input.search);
+    if (ftsQuery && hasTasksFts(db)) {
+      where.push("id IN (SELECT id FROM tasks_fts WHERE tasks_fts MATCH ?)");
+      params.push(ftsQuery);
+    } else {
+      where.push("(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+      // Escape SQL wildcards (%, _, \) in search input
+      const escaped = input.search.replace(/[\\%_]/g, '\\$&');
+      const pattern = `%${escaped}%`;
+      params.push(pattern, pattern);
+    }
   }
   if (input.dueDateFrom) {
     where.push('dueDate >= ?');
@@ -308,16 +307,31 @@ const BASE_PROJECT_COLUMNS = [
   'deletedAt',
 ];
 
+const projectColumnsCache = new WeakMap<DbClient, { hasOrderNum: boolean; selectColumns: string[] }>();
+
 const getProjectColumns = (db: DbClient) => {
+  const cached = projectColumnsCache.get(db);
+  if (cached) return cached;
   try {
     const columns = db.prepare('PRAGMA table_info(projects)').all();
     const names = new Set<string>(columns.map((col: any) => String(col.name)));
     const hasOrderNum = names.has('orderNum');
     const selectColumns = BASE_PROJECT_COLUMNS.filter((name) => hasOrderNum || name !== 'orderNum');
-    return { hasOrderNum, selectColumns };
+    const resolved = { hasOrderNum, selectColumns };
+    projectColumnsCache.set(db, resolved);
+    return resolved;
   } catch {
-    return { hasOrderNum: true, selectColumns: BASE_PROJECT_COLUMNS };
+    const fallback = { hasOrderNum: true, selectColumns: BASE_PROJECT_COLUMNS };
+    projectColumnsCache.set(db, fallback);
+    return fallback;
   }
+};
+
+const listProjectRefsForQuickAdd = (db: DbClient): ProjectRef[] => {
+  const rows = db.prepare('SELECT id, title FROM projects WHERE deletedAt IS NULL').all();
+  return rows
+    .filter((row: any) => typeof row.id === 'string' && typeof row.title === 'string')
+    .map((row: any) => ({ id: row.id, title: row.title }));
 };
 
 export function listProjects(db: DbClient): Project[] {
@@ -343,136 +357,156 @@ export function listProjects(db: DbClient): Project[] {
   }));
 }
 
+const runInTransaction = <T>(db: DbClient, fn: () => T): T => {
+  db.prepare('BEGIN IMMEDIATE').run();
+  try {
+    const result = fn();
+    db.prepare('COMMIT').run();
+    return result;
+  } catch (error) {
+    try {
+      db.prepare('ROLLBACK').run();
+    } catch {
+      // Best effort rollback.
+    }
+    throw error;
+  }
+};
+
 export function addTask(db: DbClient, input: AddTaskInput): TaskRow {
-  const now = new Date().toISOString();
-  let title = (input.title || '').trim();
-  let props: Partial<Task> = {};
+  return runInTransaction(db, () => {
+    const now = new Date().toISOString();
+    let title = (input.title || '').trim();
+    let props: Partial<Task> = {};
 
-  if (input.quickAdd) {
-    const projects = listProjects(db);
-    const quick = parseQuickAdd(input.quickAdd, projects);
-    title = quick.title || title || input.quickAdd;
-    props = quick.props;
-  }
+    if (input.quickAdd) {
+      const projects = listProjectRefsForQuickAdd(db);
+      const quick = parseQuickAdd(input.quickAdd, projects);
+      title = quick.title || title || input.quickAdd;
+      props = quick.props;
+    }
 
-  if (!title) {
-    throw new Error('Task title is required.');
-  }
+    if (!title) {
+      throw new Error('Task title is required.');
+    }
 
-  const status = input.status ?? (props.status as TaskStatus) ?? 'inbox';
-  const task: Task = {
-    id: generateUUID(),
-    title,
-    status,
-    priority: (input.priority ?? props.priority) as Task['priority'],
-    taskMode: props.taskMode,
-    startTime: input.startTime ?? props.startTime,
-    dueDate: input.dueDate ?? props.dueDate,
-    recurrence: props.recurrence,
-    pushCount: props.pushCount,
-    tags: input.tags ?? (props.tags as string[] | undefined) ?? [],
-    contexts: input.contexts ?? (props.contexts as string[] | undefined) ?? [],
-    checklist: props.checklist,
-    description: input.description ?? props.description,
-    attachments: props.attachments,
-    location: props.location,
-    projectId: input.projectId ?? props.projectId,
-    orderNum: props.orderNum ?? undefined,
-    isFocusedToday: props.isFocusedToday ?? false,
-    timeEstimate: input.timeEstimate ?? props.timeEstimate,
-    reviewAt: props.reviewAt,
-    completedAt: props.completedAt,
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: undefined,
-    purgedAt: undefined,
-  };
+    const status = input.status ?? (props.status as TaskStatus) ?? 'inbox';
+    const task: Task = {
+      id: generateUUID(),
+      title,
+      status,
+      priority: (input.priority ?? props.priority) as Task['priority'],
+      taskMode: props.taskMode,
+      startTime: input.startTime ?? props.startTime,
+      dueDate: input.dueDate ?? props.dueDate,
+      recurrence: props.recurrence,
+      pushCount: props.pushCount,
+      tags: input.tags ?? (props.tags as string[] | undefined) ?? [],
+      contexts: input.contexts ?? (props.contexts as string[] | undefined) ?? [],
+      checklist: props.checklist,
+      description: input.description ?? props.description,
+      attachments: props.attachments,
+      location: props.location,
+      projectId: input.projectId ?? props.projectId,
+      orderNum: props.orderNum ?? undefined,
+      isFocusedToday: props.isFocusedToday ?? false,
+      timeEstimate: input.timeEstimate ?? props.timeEstimate,
+      reviewAt: props.reviewAt,
+      completedAt: props.completedAt,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: undefined,
+      purgedAt: undefined,
+    };
 
-  const { hasOrderNum } = getTaskColumns(db);
-  const insertColumns = [
-    'id',
-    'title',
-    'status',
-    'priority',
-    'taskMode',
-    'startTime',
-    'dueDate',
-    'recurrence',
-    'pushCount',
-    'tags',
-    'contexts',
-    'checklist',
-    'description',
-    'attachments',
-    'location',
-    'projectId',
-    ...(hasOrderNum ? ['orderNum'] : []),
-    'isFocusedToday',
-    'timeEstimate',
-    'reviewAt',
-    'completedAt',
-    'createdAt',
-    'updatedAt',
-    'deletedAt',
-    'purgedAt',
-  ];
-  const insert = db.prepare(`
-    INSERT INTO tasks (
-      ${insertColumns.join(', ')}
-    ) VALUES (
-      ${insertColumns.map((col) => `@${col}`).join(', ')}
-    )
-  `);
+    const { hasOrderNum } = getTaskColumns(db);
+    const insertColumns = [
+      'id',
+      'title',
+      'status',
+      'priority',
+      'taskMode',
+      'startTime',
+      'dueDate',
+      'recurrence',
+      'pushCount',
+      'tags',
+      'contexts',
+      'checklist',
+      'description',
+      'attachments',
+      'location',
+      'projectId',
+      ...(hasOrderNum ? ['orderNum'] : []),
+      'isFocusedToday',
+      'timeEstimate',
+      'reviewAt',
+      'completedAt',
+      'createdAt',
+      'updatedAt',
+      'deletedAt',
+      'purgedAt',
+    ];
+    const insert = db.prepare(`
+      INSERT INTO tasks (
+        ${insertColumns.join(', ')}
+      ) VALUES (
+        ${insertColumns.map((col) => `@${col}`).join(', ')}
+      )
+    `);
 
-  insert.run({
-    id: task.id,
-    title: task.title,
-    status: task.status,
-    priority: task.priority ?? null,
-    taskMode: task.taskMode ?? null,
-    startTime: task.startTime ?? null,
-    dueDate: task.dueDate ?? null,
-    recurrence: task.recurrence ? JSON.stringify(task.recurrence) : null,
-    pushCount: task.pushCount ?? null,
-    tags: JSON.stringify(task.tags ?? []),
-    contexts: JSON.stringify(task.contexts ?? []),
-    checklist: task.checklist ? JSON.stringify(task.checklist) : null,
-    description: task.description ?? null,
-    attachments: task.attachments ? JSON.stringify(task.attachments) : null,
-    location: task.location ?? null,
-    projectId: task.projectId ?? null,
-    ...(hasOrderNum ? { orderNum: task.orderNum ?? null } : {}),
-    isFocusedToday: task.isFocusedToday ? 1 : 0,
-    timeEstimate: task.timeEstimate ?? null,
-    reviewAt: task.reviewAt ?? null,
-    completedAt: task.completedAt ?? null,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-    deletedAt: task.deletedAt ?? null,
-    purgedAt: task.purgedAt ?? null,
+    insert.run({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      priority: task.priority ?? null,
+      taskMode: task.taskMode ?? null,
+      startTime: task.startTime ?? null,
+      dueDate: task.dueDate ?? null,
+      recurrence: task.recurrence ? JSON.stringify(task.recurrence) : null,
+      pushCount: task.pushCount ?? null,
+      tags: JSON.stringify(task.tags ?? []),
+      contexts: JSON.stringify(task.contexts ?? []),
+      checklist: task.checklist ? JSON.stringify(task.checklist) : null,
+      description: task.description ?? null,
+      attachments: task.attachments ? JSON.stringify(task.attachments) : null,
+      location: task.location ?? null,
+      projectId: task.projectId ?? null,
+      ...(hasOrderNum ? { orderNum: task.orderNum ?? null } : {}),
+      isFocusedToday: task.isFocusedToday ? 1 : 0,
+      timeEstimate: task.timeEstimate ?? null,
+      reviewAt: task.reviewAt ?? null,
+      completedAt: task.completedAt ?? null,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      deletedAt: task.deletedAt ?? null,
+      purgedAt: task.purgedAt ?? null,
+    });
+
+    return task as TaskRow;
   });
-
-  return task as TaskRow;
 }
 
 export function completeTask(db: DbClient, input: CompleteTaskInput): TaskRow {
-  const now = new Date().toISOString();
-  const update = db.prepare(`
-    UPDATE tasks
-    SET status = 'done', completedAt = ?, updatedAt = ?
-    WHERE id = ? AND deletedAt IS NULL
-  `);
-  const info = update.run(now, now, input.id);
-  if (!info.changes || info.changes === 0) {
-    throw new Error(`Task not found: ${input.id}`);
-  }
+  return runInTransaction(db, () => {
+    const now = new Date().toISOString();
+    const update = db.prepare(`
+      UPDATE tasks
+      SET status = 'done', completedAt = ?, updatedAt = ?
+      WHERE id = ? AND deletedAt IS NULL
+    `);
+    const info = update.run(now, now, input.id);
+    if (!info.changes || info.changes === 0) {
+      throw new Error(`Task not found: ${input.id}`);
+    }
 
-  const { selectColumns } = getTaskColumns(db);
-  const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
-  if (!row) {
-    throw new Error(`Task not found after update: ${input.id}`);
-  }
-  return mapTaskRow(row);
+    const { selectColumns } = getTaskColumns(db);
+    const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
+    if (!row) {
+      throw new Error(`Task not found after update: ${input.id}`);
+    }
+    return mapTaskRow(row);
+  });
 }
 
 export type UpdateTaskInput = {
@@ -492,111 +526,117 @@ export type UpdateTaskInput = {
 };
 
 export function updateTask(db: DbClient, input: UpdateTaskInput): TaskRow {
-  const { selectColumns } = getTaskColumns(db);
-  const existing = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ? AND deletedAt IS NULL`).get(input.id);
-  if (!existing) {
-    throw new Error(`Task not found: ${input.id}`);
-  }
-  const current = mapTaskRow(existing);
-  const now = new Date().toISOString();
+  return runInTransaction(db, () => {
+    const { selectColumns } = getTaskColumns(db);
+    const existing = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ? AND deletedAt IS NULL`).get(input.id);
+    if (!existing) {
+      throw new Error(`Task not found: ${input.id}`);
+    }
+    const current = mapTaskRow(existing);
+    const now = new Date().toISOString();
 
-  const updated: TaskRow = {
-    ...current,
-    title: input.title ?? current.title,
-    status: input.status ?? current.status,
-    projectId: input.projectId === null ? undefined : input.projectId ?? current.projectId,
-    dueDate: input.dueDate === null ? undefined : input.dueDate ?? current.dueDate,
-    startTime: input.startTime === null ? undefined : input.startTime ?? current.startTime,
-    contexts: input.contexts === null ? [] : input.contexts ?? current.contexts ?? [],
-    tags: input.tags === null ? [] : input.tags ?? current.tags ?? [],
-    description: input.description === null ? undefined : input.description ?? current.description,
-    priority: input.priority === null ? undefined : input.priority ?? current.priority,
-    timeEstimate: input.timeEstimate === null ? undefined : input.timeEstimate ?? current.timeEstimate,
-    reviewAt: input.reviewAt === null ? undefined : input.reviewAt ?? current.reviewAt,
-    isFocusedToday: input.isFocusedToday ?? current.isFocusedToday,
-    updatedAt: now,
-  };
+    const updated: TaskRow = {
+      ...current,
+      title: input.title ?? current.title,
+      status: input.status ?? current.status,
+      projectId: input.projectId === null ? undefined : input.projectId ?? current.projectId,
+      dueDate: input.dueDate === null ? undefined : input.dueDate ?? current.dueDate,
+      startTime: input.startTime === null ? undefined : input.startTime ?? current.startTime,
+      contexts: input.contexts === null ? [] : input.contexts ?? current.contexts ?? [],
+      tags: input.tags === null ? [] : input.tags ?? current.tags ?? [],
+      description: input.description === null ? undefined : input.description ?? current.description,
+      priority: input.priority === null ? undefined : input.priority ?? current.priority,
+      timeEstimate: input.timeEstimate === null ? undefined : input.timeEstimate ?? current.timeEstimate,
+      reviewAt: input.reviewAt === null ? undefined : input.reviewAt ?? current.reviewAt,
+      isFocusedToday: input.isFocusedToday ?? current.isFocusedToday,
+      updatedAt: now,
+    };
 
-  const update = db.prepare(`
-    UPDATE tasks
-    SET title = @title,
-        status = @status,
-        projectId = @projectId,
-        dueDate = @dueDate,
-        startTime = @startTime,
-        contexts = @contexts,
-        tags = @tags,
-        description = @description,
-        priority = @priority,
-        timeEstimate = @timeEstimate,
-        reviewAt = @reviewAt,
-        isFocusedToday = @isFocusedToday,
-        updatedAt = @updatedAt
-    WHERE id = @id
-  `);
+    const update = db.prepare(`
+      UPDATE tasks
+      SET title = @title,
+          status = @status,
+          projectId = @projectId,
+          dueDate = @dueDate,
+          startTime = @startTime,
+          contexts = @contexts,
+          tags = @tags,
+          description = @description,
+          priority = @priority,
+          timeEstimate = @timeEstimate,
+          reviewAt = @reviewAt,
+          isFocusedToday = @isFocusedToday,
+          updatedAt = @updatedAt
+      WHERE id = @id
+    `);
 
-  update.run({
-    id: updated.id,
-    title: updated.title,
-    status: updated.status,
-    projectId: updated.projectId ?? null,
-    dueDate: updated.dueDate ?? null,
-    startTime: updated.startTime ?? null,
-    contexts: JSON.stringify(updated.contexts ?? []),
-    tags: JSON.stringify(updated.tags ?? []),
-    description: updated.description ?? null,
-    priority: updated.priority ?? null,
-    timeEstimate: updated.timeEstimate ?? null,
-    reviewAt: updated.reviewAt ?? null,
-    isFocusedToday: updated.isFocusedToday ? 1 : 0,
-    updatedAt: updated.updatedAt,
+    update.run({
+      id: updated.id,
+      title: updated.title,
+      status: updated.status,
+      projectId: updated.projectId ?? null,
+      dueDate: updated.dueDate ?? null,
+      startTime: updated.startTime ?? null,
+      contexts: JSON.stringify(updated.contexts ?? []),
+      tags: JSON.stringify(updated.tags ?? []),
+      description: updated.description ?? null,
+      priority: updated.priority ?? null,
+      timeEstimate: updated.timeEstimate ?? null,
+      reviewAt: updated.reviewAt ?? null,
+      isFocusedToday: updated.isFocusedToday ? 1 : 0,
+      updatedAt: updated.updatedAt,
+    });
+
+    const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
+    if (!row) {
+      throw new Error(`Task not found after update: ${input.id}`);
+    }
+    return mapTaskRow(row);
   });
-
-  const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
-  if (!row) {
-    throw new Error(`Task not found after update: ${input.id}`);
-  }
-  return mapTaskRow(row);
 }
 
 export type DeleteTaskInput = { id: string };
 
 export function deleteTask(db: DbClient, input: DeleteTaskInput): TaskRow {
-  const now = new Date().toISOString();
-  const update = db.prepare(`
-    UPDATE tasks
-    SET deletedAt = ?, updatedAt = ?
-    WHERE id = ? AND deletedAt IS NULL
-  `);
-  const info = update.run(now, now, input.id);
-  if (!info.changes || info.changes === 0) {
-    throw new Error(`Task not found or already deleted: ${input.id}`);
-  }
-  const { selectColumns } = getTaskColumns(db);
-  const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
-  if (!row) {
-    throw new Error(`Task not found after delete: ${input.id}`);
-  }
-  return mapTaskRow(row);
+  return runInTransaction(db, () => {
+    const now = new Date().toISOString();
+    const update = db.prepare(`
+      UPDATE tasks
+      SET deletedAt = ?, updatedAt = ?
+      WHERE id = ? AND deletedAt IS NULL
+    `);
+    const info = update.run(now, now, input.id);
+    if (!info.changes || info.changes === 0) {
+      throw new Error(`Task not found or already deleted: ${input.id}`);
+    }
+    const { selectColumns } = getTaskColumns(db);
+    const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
+    if (!row) {
+      throw new Error(`Task not found after delete: ${input.id}`);
+    }
+    return mapTaskRow(row);
+  });
 }
 
 export type RestoreTaskInput = { id: string };
 
 export function restoreTask(db: DbClient, input: RestoreTaskInput): TaskRow {
-  const now = new Date().toISOString();
-  const update = db.prepare(`
-    UPDATE tasks
-    SET deletedAt = NULL, updatedAt = ?
-    WHERE id = ? AND deletedAt IS NOT NULL
-  `);
-  const info = update.run(now, input.id);
-  if (!info.changes || info.changes === 0) {
-    throw new Error(`Task not found or not deleted: ${input.id}`);
-  }
-  const { selectColumns } = getTaskColumns(db);
-  const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
-  if (!row) {
-    throw new Error(`Task not found after restore: ${input.id}`);
-  }
-  return mapTaskRow(row);
+  return runInTransaction(db, () => {
+    const now = new Date().toISOString();
+    const update = db.prepare(`
+      UPDATE tasks
+      SET deletedAt = NULL, updatedAt = ?
+      WHERE id = ? AND deletedAt IS NOT NULL
+    `);
+    const info = update.run(now, input.id);
+    if (!info.changes || info.changes === 0) {
+      throw new Error(`Task not found or not deleted: ${input.id}`);
+    }
+    const { selectColumns } = getTaskColumns(db);
+    const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
+    if (!row) {
+      throw new Error(`Task not found after restore: ${input.id}`);
+    }
+    return mapTaskRow(row);
+  });
 }

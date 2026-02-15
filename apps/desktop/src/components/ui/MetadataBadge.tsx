@@ -9,12 +9,14 @@ interface MetadataBadgeProps {
     icon?: LucideIcon;
     dotColor?: string;
     className?: string;
+    ariaLabel?: string;
 }
 
-export function MetadataBadge({ label, variant, icon: Icon, dotColor, className }: MetadataBadgeProps) {
+export function MetadataBadge({ label, variant, icon: Icon, dotColor, className, ariaLabel }: MetadataBadgeProps) {
     return (
         <span
             className={cn('metadata-badge', `metadata-badge--${variant}`, className)}
+            aria-label={ariaLabel ?? label}
         >
             {dotColor && (
                 <span

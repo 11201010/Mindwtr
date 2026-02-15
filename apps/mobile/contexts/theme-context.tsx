@@ -30,7 +30,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
     const [themeStyle, setThemeStyleState] = useState<ThemeStyle>('default');
     const [isReady, setIsReady] = useState(false);
-    const syncedTheme = useTaskStore((state) => state.settings?.theme);
+    const readSyncedTheme = (): ThemeMode | undefined => {
+        const raw = (useTaskStore as unknown as { getState?: () => { settings?: { theme?: unknown } } })
+            ?.getState?.()
+            ?.settings
+            ?.theme;
+        if (typeof raw !== 'string') return undefined;
+        return raw as ThemeMode;
+    };
+    const [syncedTheme, setSyncedTheme] = useState<ThemeMode | undefined>(() => readSyncedTheme());
 
     const themePreset: ThemePreset =
         themeMode === 'eink' ? 'eink' :
@@ -56,6 +64,27 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         loadThemePreference();
+    }, []);
+
+    useEffect(() => {
+        const store = useTaskStore as unknown as {
+            subscribe?: (listener: (state: { settings?: { theme?: unknown } }, prevState: { settings?: { theme?: unknown } }) => void) => (() => void) | void;
+        };
+        if (typeof store.subscribe !== 'function') {
+            setSyncedTheme(readSyncedTheme());
+            return;
+        }
+        const unsubscribe = store.subscribe((state, prevState) => {
+            if (state?.settings?.theme === prevState?.settings?.theme) return;
+            const next = state?.settings?.theme;
+            setSyncedTheme(typeof next === 'string' ? (next as ThemeMode) : undefined);
+        });
+        setSyncedTheme(readSyncedTheme());
+        return () => {
+            if (typeof unsubscribe === 'function') {
+                unsubscribe();
+            }
+        };
     }, []);
 
     useEffect(() => {

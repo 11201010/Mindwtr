@@ -1,0 +1,3 @@
+- Se corrigieron fallos de inicio en Android y se mejoró la estabilidad de inicialización.
+- Se corrigió la apertura no deseada en Review por respuestas antiguas de notificaciones.
+- Se mejoró la limpieza/sincronización de adjuntos entre dispositivos y se agruparon referencias por Área.

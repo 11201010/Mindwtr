@@ -1,0 +1,4 @@
+- Se mejoró la fiabilidad del sync y la seguridad de resolución de conflictos en escritorio y móvil.
+- Se reforzó la seguridad de adjuntos en la nube con validación de rutas más estricta y límites de tasa en endpoints.
+- Se añadió confirmación + deshacer al borrar tareas en escritorio, mejoras de accesibilidad y mejores áreas táctiles en móvil.
+- Se amplió la cobertura de pruebas de sync/nube y se refactorizaron módulos grandes para mejor mantenibilidad.

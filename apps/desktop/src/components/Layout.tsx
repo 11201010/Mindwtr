@@ -30,13 +30,6 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
     const lastSyncAt = settings?.lastSyncAt;
     const lastSyncStatus = settings?.lastSyncStatus;
     const lastSyncDisplay = lastSyncAt ? safeFormatDate(lastSyncAt, 'PPp', lastSyncAt) : t('settings.lastSyncNever');
-    const lastSyncStatusLabel = lastSyncStatus === 'error'
-        ? t('settings.lastSyncError')
-        : lastSyncStatus === 'conflict'
-            ? t('settings.lastSyncConflict')
-            : lastSyncStatus === 'success'
-                ? t('settings.lastSyncSuccess')
-                : '';
     const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
     const dismissLabel = t('common.dismiss');
     const dismissText = dismissLabel && dismissLabel !== 'common.dismiss' ? dismissLabel : 'Dismiss';
@@ -75,31 +68,52 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
         'contexts',
         'search',
         'agenda',
+        'tutorial',
     ]);
     const isWideView = wideViews.has(currentView);
     const fullWidthViews = new Set([
         'board',
         'projects',
+        'settings',
     ]);
     const isFullWidthView = fullWidthViews.has(currentView);
 
-    const navItems = useMemo(() => ([
-        { id: 'inbox', labelKey: 'nav.inbox', icon: Inbox, count: inboxCount },
-        { id: 'agenda', labelKey: 'nav.agenda', icon: Target },
-        { id: 'projects', labelKey: 'nav.projects', icon: Folder },
-        { id: 'someday', labelKey: 'nav.someday', icon: Archive },
-        { id: 'waiting', labelKey: 'nav.waiting', icon: PauseCircle },
-        { id: 'reference', labelKey: 'nav.reference', icon: Book },
-        { id: 'calendar', labelKey: 'nav.calendar', icon: Calendar },
-        { id: 'review', labelKey: 'nav.review', icon: CheckCircle2, path: 'review' },
-        { id: 'contexts', labelKey: 'nav.contexts', icon: Tag, path: 'contexts' },
-        { id: 'board', labelKey: 'nav.board', icon: Layers },
-        { id: 'tutorial', labelKey: 'nav.tutorial', icon: HelpCircle, path: 'tutorial' },
-        // Settings moved to footer
-        { id: 'done', labelKey: 'nav.done', icon: CheckSquare },
-        { id: 'archived', labelKey: 'nav.archived', icon: Archive },
-        { id: 'trash', labelKey: 'nav.trash', icon: Trash2 },
-    ]), [inboxCount]);
+    const navSections = useMemo(() => ([
+        {
+            label: t('nav.sectionFocus') || 'Focus',
+            items: [
+                { id: 'inbox', labelKey: 'nav.inbox', icon: Inbox, count: inboxCount },
+                { id: 'agenda', labelKey: 'nav.agenda', icon: Target },
+            ],
+        },
+        {
+            label: t('nav.sectionLists') || 'Lists',
+            items: [
+                { id: 'projects', labelKey: 'nav.projects', icon: Folder },
+                { id: 'someday', labelKey: 'nav.someday', icon: Archive },
+                { id: 'waiting', labelKey: 'nav.waiting', icon: PauseCircle },
+                { id: 'reference', labelKey: 'nav.reference', icon: Book },
+            ],
+        },
+        {
+            label: t('nav.sectionOrganize') || 'Organize',
+            items: [
+                { id: 'calendar', labelKey: 'nav.calendar', icon: Calendar },
+                { id: 'review', labelKey: 'nav.review', icon: CheckCircle2 },
+                { id: 'contexts', labelKey: 'nav.contexts', icon: Tag },
+                { id: 'board', labelKey: 'nav.board', icon: Layers },
+                { id: 'tutorial', labelKey: 'nav.tutorial', icon: HelpCircle },
+            ],
+        },
+        {
+            label: t('nav.sectionArchive') || 'Archive',
+            items: [
+                { id: 'done', labelKey: 'nav.done', icon: CheckSquare },
+                { id: 'archived', labelKey: 'nav.archived', icon: Archive },
+                { id: 'trash', labelKey: 'nav.trash', icon: Trash2 },
+            ],
+        },
+    ]), [inboxCount, t]);
 
     const triggerSearch = () => {
         window.dispatchEvent(new CustomEvent('mindwtr:open-search'));
@@ -207,10 +221,10 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                                     key={search.id}
                                     onClick={() => onViewChange(`savedSearch:${search.id}`)}
                                     className={cn(
-                                        "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
+                                        "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 focus:ring-offset-background",
                                         currentView === `savedSearch:${search.id}`
-                                            ? "bg-primary text-primary-foreground"
-                                            : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+                                            ? "bg-primary/10 text-primary"
+                                            : "hover:bg-accent text-muted-foreground",
                                         isCollapsed && "justify-center px-2"
                                     )}
                                     title={search.name}
@@ -222,52 +236,59 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                         </div>
                     )}
 
-                    <nav className="space-y-1 pb-4" data-sidebar-nav>
-                        {navItems.map((item) => (
-                            <button
-                                key={item.id}
-                                onClick={() => onViewChange(item.id)}
-                                data-sidebar-item
-                                data-view={item.id}
-                                className={cn(
-                                    "w-full flex items-center rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
-                                    currentView === item.id
-                                        ? "bg-primary text-primary-foreground"
-                                        : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
-                                    isCollapsed ? "justify-center px-2 py-2" : "justify-between px-3 py-2"
+                    <nav className="space-y-4 pb-4" data-sidebar-nav>
+                        {navSections.map((section) => (
+                            <div key={section.label} className="space-y-0.5">
+                                {!isCollapsed && (
+                                    <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                                        {section.label}
+                                    </div>
                                 )}
-                                aria-current={currentView === item.id ? 'page' : undefined}
-                                title={t(item.labelKey)}
-                            >
-                                <div className={cn("flex items-center gap-3", isCollapsed && "gap-0")}>
-                                    <item.icon className="w-4 h-4" />
-                                    {!isCollapsed && t(item.labelKey)}
-                                </div>
-                                {!isCollapsed && item.count !== undefined && item.count > 0 && (
-                                    <span className={cn(
-                                        "text-xs px-2 py-0.5 rounded-full",
-                                        currentView === item.id
-                                            ? "bg-primary-foreground/20 text-primary-foreground"
-                                            : "bg-muted text-muted-foreground"
-                                    )}>
-                                        {item.count}
-                                    </span>
-                                )}
-                            </button>
+                                {section.items.map((item) => (
+                                    <button
+                                        key={item.id}
+                                        onClick={() => onViewChange(item.id)}
+                                        data-sidebar-item
+                                        data-view={item.id}
+                                        className={cn(
+                                            "w-full flex items-center rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 focus:ring-offset-background",
+                                            currentView === item.id
+                                                ? "bg-primary/10 text-primary"
+                                                : "hover:bg-accent text-muted-foreground",
+                                            isCollapsed ? "justify-center px-2 py-2.5" : "justify-between px-3 py-2.5"
+                                        )}
+                                        aria-current={currentView === item.id ? 'page' : undefined}
+                                        title={t(item.labelKey)}
+                                    >
+                                        <div className={cn("flex items-center gap-3", isCollapsed && "gap-0")}>
+                                            <item.icon className={cn("w-4 h-4", currentView === item.id && "text-primary")} />
+                                            {!isCollapsed && t(item.labelKey)}
+                                        </div>
+                                        {!isCollapsed && item.count !== undefined && item.count > 0 && (
+                                            <span className={cn(
+                                                "text-xs px-2 py-0.5 rounded-full font-medium",
+                                                currentView === item.id
+                                                    ? "bg-primary text-primary-foreground"
+                                                    : "bg-muted text-muted-foreground"
+                                            )}>
+                                                {item.count}
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
                         ))}
                     </nav>
                 </div>
 
-                <div className="mt-auto pt-4 border-t border-border space-y-3">
+                <div className="mt-auto pt-2">
                     {!isCollapsed && (
-                        <div className="space-y-1">
-                            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                                {t('projects.areaFilter')}
-                            </label>
+                        <div className="px-2 pb-2">
                             <select
                                 value={resolvedAreaFilter}
                                 onChange={(event) => handleAreaFilterChange(event.target.value)}
-                                className="w-full text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                className="w-full text-[13px] bg-muted/40 border-none rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                aria-label={t('projects.areaFilter')}
                             >
                                 <option value={AREA_FILTER_ALL}>{t('projects.allAreas')}</option>
                                 {sortedAreas.map((area) => (
@@ -279,27 +300,38 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                             </select>
                         </div>
                     )}
-                    {!isCollapsed && (
-                        <div className="px-2 text-[10px] text-muted-foreground">
-                            {t('settings.lastSync')}: {lastSyncDisplay}
-                            {lastSyncStatusLabel && ` • ${lastSyncStatusLabel}`}
-                            {!isOnline && ` • ${t('common.offline') || 'Offline'}`}
-                        </div>
-                    )}
+                    <div className="border-t border-border" />
                     <button
                         onClick={() => onViewChange('settings')}
                         className={cn(
-                            "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background focus:bg-accent focus:text-accent-foreground",
+                            "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 focus:ring-offset-background",
                             currentView === 'settings'
-                                ? "bg-primary text-primary-foreground"
-                                : "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+                                ? "bg-primary/10 text-primary"
+                                : "hover:bg-accent text-muted-foreground",
                             isCollapsed && "justify-center px-2"
                         )}
                         aria-current={currentView === 'settings' ? 'page' : undefined}
                         title={t('nav.settings')}
                     >
                         <Settings className="w-4 h-4" />
-                        {!isCollapsed && t('nav.settings')}
+                        {!isCollapsed && (
+                            <div className="flex-1 flex items-center justify-between">
+                                <span>{t('nav.settings')}</span>
+                                <div className="flex items-center gap-1.5">
+                                    <span className={cn(
+                                        "w-1.5 h-1.5 rounded-full shrink-0",
+                                        !isOnline ? "bg-destructive" : lastSyncStatus === 'error' ? "bg-orange-400" : "bg-emerald-400"
+                                    )} />
+                                    <span className="text-[10px] text-muted-foreground/60 truncate max-w-[100px]">
+                                        {!isOnline
+                                            ? (t('common.offline') || 'Offline')
+                                            : lastSyncAt
+                                                ? lastSyncDisplay
+                                                : t('settings.lastSyncNever')}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </button>
                 </div>
                 </aside>

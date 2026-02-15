@@ -1,9 +1,11 @@
-import { getDailyDigestSummary, getNextScheduledAt, stripMarkdown, type Language, Task, parseTimeOfDay, getTranslationsSync, loadTranslations, loadStoredLanguageSync, safeParseDate, hasTimeComponent } from '@mindwtr/core';
+import { getDailyDigestSummary, getNextScheduledAt, stripMarkdown, type Language, Task, parseTimeOfDay, getTranslationsSync, loadTranslations, loadStoredLanguageSync, safeParseDate, hasTimeComponent, getSystemDefaultLanguage } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
+import { isTauriRuntime } from './runtime';
 
 const notifiedAtByTask = new Map<string, string>();
 const notifiedAtByProject = new Map<string, string>();
 const digestSentOnByKind = new Map<'morning' | 'evening', string>();
+let weeklyReviewSentOnDate: string | null = null;
 let intervalId: number | null = null;
 let storeSubscription: (() => void) | null = null;
 let started = false;
@@ -23,7 +25,7 @@ const CHECK_INTERVAL_MS = 15_000;
 
 function getCurrentLanguage(): Language {
     if (typeof localStorage === 'undefined') return 'en';
-    return loadStoredLanguageSync(localStorage);
+    return loadStoredLanguageSync(localStorage, getSystemDefaultLanguage());
 }
 
 function localDateKey(date: Date): string {
@@ -34,12 +36,11 @@ function localDateKey(date: Date): string {
 }
 
 async function loadTauriNotificationApi(): Promise<TauriNotificationApi | null> {
-    if (!(window as any).__TAURI__) return null;
+    if (!isTauriRuntime()) return null;
     if (tauriNotificationApi) return tauriNotificationApi;
     try {
-        // Optional dependency. If not installed, we fall back to Web Notifications.
-        const moduleName = '@tauri-apps/plugin-notification';
-        const mod = await import(/* @vite-ignore */ moduleName);
+        // Optional dependency. If unavailable, we fall back to Web Notifications.
+        const mod = await import('@tauri-apps/plugin-notification');
         tauriNotificationApi = mod as unknown as TauriNotificationApi;
         return tauriNotificationApi;
     } catch {
@@ -140,9 +141,14 @@ function checkDueAndNotify() {
 
     const morningEnabled = settings.dailyDigestMorningEnabled === true;
     const eveningEnabled = settings.dailyDigestEveningEnabled === true;
+    const weeklyReviewEnabled = settings.weeklyReviewEnabled === true;
 
     const { hour: morningHour, minute: morningMinute } = parseTimeOfDay(settings.dailyDigestMorningTime, { hour: 9, minute: 0 });
     const { hour: eveningHour, minute: eveningMinute } = parseTimeOfDay(settings.dailyDigestEveningTime, { hour: 20, minute: 0 });
+    const { hour: weeklyHour, minute: weeklyMinute } = parseTimeOfDay(settings.weeklyReviewTime, { hour: 18, minute: 0 });
+    const weeklyReviewDay = Number.isFinite(settings.weeklyReviewDay)
+        ? Math.max(0, Math.min(6, Math.floor(settings.weeklyReviewDay as number)))
+        : 0;
 
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
@@ -173,6 +179,14 @@ function checkDueAndNotify() {
         if (nowMinutes >= target && digestSentOnByKind.get('evening') !== dateKey) {
             sendNotification(tr['digest.eveningTitle'], tr['digest.eveningBody']);
             digestSentOnByKind.set('evening', dateKey);
+        }
+    }
+
+    if (weeklyReviewEnabled) {
+        const target = weeklyHour * 60 + weeklyMinute;
+        if (now.getDay() === weeklyReviewDay && nowMinutes >= target && weeklyReviewSentOnDate !== dateKey) {
+            sendNotification(tr['digest.weeklyReviewTitle'], tr['digest.weeklyReviewBody']);
+            weeklyReviewSentOnDate = dateKey;
         }
     }
 }
@@ -235,6 +249,8 @@ export function stopDesktopNotifications() {
     storeSubscription = null;
 
     notifiedAtByTask.clear();
+    notifiedAtByProject.clear();
     digestSentOnByKind.clear();
+    weeklyReviewSentOnDate = null;
     started = false;
 }

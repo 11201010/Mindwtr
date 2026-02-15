@@ -303,18 +303,29 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
             if (!oldTask) return state;
+            const deviceState = ensureDeviceId(state.settings);
             const updatedTask = {
                 ...oldTask,
                 deletedAt: oldTask.deletedAt ?? now,
                 purgedAt: now,
                 updatedAt: now,
+                rev: normalizeRevision(oldTask.rev) + 1,
+                revBy: deviceState.deviceId,
             };
             const newAllTasks = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
             );
             const newVisibleTasks = updateVisibleTasks(state.tasks, oldTask, updatedTask);
-            snapshot = buildSaveSnapshot(state, { tasks: newAllTasks });
-            return { tasks: newVisibleTasks, _allTasks: newAllTasks, lastDataChangeAt: changeAt };
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
         });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -521,13 +532,10 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 });
             }
 
-            snapshot = {
+            snapshot = buildSaveSnapshot(state, {
                 tasks: newAllTasks,
-                projects: state._allProjects,
-                sections: state._allSections,
-                areas: state._allAreas,
-                settings: deviceState.updated ? deviceState.settings : state.settings,
-            };
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
 
             return {
                 tasks: newVisibleTasks,

@@ -12,6 +12,9 @@ import {
   webdavMakeDirectory,
   webdavPutFile,
   withRetry,
+  createWebdavDownloadBackoff,
+  isWebdavRateLimitedError,
+  getErrorStatus,
 } from '@mindwtr/core';
 import {
   SYNC_BACKEND_KEY,
@@ -34,7 +37,10 @@ const WEBDAV_ATTACHMENT_MAX_DOWNLOADS_PER_SYNC = 10;
 const WEBDAV_ATTACHMENT_MAX_UPLOADS_PER_SYNC = 10;
 const WEBDAV_ATTACHMENT_MISSING_BACKOFF_MS = 15 * 60_000;
 const WEBDAV_ATTACHMENT_ERROR_BACKOFF_MS = 2 * 60_000;
-const webdavAttachmentDownloadBackoff = new Map<string, number>();
+const webdavDownloadBackoff = createWebdavDownloadBackoff({
+  missingBackoffMs: WEBDAV_ATTACHMENT_MISSING_BACKOFF_MS,
+  errorBackoffMs: WEBDAV_ATTACHMENT_ERROR_BACKOFF_MS,
+});
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_LOOKUP = (() => {
@@ -64,52 +70,16 @@ const logAttachmentInfo = (message: string, extra?: Record<string, string>) => {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const getErrorStatus = (error: unknown): number | null => {
-  if (!error || typeof error !== 'object') return null;
-  const anyError = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
-  const status = anyError.status ?? anyError.statusCode ?? anyError.response?.status;
-  return typeof status === 'number' ? status : null;
-};
-
 const getWebdavDownloadBackoff = (attachmentId: string): number | null => {
-  const blockedUntil = webdavAttachmentDownloadBackoff.get(attachmentId);
-  if (!blockedUntil) return null;
-  if (Date.now() >= blockedUntil) {
-    webdavAttachmentDownloadBackoff.delete(attachmentId);
-    return null;
-  }
-  return blockedUntil;
+  return webdavDownloadBackoff.getBlockedUntil(attachmentId);
 };
 
 const setWebdavDownloadBackoff = (attachmentId: string, error: unknown): void => {
-  const status = getErrorStatus(error);
-  if (status === 404) {
-    webdavAttachmentDownloadBackoff.set(attachmentId, Date.now() + WEBDAV_ATTACHMENT_MISSING_BACKOFF_MS);
-    return;
-  }
-  webdavAttachmentDownloadBackoff.set(attachmentId, Date.now() + WEBDAV_ATTACHMENT_ERROR_BACKOFF_MS);
+  webdavDownloadBackoff.setFromError(attachmentId, error);
 };
 
 const pruneWebdavDownloadBackoff = (): void => {
-  const now = Date.now();
-  for (const [id, blockedUntil] of webdavAttachmentDownloadBackoff) {
-    if (blockedUntil <= now) {
-      webdavAttachmentDownloadBackoff.delete(id);
-    }
-  }
-};
-
-const isWebdavRateLimitedError = (error: unknown): boolean => {
-  const status = getErrorStatus(error);
-  if (status === 429 || status === 503) return true;
-  const message = error instanceof Error ? error.message : String(error || '');
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes('blockedtemporarily') ||
-    normalized.includes('too many requests') ||
-    normalized.includes('rate limit') ||
-    normalized.includes('rate limited')
-  );
+  webdavDownloadBackoff.prune();
 };
 
 const reportProgress = (
@@ -484,8 +454,10 @@ const resolveSafSyncDir = async (syncUri: string): Promise<{ type: 'saf'; dirUri
   const prefix = prefixMatch[1];
   const treeMatch = syncUri.match(/\/tree\/([^/]+)/);
   let parentTreeUri: string | null = null;
+  let parentDocumentUri: string | null = null;
   if (treeMatch) {
     parentTreeUri = `${prefix}/tree/${treeMatch[1]}`;
+    parentDocumentUri = `${parentTreeUri}/document/${treeMatch[1]}`;
   } else {
     const docMatch = syncUri.match(/\/document\/([^/]+)/);
     if (!docMatch) return null;
@@ -497,32 +469,46 @@ const resolveSafSyncDir = async (syncUri: string): Promise<{ type: 'saf'; dirUri
     const lastSlash = path.lastIndexOf('/');
     const parentPath = lastSlash >= 0 ? path.slice(0, lastSlash) : '';
     const parentId = parentPath ? `${volume}${parentPath}` : volume;
-    parentTreeUri = `${prefix}/tree/${encodeURIComponent(parentId)}`;
+    const parentIdEncoded = encodeURIComponent(parentId);
+    parentTreeUri = `${prefix}/tree/${parentIdEncoded}`;
+    parentDocumentUri = `${parentTreeUri}/document/${parentIdEncoded}`;
   }
   if (!parentTreeUri) return null;
+  const directoryCandidates = parentDocumentUri ? [parentDocumentUri, parentTreeUri] : [parentTreeUri];
   let attachmentsDirUri: string | null = null;
-  try {
-    const entries = await StorageAccessFramework.readDirectoryAsync(parentTreeUri);
-    const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
-      entry,
-      decoded: decodeURIComponent(entry),
-    }));
-    const matchEntry = decoded.find((item) =>
-      item.decoded.endsWith(`/${ATTACHMENTS_DIR_NAME}`) || item.decoded.endsWith(`:${ATTACHMENTS_DIR_NAME}`)
-    );
-    attachmentsDirUri = matchEntry?.entry ?? null;
-  } catch (error) {
-    logAttachmentWarn('Failed to read SAF directory for attachments', error);
+  for (const candidate of directoryCandidates) {
+    try {
+      const entries = await StorageAccessFramework.readDirectoryAsync(candidate);
+      const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
+        entry,
+        decoded: decodeURIComponent(entry),
+      }));
+      const matchEntry = decoded.find((item) =>
+        item.decoded.endsWith(`/${ATTACHMENTS_DIR_NAME}`) || item.decoded.endsWith(`:${ATTACHMENTS_DIR_NAME}`)
+      );
+      attachmentsDirUri = matchEntry?.entry ?? null;
+      if (attachmentsDirUri) break;
+    } catch (error) {
+      // Continue to fallback URI variant before logging.
+      if (candidate === directoryCandidates[directoryCandidates.length - 1]) {
+        logAttachmentWarn('Failed to read SAF directory for attachments', error);
+      }
+    }
   }
   if (!attachmentsDirUri) {
-    try {
-      attachmentsDirUri = await StorageAccessFramework.makeDirectoryAsync(parentTreeUri, ATTACHMENTS_DIR_NAME);
-    } catch (error) {
-      logAttachmentWarn('Failed to create SAF attachments directory', error);
+    for (const candidate of directoryCandidates) {
+      try {
+        attachmentsDirUri = await StorageAccessFramework.makeDirectoryAsync(candidate, ATTACHMENTS_DIR_NAME);
+        if (attachmentsDirUri) break;
+      } catch (error) {
+        if (candidate === directoryCandidates[directoryCandidates.length - 1]) {
+          logAttachmentWarn('Failed to create SAF attachments directory', error);
+        }
+      }
     }
   }
   if (!attachmentsDirUri) return null;
-  return { type: 'saf', dirUri: parentTreeUri, attachmentsDirUri };
+  return { type: 'saf', dirUri: directoryCandidates[0], attachmentsDirUri };
 };
 
 const resolveFileSyncDir = async (
@@ -764,7 +750,7 @@ export const syncWebdavAttachments = async (
       didMutate = true;
     }
     if (existsLocally || isContent || isHttp) {
-      webdavAttachmentDownloadBackoff.delete(attachment.id);
+      webdavDownloadBackoff.deleteEntry(attachment.id);
     }
 
     if (attachment.cloudKey && hasLocalPath && existsLocally && !isHttp) {
@@ -785,7 +771,7 @@ export const syncWebdavAttachments = async (
         });
         if (!remoteExists) {
           attachment.cloudKey = undefined;
-          webdavAttachmentDownloadBackoff.delete(attachment.id);
+          webdavDownloadBackoff.deleteEntry(attachment.id);
           didMutate = true;
         }
       } catch (error) {
@@ -977,14 +963,24 @@ export const syncWebdavAttachments = async (
           attachment.localStatus = 'available';
           didMutate = true;
         }
-        webdavAttachmentDownloadBackoff.delete(attachment.id);
+        webdavDownloadBackoff.deleteEntry(attachment.id);
         reportProgress(attachment.id, 'download', bytes.length, bytes.length, 'completed');
       } catch (error) {
         if (handleRateLimit(error)) {
           abortedByRateLimit = true;
           break;
         }
-        setWebdavDownloadBackoff(attachment.id, error);
+        const status = getErrorStatus(error);
+        if (status === 404 && attachment.cloudKey) {
+          attachment.cloudKey = undefined;
+          webdavDownloadBackoff.deleteEntry(attachment.id);
+          didMutate = true;
+          logAttachmentInfo('Cleared missing WebDAV cloud key after 404', {
+            id: attachment.id,
+          });
+        } else {
+          setWebdavDownloadBackoff(attachment.id, error);
+        }
         if (attachment.localStatus !== 'missing') {
           attachment.localStatus = 'missing';
           didMutate = true;

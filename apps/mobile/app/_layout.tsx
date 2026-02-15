@@ -8,6 +8,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Alert, AppState, AppStateStatus, SafeAreaView, Text, View } from 'react-native';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QuickCaptureProvider, type QuickCaptureOptions } from '../contexts/quick-capture-context';
 
 import { ThemeProvider, useTheme } from '../contexts/theme-context';
@@ -16,10 +17,46 @@ import { setStorageAdapter, useTaskStore, flushPendingSave, isSupportedLanguage 
 import { mobileStorage } from '../lib/storage-adapter';
 import { setNotificationOpenHandler, startMobileNotifications, stopMobileNotifications } from '../lib/notification-service';
 import { performMobileSync } from '../lib/sync-service';
+import { isLikelyOfflineSyncError, resolveBackend, type SyncBackend } from '../lib/sync-service-utils';
+import { SYNC_BACKEND_KEY } from '../lib/sync-constants';
 import { updateAndroidWidgetFromStore } from '../lib/widget-service';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { verifyPolyfills } from '../utils/verify-polyfills';
 import { logError, logWarn, setupGlobalErrorLogging } from '../lib/app-log';
+import { useThemeColors } from '../hooks/use-theme-colors';
+
+type AutoSyncCadence = {
+  minIntervalMs: number;
+  debounceFirstChangeMs: number;
+  debounceContinuousChangeMs: number;
+  foregroundMinIntervalMs: number;
+};
+
+const AUTO_SYNC_BACKEND_CACHE_TTL_MS = 5_000;
+const AUTO_SYNC_CADENCE_FILE: AutoSyncCadence = {
+  minIntervalMs: 30_000,
+  debounceFirstChangeMs: 8_000,
+  debounceContinuousChangeMs: 15_000,
+  foregroundMinIntervalMs: 45_000,
+};
+const AUTO_SYNC_CADENCE_REMOTE: AutoSyncCadence = {
+  minIntervalMs: 5_000,
+  debounceFirstChangeMs: 2_000,
+  debounceContinuousChangeMs: 5_000,
+  foregroundMinIntervalMs: 30_000,
+};
+const AUTO_SYNC_CADENCE_OFF: AutoSyncCadence = {
+  minIntervalMs: 60_000,
+  debounceFirstChangeMs: 15_000,
+  debounceContinuousChangeMs: 30_000,
+  foregroundMinIntervalMs: 60_000,
+};
+
+const getCadenceForBackend = (backend: SyncBackend): AutoSyncCadence => {
+  if (backend === 'file') return AUTO_SYNC_CADENCE_FILE;
+  if (backend === 'webdav' || backend === 'cloud') return AUTO_SYNC_CADENCE_REMOTE;
+  return AUTO_SYNC_CADENCE_OFF;
+};
 
 // Initialize storage for mobile
 let storageInitError: Error | null = null;
@@ -40,6 +77,7 @@ void SplashScreen.preventAutoHideAsync().catch(() => {});
 function RootLayoutContent() {
   const router = useRouter();
   const { isDark, isReady: themeReady } = useTheme();
+  const tc = useThemeColors();
   const { language, setLanguage, isReady: languageReady } = useLanguage();
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const [storageWarningShown, setStorageWarningShown] = useState(false);
@@ -58,8 +96,27 @@ function RootLayoutContent() {
   const loadAttempts = useRef(0);
   const lastSyncErrorShown = useRef<string | null>(null);
   const lastSyncErrorAt = useRef(0);
+  const syncCadenceRef = useRef<AutoSyncCadence>(AUTO_SYNC_CADENCE_REMOTE);
+  const syncBackendCacheRef = useRef<{ backend: SyncBackend; readAt: number }>({
+    backend: 'off',
+    readAt: 0,
+  });
 
-  const runSync = useCallback((minIntervalMs = 5_000) => {
+  const refreshSyncCadence = useCallback(async (): Promise<AutoSyncCadence> => {
+    const now = Date.now();
+    const cached = syncBackendCacheRef.current;
+    if (now - cached.readAt <= AUTO_SYNC_BACKEND_CACHE_TTL_MS) {
+      syncCadenceRef.current = getCadenceForBackend(cached.backend);
+      return syncCadenceRef.current;
+    }
+    const rawBackend = await AsyncStorage.getItem(SYNC_BACKEND_KEY);
+    const backend = resolveBackend(rawBackend);
+    syncBackendCacheRef.current = { backend, readAt: now };
+    syncCadenceRef.current = getCadenceForBackend(backend);
+    return syncCadenceRef.current;
+  }, []);
+
+  const runSync = useCallback((minIntervalMs = syncCadenceRef.current.minIntervalMs) => {
     if (!isActive.current) return;
     if (syncInFlight.current && appState.current !== 'active') {
       backgroundSyncPending.current = true;
@@ -87,12 +144,15 @@ function RootLayoutContent() {
       await flushPendingSave().catch(logAppError);
       const result = await performMobileSync().catch((error) => ({ success: false, error: String(error) }));
       if (!result.success && result.error) {
+        if (isLikelyOfflineSyncError(result.error)) {
+          return;
+        }
         const nowMs = Date.now();
         const shouldShow = result.error !== lastSyncErrorShown.current && nowMs - lastSyncErrorAt.current > 10 * 60 * 1000;
         if (shouldShow) {
           lastSyncErrorShown.current = result.error;
           lastSyncErrorAt.current = nowMs;
-          Alert.alert('Sync failed', result.error);
+          Alert.alert('Sync failed', 'Please check your sync settings and try again.');
         }
       }
     })().finally(() => {
@@ -103,39 +163,63 @@ function RootLayoutContent() {
         return;
       }
       if (syncPending.current && isActive.current) {
-        runSync(0);
+        // Avoid immediate back-to-back sync loops while user is actively editing.
+        runSync(syncCadenceRef.current.minIntervalMs);
       }
     });
   }, []);
 
   useEffect(() => {
-    setNotificationOpenHandler(() => {
-      router.push('/review');
+    setNotificationOpenHandler((payload) => {
+      const taskId = typeof payload?.taskId === 'string' ? payload.taskId : undefined;
+      const projectId = typeof payload?.projectId === 'string' ? payload.projectId : undefined;
+      const kind = typeof payload?.kind === 'string' ? payload.kind : undefined;
+      if (taskId) {
+        useTaskStore.getState().setHighlightTask(taskId);
+        const openToken = typeof payload?.notificationId === 'string' ? payload.notificationId : String(Date.now());
+        router.push({ pathname: '/focus', params: { taskId, openToken } });
+        return;
+      }
+      if (projectId) {
+        router.push({ pathname: '/projects-screen', params: { projectId } });
+        return;
+      }
+      if (kind === 'daily-digest' || kind === 'weekly-review') {
+        router.push('/review');
+      }
     });
     return () => {
       setNotificationOpenHandler(null);
     };
   }, [router]);
 
-  const requestSync = useCallback((minIntervalMs = 5_000) => {
+  const requestSync = useCallback((minIntervalMs?: number) => {
     syncPending.current = true;
-    runSync(minIntervalMs);
-  }, [runSync]);
+    if (typeof minIntervalMs === 'number') {
+      runSync(minIntervalMs);
+      return;
+    }
+    void refreshSyncCadence()
+      .then((cadence) => runSync(cadence.minIntervalMs))
+      .catch(logAppError);
+  }, [refreshSyncCadence, runSync]);
 
   // Auto-sync on data changes with debounce
   useEffect(() => {
     setupGlobalErrorLogging();
+    void refreshSyncCadence().catch(logAppError);
     const unsubscribe = useTaskStore.subscribe((state, prevState) => {
       if (state.lastDataChangeAt === prevState.lastDataChangeAt) return;
-      // Debounce sync: wait 5 seconds after last change
+      // Debounce sync to batch frequent edits and avoid UI jank from constant sync churn.
+      const cadence = syncCadenceRef.current;
       const hadTimer = !!syncDebounceTimer.current;
       if (syncDebounceTimer.current) {
         clearTimeout(syncDebounceTimer.current);
       }
-      const debounceMs = hadTimer ? 5000 : 2000;
+      const debounceMs = hadTimer ? cadence.debounceContinuousChangeMs : cadence.debounceFirstChangeMs;
       syncDebounceTimer.current = setTimeout(() => {
         if (!isActive.current) return;
-        requestSync(debounceMs);
+        requestSync();
       }, debounceMs);
     });
 
@@ -180,12 +264,19 @@ function RootLayoutContent() {
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (!isActive.current) return;
-      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      const previousState = appState.current;
+      const wasInactiveOrBackground = previousState === 'inactive' || previousState === 'background';
+      const nextInactiveOrBackground = nextAppState === 'inactive' || nextAppState === 'background';
+      if (wasInactiveOrBackground && nextAppState === 'active') {
         // Coming back to foreground - sync to get latest data
-        const now = Date.now();
-        if (now - lastAutoSyncAt.current > 30_000) {
-          requestSync(0);
-        }
+        void refreshSyncCadence()
+          .then((cadence) => {
+            const now = Date.now();
+            if (now - lastAutoSyncAt.current > cadence.foregroundMinIntervalMs) {
+              requestSync(0);
+            }
+          })
+          .catch(logAppError);
         updateAndroidWidgetFromStore().catch(logAppError);
         if (widgetRefreshTimer.current) {
           clearTimeout(widgetRefreshTimer.current);
@@ -195,7 +286,7 @@ function RootLayoutContent() {
           updateAndroidWidgetFromStore().catch(logAppError);
         }, 800);
       }
-      if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
+      if (previousState === 'active' && nextInactiveOrBackground) {
         // Going to background - flush saves and sync
         if (syncDebounceTimer.current) {
           clearTimeout(syncDebounceTimer.current);
@@ -203,7 +294,7 @@ function RootLayoutContent() {
         }
         requestSync(0);
       }
-      if (appState.current?.match(/inactive|background/) && nextAppState === 'active') {
+      if (wasInactiveOrBackground && nextAppState === 'active') {
         if (backgroundSyncPending.current) {
           backgroundSyncPending.current = false;
           requestSync(0);
@@ -275,6 +366,10 @@ function RootLayoutContent() {
           if (!isActive.current) return;
           updateAndroidWidgetFromStore().catch(logAppError);
         }, 800);
+        // Initial sync after cold start
+        if (!cancelled && isActive.current) {
+          requestSync(0);
+        }
       } catch (e) {
         void logError(e, { scope: 'app', extra: { message: 'Failed to load data' } });
         if (cancelled) return;
@@ -317,7 +412,7 @@ function RootLayoutContent() {
         widgetRefreshTimer.current = null;
       }
     };
-  }, [storageWarningShown, storageInitError]);
+  }, [storageWarningShown, storageInitError, requestSync]);
 
   useEffect(() => {
     let previousEnabled = useTaskStore.getState().settings.notificationsEnabled;
@@ -352,7 +447,7 @@ function RootLayoutContent() {
 
   if (storageInitError) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#f8fafc' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: tc.bg }}>
         <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
           <Text style={{ fontSize: 20, fontWeight: '600', color: isDark ? '#e2e8f0' : '#0f172a', marginBottom: 12 }}>
             Storage unavailable
@@ -373,7 +468,7 @@ function RootLayoutContent() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: tc.bg }}>
       <QuickCaptureProvider
         value={{
           openQuickCapture: (options?: QuickCaptureOptions) => {
@@ -421,7 +516,11 @@ function RootLayoutContent() {
               }}
             />
           </Stack>
-          <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+          <StatusBar
+            barStyle={isDark ? 'light-content' : 'dark-content'}
+            backgroundColor={tc.cardBg}
+            translucent={false}
+          />
         </NavigationThemeProvider>
       </QuickCaptureProvider>
     </GestureHandlerRootView>

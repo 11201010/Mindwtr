@@ -123,8 +123,7 @@ export type DerivedState = {
 };
 
 export type DerivedCache = {
-    tasksRef: Task[];
-    projectsRef: Project[];
+    lastDataChangeAt: number;
     value: DerivedState;
 };
 

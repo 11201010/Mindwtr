@@ -22,6 +22,18 @@ export function ToastHost() {
                     aria-live="polite"
                 >
                     <span className="flex-1">{toast.message}</span>
+                    {toast.action && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                toast.action?.onClick();
+                                dismissToast(toast.id);
+                            }}
+                            className="text-xs font-medium text-primary hover:underline"
+                        >
+                            {toast.action.label}
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => dismissToast(toast.id)}

@@ -17,22 +17,20 @@
     "zh": {
       "BaseListing": {
         "Keywords": [
-          "GTD \u5F85\u529E\u4E8B\u9879\u7BA1\u7406",
-          "\u672C\u5730\u4F18\u5148\u4EFB\u52A1\u7BA1\u7406",
-          "\u8F7B\u91CF\u7EA7\u4EFB\u52A1\u7BA1\u7406\u5668",
-          "\u9690\u79C1\u4FDD\u62A4\u4EFB\u52A1\u5E94\u7528"
+          "GTD 待办事项管理",
+          "本地优先任务管理",
+          "轻量级任务管理器",
+          "隐私保护任务应用"
         ],
-        "Description": "Mindwtr \n\u662F\u4E00\u6B3E\u6CE8\u91CD\u9690\u79C1\u3001\u672C\u5730\u4F18\u5148\uFF08Lo\ncal-First\uFF09\u7684 GTD (Getting Things Done) \n\u5F85\u529E\u4E8B\u9879\u7BA1\u7406\u5E94\u7528\uFF0C\u65E8\u5728\u5E2E\u52A9\u60A8\u4E95\u4E95\u6709\u6761\u5730\u5B89\u6392\u751F\u6D3B\uFF0C\u4E14\u65E0\u9700\u727A\u7272\u6570\u636E\u5B89\u5168\u3002\n\n\u4E0E\u5176\u4ED6\u5C06\u60A8\u7684\u751F\u6D3B\u6570\u636E\u5B58\u50A8\u5728\u4E91\u7AEF\u670D\u52A1\u5668\u7684\u4EFB\u52A1\u7BA1\u7406\u5668\u4E0D\u540C\uFF0CMindwtr \n\u5C06\u6240\u6709\u5185\u5BB9\u90FD\u4FDD\u5B58\u5728\u60A8\u7684\u8BBE\u5907\u4E0A\u3002\u60A8\u7684\u4EFB\u52A1\u3001\u9879\u76EE\u548C\u7B14\u8BB0\u5B8C\u5168\u5C5E\u4E8E\u60A8\u81EA\u5DF1\u3002\n\n\u4E3B\u8981\u529F\u80FD\uFF1A\n\u2022\n\u672C\u5730\u4F18\u5148\uFF1A\u9664\u975E\u60A8\u4E3B\u52A8\u5BFC\u51FA\uFF0C\u5426\u5219\u60A8\u7684\u6570\u636E\u7EDD\u4E0D\u4F1A\u79BB\u5F00\u60A8\u7684\u8BBE\u5907\u3002\n\u2022 GTD \u5DE5\u4F5C\u6D41\uFF1A\u4E13\u4E3A\u201CGetting \nThings \nDone\u201D\u65B9\u6CD5\u8BBA\u6253\u9020\uFF0C\u5305\u542B\u6536\u4EF6\u7BB1\uFF08Inbox\uFF09\u3001\u9879\u76EE\uFF08Projects\uFF09\u548C\u4E0A\u4E0B\u6587\uFF08Contexts\uFF09\u3002\n\u2022 \u5FEB\u901F\u8F7B\u91CF\uFF1A\u57FA\u4E8E Rust \n\u548C Tauri \n\u6784\u5EFA\uFF0C\u542F\u52A8\u8FC5\u901F\uFF0C\u6027\u80FD\u6781\u5FEB\u3002\n\n\u2022 \n\u4E13\u6CE8\u65E0\u5E72\u6270\uFF1A\u5E72\u51C0\u3001\u6781\u7B80\u7684\u7528\u6237\u754C\u9762\uFF0C\u52A9\u60A8\u4E13\u6CE8\u4E8E\u91CD\u8981\u4E8B\u9879\u3002\n\u2022 \n\u5F00\u6E90\u900F\u660E\uFF1A\u4EE3\u7801\u5F00\u6E90\u4E14\u53EF\u5BA1\u8BA1\uFF0C\u503C\u5F97\u60A8\u4FE1\u8D56\u3002\n\n\u638C\u63A7\u60A8\u7684\u4EFB\u52A1\n\uFF0C\u540C\u65F6\u786E\u4FE1\u60A8\u7684\u6570\u636E\u5B89\u5168\u65E0\u865E\u3002",
+        "Description": "Mindwtr \n是一款注重隐私、本地优先（Lo\ncal-First）的 GTD (Getting Things Done) \n待办事项管理应用，旨在帮助您井井有条地安排生活，且无需牺牲数据安全。\n\n与其他将您的生活数据存储在云端服务器的任务管理器不同，Mindwtr \n将所有内容都保存在您的设备上。您的任务、项目和笔记完全属于您自己。\n\n主要功能：\n•\n本地优先：除非您主动导出，否则您的数据绝不会离开您的设备。\n• GTD 工作流：专为“Getting \nThings \nDone”方法论打造，包含收件箱（Inbox）、项目（Projects）和上下文（Contexts）。\n• 快速轻量：基于 Rust \n和 Tauri \n构建，启动迅速，性能极快。\n\n• \n专注无干扰：干净、极简的用户界面，助您专注于重要事项。\n• \n开源透明：代码开源且可审计，值得您信赖。\n\n掌控您的任务\n，同时确信您的数据安全无虞。",
         "Features": [
-          
-"\u672C\u5730\u4F18\u5148\u7684\u6570\u636E\u5B58\u50A8\uFF0C\u6700\u5927\u7A0B\u5EA6\u4FDD\u62A4\u9690\u79C1",
-          "\u5E72\u51C0\u3001\u6781\u7B80\u7684 GTD (Getting Things Done) \n\u754C\u9762",
-          "\u57FA\u4E8E Rust \u548C Tauri \n\u6784\u5EFA\uFF0C\u6027\u80FD\u6781\u5FEB",
-          
-"\u5B8C\u5168\u79BB\u7EBF\u53EF\u7528\uFF0C\u65E0\u9700\u4E92\u8054\u7F51\u8FDE\u63A5",
-          "\u5B8C\u5168\u5F00\u6E90\uFF0C\u5B89\u5168\u900F\u660E"
+          "本地优先的数据存储，最大程度保护隐私",
+          "干净、极简的 GTD (Getting Things Done) \n界面",
+          "基于 Rust 和 Tauri \n构建，性能极快",
+          "完全离线可用，无需互联网连接",
+          "完全开源，安全透明"
         ],
-        "ReleaseNotes": "\u2022 描述 Markdown 现已支持清单语法（[ ] / [x]）和列表渲染。\n\u2022 在移动端点击通知后会打开回顾页面。\n\u2022 移动端同步更可靠，可更好保留新建的本地任务。",
+        "ReleaseNotes": "• 稳定了 iOS 设置与菜单页面的返回导航与边缘滑动手势。\n• 提升了多设备同步安全性与确定性合并正确性。\n• 新增通过自定义 Base URL 接入本地 OpenAI 兼容 AI 端点支持。\n• 强化 MCP 自动化可靠性：事务写入与 FTS 搜索。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -76,7 +74,7 @@
           "gtd-applications",
           "cross-platform"
         ],
-        "Description": "Requires Microsoft Visual C\u002B\u002B Redistributable \nto run.\n\nMindwtr is a privacy-focused, local-first Getting Things Done (GTD) \napplication designed to help you organize your life without compromising your \ndata.\n\nUnlike other task managers that store your life on a cloud server, \nMindwtr keeps everything on your device. Your tasks, projects, and notes belong \nto you, and you alone.\n\nKey Features:\n\u2022 Local-First: Your data never \nleaves your device unless you explicitly export it.\n\u2022 GTD Workflow: Built \nfor the \u0022Getting Things Done\u0022 methodology with Inbox, Projects, and \nContexts.\n\u2022 Fast \u0026 Lightweight: Built with Rust and Tauri for \nblazing-fast performance.\n\u2022 Distraction-Free: A clean, minimalist \ninterface that helps you focus on what matters.\n\u2022 Open Source: Auditable \nand transparent code you can trust.\n\nTake control of your tasks with the peace\nof mind that your data is safe.",
+        "Description": "Requires Microsoft Visual C++ Redistributable \nto run.\n\nMindwtr is a privacy-focused, local-first Getting Things Done (GTD) \napplication designed to help you organize your life without compromising your \ndata.\n\nUnlike other task managers that store your life on a cloud server, \nMindwtr keeps everything on your device. Your tasks, projects, and notes belong \nto you, and you alone.\n\nKey Features:\n• Local-First: Your data never \nleaves your device unless you explicitly export it.\n• GTD Workflow: Built \nfor the \"Getting Things Done\" methodology with Inbox, Projects, and \nContexts.\n• Fast & Lightweight: Built with Rust and Tauri for \nblazing-fast performance.\n• Distraction-Free: A clean, minimalist \ninterface that helps you focus on what matters.\n• Open Source: Auditable \nand transparent code you can trust.\n\nTake control of your tasks with the peace\nof mind that your data is safe.",
         "Features": [
           "Local-first data storage for maximum privacy",
           "Clean, minimalist GTD (Getting Things Done) interface",
@@ -84,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "\u2022 Description markdown now supports checklist syntax ([ ] / [x]) and list rendering more reliably.\n\u2022 Tapping a notification on mobile now opens the Review screen.\n\u2022 Mobile sync is more reliable and better preserves newly created local tasks.",
+        "ReleaseNotes": "• Stabilized iOS back navigation and edge-swipe behavior across settings and drawer screens.\n• Improved cross-device sync safety and deterministic merge correctness.\n• Added support for local OpenAI-compatible AI endpoints via custom base URL.\n• Strengthened MCP automation reliability with transactional writes and FTS-backed search.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -122,17 +120,17 @@
         "Keywords": [
           "gestor de tareas",
           "gestor GTD",
-          "aplicaci\u00F3n GTD privacidad"
+          "aplicación GTD privacidad"
         ],
-        "Description": "Mindwtr es una aplicaci\u00F3n de gesti\u00F3n de tareas\nGTD (Getting Things Done) centrada en la privacidad y con dise\u00F1o \n\u0022Local-First\u0022, dise\u00F1ada para ayudarte a organizar tu vida sin \ncomprometer tus datos.\n\nA diferencia de otros gestores de tareas que almacenan\ntu vida en un servidor en la nube, Mindwtr guarda todo en tu dispositivo. Tus \ntareas, proyectos y notas te pertenecen a ti, y solo a \nti.\n\nCaracter\u00EDsticas principales:\n\u2022 Local-First: Tus datos nunca \nsalen de tu dispositivo a menos que los exportes expl\u00EDcitamente.\n\u2022 \nFlujo de trabajo GTD: Construido para la metodolog\u00EDa \u0022Getting Things \nDone\u0022 con Bandeja de entrada, Proyectos y Contextos.\n\u2022 R\u00E1pido y \nligero: Construido con Rust y Tauri para un rendimiento incre\u00EDblemente \nr\u00E1pido.\n\u2022 Sin distracciones: Una interfaz limpia y minimalista que te\nayuda a concentrarte en lo importante.\n\u2022 C\u00F3digo abierto: C\u00F3digo \nauditable y transparente en el que puedes confiar.\n\nToma el control de tus \ntareas con la tranquilidad de saber que tus datos est\u00E1n seguros.",
+        "Description": "Mindwtr es una aplicación de gestión de tareas\nGTD (Getting Things Done) centrada en la privacidad y con diseño \n\"Local-First\", diseñada para ayudarte a organizar tu vida sin \ncomprometer tus datos.\n\nA diferencia de otros gestores de tareas que almacenan\ntu vida en un servidor en la nube, Mindwtr guarda todo en tu dispositivo. Tus \ntareas, proyectos y notas te pertenecen a ti, y solo a \nti.\n\nCaracterísticas principales:\n• Local-First: Tus datos nunca \nsalen de tu dispositivo a menos que los exportes explícitamente.\n• \nFlujo de trabajo GTD: Construido para la metodología \"Getting Things \nDone\" con Bandeja de entrada, Proyectos y Contextos.\n• Rápido y \nligero: Construido con Rust y Tauri para un rendimiento increíblemente \nrápido.\n• Sin distracciones: Una interfaz limpia y minimalista que te\nayuda a concentrarte en lo importante.\n• Código abierto: Código \nauditable y transparente en el que puedes confiar.\n\nToma el control de tus \ntareas con la tranquilidad de saber que tus datos están seguros.",
         "Features": [
-          "Almacenamiento de datos local para m\u00E1xima privacidad",
+          "Almacenamiento de datos local para máxima privacidad",
           "Interfaz GTD (Getting Things Done) limpia y minimalista",
-          "Rendimiento ultrarr\u00E1pido usando Rust y Tauri",
-          "No requiere conexi\u00F3n a internet para funcionar",
-          "C\u00F3digo abierto y transparente"
+          "Rendimiento ultrarrápido usando Rust y Tauri",
+          "No requiere conexión a internet para funcionar",
+          "Código abierto y transparente"
         ],
-        "ReleaseNotes": "\u2022 El markdown de descripciones ahora soporta mejor la sintaxis de checklist ([ ] / [x]) y las listas.\n\u2022 Al tocar una notificaci\u00f3n en m\u00f3vil ahora se abre la pantalla de Revisi\u00f3n.\n\u2022 La sincronizaci\u00f3n m\u00f3vil es m\u00e1s fiable y conserva mejor las tareas locales reci\u00e9n creadas.",
+        "ReleaseNotes": "• Se estabilizo la navegacion atras y edge-swipe en iOS en pantallas de ajustes y menu.\n• Se mejoro la seguridad de sync entre dispositivos y la correccion deterministica de merges.\n• Se agrego soporte para endpoints AI locales compatibles con OpenAI mediante URL base personalizada.\n• Se reforzo la fiabilidad de automatizacion MCP con escrituras transaccionales y busqueda FTS.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

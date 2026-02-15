@@ -68,7 +68,7 @@ export function ArchiveView() {
                 />
             </div>
 
-            <div className="space-y-3">
+            <div className="divide-y divide-border/30">
                 {archivedTasks.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground bg-muted/30 rounded-lg border border-dashed border-border">
                         <p>{t('archived.noTasksFound')}</p>
@@ -76,7 +76,7 @@ export function ArchiveView() {
                     </div>
                 ) : (
                     archivedTasks.map(task => (
-                        <div key={task.id} className="bg-card border border-border rounded-lg p-4 flex items-center justify-between group hover:shadow-sm transition-all">
+                        <div key={task.id} className="rounded-lg px-3 py-3 flex items-center justify-between group hover:bg-muted/50 transition-colors">
                             <div>
                                 <h3 className="font-medium text-foreground line-through opacity-70">{task.title}</h3>
                                 <p className="text-xs text-muted-foreground mt-1">

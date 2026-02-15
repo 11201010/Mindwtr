@@ -29,9 +29,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       : android.permissions;
   }
 
+  const extra = {
+    ...(base.extra ?? {}),
+    isFossBuild,
+  };
+
   return {
     ...base,
     android,
     plugins: filteredPlugins,
+    extra,
   };
 };

@@ -1,0 +1,4 @@
+- Improved sync safety and deterministic conflict resolution to reduce cross-device data loss risk.
+- Mobile inbox processing is now single-page with faster quick-add and token workflows.
+- Better mobile task editing and review UX with safer headers, date-picker behavior, and larger tap targets.
+- Performance/reliability upgrades across SQLite lock handling, sync hot paths, and offline error detection.

@@ -7,24 +7,31 @@ import {
     safeParseDate,
     safeParseDueDate,
     shallow,
+    type ExternalCalendarEvent,
     type ReviewSuggestion,
     useTaskStore,
     type Task,
     type TaskStatus,
     type AIProviderId,
 } from '@mindwtr/core';
-import { Archive, ArrowRight, Calendar, Check, CheckSquare, Layers, RefreshCw, Sparkles, X, type LucideIcon } from 'lucide-react';
+import { Archive, ArrowRight, Calendar, Check, CheckSquare, ChevronLeft, Layers, RefreshCw, Sparkles, X, type LucideIcon } from 'lucide-react';
 
 import { TaskItem } from '../../TaskItem';
 import { cn } from '../../../lib/utils';
 import { useLanguage } from '../../../contexts/language-context';
 import { buildAIConfig, loadAIKey } from '../../../lib/ai-config';
+import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
 
 type ReviewStep = 'intro' | 'inbox' | 'ai' | 'calendar' | 'waiting' | 'projects' | 'someday' | 'completed';
 type CalendarReviewEntry = {
     task: Task;
     date: Date;
     kind: 'due' | 'start';
+};
+type ExternalCalendarDaySummary = {
+    dayStart: Date;
+    events: ExternalCalendarEvent[];
+    totalCount: number;
 };
 
 type WeeklyReviewGuideModalProps = {
@@ -50,6 +57,9 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
     const [aiLoading, setAiLoading] = useState(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiRan, setAiRan] = useState(false);
+    const [externalCalendarEvents, setExternalCalendarEvents] = useState<ExternalCalendarEvent[]>([]);
+    const [externalCalendarLoading, setExternalCalendarLoading] = useState(false);
+    const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
 
     const aiEnabled = settings?.ai?.enabled === true;
     const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
@@ -62,43 +72,85 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
     }, [staleItems]);
     const calendarReviewItems = useMemo(() => {
         const now = new Date();
-        const pastStart = new Date(now);
-        pastStart.setDate(pastStart.getDate() - 14);
-        const upcomingEnd = new Date(now);
-        upcomingEnd.setDate(upcomingEnd.getDate() + 14);
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const upcomingEnd = new Date(startOfToday);
+        upcomingEnd.setDate(upcomingEnd.getDate() + 7);
         const entries: CalendarReviewEntry[] = [];
 
         tasks.forEach((task) => {
             if (task.deletedAt) return;
+            if (task.status === 'done' || task.status === 'archived' || task.status === 'reference') return;
             const dueDate = safeParseDueDate(task.dueDate);
             if (dueDate) entries.push({ task, date: dueDate, kind: 'due' });
             const startTime = safeParseDate(task.startTime);
             if (startTime) entries.push({ task, date: startTime, kind: 'start' });
         });
 
-        const past = entries
-            .filter((entry) => entry.date >= pastStart && entry.date < now)
-            .sort((a, b) => b.date.getTime() - a.date.getTime());
         const upcoming = entries
-            .filter((entry) => entry.date >= now && entry.date <= upcomingEnd)
+            .filter((entry) => entry.date >= startOfToday && entry.date < upcomingEnd)
             .sort((a, b) => a.date.getTime() - b.date.getTime());
 
-        return { past, upcoming };
+        return upcoming;
     }, [tasks]);
+    const externalCalendarReviewItems = useMemo<ExternalCalendarDaySummary[]>(() => {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const summaries: ExternalCalendarDaySummary[] = [];
+        for (let offset = 0; offset < 7; offset += 1) {
+            const dayStart = new Date(startOfToday);
+            dayStart.setDate(dayStart.getDate() + offset);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setDate(dayEnd.getDate() + 1);
+            const dayEvents = externalCalendarEvents
+                .filter((event) => {
+                    const start = safeParseDate(event.start);
+                    const end = safeParseDate(event.end);
+                    if (!start || !end) return false;
+                    return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
+                })
+                .sort((a, b) => {
+                    const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                    const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                    return aStart - bStart;
+                });
+            if (dayEvents.length > 0) {
+                summaries.push({
+                    dayStart,
+                    events: dayEvents.slice(0, 2),
+                    totalCount: dayEvents.length,
+                });
+            }
+        }
+        return summaries;
+    }, [externalCalendarEvents]);
 
-    const steps: { id: ReviewStep; title: string; description: string; icon: LucideIcon }[] = [
-        { id: 'intro', title: t('review.title'), description: t('review.intro'), icon: RefreshCw },
-        { id: 'inbox', title: t('review.inboxStep'), description: t('review.inboxStepDesc'), icon: CheckSquare },
-        { id: 'ai', title: t('review.aiStep'), description: t('review.aiStepDesc'), icon: Sparkles },
-        { id: 'calendar', title: t('review.calendarStep'), description: t('review.calendarStepDesc'), icon: Calendar },
-        { id: 'waiting', title: t('review.waitingStep'), description: t('review.waitingStepDesc'), icon: ArrowRight },
-        { id: 'projects', title: t('review.projectsStep'), description: t('review.projectsStepDesc'), icon: Layers },
-        { id: 'someday', title: t('review.somedayStep'), description: t('review.somedayStepDesc'), icon: Archive },
-        { id: 'completed', title: t('review.allDone'), description: t('review.allDoneDesc'), icon: Check },
-    ];
+    const steps = useMemo<{ id: ReviewStep; title: string; description: string; icon: LucideIcon }[]>(() => {
+        const list: { id: ReviewStep; title: string; description: string; icon: LucideIcon }[] = [
+            { id: 'intro', title: t('review.title'), description: t('review.intro'), icon: RefreshCw },
+            { id: 'inbox', title: t('review.inboxStep'), description: t('review.inboxStepDesc'), icon: CheckSquare },
+        ];
+        if (aiEnabled) {
+            list.push({ id: 'ai', title: t('review.aiStep'), description: t('review.aiStepDesc'), icon: Sparkles });
+        }
+        list.push(
+            { id: 'calendar', title: t('review.calendarStep'), description: t('review.calendarStepDesc'), icon: Calendar },
+            { id: 'waiting', title: t('review.waitingStep'), description: t('review.waitingStepDesc'), icon: ArrowRight },
+            { id: 'projects', title: t('review.projectsStep'), description: t('review.projectsStepDesc'), icon: Layers },
+            { id: 'someday', title: t('review.somedayStep'), description: t('review.somedayStepDesc'), icon: Archive },
+            { id: 'completed', title: t('review.allDone'), description: t('review.allDoneDesc'), icon: Check },
+        );
+        return list;
+    }, [aiEnabled, t]);
 
     const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
-    const progress = (currentStepIndex / (steps.length - 1)) * 100;
+    const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0;
+    const progress = (safeStepIndex / Math.max(1, steps.length - 1)) * 100;
+
+    useEffect(() => {
+        if (!steps.some((step) => step.id === currentStep)) {
+            setCurrentStep(steps[0].id);
+        }
+    }, [currentStep, steps]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -111,13 +163,49 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [onClose]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const loadCalendar = async () => {
+            setExternalCalendarLoading(true);
+            setExternalCalendarError(null);
+            try {
+                const now = new Date();
+                const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const rangeEnd = new Date(rangeStart);
+                rangeEnd.setDate(rangeEnd.getDate() + 7);
+                rangeEnd.setMilliseconds(-1);
+                const { events } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
+                if (cancelled) return;
+                setExternalCalendarEvents(events);
+            } catch (error) {
+                if (cancelled) return;
+                setExternalCalendarError(error instanceof Error ? error.message : String(error));
+                setExternalCalendarEvents([]);
+            } finally {
+                if (!cancelled) setExternalCalendarLoading(false);
+            }
+        };
+        loadCalendar();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     const nextStep = () => {
+        if (currentStepIndex < 0) {
+            setCurrentStep(steps[0].id);
+            return;
+        }
         if (currentStepIndex < steps.length - 1) {
             setCurrentStep(steps[currentStepIndex + 1].id);
         }
     };
 
     const prevStep = () => {
+        if (currentStepIndex < 0) {
+            setCurrentStep(steps[0].id);
+            return;
+        }
         if (currentStepIndex > 0) {
             setCurrentStep(steps[currentStepIndex - 1].id);
         }
@@ -201,7 +289,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         }
         return (
             <div className="space-y-2">
-                {items.map((entry) => (
+                {items.slice(0, 12).map((entry) => (
                     <div key={`${entry.kind}-${entry.task.id}-${entry.date.toISOString()}`} className="flex items-start gap-3 text-sm">
                         <div className="min-w-0">
                             <div className="font-medium truncate">{entry.task.title}</div>
@@ -210,6 +298,45 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                                 {' / '}
                                 {safeFormatDate(entry.date, 'MMM d, HH:mm')}
                             </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+    const renderExternalCalendarList = (days: ExternalCalendarDaySummary[]) => {
+        if (externalCalendarLoading) {
+            return <div className="text-sm text-muted-foreground">{t('common.loading')}</div>;
+        }
+        if (externalCalendarError) {
+            return <div className="text-sm text-muted-foreground">{externalCalendarError}</div>;
+        }
+        if (days.length === 0) {
+            return <div className="text-sm text-muted-foreground">{t('calendar.noTasks')}</div>;
+        }
+        return (
+            <div className="space-y-2">
+                {days.map((day) => (
+                    <div key={day.dayStart.toISOString()} className="rounded-md border border-border/70 p-2.5">
+                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            {safeFormatDate(day.dayStart, 'EEE, MMM d')} · {day.totalCount} {t('calendar.events')}
+                        </div>
+                        <div className="mt-1.5 space-y-1">
+                            {day.events.map((event) => {
+                                const start = safeParseDate(event.start);
+                                const timeLabel = event.allDay || !start ? t('calendar.allDay') : safeFormatDate(start, 'HH:mm');
+                                return (
+                                    <div key={`${event.sourceId}-${event.id}-${event.start}`} className="text-sm flex gap-2">
+                                        <span className="text-muted-foreground w-12 shrink-0">{timeLabel}</span>
+                                        <span className="font-medium truncate">{event.title}</span>
+                                    </div>
+                                );
+                            })}
+                            {day.totalCount > day.events.length && (
+                                <div className="text-xs text-muted-foreground">
+                                    +{day.totalCount - day.events.length} {t('common.more').toLowerCase()}
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -267,21 +394,23 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
             case 'calendar':
                 return (
                     <div className="space-y-6">
-                        <div className="grid grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">{t('review.past14')}</h3>
-                                <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] space-y-3">
-                                    <p className="text-xs text-muted-foreground">{t('review.past14Desc')}</p>
-                                    {renderCalendarList(calendarReviewItems.past)}
-                                </div>
+                        <div className="space-y-2">
+                            <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">
+                                {t('calendar.events')}
+                            </h3>
+                            <p className="text-xs text-muted-foreground">{t('review.calendarStepDesc')}</p>
+                            <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] space-y-3">
+                                {renderExternalCalendarList(externalCalendarReviewItems)}
                             </div>
-                            <div className="space-y-2">
-                                <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">{t('review.upcoming14')}</h3>
-                                <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] space-y-3">
-                                    <p className="text-xs text-muted-foreground">{t('review.upcoming14Desc')}</p>
-                                    {renderCalendarList(calendarReviewItems.upcoming)}
-                                </div>
-                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="font-semibold text-muted-foreground uppercase text-xs tracking-wider">
+                                {t('review.calendarStep')}
+                            </h3>
+                            <p className="text-xs text-muted-foreground">{t('review.upcoming14Desc')}</p>
+                        </div>
+                        <div className="bg-card border border-border rounded-lg p-4 min-h-[200px] space-y-3">
+                            {renderCalendarList(calendarReviewItems)}
                         </div>
                     </div>
                 );
@@ -517,37 +646,37 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                 className="bg-card border border-border rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="p-6 border-b border-border flex items-center justify-between">
-                    <h3 className="text-xl font-semibold flex items-center gap-2">
-                        <RefreshCw className="w-5 h-5 text-primary" />
+                <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                    <h3 className="text-[15px] font-semibold flex items-center gap-2.5">
+                        <RefreshCw className="w-4 h-4 text-primary" />
                         {t('review.title')}
                     </h3>
                     <button
                         onClick={onClose}
-                        className="p-2 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                        className="p-1.5 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
                         aria-label={t('common.close')}
                     >
-                        <X className="w-5 h-5" />
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
 
-                <div className="p-6 flex flex-col flex-1 min-h-0">
-                    <div className="mb-6">
+                <div className="p-5 flex flex-col flex-1 min-h-0">
+                    <div className="mb-5">
                         <div className="flex items-center justify-between mb-3">
-                            <h1 className="text-2xl font-bold flex items-center gap-2">
+                            <h1 className="text-lg font-semibold flex items-center gap-2">
                                 {(() => {
-                                    const Icon = steps[currentStepIndex].icon;
-                                    return Icon && <Icon className="w-6 h-6" />;
+                                    const Icon = steps[safeStepIndex].icon;
+                                    return Icon && <Icon className="w-[18px] h-[18px] text-primary" />;
                                 })()}
-                                {steps[currentStepIndex].title}
+                                {steps[safeStepIndex].title}
                             </h1>
-                            <span className="text-sm text-muted-foreground">
-                                {t('review.step')} {currentStepIndex + 1} {t('review.of')} {steps.length}
+                            <span className="text-xs text-muted-foreground">
+                                {t('review.step')} {safeStepIndex + 1} {t('review.of')} {steps.length}
                             </span>
                         </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-1 bg-muted rounded-full overflow-hidden">
                             <div
-                                className="h-full bg-primary transition-all duration-500 ease-in-out"
+                                className="h-full bg-primary transition-all duration-500 ease-in-out rounded-full"
                                 style={{ width: `${progress}%` }}
                             />
                         </div>
@@ -558,18 +687,18 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                     </div>
 
                     {currentStep !== 'intro' && currentStep !== 'completed' && (
-                        <div className="flex justify-between pt-4 border-t border-border mt-6">
+                        <div className="flex justify-between items-center pt-3.5 border-t border-border mt-5">
                             <button
                                 onClick={prevStep}
-                                className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
+                                className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                             >
-                                {t('review.back')}
+                                <ChevronLeft className="w-3.5 h-3.5" /> {t('review.back')}
                             </button>
                             <button
                                 onClick={nextStep}
-                                className="bg-primary text-primary-foreground px-6 py-2 rounded-md hover:bg-primary/90 transition-colors"
+                                className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors"
                             >
-                                {t('review.nextStepBtn')}
+                                {t('review.nextStepBtn')} <ArrowRight className="w-3.5 h-3.5" />
                             </button>
                         </div>
                     )}

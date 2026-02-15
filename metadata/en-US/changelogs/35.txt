@@ -1,0 +1,4 @@
+- Added support for local OpenAI-compatible AI endpoints via custom base URL configuration.
+- Hardened sync and cloud merge behavior to reduce cross-device data integrity issues.
+- Improved mobile UX with checklist keyboard visibility, navigation stability, and review/calendar flow fixes.
+- Upgraded MCP automation reliability with transactional mutations, typed validation, and FTS-backed search.

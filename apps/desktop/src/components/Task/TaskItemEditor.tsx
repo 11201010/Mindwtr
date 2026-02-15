@@ -153,12 +153,10 @@ export function TaskItemEditor({
         setEditDueDate(`${datePart}T${value}`);
     };
 
-    const sortedAreas = [...areas].sort((a, b) => {
-        const aOrder = Number.isFinite(a.order) ? a.order : 0;
-        const bOrder = Number.isFinite(b.order) ? b.order : 0;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        return a.name.localeCompare(b.name);
-    });
+    const compareLabels = (left: string, right: string) =>
+        left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+    const sortedProjects = [...projects].sort((a, b) => compareLabels(a.title, b.title));
+    const sortedAreas = [...areas].sort((a, b) => compareLabels(a.name, b.name));
     const [schedulingOpen, setSchedulingOpen] = useState(sectionCounts.scheduling > 0);
     const [organizationOpen, setOrganizationOpen] = useState(sectionCounts.organization > 0);
     const [detailsOpen, setDetailsOpen] = useState(
@@ -356,7 +354,7 @@ export function TaskItemEditor({
                     <div className="flex flex-col gap-1 flex-1 min-w-0">
                         <label className="text-xs text-muted-foreground font-medium">{t('projects.title')}</label>
                         <ProjectSelector
-                            projects={projects}
+                            projects={sortedProjects}
                             value={editProjectId}
                             onChange={setEditProjectId}
                             onCreateProject={onCreateProject}

@@ -8,7 +8,7 @@ Frequently asked questions about Mindwtr.
 
 ### What is Mindwtr?
 
-Mindwtr is a cross-platform Getting Things Done (GTD) productivity app that helps you capture, clarify, organize, and engage with your tasks. Available for desktop (Windows, macOS, Linux) and mobile (Android, iOS simulator builds).
+Mindwtr is a cross-platform Getting Things Done (GTD) productivity app that helps you capture, clarify, organize, and engage with your tasks. Available for desktop (Windows, macOS, Linux) and mobile (Android, iOS).
 
 ### Is Mindwtr free?
 
@@ -117,19 +117,28 @@ For Horizons 3–5 (Goals, Vision, Purpose), there isn’t a dedicated entity ye
 
 If you rely on explicit Goal/Vision objects, please open an issue with your desired workflow and review cadence.
 
-### How do I enable Due Date, Priority, or Time Estimate?
+### How do I enable Priority or Estimated Time?
 
-These fields are hidden by default to keep the UI clean. Enable them here:
+Mindwtr uses progressive disclosure, so optional fields are hidden by default.
 
-**Settings → GTD → Task Editor**
+Enable them in:
 
-You can also reorder the fields there.
+**Settings → GTD → Task Editor Layout**
+
+Turn on **Priority** and **Estimated Time** there (and reorder fields if needed).
 
 
 
 ### How do recurring tasks work?
 
-When you complete a recurring task, Mindwtr automatically creates the next instance with updated dates. If a due date is set, the next occurrence is calculated from that due date; otherwise it uses the completion time. Set recurrence in the task editor (daily, weekly, monthly, yearly).
+Mindwtr supports two recurrence strategies:
+
+- **Strict** (fixed schedule): next date is based on the schedule pattern itself.
+  Example: every 5 days stays on that cadence even if you complete late.
+- **Repeat after completion** (fluid): next date is calculated from when you actually complete the task.
+  Example: complete today, then next is due in 5 days from today.
+
+Set recurrence in the task editor (daily/weekly/monthly/yearly), then enable **Repeat after completion** if you want fluid behavior.
 
 ### How do I collect logs for a bug report?
 
@@ -211,23 +220,12 @@ You can snooze notifications for later.
 
 **macOS** will prompt for permission the first time you enable notifications. On **Linux**, ensure a notification daemon is running.
 
-### macOS says the app is "damaged"
-
-Run this command in Terminal:
-```bash
-xattr -cr /Applications/Mindwtr.app
-```
-
-This clears the quarantine flag. The app is not notarized with Apple.
-
----
-
 ## Mobile
 
 ### Which platforms are supported?
 
 - **Android:** Full support via Google Play or APK download
-- **iOS:** iOS builds require an Apple Developer account ($99/year). Currently available as simulator builds only. If you want iOS builds, please consider [sponsoring the developer](https://github.com/sponsors/dongdongbh) so we can fund the Apple Developer account.
+- **iOS:** Available on the App Store and via TestFlight beta. Maintaining the App Store release still requires an annual Apple Developer fee, so sponsorship support helps keep iOS available.
 
 ### Why does editing feel different on desktop and mobile?
 

@@ -1,0 +1,15 @@
+<en-US>
+- Improved cross-device sync stability: fixed a conflict tie-break edge case that could revert newer edits.
+- Enhanced mobile/desktop productivity UX: smarter @/# suggestions, review flow improvements, and a cleaner board task editor.
+- Hardened FOSS Android release pipeline for reproducible builds and stricter permission cleanup.
+</en-US>
+<zh-CN>
+- 提升跨设备同步稳定性：修复了在修订号相同情况下可能回滚新编辑内容的冲突处理问题。
+- 优化移动端与桌面端效率体验：改进 @/# 智能建议、回顾流程与看板任务编辑器。
+- 加强 FOSS Android 发布流程，提升可复现构建能力并进一步清理不必要权限。
+</zh-CN>
+<es-ES>
+- Mejoramos la estabilidad del sincronizado entre dispositivos: se corrigió un caso límite de conflictos que podía revertir cambios más recientes.
+- Mejoras de productividad en móvil y escritorio: sugerencias @/# más inteligentes, mejoras en Review y editor de tareas del tablero más claro.
+- Se reforzó el pipeline FOSS de Android para builds reproducibles y limpieza más estricta de permisos.
+</es-ES>

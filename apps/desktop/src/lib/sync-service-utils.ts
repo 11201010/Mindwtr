@@ -1,4 +1,11 @@
-import type { AppData, Attachment } from '@mindwtr/core';
+import {
+    getFileSyncDir,
+    isSyncFilePath,
+    normalizePath,
+    normalizeSyncBackend,
+    type Attachment,
+    type SyncBackend,
+} from '@mindwtr/core';
 
 export const ATTACHMENTS_DIR_NAME = 'attachments';
 
@@ -22,7 +29,24 @@ export const toStableJson = (value: unknown): string => {
     return JSON.stringify(normalize(value));
 };
 
-export const hashString = (value: string): string => {
+export const hashString = async (value: string): Promise<string> => {
+    if (globalThis.crypto?.subtle) {
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+        return Array.from(new Uint8Array(digest))
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    if (typeof process !== 'undefined' && process?.versions?.node) {
+        try {
+            const crypto = await import('node:crypto');
+            return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+        } catch {
+            // Fall through to legacy fallback if node:crypto is unavailable.
+        }
+    }
+
+    // Legacy fallback for runtimes without Web Crypto or node:crypto.
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
         hash = Math.imul(31, hash) + value.charCodeAt(i);
@@ -33,34 +57,13 @@ export const hashString = (value: string): string => {
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export const getErrorStatus = (error: unknown): number | null => {
-    if (!error || typeof error !== 'object') return null;
-    const anyError = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
-    const status = anyError.status ?? anyError.statusCode ?? anyError.response?.status;
-    return typeof status === 'number' ? status : null;
+export {
+    getFileSyncDir,
+    isSyncFilePath,
+    normalizePath,
+    normalizeSyncBackend,
+    type SyncBackend,
 };
-
-export const isWebdavRateLimitedError = (error: unknown): boolean => {
-    const status = getErrorStatus(error);
-    if (status === 429 || status === 503) return true;
-    const message = error instanceof Error ? error.message : String(error || '');
-    const normalized = message.toLowerCase();
-    return (
-        normalized.includes('blockedtemporarily') ||
-        normalized.includes('too many requests') ||
-        normalized.includes('rate limit') ||
-        normalized.includes('rate limited')
-    );
-};
-
-export const normalizePath = (input: string) => input.replace(/\\/g, '/').toLowerCase();
-
-export const isSyncFilePath = (path: string, syncFileName: string, legacySyncFileName: string) => {
-    const normalized = normalizePath(path);
-    return normalized.endsWith(`/${syncFileName}`) || normalized.endsWith(`/${legacySyncFileName}`);
-};
-
-export const cloneAppData = (data: AppData): AppData => JSON.parse(JSON.stringify(data)) as AppData;
 
 export const stripFileScheme = (uri: string): string => {
     if (!/^file:\/\//i.test(uri)) return uri;

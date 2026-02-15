@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, Modal, TouchableOpacity, ScrollView, Platform, Share, Alert, Animated, Pressable } from 'react-native';
+import { View, Text, TextInput, Modal, TouchableOpacity, ScrollView, Platform, Share, Alert, Animated, Pressable, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     Attachment,
@@ -28,9 +28,8 @@ import {
     resolveTextDirection,
     validateAttachmentForUpload,
     parseQuickAdd,
-    extractChecklistFromMarkdown,
 } from '@mindwtr/core';
-import type { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Linking from 'expo-linking';
 import * as Sharing from 'expo-sharing';
@@ -64,6 +63,12 @@ import {
     getRecurrenceRRuleValue,
 } from './task-edit/recurrence-utils';
 import { useTaskEditCopilot } from './task-edit/use-task-edit-copilot';
+import {
+    applyMarkdownChecklistToTask,
+    getActiveTokenQuery,
+    parseTokenList,
+    replaceTrailingToken,
+} from './task-edit/task-edit-token-utils';
 
 
 interface TaskEditModalProps {
@@ -98,61 +103,16 @@ const isReleasedAudioPlayerError = (error: unknown): boolean => {
         || message.includes('cannot be cast to type expo.modules.audio.audioplayer')
     );
 };
-const COMPACT_STATUS_LABELS: Record<TaskStatus, string> = {
+const STATUS_LABEL_FALLBACKS: Record<TaskStatus, string> = {
     inbox: 'Inbox',
     next: 'Next',
-    waiting: 'Wait',
-    someday: 'Later',
-    reference: 'Ref',
+    waiting: 'Waiting',
+    someday: 'Someday',
+    reference: 'Reference',
     done: 'Done',
     archived: 'Archived',
 };
-
-const normalizeChecklistKey = (value: string): string => value.trim().toLowerCase();
-
-const applyMarkdownChecklistToTask = (
-    description: string | undefined,
-    checklist: Task['checklist'],
-): Task['checklist'] => {
-    const markdownItems = extractChecklistFromMarkdown(String(description ?? ''));
-    if (markdownItems.length === 0) return checklist;
-
-    const current = checklist || [];
-    const remainingByTitle = new Map<string, { id: string; title: string; isCompleted: boolean }[]>();
-    for (const item of current) {
-        if (!item?.title) continue;
-        const key = normalizeChecklistKey(item.title);
-        const bucket = remainingByTitle.get(key);
-        if (bucket) {
-            bucket.push(item);
-        } else {
-            remainingByTitle.set(key, [item]);
-        }
-    }
-
-    const usedIds = new Set<string>();
-    const merged: NonNullable<Task['checklist']> = [];
-    for (const item of markdownItems) {
-        const key = normalizeChecklistKey(item.title);
-        const bucket = remainingByTitle.get(key) || [];
-        const reusable = bucket.find((entry) => !usedIds.has(entry.id));
-        if (reusable) {
-            usedIds.add(reusable.id);
-        }
-        merged.push({
-            id: reusable?.id ?? generateUUID(),
-            title: item.title,
-            isCompleted: item.isCompleted,
-        });
-    }
-
-    for (const item of current) {
-        if (!item?.id || usedIds.has(item.id)) continue;
-        merged.push(item);
-    }
-
-    return merged;
-};
+const QUICK_TOKEN_LIMIT = 6;
 
 const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'status',
@@ -171,6 +131,19 @@ const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'reviewAt',
     'attachments',
     'checklist',
+];
+const DEFAULT_TASK_EDITOR_VISIBLE: TaskEditorFieldId[] = [
+    'status',
+    'project',
+    'section',
+    'area',
+    'description',
+    'textDirection',
+    'checklist',
+    'contexts',
+    'dueDate',
+    'priority',
+    'timeEstimate',
 ];
 
 
@@ -223,6 +196,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const [descriptionDraft, setDescriptionDraft] = useState('');
     const descriptionDraftRef = useRef('');
     const descriptionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [contextInputDraft, setContextInputDraft] = useState('');
+    const [tagInputDraft, setTagInputDraft] = useState('');
+    const [isContextInputFocused, setIsContextInputFocused] = useState(false);
+    const [isTagInputFocused, setIsTagInputFocused] = useState(false);
     const [linkModalVisible, setLinkModalVisible] = useState(false);
     const [audioModalVisible, setAudioModalVisible] = useState(false);
     const [audioAttachment, setAudioAttachment] = useState<Attachment | null>(null);
@@ -269,37 +246,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         return Array.from(new Set([...PRESET_TAGS, ...taskTags])).filter(Boolean);
     }, [tasks]);
 
-    // Compute most frequent tags (hashtags)
-    const suggestedHashtags = React.useMemo(() => {
-        const counts = new Map<string, number>();
-        tasks.forEach(t => {
-            t.tags?.forEach(tag => {
-                counts.set(tag, (counts.get(tag) || 0) + 1);
-            });
-        });
-
-        const sorted = Array.from(counts.entries())
-            .sort((a, b) => b[1] - a[1]) // Sort desc by count
-            .map(([tag]) => tag);
-
-        // Explicitly cast PRESET_TAGS to string[] or use it directly
-        // TS Error Fix: If PRESET_TAGS is constant tuple, spread works but type might need assertion
-        // But TS says "Cannot find name", so import is the key.
-        const unique = new Set([...sorted, ...PRESET_TAGS]);
-
-        return Array.from(unique).slice(0, MAX_SUGGESTED_TAGS);
-    }, [tasks]);
-
     const {
         copilotSuggestion,
         copilotApplied,
         copilotContext,
         copilotEstimate,
         copilotTags,
-        showAllContexts,
-        setShowAllContexts,
-        showAllTags,
-        setShowAllTags,
         resetCopilotDraft,
         resetCopilotState,
         applyCopilotSuggestion,
@@ -317,12 +269,66 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         setEditedTask,
     });
 
-    const visibleContextSuggestions = showAllContexts
-        ? suggestedTags
-        : suggestedTags.slice(0, MAX_VISIBLE_SUGGESTIONS);
-    const visibleTagSuggestions = showAllTags
-        ? suggestedHashtags
-        : suggestedHashtags.slice(0, MAX_VISIBLE_SUGGESTIONS);
+    const contextSuggestionPool = useMemo(() => {
+        const taskContexts = tasks.flatMap((item) => item.contexts || []);
+        return Array.from(new Set([...(editedTask.contexts ?? []), ...taskContexts]))
+            .filter((item): item is string => Boolean(item?.startsWith('@')));
+    }, [editedTask.contexts, tasks]);
+    const tagSuggestionPool = useMemo(() => {
+        const taskTags = tasks.flatMap((item) => item.tags || []);
+        return Array.from(new Set([...(editedTask.tags ?? []), ...taskTags]))
+            .filter((item): item is string => Boolean(item?.startsWith('#')));
+    }, [editedTask.tags, tasks]);
+
+    const contextTokenQuery = useMemo(
+        () => getActiveTokenQuery(contextInputDraft, '@'),
+        [contextInputDraft]
+    );
+    const tagTokenQuery = useMemo(
+        () => getActiveTokenQuery(tagInputDraft, '#'),
+        [tagInputDraft]
+    );
+    const contextTokenSuggestions = useMemo(() => {
+        if (!contextTokenQuery) return [];
+        const selected = new Set(parseTokenList(contextInputDraft, '@'));
+        return contextSuggestionPool
+            .filter((token) => token.slice(1).toLowerCase().includes(contextTokenQuery))
+            .filter((token) => !selected.has(token))
+            .slice(0, MAX_VISIBLE_SUGGESTIONS);
+    }, [contextInputDraft, contextSuggestionPool, contextTokenQuery]);
+    const tagTokenSuggestions = useMemo(() => {
+        if (!tagTokenQuery) return [];
+        const selected = new Set(parseTokenList(tagInputDraft, '#'));
+        return tagSuggestionPool
+            .filter((token) => token.slice(1).toLowerCase().includes(tagTokenQuery))
+            .filter((token) => !selected.has(token))
+            .slice(0, MAX_VISIBLE_SUGGESTIONS);
+    }, [tagInputDraft, tagSuggestionPool, tagTokenQuery]);
+    const frequentContextSuggestions = useMemo(
+        () => suggestedTags.slice(0, QUICK_TOKEN_LIMIT),
+        [suggestedTags]
+    );
+    const frequentTagSuggestions = useMemo(() => {
+        const counts = new Map<string, number>();
+        tasks.forEach((item) => {
+            item.tags?.forEach((tag) => {
+                if (!tag?.startsWith('#')) return;
+                counts.set(tag, (counts.get(tag) || 0) + 1);
+            });
+        });
+        const sorted = Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([tag]) => tag);
+        return Array.from(new Set([...sorted, ...PRESET_TAGS])).slice(0, QUICK_TOKEN_LIMIT);
+    }, [tasks]);
+    const selectedContextTokens = useMemo(
+        () => new Set(parseTokenList(contextInputDraft, '@')),
+        [contextInputDraft]
+    );
+    const selectedTagTokens = useMemo(
+        () => new Set(parseTokenList(tagInputDraft, '#')),
+        [tagInputDraft]
+    );
 
     const resolveInitialTab = (target?: TaskEditTab, currentTask?: Task | null): TaskEditTab => {
         if (target) return target;
@@ -360,6 +366,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                 const nextDescription = String(normalizedTask.description ?? '');
                 descriptionDraftRef.current = nextDescription;
                 setDescriptionDraft(nextDescription);
+                setContextInputDraft((normalizedTask.contexts ?? []).join(', '));
+                setTagInputDraft((normalizedTask.tags ?? []).join(', '));
+                setIsContextInputFocused(false);
+                setIsTagInputFocused(false);
                 setEditTab(resolveInitialTab(defaultTab, normalizedTask));
                 resetCopilotState();
             }
@@ -376,6 +386,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             setTitleDraft('');
             descriptionDraftRef.current = '';
             setDescriptionDraft('');
+            setContextInputDraft('');
+            setTagInputDraft('');
+            setIsContextInputFocused(false);
+            setIsTagInputFocused(false);
             setEditTab(resolveInitialTab(defaultTab, null));
             setCustomWeekdays([]);
         }
@@ -399,6 +413,22 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             }
         }
     }, [visible]);
+
+    useEffect(() => {
+        if (!visible || isContextInputFocused) return;
+        const normalized = (editedTask.contexts ?? []).join(', ');
+        if (contextInputDraft !== normalized) {
+            setContextInputDraft(normalized);
+        }
+    }, [contextInputDraft, editedTask.contexts, isContextInputFocused, visible]);
+
+    useEffect(() => {
+        if (!visible || isTagInputFocused) return;
+        const normalized = (editedTask.tags ?? []).join(', ');
+        if (tagInputDraft !== normalized) {
+            setTagInputDraft(normalized);
+        }
+    }, [editedTask.tags, isTagInputFocused, tagInputDraft, visible]);
 
     useEffect(() => () => {
         if (titleDebounceRef.current) {
@@ -700,10 +730,14 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             return;
         }
 
-        const permission = await imagePicker.getMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-            const requested = await imagePicker.requestMediaLibraryPermissionsAsync();
-            if (!requested.granted) return;
+        // Android can use the system picker flow without requesting legacy media permissions.
+        // Keep the explicit permission request on iOS where Photos permission is required.
+        if (Platform.OS === 'ios') {
+            const permission = await imagePicker.getMediaLibraryPermissionsAsync();
+            if (!permission.granted) {
+                const requested = await imagePicker.requestMediaLibraryPermissionsAsync();
+                if (!requested.granted) return;
+            }
         }
         const result = await imagePicker.launchImageLibraryAsync({
             mediaTypes: imagePicker.MediaTypeOptions.Images,
@@ -864,6 +898,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             if (audioStatus.playing) {
                 await Promise.resolve(audioPlayer.pause());
             } else {
+                const duration = Number.isFinite(audioStatus.duration) ? audioStatus.duration : 0;
+                const currentTime = Number.isFinite(audioStatus.currentTime) ? audioStatus.currentTime : 0;
+                const isAtEnd = duration > 0 && currentTime >= Math.max(0, duration - 0.1);
+                if (audioStatus.didJustFinish || isAtEnd) {
+                    await Promise.resolve(audioPlayer.seekTo(0));
+                }
                 await Promise.resolve(audioPlayer.play());
             }
         } catch (error) {
@@ -1127,6 +1167,15 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 
     const savedOrder = useMemo(() => settings.gtd?.taskEditor?.order ?? [], [settings.gtd?.taskEditor?.order]);
+    const savedHidden = useMemo(() => {
+        const featureHiddenFields = new Set<TaskEditorFieldId>();
+        if (!prioritiesEnabled) featureHiddenFields.add('priority');
+        if (!timeEstimatesEnabled) featureHiddenFields.add('timeEstimate');
+        const defaultHidden = DEFAULT_TASK_EDITOR_ORDER.filter(
+            (fieldId) => !DEFAULT_TASK_EDITOR_VISIBLE.includes(fieldId) || featureHiddenFields.has(fieldId)
+        );
+        return settings.gtd?.taskEditor?.hidden ?? defaultHidden;
+    }, [prioritiesEnabled, settings.gtd?.taskEditor?.hidden, timeEstimatesEnabled]);
     const isReference = (editedTask.status ?? task?.status) === 'reference';
     const availableStatusOptions = useMemo(
         () => (isReference ? STATUS_OPTIONS : STATUS_OPTIONS.filter((status) => status !== 'reference')),
@@ -1145,6 +1194,13 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         const missing = DEFAULT_TASK_EDITOR_ORDER.filter((id) => !normalized.includes(id));
         return [...normalized, ...missing].filter((id) => !disabledFields.has(id));
     }, [savedOrder, disabledFields]);
+    const hiddenSet = useMemo(() => {
+        const known = new Set(taskEditorOrder);
+        const next = new Set(savedHidden.filter((id) => known.has(id)));
+        if (settings.features?.priorities === false) next.add('priority');
+        if (settings.features?.timeEstimates === false) next.add('timeEstimate');
+        return next;
+    }, [savedHidden, settings.features?.priorities, settings.features?.timeEstimates, taskEditorOrder]);
 
     const orderFields = useCallback(
         (fields: TaskEditorFieldId[]) => {
@@ -1164,27 +1220,105 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         'timeEstimate',
         'checklist',
     ]), []);
-    const filterReferenceFields = useCallback(
-        (fields: TaskEditorFieldId[]) => (
-            isReference ? fields.filter((fieldId) => !referenceHiddenFields.has(fieldId)) : fields
-        ),
-        [isReference, referenceHiddenFields]
+    const hasValue = useCallback((fieldId: TaskEditorFieldId) => {
+        switch (fieldId) {
+            case 'status':
+                return (editedTask.status ?? task?.status) !== 'inbox';
+            case 'project':
+                return Boolean(editedTask.projectId ?? task?.projectId);
+            case 'section':
+                return Boolean(editedTask.sectionId ?? task?.sectionId);
+            case 'area':
+                return Boolean(editedTask.areaId ?? task?.areaId);
+            case 'priority':
+                if (!prioritiesEnabled) return false;
+                return Boolean(editedTask.priority ?? task?.priority);
+            case 'contexts':
+                return Boolean(contextInputDraft.trim());
+            case 'description':
+                return Boolean(descriptionDraft.trim());
+            case 'textDirection': {
+                const direction = editedTask.textDirection ?? task?.textDirection;
+                return direction !== undefined && direction !== 'auto';
+            }
+            case 'tags':
+                return Boolean(tagInputDraft.trim());
+            case 'timeEstimate':
+                if (!timeEstimatesEnabled) return false;
+                return Boolean(editedTask.timeEstimate ?? task?.timeEstimate);
+            case 'recurrence':
+                return Boolean(editedTask.recurrence ?? task?.recurrence);
+            case 'startTime':
+                return Boolean(editedTask.startTime ?? task?.startTime);
+            case 'dueDate':
+                return Boolean(editedTask.dueDate ?? task?.dueDate);
+            case 'reviewAt':
+                return Boolean(editedTask.reviewAt ?? task?.reviewAt);
+            case 'attachments':
+                return visibleAttachments.length > 0;
+            case 'checklist':
+                return (editedTask.checklist ?? task?.checklist ?? []).length > 0;
+            default:
+                return false;
+        }
+    }, [
+        contextInputDraft,
+        descriptionDraft,
+        editedTask.areaId,
+        editedTask.checklist,
+        editedTask.dueDate,
+        editedTask.priority,
+        editedTask.projectId,
+        editedTask.recurrence,
+        editedTask.reviewAt,
+        editedTask.sectionId,
+        editedTask.startTime,
+        editedTask.status,
+        editedTask.textDirection,
+        editedTask.timeEstimate,
+        prioritiesEnabled,
+        tagInputDraft,
+        task?.areaId,
+        task?.checklist,
+        task?.dueDate,
+        task?.priority,
+        task?.projectId,
+        task?.recurrence,
+        task?.reviewAt,
+        task?.sectionId,
+        task?.startTime,
+        task?.status,
+        task?.textDirection,
+        task?.timeEstimate,
+        timeEstimatesEnabled,
+        visibleAttachments.length,
+    ]);
+    const isFieldVisible = useCallback(
+        (fieldId: TaskEditorFieldId) => {
+            if (isReference && referenceHiddenFields.has(fieldId)) return false;
+            return !hiddenSet.has(fieldId) || hasValue(fieldId);
+        },
+        [hasValue, hiddenSet, isReference, referenceHiddenFields]
+    );
+    const filterVisibleFields = useCallback(
+        (fields: TaskEditorFieldId[]) => fields.filter(isFieldVisible),
+        [isFieldVisible]
     );
     const alwaysFields = useMemo(
-        () => filterReferenceFields(orderFields(['status', 'project', 'section', 'area', 'dueDate'])),
-        [filterReferenceFields, orderFields]
+        () => filterVisibleFields(orderFields(['status', 'project', 'section', 'area', 'dueDate'])),
+        [filterVisibleFields, orderFields]
     );
     const schedulingFields = useMemo(
-        () => filterReferenceFields(orderFields(['startTime', 'recurrence', 'reviewAt'])),
-        [filterReferenceFields, orderFields]
+        () => filterVisibleFields(orderFields(['startTime', 'recurrence', 'reviewAt'])),
+        [filterVisibleFields, orderFields]
     );
     const organizationFields = useMemo(
-        () => filterReferenceFields(orderFields(['contexts', 'tags', 'priority', 'timeEstimate'])),
-        [filterReferenceFields, orderFields]
+        () => filterVisibleFields(orderFields(['contexts', 'tags', 'priority', 'timeEstimate'])),
+        [filterVisibleFields, orderFields]
     );
     const detailsFields = useMemo(
-        () => filterReferenceFields(orderFields(['description', 'textDirection', 'checklist', 'attachments'])),
-        [filterReferenceFields, orderFields]
+        () => filterVisibleFields(orderFields(['description', 'textDirection', 'checklist', 'attachments'])),
+        [filterVisibleFields, orderFields]
     );
 
     const mergedTask = useMemo(() => ({
@@ -1214,6 +1348,11 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const recurrenceRuleValue = getRecurrenceRuleValue(editedTask.recurrence);
     const recurrenceStrategyValue = getRecurrenceStrategyValue(editedTask.recurrence);
     const recurrenceRRuleValue = getRecurrenceRRuleValue(editedTask.recurrence);
+    const dailyInterval = useMemo(() => {
+        if (recurrenceRuleValue !== 'daily') return 1;
+        const parsed = parseRRuleString(recurrenceRRuleValue);
+        return parsed.interval && parsed.interval > 0 ? parsed.interval : 1;
+    }, [recurrenceRuleValue, recurrenceRRuleValue]);
     const monthlyAnchorDate = useMemo(() => {
         return safeParseDate(editedTask.dueDate ?? task?.dueDate) ?? new Date();
     }, [editedTask.dueDate, task?.dueDate]);
@@ -1289,18 +1428,46 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         setCustomRecurrenceVisible(false);
     }, [customInterval, customMode, customOrdinal, customWeekday, customMonthDay, recurrenceStrategyValue, setEditedTask]);
 
-    const toggleContext = (tag: string) => {
-        const current = editedTask.contexts || [];
-        const exists = current.includes(tag);
-
-        let newContexts;
-        if (exists) {
-            newContexts = current.filter(t => t !== tag);
+    const updateContextInput = useCallback((text: string) => {
+        setContextInputDraft(text);
+        setEditedTask((prev) => ({ ...prev, contexts: parseTokenList(text, '@') }));
+    }, [setEditedTask]);
+    const updateTagInput = useCallback((text: string) => {
+        setTagInputDraft(text);
+        setEditedTask((prev) => ({ ...prev, tags: parseTokenList(text, '#') }));
+    }, [setEditedTask]);
+    const applyContextSuggestion = useCallback((token: string) => {
+        updateContextInput(replaceTrailingToken(contextInputDraft, token));
+    }, [contextInputDraft, updateContextInput]);
+    const applyTagSuggestion = useCallback((token: string) => {
+        updateTagInput(replaceTrailingToken(tagInputDraft, token));
+    }, [tagInputDraft, updateTagInput]);
+    const toggleQuickContextToken = useCallback((token: string) => {
+        const next = new Set(parseTokenList(contextInputDraft, '@'));
+        if (next.has(token)) {
+            next.delete(token);
         } else {
-            newContexts = [...current, tag];
+            next.add(token);
         }
-        setEditedTask(prev => ({ ...prev, contexts: newContexts }));
-    };
+        updateContextInput(Array.from(next).join(', '));
+    }, [contextInputDraft, updateContextInput]);
+    const toggleQuickTagToken = useCallback((token: string) => {
+        const next = new Set(parseTokenList(tagInputDraft, '#'));
+        if (next.has(token)) {
+            next.delete(token);
+        } else {
+            next.add(token);
+        }
+        updateTagInput(Array.from(next).join(', '));
+    }, [tagInputDraft, updateTagInput]);
+    const commitContextDraft = useCallback(() => {
+        setIsContextInputFocused(false);
+        updateContextInput(parseTokenList(contextInputDraft, '@').join(', '));
+    }, [contextInputDraft, updateContextInput]);
+    const commitTagDraft = useCallback(() => {
+        setIsTagInputFocused(false);
+        updateTagInput(parseTokenList(tagInputDraft, '#').join(', '));
+    }, [tagInputDraft, updateTagInput]);
 
     const handleDone = () => {
         void handleSave();
@@ -1313,6 +1480,10 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
     const [containerWidth, setContainerWidth] = useState(0);
     const scrollX = useRef(new Animated.Value(0)).current;
     const scrollRef = useRef<ScrollView | null>(null);
+    const [scrollTaskFormToEnd, setScrollTaskFormToEnd] = useState<(() => void) | null>(null);
+    const registerScrollTaskFormToEnd = useCallback((handler: (() => void) | null) => {
+        setScrollTaskFormToEnd(() => handler);
+    }, []);
 
     const scrollToTab = useCallback((mode: TaskEditTab, animated = true) => {
         if (!containerWidth) return;
@@ -1550,14 +1721,53 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         styles.statusText,
         { color: active ? '#fff' : tc.secondaryText },
     ]);
-    const getSuggestionChipStyle = (active: boolean) => ([
-        styles.suggestionChip,
+    const getStatusLabel = (status: TaskStatus) => {
+        const key = `status.${status}` as const;
+        const translated = t(key);
+        return translated === key ? STATUS_LABEL_FALLBACKS[status] : translated;
+    };
+    const getQuickTokenChipStyle = (active: boolean) => ([
+        styles.quickTokenChip,
         { backgroundColor: active ? tc.tint : tc.filterBg, borderColor: active ? tc.tint : tc.border },
     ]);
-    const getSuggestionTextStyle = (active: boolean) => ([
-        styles.suggestionText,
+    const getQuickTokenTextStyle = (active: boolean) => ([
+        styles.quickTokenText,
         { color: active ? '#fff' : tc.secondaryText },
     ]);
+    const openDatePicker = (mode: NonNullable<typeof showDatePicker>) => {
+        Keyboard.dismiss();
+        setShowDatePicker(mode);
+    };
+    const getDatePickerValue = (mode: NonNullable<typeof showDatePicker>) => {
+        if (mode === 'start') return getSafePickerDateValue(editedTask.startTime);
+        if (mode === 'start-time') return pendingStartDate ?? getSafePickerDateValue(editedTask.startTime);
+        if (mode === 'review') return getSafePickerDateValue(editedTask.reviewAt);
+        if (mode === 'due-time') return pendingDueDate ?? getSafePickerDateValue(editedTask.dueDate);
+        return getSafePickerDateValue(editedTask.dueDate);
+    };
+    const getDatePickerMode = (mode: NonNullable<typeof showDatePicker>) =>
+        mode === 'start-time' || mode === 'due-time' ? 'time' : 'date';
+    const renderInlineIOSDatePicker = (targetModes: Array<NonNullable<typeof showDatePicker>>) => {
+        if (Platform.OS !== 'ios' || !showDatePicker || !targetModes.includes(showDatePicker)) {
+            return null;
+        }
+        return (
+            <View style={{ marginTop: 8 }}>
+                <View style={styles.pickerToolbar}>
+                    <View style={styles.pickerSpacer} />
+                    <Pressable onPress={() => setShowDatePicker(null)} style={styles.pickerDone}>
+                        <Text style={styles.pickerDoneText}>{t('common.done')}</Text>
+                    </Pressable>
+                </View>
+                <DateTimePicker
+                    value={getDatePickerValue(showDatePicker)}
+                    mode={getDatePickerMode(showDatePicker)}
+                    display="spinner"
+                    onChange={onDateChange}
+                />
+            </View>
+        );
+    };
 
     const renderField = (fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
@@ -1573,7 +1783,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                     onPress={() => setEditedTask(prev => ({ ...prev, status }))}
                                 >
                                     <Text style={getStatusTextStyle(editedTask.status === status)}>
-                                        {COMPACT_STATUS_LABELS[status] ?? t(`status.${status}`)}
+                                        {getStatusLabel(status)}
                                     </Text>
                                 </TouchableOpacity>
                             ))}
@@ -1691,41 +1901,52 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                         <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.contextsLabel')}</Text>
                         <TextInput
                             style={[styles.input, inputStyle]}
-                            value={editedTask.contexts?.join(', ')}
-                            onChangeText={(text) => setEditedTask(prev => ({
-                                ...prev,
-                                contexts: text.split(',').map(t => t.trim()).filter(Boolean)
-                            }))}
-                            placeholder="@home, @work"
+                            value={contextInputDraft}
+                            onChangeText={updateContextInput}
+                            onFocus={() => setIsContextInputFocused(true)}
+                            onBlur={commitContextDraft}
+                            onSubmitEditing={() => {
+                                commitContextDraft();
+                                Keyboard.dismiss();
+                            }}
+                            returnKeyType="done"
+                            blurOnSubmit
+                            placeholder={t('taskEdit.contextsPlaceholder')}
                             autoCapitalize="none"
                             placeholderTextColor={tc.secondaryText}
                         />
-                        <View style={styles.suggestionsContainer}>
-                            <View style={styles.suggestionTags}>
-                                {visibleContextSuggestions.map(tag => {
-                                    const isActive = Boolean(editedTask.contexts?.includes(tag));
+                        {contextTokenSuggestions.length > 0 && (
+                            <View style={[styles.tokenSuggestionsMenu, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                                {contextTokenSuggestions.map((token, index) => (
+                                    <TouchableOpacity
+                                        key={token}
+                                        style={[
+                                            styles.tokenSuggestionItem,
+                                            index === contextTokenSuggestions.length - 1 ? styles.tokenSuggestionItemLast : null,
+                                        ]}
+                                        onPress={() => applyContextSuggestion(token)}
+                                    >
+                                        <Text style={[styles.tokenSuggestionText, { color: tc.text }]}>{token}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                        {frequentContextSuggestions.length > 0 && (
+                            <View style={styles.quickTokensRow}>
+                                {frequentContextSuggestions.map((token) => {
+                                    const isActive = selectedContextTokens.has(token);
                                     return (
                                         <TouchableOpacity
-                                            key={tag}
-                                            style={getSuggestionChipStyle(isActive)}
-                                            onPress={() => toggleContext(tag)}
+                                            key={token}
+                                            style={getQuickTokenChipStyle(isActive)}
+                                            onPress={() => toggleQuickContextToken(token)}
                                         >
-                                            <Text style={getSuggestionTextStyle(isActive)}>{tag}</Text>
+                                            <Text style={getQuickTokenTextStyle(isActive)}>{token}</Text>
                                         </TouchableOpacity>
                                     );
                                 })}
-                                {!showAllContexts && suggestedTags.length > MAX_VISIBLE_SUGGESTIONS && (
-                                    <TouchableOpacity
-                                        style={getSuggestionChipStyle(false)}
-                                        onPress={() => setShowAllContexts(true)}
-                                    >
-                                        <Text style={getSuggestionTextStyle(false)}>
-                                            +{suggestedTags.length - MAX_VISIBLE_SUGGESTIONS}
-                                        </Text>
-                                    </TouchableOpacity>
-                                )}
                             </View>
-                        </View>
+                        )}
                     </View>
                 );
             case 'tags':
@@ -1734,45 +1955,52 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                         <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.tagsLabel')}</Text>
                         <TextInput
                             style={[styles.input, inputStyle]}
-                            value={editedTask.tags?.join(', ')}
-                            onChangeText={(text) => setEditedTask(prev => ({
-                                ...prev,
-                                tags: text.split(',').map(t => t.trim()).filter(Boolean)
-                            }))}
-                            placeholder="#urgent, #idea"
+                            value={tagInputDraft}
+                            onChangeText={updateTagInput}
+                            onFocus={() => setIsTagInputFocused(true)}
+                            onBlur={commitTagDraft}
+                            onSubmitEditing={() => {
+                                commitTagDraft();
+                                Keyboard.dismiss();
+                            }}
+                            returnKeyType="done"
+                            blurOnSubmit
+                            placeholder={t('taskEdit.tagsPlaceholder')}
                             autoCapitalize="none"
                             placeholderTextColor={tc.secondaryText}
                         />
-                        <View style={styles.suggestionsContainer}>
-                            <View style={styles.suggestionTags}>
-                                {visibleTagSuggestions.map(tag => {
-                                    const isActive = Boolean(editedTask.tags?.includes(tag));
+                        {tagTokenSuggestions.length > 0 && (
+                            <View style={[styles.tokenSuggestionsMenu, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                                {tagTokenSuggestions.map((token, index) => (
+                                    <TouchableOpacity
+                                        key={token}
+                                        style={[
+                                            styles.tokenSuggestionItem,
+                                            index === tagTokenSuggestions.length - 1 ? styles.tokenSuggestionItemLast : null,
+                                        ]}
+                                        onPress={() => applyTagSuggestion(token)}
+                                    >
+                                        <Text style={[styles.tokenSuggestionText, { color: tc.text }]}>{token}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                        {frequentTagSuggestions.length > 0 && (
+                            <View style={styles.quickTokensRow}>
+                                {frequentTagSuggestions.map((token) => {
+                                    const isActive = selectedTagTokens.has(token);
                                     return (
                                         <TouchableOpacity
-                                            key={tag}
-                                            style={getSuggestionChipStyle(isActive)}
-                                            onPress={() => {
-                                                const current = editedTask.tags || [];
-                                                const newTags = current.includes(tag) ? current.filter(t => t !== tag) : [...current, tag];
-                                                setEditedTask(prev => ({ ...prev, tags: newTags }));
-                                            }}
+                                            key={token}
+                                            style={getQuickTokenChipStyle(isActive)}
+                                            onPress={() => toggleQuickTagToken(token)}
                                         >
-                                            <Text style={getSuggestionTextStyle(isActive)}>{tag}</Text>
+                                            <Text style={getQuickTokenTextStyle(isActive)}>{token}</Text>
                                         </TouchableOpacity>
                                     );
                                 })}
-                                {!showAllTags && suggestedHashtags.length > MAX_VISIBLE_SUGGESTIONS && (
-                                    <TouchableOpacity
-                                        style={getSuggestionChipStyle(false)}
-                                        onPress={() => setShowAllTags(true)}
-                                    >
-                                        <Text style={getSuggestionTextStyle(false)}>
-                                            +{suggestedHashtags.length - MAX_VISIBLE_SUGGESTIONS}
-                                        </Text>
-                                    </TouchableOpacity>
-                                )}
                             </View>
-                        </View>
+                        )}
                     </View>
                 );
             case 'timeEstimate':
@@ -1813,6 +2041,19 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                     onPress={() => {
                                         if (opt.value !== 'weekly') {
                                             setCustomWeekdays([]);
+                                        }
+                                        if (opt.value === 'daily') {
+                                            const parsed = parseRRuleString(recurrenceRRuleValue);
+                                            const interval = parsed.rule === 'daily' && parsed.interval && parsed.interval > 0 ? parsed.interval : 1;
+                                            setEditedTask(prev => ({
+                                                ...prev,
+                                                recurrence: {
+                                                    rule: 'daily',
+                                                    strategy: recurrenceStrategyValue,
+                                                    rrule: buildRRuleString('daily', undefined, interval),
+                                                },
+                                            }));
+                                            return;
                                         }
                                         if (opt.value === 'monthly') {
                                             setEditedTask(prev => ({
@@ -1873,6 +2114,29 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                         </TouchableOpacity>
                                     );
                                 })}
+                            </View>
+                        )}
+                        {recurrenceRuleValue === 'daily' && (
+                            <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
+                                <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
+                                <TextInput
+                                    value={String(dailyInterval)}
+                                    onChangeText={(value) => {
+                                        const parsed = Number.parseInt(value, 10);
+                                        const interval = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 365) : 1;
+                                        setEditedTask(prev => ({
+                                            ...prev,
+                                            recurrence: {
+                                                rule: 'daily',
+                                                strategy: recurrenceStrategyValue,
+                                                rrule: buildRRuleString('daily', undefined, interval),
+                                            },
+                                        }));
+                                    }}
+                                    keyboardType="number-pad"
+                                    style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                />
+                                <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.dayUnit')}</Text>
                             </View>
                         )}
                         {recurrenceRuleValue === 'monthly' && (
@@ -1944,29 +2208,32 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                             const dateOnly = parsed ? safeFormatDate(parsed, 'yyyy-MM-dd') : '';
                             const timeOnly = hasTime && parsed ? safeFormatDate(parsed, 'HH:mm') : '';
                             return (
-                        <View style={styles.dateRow}>
-                            <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => setShowDatePicker('start')}>
-                                <Text style={{ color: tc.text }}>{formatStartDateTime(editedTask.startTime)}</Text>
-                            </TouchableOpacity>
-                            {!!editedTask.startTime && (
-                                <TouchableOpacity
-                                    style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                    onPress={() => setShowDatePicker('start-time')}
-                                >
-                                    <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>
-                                        {hasTime && timeOnly ? timeOnly : (t('calendar.changeTime') || 'Add time')}
-                                    </Text>
-                                </TouchableOpacity>
-                            )}
-                            {!!editedTask.startTime && (
-                                <TouchableOpacity
-                                    style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                    onPress={() => setEditedTask(prev => ({ ...prev, startTime: undefined }))}
-                                >
-                                    <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
+                                <View>
+                                    <View style={styles.dateRow}>
+                                        <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => openDatePicker('start')}>
+                                            <Text style={{ color: tc.text }}>{formatStartDateTime(editedTask.startTime)}</Text>
+                                        </TouchableOpacity>
+                                        {!!editedTask.startTime && (
+                                            <TouchableOpacity
+                                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                                onPress={() => openDatePicker('start-time')}
+                                            >
+                                                <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>
+                                                    {hasTime && timeOnly ? timeOnly : (t('calendar.changeTime') || 'Add time')}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                        {!!editedTask.startTime && (
+                                            <TouchableOpacity
+                                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                                onPress={() => setEditedTask(prev => ({ ...prev, startTime: undefined }))}
+                                            >
+                                                <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                    {renderInlineIOSDatePicker(['start', 'start-time'])}
+                                </View>
                             );
                         })()}
                     </View>
@@ -1981,29 +2248,32 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                             const dateOnly = parsed ? safeFormatDate(parsed, 'yyyy-MM-dd') : '';
                             const timeOnly = hasTime && parsed ? safeFormatDate(parsed, 'HH:mm') : '';
                             return (
-                        <View style={styles.dateRow}>
-                            <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => setShowDatePicker('due')}>
-                                <Text style={{ color: tc.text }}>{formatDueDate(editedTask.dueDate)}</Text>
-                            </TouchableOpacity>
-                            {!!editedTask.dueDate && (
-                                <TouchableOpacity
-                                    style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                    onPress={() => setShowDatePicker('due-time')}
-                                >
-                                    <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>
-                                        {hasTime && timeOnly ? timeOnly : (t('calendar.changeTime') || 'Add time')}
-                                    </Text>
-                                </TouchableOpacity>
-                            )}
-                            {!!editedTask.dueDate && (
-                                <TouchableOpacity
-                                    style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                    onPress={() => setEditedTask(prev => ({ ...prev, dueDate: undefined }))}
-                                >
-                                    <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
+                                <View>
+                                    <View style={styles.dateRow}>
+                                        <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => openDatePicker('due')}>
+                                            <Text style={{ color: tc.text }}>{formatDueDate(editedTask.dueDate)}</Text>
+                                        </TouchableOpacity>
+                                        {!!editedTask.dueDate && (
+                                            <TouchableOpacity
+                                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                                onPress={() => openDatePicker('due-time')}
+                                            >
+                                                <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>
+                                                    {hasTime && timeOnly ? timeOnly : (t('calendar.changeTime') || 'Add time')}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                        {!!editedTask.dueDate && (
+                                            <TouchableOpacity
+                                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                                onPress={() => setEditedTask(prev => ({ ...prev, dueDate: undefined }))}
+                                            >
+                                                <Text style={[styles.clearDateText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                    {renderInlineIOSDatePicker(['due', 'due-time'])}
+                                </View>
                             );
                         })()}
                     </View>
@@ -2013,7 +2283,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                     <View style={styles.formGroup}>
                         <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.reviewDateLabel')}</Text>
                         <View style={styles.dateRow}>
-                            <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => setShowDatePicker('review')}>
+                            <TouchableOpacity style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]} onPress={() => openDatePicker('review')}>
                                 <Text style={{ color: tc.text }}>{formatDate(editedTask.reviewAt)}</Text>
                             </TouchableOpacity>
                             {!!editedTask.reviewAt && (
@@ -2025,6 +2295,7 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                 </TouchableOpacity>
                             )}
                         </View>
+                        {renderInlineIOSDatePicker(['review'])}
                     </View>
                 );
             case 'textDirection':
@@ -2194,6 +2465,12 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                                             item.isCompleted && styles.completedText,
                                         ]}
                                         value={item.title}
+                                        onFocus={() => {
+                                            if (Platform.OS !== 'android') return;
+                                            setTimeout(() => {
+                                                scrollTaskFormToEnd?.();
+                                            }, 120);
+                                        }}
                                         onChangeText={(text) => {
                                             const newChecklist = (editedTask.checklist || []).map((item, i) =>
                                                 i === index ? { ...item, title: text } : item
@@ -2257,9 +2534,13 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
             visible={visible}
             animationType="slide"
             presentationStyle="pageSheet"
+            allowSwipeDismissal
             onRequestClose={handleDone}
         >
-            <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['top']}>
+            <SafeAreaView
+                style={[styles.container, { backgroundColor: tc.bg }]}
+                edges={['top']}
+            >
                 <TaskEditHeader
                     title={String(titleDraft || editedTask.title || '').trim() || t('taskEdit.title')}
                     onDone={handleDone}
@@ -2348,11 +2629,11 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
                             pendingDueDate={pendingDueDate}
                             getSafePickerDateValue={getSafePickerDateValue}
                             onDateChange={onDateChange}
-                            onCloseDatePicker={() => setShowDatePicker(null)}
                             containerWidth={containerWidth}
                             textDirectionStyle={textDirectionStyle}
                             titleDraft={titleDraft}
                             onTitleDraftChange={handleTitleDraftChange}
+                            registerScrollToEnd={registerScrollTaskFormToEnd}
                         />
                         <View style={[styles.tabPage, { width: containerWidth || '100%' }]}>
                             <TaskEditViewTab

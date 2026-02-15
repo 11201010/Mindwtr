@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import {
     createAIProvider,
     getStaleItems,
     isDueForReview,
+    safeFormatDate,
+    safeParseDate,
+    safeParseDueDate,
+    type ExternalCalendarEvent,
     type ReviewSuggestion,
     type AIProviderId,
     type Task,
@@ -20,8 +24,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { buildAIConfig, loadAIKey } from '../lib/ai-config';
 import { logError } from '../lib/app-log';
+import { fetchExternalCalendarEvents } from '../lib/external-calendar';
 
-type ReviewStep = 'intro' | 'inbox' | 'ai' | 'waiting' | 'projects' | 'someday' | 'completed';
+type ReviewStep = 'intro' | 'inbox' | 'ai' | 'calendar' | 'waiting' | 'projects' | 'someday' | 'completed';
+type ExternalCalendarDaySummary = {
+    dayStart: Date;
+    events: ExternalCalendarEvent[];
+    totalCount: number;
+};
+type CalendarTaskReviewEntry = {
+    task: Task;
+    date: Date;
+    kind: 'due' | 'start';
+};
 
 interface ReviewModalProps {
     visible: boolean;
@@ -40,6 +55,7 @@ const getReviewLabels = (lang: string) => {
             weeklyReview: '周回顾',
             inbox: '收集箱',
             ai: 'AI 洞察',
+            calendar: '日历',
             waiting: '等待中',
             projects: '项目',
             someday: '将来/也许',
@@ -60,6 +76,16 @@ const getReviewLabels = (lang: string) => {
             aiActionArchive: '归档',
             aiActionBreakdown: '需要拆解',
             aiActionKeep: '保留',
+            loading: '加载中…',
+            calendarDesc: '先查看未来 7 天的日程摘要。',
+            calendarEmpty: '该时间范围没有日历事件。',
+            calendarUpcoming: '未来 7 天',
+            calendarTasks: '未来 7 天任务',
+            calendarTasksEmpty: '未来 7 天没有已安排任务。',
+            dueLabel: '截止',
+            startLabel: '开始',
+            allDay: '全天',
+            more: '更多',
             waitingDesc: '跟进等待项目',
             waitingGuide: '检查每个等待项：是否需要跟进？已完成可以标记完成，需要再次跟进可以加注释。',
             nothingWaiting: '没有等待项目',
@@ -84,6 +110,7 @@ const getReviewLabels = (lang: string) => {
         weeklyReview: 'Weekly Review',
         inbox: 'Inbox',
         ai: 'AI Insight',
+        calendar: 'Calendar',
         waiting: 'Waiting For',
         projects: 'Projects',
         someday: 'Someday/Maybe',
@@ -104,6 +131,16 @@ const getReviewLabels = (lang: string) => {
         aiActionArchive: 'Archive',
         aiActionBreakdown: 'Needs breakdown',
         aiActionKeep: 'Keep',
+        loading: 'Loading…',
+        calendarDesc: 'Review your hard landscape first: a compact summary of the next 7 days.',
+        calendarEmpty: 'No calendar events in this range.',
+        calendarUpcoming: 'Next 7 days',
+        calendarTasks: 'Mindwtr tasks (next 7 days)',
+        calendarTasksEmpty: 'No scheduled/due tasks in this range.',
+        dueLabel: 'Due',
+        startLabel: 'Start',
+        allDay: 'All day',
+        more: 'more',
         waitingDesc: 'Follow Up on Waiting Items',
         waitingGuide: 'Check each item: need to follow up? Mark done if resolved. Add notes for context.',
         nothingWaiting: 'Nothing waiting - all clear!',
@@ -127,7 +164,7 @@ const getReviewLabels = (lang: string) => {
 
 export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const { tasks, projects, areas, updateTask, deleteTask, settings, batchUpdateTasks } = useTaskStore();
-    const areaById = React.useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
+    const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const { isDark } = useTheme();
     const { language } = useLanguage();
     const [currentStep, setCurrentStep] = useState<ReviewStep>('intro');
@@ -139,30 +176,52 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const [aiLoading, setAiLoading] = useState(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiRan, setAiRan] = useState(false);
+    const [externalCalendarEvents, setExternalCalendarEvents] = useState<ExternalCalendarEvent[]>([]);
+    const [externalCalendarLoading, setExternalCalendarLoading] = useState(false);
+    const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
 
     const labels = getReviewLabels(language);
     const tc = useThemeColors();
+    const aiEnabled = settings?.ai?.enabled === true;
+    const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
 
-    const steps: { id: ReviewStep; title: string; icon: string }[] = [
-        { id: 'intro', title: labels.weeklyReview, icon: '🔄' },
-        { id: 'inbox', title: labels.inbox, icon: '📥' },
-        { id: 'ai', title: labels.ai, icon: '✨' },
-        { id: 'waiting', title: labels.waiting, icon: '⏳' },
-        { id: 'projects', title: labels.projects, icon: '📂' },
-        { id: 'someday', title: labels.someday, icon: '💭' },
-        { id: 'completed', title: labels.done, icon: '✅' },
-    ];
+    const steps = useMemo<{ id: ReviewStep; title: string; icon: string }[]>(() => {
+        const list: { id: ReviewStep; title: string; icon: string }[] = [
+            { id: 'intro', title: labels.weeklyReview, icon: '🔄' },
+            { id: 'inbox', title: labels.inbox, icon: '📥' },
+        ];
+        if (aiEnabled) {
+            list.push({ id: 'ai', title: labels.ai, icon: '✨' });
+        }
+        list.push(
+            { id: 'calendar', title: labels.calendar, icon: '📅' },
+            { id: 'waiting', title: labels.waiting, icon: '⏳' },
+            { id: 'projects', title: labels.projects, icon: '📂' },
+            { id: 'someday', title: labels.someday, icon: '💭' },
+            { id: 'completed', title: labels.done, icon: '✅' },
+        );
+        return list;
+    }, [aiEnabled, labels]);
 
     const currentStepIndex = steps.findIndex(s => s.id === currentStep);
-    const progress = ((currentStepIndex) / (steps.length - 1)) * 100;
+    const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0;
+    const progress = (safeStepIndex / Math.max(1, steps.length - 1)) * 100;
 
     const nextStep = () => {
+        if (currentStepIndex < 0) {
+            setCurrentStep(steps[0].id);
+            return;
+        }
         if (currentStepIndex < steps.length - 1) {
             setCurrentStep(steps[currentStepIndex + 1].id);
         }
     };
 
     const prevStep = () => {
+        if (currentStepIndex < 0) {
+            setCurrentStep(steps[0].id);
+            return;
+        }
         if (currentStepIndex > 0) {
             setCurrentStep(steps[currentStepIndex - 1].id);
         }
@@ -186,6 +245,35 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
         deleteTask(taskId);
     };
 
+    useEffect(() => {
+        if (!visible) return;
+        let cancelled = false;
+        const loadCalendar = async () => {
+            setExternalCalendarLoading(true);
+            setExternalCalendarError(null);
+            try {
+                const now = new Date();
+                const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const rangeEnd = new Date(rangeStart);
+                rangeEnd.setDate(rangeEnd.getDate() + 7);
+                rangeEnd.setMilliseconds(-1);
+                const { events } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
+                if (cancelled) return;
+                setExternalCalendarEvents(events);
+            } catch (error) {
+                if (cancelled) return;
+                setExternalCalendarError(error instanceof Error ? error.message : String(error));
+                setExternalCalendarEvents([]);
+            } finally {
+                if (!cancelled) setExternalCalendarLoading(false);
+            }
+        };
+        loadCalendar();
+        return () => {
+            cancelled = true;
+        };
+    }, [visible]);
+
     const handleFinish = async () => {
         try {
             await AsyncStorage.setItem('lastWeeklyReview', new Date().toISOString());
@@ -195,13 +283,17 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
         handleClose();
     };
 
-    const aiEnabled = settings?.ai?.enabled === true;
-    const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
     const staleItems = getStaleItems(tasks, projects);
     const staleItemTitleMap = staleItems.reduce((acc, item) => {
         acc[item.id] = item.title;
         return acc;
     }, {} as Record<string, string>);
+
+    useEffect(() => {
+        if (!steps.some((step) => step.id === currentStep)) {
+            setCurrentStep(steps[0].id);
+        }
+    }, [currentStep, steps]);
 
     const isActionableSuggestion = (suggestion: ReviewSuggestion) => {
         if (suggestion.id.startsWith('project:')) return false;
@@ -287,6 +379,58 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const dueProjects = activeProjects.filter(p => isDueForReview(p.reviewAt));
     const futureProjects = activeProjects.filter(p => !isDueForReview(p.reviewAt));
     const orderedProjects = [...dueProjects, ...futureProjects];
+    const calendarReviewItems = useMemo<CalendarTaskReviewEntry[]>(() => {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const upcomingEnd = new Date(startOfToday);
+        upcomingEnd.setDate(upcomingEnd.getDate() + 7);
+        const entries: CalendarTaskReviewEntry[] = [];
+
+        tasks.forEach((task) => {
+            if (task.deletedAt) return;
+            if (task.status === 'done' || task.status === 'archived' || task.status === 'reference') return;
+            const dueDate = safeParseDueDate(task.dueDate);
+            if (dueDate) entries.push({ task, date: dueDate, kind: 'due' });
+            const startTime = safeParseDate(task.startTime);
+            if (startTime) entries.push({ task, date: startTime, kind: 'start' });
+        });
+
+        return entries
+            .filter((entry) => entry.date >= startOfToday && entry.date < upcomingEnd)
+            .sort((a, b) => a.date.getTime() - b.date.getTime());
+    }, [tasks]);
+
+    const externalCalendarReviewItems = useMemo<ExternalCalendarDaySummary[]>(() => {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const summaries: ExternalCalendarDaySummary[] = [];
+        for (let offset = 0; offset < 7; offset += 1) {
+            const dayStart = new Date(startOfToday);
+            dayStart.setDate(dayStart.getDate() + offset);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setDate(dayEnd.getDate() + 1);
+            const dayEvents = externalCalendarEvents
+                .filter((event) => {
+                    const start = safeParseDate(event.start);
+                    const end = safeParseDate(event.end);
+                    if (!start || !end) return false;
+                    return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
+                })
+                .sort((a, b) => {
+                    const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                    const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                    return aStart - bStart;
+                });
+            if (dayEvents.length > 0) {
+                summaries.push({
+                    dayStart,
+                    events: dayEvents.slice(0, 2),
+                    totalCount: dayEvents.length,
+                });
+            }
+        }
+        return summaries;
+    }, [externalCalendarEvents]);
 
     const renderTaskList = (taskList: Task[]) => (
         <ScrollView style={styles.taskList}>
@@ -303,6 +447,70 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
             ))}
         </ScrollView>
     );
+
+    const renderExternalCalendarList = (days: ExternalCalendarDaySummary[]) => {
+        if (externalCalendarLoading) {
+            return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{labels.loading}</Text>;
+        }
+        if (externalCalendarError) {
+            return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{externalCalendarError}</Text>;
+        }
+        if (days.length === 0) {
+            return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{labels.calendarEmpty}</Text>;
+        }
+        return (
+            <View style={styles.calendarEventList}>
+                {days.map((day) => (
+                    <View key={day.dayStart.toISOString()} style={[styles.calendarDayCard, { borderColor: tc.border }]}>
+                        <Text style={[styles.calendarDayTitle, { color: tc.secondaryText }]}>
+                            {safeFormatDate(day.dayStart, 'EEE, MMM d')} · {day.totalCount}
+                        </Text>
+                        {day.events.map((event) => {
+                            const start = safeParseDate(event.start);
+                            const timeLabel = event.allDay || !start ? labels.allDay : safeFormatDate(start, 'HH:mm');
+                            return (
+                                <View key={`${event.sourceId}-${event.id}-${event.start}`} style={styles.calendarEventRow}>
+                                    <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>
+                                        {timeLabel}
+                                    </Text>
+                                    <Text style={[styles.calendarEventTitle, { color: tc.text }]} numberOfLines={1}>
+                                        {event.title}
+                                    </Text>
+                                </View>
+                            );
+                        })}
+                        {day.totalCount > day.events.length && (
+                            <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>
+                                +{day.totalCount - day.events.length} {labels.more}
+                            </Text>
+                        )}
+                    </View>
+                ))}
+            </View>
+        );
+    };
+    const renderCalendarTaskList = (items: CalendarTaskReviewEntry[]) => {
+        if (items.length === 0) {
+            return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{labels.calendarTasksEmpty}</Text>;
+        }
+        return (
+            <View style={styles.calendarEventList}>
+                {items.slice(0, 12).map((entry) => (
+                    <View
+                        key={`${entry.kind}-${entry.task.id}-${entry.date.toISOString()}`}
+                        style={[styles.calendarDayCard, { borderColor: tc.border }]}
+                    >
+                        <Text style={[styles.calendarEventTitle, { color: tc.text }]} numberOfLines={1}>
+                            {entry.task.title}
+                        </Text>
+                        <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>
+                            {(entry.kind === 'due' ? labels.dueLabel : labels.startLabel)} · {safeFormatDate(entry.date, 'MMM d, HH:mm')}
+                        </Text>
+                    </View>
+                ))}
+            </View>
+        );
+    };
 
     const renderStepContent = () => {
         switch (currentStep) {
@@ -433,6 +641,26 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                                 </TouchableOpacity>
                             </ScrollView>
                         )}
+                    </View>
+                );
+
+            case 'calendar':
+                return (
+                    <View style={styles.stepContent}>
+                        <Text style={[styles.stepTitle, { color: tc.text }]}>
+                            📅 {labels.calendar}
+                        </Text>
+                        <Text style={[styles.hint, { color: tc.secondaryText }]}>
+                            {labels.calendarDesc}
+                        </Text>
+                        <View style={[styles.calendarColumn, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            <Text style={[styles.calendarColumnTitle, { color: tc.secondaryText }]}>{labels.calendarUpcoming}</Text>
+                            {renderExternalCalendarList(externalCalendarReviewItems)}
+                        </View>
+                        <View style={[styles.calendarColumn, { backgroundColor: tc.cardBg, borderColor: tc.border, marginTop: 12 }]}>
+                            <Text style={[styles.calendarColumnTitle, { color: tc.secondaryText }]}>{labels.calendarTasks}</Text>
+                            {renderCalendarTaskList(calendarReviewItems)}
+                        </View>
                     </View>
                 );
 
@@ -569,7 +797,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     };
 
     return (
-        <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
+        <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" allowSwipeDismissal onRequestClose={handleClose}>
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <View style={[styles.container, { backgroundColor: tc.bg }]}>
                     {/* Header */}
@@ -578,10 +806,10 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                             <Text style={[styles.closeButton, { color: tc.text }]}>✕</Text>
                         </TouchableOpacity>
                         <Text style={[styles.headerTitle, { color: tc.text }]}>
-                            {steps[currentStepIndex].icon} {steps[currentStepIndex].title}
+                            {steps[safeStepIndex].icon} {steps[safeStepIndex].title}
                         </Text>
                         <Text style={[styles.stepIndicator, { color: tc.secondaryText }]}>
-                            {currentStepIndex + 1}/{steps.length}
+                            {safeStepIndex + 1}/{steps.length}
                         </Text>
                     </View>
 
@@ -757,6 +985,44 @@ const styles = StyleSheet.create({
     aiItemMeta: {
         fontSize: 12,
         marginTop: 4,
+    },
+    calendarColumn: {
+        borderWidth: 1,
+        borderRadius: 10,
+        padding: 12,
+        minHeight: 140,
+    },
+    calendarColumnTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        marginBottom: 8,
+        letterSpacing: 0.4,
+    },
+    calendarEventList: {
+        gap: 8,
+    },
+    calendarDayCard: {
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: 8,
+        gap: 6,
+    },
+    calendarDayTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    calendarEventRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    calendarEventTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    calendarEventMeta: {
+        fontSize: 12,
     },
     projectItem: {
         padding: 12,

@@ -57,7 +57,8 @@ export default function MenuScreen() {
     waiting: '#F2B705',
     someday: '#6366F1',
     reference: '#0EA5E9',
-    archived: '#22C55E',
+    done: '#22C55E',
+    archived: '#64748B',
     trash: '#EF4444',
     settings: '#64748B',
     saved: '#4F8CF7',
@@ -74,7 +75,8 @@ export default function MenuScreen() {
         <MenuRow label={t('nav.waiting')} icon="pause.circle.fill" iconColor={iconColors.waiting} tc={tc} onPress={() => router.push('/waiting')} />
         <MenuRow label={t('nav.someday')} icon="arrow.up.circle.fill" iconColor={iconColors.someday} tc={tc} onPress={() => router.push('/someday')} />
         <MenuRow label={t('nav.reference')} icon="book.closed.fill" iconColor={iconColors.reference} tc={tc} onPress={() => router.push('/reference')} />
-        <MenuRow label={t('nav.archived')} icon="checkmark.circle.fill" iconColor={iconColors.archived} tc={tc} onPress={() => router.push('/archived')} />
+        <MenuRow label={t('nav.done')} icon="checkmark.circle.fill" iconColor={iconColors.done} tc={tc} onPress={() => router.push('/done' as never)} />
+        <MenuRow label={t('nav.archived')} icon="archivebox.fill" iconColor={iconColors.archived} tc={tc} onPress={() => router.push('/archived')} />
         <MenuRow label={t('nav.trash')} icon="trash.fill" iconColor={iconColors.trash} tc={tc} onPress={() => router.push('/trash')} />
         <MenuRow label={t('nav.settings')} icon="gearshape.fill" iconColor={iconColors.settings} tc={tc} onPress={() => router.push('/settings')} isLast />
       </View>

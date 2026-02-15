@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/dongdongbh/Mindwtr/discussions/new?category=q-a
+    about: Please ask and answer questions in Discussions.
+  - name: Submit an idea
+    url: https://github.com/dongdongbh/Mindwtr/discussions/new?category=ideas
+    about: Share early ideas and discuss before opening a formal feature request.
+  - name: Report a security vulnerability
+    url: https://github.com/dongdongbh/Mindwtr/security/policy
+    about: Please follow the security policy for responsible disclosure.

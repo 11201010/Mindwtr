@@ -13,8 +13,8 @@
 [![CI](https://github.com/dongdongbh/Mindwtr/actions/workflows/ci.yml/badge.svg)](https://github.com/dongdongbh/Mindwtr/actions/workflows/ci.yml)
 [![GitHub license](https://img.shields.io/github/license/dongdongbh/Mindwtr?color=brightgreen)](LICENSE)
 [![GitHub downloads](https://img.shields.io/github/downloads/dongdongbh/Mindwtr/total)](https://github.com/dongdongbh/Mindwtr/releases)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/MrrkRsm8)
-[![X Share](https://img.shields.io/badge/X-Share-111111?logo=X&logoColor=white)](https://x.com/intent/post?text=Mindwtr%20https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dongdongbh/Mindwtr)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/ahhFxuDBb4)
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-ff5f5f?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/dongdongbh)
 [![Ko-fi](https://img.shields.io/badge/Sponsor-Ko--fi-29abe0?logo=kofi&logoColor=white)](https://ko-fi.com/D1D01T20WK)
 
@@ -32,6 +32,13 @@
          alt="Google Play"
          style="height: 56px"
          height="56" />
+  </a>
+  <a href="https://apps.apple.com/app/mindwtr/id6758597144" target="_blank">
+    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/zh-cn?size=250x83"
+         align="center"
+         alt="Download on the App Store"
+         style="height: 50px"
+         height="50" />
   </a>
   <a href="https://snapcraft.io/mindwtr" target="_blank">
     <img alt="Get it from the Snap Store"
@@ -92,11 +99,12 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
 - 📎 **附件** - 任务支持文件与链接
 - ✏️ **Markdown 备注** - 富文本描述与预览
 - 🗂️ **项目状态** - 进行中、等待中、将来/也许、归档
-- ♾️ **流动重复** - 固定日期或“完成后 X 天”
+- ♾️ **流动重复** - 下次日期按完成时间计算
 - ♻️ **可复用清单** - 复制任务或重置清单
 - ✅ **清单模式** - 清单任务快速勾选
 - ✅ **语音收集** - 语音快速记录、自动转写并创建任务
 - 🧭 **Copilot 建议** - 可选的情境/标签/时间提示
+- 🍅 **番茄专注（可选）** - 在聚焦视图使用 15/3、25/5、50/10 番茄钟面板
 - 🔔 **通知** - 截止提醒与稍后提醒
 - 📊 **每日摘要** - 早间简报 + 晚间回顾
 - 📅 **每周回顾** - 可定制的每周提醒
@@ -115,12 +123,24 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
 
 ### 跨平台
 - 🖥️ **桌面端** - Tauri v2（macOS、Linux、Windows）
-- 📱 **移动端** - React Native/Expo（iOS 通过 TestFlight、Android）
+- 📱 **移动端** - React Native/Expo（iOS 通过 App Store/TestFlight、Android）
 - 📲 **Android 小部件** - 桌面焦点/下一步小组件
 - ⌨️ **键盘快捷键** - Vim 与 Emacs 预设
 - 🎨 **主题** - 明/暗模式
 - 🌍 **国际化** - 英文、中文、西班牙语、印地语、阿拉伯语、德语、俄语、日语、法语、葡萄牙语、韩语、意大利语、土耳其语
 - 🐳 **Docker** - 使用 Docker 运行 PWA + 自托管同步服务
+
+## 环境要求
+
+### 普通用户
+- 通过系统包管理器或应用商店安装桌面版时，不需要 Bun/Node.js。
+- 移动端可直接从 App Store / Google Play 安装。
+
+### 源码构建
+- **Bun**：`>= 1.1`（工作区安装、脚本与测试）
+- **Node.js**：`>= 18`（工具链兼容性建议）
+- **Rust 工具链** + 对应平台 WebView 依赖（用于 Tauri 桌面构建）
+- **Android Studio/SDK** 和/或 **Xcode**（用于 React Native 移动端构建）
 
 ## 安装
 
@@ -198,22 +218,23 @@ scoop install mindwtr
 
 ### 桌面端（macOS）
 
-**Homebrew（推荐）：**
-<a href="https://github.com/dongdongbh/homebrew-mindwtr">
-  <img src="https://img.shields.io/badge/Homebrew-Install-orange?logo=homebrew&logoColor=white" alt="Homebrew">
+**Mac App Store（推荐）：**
+<a href="https://apps.apple.com/app/mindwtr/id6758597144">
+  <img src="https://tools.applemediaservices.com/api/badges/download-on-the-mac-app-store/black/zh-cn?size=250x83" alt="Download on the Mac App Store">
+</a>
+
+通过 Mac App Store 安装：[Mindwtr（Mac App Store）](https://apps.apple.com/app/mindwtr/id6758597144)。
+TestFlight 测试版（macOS）：[加入测试版](https://testflight.apple.com/join/7SMJCTSR)。
+
+**Homebrew：**
+<a href="https://formulae.brew.sh/cask/mindwtr">
+  <img src="https://img.shields.io/homebrew/cask/v/mindwtr?label=Homebrew&logo=homebrew&logoColor=white" alt="Homebrew Cask Version">
 </a>
 ```bash
-brew tap dongdongbh/mindwtr
 brew install --cask mindwtr
 ```
 
 **其他方式：** 从 [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases) 获取 `.dmg`。
-
-> **注意：** 如果 macOS 提示应用“已损坏”或“来自未知开发者”，请执行：
-> ```bash
-> xattr -cr /Applications/Mindwtr.app
-> ```
-> 然后正常打开即可。该步骤是因为应用尚未进行苹果公证。
 
 ### 移动端
 
@@ -225,7 +246,12 @@ brew install --cask mindwtr
 其他方式：从 [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases) 下载 APK。
 
 **iOS：**
-已上线 TestFlight：[加入测试版](https://testflight.apple.com/join/7SMJCTSR)。
+<a href="https://apps.apple.com/app/mindwtr/id6758597144">
+  <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/zh-cn?size=250x83" alt="Download on the App Store">
+</a>
+
+已上线 App Store：[Mindwtr for iOS](https://apps.apple.com/app/mindwtr/id6758597144)。
+TestFlight 测试版：[加入测试版](https://testflight.apple.com/join/7SMJCTSR)。
 
 不过，维护 iOS 版上架 App Store 需要支付较高的年费（参考 [Apple Developer Program](https://developer.apple.com/support/enrollment/)），目前由我自费承担。
 
@@ -240,11 +266,30 @@ brew install --cask mindwtr
 - 🚀 [快速开始](https://github.com/dongdongbh/Mindwtr/wiki/Getting-Started)
 - 📚 [全平台与包管理器](https://github.com/dongdongbh/Mindwtr/wiki)
 
+## 社区
+
+Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它变得更好。
+
+### :hearts: 贡献与支持
+
+如果你想参与进来，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+你可以通过以下方式帮助项目：
+
+1. **帮忙传播：** 向朋友和社区推荐 Mindwtr，并在 [Product Hunt](https://www.producthunt.com/products/mindwtr) 与 [AlternativeTo](https://alternativeto.net/software/mindwtr/) 支持它。
+2. **留下应用商店评价：** 在 [App Store](https://apps.apple.com/app/mindwtr/id6758597144)、[Google Play](https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr) 或 [Microsoft Store](https://apps.microsoft.com/detail/9n0v5b0b6frx?ocid=webpdpshare) 的好评对项目帮助很大。
+3. **在社交平台分享：** 在 [X](https://twitter.com/intent/tweet?text=I%20like%20Mindwtr%20https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr)、[Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr&title=I%20like%20Mindwtr)、[LinkedIn](https://www.linkedin.com/shareArticle?mini=true&url=https%3A%2F%2Fgithub.com%2Fdongdongbh%2FMindwtr&title=I%20like%20Mindwtr) 发布使用体验。
+4. **报告问题与提出需求：** 在 [GitHub Issues](https://github.com/dongdongbh/Mindwtr/issues) 提交 Bug 和功能建议。
+5. **加入社区讨论：** 欢迎加入 [Discord](https://discord.gg/ahhFxuDBb4)。
+6. **贡献代码或文档：** 提交 PR，并遵循[贡献指南](docs/CONTRIBUTING.md)和提交规范。
+7. **赞助项目：** 可通过 [GitHub Sponsors](https://github.com/sponsors/dongdongbh) 或 [Ko-fi](https://ko-fi.com/D1D01T20WK) 支持持续开发。
+
 ## 路线图
 
 - 📦 上架 Flathub
 - 🤖 上架 F-Droid
-- 📱 iOS 正式发布
+- 📱 持续优化 iOS 体验
+- 🔗 与 Obsidian 集成（任务深度链接）
 - ✉️ 邮件添加到收件箱
 
 ## 文档

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { Task, TaskEditorFieldId, TimeEstimate } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -35,11 +35,11 @@ type TaskEditFormTabProps = {
     pendingDueDate: Date | null;
     getSafePickerDateValue: (dateStr?: string) => Date;
     onDateChange: (event: DateTimePickerEvent, selectedDate?: Date) => void;
-    onCloseDatePicker: () => void;
     containerWidth: number;
     textDirectionStyle: Record<string, any>;
     titleDraft: string;
     onTitleDraftChange: (text: string) => void;
+    registerScrollToEnd?: (handler: (() => void) | null) => void;
 };
 
 export function TaskEditFormTab({
@@ -70,13 +70,22 @@ export function TaskEditFormTab({
     pendingDueDate,
     getSafePickerDateValue,
     onDateChange,
-    onCloseDatePicker,
     containerWidth,
     textDirectionStyle,
     titleDraft,
     onTitleDraftChange,
+    registerScrollToEnd,
 }: TaskEditFormTabProps) {
     const [titleFocused, setTitleFocused] = React.useState(false);
+    const formScrollRef = React.useRef<ScrollView | null>(null);
+
+    React.useEffect(() => {
+        if (!registerScrollToEnd) return;
+        registerScrollToEnd(() => {
+            formScrollRef.current?.scrollToEnd({ animated: true });
+        });
+        return () => registerScrollToEnd(null);
+    }, [registerScrollToEnd]);
     const countFilledFields = (fieldIds: TaskEditorFieldId[]): number => {
         return fieldIds.filter((fieldId) => {
             switch (fieldId) {
@@ -116,6 +125,7 @@ export function TaskEditFormTab({
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
             >
                 <ScrollView
+                    ref={formScrollRef}
                     style={styles.content}
                     contentContainerStyle={styles.contentContainer}
                     keyboardShouldPersistTaps="handled"
@@ -245,16 +255,8 @@ export function TaskEditFormTab({
 
                     <View style={{ height: 100 }} />
 
-                    {showDatePicker && (
+                    {showDatePicker && Platform.OS === 'android' && (
                         <View>
-                            {Platform.OS === 'ios' && (
-                                <View style={styles.pickerToolbar}>
-                                    <View style={styles.pickerSpacer} />
-                                    <Pressable onPress={onCloseDatePicker} style={styles.pickerDone}>
-                                        <Text style={styles.pickerDoneText}>{t('common.done')}</Text>
-                                    </Pressable>
-                                </View>
-                            )}
                             <DateTimePicker
                                 value={(() => {
                                     if (showDatePicker === 'start') return getSafePickerDateValue(editedTask.startTime);
@@ -268,7 +270,7 @@ export function TaskEditFormTab({
                                         ? 'time'
                                         : 'date'
                                 }
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                display="default"
                                 onChange={onDateChange}
                             />
                         </View>

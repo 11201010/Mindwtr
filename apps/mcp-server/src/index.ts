@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod';
 
-import { createService } from './service.js';
+import { createService, type MindwtrService } from './service.js';
 
 type LogLevel = 'info' | 'error';
 type LogEntry = {
@@ -40,9 +40,7 @@ const logError = (message: string, error?: unknown) => {
   });
 };
 
-const args = process.argv.slice(2);
-
-const parseArgs = (argv: string[]) => {
+export const parseArgs = (argv: string[]) => {
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -59,21 +57,11 @@ const parseArgs = (argv: string[]) => {
   return flags;
 };
 
-const flags = parseArgs(args);
-
-const dbPath = typeof flags.db === 'string' ? flags.db : undefined;
-const allowWrite = Boolean(flags.write || flags.allowWrite || flags.allowWrites);
-const readonly = Boolean(flags.readonly) || !allowWrite;
-const keepAlive = !(flags.nowait || flags.noWait);
-const service = createService({ dbPath, readonly });
-
-const server = new McpServer({
-  name: 'mindwtr-mcp-server',
-  version: '0.1.0',
-});
+const taskStatusSchema = z.enum(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived']);
+const taskStatusOrAllSchema = z.enum(['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived', 'all']);
 
 const listTasksSchema = z.object({
-  status: z.string().optional(),
+  status: taskStatusOrAllSchema.optional(),
   projectId: z.string().optional(),
   includeDeleted: z.boolean().optional(),
   limit: z.number().int().optional(),
@@ -89,7 +77,7 @@ const listTasksSchema = z.object({
 const addTaskSchema = z.object({
   title: z.string().optional().describe('Task title'),
   quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
-  status: z.string().optional().describe('Task status: inbox, next, waiting, someday, done, archived'),
+  status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
   dueDate: z.string().optional().describe('Due date in ISO format'),
   startTime: z.string().optional().describe('Start time in ISO format'),
@@ -111,7 +99,7 @@ const completeTaskSchema = z.object({
 const updateTaskSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
-  status: z.string().optional(),
+  status: taskStatusSchema.optional(),
   projectId: z.string().nullable().optional(),
   dueDate: z.string().nullable().optional(),
   startTime: z.string().nullable().optional(),
@@ -139,136 +127,170 @@ const restoreTaskSchema = z.object({
 
 const listProjectsSchema = z.object({});
 
-server.registerTool(
-  'mindwtr.list_tasks',
-  {
-    description: 'List tasks from the local Mindwtr SQLite database. Supports filtering by status, project, date range, and search. Supports sorting by various fields.',
-    inputSchema: listTasksSchema,
-  },
-  async (input) => {
-    const tasks = await service.listTasks({
-      ...input,
-      status: input.status as any,
-      sortBy: input.sortBy as any,
-      sortOrder: input.sortOrder as any,
+export const registerMindwtrTools = (server: McpServer, service: MindwtrService, readonly: boolean) => {
+  server.registerTool(
+    'mindwtr.list_tasks',
+    {
+      description: 'List tasks from the local Mindwtr SQLite database. Supports filtering by status, project, date range, and search. Supports sorting by various fields.',
+      inputSchema: listTasksSchema,
+    },
+    async (input) => {
+      const tasks = await service.listTasks({
+        ...input,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ tasks }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.list_projects',
+    {
+      description: 'List projects from the local Mindwtr SQLite database.',
+      inputSchema: listProjectsSchema,
+    },
+    async () => {
+      const projects = await service.listProjects();
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ projects }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.add_task',
+    {
+      description: 'Add a task to the local Mindwtr SQLite database.',
+      inputSchema: addTaskSchema,
+    },
+    async (input) => {
+      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      validateAddTask(input);
+      const task = await service.addTask({
+        ...input,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.update_task',
+    {
+      description: 'Update a task in the local Mindwtr SQLite database.',
+      inputSchema: updateTaskSchema,
+    },
+    async (input) => {
+      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      const task = await service.updateTask({
+        ...input,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.complete_task',
+    {
+      description: 'Mark a task as done in the local Mindwtr SQLite database.',
+      inputSchema: completeTaskSchema,
+    },
+    async (input) => {
+      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      const task = await service.completeTask(input.id);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.delete_task',
+    {
+      description: 'Soft-delete a task in the local Mindwtr SQLite database.',
+      inputSchema: deleteTaskSchema,
+    },
+    async (input) => {
+      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      const task = await service.deleteTask(input.id);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.get_task',
+    {
+      description: 'Get a single task by ID from the local Mindwtr SQLite database.',
+      inputSchema: getTaskSchema,
+    },
+    async (input) => {
+      const task = await service.getTask({ id: input.id, includeDeleted: input.includeDeleted });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    'mindwtr.restore_task',
+    {
+      description: 'Restore a soft-deleted task in the local Mindwtr SQLite database.',
+      inputSchema: restoreTaskSchema,
+    },
+    async (input) => {
+      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      const task = await service.restoreTask(input.id);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
+      };
+    },
+  );
+};
+
+const attachLifecycleHandlers = (service: MindwtrService) => {
+  const closeService = () => {
+    void service.close().catch((error) => {
+      logError('Failed to close database connection', error);
     });
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ tasks }, null, 2) }],
-    };
-  },
-);
+  };
 
-server.registerTool(
-  'mindwtr.list_projects',
-  {
-    description: 'List projects from the local Mindwtr SQLite database.',
-    inputSchema: listProjectsSchema,
-  },
-  async () => {
-    const projects = await service.listProjects();
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ projects }, null, 2) }],
-    };
-  },
-);
+  process.on('exit', () => {
+    closeService();
+  });
+  process.on('SIGINT', () => {
+    closeService();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    closeService();
+    process.exit(0);
+  });
+};
 
-server.registerTool(
-  'mindwtr.add_task',
-  {
-    description: 'Add a task to the local Mindwtr SQLite database.',
-    inputSchema: addTaskSchema,
-  },
-  async (input) => {
-    if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
-    validateAddTask(input);
-    const task = await service.addTask({
-      ...input,
-      status: input.status as any,
-    });
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
+export async function startMcpServer(argv: string[] = process.argv.slice(2)) {
+  const flags = parseArgs(argv);
 
-server.registerTool(
-  'mindwtr.update_task',
-  {
-    description: 'Update a task in the local Mindwtr SQLite database.',
-    inputSchema: updateTaskSchema,
-  },
-  async (input) => {
-    if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
-    const task = await service.updateTask({
-      ...input,
-      status: input.status as any,
-    });
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
+  const dbPath = typeof flags.db === 'string' ? flags.db : undefined;
+  const allowWrite = Boolean(flags.write || flags.allowWrite || flags.allowWrites);
+  const readonly = Boolean(flags.readonly) || !allowWrite;
+  const keepAlive = !(flags.nowait || flags.noWait);
 
-server.registerTool(
-  'mindwtr.complete_task',
-  {
-    description: 'Mark a task as done in the local Mindwtr SQLite database.',
-    inputSchema: completeTaskSchema,
-  },
-  async (input) => {
-    if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
-    const task = await service.completeTask(input.id);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
+  const service = createService({ dbPath, readonly });
+  attachLifecycleHandlers(service);
 
-server.registerTool(
-  'mindwtr.delete_task',
-  {
-    description: 'Soft-delete a task in the local Mindwtr SQLite database.',
-    inputSchema: deleteTaskSchema,
-  },
-  async (input) => {
-    if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
-    const task = await service.deleteTask(input.id);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
+  const server = new McpServer({
+    name: 'mindwtr-mcp-server',
+    version: '0.1.0',
+  });
 
-server.registerTool(
-  'mindwtr.get_task',
-  {
-    description: 'Get a single task by ID from the local Mindwtr SQLite database.',
-    inputSchema: getTaskSchema,
-  },
-  async (input) => {
-    const task = await service.getTask({ id: input.id, includeDeleted: input.includeDeleted });
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
+  registerMindwtrTools(server, service, readonly);
 
-server.registerTool(
-  'mindwtr.restore_task',
-  {
-    description: 'Restore a soft-deleted task in the local Mindwtr SQLite database.',
-    inputSchema: restoreTaskSchema,
-  },
-  async (input) => {
-    if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
-    const task = await service.restoreTask(input.id);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ task }, null, 2) }],
-    };
-  },
-);
-
-async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   if (keepAlive) {
@@ -278,7 +300,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  logError('Failed to start server', error);
-  process.exit(1);
-});
+if (import.meta.main) {
+  startMcpServer().catch((error) => {
+    logError('Failed to start server', error);
+    process.exit(1);
+  });
+}

@@ -112,6 +112,18 @@ node apps/mcp-server/dist/index.js --db "/path/to/mindwtr.db"
 ## Available Tools
 
 When connected, the AI agent has access to these tools. By default the server is **read-only**; pass `--write` to enable any write tool.
+Only `--write` is supported for write access (no alternate aliases).
+
+| Tool | Operation | Requires `--write` |
+| --- | --- | --- |
+| `mindwtr.list_tasks` | List tasks | No |
+| `mindwtr.list_projects` | List projects | No |
+| `mindwtr.get_task` | Fetch one task by ID | No |
+| `mindwtr.add_task` | Create task | Yes |
+| `mindwtr.update_task` | Update task | Yes |
+| `mindwtr.complete_task` | Mark done | Yes |
+| `mindwtr.delete_task` | Soft-delete task | Yes |
+| `mindwtr.restore_task` | Restore task | Yes |
 
 ### Read Tools
 - **`mindwtr.list_tasks`**: List tasks with filters (status, project, date range, search).

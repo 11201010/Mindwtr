@@ -3,6 +3,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useTaskStore, Task, getChecklistProgress, getTaskAgeLabel, getTaskStaleness, getStatusColor, hasTimeComponent, safeFormatDate, safeParseDueDate, TaskStatus, Project, resolveTaskTextDirection } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { useRef, useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
+import { ArrowRight, Check, RotateCcw, Trash2 } from 'lucide-react-native';
 import { ThemeColors } from '../hooks/use-theme-colors';
 
 export interface SwipeableTaskItemProps {
@@ -86,15 +87,15 @@ export function SwipeableTaskItem({
     // Status-aware left swipe action
     const getLeftAction = (): { label: string; color: string; action: TaskStatus } => {
         if (task.status === 'done') {
-            return { label: `↩ ${t('archived.restoreToInbox')}`, color: getStatusColor('inbox').text, action: 'inbox' };
+            return { label: t('archived.restoreToInbox') || 'Restore', color: getStatusColor('inbox').text, action: 'inbox' };
         } else if (task.status === 'next') {
-            return { label: `✓ ${t('common.done')}`, color: getStatusColor('done').text, action: 'done' };
+            return { label: t('common.done') || 'Done', color: getStatusColor('done').text, action: 'done' };
         } else if (task.status === 'waiting' || task.status === 'someday' || task.status === 'reference') {
-            return { label: `▶️ ${t('status.next')}`, color: getStatusColor('next').text, action: 'next' };
+            return { label: t('status.next') || 'Next', color: getStatusColor('next').text, action: 'next' };
         } else if (task.status === 'inbox') {
-            return { label: `▶️ ${t('status.next')}`, color: getStatusColor('next').text, action: 'next' };
+            return { label: t('status.next') || 'Next', color: getStatusColor('next').text, action: 'next' };
         } else {
-            return { label: `✓ ${t('common.done')}`, color: getStatusColor('done').text, action: 'done' };
+            return { label: t('common.done') || 'Done', color: getStatusColor('done').text, action: 'done' };
         }
     };
 
@@ -103,20 +104,21 @@ export function SwipeableTaskItem({
     const [showChecklist, setShowChecklist] = useState(false);
     const [localChecklist, setLocalChecklist] = useState(task.checklist || []);
     const checklistUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingChecklist = useRef<Task['checklist'] | null>(null);
+    const pendingChecklist = useRef<{ taskId: string; checklist: Task['checklist'] } | null>(null);
     const checklistTaskIdRef = useRef(task.id);
 
     const flushPendingChecklist = useCallback(() => {
-        const taskId = checklistTaskIdRef.current;
         const pending = pendingChecklist.current;
         if (!pending) return;
+        const { taskId } = pending;
+        const checklist = pending.checklist ?? [];
         const latestTask = useTaskStore.getState().tasks.find((t) => t.id === taskId);
         if (!latestTask || latestTask.deletedAt) {
             pendingChecklist.current = null;
             return;
         }
         const isListMode = latestTask.taskMode === 'list';
-        const allComplete = pending.length > 0 && pending.every((entry) => entry.isCompleted);
+        const allComplete = checklist.length > 0 && checklist.every((entry) => entry.isCompleted);
         const nextStatus = isListMode
             ? allComplete
                 ? 'done'
@@ -124,7 +126,7 @@ export function SwipeableTaskItem({
                     ? 'next'
                     : undefined
             : undefined;
-        updateTask(taskId, { checklist: pending, ...(nextStatus ? { status: nextStatus } : {}) });
+        updateTask(taskId, { checklist, ...(nextStatus ? { status: nextStatus } : {}) });
         pendingChecklist.current = null;
     }, [updateTask]);
 
@@ -136,7 +138,6 @@ export function SwipeableTaskItem({
         if (checklistTaskIdRef.current !== task.id) {
             flushPendingChecklist();
             checklistTaskIdRef.current = task.id;
-            pendingChecklist.current = null;
             if (checklistUpdateTimer.current) {
                 clearTimeout(checklistUpdateTimer.current);
                 checklistUpdateTimer.current = null;
@@ -239,19 +240,23 @@ export function SwipeableTaskItem({
         );
     }
 
-    const renderLeftActions = () => (
-        <Pressable
-            style={[styles.swipeActionLeft, { backgroundColor: leftAction.color }]}
-            onPress={() => {
-                swipeableRef.current?.close();
-                onStatusChange(leftAction.action);
-            }}
-            accessibilityLabel={`${leftAction.label} action`}
-            accessibilityRole="button"
-        >
-            <Text style={styles.swipeActionText}>{leftAction.label}</Text>
-        </Pressable>
-    );
+    const renderLeftActions = () => {
+        const LeftIcon = leftAction.action === 'inbox' ? RotateCcw : leftAction.action === 'done' ? Check : ArrowRight;
+        return (
+            <Pressable
+                style={[styles.swipeActionLeft, { backgroundColor: leftAction.color }]}
+                onPress={() => {
+                    swipeableRef.current?.close();
+                    onStatusChange(leftAction.action);
+                }}
+                accessibilityLabel={`${leftAction.label} action`}
+                accessibilityRole="button"
+            >
+                <LeftIcon size={20} color="#FFFFFF" />
+                <Text style={styles.swipeActionText}>{leftAction.label}</Text>
+            </Pressable>
+        );
+    };
 
     const renderRightActions = () => (
         <Pressable
@@ -263,7 +268,8 @@ export function SwipeableTaskItem({
             accessibilityLabel="Delete task"
             accessibilityRole="button"
         >
-            <Text style={styles.swipeActionText}>🗑️ {t('common.delete')}</Text>
+            <Trash2 size={20} color="#FFFFFF" />
+            <Text style={styles.swipeActionText}>{t('common.delete')}</Text>
         </Pressable>
     );
 
@@ -302,7 +308,7 @@ export function SwipeableTaskItem({
             style={[
                 styles.taskItem,
                 { backgroundColor: tc.taskItemBg },
-                !isDark && { borderWidth: StyleSheet.hairlineWidth, borderColor: tc.border },
+                { borderWidth: StyleSheet.hairlineWidth, borderColor: tc.border },
                 !isDark && {
                     shadowColor: '#0F172A',
                     shadowOffset: { width: 0, height: 2 },
@@ -353,6 +359,7 @@ export function SwipeableTaskItem({
                                         event.stopPropagation();
                                         toggleFocus();
                                     }}
+                                    hitSlop={8}
                                     style={[
                                         styles.focusButton,
                                         { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(15, 23, 42, 0.08)' }
@@ -415,12 +422,13 @@ export function SwipeableTaskItem({
                                                 i === index ? { ...it, isCompleted: !it.isCompleted } : it
                                             );
                                             setLocalChecklist(newList);
-                                            pendingChecklist.current = newList;
+                                            pendingChecklist.current = { taskId, checklist: newList };
                                             if (checklistUpdateTimer.current) {
                                                 clearTimeout(checklistUpdateTimer.current);
                                             }
                                             checklistUpdateTimer.current = setTimeout(() => {
-                                                if (checklistTaskIdRef.current !== taskId) return;
+                                                const pending = pendingChecklist.current;
+                                                if (!pending || pending.taskId !== taskId) return;
                                                 flushPendingChecklist();
                                                 checklistUpdateTimer.current = null;
                                             }, 200);
@@ -455,6 +463,7 @@ export function SwipeableTaskItem({
                                 e.stopPropagation();
                                 setShowStatusMenu(true);
                             }}
+                            hitSlop={8}
                             style={[
                                 styles.statusBadge,
                                 { backgroundColor: statusColors.bg, borderColor: statusColors.border }
@@ -533,15 +542,11 @@ const styles = StyleSheet.create({
     taskItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 12,
-        borderRadius: 10,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 14,
         marginBottom: 8,
         position: 'relative',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0,
-        shadowRadius: 0,
-        elevation: 0,
     },
     selectionIndicator: {
         width: 22,
@@ -567,16 +572,20 @@ const styles = StyleSheet.create({
     },
     taskTitle: {
         fontSize: 15,
-        fontWeight: '600',
+        fontWeight: '500',
         lineHeight: 20,
     },
     taskTitleFlex: {
         flex: 1,
     },
     focusButton: {
-        paddingHorizontal: 6,
-        paddingVertical: 2,
+        minWidth: 44,
+        minHeight: 44,
+        paddingHorizontal: 8,
+        paddingVertical: 8,
         borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     focusButtonText: {
         fontSize: 16,
@@ -720,13 +729,13 @@ const styles = StyleSheet.create({
         opacity: 0.6,
     },
     statusBadge: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
+        minHeight: 44,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 8,
         marginLeft: 12,
-        minWidth: 60,
         alignItems: 'center',
-        borderWidth: 1,
+        justifyContent: 'center',
     },
     statusText: {
         fontSize: 10,
@@ -737,24 +746,26 @@ const styles = StyleSheet.create({
         backgroundColor: '#10B981',
         justifyContent: 'center',
         alignItems: 'center',
-        width: 100,
-        borderRadius: 12,
-        marginBottom: 12,
+        width: 90,
+        borderRadius: 14,
+        marginBottom: 8,
         marginRight: 8,
+        gap: 4,
     },
     swipeActionRight: {
         backgroundColor: '#EF4444',
         justifyContent: 'center',
         alignItems: 'center',
-        width: 100,
-        borderRadius: 12,
-        marginBottom: 12,
+        width: 90,
+        borderRadius: 14,
+        marginBottom: 8,
         marginLeft: 8,
+        gap: 4,
     },
     swipeActionText: {
         color: '#FFFFFF',
         fontWeight: '600',
-        fontSize: 14,
+        fontSize: 12,
     },
     modalOverlay: {
         flex: 1,

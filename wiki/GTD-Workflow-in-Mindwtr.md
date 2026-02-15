@@ -219,7 +219,10 @@ Set up recurring tasks for habits:
 
 1. Edit a task
 2. Set recurrence (daily, weekly, monthly, yearly)
-3. When completed, a new instance is created automatically
+3. Choose strategy:
+   - **Strict** for fixed schedules (e.g., every 5 days on a fixed cadence)
+   - **Repeat after completion** for habits based on when you actually finish
+4. When completed, a new instance is created automatically
 
 **Example recurring tasks:**
 - Weekly: "Review project status"

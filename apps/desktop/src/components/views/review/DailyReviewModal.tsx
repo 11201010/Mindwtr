@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Calendar, Check, CheckSquare, RefreshCw, Star, X, type LucideIcon } from 'lucide-react';
-import { PRESET_CONTEXTS, isDueForReview, safeParseDate, safeParseDueDate, sortTasksBy, type Task, type TaskSortBy, shallow, useTaskStore, isTaskInActiveProject } from '@mindwtr/core';
+import { ArrowRight, Calendar, Check, CheckSquare, ChevronLeft, RefreshCw, Star, X, type LucideIcon } from 'lucide-react';
+import {
+    PRESET_CONTEXTS,
+    isDueForReview,
+    safeFormatDate,
+    safeParseDate,
+    safeParseDueDate,
+    sortTasksBy,
+    type ExternalCalendarEvent,
+    type Task,
+    type TaskSortBy,
+    shallow,
+    useTaskStore,
+    isTaskInActiveProject,
+} from '@mindwtr/core';
 import { cn } from '../../../lib/utils';
 import { useLanguage } from '../../../contexts/language-context';
 import { InboxProcessor } from '../InboxProcessor';
 import { TaskItem } from '../../TaskItem';
+import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
 
 type DailyReviewStep = 'intro' | 'today' | 'focus' | 'inbox' | 'waiting' | 'completed';
 
@@ -32,6 +46,9 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
     );
     const { t } = useLanguage();
     const [isProcessing, setIsProcessing] = useState(false);
+    const [externalCalendarEvents, setExternalCalendarEvents] = useState<ExternalCalendarEvent[]>([]);
+    const [externalCalendarLoading, setExternalCalendarLoading] = useState(false);
+    const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
 
     const today = new Date();
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -156,6 +173,60 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [onClose]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const loadCalendar = async () => {
+            setExternalCalendarLoading(true);
+            setExternalCalendarError(null);
+            try {
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                const tomorrowEnd = new Date(todayStart);
+                tomorrowEnd.setDate(tomorrowEnd.getDate() + 2);
+                tomorrowEnd.setMilliseconds(-1);
+                const { events } = await fetchExternalCalendarEvents(todayStart, tomorrowEnd);
+                if (cancelled) return;
+                setExternalCalendarEvents(events);
+            } catch (error) {
+                if (cancelled) return;
+                setExternalCalendarError(error instanceof Error ? error.message : String(error));
+                setExternalCalendarEvents([]);
+            } finally {
+                if (!cancelled) setExternalCalendarLoading(false);
+            }
+        };
+        loadCalendar();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const getEventsForDay = (date: Date) => {
+        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        return externalCalendarEvents
+            .filter((event) => {
+                const start = safeParseDate(event.start);
+                const end = safeParseDate(event.end);
+                if (!start || !end) return false;
+                return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
+            })
+            .sort((a, b) => {
+                const aStart = safeParseDate(a.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                const bStart = safeParseDate(b.start)?.getTime() ?? Number.POSITIVE_INFINITY;
+                return aStart - bStart;
+            });
+    };
+
+    const tomorrow = useMemo(() => {
+        const d = new Date(today);
+        d.setDate(d.getDate() + 1);
+        return d;
+    }, [today]);
+    const todayCalendarEvents = useMemo(() => getEventsForDay(today), [externalCalendarEvents, today]);
+    const tomorrowCalendarEvents = useMemo(() => getEventsForDay(tomorrow), [externalCalendarEvents, tomorrow]);
+
     const steps: { id: DailyReviewStep; title: string; description: string; icon: LucideIcon }[] = [
         { id: 'intro', title: t('dailyReview.title'), description: t('dailyReview.introDesc'), icon: RefreshCw },
         { id: 'today', title: t('dailyReview.todayStep'), description: t('dailyReview.todayDesc'), icon: Calendar },
@@ -189,7 +260,7 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
             );
         }
         return (
-            <div className="space-y-2">
+            <div className="divide-y divide-border/30">
                 {list.slice(0, 10).map((task) => (
                     <TaskItem key={task.id} task={task} showProjectBadgeInActions={false} />
                 ))}
@@ -274,6 +345,35 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
         );
     };
 
+    const renderCalendarEventList = (events: ExternalCalendarEvent[]) => {
+        if (externalCalendarLoading) {
+            return <p className="text-xs text-muted-foreground">{t('common.loading')}</p>;
+        }
+        if (externalCalendarError) {
+            return <p className="text-xs text-muted-foreground">{externalCalendarError}</p>;
+        }
+        if (events.length === 0) {
+            return <p className="text-xs text-muted-foreground">{t('calendar.noTasks')}</p>;
+        }
+        return (
+            <div className="space-y-1.5">
+                {events.slice(0, 5).map((event) => {
+                    const start = safeParseDate(event.start);
+                    const end = safeParseDate(event.end);
+                    const timeLabel = event.allDay || !start || !end
+                        ? t('calendar.allDay')
+                        : `${safeFormatDate(start, 'HH:mm')} - ${safeFormatDate(end, 'HH:mm')}`;
+                    return (
+                        <div key={event.id} className="text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground mr-2">{event.title}</span>
+                            <span>{timeLabel}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     const renderStepContent = () => {
         switch (currentStep) {
             case 'intro':
@@ -303,6 +403,20 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                             <p className="text-sm text-muted-foreground mt-2">
                                 <span className="font-bold text-foreground">{list.length}</span> {t('common.tasks')}
                             </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="bg-card border border-border rounded-lg p-3 space-y-2">
+                                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {safeFormatDate(today, 'MMM d')} · {t('calendar.events')}
+                                </h4>
+                                {renderCalendarEventList(todayCalendarEvents)}
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 space-y-2">
+                                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {safeFormatDate(tomorrow, 'MMM d')} · {t('calendar.events')}
+                                </h4>
+                                {renderCalendarEventList(tomorrowCalendarEvents)}
+                            </div>
                         </div>
                         {renderTaskList(list, t('agenda.noTasks'))}
                     </div>
@@ -396,37 +510,37 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                 className="bg-card border border-border rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="p-6 border-b border-border flex items-center justify-between">
-                    <h3 className="text-xl font-semibold flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-primary" />
+                <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                    <h3 className="text-[15px] font-semibold flex items-center gap-2.5">
+                        <Calendar className="w-4 h-4 text-primary" />
                         {t('dailyReview.title')}
                     </h3>
                     <button
                         onClick={onClose}
-                        className="p-2 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                        className="p-1.5 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
                         aria-label={t('common.close')}
                     >
-                        <X className="w-5 h-5" />
+                        <X className="w-4 h-4" />
                     </button>
                 </div>
 
-                <div className="p-6 flex flex-col flex-1 min-h-0">
-                    <div className="mb-6">
+                <div className="p-5 flex flex-col flex-1 min-h-0">
+                    <div className="mb-5">
                         <div className="flex items-center justify-between mb-3">
-                            <h1 className="text-2xl font-bold flex items-center gap-2">
+                            <h1 className="text-lg font-semibold flex items-center gap-2">
                                 {(() => {
                                     const Icon = steps[currentStepIndex].icon;
-                                    return Icon && <Icon className="w-6 h-6" />;
+                                    return Icon && <Icon className="w-[18px] h-[18px] text-primary" />;
                                 })()}
                                 {steps[currentStepIndex].title}
                             </h1>
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-xs text-muted-foreground">
                                 {t('review.step')} {currentStepIndex + 1} {t('review.of')} {steps.length}
                             </span>
                         </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-1 bg-muted rounded-full overflow-hidden">
                             <div
-                                className="h-full bg-primary transition-all duration-500 ease-in-out"
+                                className="h-full bg-primary transition-all duration-500 ease-in-out rounded-full"
                                 style={{ width: `${progress}%` }}
                             />
                         </div>
@@ -437,18 +551,18 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                     </div>
 
                     {currentStep !== 'intro' && currentStep !== 'completed' && (
-                        <div className="flex justify-between pt-4 border-t border-border mt-6">
+                        <div className="flex justify-between items-center pt-3.5 border-t border-border mt-5">
                             <button
                                 onClick={prevStep}
-                                className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
+                                className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                             >
-                                {t('review.back')}
+                                <ChevronLeft className="w-3.5 h-3.5" /> {t('review.back')}
                             </button>
                             <button
                                 onClick={nextStep}
-                                className="bg-primary text-primary-foreground px-6 py-2 rounded-md hover:bg-primary/90 transition-colors"
+                                className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors"
                             >
-                                {t('review.nextStepBtn')}
+                                {t('review.nextStepBtn')} <ArrowRight className="w-3.5 h-3.5" />
                             </button>
                         </div>
                     )}

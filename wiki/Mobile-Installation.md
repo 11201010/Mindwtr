@@ -40,16 +40,22 @@ After installation:
 
 ### Current Status
 
-iOS is currently available via TestFlight:
-https://testflight.apple.com/join/7SMJCTSR
+iOS is now available on the App Store:
+https://apps.apple.com/app/mindwtr/id6758597144
 
-There is no public App Store release at this time.
+TestFlight beta is also available:
+https://testflight.apple.com/join/7SMJCTSR
 
 ### Options
 
-1. **TestFlight (Recommended)** — Install the latest iOS beta build
-2. **Simulator builds** — Available in the source code for development
-3. **Self-build** — Build and sign the app yourself with Xcode (Apple Developer account required for device signing)
+1. **App Store (Recommended)** — Install the stable release
+2. **TestFlight** — Install the latest iOS beta build
+3. **Simulator builds** — Available in the source code for development
+4. **Self-build** — Build and sign the app yourself with Xcode (Apple Developer account required for device signing)
+
+However, maintaining the iOS version on the App Store requires a substantial annual fee (see the Apple Developer Program), which I currently cover out of pocket.
+
+To ensure Mindwtr's continued existence and future development, your support is greatly appreciated! If you find value in the app, please consider supporting the project via GitHub Sponsors or Ko-fi.
 
 ### Building for iOS (Developers)
 

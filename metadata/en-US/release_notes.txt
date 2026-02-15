@@ -1,0 +1,3 @@
+- Stabilized iOS back navigation and edge-swipe behavior across Settings and drawer screens.
+- Improved cross-device sync safety and merge correctness with stronger data-integrity validation.
+- Added support for local OpenAI-compatible AI endpoints through custom base URL configuration.

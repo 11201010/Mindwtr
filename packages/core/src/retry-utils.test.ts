@@ -31,6 +31,7 @@ describe('withRetry', () => {
             maxAttempts: 3,
             baseDelayMs: 1,
             maxDelayMs: 4,
+            jitterRatio: 0,
             onRetry: (_err, _attempt, delayMs) => delays.push(delayMs),
         });
 
@@ -53,5 +54,22 @@ describe('withRetry', () => {
         const fn = vi.fn().mockRejectedValue(error);
         await expect(withRetry(fn, { maxAttempts: 3, baseDelayMs: 0 })).rejects.toBe(error);
         expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('applies jitter to exponential delay when enabled', async () => {
+        const delays: number[] = [];
+        const fn = vi.fn().mockRejectedValue(new Error('timeout'));
+
+        await expect(withRetry(fn, {
+            maxAttempts: 2,
+            baseDelayMs: 10,
+            maxDelayMs: 100,
+            jitterRatio: 0.5,
+            random: () => 1, // max positive jitter
+            onRetry: (_err, _attempt, delayMs) => delays.push(delayMs),
+        })).rejects.toBeDefined();
+
+        expect(delays).toHaveLength(1);
+        expect(delays[0]).toBe(15);
     });
 });

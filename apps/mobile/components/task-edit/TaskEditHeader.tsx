@@ -30,15 +30,23 @@ export function TaskEditHeader({
   return (
     <>
       <View style={[styles.header, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
-        <TouchableOpacity onPress={onDone}>
-          <Text style={[styles.headerBtn, { color: tc.tint }]}>{t('common.done')}</Text>
-        </TouchableOpacity>
+        <View style={[styles.headerSide, styles.headerLeft]}>
+          <TouchableOpacity
+            style={[styles.headerActionTouchable, styles.headerActionLeft]}
+            onPress={() => setMenuVisible(true)}
+          >
+            <Text style={[styles.headerBtn, styles.headerMoreBtn, { color: tc.tint }]}>•••</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={[styles.headerTitle, { color: tc.text }]} numberOfLines={1}>
           {title}
         </Text>
-        <View style={styles.headerRight}>
-          <TouchableOpacity onPress={() => setMenuVisible(true)}>
-            <Text style={[styles.headerBtn, { color: tc.tint }]}>•••</Text>
+        <View style={[styles.headerSide, styles.headerRight]}>
+          <TouchableOpacity
+            style={[styles.headerActionTouchable, styles.headerActionRight]}
+            onPress={onDone}
+          >
+            <Text style={[styles.headerBtn, { color: tc.tint }]}>{t('common.done')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -102,22 +110,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
+    minHeight: 60,
   },
   headerBtn: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  headerMoreBtn: {
+    fontSize: 22,
   },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     marginHorizontal: 8,
   },
+  headerSide: {
+    minWidth: 72,
+  },
+  headerLeft: {
+    alignItems: 'flex-start',
+  },
   headerRight: {
-    minWidth: 32,
+    alignItems: 'flex-end',
+  },
+  headerActionTouchable: {
+    minWidth: 72,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  headerActionLeft: {
+    alignItems: 'flex-start',
+  },
+  headerActionRight: {
     alignItems: 'flex-end',
   },
   menuOverlay: {

@@ -1,0 +1,3 @@
+- Added reliable scheduled-time notifications for tasks and review reminders, with better deep-link routing when tapping notifications.
+- Added optional Pomodoro Focus timer on desktop and mobile (disabled by default).
+- Improved mobile UX: fixed done-search routing, iOS keyboard gap, audio replay, and modal back behavior.

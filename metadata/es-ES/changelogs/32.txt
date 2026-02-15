@@ -1,0 +1,3 @@
+- Se corrigió un fallo de inicio en Android de Play Store (`undefined is not a function`) en builds de release.
+- Se mejoró la estabilidad de inicio de la barra de pestañas nativa.
+- Se añadió reintento en CI para la descarga de assets del repositorio Linux.

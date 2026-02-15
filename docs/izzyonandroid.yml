@@ -1,0 +1,25 @@
+repo_url: https://github.com/dongdongbh/Mindwtr
+repo_name: Mindwtr
+
+build:
+  - npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund --prefix packages/core
+  - bash apps/mobile/scripts/fdroid_prep.sh
+  - npm install --workspaces=false --legacy-peer-deps --no-audit --no-fund --prefix apps/mobile
+  - UNSIGNED_APK=1 FOSS_BUILD=1 SKIP_FDROID_PREP=1 ARCHS=arm64-v8a bash apps/mobile/scripts/android_build.sh
+
+artifacts:
+  - apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk
+
+notes:
+  - Build with plain npm + Gradle; no Bun and no EAS required.
+  - FOSS mode strips non-free Expo dependencies via scripts/fdroid_prep.sh.
+  - scripts/fdroid_prep.sh rewrites @mindwtr/core from workspace:* to file:../../packages/core for npm compatibility.
+  - Install packages/core first because @mindwtr/core is a local package in this flow.
+  - scripts/fdroid_prep.sh mutates apps/mobile/package.json; run from a clean checkout/CI workspace.
+  - SKIP_FDROID_PREP=1 avoids running prep twice after explicit pre-install prep.
+  - Use `FOSS_BUILD=1 ARCHS=arm64-v8a bash apps/mobile/scripts/android_build.sh --prep-only` for prep-only mode, then run Gradle manually in apps/mobile/android.
+  - Android manifest fixes remove unused CAMERA, SYSTEM_ALERT_WINDOW, and legacy storage permissions.
+  - RECORD_AUDIO is intentionally kept for voice notes.
+  - FOSS mode disables Gradle dependenciesInfo inclusion in APK/AAB.
+  - FOSS mode pins `react_native_dev_server_ip` to `localhost` in the React Native Gradle plugin for reproducible APKs.
+  - `UNSIGNED_APK=1` avoids debug-key signing; resulting APK is unsigned and should be signed by the distributor/release pipeline.

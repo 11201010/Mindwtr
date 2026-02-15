@@ -3,6 +3,7 @@ import type { AIProviderConfig, AIProviderId } from './ai/types';
 import { DEFAULT_ANTHROPIC_THINKING_BUDGET, DEFAULT_GEMINI_THINKING_BUDGET, DEFAULT_REASONING_EFFORT, getDefaultAIConfig, getDefaultCopilotModel } from './ai/catalog';
 
 const AI_KEY_PREFIX = 'mindwtr-ai-key';
+const OPENAI_CHAT_COMPLETIONS_PATH = '/chat/completions';
 
 export function getAIKeyStorageKey(provider: AIProviderId): string {
     return `${AI_KEY_PREFIX}:${provider}`;
@@ -47,20 +48,38 @@ export async function saveAIKeyToStorage(storage: KeyValueStorageAsync, provider
     await storage.setItem(key, value);
 }
 
+const resolveOpenAIEndpoint = (baseUrl?: string): string | undefined => {
+    const trimmed = String(baseUrl || '').trim();
+    if (!trimmed) return undefined;
+    const normalized = trimmed.replace(/\/+$/, '');
+    const lower = normalized.toLowerCase();
+    if (lower.endsWith(OPENAI_CHAT_COMPLETIONS_PATH)) {
+        return normalized;
+    }
+    return `${normalized}${OPENAI_CHAT_COMPLETIONS_PATH}`;
+};
+
 export function buildAIConfig(settings: AppData['settings'], apiKey: string): AIProviderConfig {
     const provider = (settings.ai?.provider ?? 'openai') as AIProviderId;
     const defaults = getDefaultAIConfig(provider);
+    const endpoint = provider === 'openai'
+        ? resolveOpenAIEndpoint(settings.ai?.baseUrl)
+        : undefined;
     return {
         provider,
         apiKey,
         model: settings.ai?.model ?? defaults.model,
         reasoningEffort: settings.ai?.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
         thinkingBudget: settings.ai?.thinkingBudget ?? defaults.thinkingBudget,
+        ...(endpoint ? { endpoint } : {}),
     };
 }
 
 export function buildCopilotConfig(settings: AppData['settings'], apiKey: string): AIProviderConfig {
     const provider = (settings.ai?.provider ?? 'openai') as AIProviderId;
+    const endpoint = provider === 'openai'
+        ? resolveOpenAIEndpoint(settings.ai?.baseUrl)
+        : undefined;
     return {
         provider,
         apiKey,
@@ -68,5 +87,6 @@ export function buildCopilotConfig(settings: AppData['settings'], apiKey: string
         reasoningEffort: DEFAULT_REASONING_EFFORT,
         ...(provider === 'gemini' ? { thinkingBudget: DEFAULT_GEMINI_THINKING_BUDGET } : {}),
         ...(provider === 'anthropic' ? { thinkingBudget: DEFAULT_ANTHROPIC_THINKING_BUDGET } : {}),
+        ...(endpoint ? { endpoint } : {}),
     };
 }

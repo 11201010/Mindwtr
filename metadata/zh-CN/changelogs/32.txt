@@ -1,0 +1,3 @@
+- 修复了 Play 商店 Android 发行版启动时的 `undefined is not a function` 崩溃问题。
+- 提升了原生底部标签栏启动稳定性。
+- 为 Linux 仓库发布资产下载增加了 CI 重试机制。

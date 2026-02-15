@@ -47,6 +47,8 @@ describeBun('SqliteAdapter', () => {
                     id: 'task-1',
                     title: 'Write docs',
                     status: 'next',
+                    rev: 5,
+                    revBy: 'device-desktop',
                     tags: ['#docs', '#writing'],
                     contexts: ['@computer'],
                     recurrence: {
@@ -80,16 +82,31 @@ describeBun('SqliteAdapter', () => {
                     tagIds: ['tag-1'],
                     isSequential: true,
                     isFocused: false,
+                    rev: 7,
+                    revBy: 'device-desktop',
                     createdAt: now,
                     updatedAt: now,
                 },
             ],
-            sections: [],
+            sections: [
+                {
+                    id: 'section-1',
+                    projectId: 'proj-1',
+                    title: 'Milestones',
+                    order: 0,
+                    rev: 2,
+                    revBy: 'device-desktop',
+                    createdAt: now,
+                    updatedAt: now,
+                },
+            ],
             areas: [
                 {
                     id: 'area-1',
                     name: 'Work',
                     order: 0,
+                    rev: 3,
+                    revBy: 'device-desktop',
                 },
             ],
             settings: {
@@ -102,7 +119,7 @@ describeBun('SqliteAdapter', () => {
 
         expect(loaded.tasks).toHaveLength(1);
         expect(loaded.projects).toHaveLength(1);
-        expect(loaded.sections).toHaveLength(0);
+        expect(loaded.sections).toHaveLength(1);
         expect(loaded.areas).toHaveLength(1);
         expect(loaded.settings.gtd?.autoArchiveDays).toBe(7);
 
@@ -118,16 +135,64 @@ describeBun('SqliteAdapter', () => {
         });
         expect(task.checklist?.[0]?.title).toBe('Outline');
         expect(task.attachments?.[0]?.title).toBe('spec.pdf');
+        expect(task.rev).toBe(5);
+        expect(task.revBy).toBe('device-desktop');
 
         const project = loaded.projects[0];
         expect(project.title).toBe('Mindwtr');
         expect(project.tagIds).toEqual(['tag-1']);
         expect(project.isSequential).toBe(true);
         expect(project.isFocused).toBe(false);
+        expect(project.rev).toBe(7);
+        expect(project.revBy).toBe('device-desktop');
+
+        const section = loaded.sections[0];
+        expect(section.title).toBe('Milestones');
+        expect(section.rev).toBe(2);
+        expect(section.revBy).toBe('device-desktop');
 
         const area = loaded.areas[0];
         expect(area.name).toBe('Work');
         expect(area.order).toBe(0);
+        expect(area.rev).toBe(3);
+        expect(area.revBy).toBe('device-desktop');
+    });
+
+    it('drops attachments with empty URIs when loading tasks', async () => {
+        const now = new Date().toISOString();
+        const data: AppData = {
+            tasks: [
+                {
+                    id: 'task-empty-uri',
+                    title: 'Task with invalid attachment',
+                    status: 'inbox',
+                    tags: [],
+                    contexts: [],
+                    attachments: [
+                        {
+                            id: 'att-empty',
+                            kind: 'file',
+                            title: 'empty',
+                            uri: '   ',
+                            createdAt: now,
+                            updatedAt: now,
+                        },
+                    ],
+                    createdAt: now,
+                    updatedAt: now,
+                },
+            ],
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {},
+        };
+
+        await adapter.saveData(data);
+        const loaded = await adapter.getData();
+
+        expect(loaded.tasks).toHaveLength(1);
+        expect(loaded.tasks[0].attachments).toBeUndefined();
     });
 
     it('adds missing task columns on older schemas', async () => {
@@ -157,5 +222,54 @@ describeBun('SqliteAdapter', () => {
         expect(names).toContain('areaId');
         expect(names).toContain('sectionId');
         expect(names).toContain('purgedAt');
+        expect(names).toContain('rev');
+        expect(names).toContain('revBy');
+
+        const projectColumns = db.query('PRAGMA table_info(projects)').all() as { name: string }[];
+        const projectColumnNames = projectColumns.map((col) => col.name);
+        expect(projectColumnNames).toContain('rev');
+        expect(projectColumnNames).toContain('revBy');
+
+        const sectionColumns = db.query('PRAGMA table_info(sections)').all() as { name: string }[];
+        const sectionColumnNames = sectionColumns.map((col) => col.name);
+        expect(sectionColumnNames).toContain('rev');
+        expect(sectionColumnNames).toContain('revBy');
+
+        const areaColumns = db.query('PRAGMA table_info(areas)').all() as { name: string }[];
+        const areaColumnNames = areaColumns.map((col) => col.name);
+        expect(areaColumnNames).toContain('rev');
+        expect(areaColumnNames).toContain('revBy');
+    });
+
+    it('rejects invalid task status values at the database layer', async () => {
+        await adapter.ensureSchema();
+
+        expect(() =>
+            db.query(`
+                INSERT INTO tasks (id, title, status, createdAt, updatedAt)
+                VALUES ('bad-status', 'Bad status', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+            `).run()
+        ).toThrow(/invalid_task_status/i);
+    });
+
+    it('rejects malformed json fields at the database layer', async () => {
+        await adapter.ensureSchema();
+
+        expect(() =>
+            db.query(`
+                INSERT INTO tasks (id, title, status, tags, createdAt, updatedAt)
+                VALUES ('bad-json', 'Bad json', 'next', '{invalid', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+            `).run()
+        ).toThrow(/invalid_tasks_tags_json/i);
+    });
+
+    it('creates composite indexes used by sync queries', async () => {
+        await adapter.ensureSchema();
+
+        const indexes = db.query(`PRAGMA index_list(tasks)`).all() as Array<{ name: string }>;
+        const names = new Set(indexes.map((index) => index.name));
+
+        expect(names.has('idx_tasks_project_status_updatedAt')).toBe(true);
+        expect(names.has('idx_tasks_area_deletedAt')).toBe(true);
     });
 });

@@ -97,12 +97,110 @@ describe('TaskStore', () => {
         expect(tasks).toHaveLength(0);
     });
 
+    it('should increment revision metadata when purging a task', () => {
+        const { addTask, deleteTask, purgeTask } = useTaskStore.getState();
+        addTask('Task to Purge');
+
+        const task = useTaskStore.getState()._allTasks[0];
+        deleteTask(task.id);
+        const deleted = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        const deletedRev = deleted.rev ?? 0;
+
+        purgeTask(task.id);
+        const purged = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        expect(purged.purgedAt).toBeTruthy();
+        expect((purged.rev ?? 0)).toBeGreaterThan(deletedRev);
+        expect(typeof purged.revBy).toBe('string');
+        expect((purged.revBy ?? '').length).toBeGreaterThan(0);
+    });
+
     it('skips fetch while edits are in progress', async () => {
         const { lockEditing, unlockEditing, fetchData } = useTaskStore.getState();
         lockEditing();
         await fetchData({ silent: true });
         expect(mockStorage.getData).not.toHaveBeenCalled();
         unlockEditing();
+    });
+
+    it('purges expired tombstones during fetch even without sync', async () => {
+        mockStorage.getData = vi.fn().mockResolvedValue({
+            tasks: [
+                {
+                    id: 't-old',
+                    title: 'Old tombstone',
+                    status: 'done',
+                    tags: [],
+                    contexts: [],
+                    createdAt: '2000-01-01T00:00:00.000Z',
+                    updatedAt: '2000-06-01T00:00:00.000Z',
+                    deletedAt: '2000-06-01T00:00:00.000Z',
+                    purgedAt: '2000-06-01T00:00:00.000Z',
+                },
+            ],
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {},
+        });
+
+        await useTaskStore.getState().fetchData({ silent: true });
+        await flushPendingSave();
+
+        expect(useTaskStore.getState()._allTasks).toHaveLength(0);
+        expect((mockStorage.saveData as unknown as { mock: { calls: any[][] } }).mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('promotes scheduled tasks to next when scheduled date is reached', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-02-14T10:00:00.000Z').getTime());
+        mockStorage.getData = vi.fn().mockResolvedValue({
+            tasks: [
+                {
+                    id: 't-inbox',
+                    title: 'Inbox task due today',
+                    status: 'inbox',
+                    dueDate: '2026-02-14',
+                    tags: [],
+                    contexts: [],
+                    createdAt: '2026-02-01T00:00:00.000Z',
+                    updatedAt: '2026-02-01T00:00:00.000Z',
+                },
+                {
+                    id: 't-someday',
+                    title: 'Someday task start passed',
+                    status: 'someday',
+                    startTime: '2026-02-13T08:00:00.000Z',
+                    tags: [],
+                    contexts: [],
+                    createdAt: '2026-02-01T00:00:00.000Z',
+                    updatedAt: '2026-02-01T00:00:00.000Z',
+                },
+                {
+                    id: 't-waiting-future',
+                    title: 'Waiting task still future',
+                    status: 'waiting',
+                    startTime: '2026-02-15T08:00:00.000Z',
+                    tags: [],
+                    contexts: [],
+                    createdAt: '2026-02-01T00:00:00.000Z',
+                    updatedAt: '2026-02-01T00:00:00.000Z',
+                },
+            ],
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {},
+        });
+
+        await useTaskStore.getState().fetchData({ silent: true });
+        await flushPendingSave();
+
+        const byId = new Map(useTaskStore.getState()._allTasks.map((task) => [task.id, task]));
+        expect(byId.get('t-inbox')?.status).toBe('next');
+        expect(byId.get('t-someday')?.status).toBe('next');
+        expect(byId.get('t-waiting-future')?.status).toBe('waiting');
+        expect(byId.get('t-inbox')?.rev).toBe(1);
+        expect(typeof byId.get('t-inbox')?.revBy).toBe('string');
+        expect(mockStorage.saveData).toHaveBeenCalled();
     });
 
     it('supports a basic task lifecycle', async () => {
@@ -152,6 +250,38 @@ describe('TaskStore', () => {
         expect(saved.tasks[0].projectId).toBe(project.id);
     });
 
+    it('retries failed saves with the latest queued snapshot', async () => {
+        let rejectFirstSave: ((reason?: unknown) => void) | null = null;
+        mockStorage.saveData = vi.fn().mockImplementation(() => {
+            if (!rejectFirstSave) {
+                return new Promise<void>((_, reject) => {
+                    rejectFirstSave = reject;
+                });
+            }
+            return Promise.resolve();
+        });
+        setStorageAdapter(mockStorage);
+
+        const { addTask, updateTask } = useTaskStore.getState();
+        addTask('Alpha');
+        await Promise.resolve();
+
+        const taskId = useTaskStore.getState().tasks[0].id;
+        updateTask(taskId, { title: 'Alpha Updated' });
+        expect(mockStorage.saveData).toHaveBeenCalledTimes(1);
+
+        rejectFirstSave?.(new Error('disk full'));
+        await Promise.resolve();
+
+        await flushPendingSave();
+
+        const saveCalls = (mockStorage.saveData as unknown as { mock: { calls: any[][] } }).mock.calls;
+        expect(saveCalls.length).toBeGreaterThanOrEqual(2);
+        const lastSaved = saveCalls[saveCalls.length - 1]?.[0];
+        expect(lastSaved.tasks).toHaveLength(1);
+        expect(lastSaved.tasks[0].title).toBe('Alpha Updated');
+    });
+
     it('should add a project', () => {
         const { addProject } = useTaskStore.getState();
         addProject('New Project', '#ff0000');
@@ -160,6 +290,30 @@ describe('TaskStore', () => {
         expect(projects).toHaveLength(1);
         expect(projects[0].title).toBe('New Project');
         expect(projects[0].color).toBe('#ff0000');
+    });
+
+    it('should soft-delete areas and clear area references from projects/tasks', async () => {
+        const { addArea, addProject, addTask, deleteArea } = useTaskStore.getState();
+        const area = await addArea('Work');
+        expect(area).not.toBeNull();
+        if (!area) return;
+
+        const project = await addProject('Area Project', '#123456', { areaId: area.id });
+        expect(project).not.toBeNull();
+        if (!project) return;
+        addTask('Area Task', { areaId: area.id, status: 'next' });
+
+        await deleteArea(area.id);
+
+        const state = useTaskStore.getState();
+        expect(state.areas).toHaveLength(0);
+        const tombstone = state._allAreas.find((item) => item.id === area.id);
+        expect(tombstone?.deletedAt).toBeTruthy();
+
+        const updatedProject = state._allProjects.find((item) => item.id === project.id)!;
+        expect(updatedProject.areaId).toBeUndefined();
+        const updatedTask = state._allTasks.find((item) => item.title === 'Area Task')!;
+        expect(updatedTask.areaId).toBeUndefined();
     });
 
     it('should move a project to someday without altering task status', () => {

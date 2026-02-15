@@ -1,16 +1,14 @@
 import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, Attachment, Task, type Project, type Section, generateUUID, parseQuickAdd, validateAttachmentForUpload } from '@mindwtr/core';
+import { useTaskStore, Attachment, Task, type Project, type Section, generateUUID, parseQuickAdd } from '@mindwtr/core';
 import { ChevronDown, ChevronRight, FileText, Folder, Pencil, Plus, Trash2 } from 'lucide-react';
-import { DndContext, PointerSensor, useDroppable, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { useLanguage } from '../../contexts/language-context';
 import { PromptModal } from '../PromptModal';
 import { isTauriRuntime } from '../../lib/runtime';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
 import { cn } from '../../lib/utils';
-import { invoke } from '@tauri-apps/api/core';
-import { size } from '@tauri-apps/plugin-fs';
 import { SortableProjectTaskRow } from './projects/SortableRows';
 import { ProjectsSidebar } from './projects/ProjectsSidebar';
 import { AreaManagerModal } from './projects/AreaManagerModal';
@@ -28,31 +26,13 @@ import {
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { useUiStore } from '../../store/ui-store';
-import { logWarn } from '../../lib/app-log';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, projectMatchesAreaFilter } from '../../lib/area-filter';
+import { reportError } from '../../lib/report-error';
 import { useAreaSidebarState } from './projects/useAreaSidebarState';
-
-const SECTION_CONTAINER_PREFIX = 'section:';
-const NO_SECTION_CONTAINER = `${SECTION_CONTAINER_PREFIX}none`;
-const getSectionContainerId = (sectionId?: string | null) =>
-    sectionId ? `${SECTION_CONTAINER_PREFIX}${sectionId}` : NO_SECTION_CONTAINER;
-const getSectionIdFromContainer = (containerId: string) =>
-    containerId === NO_SECTION_CONTAINER ? null : containerId.replace(SECTION_CONTAINER_PREFIX, '');
-
-type SectionDropZoneProps = {
-    id: string;
-    className?: string;
-    children: ReactNode;
-};
-
-const SectionDropZone = ({ id, className, children }: SectionDropZoneProps) => {
-    const { setNodeRef, isOver } = useDroppable({ id });
-    return (
-        <div ref={setNodeRef} className={cn(className, isOver && 'ring-2 ring-primary/40')}>
-            {children}
-        </div>
-    );
-};
+import { useProjectAttachmentActions } from './projects/useProjectAttachmentActions';
+import { SectionDropZone, getSectionContainerId, getSectionIdFromContainer, NO_SECTION_CONTAINER } from './projects/section-dnd';
+import { useProjectSectionActions } from './projects/useProjectSectionActions';
+import { useProjectsViewStore } from './projects/useProjectsViewStore';
 
 export function ProjectsView() {
     const perf = usePerformanceMonitor('ProjectsView');
@@ -77,55 +57,25 @@ export function ProjectsView() {
         deleteSection,
         addTask,
         toggleProjectFocus,
-        _allTasks,
+        allTasks,
         highlightTaskId,
         setHighlightTask,
         settings,
-    } = useTaskStore(
-        (state) => ({
-            projects: state.projects,
-            tasks: state.tasks,
-            sections: state.sections,
-            areas: state.areas,
-            addArea: state.addArea,
-            updateArea: state.updateArea,
-            deleteArea: state.deleteArea,
-            reorderAreas: state.reorderAreas,
-            reorderProjects: state.reorderProjects,
-            reorderProjectTasks: state.reorderProjectTasks,
-            addProject: state.addProject,
-            updateProject: state.updateProject,
-            deleteProject: state.deleteProject,
-            duplicateProject: state.duplicateProject,
-            updateTask: state.updateTask,
-            addSection: state.addSection,
-            updateSection: state.updateSection,
-            deleteSection: state.deleteSection,
-            addTask: state.addTask,
-            toggleProjectFocus: state.toggleProjectFocus,
-            _allTasks: state._allTasks,
-            highlightTaskId: state.highlightTaskId,
-            setHighlightTask: state.setHighlightTask,
-            settings: state.settings,
-        }),
-        shallow
-    );
-    const getDerivedState = useTaskStore((state) => state.getDerivedState);
+        getDerivedState,
+    } = useProjectsViewStore();
     const { allContexts } = getDerivedState();
     const { t } = useLanguage();
-    const { selectedProjectId, setSelectedProjectId } = useUiStore(
-        (state) => ({
-            selectedProjectId: state.projectView.selectedProjectId,
-            setSelectedProjectId: (value: string | null) => state.setProjectView({ selectedProjectId: value }),
-        }),
-        shallow
+    const selectedProjectId = useUiStore((state) => state.projectView.selectedProjectId);
+    const setProjectView = useUiStore((state) => state.setProjectView);
+    const showToast = useUiStore((state) => state.showToast);
+    const setSelectedProjectId = useCallback(
+        (value: string | null) => setProjectView({ selectedProjectId: value }),
+        [setProjectView]
     );
     const [isCreating, setIsCreating] = useState(false);
     const [newProjectTitle, setNewProjectTitle] = useState('');
     const [notesExpanded, setNotesExpanded] = useState(false);
     const [showNotesPreview, setShowNotesPreview] = useState(true);
-    const [attachmentError, setAttachmentError] = useState<string | null>(null);
-    const [showLinkPrompt, setShowLinkPrompt] = useState(false);
     const [showDeferredProjects, setShowDeferredProjects] = useState(false);
     const [collapsedAreas, setCollapsedAreas] = useState<Record<string, boolean>>({});
     const [showAreaManager, setShowAreaManager] = useState(false);
@@ -144,8 +94,8 @@ export function ProjectsView() {
     const [editProjectTitle, setEditProjectTitle] = useState('');
     const [projectTaskTitle, setProjectTaskTitle] = useState('');
     const [isCreatingProject, setIsCreatingProject] = useState(false);
-    const [isProjectAttachmentBusy, setIsProjectAttachmentBusy] = useState(false);
     const [isProjectDeleting, setIsProjectDeleting] = useState(false);
+    const [isAreaCreating, setIsAreaCreating] = useState(false);
     const ALL_AREAS = AREA_FILTER_ALL;
     const NO_AREA = AREA_FILTER_NONE;
     const ALL_TAGS = '__all__';
@@ -166,10 +116,6 @@ export function ProjectsView() {
         }, 0);
         return () => window.clearTimeout(timer);
     }, [perf.enabled]);
-
-    useEffect(() => {
-        setAttachmentError(null);
-    }, [selectedProjectId]);
 
     const {
         selectedArea,
@@ -196,47 +142,6 @@ export function ProjectsView() {
     );
 
     const getProjectColorForTask = (project: Project) => getProjectColor(project, areaById, DEFAULT_AREA_COLOR);
-
-    const handleAddSection = () => {
-        if (!selectedProject) return;
-        setEditingSectionId(null);
-        setSectionDraft('');
-        setShowSectionPrompt(true);
-    };
-
-    const handleRenameSection = (section: Section) => {
-        setEditingSectionId(section.id);
-        setSectionDraft(section.title);
-        setShowSectionPrompt(true);
-    };
-
-    const handleDeleteSection = async (section: Section) => {
-        const confirmed = isTauriRuntime()
-            ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
-                confirm(t('projects.deleteSectionConfirm'), {
-                    title: t('projects.sectionsLabel'),
-                    kind: 'warning',
-                }),
-            )
-            : window.confirm(t('projects.deleteSectionConfirm'));
-        if (confirmed) {
-            deleteSection(section.id);
-        }
-    };
-
-    const handleToggleSection = (section: Section) => {
-        updateSection(section.id, { isCollapsed: !section.isCollapsed });
-    };
-
-    const handleToggleSectionNotes = (sectionId: string) => {
-        setSectionNotesOpen((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
-    };
-
-    const handleOpenSectionTaskPrompt = (sectionId: string) => {
-        setSectionTaskTargetId(sectionId);
-        setSectionTaskDraft('');
-        setShowSectionTaskPrompt(true);
-    };
 
     const sortAreasByName = () => reorderAreas(sortAreasByNameIds(sortedAreas));
     const sortAreasByColor = () => reorderAreas(sortAreasByColorIds(sortedAreas));
@@ -338,12 +243,36 @@ export function ProjectsView() {
             );
             setNewProjectTitle('');
             setIsCreating(false);
+        } catch (error) {
+            reportError('Failed to create project', error);
+            showToast(t('projects.createFailed') || 'Failed to create project', 'error');
         } finally {
             setIsCreatingProject(false);
         }
     };
 
     const selectedProject = projects.find(p => p.id === selectedProjectId);
+
+    const {
+        handleAddSection,
+        handleRenameSection,
+        handleDeleteSection,
+        handleToggleSection,
+        handleToggleSectionNotes,
+        handleOpenSectionTaskPrompt,
+    } = useProjectSectionActions({
+        t,
+        selectedProject,
+        setEditingSectionId,
+        setSectionDraft,
+        setShowSectionPrompt,
+        deleteSection,
+        updateSection,
+        setSectionNotesOpen,
+        setSectionTaskTargetId,
+        setSectionTaskDraft,
+        setShowSectionTaskPrompt,
+    });
 
     useEffect(() => {
         if (!selectedProjectId || !selectedProject) return;
@@ -357,8 +286,8 @@ export function ProjectsView() {
     }, [selectedProject?.id, selectedProject?.title]);
     const projectAllTasks = useMemo(() => {
         if (!selectedProjectId) return [];
-        return _allTasks.filter((task) => !task.deletedAt && task.projectId === selectedProjectId);
-    }, [selectedProjectId, _allTasks]);
+        return allTasks.filter((task) => !task.deletedAt && task.projectId === selectedProjectId);
+    }, [allTasks, selectedProjectId]);
     const projectTasks = useMemo(() => (
         projectAllTasks.filter((task) => task.status !== 'done' && task.status !== 'reference' && task.status !== 'archived')
     ), [projectAllTasks]);
@@ -504,7 +433,7 @@ export function ProjectsView() {
 
     const renderSortableTasks = (list: Task[]) => (
         <SortableContext items={list.map((task) => task.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
+            <div className="divide-y divide-border/30">
                 {list.map((task) => (
                     <SortableProjectTaskRow key={task.id} task={task} project={selectedProject!} />
                 ))}
@@ -514,7 +443,10 @@ export function ProjectsView() {
     const renderProjectSections = (renderTasks: (list: Task[]) => ReactNode) => {
         if (projectSections.length === 0) {
             return (
-                <SectionDropZone id={NO_SECTION_CONTAINER} className="min-h-[120px]">
+                <SectionDropZone
+                    id={NO_SECTION_CONTAINER}
+                    className="min-h-[120px] rounded-xl border border-dashed border-border/80 bg-muted/20 p-4"
+                >
                     {orderedProjectTasks.length > 0 ? (
                         renderTasks(orderedProjectTasks)
                     ) : (
@@ -526,7 +458,7 @@ export function ProjectsView() {
             );
         }
         return (
-            <div className="space-y-4">
+            <div className="space-y-3">
                 {sectionTaskGroups.sections.map((group) => {
                     const isCollapsed = group.section.isCollapsed;
                     const taskCount = group.tasks.length;
@@ -536,9 +468,9 @@ export function ProjectsView() {
                         <SectionDropZone
                             key={group.section.id}
                             id={getSectionContainerId(group.section.id)}
-                            className="border border-border rounded-lg bg-card/40"
+                            className="rounded-xl border border-border/70 bg-background/40"
                         >
-                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
                                 <button
                                     type="button"
                                     onClick={() => handleToggleSection(group.section)}
@@ -556,7 +488,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleOpenSectionTaskPrompt(group.section.id)}
-                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('projects.addTask')}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
@@ -565,7 +497,7 @@ export function ProjectsView() {
                                         type="button"
                                         onClick={() => handleToggleSectionNotes(group.section.id)}
                                         className={cn(
-                                            'p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground',
+                                            'h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center',
                                             (hasNotes || notesOpen) && 'text-primary'
                                         )}
                                         aria-label={t('projects.sectionNotes')}
@@ -575,7 +507,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleRenameSection(group.section)}
-                                        className="p-1 rounded hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('common.edit')}
                                     >
                                         <Pencil className="h-3.5 w-3.5" />
@@ -583,7 +515,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleDeleteSection(group.section)}
-                                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                        className="h-7 w-7 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center"
                                         aria-label={t('common.delete')}
                                     >
                                         <Trash2 className="h-3.5 w-3.5" />
@@ -591,9 +523,9 @@ export function ProjectsView() {
                                 </div>
                             </div>
                             {notesOpen && (
-                                <div className="px-3 py-2 border-b border-border/60">
+                                <div className="px-3 py-2 border-b border-border/60 bg-muted/10">
                                     <textarea
-                                        className="w-full min-h-[90px] p-2 text-xs bg-transparent border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
+                                        className="w-full min-h-[90px] p-2 text-xs bg-background/40 border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
                                         placeholder={t('projects.sectionNotesPlaceholder')}
                                         defaultValue={group.section.description || ''}
                                         onBlur={(event) => {
@@ -619,9 +551,9 @@ export function ProjectsView() {
                 })}
                 <SectionDropZone
                     id={NO_SECTION_CONTAINER}
-                    className="border border-dashed border-border rounded-lg bg-card/20"
+                    className="rounded-xl border border-dashed border-border/80 bg-muted/20"
                 >
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
                         <div className="flex items-center gap-2 text-sm font-semibold">
                             <span>{t('projects.noSection')}</span>
                             <span className="text-xs text-muted-foreground">
@@ -684,37 +616,48 @@ export function ProjectsView() {
 
     const handleArchiveProject = async () => {
         if (!selectedProject) return;
-        const confirmed = isTauriRuntime()
-            ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
-                confirm(t('projects.archiveConfirm'), {
-                    title: t('projects.title'),
-                    kind: 'warning',
-                }),
-            )
-            : window.confirm(t('projects.archiveConfirm'));
-        if (confirmed) {
-            updateProject(selectedProject.id, { status: 'archived' });
+        try {
+            const confirmed = isTauriRuntime()
+                ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
+                    confirm(t('projects.archiveConfirm'), {
+                        title: t('projects.title'),
+                        kind: 'warning',
+                    }),
+                )
+                : window.confirm(t('projects.archiveConfirm'));
+            if (confirmed) {
+                await Promise.resolve(updateProject(selectedProject.id, { status: 'archived' }));
+            }
+        } catch (error) {
+            reportError('Failed to archive project', error);
+            showToast(t('projects.archiveFailed') || 'Failed to archive project', 'error');
         }
     };
 
     const handleDeleteProject = async () => {
         if (!selectedProject) return;
-        const confirmed = isTauriRuntime()
-            ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
-                confirm(t('projects.deleteConfirm'), {
-                    title: t('projects.title'),
-                    kind: 'warning',
-                }),
-            )
-            : window.confirm(t('projects.deleteConfirm'));
-        if (confirmed) {
-            setIsProjectDeleting(true);
-            try {
-                await Promise.resolve(deleteProject(selectedProject.id));
-                setSelectedProjectId(null);
-            } finally {
-                setIsProjectDeleting(false);
+        try {
+            const confirmed = isTauriRuntime()
+                ? await import('@tauri-apps/plugin-dialog').then(({ confirm }) =>
+                    confirm(t('projects.deleteConfirm'), {
+                        title: t('projects.title'),
+                        kind: 'warning',
+                    }),
+                )
+                : window.confirm(t('projects.deleteConfirm'));
+            if (confirmed) {
+                setIsProjectDeleting(true);
+                try {
+                    await Promise.resolve(deleteProject(selectedProject.id));
+                    setSelectedProjectId(null);
+                } finally {
+                    setIsProjectDeleting(false);
+                }
             }
+        } catch (error) {
+            reportError('Failed to delete project', error);
+            showToast(t('projects.deleteFailed') || 'Failed to delete project', 'error');
+            setIsProjectDeleting(false);
         }
     };
     const resolveValidationMessage = (error?: string) => {
@@ -722,6 +665,22 @@ export function ProjectsView() {
         if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
         return t('attachments.fileNotSupported');
     };
+
+    const {
+        attachmentError,
+        showLinkPrompt,
+        setShowLinkPrompt,
+        isProjectAttachmentBusy,
+        openAttachment,
+        addProjectFileAttachment,
+        addProjectLinkAttachment,
+        removeProjectAttachment,
+    } = useProjectAttachmentActions({
+        t,
+        selectedProject,
+        updateProject,
+        resolveValidationMessage,
+    });
 
     useEffect(() => {
         if (!selectedProject) {
@@ -760,103 +719,20 @@ export function ProjectsView() {
             } else {
                 initialProps.sectionId = undefined;
             }
-            await addTask(finalTitle, initialProps);
+            try {
+                await addTask(finalTitle, initialProps);
+            } catch (error) {
+                reportError('Failed to add task to project', error);
+                showToast(t('projects.addTaskFailed') || 'Failed to add task', 'error');
+            }
         },
-        [addProject, addTask, projects, selectedProject]
+        [addProject, addTask, areas, projects, selectedProject, showToast, t]
     );
-
-    const openAttachment = async (attachment: Attachment) => {
-        const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(attachment.uri);
-        const normalized = hasScheme ? attachment.uri : `file://${attachment.uri}`;
-        if (isTauriRuntime()) {
-            try {
-                await invoke('open_path', { path: attachment.uri });
-                return;
-            } catch (error) {
-                void logWarn('Failed to open attachment', {
-                    scope: 'attachment',
-                    extra: { error: error instanceof Error ? error.message : String(error) },
-                });
-            }
-        }
-        window.open(normalized, '_blank');
-    };
-
-    const addProjectFileAttachment = async () => {
-        if (!selectedProject) return;
-        if (isProjectAttachmentBusy) return;
-        if (!isTauriRuntime()) {
-            setAttachmentError(t('attachments.fileNotSupported'));
-            return;
-        }
-        setIsProjectAttachmentBusy(true);
-        setAttachmentError(null);
-        try {
-            const { open } = await import('@tauri-apps/plugin-dialog');
-            const selected = await open({
-                multiple: false,
-                directory: false,
-                title: t('attachments.addFile'),
-            });
-            if (!selected || typeof selected !== 'string') return;
-            try {
-                const fileSize = await size(selected);
-                const validation = await validateAttachmentForUpload(
-                    {
-                        id: 'pending',
-                        kind: 'file',
-                        title: selected.split(/[/\\]/).pop() || selected,
-                        uri: selected,
-                        createdAt: new Date().toISOString(),
-                        updatedAt: new Date().toISOString(),
-                    },
-                    fileSize
-                );
-                if (!validation.valid) {
-                    setAttachmentError(resolveValidationMessage(validation.error));
-                    return;
-                }
-            } catch (error) {
-                void logWarn('Failed to validate attachment size', {
-                    scope: 'attachment',
-                    extra: { error: error instanceof Error ? error.message : String(error) },
-                });
-            }
-            const now = new Date().toISOString();
-            const title = selected.split(/[/\\]/).pop() || selected;
-            const attachment: Attachment = {
-                id: generateUUID(),
-                kind: 'file',
-                title,
-                uri: selected,
-                createdAt: now,
-                updatedAt: now,
-            };
-            updateProject(selectedProject.id, { attachments: [...(selectedProject.attachments || []), attachment] });
-        } finally {
-            setIsProjectAttachmentBusy(false);
-        }
-    };
-
-    const addProjectLinkAttachment = () => {
-        if (!selectedProject) return;
-        setAttachmentError(null);
-        setShowLinkPrompt(true);
-    };
-
-    const removeProjectAttachment = (id: string) => {
-        if (!selectedProject) return;
-        const now = new Date().toISOString();
-        const next = (selectedProject.attachments || []).map((a) =>
-            a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a
-        );
-        updateProject(selectedProject.id, { attachments: next });
-    };
 
     return (
         <ErrorBoundary>
-            <div className="h-full">
-                <div className="flex h-full gap-6 w-full max-w-[calc(72rem+16rem+1.5rem)] mx-auto">
+            <div className="h-full px-4 py-3">
+                <div className="flex h-full gap-6 w-full max-w-[calc(18rem+1100px+1.5rem)] mx-auto">
                     <ProjectsSidebar
                         t={t}
                         areaFilterLabel={areaFilterLabel ?? undefined}
@@ -891,23 +767,30 @@ export function ProjectsView() {
                     />
 
                     {/* Project Details & Tasks */}
-                    <div className="flex-1 min-w-0 h-full">
-                        <div className="flex flex-col h-full min-h-0 w-full">
+                    <div className="flex-1 min-w-0 h-full flex">
+                        <div className="flex flex-col h-full min-h-0 w-full max-w-[1100px] rounded-2xl border border-border/70 bg-card/40">
                             {selectedProject ? (
-                                <>
-                                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-4">
-                                        <ProjectDetailsHeader
-                                            project={selectedProject}
-                                            projectColor={getProjectColorForTask(selectedProject)}
-                                            editTitle={editProjectTitle}
+                                <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+                                    {(isCreatingProject || isProjectDeleting || isAreaCreating) && (
+                                        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                            {t('common.loading') || 'Loading...'}
+                                        </div>
+                                    )}
+                                    <ProjectDetailsHeader
+                                        project={selectedProject}
+                                        projectColor={getProjectColorForTask(selectedProject)}
+                                        editTitle={editProjectTitle}
                                         onEditTitleChange={setEditProjectTitle}
                                         onCommitTitle={handleCommitProjectTitle}
                                         onResetTitle={handleResetProjectTitle}
-                                        onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
-                                        onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
                                         onDuplicate={() => handleDuplicateProject(selectedProject.id)}
                                         onArchive={handleArchiveProject}
-                                        onReactivate={() => updateProject(selectedProject.id, { status: 'active' })}
+                                        onReactivate={() => {
+                                            Promise.resolve(updateProject(selectedProject.id, { status: 'active' })).catch((error) => {
+                                                reportError('Failed to reactivate project', error);
+                                                showToast(t('projects.reactivateFailed') || 'Failed to reactivate project', 'error');
+                                            });
+                                        }}
                                         onDelete={handleDeleteProject}
                                         isDeleting={isProjectDeleting}
                                         projectProgress={projectProgress}
@@ -917,13 +800,13 @@ export function ProjectsView() {
                                     <ProjectNotesSection
                                         project={selectedProject}
                                         notesExpanded={notesExpanded}
-                                    onToggleNotes={() => {
-                                        setNotesExpanded((prev) => {
-                                            const next = !prev;
-                                            if (next) setShowNotesPreview(true);
-                                            return next;
-                                        });
-                                    }}
+                                        onToggleNotes={() => {
+                                            setNotesExpanded((prev) => {
+                                                const next = !prev;
+                                                if (next) setShowNotesPreview(true);
+                                                return next;
+                                            });
+                                        }}
                                         showNotesPreview={showNotesPreview}
                                         onTogglePreview={() => setShowNotesPreview((value) => !value)}
                                         onAddFile={addProjectFileAttachment}
@@ -961,6 +844,10 @@ export function ProjectsView() {
                                         onAreaChange={(value) => {
                                             updateProject(selectedProject.id, { areaId: value === NO_AREA ? undefined : value });
                                         }}
+                                        isSequential={selectedProject.isSequential === true}
+                                        onToggleSequential={() => updateProject(selectedProject.id, { isSequential: !selectedProject.isSequential })}
+                                        status={selectedProject.status}
+                                        onChangeStatus={(status) => updateProject(selectedProject.id, { status })}
                                         reviewAtValue={toDateTimeLocalValue(selectedProject.reviewAt)}
                                         onReviewAtChange={(value) => updateProject(selectedProject.id, { reviewAt: value || undefined })}
                                         projectTaskTitle={projectTaskTitle}
@@ -977,7 +864,7 @@ export function ProjectsView() {
                                         }}
                                     />
 
-                                    <div>
+                                    <div className="pb-2">
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="text-xs uppercase tracking-wider text-muted-foreground">
                                                 {t('projects.sectionsLabel')}
@@ -985,7 +872,7 @@ export function ProjectsView() {
                                             <button
                                                 type="button"
                                                 onClick={handleAddSection}
-                                                className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md border border-border bg-muted/40 hover:bg-muted transition-colors"
                                             >
                                                 <Plus className="h-3.5 w-3.5" />
                                                 {t('projects.addSection')}
@@ -994,11 +881,10 @@ export function ProjectsView() {
                                         {tasksContent}
                                     </div>
                                 </div>
-                                </>
                             ) : (
-                                <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                                    <div className="text-center">
-                                        <Folder className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                <div className="flex-1 flex items-center justify-center text-muted-foreground p-6">
+                                    <div className="text-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-10 py-12">
+                                        <Folder className="w-12 h-12 mx-auto mb-4 opacity-25" />
                                         <p>{t('projects.selectProject')}</p>
                                     </div>
                                 </div>
@@ -1018,12 +904,21 @@ export function ProjectsView() {
                         onChangeNewAreaColor={(event) => setNewAreaColor(event.target.value)}
                         newAreaName={newAreaName}
                         onChangeNewAreaName={(event) => setNewAreaName(event.target.value)}
-                        onCreateArea={() => {
+                        onCreateArea={async () => {
                             const name = newAreaName.trim();
                             if (!name) return;
-                            addArea(name, { color: newAreaColor });
-                            setNewAreaName('');
+                            setIsAreaCreating(true);
+                            try {
+                                await addArea(name, { color: newAreaColor });
+                                setNewAreaName('');
+                            } catch (error) {
+                                reportError('Failed to create area', error);
+                                showToast(t('projects.createAreaFailed') || 'Failed to create area', 'error');
+                            } finally {
+                                setIsAreaCreating(false);
+                            }
                         }}
+                        isCreatingArea={isAreaCreating}
                         onSortByName={sortAreasByName}
                         onSortByColor={sortAreasByColor}
                         onClose={() => setShowAreaManager(false)}
@@ -1123,17 +1018,25 @@ export function ProjectsView() {
                     onConfirm={async (value) => {
                         const name = value.trim();
                         if (!name) return;
-                        await addArea(name, { color: newAreaColor });
-                        const state = useTaskStore.getState();
-                        const matching = [...state.areas]
-                            .filter((area) => area.name.trim().toLowerCase() === name.toLowerCase())
-                            .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
-                        const created = matching[0];
-                        if (created && pendingAreaAssignProjectId) {
-                            updateProject(pendingAreaAssignProjectId, { areaId: created.id });
+                        setIsAreaCreating(true);
+                        try {
+                            await addArea(name, { color: newAreaColor });
+                            const state = useTaskStore.getState();
+                            const matching = [...state.areas]
+                                .filter((area) => area.name.trim().toLowerCase() === name.toLowerCase())
+                                .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
+                            const created = matching[0];
+                            if (created && pendingAreaAssignProjectId) {
+                                await Promise.resolve(updateProject(pendingAreaAssignProjectId, { areaId: created.id }));
+                            }
+                        } catch (error) {
+                            reportError('Failed to create quick area', error);
+                            showToast(t('projects.createAreaFailed') || 'Failed to create area', 'error');
+                        } finally {
+                            setIsAreaCreating(false);
+                            setShowQuickAreaPrompt(false);
+                            setPendingAreaAssignProjectId(null);
                         }
-                        setShowQuickAreaPrompt(false);
-                        setPendingAreaAssignProjectId(null);
                     }}
                 />
             </div>

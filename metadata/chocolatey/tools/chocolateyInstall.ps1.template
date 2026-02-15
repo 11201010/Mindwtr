@@ -1,0 +1,13 @@
+$ErrorActionPreference = 'Stop'
+
+$packageArgs = @{
+    packageName    = 'mindwtr'
+    fileType       = 'exe'
+    url            = '__INSTALLER_URL__'
+    checksum       = '__CHECKSUM__'
+    checksumType   = 'sha256'
+    silentArgs     = '/S'
+    validExitCodes = @(0, 3010, 1641)
+}
+
+Install-ChocolateyPackage @packageArgs

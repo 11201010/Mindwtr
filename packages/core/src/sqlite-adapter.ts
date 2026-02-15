@@ -91,7 +91,8 @@ const toAttachments = (value: unknown): Attachment[] | undefined => {
                 typeof item.id === 'string' &&
                 typeof item.kind === 'string' &&
                 typeof item.title === 'string' &&
-                typeof item.uri === 'string'
+                typeof item.uri === 'string' &&
+                item.uri.trim().length > 0
         )
         .map((item) => ({
             id: item.id as string,
@@ -162,12 +163,20 @@ export class SqliteAdapter {
     private async acquireFtsLock(): Promise<string | null> {
         const owner = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const now = Date.now();
+        const staleBefore = now - FTS_LOCK_TTL_MS;
         await this.client.run(
             'CREATE TABLE IF NOT EXISTS fts_lock (id INTEGER PRIMARY KEY, owner TEXT, acquiredAt INTEGER)'
         );
-        await this.client.run('DELETE FROM fts_lock WHERE acquiredAt < ?', [now - FTS_LOCK_TTL_MS]);
-        await this.client.run('INSERT OR IGNORE INTO fts_lock (id, owner, acquiredAt) VALUES (1, ?, ?)', [owner, now]);
-        const row = await this.client.get<{ owner?: string }>('SELECT owner FROM fts_lock WHERE id = 1');
+        const row = await this.client.get<{ owner?: string }>(
+            `INSERT INTO fts_lock (id, owner, acquiredAt)
+             VALUES (1, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               owner = excluded.owner,
+               acquiredAt = excluded.acquiredAt
+             WHERE fts_lock.acquiredAt < ?
+             RETURNING owner`,
+            [owner, now, staleBefore]
+        );
         return row?.owner === owner ? owner : null;
     }
 
@@ -183,6 +192,8 @@ export class SqliteAdapter {
         }
         await this.ensureTaskColumns();
         await this.ensureProjectColumns();
+        await this.ensureSectionColumns();
+        await this.ensureAreaColumns();
         if (this.client.exec) {
             await this.client.exec(SQLITE_FTS_SCHEMA);
             await this.client.exec(SQLITE_INDEX_SCHEMA);
@@ -282,6 +293,8 @@ export class SqliteAdapter {
             { name: 'timeEstimate', sql: 'ALTER TABLE tasks ADD COLUMN timeEstimate TEXT' },
             { name: 'reviewAt', sql: 'ALTER TABLE tasks ADD COLUMN reviewAt TEXT' },
             { name: 'completedAt', sql: 'ALTER TABLE tasks ADD COLUMN completedAt TEXT' },
+            { name: 'rev', sql: 'ALTER TABLE tasks ADD COLUMN rev INTEGER' },
+            { name: 'revBy', sql: 'ALTER TABLE tasks ADD COLUMN revBy TEXT' },
             { name: 'createdAt', sql: 'ALTER TABLE tasks ADD COLUMN createdAt TEXT' },
             { name: 'updatedAt', sql: 'ALTER TABLE tasks ADD COLUMN updatedAt TEXT' },
             { name: 'deletedAt', sql: 'ALTER TABLE tasks ADD COLUMN deletedAt TEXT' },
@@ -307,6 +320,8 @@ export class SqliteAdapter {
             { name: 'reviewAt', sql: 'ALTER TABLE projects ADD COLUMN reviewAt TEXT' },
             { name: 'areaId', sql: 'ALTER TABLE projects ADD COLUMN areaId TEXT' },
             { name: 'areaTitle', sql: 'ALTER TABLE projects ADD COLUMN areaTitle TEXT' },
+            { name: 'rev', sql: 'ALTER TABLE projects ADD COLUMN rev INTEGER' },
+            { name: 'revBy', sql: 'ALTER TABLE projects ADD COLUMN revBy TEXT' },
             { name: 'createdAt', sql: 'ALTER TABLE projects ADD COLUMN createdAt TEXT' },
             { name: 'updatedAt', sql: 'ALTER TABLE projects ADD COLUMN updatedAt TEXT' },
             { name: 'deletedAt', sql: 'ALTER TABLE projects ADD COLUMN deletedAt TEXT' },
@@ -319,6 +334,46 @@ export class SqliteAdapter {
         await this.client.run(
             'CREATE INDEX IF NOT EXISTS idx_projects_area_order ON projects(areaId, orderNum)'
         );
+    }
+
+    private async ensureSectionColumns() {
+        const columns = await this.client.all<{ name?: string }>('PRAGMA table_info(sections)');
+        const names = new Set(columns.map((col) => col.name));
+        const definitions: Array<{ name: string; sql: string }> = [
+            { name: 'description', sql: 'ALTER TABLE sections ADD COLUMN description TEXT' },
+            { name: 'orderNum', sql: 'ALTER TABLE sections ADD COLUMN orderNum INTEGER' },
+            { name: 'isCollapsed', sql: 'ALTER TABLE sections ADD COLUMN isCollapsed INTEGER' },
+            { name: 'rev', sql: 'ALTER TABLE sections ADD COLUMN rev INTEGER' },
+            { name: 'revBy', sql: 'ALTER TABLE sections ADD COLUMN revBy TEXT' },
+            { name: 'createdAt', sql: 'ALTER TABLE sections ADD COLUMN createdAt TEXT' },
+            { name: 'updatedAt', sql: 'ALTER TABLE sections ADD COLUMN updatedAt TEXT' },
+            { name: 'deletedAt', sql: 'ALTER TABLE sections ADD COLUMN deletedAt TEXT' },
+        ];
+        for (const definition of definitions) {
+            if (!names.has(definition.name)) {
+                await this.client.run(definition.sql);
+            }
+        }
+    }
+
+    private async ensureAreaColumns() {
+        const columns = await this.client.all<{ name?: string }>('PRAGMA table_info(areas)');
+        const names = new Set(columns.map((col) => col.name));
+        const definitions: Array<{ name: string; sql: string }> = [
+            { name: 'color', sql: 'ALTER TABLE areas ADD COLUMN color TEXT' },
+            { name: 'icon', sql: 'ALTER TABLE areas ADD COLUMN icon TEXT' },
+            { name: 'orderNum', sql: 'ALTER TABLE areas ADD COLUMN orderNum INTEGER' },
+            { name: 'rev', sql: 'ALTER TABLE areas ADD COLUMN rev INTEGER' },
+            { name: 'revBy', sql: 'ALTER TABLE areas ADD COLUMN revBy TEXT' },
+            { name: 'createdAt', sql: 'ALTER TABLE areas ADD COLUMN createdAt TEXT' },
+            { name: 'updatedAt', sql: 'ALTER TABLE areas ADD COLUMN updatedAt TEXT' },
+            { name: 'deletedAt', sql: 'ALTER TABLE areas ADD COLUMN deletedAt TEXT' },
+        ];
+        for (const definition of definitions) {
+            if (!names.has(definition.name)) {
+                await this.client.run(definition.sql);
+            }
+        }
     }
 
     private async ensureFtsPopulated(forceRebuild = false) {
@@ -377,12 +432,16 @@ export class SqliteAdapter {
             const maxAttempts = 3;
             let lockOwner = await this.acquireFtsLock();
             for (let attempt = 1; !lockOwner && attempt < maxAttempts; attempt += 1) {
-                const delayMs = Math.min(2000, 200 * Math.pow(2, attempt - 1));
+                const baseDelayMs = Math.min(2000, 200 * Math.pow(2, attempt - 1));
+                const jitterMs = Math.floor(Math.random() * (baseDelayMs * 0.5));
+                const delayMs = baseDelayMs + jitterMs;
                 logWarn('FTS rebuild lock unavailable, retrying', {
                     scope: 'sqlite',
                     category: 'fts',
                     context: {
                         attempt: attempt + 1,
+                        baseDelayMs,
+                        jitterMs,
                         delayMs,
                     },
                 });
@@ -466,6 +525,8 @@ export class SqliteAdapter {
             timeEstimate: row.timeEstimate as Task['timeEstimate'] | undefined,
             reviewAt: row.reviewAt as string | undefined,
             completedAt: row.completedAt as string | undefined,
+            rev: row.rev === null || row.rev === undefined ? undefined : Number(row.rev),
+            revBy: row.revBy as string | undefined,
             createdAt: String(row.createdAt ?? ''),
             updatedAt: String(row.updatedAt ?? ''),
             deletedAt: row.deletedAt as string | undefined,
@@ -488,6 +549,8 @@ export class SqliteAdapter {
             reviewAt: row.reviewAt as string | undefined,
             areaId: row.areaId as string | undefined,
             areaTitle: row.areaTitle as string | undefined,
+            rev: row.rev === null || row.rev === undefined ? undefined : Number(row.rev),
+            revBy: row.revBy as string | undefined,
             createdAt: String(row.createdAt ?? ''),
             updatedAt: String(row.updatedAt ?? ''),
             deletedAt: row.deletedAt as string | undefined,
@@ -502,6 +565,8 @@ export class SqliteAdapter {
             description: row.description as string | undefined,
             order: row.orderNum === null || row.orderNum === undefined ? 0 : Number(row.orderNum),
             isCollapsed: fromBool(row.isCollapsed),
+            rev: row.rev === null || row.rev === undefined ? undefined : Number(row.rev),
+            revBy: row.revBy as string | undefined,
             createdAt: String(row.createdAt ?? ''),
             updatedAt: String(row.updatedAt ?? ''),
             deletedAt: row.deletedAt as string | undefined,
@@ -526,8 +591,11 @@ export class SqliteAdapter {
             color: row.color as string | undefined,
             icon: row.icon as string | undefined,
             order: Number(row.orderNum ?? 0),
+            rev: row.rev === null || row.rev === undefined ? undefined : Number(row.rev),
+            revBy: row.revBy as string | undefined,
             createdAt: row.createdAt as string | undefined,
             updatedAt: row.updatedAt as string | undefined,
+            deletedAt: row.deletedAt as string | undefined,
         }));
 
         const settings = settingsRow?.data ? fromJson<AppData['settings']>(settingsRow.data, {}) : {};
@@ -702,6 +770,8 @@ export class SqliteAdapter {
                     'timeEstimate',
                     'reviewAt',
                     'completedAt',
+                    'rev',
+                    'revBy',
                     'createdAt',
                     'updatedAt',
                     'deletedAt',
@@ -732,6 +802,8 @@ export class SqliteAdapter {
                     task.timeEstimate ?? null,
                     task.reviewAt ?? null,
                     task.completedAt ?? null,
+                    task.rev ?? null,
+                    task.revBy ?? null,
                     task.createdAt,
                     task.updatedAt,
                     task.deletedAt ?? null,
@@ -760,6 +832,8 @@ export class SqliteAdapter {
                  timeEstimate=excluded.timeEstimate,
                  reviewAt=excluded.reviewAt,
                  completedAt=excluded.completedAt,
+                 rev=excluded.rev,
+                 revBy=excluded.revBy,
                  createdAt=excluded.createdAt,
                  updatedAt=excluded.updatedAt,
                  deletedAt=excluded.deletedAt,
@@ -782,6 +856,8 @@ export class SqliteAdapter {
                     'reviewAt',
                     'areaId',
                     'areaTitle',
+                    'rev',
+                    'revBy',
                     'createdAt',
                     'updatedAt',
                     'deletedAt',
@@ -800,6 +876,8 @@ export class SqliteAdapter {
                     project.reviewAt ?? null,
                     project.areaId ?? null,
                     project.areaTitle ?? null,
+                    project.rev ?? null,
+                    project.revBy ?? null,
                     project.createdAt,
                     project.updatedAt,
                     project.deletedAt ?? null,
@@ -816,6 +894,8 @@ export class SqliteAdapter {
                  reviewAt=excluded.reviewAt,
                  areaId=excluded.areaId,
                  areaTitle=excluded.areaTitle,
+                 rev=excluded.rev,
+                 revBy=excluded.revBy,
                  createdAt=excluded.createdAt,
                  updatedAt=excluded.updatedAt,
                  deletedAt=excluded.deletedAt`,
@@ -830,6 +910,8 @@ export class SqliteAdapter {
                     'description',
                     'orderNum',
                     'isCollapsed',
+                    'rev',
+                    'revBy',
                     'createdAt',
                     'updatedAt',
                     'deletedAt',
@@ -841,6 +923,8 @@ export class SqliteAdapter {
                     section.description ?? null,
                     Number.isFinite(section.order) ? section.order : 0,
                     toBool(section.isCollapsed),
+                    section.rev ?? null,
+                    section.revBy ?? null,
                     section.createdAt,
                     section.updatedAt,
                     section.deletedAt ?? null,
@@ -850,6 +934,8 @@ export class SqliteAdapter {
                  description=excluded.description,
                  orderNum=excluded.orderNum,
                  isCollapsed=excluded.isCollapsed,
+                 rev=excluded.rev,
+                 revBy=excluded.revBy,
                  createdAt=excluded.createdAt,
                  updatedAt=excluded.updatedAt,
                  deletedAt=excluded.deletedAt`,
@@ -863,8 +949,11 @@ export class SqliteAdapter {
                     'color',
                     'icon',
                     'orderNum',
+                    'rev',
+                    'revBy',
                     'createdAt',
                     'updatedAt',
+                    'deletedAt',
                 ],
                 data.areas.map((area) => [
                     area.id,
@@ -872,15 +961,21 @@ export class SqliteAdapter {
                     area.color ?? null,
                     area.icon ?? null,
                     area.order,
+                    area.rev ?? null,
+                    area.revBy ?? null,
                     area.createdAt ?? null,
                     area.updatedAt ?? null,
+                    area.deletedAt ?? null,
                 ]),
                 `name=excluded.name,
                  color=excluded.color,
                  icon=excluded.icon,
                  orderNum=excluded.orderNum,
+                 rev=excluded.rev,
+                 revBy=excluded.revBy,
                  createdAt=excluded.createdAt,
-                 updatedAt=excluded.updatedAt`,
+                 updatedAt=excluded.updatedAt,
+                 deletedAt=excluded.deletedAt`,
             );
 
             await this.client.run(

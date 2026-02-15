@@ -70,14 +70,14 @@
     },
     "apps/cloud": {
       "name": "mindwtr-cloud",
-      "version": "0.3.1",
+      "version": "0.6.13",
       "dependencies": {
         "@mindwtr/core": "workspace:*",
       },
     },
     "apps/desktop": {
       "name": "mindwtr",
-      "version": "0.6.8",
+      "version": "0.6.15",
       "dependencies": {
         "@dnd-kit/core": "^6.1.0",
         "@dnd-kit/sortable": "^8.0.0",
@@ -91,7 +91,7 @@
         "@tauri-apps/plugin-notification": "^2.3.3",
         "@tauri-apps/plugin-shell": "^2.3.0",
         "clsx": "^2.1.0",
-        "date-fns": "^3.3.1",
+        "date-fns": "^4.1.0",
         "lucide-react": "^0.344.0",
         "react": "19.1.0",
         "react-dom": "19.1.0",
@@ -124,7 +124,7 @@
     },
     "apps/mcp-server": {
       "name": "mindwtr-mcp-server",
-      "version": "0.1.0",
+      "version": "0.6.13",
       "bin": {
         "mindwtr-mcp": "dist/index.js",
       },
@@ -137,7 +137,7 @@
     },
     "apps/mobile": {
       "name": "mobile",
-      "version": "0.6.8",
+      "version": "0.6.15",
       "dependencies": {
         "@babel/runtime": "^7.28.4",
         "@expo/metro-runtime": "^6.1.2",
@@ -150,7 +150,9 @@
         "@react-navigation/drawer": "^7.5.0",
         "@react-navigation/elements": "^2.6.3",
         "@react-navigation/native": "^7.1.8",
+        "date-fns": "^4.1.0",
         "expo": "~54.0.30",
+        "expo-application": "~7.0.8",
         "expo-asset": "~12.0.12",
         "expo-audio": "~1.1.1",
         "expo-build-properties": "~1.0.10",
@@ -163,6 +165,7 @@
         "expo-image": "~3.0.11",
         "expo-image-picker": "~17.0.10",
         "expo-linking": "~8.0.11",
+        "expo-network": "~8.0.8",
         "expo-notifications": "~0.32.16",
         "expo-router": "~6.0.21",
         "expo-secure-store": "~15.0.8",
@@ -192,6 +195,7 @@
         "react-native-url-polyfill": "^3.0.0",
         "react-native-web": "~0.21.0",
         "react-native-worklets": "0.5.1",
+        "semver": "^7.7.2",
         "tailwindcss": "3.3.2",
         "whatwg-fetch": "^3.6.20",
         "whatwg-url-without-unicode": "^8.0.0-3",
@@ -210,7 +214,7 @@
     },
     "packages/core": {
       "name": "@mindwtr/core",
-      "version": "0.6.8",
+      "version": "0.6.15",
       "dependencies": {
         "@babel/runtime": "^7.28.4",
         "date-fns": "^4.1.0",
@@ -1427,6 +1431,8 @@
     "expo-modules-autolinking": ["expo-modules-autolinking@3.0.23", "", { "dependencies": { "@expo/spawn-async": "^1.7.2", "chalk": "^4.1.0", "commander": "^7.2.0", "require-from-string": "^2.0.2", "resolve-from": "^5.0.0" }, "bin": { "expo-modules-autolinking": "bin/expo-modules-autolinking.js" } }, "sha512-YZnaE0G+52xftjH5nsIRaWsoVBY38SQCECclpdgLisdbRY/6Mzo7ndokjauOv3mpFmzMZACHyJNu1YSAffQwTg=="],
 
     "expo-modules-core": ["expo-modules-core@3.0.29", "", { "dependencies": { "invariant": "^2.2.4" }, "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-LzipcjGqk8gvkrOUf7O2mejNWugPkf3lmd9GkqL9WuNyeN2fRwU0Dn77e3ZUKI3k6sI+DNwjkq4Nu9fNN9WS7Q=="],
+
+    "expo-network": ["expo-network@8.0.8", "", { "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-dgrL8UHAmWofqeY4UEjWskCl/RoQAM0DG6PZR8xz2WZt+6aQEboQgFRXowCfhbKZ71d16sNuKXtwBEsp2DtdNw=="],
 
     "expo-notifications": ["expo-notifications@0.32.16", "", { "dependencies": { "@expo/image-utils": "^0.8.8", "@ide/backoff": "^1.0.0", "abort-controller": "^3.0.0", "assert": "^2.0.0", "badgin": "^1.1.5", "expo-application": "~7.0.8", "expo-constants": "~18.0.13" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-QQD/UA6v7LgvwIJ+tS7tSvqJZkdp0nCSj9MxsDk/jU1GttYdK49/5L2LvE/4U0H7sNBz1NZAyhDZozg8xgBLXw=="],
 
@@ -2983,8 +2989,6 @@
     "metro-babel-transformer/hermes-parser": ["hermes-parser@0.32.0", "", { "dependencies": { "hermes-estree": "0.32.0" } }, "sha512-g4nBOWFpuiTqjR3LZdRxKUkij9iyveWeuks7INEsMX741f3r9xxrOe8TeQfUxtda0eXmiIFiMQzoeSQEno33Hw=="],
 
     "micromatch/picomatch": ["picomatch@2.3.1", "", {}, "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="],
-
-    "mindwtr/date-fns": ["date-fns@3.6.0", "", {}, "sha512-fRHTG8g/Gif+kSh50gaGEdToemgfj74aRX3swtiouboip5JDLAyDE9F11nHMIcvOaXeOC6D7SpNhi7uFyB7Uww=="],
 
     "mindwtr/eslint": ["eslint@8.57.1", "", { "dependencies": { "@eslint-community/eslint-utils": "^4.2.0", "@eslint-community/regexpp": "^4.6.1", "@eslint/eslintrc": "^2.1.4", "@eslint/js": "8.57.1", "@humanwhocodes/config-array": "^0.13.0", "@humanwhocodes/module-importer": "^1.0.1", "@nodelib/fs.walk": "^1.2.8", "@ungap/structured-clone": "^1.2.0", "ajv": "^6.12.4", "chalk": "^4.0.0", "cross-spawn": "^7.0.2", "debug": "^4.3.2", "doctrine": "^3.0.0", "escape-string-regexp": "^4.0.0", "eslint-scope": "^7.2.2", "eslint-visitor-keys": "^3.4.3", "espree": "^9.6.1", "esquery": "^1.4.2", "esutils": "^2.0.2", "fast-deep-equal": "^3.1.3", "file-entry-cache": "^6.0.1", "find-up": "^5.0.0", "glob-parent": "^6.0.2", "globals": "^13.19.0", "graphemer": "^1.4.0", "ignore": "^5.2.0", "imurmurhash": "^0.1.4", "is-glob": "^4.0.0", "is-path-inside": "^3.0.3", "js-yaml": "^4.1.0", "json-stable-stringify-without-jsonify": "^1.0.1", "levn": "^0.4.1", "lodash.merge": "^4.6.2", "minimatch": "^3.1.2", "natural-compare": "^1.4.0", "optionator": "^0.9.3", "strip-ansi": "^6.0.1", "text-table": "^0.2.0" }, "bin": { "eslint": "bin/eslint.js" } }, "sha512-ypowyDxpVSYpkXr9WPv2PAZCtNip1Mv5KTW0SCurXv/9iOpcrH9PaqUElksqEB6pChqHGDRCFTyrZlGhnLNGiA=="],
 

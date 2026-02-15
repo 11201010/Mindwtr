@@ -25,6 +25,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   MS_IDENTITY_NAME: "DongdaLi.Mindwtr"
   MS_PUBLISHER_ID: "CN=76AC9B15-7A1B-49FF-9342-2BE80735A1E6"
@@ -34,6 +38,7 @@ jobs:
   windows:
     runs-on: windows-latest
     name: Windows Build (EXE + MSIX)
+    timeout-minutes: 90
 
     steps:
       - name: Checkout code
@@ -41,6 +46,11 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,7 +60,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install
@@ -161,240 +171,337 @@ jobs:
           }
           & $makeappx pack /d msix-staging /p $msixPath /o
 
-      - name: Setup Microsoft Store CLI
-        uses: microsoft/setup-msstore-cli@v1
-
       - name: Validate Microsoft Store secrets
         if: startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true
         shell: pwsh
         env:
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
-          MS_SELLER_ID: ${{ secrets.MS_SELLER_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
         run: |
-          $required = @('MS_TENANT_ID','MS_SELLER_ID','MS_CLIENT_ID','MS_CLIENT_SECRET','MS_STORE_APP_ID')
+          $required = @('MS_TENANT_ID','MS_CLIENT_ID','MS_CLIENT_SECRET','MS_STORE_APP_ID')
           foreach ($name in $required) {
             if (-not (Get-Item -Path "env:$name" -ErrorAction SilentlyContinue)) {
               Write-Error "$name is missing. Please set it in repository secrets."
             }
           }
 
-      - name: Reconfigure store credentials
-        if: startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true
-        shell: pwsh
-        env:
-          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
-          MS_SELLER_ID: ${{ secrets.MS_SELLER_ID }}
-          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
-          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
-        run: |
-          msstore reconfigure `
-            --tenantId $env:MS_TENANT_ID `
-            --sellerId $env:MS_SELLER_ID `
-            --clientId $env:MS_CLIENT_ID `
-            --clientSecret $env:MS_CLIENT_SECRET
-
       - name: Check Microsoft Store submission status
         id: msstore_status
         if: startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true
         shell: pwsh
         env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
         run: |
-          $statusOutput = & msstore submission status $env:MS_STORE_APP_ID 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Failed to check submission status. Continuing: $statusOutput"
+          $tokenBody = @{
+            grant_type    = 'client_credentials'
+            resource      = 'https://manage.devcenter.microsoft.com'
+            client_id     = $env:MS_CLIENT_ID
+            client_secret = $env:MS_CLIENT_SECRET
+          }
+          try {
+            $tokenResponse = Invoke-RestMethod -Method Post `
+              -Uri "https://login.microsoftonline.com/$($env:MS_TENANT_ID)/oauth2/token" `
+              -ContentType 'application/x-www-form-urlencoded' `
+              -Body $tokenBody
+          } catch {
+            Write-Warning "Failed to obtain token for status check. Continuing: $_"
             "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
-          if ($statusOutput -match 'Could not find a Pending Submission') {
+          $headers = @{ 'Authorization' = "Bearer $($tokenResponse.access_token)" }
+
+          try {
+            $appsResponse = Invoke-RestMethod -Method Get `
+              -Uri 'https://manage.devcenter.microsoft.com/v1.0/my/applications' `
+              -Headers $headers
+          } catch {
+            Write-Warning "Failed to list applications. Continuing: $_"
             "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
-          $status = ''
-          $pendingMatch = [regex]::Match($statusOutput, 'Pending Submission.*?Submission Status\\s*=\\s*(\\w+)', 'Singleline')
-          if ($pendingMatch.Success) {
-            $status = $pendingMatch.Groups[1].Value
-          } else {
-            $statusMatch = [regex]::Match($statusOutput, 'Submission Status\\s*=\\s*(\\w+)')
-            if ($statusMatch.Success) {
-              $status = $statusMatch.Groups[1].Value
-            }
-          }
-          $blockedStatuses = @('CommitStarted', 'PreProcessing', 'Certification', 'PendingCommit', 'InProgress')
-          $blocked = $blockedStatuses -contains $status
-          if ($blocked) {
-            Write-Warning "Store submission in progress. Skipping Store update. Status: $statusOutput"
-            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $app = $appsResponse.value | Where-Object {
+            $_.id -eq $env:MS_STORE_APP_ID -or
+            ($_.applicationId -and $_.applicationId -eq $env:MS_STORE_APP_ID) -or
+            ($_ | ConvertTo-Json -Depth 5 | Select-String -Pattern $env:MS_STORE_APP_ID -Quiet)
+          } | Select-Object -First 1
+
+          if (-not $app) {
+            Write-Warning "Could not find app for status check. Continuing."
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
+          }
+
+          $pendingSub = $null
+          if ($app.PSObject.Properties.Name -contains 'pendingApplicationSubmission') {
+            $pendingSub = $app.pendingApplicationSubmission
+          }
+          if ($pendingSub) {
+            $pendingId = $pendingSub.id
+            $applicationId = $app.id
+            try {
+              $statusResponse = Invoke-RestMethod -Method Get `
+                -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$pendingId/status" `
+                -Headers $headers
+              $status = $statusResponse.status
+              $blockedStatuses = @('CommitStarted', 'PreProcessing', 'Certification', 'Publishing', 'Release')
+              if ($blockedStatuses -contains $status) {
+                Write-Warning "Existing submission is in '$status' state. Skipping Store update."
+                "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                exit 0
+              }
+            } catch {
+              Write-Warning "Failed to check pending submission status: $_"
+            }
           }
           "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Update Microsoft Store metadata
-        if: (startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true) && steps.msstore_status.outputs.skip != 'true'
-        shell: pwsh
-        env:
-          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
-        run: |
-          if (-not (Test-Path "metadata/metadata.json")) {
-            Write-Warning "metadata/metadata.json not found. Skipping store metadata update."
-            exit 0
-          }
-          $metadataRaw = Get-Content -Raw "metadata/metadata.json"
-          $metadata = $metadataRaw | ConvertFrom-Json
-          foreach ($prop in @('Id','PendingApplicationId','Status','StatusDetails','FileUploadUrl','PackageDeliveryOptions','FriendlyName','Trailers','GamingOptions')) {
-            if ($metadata.PSObject.Properties.Name -contains $prop) {
-              $metadata.PSObject.Properties.Remove($prop)
-            }
-          }
-          $packagesJson = $null
-          $submissionGetOutput = & msstore submission get $env:MS_STORE_APP_ID 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            $submissionText = ($submissionGetOutput | Out-String)
-            $keyIndex = $submissionText.IndexOf('"ApplicationPackages"')
-            if ($keyIndex -ge 0) {
-              $arrayStart = $submissionText.IndexOf('[', $keyIndex)
-              if ($arrayStart -ge 0) {
-                $depth = 0
-                $inString = $false
-                $escape = $false
-                for ($i = $arrayStart; $i -lt $submissionText.Length; $i++) {
-                  $ch = $submissionText[$i]
-                  if ($inString) {
-                    if ($escape) {
-                      $escape = $false
-                    } elseif ($ch -eq '\') {
-                      $escape = $true
-                    } elseif ($ch -eq '"') {
-                      $inString = $false
-                    }
-                    continue
-                  }
-                  if ($ch -eq '"') {
-                    $inString = $true
-                    continue
-                  }
-                  if ($ch -eq '[') {
-                    $depth += 1
-                  } elseif ($ch -eq ']') {
-                    $depth -= 1
-                    if ($depth -eq 0) {
-                      $packagesJson = $submissionText.Substring($arrayStart, $i - $arrayStart + 1)
-                      break
-                    }
-                  }
-                }
-              }
-            }
-            if ($packagesJson) {
-              $packagesJson = ($packagesJson -replace "`r?`n", "").Trim()
-            } else {
-              Write-Warning "Could not locate ApplicationPackages array in submission output."
-            }
-          } else {
-            Write-Warning "Failed to fetch current submission packages: $submissionGetOutput"
-          }
-          if ($packagesJson) {
-            $metadata.ApplicationPackages = "__PACKAGES__"
-          } else {
-            Write-Warning "ApplicationPackages missing; metadata update may fail."
-            if ($metadata.PSObject.Properties.Name -contains 'ApplicationPackages') {
-              $metadata.PSObject.Properties.Remove('ApplicationPackages')
-            }
-          }
-          $ensureArray = {
-            param($value)
-            if ($null -eq $value) { return $value }
-            if ($value -is [System.Array]) { return $value }
-            return @($value)
-          }
-          if ($metadata.HardwarePreferences) {
-            $metadata.HardwarePreferences = & $ensureArray $metadata.HardwarePreferences
-          }
-          if ($metadata.Listings) {
-            foreach ($listingProp in $metadata.Listings.PSObject.Properties) {
-              $listing = $listingProp.Value
-              if (-not $listing) { continue }
-              $baseListing = $listing.BaseListing
-              if (-not $baseListing) { continue }
-              foreach ($field in @('Keywords','Features','Images','RecommendedHardware','MinimumHardware')) {
-                if ($baseListing.PSObject.Properties.Name -contains $field) {
-                  $baseListing.$field = & $ensureArray $baseListing.$field
-                }
-              }
-            }
-          }
-          $metadataJson = $metadata | ConvertTo-Json -Depth 100 -Compress
-          if ($packagesJson) {
-            $metadataJson = $metadataJson.Replace('"ApplicationPackages":"__PACKAGES__"', '"ApplicationPackages":' + $packagesJson)
-          }
-          $maxRetries = 3
-          $delaySeconds = 30
-          $success = $false
-          for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-            Write-Host "Updating metadata (attempt $attempt of $maxRetries)..."
-            $psi = [System.Diagnostics.ProcessStartInfo]::new()
-            $psi.FileName = 'msstore'
-            $psi.ArgumentList.Add('submission')
-            $psi.ArgumentList.Add('updateMetadata')
-            $psi.ArgumentList.Add($env:MS_STORE_APP_ID)
-            $psi.ArgumentList.Add($metadataJson)
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $psi.UseShellExecute = $false
-            $process = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-            $stderrTask = $process.StandardError.ReadToEndAsync()
-            if (-not $process.WaitForExit(600000)) {
-              $process.Kill()
-              $updateOutput = "Metadata update timed out after 10 minutes"
-              $exitCode = 124
-            } else {
-              $stdout = $stdoutTask.GetAwaiter().GetResult()
-              $stderr = $stderrTask.GetAwaiter().GetResult()
-              $updateOutput = ($stdout + $stderr).Trim()
-              $exitCode = $process.ExitCode
-            }
-            if ($exitCode -eq 0) {
-              $success = $true
-              break
-            }
-            if ($updateOutput -match 'InvalidState' -or $updateOutput -match 'certification' -or $updateOutput -match 'Pending Submission') {
-              Write-Warning "Store submission is in certification. Skipping metadata update."
-              exit 0
-            }
-            if ($updateOutput -match '504' -or $updateOutput -match 'Gateway' -or $updateOutput -match 'timeout' -or $updateOutput -match 'timed out') {
-              if ($attempt -lt $maxRetries) {
-                Write-Warning "Store API timeout. Retrying in $delaySeconds seconds..."
-                Start-Sleep -Seconds $delaySeconds
-                $delaySeconds = [Math]::Min($delaySeconds * 2, 180)
-                continue
-              }
-            }
-            break
-          }
-          if (-not $success) {
-            throw "Metadata update failed after $maxRetries attempts: $updateOutput"
-          }
-
-      - name: Publish to Microsoft Store
+      - name: Publish to Microsoft Store (metadata + package)
         if: (startsWith(github.ref, 'refs/tags/') || inputs.run_msstore == 'true' || inputs.run_msstore == true) && steps.msstore_status.outputs.skip != 'true' && env.MSSTORE_SKIP_PUBLISH != 'true'
         shell: pwsh
         env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
         run: |
-          $msix = (Resolve-Path "mindwtr_${{ steps.version.outputs.version }}_x64.msix").Path
-          $publishOutput = & msstore publish $msix -id $env:MS_STORE_APP_ID 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            if ($publishOutput -match 'InvalidState' -or $publishOutput -match 'certification' -or $publishOutput -match 'Pending Submission') {
-              Write-Warning "Store submission is already in certification. Skipping publish."
-              exit 0
-            }
-            throw "Store publish failed: $publishOutput"
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $msixPath = (Resolve-Path "mindwtr_${{ steps.version.outputs.version }}_x64.msix").Path
+          $msixFileName = [System.IO.Path]::GetFileName($msixPath)
+
+          $isStoreBusy = {
+            param([string]$text)
+            if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+            return $text -match '(?i)(InvalidState|CommitStarted|PreProcessing|Certification|InCertification|PendingCommit|InProgress|Pending[\s_-]*Submission|Another\s+submission|already\s+.*submission)'
           }
+
+          $tokenBody = @{
+            grant_type    = 'client_credentials'
+            resource      = 'https://manage.devcenter.microsoft.com'
+            client_id     = $env:MS_CLIENT_ID
+            client_secret = $env:MS_CLIENT_SECRET
+          }
+          Write-Host "Obtaining Partner Center access token..."
+          $tokenResponse = Invoke-RestMethod -Method Post `
+            -Uri "https://login.microsoftonline.com/$($env:MS_TENANT_ID)/oauth2/token" `
+            -ContentType 'application/x-www-form-urlencoded' `
+            -Body $tokenBody
+          $accessToken = $tokenResponse.access_token
+          if (-not $accessToken) {
+            throw "Failed to obtain Partner Center access token."
+          }
+          $headers = @{
+            'Authorization' = "Bearer $accessToken"
+            'Content-Type'  = 'application/json'
+          }
+
+          Write-Host "Looking up application..."
+          $appsResponse = Invoke-RestMethod -Method Get `
+            -Uri 'https://manage.devcenter.microsoft.com/v1.0/my/applications' `
+            -Headers $headers
+          $app = $appsResponse.value | Where-Object {
+            $_.id -eq $env:MS_STORE_APP_ID -or
+            ($_.applicationId -and $_.applicationId -eq $env:MS_STORE_APP_ID) -or
+            ($_ | ConvertTo-Json -Depth 5 | Select-String -Pattern $env:MS_STORE_APP_ID -Quiet)
+          } | Select-Object -First 1
+          if (-not $app) {
+            Write-Host "Available apps:"
+            $appsResponse.value | ForEach-Object { Write-Host "  ID=$($_.id)  primaryName=$($_.primaryName)" }
+            throw "Could not find app matching MS_STORE_APP_ID='$($env:MS_STORE_APP_ID)'."
+          }
+          $applicationId = $app.id
+          Write-Host "Found application: $($app.primaryName) (ID: $applicationId)"
+
+          $pendingSub = $null
+          if ($app.PSObject.Properties.Name -contains 'pendingApplicationSubmission') {
+            $pendingSub = $app.pendingApplicationSubmission
+          }
+          if ($pendingSub) {
+            $pendingId = $pendingSub.id
+            Write-Host "Deleting existing pending submission $pendingId..."
+            try {
+              Invoke-RestMethod -Method Delete `
+                -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$pendingId" `
+                -Headers $headers
+              Write-Host "Deleted pending submission."
+            } catch {
+              $errText = $_.Exception.Message
+              if (& $isStoreBusy $errText) {
+                Write-Warning "Existing submission is in certification; cannot delete. Skipping publish."
+                exit 0
+              }
+              throw
+            }
+          }
+
+          Write-Host "Creating new submission..."
+          $submission = Invoke-RestMethod -Method Post `
+            -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions" `
+            -Headers $headers
+          $submissionId = $submission.id
+          $fileUploadUrl = $submission.fileUploadUrl
+          Write-Host "Created submission $submissionId"
+
+          $packages = [System.Collections.ArrayList]::new()
+          if ($submission.applicationPackages) {
+            foreach ($pkg in $submission.applicationPackages) {
+              $pkg.fileStatus = 'PendingDelete'
+              [void]$packages.Add($pkg)
+            }
+          }
+          [void]$packages.Add(@{
+            fileName              = $msixFileName
+            fileStatus            = 'PendingUpload'
+            minimumDirectXVersion = 'None'
+            minimumSystemRam      = 'None'
+          })
+          $submission.applicationPackages = $packages.ToArray()
+
+          if (Test-Path "metadata/metadata.json") {
+            Write-Host "Applying metadata from metadata/metadata.json..."
+            $metadata = Get-Content -Raw "metadata/metadata.json" | ConvertFrom-Json
+
+            function Normalize-StoreListingText {
+              param([string]$Text)
+              if ([string]::IsNullOrWhiteSpace($Text)) {
+                return $Text
+              }
+
+              $normalized = $Text -replace "`r`n?", "`n"
+
+              # Fix hard wraps that split short words (e.g., Lo\ncal-First) and CJK punctuation/characters.
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '([A-Za-zÀ-ÖØ-öø-ÿ]{1,2})\n([a-zà-öø-ÿ])',
+                '$1$2'
+              )
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '([\p{IsCJKUnifiedIdeographs}])\n([，。！？、；：）】》」』\p{IsCJKUnifiedIdeographs}])',
+                '$1$2'
+              )
+
+              # Convert single line breaks to spaces, while preserving paragraph breaks and bullet lines.
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace(
+                $normalized,
+                '(?<!\n)\n(?!\n|[•*\-]|\d+[.)]\s)',
+                ' '
+              )
+
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, ' {2,}', ' ')
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, '\s+([,.;:!?])', '$1')
+              $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, '\s+([，。！？、；：）】》」』])', '$1')
+              return $normalized.Trim()
+            }
+
+            if ($metadata.PSObject.Properties.Name -contains 'Listings' -and $metadata.Listings) {
+              foreach ($listingProp in $metadata.Listings.PSObject.Properties) {
+                if (-not $listingProp.Value) { continue }
+                if (-not ($listingProp.Value.PSObject.Properties.Name -contains 'BaseListing')) { continue }
+                $baseListing = $listingProp.Value.BaseListing
+                if (-not $baseListing) { continue }
+                if ($baseListing.PSObject.Properties.Name -contains 'Description') {
+                  $baseListing.Description = Normalize-StoreListingText -Text ([string]$baseListing.Description)
+                }
+              }
+            }
+
+            $fieldMap = @{
+              listings = 'Listings'
+              applicationCategory = 'ApplicationCategory'
+              pricing = 'Pricing'
+              visibility = 'Visibility'
+              targetPublishMode = 'TargetPublishMode'
+              targetPublishDate = 'TargetPublishDate'
+              hardwarePreferences = 'HardwarePreferences'
+              hasExternalInAppProducts = 'HasExternalInAppProducts'
+              meetAccessibilityGuidelines = 'MeetAccessibilityGuidelines'
+              notesForCertification = 'NotesForCertification'
+              allowMicrosoftDecideAppAvailabilityToFutureDeviceFamilies = 'AllowMicrosoftDecideAppAvailabilityToFutureDeviceFamilies'
+              allowTargetFutureDeviceFamilies = 'AllowTargetFutureDeviceFamilies'
+              automaticBackupEnabled = 'AutomaticBackupEnabled'
+              canInstallOnRemovableMedia = 'CanInstallOnRemovableMedia'
+              isGameDvrEnabled = 'IsGameDvrEnabled'
+              enterpriseLicensing = 'EnterpriseLicensing'
+            }
+            foreach ($target in $fieldMap.Keys) {
+              $source = $fieldMap[$target]
+              if ($metadata.PSObject.Properties.Name -contains $source) {
+                $submission.$target = $metadata.$source
+              }
+            }
+          } else {
+            Write-Warning "metadata/metadata.json not found; submitting cloned metadata from last published version."
+          }
+
+          foreach ($prop in @('id', 'status', 'statusDetails', 'fileUploadUrl', 'friendlyName', 'pendingApplicationId')) {
+            if ($submission.PSObject.Properties.Name -contains $prop) {
+              $submission.PSObject.Properties.Remove($prop)
+            }
+          }
+          $submissionJson = $submission | ConvertTo-Json -Depth 100 -Compress
+
+          Write-Host "Updating submission data (metadata + package references)..."
+          Invoke-RestMethod -Method Put `
+            -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId" `
+            -Headers $headers `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($submissionJson)) `
+            -ContentType 'application/json; charset=utf-8'
+
+          Write-Host "Creating ZIP archive for upload..."
+          $zipPath = "$env:RUNNER_TEMP/submission-package.zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path $msixPath -DestinationPath $zipPath -Force
+          $zipBytes = [System.IO.File]::ReadAllBytes($zipPath)
+
+          Write-Host "Uploading package payload..."
+          Invoke-RestMethod -Method Put `
+            -Uri $fileUploadUrl `
+            -Headers @{ 'x-ms-blob-type' = 'BlockBlob' } `
+            -Body $zipBytes `
+            -ContentType 'application/octet-stream'
+
+          Write-Host "Committing submission..."
+          Invoke-RestMethod -Method Post `
+            -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId/commit" `
+            -Headers @{ 'Authorization' = "Bearer $accessToken"; 'Content-Type' = 'application/json' } `
+            -Body '{}'
+
+          Write-Host "Polling submission status..."
+          $deadline = (Get-Date).AddMinutes(30)
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            try {
+              $statusResponse = Invoke-RestMethod -Method Get `
+                -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId/status" `
+                -Headers @{ 'Authorization' = "Bearer $accessToken" }
+            } catch {
+              Write-Warning "Status poll failed, refreshing token: $_"
+              $tokenResponse = Invoke-RestMethod -Method Post `
+                -Uri "https://login.microsoftonline.com/$($env:MS_TENANT_ID)/oauth2/token" `
+                -ContentType 'application/x-www-form-urlencoded' `
+                -Body $tokenBody
+              $accessToken = $tokenResponse.access_token
+              continue
+            }
+            $currentStatus = $statusResponse.status
+            Write-Host "  Status: $currentStatus"
+            if ($currentStatus -eq 'CommitFailed') {
+              $details = $statusResponse.statusDetails | ConvertTo-Json -Depth 5
+              throw "Submission commit failed. Details: $details"
+            }
+            if ($currentStatus -in @('PreProcessing', 'Certification', 'Publishing', 'Published', 'Release')) {
+              break
+            }
+          }
+          Write-Host "Microsoft Store publish completed."
 
       - name: Collect Windows artifacts
         shell: pwsh

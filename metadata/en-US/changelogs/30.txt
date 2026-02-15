@@ -1,0 +1,3 @@
+- Improved cross-device sync stability by fixing a revision tie-break edge case that could revert newer edits.
+- Improved review and board editing UX, including smarter @/# suggestions and a clearer board task edit modal.
+- Hardened FOSS Android release flow for reproducible builds and stricter permission cleanup.

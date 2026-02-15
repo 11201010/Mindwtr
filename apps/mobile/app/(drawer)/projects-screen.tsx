@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions, Platform, Keyboard, ActionSheetIOS } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Area, Attachment, generateUUID, Project, PRESET_TAGS, Task, TaskStatus, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
@@ -54,7 +54,6 @@ export default function ProjectsScreen() {
   const [expandedAreaColorId, setExpandedAreaColorId] = useState<string | null>(null);
   const { projectId, taskId } = useLocalSearchParams<{ projectId?: string; taskId?: string }>();
   const lastOpenedTaskIdRef = useRef<string | null>(null);
-  const closingProjectRef = useRef(false);
   const ALL_TAGS = '__all__';
   const NO_TAGS = '__none__';
   const ALL_AREAS = '__all__';
@@ -74,6 +73,7 @@ export default function ProjectsScreen() {
   const pickerCardMaxHeight = Math.min(windowHeight * 0.8, 560);
   const areaListMaxHeight = Math.min(windowHeight * 0.4, 280);
   const areaManagerListMaxHeight = Math.min(windowHeight * 0.45, 320);
+  const overlayModalPresentation = Platform.OS === 'ios' ? 'overFullScreen' : 'fullScreen';
   const resolveValidationMessage = (error?: string) => {
     if (error === 'file_too_large') return t('attachments.fileTooLarge');
     if (error === 'mime_type_blocked' || error === 'mime_type_not_allowed') return t('attachments.invalidFileType');
@@ -90,6 +90,14 @@ export default function ProjectsScreen() {
   };
 
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+  const colorDisplayByHex: Record<string, { name: string; swatch: string }> = {
+    '#3b82f6': { name: 'Blue', swatch: '🔵' },
+    '#10b981': { name: 'Green', swatch: '🟢' },
+    '#f59e0b': { name: 'Amber', swatch: '🟠' },
+    '#ef4444': { name: 'Red', swatch: '🔴' },
+    '#8b5cf6': { name: 'Purple', swatch: '🟣' },
+    '#ec4899': { name: 'Pink', swatch: '🩷' },
+  };
 
   const sortedAreas = useMemo(() => [...areas].sort((a, b) => a.order - b.order), [areas]);
   const focusedCount = useMemo(() => projects.filter((project) => project.isFocused).length, [projects]);
@@ -163,13 +171,6 @@ export default function ProjectsScreen() {
     setHighlightTask(task.id);
     setEditingTask(task);
   }, [taskId, projectId, selectedProject, tasks, setHighlightTask]);
-
-  useEffect(() => {
-    if (!selectedProject) {
-      closingProjectRef.current = false;
-    }
-  }, [selectedProject]);
-
 
   const sortAreasByName = () => {
     const reordered = [...sortedAreas]
@@ -381,8 +382,6 @@ export default function ProjectsScreen() {
   };
 
   const closeProjectDetail = () => {
-    if (closingProjectRef.current) return;
-    closingProjectRef.current = true;
     persistSelectedProjectEdits(selectedProject);
     setSelectedProject(null);
     setNotesExpanded(false);
@@ -423,6 +422,307 @@ export default function ProjectsScreen() {
         }
       ]
     );
+  };
+
+  const openAreaPicker = () => {
+    Keyboard.dismiss();
+    setShowStatusMenu(false);
+    if (Platform.OS === 'ios' && selectedProject) {
+      const manageAreasLabel = (() => {
+        const translated = t('projects.manageAreas');
+        return translated === 'projects.manageAreas' ? 'Manage areas' : translated;
+      })();
+      const chooseColorLabel = (() => {
+        const translated = t('projects.changeColor');
+        return translated === 'projects.changeColor' ? 'Choose color' : translated;
+      })();
+      const nextLabel = (() => {
+        const translated = t('common.next');
+        return translated === 'common.next' ? 'Next' : translated;
+      })();
+      const createAreaWithColor = (onCreated: (created: Area) => void, logMessage: string) => {
+        Alert.prompt(
+          t('projects.areaLabel'),
+          `${t('common.add')} ${t('projects.areaLabel')}`,
+          [
+            { text: t('common.cancel'), style: 'cancel' },
+            {
+              text: nextLabel,
+              onPress: (value?: string) => {
+                const name = (value ?? '').trim();
+                if (!name) return;
+                ActionSheetIOS.showActionSheetWithOptions(
+                  {
+                    options: [
+                      t('common.cancel'),
+                      ...colors.map((color) => {
+                        const colorMeta = colorDisplayByHex[color] ?? { name: color.toUpperCase(), swatch: '◯' };
+                        return `${colorMeta.swatch} ${colorMeta.name}`;
+                      }),
+                    ],
+                    cancelButtonIndex: 0,
+                    title: chooseColorLabel,
+                  },
+                  async (colorIndex) => {
+                    if (colorIndex <= 0) return;
+                    const color = colors[colorIndex - 1];
+                    if (!color) return;
+                    try {
+                      const created = await addArea(name, { color });
+                      if (!created) return;
+                      onCreated(created);
+                    } catch (error) {
+                      logProjectError(logMessage, error);
+                    }
+                  }
+                );
+              },
+            },
+          ],
+          'plain-text'
+        );
+      };
+      const openIOSAreaManager = () => {
+        const editAreaLabel = (() => {
+          const translated = t('projects.editArea');
+          return translated === 'projects.editArea' ? 'Edit area' : translated;
+        })();
+        const renameAreaLabel = (() => {
+          const translated = t('projects.renameArea');
+          return translated === 'projects.renameArea' ? 'Rename area' : translated;
+        })();
+        const changeColorLabel = (() => {
+          const translated = t('projects.changeColor');
+          return translated === 'projects.changeColor' ? 'Change color' : translated;
+        })();
+        const openIOSAreaEditor = (area: Area) => {
+          ActionSheetIOS.showActionSheetWithOptions(
+            {
+              options: [t('common.cancel'), renameAreaLabel, changeColorLabel],
+              cancelButtonIndex: 0,
+              title: area.name,
+            },
+            (editIndex) => {
+              if (editIndex === 0) return;
+              if (editIndex === 1) {
+                Alert.prompt(
+                  renameAreaLabel,
+                  area.name,
+                  [
+                    { text: t('common.cancel'), style: 'cancel' },
+                    {
+                      text: t('common.save'),
+                      onPress: async (value?: string) => {
+                        const nextName = (value ?? '').trim();
+                        if (!nextName || nextName === area.name) return;
+                        try {
+                          await updateArea(area.id, { name: nextName });
+                        } catch (error) {
+                          logProjectError('Failed to rename area on iOS', error);
+                        }
+                      },
+                    },
+                  ],
+                  'plain-text',
+                  area.name
+                );
+                return;
+              }
+              ActionSheetIOS.showActionSheetWithOptions(
+                {
+                  options: [
+                    t('common.cancel'),
+                    ...colors.map((color) => {
+                      const colorMeta = colorDisplayByHex[color] ?? { name: color.toUpperCase(), swatch: '◯' };
+                      return `${area.color === color ? '✓ ' : ''}${colorMeta.swatch} ${colorMeta.name}`;
+                    }),
+                  ],
+                  cancelButtonIndex: 0,
+                  title: changeColorLabel,
+                },
+                async (colorIndex) => {
+                  if (colorIndex <= 0) return;
+                  const color = colors[colorIndex - 1];
+                  if (!color || color === area.color) return;
+                  try {
+                    await updateArea(area.id, { color });
+                  } catch (error) {
+                    logProjectError('Failed to change area color on iOS', error);
+                  }
+                }
+              );
+            }
+          );
+        };
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: [
+              t('common.cancel'),
+              `${t('common.add')} ${t('projects.areaLabel')}`,
+              editAreaLabel,
+              t('projects.sortByName'),
+              t('projects.sortByColor'),
+              t('common.delete'),
+            ],
+            cancelButtonIndex: 0,
+            title: manageAreasLabel,
+          },
+          (manageIndex) => {
+            if (manageIndex === 0) return;
+            if (manageIndex === 1) {
+              createAreaWithColor((created) => {
+                updateProject(selectedProject.id, { areaId: created.id });
+                setSelectedProject({ ...selectedProject, areaId: created.id });
+              }, 'Failed to create area from iOS manager');
+              return;
+            }
+            if (manageIndex === 2) {
+              if (sortedAreas.length === 0) {
+                Alert.alert(t('common.notice') || 'Notice', t('projects.noArea'));
+                return;
+              }
+              ActionSheetIOS.showActionSheetWithOptions(
+                {
+                  options: [t('common.cancel'), ...sortedAreas.map((area) => area.name)],
+                  cancelButtonIndex: 0,
+                  title: editAreaLabel,
+                },
+                (areaIndex) => {
+                  if (areaIndex <= 0) return;
+                  const target = sortedAreas[areaIndex - 1];
+                  if (!target) return;
+                  openIOSAreaEditor(target);
+                }
+              );
+              return;
+            }
+            if (manageIndex === 3) {
+              sortAreasByName();
+              return;
+            }
+            if (manageIndex === 4) {
+              sortAreasByColor();
+              return;
+            }
+            const deletableAreas = sortedAreas.filter((area) => (areaUsage.get(area.id) || 0) === 0);
+            if (deletableAreas.length === 0) {
+              Alert.alert(t('common.notice') || 'Notice', t('projects.areaInUse') || 'Area has projects.');
+              return;
+            }
+            ActionSheetIOS.showActionSheetWithOptions(
+              {
+                options: [t('common.cancel'), ...deletableAreas.map((area) => `${t('common.delete')} ${area.name}`)],
+                cancelButtonIndex: 0,
+                destructiveButtonIndex: deletableAreas.length > 0 ? 1 : undefined,
+                title: t('common.delete'),
+              },
+              (deleteIndex) => {
+                if (deleteIndex <= 0) return;
+                const target = deletableAreas[deleteIndex - 1];
+                if (!target) return;
+                deleteArea(target.id);
+              }
+            );
+          }
+        );
+      };
+      const options = [
+        t('common.cancel'),
+        t('projects.noArea'),
+        `${t('common.add')} ${t('projects.areaLabel')}`,
+        manageAreasLabel,
+        ...sortedAreas.map((area) => area.name),
+      ];
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: 0,
+          title: t('projects.areaLabel'),
+        },
+        (buttonIndex) => {
+          if (!selectedProject) return;
+          if (buttonIndex === 0) return;
+          if (buttonIndex === 1) {
+            updateProject(selectedProject.id, { areaId: undefined });
+            setSelectedProject({ ...selectedProject, areaId: undefined });
+            return;
+          }
+          if (buttonIndex === 2) {
+            createAreaWithColor((created) => {
+              updateProject(selectedProject.id, { areaId: created.id });
+              setSelectedProject({ ...selectedProject, areaId: created.id });
+            }, 'Failed to create area from iOS action sheet');
+            return;
+          }
+          if (buttonIndex === 3) {
+            openIOSAreaManager();
+            return;
+          }
+          const pickedArea = sortedAreas[buttonIndex - 4];
+          if (!pickedArea) return;
+          updateProject(selectedProject.id, { areaId: pickedArea.id });
+          setSelectedProject({ ...selectedProject, areaId: pickedArea.id });
+        }
+      );
+      return;
+    }
+    setShowAreaPicker(true);
+  };
+
+  const openTagPicker = () => {
+    Keyboard.dismiss();
+    setShowStatusMenu(false);
+    if (Platform.OS === 'ios' && selectedProject) {
+      const existingTags = selectedProject.tagIds || [];
+      const tagOptions = projectTagOptions.slice(0, 25);
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: [
+            t('common.cancel'),
+            `${t('common.add')} ${t('taskEdit.tagsLabel')}`,
+            t('common.clear'),
+            ...tagOptions.map((tag) => (existingTags.includes(tag) ? `✓ ${tag}` : tag)),
+          ],
+          cancelButtonIndex: 0,
+          title: t('taskEdit.tagsLabel'),
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) return;
+          if (buttonIndex === 1) {
+            Alert.prompt(
+              t('taskEdit.tagsLabel'),
+              `${t('common.add')} ${t('taskEdit.tagsLabel')}`,
+              [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('common.save'),
+                  onPress: (value?: string) => {
+                    const normalized = normalizeTag(value ?? '');
+                    if (!normalized) return;
+                    const next = Array.from(new Set([...(selectedProject.tagIds || []), normalized]));
+                    updateProject(selectedProject.id, { tagIds: next });
+                    setSelectedProject({ ...selectedProject, tagIds: next });
+                  },
+                },
+              ],
+              'plain-text'
+            );
+            return;
+          }
+          if (buttonIndex === 2) {
+            updateProject(selectedProject.id, { tagIds: [] });
+            setSelectedProject({ ...selectedProject, tagIds: [] });
+            return;
+          }
+          const pickedTag = tagOptions[buttonIndex - 3];
+          if (!pickedTag) return;
+          toggleProjectTag(pickedTag);
+        }
+      );
+      return;
+    }
+    setTagDraft('');
+    setShowTagPicker(true);
   };
 
   const updateAttachmentStatus = (
@@ -803,10 +1103,14 @@ export default function ProjectsScreen() {
       <Modal
         visible={!!selectedProject}
         animationType="slide"
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        allowSwipeDismissal
         onRequestClose={closeProjectDetail}
-        onDismiss={closeProjectDetail}
       >
-                <SafeAreaView style={{ flex: 1, backgroundColor: tc.bg }} edges={['left', 'right', 'bottom']}>
+                <SafeAreaView
+                  style={{ flex: 1, backgroundColor: tc.bg }}
+                  edges={['left', 'right', 'bottom']}
+                >
                   {selectedProject ? (
                     <>
                 <View style={modalHeaderStyle}>
@@ -946,7 +1250,7 @@ export default function ProjectsScreen() {
                       </Text>
                       <TouchableOpacity
                         style={[styles.reviewButton, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                        onPress={() => setShowAreaPicker(true)}
+                        onPress={openAreaPicker}
                       >
                         <Text style={{ color: tc.text }}>
                           {selectedProject.areaId && areaById.has(selectedProject.areaId)
@@ -962,7 +1266,7 @@ export default function ProjectsScreen() {
                       </Text>
                       <TouchableOpacity
                         style={[styles.reviewButton, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                        onPress={() => setShowTagPicker(true)}
+                        onPress={openTagPicker}
                       >
                         <Text style={{ color: tc.text }}>
                           {selectedProject.tagIds?.length ? selectedProject.tagIds.join(', ') : t('common.none')}
@@ -1159,6 +1463,7 @@ export default function ProjectsScreen() {
         visible={linkModalVisible}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setLinkModalVisible(false)}
       >
         <View style={styles.overlay}>
@@ -1198,6 +1503,7 @@ export default function ProjectsScreen() {
         visible={showAreaPicker}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setShowAreaPicker(false)}
       >
         <Pressable style={styles.overlay} onPress={() => setShowAreaPicker(false)}>
@@ -1249,6 +1555,7 @@ export default function ProjectsScreen() {
         visible={showAreaManager}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => {
           setShowAreaManager(false);
           setExpandedAreaColorId(null);
@@ -1391,6 +1698,7 @@ export default function ProjectsScreen() {
         visible={showTagPicker}
         transparent
         animationType="fade"
+        presentationStyle={overlayModalPresentation}
         onRequestClose={() => setShowTagPicker(false)}
       >
         <Pressable style={styles.overlay} onPress={() => setShowTagPicker(false)}>
@@ -1400,7 +1708,7 @@ export default function ProjectsScreen() {
               <TextInput
                 value={tagDraft}
                 onChangeText={setTagDraft}
-                placeholder="#tag"
+                placeholder={t('taskEdit.tagsLabel')}
                 placeholderTextColor={tc.secondaryText}
                 style={[styles.tagInput, { color: tc.text }]}
                 autoCapitalize="none"

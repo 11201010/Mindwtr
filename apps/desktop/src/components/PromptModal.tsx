@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 interface PromptModalProps {
     isOpen: boolean;
@@ -25,6 +25,8 @@ export function PromptModal({
 }: PromptModalProps) {
     const [value, setValue] = useState(defaultValue ?? '');
     const inputRef = useRef<HTMLInputElement>(null);
+    const titleId = useId();
+    const descriptionId = useId();
 
     useEffect(() => {
         if (isOpen) {
@@ -40,6 +42,8 @@ export function PromptModal({
             className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50"
             role="dialog"
             aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={description ? descriptionId : undefined}
             onClick={onCancel}
         >
             <div
@@ -47,9 +51,11 @@ export function PromptModal({
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="px-4 py-3 border-b">
-                    <h3 className="font-semibold">{title}</h3>
+                    <h3 id={titleId} className="font-semibold">{title}</h3>
                     {description && (
-                        <p className="text-xs text-muted-foreground mt-1">{description}</p>
+                        <p id={descriptionId} className="text-xs text-muted-foreground mt-1">
+                            {description}
+                        </p>
                     )}
                 </div>
                 <div className="p-4 space-y-3">

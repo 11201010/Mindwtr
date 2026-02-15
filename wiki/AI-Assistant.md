@@ -19,9 +19,26 @@ Configure in **Settings → AI assistant**:
 - Enable/disable AI
 - Provider
 - Model
+- Optional custom base URL (OpenAI-compatible)
 - API key (stored locally only)
 - Reasoning effort / thinking budget (provider-dependent)
 - Optional **“Enable thinking”** toggle for Claude/Gemini (adds extended reasoning)
+
+## Local LLM (OpenAI-compatible)
+
+Mindwtr stays lightweight by connecting to a local server instead of bundling a model.
+
+1. Run a local OpenAI-compatible server (for example Ollama, LM Studio, LocalAI, or vLLM).
+2. In **Settings → AI assistant**:
+   - Set **Provider** to **OpenAI**
+   - Set **Custom base URL** to your local endpoint base
+   - Leave **API key** empty if your local server does not require auth
+3. Keep your preferred model selected.
+
+Common base URLs:
+- **Ollama**: `http://localhost:11434/v1`
+- **LM Studio**: `http://localhost:1234/v1`
+- **LocalAI / vLLM**: `http://localhost:8080/v1`
 
 ## Features
 

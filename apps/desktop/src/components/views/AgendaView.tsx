@@ -10,6 +10,7 @@ import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { TaskItem } from '../TaskItem';
 import { projectMatchesAreaFilter, resolveAreaFilter, taskMatchesAreaFilter } from '../../lib/area-filter';
+import { PomodoroPanel } from './PomodoroPanel';
 
 export function AgendaView() {
     const perf = usePerformanceMonitor('AgendaView');
@@ -39,6 +40,7 @@ export function AgendaView() {
     const [top3Only, setTop3Only] = useState(false);
     const prioritiesEnabled = settings?.features?.priorities === true;
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+    const pomodoroEnabled = settings?.features?.pomodoro === true;
     const activePriorities = prioritiesEnabled ? selectedPriorities : [];
     const activeTimeEstimates = timeEstimatesEnabled ? selectedTimeEstimates : [];
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
@@ -362,7 +364,7 @@ export function AgendaView() {
                     {title}
                     <span className="text-muted-foreground font-normal">({tasks.length})</span>
                 </h3>
-                <div className="space-y-2">
+                <div className="divide-y divide-border/30">
                     {tasks.map(task => (
                         <TaskItem
                             key={task.id}
@@ -420,6 +422,21 @@ export function AgendaView() {
 
     const visibleActive = filteredActiveTasks.length;
     const nextActionsCount = sections.nextActions.length;
+    const pomodoroTasks = useMemo(() => {
+        const ordered = [
+            ...focusedTasks,
+            ...sections.nextActions,
+            ...sections.dueToday,
+            ...sections.overdue,
+            ...sections.reviewDue,
+        ];
+        const byId = new Map<string, Task>();
+        ordered.forEach((task) => {
+            if (task.deletedAt) return;
+            byId.set(task.id, task);
+        });
+        return Array.from(byId.values());
+    }, [focusedTasks, sections]);
 
     return (
         <ErrorBoundary>
@@ -464,6 +481,8 @@ export function AgendaView() {
                     </button>
                 </div>
             </header>
+
+            {pomodoroEnabled && <PomodoroPanel tasks={pomodoroTasks} />}
 
             <div className="bg-card border border-border rounded-lg p-3 space-y-3">
                 <div className="flex items-center justify-between">
@@ -577,7 +596,7 @@ export function AgendaView() {
                     <div className="space-y-2">
                         <h3 className="font-semibold">{t('agenda.top3Title')}</h3>
                         {top3Tasks.length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="divide-y divide-border/30">
                                 {top3Tasks.map(task => (
                                     <TaskItem
                                         key={task.id}
@@ -615,7 +634,7 @@ export function AgendaView() {
                         </h3>
 
                         {focusedTasks.length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="divide-y divide-border/30">
                                 {focusedTasks.map(task => (
                                     <TaskItem
                                         key={task.id}

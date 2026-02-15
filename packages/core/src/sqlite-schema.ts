@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   timeEstimate TEXT,
   reviewAt TEXT,
   completedAt TEXT,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT,
@@ -47,6 +49,8 @@ CREATE TABLE IF NOT EXISTS projects (
   reviewAt TEXT,
   areaId TEXT,
   areaTitle TEXT,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT
@@ -58,8 +62,11 @@ CREATE TABLE IF NOT EXISTS areas (
   color TEXT,
   icon TEXT,
   orderNum INTEGER NOT NULL,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT,
-  updatedAt TEXT
+  updatedAt TEXT,
+  deletedAt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sections (
@@ -69,6 +76,8 @@ CREATE TABLE IF NOT EXISTS sections (
   description TEXT,
   orderNum INTEGER,
   isCollapsed INTEGER,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT
@@ -85,6 +94,62 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
 
+CREATE TRIGGER IF NOT EXISTS tasks_validate_insert
+BEFORE INSERT ON tasks
+BEGIN
+  SELECT RAISE(ABORT, 'invalid_task_status')
+  WHERE new.status NOT IN ('inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived');
+  SELECT RAISE(ABORT, 'invalid_tasks_tags_json')
+  WHERE new.tags IS NOT NULL AND json_valid(new.tags) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_contexts_json')
+  WHERE new.contexts IS NOT NULL AND json_valid(new.contexts) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_checklist_json')
+  WHERE new.checklist IS NOT NULL AND json_valid(new.checklist) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_attachments_json')
+  WHERE new.attachments IS NOT NULL AND json_valid(new.attachments) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_recurrence_json')
+  WHERE new.recurrence IS NOT NULL AND json_valid(new.recurrence) = 0;
+END;
+
+CREATE TRIGGER IF NOT EXISTS tasks_validate_update
+BEFORE UPDATE ON tasks
+BEGIN
+  SELECT RAISE(ABORT, 'invalid_task_status')
+  WHERE new.status NOT IN ('inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived');
+  SELECT RAISE(ABORT, 'invalid_tasks_tags_json')
+  WHERE new.tags IS NOT NULL AND json_valid(new.tags) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_contexts_json')
+  WHERE new.contexts IS NOT NULL AND json_valid(new.contexts) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_checklist_json')
+  WHERE new.checklist IS NOT NULL AND json_valid(new.checklist) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_attachments_json')
+  WHERE new.attachments IS NOT NULL AND json_valid(new.attachments) = 0;
+  SELECT RAISE(ABORT, 'invalid_tasks_recurrence_json')
+  WHERE new.recurrence IS NOT NULL AND json_valid(new.recurrence) = 0;
+END;
+
+CREATE TRIGGER IF NOT EXISTS projects_validate_insert
+BEFORE INSERT ON projects
+BEGIN
+  SELECT RAISE(ABORT, 'invalid_project_status')
+  WHERE new.status NOT IN ('active', 'someday', 'waiting', 'archived');
+  SELECT RAISE(ABORT, 'invalid_projects_tag_ids_json')
+  WHERE new.tagIds IS NOT NULL AND json_valid(new.tagIds) = 0;
+  SELECT RAISE(ABORT, 'invalid_projects_attachments_json')
+  WHERE new.attachments IS NOT NULL AND json_valid(new.attachments) = 0;
+END;
+
+CREATE TRIGGER IF NOT EXISTS projects_validate_update
+BEFORE UPDATE ON projects
+BEGIN
+  SELECT RAISE(ABORT, 'invalid_project_status')
+  WHERE new.status NOT IN ('active', 'someday', 'waiting', 'archived');
+  SELECT RAISE(ABORT, 'invalid_projects_tag_ids_json')
+  WHERE new.tagIds IS NOT NULL AND json_valid(new.tagIds) = 0;
+  SELECT RAISE(ABORT, 'invalid_projects_attachments_json')
+  WHERE new.attachments IS NOT NULL AND json_valid(new.attachments) = 0;
+END;
+
 `;
 
 export const SQLITE_INDEX_SCHEMA = `
@@ -94,10 +159,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_deletedAt ON tasks(deletedAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_dueDate ON tasks(dueDate);
 CREATE INDEX IF NOT EXISTS idx_tasks_startTime ON tasks(startTime);
 CREATE INDEX IF NOT EXISTS idx_tasks_reviewAt ON tasks(reviewAt);
+CREATE INDEX IF NOT EXISTS idx_tasks_completedAt ON tasks(completedAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_createdAt ON tasks(createdAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_updatedAt ON tasks(updatedAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_deletedAt ON tasks(status, deletedAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status_deletedAt ON tasks(projectId, status, deletedAt);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status_updatedAt ON tasks(projectId, status, updatedAt);
+CREATE INDEX IF NOT EXISTS idx_tasks_area_deletedAt ON tasks(areaId, deletedAt);
 CREATE INDEX IF NOT EXISTS idx_tasks_area_id ON tasks(areaId);
 CREATE INDEX IF NOT EXISTS idx_tasks_section_id ON tasks(sectionId);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);

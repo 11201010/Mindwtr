@@ -84,7 +84,7 @@ export function TrashView() {
                 />
             </div>
 
-            <div className="space-y-3">
+            <div className="divide-y divide-border/30">
                 {trashedTasks.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground bg-muted/30 rounded-lg border border-dashed border-border">
                         <p>{t('trash.noTasksFound')}</p>
@@ -94,7 +94,7 @@ export function TrashView() {
                     trashedTasks.map((task) => (
                         <div
                             key={task.id}
-                            className="bg-card border border-border rounded-lg p-4 flex items-center justify-between group hover:shadow-sm transition-all"
+                            className="rounded-lg px-3 py-3 flex items-center justify-between group hover:bg-muted/50 transition-colors"
                         >
                             <div>
                                 <h3 className="font-medium text-foreground line-through opacity-70">{task.title}</h3>

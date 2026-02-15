@@ -7,12 +7,15 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem};
+#[cfg(target_os = "macos")]
+use tauri::menu::HELP_SUBMENU_ID;
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::image::Image;
@@ -33,6 +36,10 @@ const KEYRING_CLOUD_TOKEN: &str = "cloud_token";
 const KEYRING_AI_OPENAI: &str = "ai_key_openai";
 const KEYRING_AI_ANTHROPIC: &str = "ai_key_anthropic";
 const KEYRING_AI_GEMINI: &str = "ai_key_gemini";
+#[cfg(target_os = "macos")]
+const MENU_HELP_DOCS_ID: &str = "help_docs";
+#[cfg(target_os = "macos")]
+const MENU_HELP_ISSUES_ID: &str = "help_report_issue";
 
 const SQLITE_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -62,6 +69,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   timeEstimate TEXT,
   reviewAt TEXT,
   completedAt TEXT,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT,
@@ -93,6 +102,8 @@ CREATE TABLE IF NOT EXISTS projects (
   reviewAt TEXT,
   areaId TEXT,
   areaTitle TEXT,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT
@@ -104,6 +115,9 @@ CREATE TABLE IF NOT EXISTS areas (
   color TEXT,
   icon TEXT,
   orderNum INTEGER NOT NULL,
+  deletedAt TEXT,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT,
   updatedAt TEXT
 );
@@ -115,6 +129,8 @@ CREATE TABLE IF NOT EXISTS sections (
   description TEXT,
   orderNum INTEGER,
   isCollapsed INTEGER,
+  rev INTEGER,
+  revBy TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   deletedAt TEXT
@@ -289,6 +305,117 @@ fn is_windows_store_install() -> bool {
     #[cfg(not(target_os = "windows"))]
     {
         false
+    }
+}
+
+fn current_exe_path_lowercase() -> Option<String> {
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(|value| value.to_lowercase()))
+}
+
+fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
+    Command::new(cmd)
+        .args(args)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn find_macos_bundle_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| {
+            ancestor
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("app"))
+                .unwrap_or(false)
+        })
+        .map(|ancestor| ancestor.to_path_buf())
+}
+
+#[tauri::command]
+fn get_install_source() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        if is_windows_store_install() {
+            return "microsoft-store".to_string();
+        }
+        if env::var_os("WINGET_PACKAGE_IDENTIFIER").is_some() {
+            return "winget".to_string();
+        }
+        if let Some(path) = current_exe_path_lowercase() {
+            if path.contains("\\microsoft\\winget\\packages\\")
+                || path.contains("/microsoft/winget/packages/")
+            {
+                return "winget".to_string();
+            }
+        }
+        return "direct".to_string();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(exe_path) = env::current_exe() {
+            if let Some(bundle_root) = find_macos_bundle_root(&exe_path) {
+                if bundle_root
+                    .join("Contents")
+                    .join("_MASReceipt")
+                    .join("receipt")
+                    .exists()
+                {
+                    return "mac-app-store".to_string();
+                }
+            }
+        }
+        if let Some(path) = current_exe_path_lowercase() {
+            if path.contains("/caskroom/") || path.contains("/homebrew/") {
+                return "homebrew".to_string();
+            }
+        }
+        return "direct".to_string();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if is_flatpak() {
+            return "flatpak".to_string();
+        }
+        if env::var_os("SNAP").is_some() || env::var_os("SNAP_NAME").is_some() {
+            return "snap".to_string();
+        }
+        if env::var_os("APPIMAGE").is_some() {
+            return "appimage".to_string();
+        }
+        if let Some(path) = current_exe_path_lowercase() {
+            if path.ends_with(".appimage") || path.contains(".appimage") {
+                return "appimage".to_string();
+            }
+            if path.contains("/home/linuxbrew/") || path.contains("/linuxbrew/") {
+                return "homebrew".to_string();
+            }
+        }
+        if command_succeeds("brew", &["list", "--cask", "mindwtr"]) {
+            return "homebrew".to_string();
+        }
+        if command_succeeds("pacman", &["-Q", "mindwtr-bin"])
+            || command_succeeds("pacman", &["-Q", "mindwtr"])
+        {
+            return "aur".to_string();
+        }
+        if command_succeeds("dpkg-query", &["-W", "mindwtr"]) {
+            return "apt".to_string();
+        }
+        if command_succeeds("rpm", &["-q", "mindwtr"]) {
+            return "rpm".to_string();
+        }
+        return "direct".to_string();
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "direct".to_string()
     }
 }
 
@@ -642,9 +769,46 @@ fn open_sqlite(app: &tauri::AppHandle) -> Result<Connection, String> {
     ensure_tasks_section_column(&conn)?;
     ensure_projects_order_column(&conn)?;
     ensure_projects_area_order_index(&conn)?;
+    ensure_sync_revision_columns(&conn)?;
     ensure_fts_triggers(&conn)?;
     ensure_fts_populated(&conn, false)?;
     Ok(conn)
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({})", table);
+    let mut stmt = conn.prepare(&pragma).map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+    for col in columns {
+        if col.map_err(|e| e.to_string())? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, column_sql: &str) -> Result<(), String> {
+    if has_column(conn, table, column)? {
+        return Ok(());
+    }
+    let statement = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_sql);
+    conn.execute(&statement, []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn ensure_sync_revision_columns(conn: &Connection) -> Result<(), String> {
+    ensure_column(conn, "tasks", "rev", "INTEGER")?;
+    ensure_column(conn, "tasks", "revBy", "TEXT")?;
+    ensure_column(conn, "projects", "rev", "INTEGER")?;
+    ensure_column(conn, "projects", "revBy", "TEXT")?;
+    ensure_column(conn, "sections", "rev", "INTEGER")?;
+    ensure_column(conn, "sections", "revBy", "TEXT")?;
+    ensure_column(conn, "areas", "deletedAt", "TEXT")?;
+    ensure_column(conn, "areas", "rev", "INTEGER")?;
+    ensure_column(conn, "areas", "revBy", "TEXT")?;
+    Ok(())
 }
 
 fn ensure_tasks_purged_at_column(conn: &Connection) -> Result<(), String> {
@@ -1017,6 +1181,12 @@ fn row_to_task_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Error> 
     if let Ok(val) = row.get::<_, Option<String>>("completedAt") {
         if let Some(v) = val { map.insert("completedAt".to_string(), Value::String(v)); }
     }
+    if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+        if let Some(v) = val { map.insert("rev".to_string(), Value::Number(v.into())); }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+        if let Some(v) = val { map.insert("revBy".to_string(), Value::String(v)); }
+    }
     map.insert("createdAt".to_string(), Value::String(row.get::<_, String>("createdAt")?));
     map.insert("updatedAt".to_string(), Value::String(row.get::<_, String>("updatedAt")?));
     if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
@@ -1060,6 +1230,12 @@ fn row_to_project_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
     if let Ok(val) = row.get::<_, Option<String>>("areaTitle") {
         if let Some(v) = val { map.insert("areaTitle".to_string(), Value::String(v)); }
     }
+    if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+        if let Some(v) = val { map.insert("rev".to_string(), Value::Number(v.into())); }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+        if let Some(v) = val { map.insert("revBy".to_string(), Value::String(v)); }
+    }
     map.insert("createdAt".to_string(), Value::String(row.get::<_, String>("createdAt")?));
     map.insert("updatedAt".to_string(), Value::String(row.get::<_, String>("updatedAt")?));
     if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
@@ -1081,6 +1257,12 @@ fn row_to_section_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
     }
     if let Ok(val) = row.get::<_, i64>("isCollapsed") {
         if val != 0 { map.insert("isCollapsed".to_string(), Value::Bool(true)); }
+    }
+    if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+        if let Some(v) = val { map.insert("rev".to_string(), Value::Number(v.into())); }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+        if let Some(v) = val { map.insert("revBy".to_string(), Value::String(v)); }
     }
     map.insert("createdAt".to_string(), Value::String(row.get::<_, String>("createdAt")?));
     map.insert("updatedAt".to_string(), Value::String(row.get::<_, String>("updatedAt")?));
@@ -1106,7 +1288,7 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
         let checklist_json = json_str(task.get("checklist"));
         let attachments_json = json_str(task.get("attachments"));
         tx.execute(
-            "INSERT INTO tasks (id, title, status, priority, taskMode, startTime, dueDate, recurrence, pushCount, tags, contexts, checklist, description, attachments, location, projectId, sectionId, areaId, orderNum, isFocusedToday, timeEstimate, reviewAt, completedAt, createdAt, updatedAt, deletedAt, purgedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+            "INSERT INTO tasks (id, title, status, priority, taskMode, startTime, dueDate, recurrence, pushCount, tags, contexts, checklist, description, attachments, location, projectId, sectionId, areaId, orderNum, isFocusedToday, timeEstimate, reviewAt, completedAt, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
             params![
                 task.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 task.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -1131,6 +1313,8 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
                 task.get("timeEstimate").and_then(|v| v.as_str()),
                 task.get("reviewAt").and_then(|v| v.as_str()),
                 task.get("completedAt").and_then(|v| v.as_str()),
+                task.get("rev").and_then(|v| v.as_i64()),
+                task.get("revBy").and_then(|v| v.as_str()),
                 task.get("createdAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 task.get("updatedAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 task.get("deletedAt").and_then(|v| v.as_str()),
@@ -1145,7 +1329,7 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
         let tag_ids_json = json_str_or_default(project.get("tagIds"), "[]");
         let attachments_json = json_str(project.get("attachments"));
         tx.execute(
-            "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, isFocused, supportNotes, attachments, reviewAt, areaId, areaTitle, createdAt, updatedAt, deletedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, isFocused, supportNotes, attachments, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 project.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -1160,6 +1344,8 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
                 project.get("reviewAt").and_then(|v| v.as_str()),
                 project.get("areaId").and_then(|v| v.as_str()),
                 project.get("areaTitle").and_then(|v| v.as_str()),
+                project.get("rev").and_then(|v| v.as_i64()),
+                project.get("revBy").and_then(|v| v.as_str()),
                 project.get("createdAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("updatedAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("deletedAt").and_then(|v| v.as_str()),
@@ -1171,13 +1357,16 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
     let areas = data.get("areas").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     for area in areas {
         tx.execute(
-            "INSERT INTO areas (id, name, color, icon, orderNum, createdAt, updatedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO areas (id, name, color, icon, orderNum, deletedAt, rev, revBy, createdAt, updatedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 area.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 area.get("name").and_then(|v| v.as_str()).unwrap_or_default(),
                 area.get("color").and_then(|v| v.as_str()),
                 area.get("icon").and_then(|v| v.as_str()),
                 area.get("order").and_then(|v| v.as_i64()).unwrap_or(0),
+                area.get("deletedAt").and_then(|v| v.as_str()),
+                area.get("rev").and_then(|v| v.as_i64()),
+                area.get("revBy").and_then(|v| v.as_str()),
                 area.get("createdAt").and_then(|v| v.as_str()),
                 area.get("updatedAt").and_then(|v| v.as_str()),
             ],
@@ -1188,7 +1377,7 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
     let sections = data.get("sections").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     for section in sections {
         tx.execute(
-            "INSERT INTO sections (id, projectId, title, description, orderNum, isCollapsed, createdAt, updatedAt, deletedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO sections (id, projectId, title, description, orderNum, isCollapsed, rev, revBy, createdAt, updatedAt, deletedAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 section.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 section.get("projectId").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -1196,6 +1385,8 @@ fn migrate_json_to_sqlite(conn: &mut Connection, data: &Value) -> Result<(), Str
                 section.get("description").and_then(|v| v.as_str()),
                 section.get("order").and_then(|v| v.as_i64()),
                 section.get("isCollapsed").and_then(|v| v.as_bool()).unwrap_or(false) as i32,
+                section.get("rev").and_then(|v| v.as_i64()),
+                section.get("revBy").and_then(|v| v.as_str()),
                 section.get("createdAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 section.get("updatedAt").and_then(|v| v.as_str()).unwrap_or_default(),
                 section.get("deletedAt").and_then(|v| v.as_str()),
@@ -1264,6 +1455,15 @@ fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
                 if let Some(v) = val { map.insert("icon".to_string(), Value::String(v)); }
             }
             map.insert("order".to_string(), Value::Number((row.get::<_, i64>("orderNum")?).into()));
+            if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
+                if let Some(v) = val { map.insert("deletedAt".to_string(), Value::String(v)); }
+            }
+            if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+                if let Some(v) = val { map.insert("rev".to_string(), Value::Number(v.into())); }
+            }
+            if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+                if let Some(v) = val { map.insert("revBy".to_string(), Value::String(v)); }
+            }
             if let Ok(val) = row.get::<_, Option<String>>("createdAt") {
                 if let Some(v) = val { map.insert("createdAt".to_string(), Value::String(v)); }
             }
@@ -2141,6 +2341,10 @@ fn webdav_get_json(app: tauri::AppHandle) -> Result<Value, String> {
         .send()
         .map_err(|e| format!("WebDAV request failed: {e}"))?;
 
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Value::Null);
+    }
+  
     if !response.status().is_success() {
         return Err(format!("WebDAV error: {}", response.status()));
     }
@@ -2464,14 +2668,36 @@ fn diagnostics_enabled() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(QuickAddPending(AtomicBool::new(false)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(|handle| {
+            let menu = Menu::default(handle)?;
+            if let Some(help_submenu) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
+                let docs_item = MenuItem::with_id(handle, MENU_HELP_DOCS_ID, "Mindwtr Help", true, None::<&str>)?;
+                let issues_item = MenuItem::with_id(handle, MENU_HELP_ISSUES_ID, "Report an Issue", true, None::<&str>)?;
+                help_submenu.append_items(&[&docs_item, &issues_item])?;
+                let _ = help_submenu.set_as_help_menu_for_nsapp();
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|_app, event| match event.id().as_ref() {
+            MENU_HELP_DOCS_ID => {
+                let _ = open::that("https://github.com/dongdongbh/Mindwtr#readme");
+            }
+            MENU_HELP_ISSUES_ID => {
+                let _ = open::that("https://github.com/dongdongbh/Mindwtr/issues");
+            }
+            _ => {}
+        });
+    builder
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -2486,6 +2712,10 @@ pub fn run() {
             ensure_data_file(&app.handle()).ok();
             let diagnostics_enabled = diagnostics_enabled();
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
+                    let _ = window.set_icon(icon);
+                }
                 if cfg!(target_os = "linux") && is_niri_session() {
                     let _ = window.set_decorations(false);
                 }
@@ -2595,6 +2825,7 @@ pub fn run() {
             clear_log_file,
             consume_quick_add_pending,
             is_windows_store_install,
+            get_install_source,
             quit_app
         ])
         .run(tauri::generate_context!())

@@ -6,6 +6,8 @@ import { reportError } from '../../../lib/report-error';
 import type { Language } from '../../../contexts/language-context';
 
 type Labels = {
+    features: string;
+    featuresDesc: string;
     autoArchive: string;
     autoArchiveDesc: string;
     autoArchiveNever: string;
@@ -42,6 +44,12 @@ type Labels = {
     taskEditorFieldAttachments: string;
     taskEditorFieldChecklist: string;
     taskEditorFieldTextDirection: string;
+    featurePriorities: string;
+    featurePrioritiesDesc: string;
+    featureTimeEstimates: string;
+    featureTimeEstimatesDesc: string;
+    featurePomodoro: string;
+    featurePomodoroDesc: string;
     visible: string;
     hidden: string;
 };
@@ -141,6 +149,9 @@ export function SettingsGtdPage({
     const inboxTwoMinuteFirst = inboxProcessing.twoMinuteFirst === true;
     const inboxProjectFirst = inboxProcessing.projectFirst === true;
     const inboxScheduleEnabled = inboxProcessing.scheduleEnabled !== false;
+    const prioritiesEnabled = safeSettings.features?.priorities === true;
+    const timeEstimatesEnabled = safeSettings.features?.timeEstimates === true;
+    const pomodoroEnabled = safeSettings.features?.pomodoro === true;
     const fieldLabel = (fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
             case 'status':
@@ -273,6 +284,102 @@ export function SettingsGtdPage({
                             ))}
                         </select>
                     </div>
+                </div>
+            </div>
+            <div className="bg-card border border-border rounded-lg divide-y divide-border">
+                <div className="p-4">
+                    <div className="text-sm font-medium">{t.features}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{t.featuresDesc}</div>
+                </div>
+                <div className="p-4 flex items-center justify-between gap-6">
+                    <div className="min-w-0">
+                        <div className="text-sm font-medium">{t.featurePriorities}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.featurePrioritiesDesc}</div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={prioritiesEnabled}
+                        onClick={() => {
+                            updateSettings({
+                                features: {
+                                    ...(safeSettings.features ?? {}),
+                                    priorities: !prioritiesEnabled,
+                                },
+                            }).then(showSaved).catch((error) => reportError('Failed to update feature flags', error));
+                        }}
+                        className={cn(
+                            'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                            prioritiesEnabled ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                        )}
+                    >
+                        <span
+                            className={cn(
+                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                prioritiesEnabled ? 'translate-x-4' : 'translate-x-1'
+                            )}
+                        />
+                    </button>
+                </div>
+                <div className="p-4 flex items-center justify-between gap-6">
+                    <div className="min-w-0">
+                        <div className="text-sm font-medium">{t.featureTimeEstimates}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.featureTimeEstimatesDesc}</div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={timeEstimatesEnabled}
+                        onClick={() => {
+                            updateSettings({
+                                features: {
+                                    ...(safeSettings.features ?? {}),
+                                    timeEstimates: !timeEstimatesEnabled,
+                                },
+                            }).then(showSaved).catch((error) => reportError('Failed to update feature flags', error));
+                        }}
+                        className={cn(
+                            'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                            timeEstimatesEnabled ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                        )}
+                    >
+                        <span
+                            className={cn(
+                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                timeEstimatesEnabled ? 'translate-x-4' : 'translate-x-1'
+                            )}
+                        />
+                    </button>
+                </div>
+                <div className="p-4 flex items-center justify-between gap-6">
+                    <div className="min-w-0">
+                        <div className="text-sm font-medium">{t.featurePomodoro}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.featurePomodoroDesc}</div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={pomodoroEnabled}
+                        onClick={() => {
+                            updateSettings({
+                                features: {
+                                    ...(safeSettings.features ?? {}),
+                                    pomodoro: !pomodoroEnabled,
+                                },
+                            }).then(showSaved).catch((error) => reportError('Failed to update feature flags', error));
+                        }}
+                        className={cn(
+                            'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                            pomodoroEnabled ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                        )}
+                    >
+                        <span
+                            className={cn(
+                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                pomodoroEnabled ? 'translate-x-4' : 'translate-x-1'
+                            )}
+                        />
+                    </button>
                 </div>
             </div>
             <div className="bg-card border border-border rounded-lg divide-y divide-border">

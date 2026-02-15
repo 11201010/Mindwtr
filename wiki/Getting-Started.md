@@ -15,11 +15,6 @@ Welcome to Mindwtr! This guide will help you get up and running quickly.
 | **Windows**       | Microsoft Store or `winget install dongdongbh.Mindwtr` (or `.msi`/`.exe` from [Releases](https://github.com/dongdongbh/Mindwtr/releases)) |
 | **macOS**         | `brew install --cask mindwtr` (or `.dmg` from [Releases](https://github.com/dongdongbh/Mindwtr/releases)) |
 
-> **Note:** On macOS, if you see "damaged" or "unidentified developer" warning:
-> ```bash
-> xattr -cr /Applications/Mindwtr.app
-> ```
-
 See [[Desktop Installation]] for detailed instructions.
 
 ### Mobile
@@ -27,7 +22,7 @@ See [[Desktop Installation]] for detailed instructions.
 | Platform    | Installation                                                                 |
 | ----------- | ---------------------------------------------------------------------------- |
 | **Android** | Google Play or APK from [Releases](https://github.com/dongdongbh/Mindwtr/releases) |
-| **iOS**     | Simulator builds only (requires Apple Developer account)                     |
+| **iOS**     | App Store, TestFlight beta, or simulator/self-build for development          |
 
 See [[Mobile Installation]] for detailed instructions.
 

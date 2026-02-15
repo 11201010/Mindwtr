@@ -1,0 +1,3 @@
+- Fixed a Play Store Android startup crash (`undefined is not a function`) in release builds.
+- Improved native tab bar startup stability.
+- Added retry handling for Linux repo release-asset download in CI.

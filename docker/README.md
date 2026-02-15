@@ -19,8 +19,10 @@ Then open:
 The cloud server expects a token. In `docker/compose.yaml`, set:
 
 ```
-MINDWTR_CLOUD_TOKEN=your_token_here
+MINDWTR_CLOUD_AUTH_TOKENS=your_token_here
 ```
+
+`MINDWTR_CLOUD_TOKEN` is still accepted for backward compatibility, but deprecated.
 
 Use the **same token** in Mindwtr Settings → Sync → Self-Hosted.
 Set the Self-Hosted URL to the **base** endpoint, for example:
@@ -71,10 +73,10 @@ curl -H "Authorization: Bearer your_token_here" \
 Persist cloud data by mounting a host path:
 
 ```
-/path/data_dir:/app/cloud_data
+./data:/app/cloud_data
 ```
 
-Make sure the host path is writable by the container user (uid 1000):
+If you switch to a custom host path, make sure it is writable by the container user (uid 1000):
 
 ```
 sudo chown -R 1000:1000 /path/data_dir

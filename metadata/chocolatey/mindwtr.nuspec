@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+    <metadata>
+        <id>mindwtr</id>
+        <version>0.0.0</version>
+        <title>Mindwtr</title>
+        <authors>Dongda Li</authors>
+        <owners>Dongda Li</owners>
+        <projectUrl>https://github.com/dongdongbh/Mindwtr</projectUrl>
+        <iconUrl>https://cdn.jsdelivr.net/gh/dongdongbh/Mindwtr@main/metadata/en-US/images/icon.png</iconUrl>
+        <copyright>Copyright 2026 Dongda Li</copyright>
+        <licenseUrl>https://github.com/dongdongbh/Mindwtr/blob/main/LICENSE</licenseUrl>
+        <requireLicenseAcceptance>false</requireLicenseAcceptance>
+        <projectSourceUrl>https://github.com/dongdongbh/Mindwtr</projectSourceUrl>
+        <packageSourceUrl>https://github.com/dongdongbh/Mindwtr/tree/main/metadata/chocolatey</packageSourceUrl>
+        <docsUrl>https://github.com/dongdongbh/Mindwtr#readme</docsUrl>
+        <bugTrackerUrl>https://github.com/dongdongbh/Mindwtr/issues</bugTrackerUrl>
+        <tags>mindwtr gtd productivity task-management kanban tauri local-first</tags>
+        <summary>Local-first GTD productivity tool.</summary>
+        <description>Mindwtr is a local-first, open-source productivity app built for Getting Things Done (GTD), with projects, reviews, sync, and offline support.</description>
+        <releaseNotes>https://github.com/dongdongbh/Mindwtr/releases</releaseNotes>
+    </metadata>
+</package>

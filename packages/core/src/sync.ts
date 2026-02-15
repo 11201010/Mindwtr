@@ -22,6 +22,8 @@ export interface EntityMergeStats {
 export interface MergeStats {
     tasks: EntityMergeStats;
     projects: EntityMergeStats;
+    sections: EntityMergeStats;
+    areas: EntityMergeStats;
 }
 
 export interface MergeResult {
@@ -95,6 +97,57 @@ const isNonEmptyString = (value: unknown): value is string =>
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const isValidTimestamp = (value: unknown): value is string =>
+    typeof value === 'string' && Number.isFinite(Date.parse(value));
+
+type RevisionMetadata = {
+    rev?: unknown;
+    revBy?: unknown;
+};
+
+const normalizeRevisionMetadata = <T extends RevisionMetadata>(item: T): T => {
+    const normalized = { ...item };
+    const rawRev = normalized.rev;
+    if (
+        typeof rawRev !== 'number'
+        || !Number.isFinite(rawRev)
+        || !Number.isInteger(rawRev)
+        || rawRev < 0
+    ) {
+        delete normalized.rev;
+    }
+    const rawRevBy = normalized.revBy;
+    if (typeof rawRevBy === 'string') {
+        const trimmed = rawRevBy.trim();
+        if (trimmed.length > 0) {
+            normalized.revBy = trimmed;
+        } else {
+            delete normalized.revBy;
+        }
+    } else {
+        delete normalized.revBy;
+    }
+    return normalized;
+};
+
+const validateRevisionFields = (
+    item: Record<string, unknown>,
+    label: string,
+    index: number,
+    errors: string[]
+) => {
+    const rev = item.rev;
+    if (rev !== undefined) {
+        if (typeof rev !== 'number' || !Number.isFinite(rev) || rev < 0 || !Number.isInteger(rev)) {
+            errors.push(`${label}[${index}].rev must be a non-negative integer when present`);
+        }
+    }
+    const revBy = item.revBy;
+    if (revBy !== undefined && !isNonEmptyString(revBy)) {
+        errors.push(`${label}[${index}].revBy must be a non-empty string when present`);
+    }
+};
+
 const validateEntityShape = (
     items: unknown[],
     label: 'tasks' | 'projects' | 'sections',
@@ -109,9 +162,24 @@ const validateEntityShape = (
         if (!isNonEmptyString(item.id)) {
             errors.push(`${label}[${index}].id must be a non-empty string`);
         }
+        if (item.createdAt !== undefined && !isNonEmptyString(item.createdAt)) {
+            errors.push(`${label}[${index}].createdAt must be a non-empty string when present`);
+        } else if (isNonEmptyString(item.createdAt) && !isValidTimestamp(item.createdAt)) {
+            errors.push(`${label}[${index}].createdAt must be a valid ISO timestamp when present`);
+        }
         if (!isNonEmptyString(item.updatedAt)) {
             errors.push(`${label}[${index}].updatedAt must be a non-empty string`);
+        } else if (!isValidTimestamp(item.updatedAt)) {
+            errors.push(`${label}[${index}].updatedAt must be a valid ISO timestamp`);
         }
+        if (isValidTimestamp(item.createdAt) && isValidTimestamp(item.updatedAt)) {
+            const createdMs = Date.parse(item.createdAt);
+            const updatedMs = Date.parse(item.updatedAt);
+            if (updatedMs < createdMs) {
+                errors.push(`${label}[${index}].updatedAt must be greater than or equal to createdAt`);
+            }
+        }
+        validateRevisionFields(item, label, index, errors);
     }
 };
 
@@ -139,7 +207,46 @@ const validateMergedSyncData = (data: AppData): string[] => {
             if (!isNonEmptyString(area.name)) {
                 errors.push(`areas[${index}].name must be a non-empty string`);
             }
+            if (area.createdAt !== undefined && !isValidTimestamp(area.createdAt)) {
+                errors.push(`areas[${index}].createdAt must be a valid ISO timestamp when present`);
+            }
+            if (area.updatedAt !== undefined && !isValidTimestamp(area.updatedAt)) {
+                errors.push(`areas[${index}].updatedAt must be a valid ISO timestamp when present`);
+            }
+            if (isValidTimestamp(area.createdAt) && isValidTimestamp(area.updatedAt)) {
+                const createdMs = Date.parse(area.createdAt);
+                const updatedMs = Date.parse(area.updatedAt);
+                if (updatedMs < createdMs) {
+                    errors.push(`areas[${index}].updatedAt must be greater than or equal to createdAt`);
+                }
+            }
+            validateRevisionFields(area, 'areas', index, errors);
         }
+    }
+    return errors;
+};
+
+const validateSyncPayloadShape = (data: unknown, source: 'local' | 'remote'): string[] => {
+    const errors: string[] = [];
+    if (!isObjectRecord(data)) {
+        errors.push(`${source} payload must be an object`);
+        return errors;
+    }
+    const record = data as Record<string, unknown>;
+    if (record.tasks !== undefined && !Array.isArray(record.tasks)) {
+        errors.push(`${source} payload field "tasks" must be an array when present`);
+    }
+    if (record.projects !== undefined && !Array.isArray(record.projects)) {
+        errors.push(`${source} payload field "projects" must be an array when present`);
+    }
+    if (record.sections !== undefined && !Array.isArray(record.sections)) {
+        errors.push(`${source} payload field "sections" must be an array when present`);
+    }
+    if (record.areas !== undefined && !Array.isArray(record.areas)) {
+        errors.push(`${source} payload field "areas" must be an array when present`);
+    }
+    if (record.settings !== undefined && !isObjectRecord(record.settings)) {
+        errors.push(`${source} payload field "settings" must be an object when present`);
     }
     return errors;
 };
@@ -177,7 +284,7 @@ const pruneAttachmentTombstones = (
     };
 };
 
-const purgeExpiredTombstones = (
+export const purgeExpiredTombstones = (
     data: AppData,
     nowIso: string,
     retentionDays?: number
@@ -277,18 +384,40 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
         nextSyncUpdatedAt.preferences = localPrefsAt;
     }
 
-    const shouldSync = (key: SettingsSyncGroup): boolean => mergedPrefs?.[key] === true;
+    const isSameValue = (left: unknown, right: unknown): boolean => {
+        if (left === right) return true;
+        return JSON.stringify(left) === JSON.stringify(right);
+    };
+    const chooseGroupFieldValue = <T>(localValue: T, incomingValue: T, incomingWins: boolean): T => {
+        if (incomingValue === undefined) return localValue;
+        if (localValue === undefined) return incomingValue;
+        if (isSameValue(localValue, incomingValue)) return localValue;
+        return incomingWins ? incomingValue : localValue;
+    };
+    const mergeRecordFields = <T extends Record<string, unknown>>(localValue: T, incomingValue: T, incomingWins: boolean): T => {
+        const mergedValue: Record<string, unknown> = {};
+        const localRecord = (localValue ?? {}) as Record<string, unknown>;
+        const incomingRecord = (incomingValue ?? {}) as Record<string, unknown>;
+        const keys = new Set([...Object.keys(localRecord), ...Object.keys(incomingRecord)]);
+        for (const fieldKey of keys) {
+            mergedValue[fieldKey] = chooseGroupFieldValue(localRecord[fieldKey], incomingRecord[fieldKey], incomingWins);
+        }
+        return mergedValue as T;
+    };
     const mergeGroup = <T>(
         key: SettingsSyncGroup,
         localValue: T,
         incomingValue: T,
-        apply: (value: T, incomingWins: boolean) => void
+        apply: (value: T, incomingWins: boolean) => void,
+        mergeValues?: (localValue: T, incomingValue: T, incomingWins: boolean) => T
     ) => {
-        if (!shouldSync(key)) return;
         const localAt = localSettings.syncPreferencesUpdatedAt?.[key];
         const incomingAt = incomingSettings.syncPreferencesUpdatedAt?.[key];
         const incomingWins = isIncomingNewer(localAt, incomingAt);
-        apply(incomingWins ? incomingValue : localValue, incomingWins);
+        const resolvedValue = mergeValues
+            ? mergeValues(localValue, incomingValue, incomingWins)
+            : (incomingWins ? incomingValue : localValue);
+        apply(resolvedValue, incomingWins);
         const winnerAt = incomingWins ? incomingAt : localAt;
         if (winnerAt) nextSyncUpdatedAt[key] = winnerAt;
     };
@@ -309,7 +438,8 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
             merged.theme = value.theme;
             merged.appearance = value.appearance;
             merged.keybindingStyle = value.keybindingStyle;
-        }
+        },
+        (localValue, incomingValue, incomingWins) => mergeRecordFields(localValue, incomingValue, incomingWins)
     );
 
     mergeGroup(
@@ -320,7 +450,8 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
             merged.language = value.language;
             merged.weekStart = value.weekStart;
             merged.dateFormat = value.dateFormat;
-        }
+        },
+        (localValue, incomingValue, incomingWins) => mergeRecordFields(localValue, incomingValue, incomingWins)
     );
 
     mergeGroup(
@@ -338,7 +469,8 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
         incomingSettings.ai,
         (value) => {
             merged.ai = sanitizeAiForSync(value, localSettings.ai);
-        }
+        },
+        (localValue, incomingValue, incomingWins) => chooseGroupFieldValue(localValue, incomingValue, incomingWins)
     );
 
     merged.syncPreferencesUpdatedAt = Object.keys(nextSyncUpdatedAt).length > 0 ? nextSyncUpdatedAt : merged.syncPreferencesUpdatedAt;
@@ -372,6 +504,38 @@ function createEmptyEntityStats(localTotal: number, incomingTotal: number): Enti
     };
 }
 
+const CONTENT_DIFF_IGNORED_KEYS = new Set(['rev', 'revBy', 'updatedAt', 'createdAt', 'localStatus']);
+
+const toComparableValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+        return value.map((item) => toComparableValue(item));
+    }
+    if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const comparable: Record<string, unknown> = {};
+        for (const key of Object.keys(record).sort()) {
+            if (CONTENT_DIFF_IGNORED_KEYS.has(key)) continue;
+            if (key === 'uri' && record.kind === 'file') continue;
+            comparable[key] = toComparableValue(record[key]);
+        }
+        return comparable;
+    }
+    return value;
+};
+
+const hasContentDifference = (localItem: unknown, incomingItem: unknown): boolean =>
+    JSON.stringify(toComparableValue(localItem)) !== JSON.stringify(toComparableValue(incomingItem));
+
+const toComparableSignature = (value: unknown): string =>
+    JSON.stringify(toComparableValue(value));
+
+const chooseDeterministicWinner = <T>(localItem: T, incomingItem: T): T => {
+    const localSignature = toComparableSignature(localItem);
+    const incomingSignature = toComparableSignature(incomingItem);
+    if (localSignature === incomingSignature) return incomingItem;
+    return incomingSignature > localSignature ? incomingItem : localItem;
+};
+
 function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; deletedAt?: string }>(
     local: T[],
     incoming: T[],
@@ -395,13 +559,13 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
             stats.timestampAdjustmentIds.push(item.id);
         }
         if (stats.timestampAdjustments <= 5) {
-            logWarn('Normalized updatedAt before createdAt', {
+            logWarn('Normalized createdAt after updatedAt', {
                 scope: 'sync',
                 category: 'sync',
                 context: { id: item.id, createdAt: item.createdAt, updatedAt: item.updatedAt },
             });
         }
-        return { ...item, updatedAt: item.createdAt } as Item;
+        return { ...item, createdAt: item.updatedAt } as Item;
     };
 
     for (const id of allIds) {
@@ -440,9 +604,11 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const incomingDeleted = !!incomingItem.deletedAt;
         const revDiff = localRev - incomingRev;
         const revByDiff = localRevBy !== incomingRevBy;
+        const shouldCheckContentDiff = hasRevision && revDiff === 0 && !revByDiff && localDeleted === incomingDeleted;
+        const contentDiff = shouldCheckContentDiff ? hasContentDifference(localItem, incomingItem) : false;
 
         const differs = hasRevision
-            ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted
+            ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted || contentDiff
             : safeLocalTime !== safeIncomingTime || localDeleted !== incomingDeleted;
 
         if (differs) {
@@ -457,20 +623,25 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         }
         const withinSkew = Math.abs(timeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
         const resolveOperationTime = (item: T): number => {
-            if (item.deletedAt) {
-                const deletedTimeRaw = new Date(item.deletedAt).getTime();
-                if (Number.isFinite(deletedTimeRaw)) return deletedTimeRaw;
+            const updatedTimeRaw = item.updatedAt ? new Date(item.updatedAt).getTime() : NaN;
+            const updatedTime = Number.isFinite(updatedTimeRaw) ? updatedTimeRaw : 0;
+            if (!item.deletedAt) return updatedTime;
+
+            const deletedTimeRaw = new Date(item.deletedAt).getTime();
+            if (!Number.isFinite(deletedTimeRaw)) {
+                const fallbackDeletedTime = updatedTime;
                 invalidDeletedAtWarnings += 1;
                 if (invalidDeletedAtWarnings <= 5) {
-                    logWarn('Invalid deletedAt timestamp during merge; falling back to updatedAt', {
+                    logWarn('Invalid deletedAt timestamp during merge; using updatedAt fallback', {
                         scope: 'sync',
                         category: 'sync',
-                        context: { id: item.id, deletedAt: item.deletedAt },
+                        context: { id: item.id, deletedAt: item.deletedAt, updatedAt: item.updatedAt, fallbackDeletedTime },
                     });
                 }
+                return Math.max(updatedTime, fallbackDeletedTime);
             }
-            const updatedTimeRaw = item.updatedAt ? new Date(item.updatedAt).getTime() : NaN;
-            return Number.isFinite(updatedTimeRaw) ? updatedTimeRaw : 0;
+
+            return Math.max(updatedTime, deletedTimeRaw);
         };
         let winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
         if (hasRevision) {
@@ -481,19 +652,19 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
                     winner = incomingItem;
                 } else if (localOpTime > incomingOpTime) {
                     winner = localItem;
-                } else if (safeIncomingTime !== safeLocalTime) {
-                    winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
                 } else {
-                    winner = incomingItem;
+                    winner = localDeleted ? localItem : incomingItem;
                 }
             } else if (revDiff !== 0) {
                 winner = revDiff > 0 ? localItem : incomingItem;
-            } else if (revByDiff && localRevBy && incomingRevBy) {
-                winner = incomingRevBy.localeCompare(localRevBy) > 0 ? incomingItem : localItem;
             } else if (safeIncomingTime !== safeLocalTime) {
+                // When revisions tie, prefer fresher timestamps before revBy tie-break.
                 winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
+            } else if (revByDiff && localRevBy && incomingRevBy) {
+                winner = incomingRevBy > localRevBy ? incomingItem : localItem;
             } else {
-                winner = incomingItem;
+                // Preserve deterministic convergence when metadata ties but content differs.
+                winner = chooseDeterministicWinner(localItem, incomingItem);
             }
         } else if (localDeleted !== incomingDeleted) {
             const localOpTime = resolveOperationTime(localItem);
@@ -502,13 +673,11 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
                 winner = incomingItem;
             } else if (localOpTime > incomingOpTime) {
                 winner = localItem;
-            } else if (safeIncomingTime !== safeLocalTime) {
-                winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
             } else {
-                winner = incomingItem;
+                winner = localDeleted ? localItem : incomingItem;
             }
         } else if (withinSkew && safeIncomingTime === safeLocalTime) {
-            winner = incomingItem;
+            winner = chooseDeterministicWinner(localItem, incomingItem);
         }
         if (winner === incomingItem) stats.resolvedUsingIncoming += 1;
         else stats.resolvedUsingLocal += 1;
@@ -526,68 +695,31 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
     return { merged, stats };
 }
 
-function mergeEntities<T extends { id: string; updatedAt: string; deletedAt?: string }>(
-    local: T[],
-    incoming: T[]
-): T[] {
-    return mergeEntitiesWithStats(local, incoming).merged;
-}
-
-function mergeAreas(local: Area[], incoming: Area[]): Area[] {
-    const localMap = new Map<string, Area>(local.map(area => [area.id, area]));
-    const incomingMap = new Map<string, Area>(incoming.map(area => [area.id, area]));
-    const allIds = new Set<string>([...localMap.keys(), ...incomingMap.keys()]);
-    const merged: Area[] = [];
-
-    const resolveTime = (area?: Area): number => {
-        const timestamp = area?.updatedAt || area?.createdAt;
-        const parsed = timestamp ? new Date(timestamp).getTime() : 0;
-        return Number.isFinite(parsed) ? parsed : 0;
+const normalizeAreaForMerge = (area: Area, nowIso: string): Area & { createdAt: string; updatedAt: string } => {
+    const createdAt = area.createdAt || area.updatedAt || nowIso;
+    const updatedAt = area.updatedAt || area.createdAt || nowIso;
+    return {
+        ...area,
+        createdAt,
+        updatedAt,
     };
-    const resolveRev = (area?: Area): number => {
-        const value = area?.rev;
-        return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-    };
-    const resolveRevBy = (area?: Area): string => (typeof area?.revBy === 'string' ? area.revBy : '');
+};
 
-    for (const id of allIds) {
-        const localArea = localMap.get(id);
-        const incomingArea = incomingMap.get(id);
-
-        if (localArea && !incomingArea) {
-            merged.push(localArea);
-            continue;
-        }
-        if (incomingArea && !localArea) {
-            merged.push(incomingArea);
-            continue;
-        }
-        if (!localArea || !incomingArea) continue;
-
-        const localRev = resolveRev(localArea);
-        const incomingRev = resolveRev(incomingArea);
-        const localRevBy = resolveRevBy(localArea);
-        const incomingRevBy = resolveRevBy(incomingArea);
-        const hasRevision = localRev > 0 || incomingRev > 0 || !!localRevBy || !!incomingRevBy;
-        let winner = localArea;
-        if (hasRevision && localRev !== incomingRev) {
-            winner = localRev > incomingRev ? localArea : incomingArea;
-        } else if (hasRevision && localRevBy !== incomingRevBy && localRevBy && incomingRevBy) {
-            winner = incomingRevBy.localeCompare(localRevBy) > 0 ? incomingArea : localArea;
-        } else {
-            const localTime = resolveTime(localArea);
-            const incomingTime = resolveTime(incomingArea);
-            winner = incomingTime > localTime ? incomingArea : localArea;
-        }
-        merged.push(winner);
-    }
-
-    return merged
-        .map((area, index) => ({
-            ...area,
-            order: Number.isFinite(area.order) ? area.order : index,
-        }))
-        .sort((a, b) => a.order - b.order);
+function mergeAreas(local: Area[], incoming: Area[], nowIso: string): { merged: Area[]; stats: EntityMergeStats } {
+    const localNormalized = local.map((area) => normalizeAreaForMerge(area, nowIso));
+    const incomingNormalized = incoming.map((area) => normalizeAreaForMerge(area, nowIso));
+    const result = mergeEntitiesWithStats(localNormalized, incomingNormalized);
+    let fallbackOrder = result.merged.reduce((maxOrder, area) => {
+        const order = Number.isFinite(area.order) ? area.order : -1;
+        return Math.max(maxOrder, order);
+    }, -1) + 1;
+    const merged = result.merged.map((area) => {
+        if (Number.isFinite(area.order)) return area;
+        const normalized = { ...area, order: fallbackOrder };
+        fallbackOrder += 1;
+        return normalized;
+    });
+    return { merged, stats: result.stats };
 }
 
 /**
@@ -607,69 +739,112 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
     const nowIso = new Date().toISOString();
     const localNormalized: AppData = {
         ...local,
-        tasks: (local.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
-        projects: local.projects || [],
-        sections: local.sections || [],
-        areas: local.areas || [],
+        tasks: (local.tasks || []).map((t) => normalizeRevisionMetadata(normalizeTaskForLoad(t, nowIso))),
+        projects: (local.projects || []).map((project) => normalizeRevisionMetadata(project)),
+        sections: (local.sections || []).map((section) => normalizeRevisionMetadata(section)),
+        areas: (local.areas || []).map((area) => normalizeRevisionMetadata(area)),
     };
     const incomingNormalized: AppData = {
         ...incoming,
-        tasks: (incoming.tasks || []).map((t) => normalizeTaskForLoad(t, nowIso)),
-        projects: incoming.projects || [],
-        sections: incoming.sections || [],
-        areas: incoming.areas || [],
+        tasks: (incoming.tasks || []).map((t) => normalizeRevisionMetadata(normalizeTaskForLoad(t, nowIso))),
+        projects: (incoming.projects || []).map((project) => normalizeRevisionMetadata(project)),
+        sections: (incoming.sections || []).map((section) => normalizeRevisionMetadata(section)),
+        areas: (incoming.areas || []).map((area) => normalizeRevisionMetadata(area)),
     };
 
     const mergeAttachments = (local?: Attachment[], incoming?: Attachment[]): Attachment[] | undefined => {
         const localList = local || [];
         const incomingList = incoming || [];
         if (localList.length === 0 && incomingList.length === 0) return undefined;
-        const merged = mergeEntities(localList, incomingList);
-        if (merged.length === 0) return undefined;
-        if (localList.length === 0) return merged;
-
         const localById = new Map(localList.map((item) => [item.id, item]));
         const incomingById = new Map(incomingList.map((item) => [item.id, item]));
-        return merged.map((attachment) => {
-            const localAttachment = localById.get(attachment.id);
-            if (!localAttachment) return attachment;
-            if (attachment.kind !== 'file' || localAttachment.kind !== 'file') {
-                return attachment;
+        const hasAvailableUri = (attachment?: Attachment): boolean => {
+            return attachment?.kind === 'file'
+                && attachment.localStatus !== 'missing'
+                && typeof attachment.uri === 'string'
+                && attachment.uri.trim().length > 0;
+        };
+
+        const merged = mergeEntitiesWithStats(localList, incomingList, (localAttachment, incomingAttachment, winner) => {
+            if (winner.kind !== 'file' || localAttachment.kind !== 'file' || incomingAttachment.kind !== 'file') {
+                return winner;
             }
+
+            const winnerIsIncoming = winner === incomingAttachment;
+            const winnerHasUri = hasAvailableUri(winner);
+            const localHasUri = hasAvailableUri(localAttachment);
+            const incomingHasUri = hasAvailableUri(incomingAttachment);
+
+            let uri = winner.uri;
+            let localStatus = winner.localStatus;
+
+            if (winnerHasUri) {
+                uri = winner.uri;
+                localStatus = winner.localStatus || 'available';
+            } else if (winnerIsIncoming && localHasUri) {
+                uri = localAttachment.uri;
+                localStatus = localAttachment.localStatus || 'available';
+            } else if (!winnerIsIncoming && incomingHasUri) {
+                uri = incomingAttachment.uri;
+                localStatus = incomingAttachment.localStatus || 'available';
+            } else if ((localStatus === undefined || localStatus === null) && typeof uri === 'string' && uri.trim().length > 0) {
+                localStatus = 'available';
+            }
+
+            return {
+                ...winner,
+                cloudKey: winner.cloudKey || localAttachment.cloudKey || incomingAttachment.cloudKey,
+                fileHash: winner.fileHash || localAttachment.fileHash || incomingAttachment.fileHash,
+                uri,
+                localStatus,
+            };
+        }).merged;
+
+        const normalized = merged.map((attachment) => {
+            if (attachment.kind !== 'file') return attachment;
+            const localAttachment = localById.get(attachment.id);
             const incomingAttachment = incomingById.get(attachment.id);
+            const localFile = localAttachment?.kind === 'file' ? localAttachment : undefined;
+            const incomingFile = incomingAttachment?.kind === 'file' ? incomingAttachment : undefined;
+            const uriAvailable = hasAvailableUri(attachment);
             return {
                 ...attachment,
-                cloudKey: attachment.cloudKey || localAttachment.cloudKey || incomingAttachment?.cloudKey,
-                fileHash: attachment.fileHash || localAttachment.fileHash || incomingAttachment?.fileHash,
-                uri: localAttachment.uri,
-                localStatus: localAttachment.localStatus,
+                cloudKey: attachment.cloudKey || localFile?.cloudKey || incomingFile?.cloudKey,
+                fileHash: attachment.fileHash || localFile?.fileHash || incomingFile?.fileHash,
+                localStatus: attachment.localStatus ?? (uriAvailable ? 'available' : undefined),
             };
         });
+
+        return normalized.length > 0 ? normalized : undefined;
     };
 
     const tasksResult = mergeEntitiesWithStats(localNormalized.tasks, incomingNormalized.tasks, (localTask: Task, incomingTask: Task, winner: Task) => {
         const attachments = mergeAttachments(localTask.attachments, incomingTask.attachments);
-        return attachments ? { ...winner, attachments } : winner;
+        return { ...winner, attachments };
     });
 
     const projectsResult = mergeEntitiesWithStats(localNormalized.projects, incomingNormalized.projects, (localProject: Project, incomingProject: Project, winner: Project) => {
         const attachments = mergeAttachments(localProject.attachments, incomingProject.attachments);
-        return attachments ? { ...winner, attachments } : winner;
+        return { ...winner, attachments };
     });
 
-    const sectionsMerged = mergeEntities(localNormalized.sections, incomingNormalized.sections);
+    const sectionsResult = mergeEntitiesWithStats(localNormalized.sections, incomingNormalized.sections);
+
+    const areasResult = mergeAreas(localNormalized.areas, incomingNormalized.areas, nowIso);
 
     return {
         data: {
             tasks: tasksResult.merged,
             projects: projectsResult.merged,
-            sections: sectionsMerged,
-            areas: mergeAreas(localNormalized.areas, incomingNormalized.areas),
+            sections: sectionsResult.merged,
+            areas: areasResult.merged,
             settings: mergeSettingsForSync(localNormalized.settings, incomingNormalized.settings),
         },
         stats: {
             tasks: tasksResult.stats,
             projects: projectsResult.stats,
+            sections: sectionsResult.stats,
+            areas: areasResult.stats,
         },
     };
 }
@@ -679,29 +854,69 @@ export function mergeAppData(local: AppData, incoming: AppData): AppData {
 }
 
 export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult> {
+    const nowIso = io.now ? io.now() : new Date().toISOString();
+
     io.onStep?.('read-local');
     const localDataRaw = await io.readLocal();
-    const localData = normalizeAppData(localDataRaw);
+    const localShapeErrors = validateSyncPayloadShape(localDataRaw, 'local');
+    if (localShapeErrors.length > 0) {
+        const sample = localShapeErrors.slice(0, 3).join('; ');
+        throw new Error(`Invalid local sync payload: ${sample}`);
+    }
+    const localNormalized = normalizeAppData(localDataRaw);
+    const localData = purgeExpiredTombstones(localNormalized, nowIso, io.tombstoneRetentionDays).data;
 
     io.onStep?.('read-remote');
     const remoteDataRaw = await io.readRemote();
-    const remoteData = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], sections: [], areas: [], settings: {} });
+    if (remoteDataRaw) {
+        const remoteShapeErrors = validateSyncPayloadShape(remoteDataRaw, 'remote');
+        if (remoteShapeErrors.length > 0) {
+            const sample = remoteShapeErrors.slice(0, 3).join('; ');
+            logWarn('Invalid remote sync payload shape', {
+                scope: 'sync',
+                context: {
+                    issues: remoteShapeErrors.length,
+                    sample,
+                },
+            });
+            throw new Error(`Invalid remote sync payload: ${sample}`);
+        }
+    }
+    const remoteNormalized = normalizeAppData(remoteDataRaw || { tasks: [], projects: [], sections: [], areas: [], settings: {} });
+    const remoteData = purgeExpiredTombstones(remoteNormalized, nowIso, io.tombstoneRetentionDays).data;
 
     io.onStep?.('merge');
     const mergeResult = mergeAppDataWithStats(localData, remoteData);
-    const conflictCount = (mergeResult.stats.tasks.conflicts || 0) + (mergeResult.stats.projects.conflicts || 0);
+    const conflictCount = (mergeResult.stats.tasks.conflicts || 0)
+        + (mergeResult.stats.projects.conflicts || 0)
+        + (mergeResult.stats.sections.conflicts || 0)
+        + (mergeResult.stats.areas.conflicts || 0);
     const nextSyncStatus: SyncCycleResult['status'] = conflictCount > 0 ? 'conflict' : 'success';
-    const nowIso = io.now ? io.now() : new Date().toISOString();
     const conflictIds = [
         ...(mergeResult.stats.tasks.conflictIds || []),
         ...(mergeResult.stats.projects.conflictIds || []),
+        ...(mergeResult.stats.sections.conflictIds || []),
+        ...(mergeResult.stats.areas.conflictIds || []),
     ].slice(0, 10);
     const maxClockSkewMs = Math.max(
         mergeResult.stats.tasks.maxClockSkewMs || 0,
-        mergeResult.stats.projects.maxClockSkewMs || 0
+        mergeResult.stats.projects.maxClockSkewMs || 0,
+        mergeResult.stats.sections.maxClockSkewMs || 0,
+        mergeResult.stats.areas.maxClockSkewMs || 0
     );
+    if (maxClockSkewMs > CLOCK_SKEW_THRESHOLD_MS) {
+        logWarn('Sync merge detected large clock skew', {
+            scope: 'sync',
+            context: {
+                maxClockSkewMs: Math.round(maxClockSkewMs),
+                thresholdMs: CLOCK_SKEW_THRESHOLD_MS,
+            },
+        });
+    }
     const timestampAdjustments = (mergeResult.stats.tasks.timestampAdjustments || 0)
-        + (mergeResult.stats.projects.timestampAdjustments || 0);
+        + (mergeResult.stats.projects.timestampAdjustments || 0)
+        + (mergeResult.stats.sections.timestampAdjustments || 0)
+        + (mergeResult.stats.areas.timestampAdjustments || 0);
     const historyEntry: SyncHistoryEntry = {
         at: nowIso,
         status: nextSyncStatus,
@@ -746,12 +961,12 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         throw new Error(`Sync validation failed: ${sample}`);
     }
 
-    // Write remote first so a failed remote flush does not advance local sync state.
-    io.onStep?.('write-remote');
-    await io.writeRemote(finalData);
-
     io.onStep?.('write-local');
     await io.writeLocal(finalData);
+
+    // Write local first so a local persistence failure cannot leave remote ahead.
+    io.onStep?.('write-remote');
+    await io.writeRemote(finalData);
 
     return { data: finalData, stats: mergeResult.stats, status: nextSyncStatus };
 }

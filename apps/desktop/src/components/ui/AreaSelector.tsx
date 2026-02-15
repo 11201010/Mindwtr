@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Area } from '@mindwtr/core';
 import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useDropdownPosition } from './use-dropdown-position';
 
 interface AreaSelectorProps {
     areas: Area[];
@@ -25,7 +26,13 @@ export function AreaSelector({
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
     const containerRef = useRef<HTMLDivElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
     const selected = areas.find((area) => area.id === value);
+    const { dropdownClassName, listMaxHeight } = useDropdownPosition({
+        open,
+        containerRef,
+        dropdownRef,
+    });
 
     const normalizedQuery = query.trim().toLowerCase();
     const filtered = useMemo(() => {
@@ -74,7 +81,10 @@ export function AreaSelector({
                 <ChevronDown className="h-3.5 w-3.5 opacity-70" />
             </button>
             {open && (
-                <div className="absolute z-20 mt-1 w-full rounded-md border border-border bg-popover shadow-lg p-1 text-xs">
+                <div
+                    ref={dropdownRef}
+                    className={cn('absolute z-20 w-full rounded-md border border-border bg-popover shadow-lg p-1 text-xs', dropdownClassName)}
+                >
                     <input
                         autoFocus
                         value={query}
@@ -106,7 +116,7 @@ export function AreaSelector({
                             Create Area &quot;{query.trim()}&quot;
                         </button>
                     )}
-                    <div className="max-h-48 overflow-y-auto">
+                    <div className="overflow-y-auto" style={{ maxHeight: listMaxHeight }}>
                         {filtered.map((area) => (
                             <button
                                 key={area.id}

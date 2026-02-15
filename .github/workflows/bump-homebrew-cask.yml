@@ -1,0 +1,100 @@
+name: Bump Homebrew Cask
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g., v0.6.15)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-homebrew-cask-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bump-official-cask:
+    runs-on: macos-latest
+    name: Bump Official Homebrew Cask
+    timeout-minutes: 30
+    steps:
+      - name: Resolve release tag/version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          VERSION="${TAG#v}"
+          if [ -z "$TAG" ] || [ -z "$VERSION" ]; then
+            echo "Invalid tag input: '$TAG'"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for macOS release assets to be live
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          URL_DMG_ARM="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_aarch64.dmg"
+          URL_DMG_INTEL="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_x64.dmg"
+
+          echo "Waiting for release assets:"
+          echo "  - $URL_DMG_ARM"
+          echo "  - $URL_DMG_INTEL"
+
+          for attempt in $(seq 1 20); do
+            if curl -fsI "$URL_DMG_ARM" >/dev/null && curl -fsI "$URL_DMG_INTEL" >/dev/null; then
+              echo "macOS assets are available."
+              exit 0
+            fi
+            echo "Attempt $attempt/20: assets not live yet; sleeping 15s..."
+            sleep 15
+          done
+
+          echo "Release assets were not available in time."
+          exit 1
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Submit Homebrew cask bump PR
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_PR_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_GITHUB_API_TOKEN}" ]; then
+            echo "Missing HOMEBREW_PR_TOKEN secret."
+            exit 1
+          fi
+
+          VERSION="${{ steps.version.outputs.version }}"
+          run_bump_cask_pr() {
+            HOMEBREW_NO_INSTALL_FROM_API=1 brew bump-cask-pr homebrew/cask/mindwtr --version "$VERSION" --verbose --no-browse 2>&1
+          }
+
+          set +e
+          OUTPUT="$(run_bump_cask_pr)"
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+
+          if [ "$STATUS" -ne 0 ] && echo "$OUTPUT" | grep -Fqi "Tap homebrew/cask already tapped"; then
+            echo "Homebrew cask tap conflict detected; retrying once after untap."
+            brew untap homebrew/cask >/dev/null 2>&1 || true
+            set +e
+            OUTPUT="$(run_bump_cask_pr)"
+            STATUS=$?
+            set -e
+            echo "$OUTPUT"
+          fi
+
+          if [ "$STATUS" -ne 0 ]; then
+            if echo "$OUTPUT" | grep -Eiq "already (at version|up[ -]?to[ -]?date)|no changes"; then
+              echo "Official cask is already at version $VERSION; skipping."
+              exit 0
+            fi
+            exit "$STATUS"
+          fi

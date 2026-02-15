@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import {
     View,
     Text,
@@ -11,13 +14,11 @@ import {
     Linking,
     Alert,
     ActivityIndicator,
-    BackHandler,
     Platform,
     KeyboardAvoidingView,
     Modal,
     Pressable,
 } from 'react-native';
-import { HeaderBackButton, type HeaderBackButtonProps } from '@react-navigation/elements';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -25,7 +26,6 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { useNavigation, useRouter } from 'expo-router';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage, Language } from '../../contexts/language-context';
 
@@ -49,7 +49,7 @@ import {
     type TimeEstimate,
     useTaskStore,
 } from '@mindwtr/core';
-import { pickAndParseSyncFile, pickAndParseSyncFolder, exportData } from '../../lib/storage-file';
+import { pickAndParseSyncFolder, exportData } from '../../lib/storage-file';
 import { fetchExternalCalendarEvents, getExternalCalendars, saveExternalCalendars } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
 import { clearLog, ensureLogFilePath, logError, logInfo, logWarn } from '../../lib/app-log';
@@ -78,6 +78,21 @@ type SettingsScreen =
     | 'gtd-task-editor'
     | 'sync'
     | 'about';
+
+const SETTINGS_SCREEN_SET: Record<SettingsScreen, true> = {
+    main: true,
+    general: true,
+    notifications: true,
+    ai: true,
+    calendar: true,
+    advanced: true,
+    gtd: true,
+    'gtd-archive': true,
+    'gtd-time-estimates': true,
+    'gtd-task-editor': true,
+    sync: true,
+    about: true,
+};
 
 const LANGUAGES: { id: Language; native: string }[] = [
     { id: 'en', native: 'English' },
@@ -183,15 +198,26 @@ const isValidHttpUrl = (value: string): boolean => {
 };
 
 export default function SettingsPage() {
-    const navigation = useNavigation();
     const router = useRouter();
+    const { settingsScreen } = useLocalSearchParams<{ settingsScreen?: string | string[] }>();
     const { themeMode, setThemeMode } = useTheme();
     const { language, setLanguage, t } = useLanguage();
     const localize = (enText: string, zhText?: string) =>
         language === 'zh' && zhText ? zhText : translateText(enText, language);
     const { tasks, projects, sections, areas, settings, updateSettings } = useTaskStore();
     const [isSyncing, setIsSyncing] = useState(false);
-    const [currentScreen, setCurrentScreen] = useState<SettingsScreen>('main');
+    const currentScreen = useMemo<SettingsScreen>(() => {
+        const rawScreen = Array.isArray(settingsScreen) ? settingsScreen[0] : settingsScreen;
+        if (!rawScreen) return 'main';
+        return SETTINGS_SCREEN_SET[rawScreen as SettingsScreen] ? (rawScreen as SettingsScreen) : 'main';
+    }, [settingsScreen]);
+    const pushSettingsScreen = useCallback((nextScreen: SettingsScreen) => {
+        if (nextScreen === 'main') {
+            router.push('/settings');
+            return;
+        }
+        router.push({ pathname: '/settings', params: { settingsScreen: nextScreen } });
+    }, [router]);
     const [syncPath, setSyncPath] = useState<string | null>(null);
     const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud' | 'off'>('off');
     const [webdavUrl, setWebdavUrl] = useState('');
@@ -202,7 +228,9 @@ export default function SettingsPage() {
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
     const [hasUpdateBadge, setHasUpdateBadge] = useState(false);
     const [digestTimePicker, setDigestTimePicker] = useState<'morning' | 'evening' | null>(null);
+    const [digestTimeDraft, setDigestTimeDraft] = useState<Date | null>(null);
     const [weeklyReviewTimePicker, setWeeklyReviewTimePicker] = useState(false);
+    const [weeklyReviewTimeDraft, setWeeklyReviewTimeDraft] = useState<Date | null>(null);
     const [weeklyReviewDayPickerOpen, setWeeklyReviewDayPickerOpen] = useState(false);
     const [modelPicker, setModelPicker] = useState<null | 'model' | 'copilot' | 'speech'>(null);
     const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
@@ -222,6 +250,11 @@ export default function SettingsPage() {
     const tc = useThemeColors();
     const insets = useSafeAreaInsets();
     const isExpoGo = Constants.appOwnership === 'expo';
+    const extraConfig = Constants.expoConfig?.extra as { isFossBuild?: boolean | string } | undefined;
+    const isFossBuild = extraConfig?.isFossBuild === true || extraConfig?.isFossBuild === 'true';
+    const [androidInstallerSource, setAndroidInstallerSource] = useState<'play-store' | 'sideload' | 'unknown'>(
+        Platform.OS === 'android' ? 'unknown' : 'play-store'
+    );
     const currentVersion = Constants.expoConfig?.version || '0.0.0';
     const notificationsEnabled = settings.notificationsEnabled !== false;
     const dailyDigestMorningEnabled = settings.dailyDigestMorningEnabled === true;
@@ -253,6 +286,7 @@ export default function SettingsPage() {
     const aiProvider = (settings.ai?.provider ?? 'openai') as AIProviderId;
     const aiEnabled = settings.ai?.enabled === true;
     const aiModel = settings.ai?.model ?? getDefaultAIConfig(aiProvider).model;
+    const aiBaseUrl = settings.ai?.baseUrl ?? '';
     const aiReasoningEffort = (settings.ai?.reasoningEffort ?? DEFAULT_REASONING_EFFORT) as AIReasoningEffort;
     const aiThinkingBudget = settings.ai?.thinkingBudget ?? getDefaultAIConfig(aiProvider).thinkingBudget ?? 0;
     const aiModelOptions = getModelOptions(aiProvider);
@@ -293,6 +327,7 @@ export default function SettingsPage() {
         : 7;
     const prioritiesEnabled = settings.features?.priorities === true;
     const timeEstimatesEnabled = settings.features?.timeEstimates === true;
+    const pomodoroEnabled = settings.features?.pomodoro === true;
 
     const updateSyncPreferences = (partial: Partial<NonNullable<AppData['settings']['syncPreferences']>>) => {
         updateSettings({ syncPreferences: { ...syncPreferences, ...partial } }).catch(logSettingsError);
@@ -354,14 +389,60 @@ export default function SettingsPage() {
         date.setHours(Number.isFinite(hours) ? hours : 9, Number.isFinite(minutes) ? minutes : 0, 0, 0);
         return date;
     };
+    const toTimeValue = (date: Date) => {
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+    };
+
+    const openDigestTimePicker = useCallback((picker: 'morning' | 'evening') => {
+        setDigestTimePicker(picker);
+        if (Platform.OS !== 'ios') return;
+        const current = picker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime;
+        setDigestTimeDraft(toTimePickerDate(current));
+    }, [dailyDigestEveningTime, dailyDigestMorningTime]);
+
+    const closeDigestTimePicker = useCallback(() => {
+        setDigestTimePicker(null);
+        setDigestTimeDraft(null);
+    }, []);
+
+    const saveDigestTimePicker = useCallback(() => {
+        const picker = digestTimePicker;
+        const selected = digestTimeDraft;
+        closeDigestTimePicker();
+        if (!picker || !selected) return;
+        const value = toTimeValue(selected);
+        if (picker === 'morning') {
+            updateSettings({ dailyDigestMorningTime: value }).catch(logSettingsError);
+            return;
+        }
+        updateSettings({ dailyDigestEveningTime: value }).catch(logSettingsError);
+    }, [closeDigestTimePicker, digestTimeDraft, digestTimePicker, updateSettings]);
+
+    const openWeeklyReviewTimePicker = useCallback(() => {
+        setWeeklyReviewTimePicker(true);
+        if (Platform.OS !== 'ios') return;
+        setWeeklyReviewTimeDraft(toTimePickerDate(weeklyReviewTime));
+    }, [weeklyReviewTime]);
+
+    const closeWeeklyReviewTimePicker = useCallback(() => {
+        setWeeklyReviewTimePicker(false);
+        setWeeklyReviewTimeDraft(null);
+    }, []);
+
+    const saveWeeklyReviewTimePicker = useCallback(() => {
+        const selected = weeklyReviewTimeDraft;
+        closeWeeklyReviewTimePicker();
+        if (!selected) return;
+        updateSettings({ weeklyReviewTime: toTimeValue(selected) }).catch(logSettingsError);
+    }, [closeWeeklyReviewTimePicker, updateSettings, weeklyReviewTimeDraft]);
 
     const onDigestTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
         const picker = digestTimePicker;
         setDigestTimePicker(null);
         if (!picker || !selected) return;
-        const hours = String(selected.getHours()).padStart(2, '0');
-        const minutes = String(selected.getMinutes()).padStart(2, '0');
-        const value = `${hours}:${minutes}`;
+        const value = toTimeValue(selected);
         if (picker === 'morning') {
             updateSettings({ dailyDigestMorningTime: value }).catch(logSettingsError);
         } else {
@@ -372,9 +453,7 @@ export default function SettingsPage() {
     const onWeeklyReviewTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
         setWeeklyReviewTimePicker(false);
         if (!selected) return;
-        const hours = String(selected.getHours()).padStart(2, '0');
-        const minutes = String(selected.getMinutes()).padStart(2, '0');
-        updateSettings({ weeklyReviewTime: `${hours}:${minutes}` }).catch(logSettingsError);
+        updateSettings({ weeklyReviewTime: toTimeValue(selected) }).catch(logSettingsError);
     };
 
     const getWeekdayLabel = (dayIndex: number) => {
@@ -454,47 +533,6 @@ export default function SettingsPage() {
         }
         loadAIKey(speechProvider).then(setSpeechApiKey).catch(logSettingsError);
     }, [speechProvider]);
-
-    const handleSettingsBack = useCallback(() => {
-        if (currentScreen !== 'main') {
-            if (currentScreen === 'gtd-time-estimates' || currentScreen === 'gtd-task-editor' || currentScreen === 'gtd-archive') {
-                setCurrentScreen('gtd');
-            } else if (currentScreen === 'ai' || currentScreen === 'calendar') {
-                setCurrentScreen('advanced');
-            } else {
-                setCurrentScreen('main');
-            }
-            return true;
-        }
-        return false;
-    }, [currentScreen]);
-
-    const handleHeaderBack = useCallback(() => {
-        if (handleSettingsBack()) return;
-        if (router.canGoBack()) {
-            router.back();
-        }
-    }, [handleSettingsBack, router]);
-
-    useLayoutEffect(() => {
-        navigation.setOptions({
-            headerLeft: (props: HeaderBackButtonProps) => (
-                <HeaderBackButton
-                    {...props}
-                    onPress={handleHeaderBack}
-                />
-            ),
-            headerBackTitleVisible: false,
-            headerBackTitle: '',
-        });
-    }, [navigation, handleHeaderBack]);
-
-    // Handle Android hardware back button
-    useEffect(() => {
-        const onBackPress = () => handleSettingsBack();
-        const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-        return () => subscription.remove();
-    }, [handleSettingsBack]);
 
     const themeOptions: { value: typeof themeMode; label: string }[] = [
         { value: 'system', label: t('settings.system') },
@@ -714,26 +752,13 @@ export default function SettingsPage() {
                     directory.create({ intermediates: true, idempotent: true });
                     const dirUri = directory.uri.endsWith('/') ? directory.uri : `${directory.uri}/`;
                     const targetFile = new File(`${dirUri}${fileName}`);
-                    try {
-                        const entries = directory.list();
-                        const conflict = entries.find((entry) => Paths.basename(entry.uri) === fileName);
-                        if (conflict instanceof Directory) {
-                            conflict.delete();
-                        }
-                        if (conflict instanceof File) {
-                            conflict.delete();
-                        }
-                    } catch (cleanupError) {
-                        logSettingsWarn('Whisper model cleanup failed', cleanupError);
-                    }
                     const conflictInfo = safePathInfo(targetFile.uri);
                     if (conflictInfo?.exists && conflictInfo.isDirectory) {
-                        if (isWhisperTargetPath(targetFile.uri, fileName)) {
-                            try {
-                                new Directory(targetFile.uri).delete();
-                            } catch (deleteError) {
-                                logSettingsWarn('Whisper model directory cleanup failed', deleteError);
-                            }
+                        if (!isWhisperTargetPath(targetFile.uri, fileName)) {
+                            throw new Error(localize(
+                                `Offline model path is not safe to modify (${targetFile.uri}).`,
+                                `离线模型路径不安全，无法自动处理（${targetFile.uri}）。`
+                            ));
                         }
                     }
                     const postCleanupInfo = safePathInfo(targetFile.uri);
@@ -810,10 +835,41 @@ export default function SettingsPage() {
         }
     };
 
+    useEffect(() => {
+        if (Platform.OS !== 'android') {
+            setAndroidInstallerSource('play-store');
+            return;
+        }
+        if (isFossBuild) {
+            setAndroidInstallerSource('sideload');
+            return;
+        }
+        let cancelled = false;
+        Application.getInstallReferrerAsync()
+            .then((referrer) => {
+                if (cancelled) return;
+                const normalized = (referrer || '').trim().toLowerCase();
+                setAndroidInstallerSource(normalized ? 'play-store' : 'sideload');
+            })
+            .catch((error) => {
+                if (!cancelled) {
+                    setAndroidInstallerSource('unknown');
+                }
+                logSettingsWarn('Failed to detect Android installer source', error);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isFossBuild]);
+
     const GITHUB_RELEASES_API = 'https://api.github.com/repos/dongdongbh/Mindwtr/releases/latest';
     const GITHUB_RELEASES_URL = 'https://github.com/dongdongbh/Mindwtr/releases/latest';
     const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr';
+    const PLAY_STORE_LOOKUP_URL = 'https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr&hl=en_US&gl=US';
     const PLAY_STORE_MARKET_URL = 'market://details?id=tech.dongdongbh.mindwtr';
+    const APP_STORE_BUNDLE_ID = Constants.expoConfig?.ios?.bundleIdentifier || 'tech.dongdongbh.mindwtr';
+    const APP_STORE_LOOKUP_URL = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(APP_STORE_BUNDLE_ID)}&country=US`;
+    const APP_STORE_LOOKUP_FALLBACK_URL = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(APP_STORE_BUNDLE_ID)}`;
 
     const persistUpdateBadge = useCallback(async (next: boolean, latestVersion?: string) => {
         setHasUpdateBadge(next);
@@ -841,6 +897,119 @@ export default function SettingsPage() {
         }
         return response.json();
     }, [GITHUB_RELEASES_API]);
+
+    const fetchLatestGithubVersion = useCallback(async () => {
+        const release = await fetchLatestRelease();
+        return release.tag_name?.replace(/^v/, '') || '0.0.0';
+    }, [fetchLatestRelease]);
+
+    const fetchLatestAppStoreInfo = useCallback(async (): Promise<{ version: string; trackViewUrl: string | null }> => {
+        const lookupUrls = [APP_STORE_LOOKUP_URL, APP_STORE_LOOKUP_FALLBACK_URL];
+        let lastError: Error | null = null;
+        for (const url of lookupUrls) {
+            const response = await fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                    'User-Agent': 'Mindwtr-App'
+                }
+            });
+            if (!response.ok) {
+                lastError = new Error(`App Store lookup failed (${url}): ${response.status}`);
+                continue;
+            }
+            const payload = await response.json() as { results?: { version?: unknown; trackViewUrl?: unknown }[] };
+            const candidate = Array.isArray(payload.results) ? payload.results[0] : null;
+            const version = typeof candidate?.version === 'string' ? candidate.version.trim() : '';
+            if (!version) {
+                lastError = new Error(`Unable to parse App Store version from ${url}`);
+                continue;
+            }
+            const trackViewUrl = typeof candidate?.trackViewUrl === 'string' && candidate.trackViewUrl.trim()
+                ? candidate.trackViewUrl.trim()
+                : null;
+            return { version, trackViewUrl };
+        }
+        if (lastError) {
+            throw lastError;
+        }
+        throw new Error('Unable to fetch App Store version');
+    }, [APP_STORE_LOOKUP_FALLBACK_URL, APP_STORE_LOOKUP_URL]);
+
+    const parsePlayStoreVersion = useCallback((html: string): string | null => {
+        const patterns = [
+            /"softwareVersion"\s*:\s*"([^"]+)"/i,
+            /\\"softwareVersion\\"\s*:\s*\\"([^"]+)\\"/i,
+            /itemprop="softwareVersion"[^>]*>\s*([^<]+)\s*</i,
+            /"versionName"\s*:\s*"([^"]+)"/i,
+            // New Play Store payload format (AF_initDataCallback ds:5)
+            /"141"\s*:\s*\[\[\["([^"]+)"/i,
+            /\\"141\\"\s*:\s*\[\[\[\\"([^"]+)/i,
+        ];
+        for (const pattern of patterns) {
+            const match = html.match(pattern);
+            const candidate = match?.[1]?.trim();
+            if (!candidate) continue;
+            const versionMatch = candidate.match(/\d+(?:\.\d+){1,3}/);
+            if (versionMatch?.[0]) {
+                return versionMatch[0];
+            }
+        }
+        return null;
+    }, []);
+
+    const fetchLatestPlayStoreVersion = useCallback(async () => {
+        const urls = [PLAY_STORE_LOOKUP_URL, PLAY_STORE_URL];
+        let lastError: Error | null = null;
+        for (const url of urls) {
+            const response = await fetch(url, {
+                headers: {
+                    'Accept': 'text/html',
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+                }
+            });
+            if (!response.ok) {
+                lastError = new Error(`Play Store request failed (${url}): ${response.status}`);
+                continue;
+            }
+            const html = await response.text();
+            const version = parsePlayStoreVersion(html);
+            if (version) {
+                return version;
+            }
+            lastError = new Error(`Unable to parse Play Store version from ${url}`);
+        }
+        if (lastError) {
+            throw lastError;
+        }
+        throw new Error('Unable to fetch Play Store version');
+    }, [PLAY_STORE_LOOKUP_URL, PLAY_STORE_URL, parsePlayStoreVersion]);
+
+    const fetchLatestComparableVersion = useCallback(async (): Promise<{ version: string; source: 'play-store' | 'app-store' | 'github-release' }> => {
+        if (isFossBuild) {
+            const githubVersion = await fetchLatestGithubVersion();
+            return { version: githubVersion, source: 'github-release' };
+        }
+        if (Platform.OS === 'ios') {
+            const appStoreInfo = await fetchLatestAppStoreInfo();
+            return { version: appStoreInfo.version, source: 'app-store' };
+        }
+        if (Platform.OS !== 'android') {
+            const githubVersion = await fetchLatestGithubVersion();
+            return { version: githubVersion, source: 'github-release' };
+        }
+        if (androidInstallerSource === 'sideload') {
+            const githubVersion = await fetchLatestGithubVersion();
+            return { version: githubVersion, source: 'github-release' };
+        }
+        try {
+            const playStoreVersion = await fetchLatestPlayStoreVersion();
+            return { version: playStoreVersion, source: 'play-store' };
+        } catch (error) {
+            logSettingsWarn('Play Store update check failed; falling back to GitHub release', error);
+            const githubVersion = await fetchLatestGithubVersion();
+            return { version: githubVersion, source: 'github-release' };
+        }
+    }, [androidInstallerSource, fetchLatestAppStoreInfo, fetchLatestGithubVersion, fetchLatestPlayStoreVersion, isFossBuild]);
 
     useEffect(() => {
         let cancelled = false;
@@ -872,8 +1041,7 @@ export default function SettingsPage() {
                 const lastCheck = Number(lastCheckRaw || 0);
                 if (Date.now() - lastCheck < UPDATE_BADGE_INTERVAL_MS) return;
                 await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
-                const release = await fetchLatestRelease();
-                const latestVersion = release.tag_name?.replace(/^v/, '') || '0.0.0';
+                const { version: latestVersion } = await fetchLatestComparableVersion();
                 const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
                 if (cancelled) return;
                 await persistUpdateBadge(hasUpdate, hasUpdate ? latestVersion : undefined);
@@ -885,29 +1053,85 @@ export default function SettingsPage() {
         return () => {
             cancelled = true;
         };
-    }, [currentVersion, fetchLatestRelease, isExpoGo, persistUpdateBadge]);
+    }, [currentVersion, fetchLatestComparableVersion, isExpoGo, persistUpdateBadge]);
 
     const handleCheckUpdates = async () => {
         setIsCheckingUpdate(true);
         try {
-            if (Platform.OS === 'android') {
+            await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
+
+            if (Platform.OS === 'android' && !isFossBuild && androidInstallerSource !== 'sideload') {
                 const canOpenMarket = await Linking.canOpenURL(PLAY_STORE_MARKET_URL);
                 const targetUrl = canOpenMarket ? PLAY_STORE_MARKET_URL : PLAY_STORE_URL;
-                Alert.alert(
-                    localize('Check for Updates', '检查更新'),
-                    localize(
-                        'Updates on Android are managed by Google Play. Open the Play Store listing?',
-                        'Android 更新由 Google Play 管理。是否打开应用页面？'
-                    ),
-                    [
-                        { text: localize('Later', '稍后'), style: 'cancel' },
-                        { text: localize('Open', '打开'), onPress: () => Linking.openURL(targetUrl) }
-                    ]
-                );
+                const { version: latestVersion, source } = await fetchLatestComparableVersion();
+                const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+                if (hasUpdate) {
+                    const updateMessage = source === 'play-store'
+                        ? localize(
+                            `v${currentVersion} → v${latestVersion}\n\nUpdate is available on Google Play. Open app listing now?`,
+                            `v${currentVersion} → v${latestVersion}\n\nGoogle Play 已提供更新，是否立即打开应用页面？`
+                        )
+                        : localize(
+                            `v${currentVersion} → v${latestVersion}\n\nPlay Store version lookup is temporarily unavailable. A newer GitHub release is available, and Play rollout may lag. Open app listing now?`,
+                            `v${currentVersion} → v${latestVersion}\n\n暂时无法直接获取 Google Play 版本，GitHub 已有更新，Play 商店可能会延迟推送。是否立即打开应用页面？`
+                        );
+                    Alert.alert(
+                        localize('Update Available', '有可用更新'),
+                        updateMessage,
+                        [
+                            { text: localize('Later', '稍后'), style: 'cancel' },
+                            { text: localize('Open', '打开'), onPress: () => Linking.openURL(targetUrl) }
+                        ]
+                    );
+                    await persistUpdateBadge(true, latestVersion);
+                } else {
+                    const upToDateMessage = source === 'play-store'
+                        ? localize('You are using the latest Google Play version!', '您正在使用 Google Play 最新版本！')
+                        : localize(
+                            'Play Store version lookup is temporarily unavailable. Your version matches the latest GitHub release.',
+                            '暂时无法直接获取 Google Play 版本，但当前版本与 GitHub 最新发布一致。'
+                        );
+                    Alert.alert(
+                        localize('Up to Date', '已是最新'),
+                        upToDateMessage
+                    );
+                    await persistUpdateBadge(false);
+                }
                 return;
             }
 
-            await AsyncStorage.setItem(UPDATE_BADGE_LAST_CHECK_KEY, String(Date.now()));
+            if (Platform.OS === 'ios' && !isFossBuild) {
+                const { version: latestVersion, trackViewUrl } = await fetchLatestAppStoreInfo();
+                const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+                const trackIdMatch = trackViewUrl?.match(/\/id(\d+)/i);
+                const appStoreDeepLink = trackIdMatch?.[1] ? `itms-apps://apps.apple.com/app/id${trackIdMatch[1]}` : null;
+                const canOpenDeepLink = appStoreDeepLink ? await Linking.canOpenURL(appStoreDeepLink) : false;
+                const targetUrl = canOpenDeepLink ? appStoreDeepLink : trackViewUrl;
+                if (hasUpdate) {
+                    Alert.alert(
+                        localize('Update Available', '有可用更新'),
+                        localize(
+                            `v${currentVersion} → v${latestVersion}\n\nUpdate is available on the App Store. Open app listing now?`,
+                            `v${currentVersion} → v${latestVersion}\n\nApp Store 已提供更新，是否立即打开应用页面？`
+                        ),
+                        [
+                            { text: localize('Later', '稍后'), style: 'cancel' },
+                            ...(targetUrl
+                                ? [{ text: localize('Open', '打开'), onPress: () => Linking.openURL(targetUrl) }]
+                                : [])
+                        ]
+                    );
+                    await persistUpdateBadge(true, latestVersion);
+                } else {
+                    Alert.alert(
+                        localize('Up to Date', '已是最新'),
+                        localize('You are using the latest App Store version!', '您正在使用 App Store 最新版本！')
+                    );
+                    await persistUpdateBadge(false);
+                }
+                return;
+            }
+
             const release = await fetchLatestRelease();
             const latestVersion = release.tag_name?.replace(/^v/, '') || '0.0.0';
 
@@ -1149,7 +1373,7 @@ export default function SettingsPage() {
         Alert.alert(t('settings.debugLogging'), t('settings.logCleared'));
     };
 
-    const updateFeatureFlags = (next: { priorities?: boolean; timeEstimates?: boolean }) => {
+    const updateFeatureFlags = (next: { priorities?: boolean; timeEstimates?: boolean; pomodoro?: boolean }) => {
         updateSettings({
             features: {
                 ...(settings.features ?? {}),
@@ -1203,10 +1427,45 @@ export default function SettingsPage() {
         </TouchableOpacity>
     );
 
+    const SettingsTopBar = () => {
+        const canGoBack = router.canGoBack();
+        return (
+            <View
+                style={[
+                    styles.topBar,
+                    {
+                        backgroundColor: tc.cardBg,
+                        borderBottomColor: tc.border,
+                        height: 52 + insets.top,
+                        paddingTop: insets.top,
+                    },
+                ]}
+            >
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                    disabled={!canGoBack}
+                    hitSlop={8}
+                    onPress={() => {
+                        if (canGoBack) router.back();
+                    }}
+                    style={[styles.topBarBackButton, !canGoBack && styles.topBarBackButtonHidden]}
+                >
+                    <Ionicons color={tc.text} name="chevron-back" size={24} />
+                </Pressable>
+                <Text style={[styles.topBarTitle, { color: tc.text }]} numberOfLines={1}>
+                    {t('settings.title')}
+                </Text>
+                <View style={styles.topBarBackButton} />
+            </View>
+        );
+    };
+
     // ============ NOTIFICATIONS SCREEN ============
     if (currentScreen === 'notifications') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.notifications')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
@@ -1280,7 +1539,7 @@ export default function SettingsPage() {
 
                         <TouchableOpacity
                             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={() => setWeeklyReviewTimePicker(true)}
+                            onPress={openWeeklyReviewTimePicker}
                             disabled={!weeklyReviewEnabled || !notificationsEnabled}
                         >
                             <View style={styles.settingInfo}>
@@ -1371,7 +1630,7 @@ export default function SettingsPage() {
 
                         <TouchableOpacity
                             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={() => setDigestTimePicker('morning')}
+                            onPress={() => openDigestTimePicker('morning')}
                             disabled={!dailyDigestMorningEnabled}
                         >
                             <View style={styles.settingInfo}>
@@ -1411,7 +1670,7 @@ export default function SettingsPage() {
 
                         <TouchableOpacity
                             style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                            onPress={() => setDigestTimePicker('evening')}
+                            onPress={() => openDigestTimePicker('evening')}
                             disabled={!dailyDigestEveningEnabled}
                         >
                             <View style={styles.settingInfo}>
@@ -1425,34 +1684,112 @@ export default function SettingsPage() {
                         </TouchableOpacity>
                     </View>
 
-                    {digestTimePicker && (
+                    {digestTimePicker && Platform.OS === 'ios' && (
+                        <Modal
+                            transparent
+                            visible
+                            animationType="fade"
+                            onRequestClose={closeDigestTimePicker}
+                        >
+                            <Pressable style={styles.pickerOverlay} onPress={closeDigestTimePicker}>
+                                <View
+                                    style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                                    onStartShouldSetResponder={() => true}
+                                >
+                                    <Text style={[styles.pickerTitle, { color: tc.text }]}>
+                                        {digestTimePicker === 'morning'
+                                            ? t('settings.dailyDigestMorningTime')
+                                            : t('settings.dailyDigestEveningTime')}
+                                    </Text>
+                                    <DateTimePicker
+                                        value={digestTimeDraft ?? toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
+                                        mode="time"
+                                        display="spinner"
+                                        onChange={(_, date) => {
+                                            if (!date) return;
+                                            setDigestTimeDraft(date);
+                                        }}
+                                    />
+                                    <View style={[styles.timePickerActions, { borderTopColor: tc.border }]}>
+                                        <TouchableOpacity onPress={closeDigestTimePicker} style={styles.timePickerActionButton}>
+                                            <Text style={[styles.timePickerActionText, { color: tc.secondaryText }]}>
+                                                {t('common.cancel') || 'Cancel'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={saveDigestTimePicker} style={styles.timePickerActionButton}>
+                                            <Text style={[styles.timePickerActionText, { color: tc.tint }]}>
+                                                {t('common.done') || 'Done'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </Pressable>
+                        </Modal>
+                    )}
+
+                    {digestTimePicker && Platform.OS === 'android' && (
                         <DateTimePicker
                             value={toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
                             mode="time"
                             display="default"
                             onChange={(event, date) => {
-                                if (Platform.OS === 'android') {
-                                    if (event.type === 'dismissed') {
-                                        setDigestTimePicker(null);
-                                        return;
-                                    }
+                                if (event.type === 'dismissed') {
+                                    setDigestTimePicker(null);
+                                    return;
                                 }
                                 onDigestTimeChange(event, date);
                             }}
                         />
                     )}
 
-                    {weeklyReviewTimePicker && (
+                    {weeklyReviewTimePicker && Platform.OS === 'ios' && (
+                        <Modal
+                            transparent
+                            visible
+                            animationType="fade"
+                            onRequestClose={closeWeeklyReviewTimePicker}
+                        >
+                            <Pressable style={styles.pickerOverlay} onPress={closeWeeklyReviewTimePicker}>
+                                <View
+                                    style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                                    onStartShouldSetResponder={() => true}
+                                >
+                                    <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('settings.weeklyReviewTime')}</Text>
+                                    <DateTimePicker
+                                        value={weeklyReviewTimeDraft ?? toTimePickerDate(weeklyReviewTime)}
+                                        mode="time"
+                                        display="spinner"
+                                        onChange={(_, date) => {
+                                            if (!date) return;
+                                            setWeeklyReviewTimeDraft(date);
+                                        }}
+                                    />
+                                    <View style={[styles.timePickerActions, { borderTopColor: tc.border }]}>
+                                        <TouchableOpacity onPress={closeWeeklyReviewTimePicker} style={styles.timePickerActionButton}>
+                                            <Text style={[styles.timePickerActionText, { color: tc.secondaryText }]}>
+                                                {t('common.cancel') || 'Cancel'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={saveWeeklyReviewTimePicker} style={styles.timePickerActionButton}>
+                                            <Text style={[styles.timePickerActionText, { color: tc.tint }]}>
+                                                {t('common.done') || 'Done'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </Pressable>
+                        </Modal>
+                    )}
+
+                    {weeklyReviewTimePicker && Platform.OS === 'android' && (
                         <DateTimePicker
                             value={toTimePickerDate(weeklyReviewTime)}
                             mode="time"
                             display="default"
                             onChange={(event, date) => {
-                                if (Platform.OS === 'android') {
-                                    if (event.type === 'dismissed') {
-                                        setWeeklyReviewTimePicker(false);
-                                        return;
-                                    }
+                                if (event.type === 'dismissed') {
+                                    setWeeklyReviewTimePicker(false);
+                                    return;
                                 }
                                 onWeeklyReviewTimeChange(event, date);
                             }}
@@ -1469,6 +1806,7 @@ export default function SettingsPage() {
     if (currentScreen === 'general') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.general')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.sectionTitle, { color: tc.secondaryText }]}>{t('settings.appearance')}</Text>
@@ -1634,6 +1972,7 @@ export default function SettingsPage() {
     if (currentScreen === 'ai') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.ai')} />
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1819,6 +2158,25 @@ export default function SettingsPage() {
                                             </TouchableOpacity>
                                         ))}
                                     </View>
+                                </View>
+                                <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.aiBaseUrl')}</Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {t('settings.aiBaseUrlHint')}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                    <TextInput
+                                        value={aiBaseUrl}
+                                        onChangeText={(value) => updateAISettings({ baseUrl: value })}
+                                        placeholder={t('settings.aiBaseUrlPlaceholder')}
+                                        placeholderTextColor={tc.secondaryText}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        style={[styles.textInput, { borderColor: tc.border, color: tc.text }]}
+                                    />
                                 </View>
                             </>
                         )}
@@ -2302,25 +2660,83 @@ export default function SettingsPage() {
 
     // ============ GTD MENU ============
     if (currentScreen === 'gtd') {
+        const featurePomodoroLabelRaw = t('settings.featurePomodoro');
+        const featurePomodoroDescRaw = t('settings.featurePomodoroDesc');
+        const featurePomodoroLabel = featurePomodoroLabelRaw === 'settings.featurePomodoro'
+            ? localize('Pomodoro timer', '番茄钟')
+            : featurePomodoroLabelRaw;
+        const featurePomodoroDesc = featurePomodoroDescRaw === 'settings.featurePomodoroDesc'
+            ? localize('Enable the optional Pomodoro panel in Focus view.', '在聚焦视图中启用可选的番茄钟面板。')
+            : featurePomodoroDescRaw;
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.gtd')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.gtdDesc')}</Text>
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginBottom: 12 }]}>
+                        <View style={styles.settingRow}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.features')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.featuresDesc')}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.featurePriorities')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.featurePrioritiesDesc')}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={prioritiesEnabled}
+                                onValueChange={(value) => updateFeatureFlags({ priorities: value })}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.featureTimeEstimates')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.featureTimeEstimatesDesc')}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={timeEstimatesEnabled}
+                                onValueChange={(value) => updateFeatureFlags({ timeEstimates: value })}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{featurePomodoroLabel}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {featurePomodoroDesc}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={pomodoroEnabled}
+                                onValueChange={(value) => updateFeatureFlags({ pomodoro: value })}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+                    </View>
                     <View style={[styles.menuCard, { backgroundColor: tc.cardBg }]}>
                         {timeEstimatesEnabled && (
                             <MenuItem
                                 title={t('settings.timeEstimatePresets')}
-                                onPress={() => setCurrentScreen('gtd-time-estimates')}
+                                onPress={() => pushSettingsScreen('gtd-time-estimates')}
                             />
                         )}
                         <MenuItem
                             title={t('settings.autoArchive')}
-                            onPress={() => setCurrentScreen('gtd-archive')}
+                            onPress={() => pushSettingsScreen('gtd-archive')}
                         />
                         <MenuItem
                             title={t('settings.taskEditorLayout')}
-                            onPress={() => setCurrentScreen('gtd-task-editor')}
+                            onPress={() => pushSettingsScreen('gtd-task-editor')}
                         />
                     </View>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
@@ -2460,6 +2876,7 @@ export default function SettingsPage() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.autoArchive')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.autoArchiveDesc')}</Text>
@@ -2488,6 +2905,7 @@ export default function SettingsPage() {
         if (!timeEstimatesEnabled) {
             return (
                 <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                     <SubHeader title={t('settings.timeEstimatePresets')} />
                     <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                         <Text style={[styles.description, { color: tc.secondaryText }]}>
@@ -2534,6 +2952,7 @@ export default function SettingsPage() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.timeEstimatePresets')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.timeEstimatePresetsDesc')}</Text>
@@ -2788,6 +3207,7 @@ export default function SettingsPage() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.taskEditorLayout')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.taskEditorLayoutDesc')}</Text>
@@ -2879,6 +3299,7 @@ export default function SettingsPage() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.calendar')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <Text style={[styles.description, { color: tc.secondaryText }]}>
@@ -2978,11 +3399,12 @@ export default function SettingsPage() {
     if (currentScreen === 'advanced') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.advanced')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <View style={[styles.menuCard, { backgroundColor: tc.cardBg }]}>
-                        <MenuItem title={t('settings.ai')} onPress={() => setCurrentScreen('ai')} />
-                        <MenuItem title={t('settings.calendar')} onPress={() => setCurrentScreen('calendar')} />
+                        <MenuItem title={t('settings.ai')} onPress={() => pushSettingsScreen('ai')} />
+                        <MenuItem title={t('settings.calendar')} onPress={() => pushSettingsScreen('calendar')} />
                     </View>
                 </ScrollView>
             </SafeAreaView>
@@ -2993,6 +3415,7 @@ export default function SettingsPage() {
     if (currentScreen === 'sync') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.dataSync')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginBottom: 12 }]}>
@@ -3598,6 +4021,7 @@ export default function SettingsPage() {
     if (currentScreen === 'about') {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
                 <SubHeader title={t('settings.about')} />
                 <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
@@ -3668,14 +4092,15 @@ export default function SettingsPage() {
     // ============ MAIN SETTINGS SCREEN ============
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
             <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                 <View style={[styles.menuCard, { backgroundColor: tc.cardBg, marginTop: 16 }]}>
-                    <MenuItem title={t('settings.general')} onPress={() => setCurrentScreen('general')} />
-                    <MenuItem title={t('settings.gtd')} onPress={() => setCurrentScreen('gtd')} />
-                    <MenuItem title={t('settings.notifications')} onPress={() => setCurrentScreen('notifications')} />
-                    <MenuItem title={t('settings.dataSync')} onPress={() => setCurrentScreen('sync')} />
-                    <MenuItem title={t('settings.advanced')} onPress={() => setCurrentScreen('advanced')} />
-                    <MenuItem title={t('settings.about')} onPress={() => setCurrentScreen('about')} showIndicator={hasUpdateBadge} />
+                    <MenuItem title={t('settings.general')} onPress={() => pushSettingsScreen('general')} />
+                    <MenuItem title={t('settings.gtd')} onPress={() => pushSettingsScreen('gtd')} />
+                    <MenuItem title={t('settings.notifications')} onPress={() => pushSettingsScreen('notifications')} />
+                    <MenuItem title={t('settings.dataSync')} onPress={() => pushSettingsScreen('sync')} />
+                    <MenuItem title={t('settings.advanced')} onPress={() => pushSettingsScreen('advanced')} />
+                    <MenuItem title={t('settings.about')} onPress={() => pushSettingsScreen('about')} showIndicator={hasUpdateBadge} />
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -3686,6 +4111,27 @@ const styles = StyleSheet.create({
     container: { flex: 1 },
     scrollView: { flex: 1 },
     scrollContent: { padding: 16 },
+    topBar: {
+        height: 52,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 8,
+    },
+    topBarBackButton: {
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    topBarBackButtonHidden: {
+        opacity: 0,
+    },
+    topBarTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+    },
     subHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
     backButton: { fontSize: 16, fontWeight: '500' },
     subHeaderTitle: { fontSize: 18, fontWeight: '600' },
@@ -3770,6 +4216,22 @@ const styles = StyleSheet.create({
     },
     pickerOptionText: {
         fontSize: 13,
+        fontWeight: '600',
+    },
+    timePickerActions: {
+        marginTop: 12,
+        borderTopWidth: 1,
+        paddingTop: 12,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 8,
+    },
+    timePickerActionButton: {
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    timePickerActionText: {
+        fontSize: 15,
         fontWeight: '600',
     },
     inputGroup: { padding: 16 },

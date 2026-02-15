@@ -602,11 +602,18 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
         let snapshot: AppData | null = null;
         let createdArea: Area | null = null;
         let existingAreaId: string | null = null;
+        let shouldRestoreDeletedArea = false;
         set((state) => {
             const allAreas = state._allAreas;
-            const existing = allAreas.find((area) => area?.name?.trim().toLowerCase() === normalized);
-            if (existing) {
-                existingAreaId = existing.id;
+            const existingActive = allAreas.find((area) => !area.deletedAt && area?.name?.trim().toLowerCase() === normalized);
+            if (existingActive) {
+                existingAreaId = existingActive.id;
+                return state;
+            }
+            const existingDeleted = allAreas.find((area) => area.deletedAt && area?.name?.trim().toLowerCase() === normalized);
+            if (existingDeleted) {
+                existingAreaId = existingDeleted.id;
+                shouldRestoreDeletedArea = true;
                 return state;
             }
             const deviceState = ensureDeviceId(state.settings);
@@ -627,22 +634,26 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             };
             createdArea = newArea;
             const newAllAreas = [...allAreas, newArea].sort((a, b) => a.order - b.order);
+            const newVisibleAreas = newAllAreas.filter((area) => !area.deletedAt);
             snapshot = buildSaveSnapshot(state, {
                 areas: newAllAreas,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
-                areas: newAllAreas,
+                areas: newVisibleAreas,
                 _allAreas: newAllAreas,
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
         if (existingAreaId) {
-            if (initialProps && Object.keys(initialProps).length > 0) {
-                await get().updateArea(existingAreaId, { ...initialProps });
+            if (shouldRestoreDeletedArea || (initialProps && Object.keys(initialProps).length > 0)) {
+                await get().updateArea(existingAreaId, {
+                    ...(initialProps ?? {}),
+                    ...(shouldRestoreDeletedArea ? { deletedAt: undefined, name: trimmedName } : {}),
+                });
             }
-            return get()._allAreas.find((area) => area.id === existingAreaId) ?? null;
+            return get()._allAreas.find((area) => area.id === existingAreaId && !area.deletedAt) ?? null;
         }
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
@@ -661,7 +672,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 const trimmedName = updates.name.trim();
                 if (!trimmedName) return state;
                 const normalized = trimmedName.toLowerCase();
-                const existing = allAreas.find((a) => a.id !== id && a?.name?.trim().toLowerCase() === normalized);
+                const existing = allAreas.find((a) => a.id !== id && !a.deletedAt && a?.name?.trim().toLowerCase() === normalized);
                 if (existing) {
                     const now = new Date().toISOString();
                     const mergedArea: Area = {
@@ -693,7 +704,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                         ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                     });
                     return {
-                        areas: newAllAreas,
+                        areas: newAllAreas.filter((item) => !item.deletedAt),
                         _allAreas: newAllAreas,
                         projects: newVisibleProjects,
                         _allProjects: newAllProjects,
@@ -724,7 +735,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
-                areas: newAllAreas,
+                areas: newAllAreas.filter((item) => !item.deletedAt),
                 _allAreas: newAllAreas,
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
@@ -741,10 +752,22 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
         let snapshot: AppData | null = null;
         set((state) => {
             const allAreas = state._allAreas;
-            const areaExists = allAreas.some(a => a.id === id);
-            if (!areaExists) return state;
+            const area = allAreas.find((item) => item.id === id);
+            if (!area || area.deletedAt) return state;
             const deviceState = ensureDeviceId(state.settings);
-            const newAllAreas = allAreas.filter(a => a.id !== id).sort((a, b) => a.order - b.order);
+            const newAllAreas = allAreas
+                .map((item) =>
+                    item.id === id
+                        ? {
+                            ...item,
+                            deletedAt: now,
+                            updatedAt: now,
+                            rev: normalizeRevision(item.rev) + 1,
+                            revBy: deviceState.deviceId,
+                        }
+                        : item
+                )
+                .sort((a, b) => a.order - b.order);
             const newAllProjects = state._allProjects.map((project) => {
                 if (project.areaId !== id) return project;
                 return {
@@ -768,6 +791,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             });
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter((task) => !task.deletedAt && task.status !== 'archived');
+            const newVisibleAreas = newAllAreas.filter((item) => !item.deletedAt);
             clearDerivedCache();
             snapshot = buildSaveSnapshot(state, {
                 tasks: newAllTasks,
@@ -776,7 +800,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
-                areas: newAllAreas,
+                areas: newVisibleAreas,
                 _allAreas: newAllAreas,
                 projects: newVisibleProjects,
                 _allProjects: newAllProjects,
@@ -796,7 +820,9 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
         let snapshot: AppData | null = null;
         set((state) => {
             const allAreas = state._allAreas;
-            const areaById = new Map(allAreas.map(area => [area.id, area]));
+            const activeAreas = allAreas.filter((area) => !area.deletedAt);
+            const deletedAreas = allAreas.filter((area) => area.deletedAt);
+            const areaById = new Map(activeAreas.map(area => [area.id, area]));
             const seen = new Set<string>();
             const now = new Date().toISOString();
             const deviceState = ensureDeviceId(state.settings);
@@ -809,7 +835,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 reordered.push({ ...area, order: index, updatedAt: now });
             });
 
-            const remaining = allAreas
+            const remaining = activeAreas
                 .filter(area => !seen.has(area.id))
                 .sort((a, b) => a.order - b.order)
                 .map((area, idx) => ({
@@ -818,17 +844,18 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                     updatedAt: now,
                 }));
 
-            const newAllAreas = [...reordered, ...remaining].map((area) => ({
+            const newVisibleAreas = [...reordered, ...remaining].map((area) => ({
                 ...area,
                 rev: normalizeRevision(area.rev) + 1,
                 revBy: deviceState.deviceId,
             }));
+            const newAllAreas = [...newVisibleAreas, ...deletedAreas];
             snapshot = buildSaveSnapshot(state, {
                 areas: newAllAreas,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
-                areas: newAllAreas,
+                areas: newVisibleAreas,
                 _allAreas: newAllAreas,
                 lastDataChangeAt: Date.now(),
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),

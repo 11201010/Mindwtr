@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   linux:
     uses: ./.github/workflows/release-linux.yml
@@ -35,10 +39,27 @@ jobs:
     uses: ./.github/workflows/release-android-foss.yml
     secrets: inherit
 
+  ios-appstore:
+    uses: ./.github/workflows/release-ios-appstore.yml
+    with:
+      upload: 'true'
+      submit_for_review: 'true'
+      testflight_group: 'external_testing'
+    secrets: inherit
+
+  macos-appstore:
+    uses: ./.github/workflows/release-macos-appstore.yml
+    with:
+      upload: 'true'
+      submit_for_review: 'true'
+      testflight_group: 'external_testing'
+    secrets: inherit
+
   release:
     needs: [linux, macos, windows, android, android-foss]
     runs-on: ubuntu-latest
     name: Create Release
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -93,7 +114,7 @@ jobs:
           echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG" >> CHANGELOG.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./release-assets/*
           body_path: ${{ steps.release_notes.outputs.body_path }}
@@ -106,6 +127,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     name: Update Homebrew/Scoop Packages
+    timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success'
     steps:
       - name: Checkout packages repo
@@ -360,6 +382,89 @@ jobs:
           git commit -m "update: Mindwtr ${{ steps.version.outputs.version }}"
           git push
 
+  bump-official-cask:
+    needs: release
+    runs-on: macos-latest
+    name: Bump Official Homebrew Cask
+    timeout-minutes: 30
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success' && !contains(github.ref, '-')
+    steps:
+      - name: Resolve release tag/version
+        id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-${GITHUB_REF#refs/tags/}}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for macOS release assets to be live
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          URL_DMG_ARM="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_aarch64.dmg"
+          URL_DMG_INTEL="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_x64.dmg"
+
+          echo "Waiting for release assets:"
+          echo "  - $URL_DMG_ARM"
+          echo "  - $URL_DMG_INTEL"
+
+          for attempt in $(seq 1 20); do
+            if curl -fsI "$URL_DMG_ARM" >/dev/null && curl -fsI "$URL_DMG_INTEL" >/dev/null; then
+              echo "macOS assets are available."
+              exit 0
+            fi
+            echo "Attempt $attempt/20: assets not live yet; sleeping 15s..."
+            sleep 15
+          done
+
+          echo "Release assets were not available in time."
+          exit 1
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Submit Homebrew cask bump PR
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_PR_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_GITHUB_API_TOKEN}" ]; then
+            echo "Missing HOMEBREW_PR_TOKEN secret."
+            exit 1
+          fi
+
+          VERSION="${{ steps.version.outputs.version }}"
+          run_bump_cask_pr() {
+            HOMEBREW_NO_INSTALL_FROM_API=1 brew bump-cask-pr homebrew/cask/mindwtr --version "$VERSION" --verbose --no-browse 2>&1
+          }
+
+          set +e
+          OUTPUT="$(run_bump_cask_pr)"
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+
+          if [ "$STATUS" -ne 0 ] && echo "$OUTPUT" | grep -Fqi "Tap homebrew/cask already tapped"; then
+            echo "Homebrew cask tap conflict detected; retrying once after untap."
+            brew untap homebrew/cask >/dev/null 2>&1 || true
+            set +e
+            OUTPUT="$(run_bump_cask_pr)"
+            STATUS=$?
+            set -e
+            echo "$OUTPUT"
+          fi
+
+          if [ "$STATUS" -ne 0 ]; then
+            if echo "$OUTPUT" | grep -Eiq "already (at version|up[ -]?to[ -]?date)|no changes"; then
+              echo "Official cask is already at version $VERSION; skipping."
+              exit 0
+            fi
+            exit "$STATUS"
+          fi
+
   update-linux-repos:
     needs: release
     if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success'
@@ -368,10 +473,133 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
 
+  publish-chocolatey:
+    needs: release
+    runs-on: windows-latest
+    name: Publish Chocolatey
+    timeout-minutes: 45
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success' && !contains(github.ref, '-') && vars.CHOCOLATEY_PUBLISH_ENABLED == 'true'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag/version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { throw "Missing tag." }
+          $version = $tag.TrimStart('v')
+          if (-not $version) { throw "Failed to resolve version from tag '$tag'." }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Download Windows installer and compute SHA256
+        id: installer
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ steps.version.outputs.tag }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/mindwtr_${version}_x64-setup.exe"
+          Write-Host "Waiting for release asset: $url"
+          $maxAttempts = 20
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+              $response = Invoke-WebRequest -Uri $url -Method Head -MaximumRedirection 10 -ErrorAction Stop
+              if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400) {
+                break
+              }
+            } catch {
+              if ($attempt -eq $maxAttempts) {
+                throw "Release asset unavailable after $maxAttempts attempts: $url"
+              }
+              Start-Sleep -Seconds 15
+            }
+          }
+          $outFile = Join-Path $PWD "mindwtr-${version}-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $outFile -MaximumRedirection 10
+          $sha = (Get-FileHash -Path $outFile -Algorithm SHA256).Hash.ToLowerInvariant()
+          "installer_url=$url" >> $env:GITHUB_OUTPUT
+          "installer_path=$outFile" >> $env:GITHUB_OUTPUT
+          "sha256=$sha" >> $env:GITHUB_OUTPUT
+          Write-Host "Installer SHA256: $sha"
+
+      - name: Ensure Chocolatey CLI exists
+        shell: pwsh
+        run: |
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            throw "Chocolatey CLI (choco) not found on runner."
+          }
+          choco --version
+
+      - name: Build Chocolatey package (auto-generated install script)
+        id: pack
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.version.outputs.version }}"
+          $installerUrl = "${{ steps.installer.outputs.installer_url }}"
+          $sha = "${{ steps.installer.outputs.sha256 }}"
+
+          $pkgRoot = Join-Path $PWD "chocolatey-package"
+          $toolsDir = Join-Path $pkgRoot "tools"
+          New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+
+          Copy-Item "metadata/chocolatey/mindwtr.nuspec" -Destination (Join-Path $pkgRoot "mindwtr.nuspec") -Force
+          $template = Get-Content -Raw "metadata/chocolatey/tools/chocolateyInstall.ps1.template"
+          $installScript = $template.Replace("__INSTALLER_URL__", $installerUrl).Replace("__CHECKSUM__", $sha)
+          Set-Content -Path (Join-Path $toolsDir "chocolateyInstall.ps1") -Value $installScript -Encoding UTF8 -NoNewline
+
+          Push-Location $pkgRoot
+          choco pack "mindwtr.nuspec" --version "$version"
+          Pop-Location
+
+          $nupkg = Get-ChildItem -Path $pkgRoot -Filter "mindwtr.$version.nupkg" | Select-Object -First 1
+          if (-not $nupkg) {
+            throw "Failed to generate Chocolatey package for version $version."
+          }
+          "nupkg_path=$($nupkg.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Generated package: $($nupkg.FullName)"
+
+      - name: Smoke test Chocolatey package locally
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $pkgRoot = Join-Path $PWD "chocolatey-package"
+          choco install mindwtr --source "$pkgRoot" --force --no-progress -y
+
+      - name: Push package to Chocolatey
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CHOCOLATEY_API_KEY)) {
+            throw "Missing CHOCOLATEY_API_KEY secret."
+          }
+          $nupkg = "${{ steps.pack.outputs.nupkg_path }}"
+          $output = choco push "$nupkg" --source "https://push.chocolatey.org/" --api-key "$env:CHOCOLATEY_API_KEY" --timeout 2700 2>&1
+          $exitCode = $LASTEXITCODE
+          $text = ($output | Out-String)
+          Write-Host $text
+          if ($exitCode -ne 0) {
+            if ($text -match "already exists") {
+              Write-Host "Chocolatey package version already exists. Skipping duplicate push."
+              exit 0
+            }
+            throw "Chocolatey push failed."
+          }
+
   update-aur:
     needs: release
     runs-on: ubuntu-latest
     name: Update AUR
+    timeout-minutes: 30
     if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success'
     steps:
       - name: Checkout repo

@@ -1,0 +1,15 @@
+<en-US>
+- Added reliable scheduled-time notifications for tasks and review reminders, with better deep-link routing when tapping notifications.
+- Added optional Pomodoro Focus timer on desktop and mobile (disabled by default).
+- Improved mobile UX: fixed done-search routing, iOS keyboard gap, audio replay, and modal back behavior.
+</en-US>
+<zh-CN>
+- 新增任务定时与回顾提醒通知，点击通知后的跳转更准确。
+- 新增桌面端与移动端可选番茄专注计时器（默认关闭）。
+- 优化移动端体验：修复已完成搜索跳转、iOS 键盘间隙、音频重复播放与弹窗返回行为。
+</zh-CN>
+<es-ES>
+- Se agregaron notificaciones fiables para tareas programadas y recordatorios de revisión, con mejor navegación al tocar la notificación.
+- Se añadió el temporizador Pomodoro opcional en escritorio y móvil (desactivado por defecto).
+- Mejoras en móvil: corrección de navegación de tareas completadas, hueco de teclado en iOS, repetición de audio y comportamiento de cierre de modales.
+</es-ES>

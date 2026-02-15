@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, Alert, Share, ActivityIndicator, Dimensions, type TextStyle } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +18,8 @@ type InboxProcessingModalProps = {
   onClose: () => void;
 };
 
+const MAX_TOKEN_SUGGESTIONS = 6;
+
 export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalProps) {
   const { tasks, projects, areas, settings, updateTask, deleteTask, addProject } = useTaskStore();
   const { t } = useLanguage();
@@ -26,7 +28,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const insets = useSafeAreaInsets();
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [processingStep, setProcessingStep] = useState<'refine' | 'actionable' | 'twomin' | 'decide' | 'context' | 'project' | 'delegate'>('refine');
+  const [actionabilityChoice, setActionabilityChoice] = useState<'actionable' | 'trash' | 'someday' | 'reference'>('actionable');
+  const [twoMinuteChoice, setTwoMinuteChoice] = useState<'yes' | 'no'>('no');
+  const [executionChoice, setExecutionChoice] = useState<'defer' | 'delegate'>('defer');
   const [newContext, setNewContext] = useState('');
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [delegateWho, setDelegateWho] = useState('');
@@ -42,10 +46,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [isAIWorking, setIsAIWorking] = useState(false);
   const [aiModal, setAiModal] = useState<{ title: string; message?: string; actions: AIResponseAction[] } | null>(null);
+  const processingScrollRef = useRef<ScrollView | null>(null);
 
   const inboxProcessing = settings?.gtd?.inboxProcessing ?? {};
-  const twoMinuteFirst = inboxProcessing.twoMinuteFirst === true;
-  const projectFirst = inboxProcessing.projectFirst === true;
   const scheduleEnabled = inboxProcessing.scheduleEnabled !== false;
 
   const aiEnabled = settings?.ai?.enabled === true;
@@ -85,6 +88,120 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const [selectedContexts, setSelectedContexts] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
+  const contextSuggestionPool = useMemo(() => {
+    const usage = new Map<string, { count: number; lastUsedAt: number }>();
+    const ensureToken = (token: string) => {
+      if (!usage.has(token)) {
+        usage.set(token, { count: 0, lastUsedAt: 0 });
+      }
+      return usage.get(token)!;
+    };
+    PRESET_CONTEXTS
+      .filter((item) => item.startsWith('@'))
+      .forEach((item) => {
+        const entry = ensureToken(item);
+        entry.count += 1;
+      });
+    tasks.forEach((task) => {
+      const taskUpdatedAt = safeParseDate(task.updatedAt)?.getTime()
+        ?? safeParseDate(task.createdAt)?.getTime()
+        ?? 0;
+      (task.contexts ?? []).forEach((ctx) => {
+        if (!ctx?.startsWith('@')) return;
+        const entry = ensureToken(ctx);
+        entry.count += 1;
+        if (taskUpdatedAt > entry.lastUsedAt) {
+          entry.lastUsedAt = taskUpdatedAt;
+        }
+      });
+    });
+    return Array.from(usage.entries())
+      .sort((a, b) => {
+        const aMeta = a[1];
+        const bMeta = b[1];
+        return bMeta.lastUsedAt - aMeta.lastUsedAt || bMeta.count - aMeta.count || a[0].localeCompare(b[0]);
+      })
+      .map(([token]) => token);
+  }, [tasks]);
+  const tagSuggestionPool = useMemo(() => {
+    const usage = new Map<string, { count: number; lastUsedAt: number }>();
+    const ensureToken = (token: string) => {
+      if (!usage.has(token)) {
+        usage.set(token, { count: 0, lastUsedAt: 0 });
+      }
+      return usage.get(token)!;
+    };
+    PRESET_TAGS
+      .filter((item) => item.startsWith('#'))
+      .forEach((item) => {
+        const entry = ensureToken(item);
+        entry.count += 1;
+      });
+    tasks.forEach((task) => {
+      const taskUpdatedAt = safeParseDate(task.updatedAt)?.getTime()
+        ?? safeParseDate(task.createdAt)?.getTime()
+        ?? 0;
+      (task.tags ?? []).forEach((tag) => {
+        if (!tag?.startsWith('#')) return;
+        const entry = ensureToken(tag);
+        entry.count += 1;
+        if (taskUpdatedAt > entry.lastUsedAt) {
+          entry.lastUsedAt = taskUpdatedAt;
+        }
+      });
+    });
+    return Array.from(usage.entries())
+      .sort((a, b) => {
+        const aMeta = a[1];
+        const bMeta = b[1];
+        return bMeta.lastUsedAt - aMeta.lastUsedAt || bMeta.count - aMeta.count || a[0].localeCompare(b[0]);
+      })
+      .map(([token]) => token);
+  }, [tasks]);
+  const suggestionTerms = useMemo(() => {
+    const raw = `${processingTitle} ${processingDescription} ${newContext}`.toLowerCase();
+    const parts = raw
+      .split(/[^a-z0-9@#]+/i)
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 2)
+      .map((term) => term.replace(/^[@#]/, ''));
+    return Array.from(new Set(parts)).slice(0, 10);
+  }, [newContext, processingDescription, processingTitle]);
+  const tokenDraft = newContext.trim();
+  const tokenPrefix = tokenDraft.startsWith('#') ? '#' : tokenDraft.startsWith('@') ? '@' : '';
+  const tokenQuery = tokenPrefix ? tokenDraft.slice(1).toLowerCase() : '';
+  const tokenSuggestions = useMemo(() => {
+    if (!tokenPrefix || tokenQuery.length === 0) return [];
+    const pool = tokenPrefix === '@' ? contextSuggestionPool : tagSuggestionPool;
+    const selected = new Set(tokenPrefix === '@' ? selectedContexts : selectedTags);
+    const normalizedQuery = tokenQuery.toLowerCase();
+    return pool
+      .filter((item) => !selected.has(item))
+      .filter((item) => item.slice(1).toLowerCase().includes(normalizedQuery))
+      .slice(0, MAX_TOKEN_SUGGESTIONS);
+  }, [contextSuggestionPool, selectedContexts, selectedTags, tagSuggestionPool, tokenPrefix, tokenQuery]);
+  const contextCopilotSuggestions = useMemo(() => {
+    const selected = new Set(selectedContexts);
+    const candidates = contextSuggestionPool.filter((token) => !selected.has(token));
+    if (candidates.length === 0) return [];
+    const fromInput = candidates.filter((token) => {
+      const normalizedToken = token.slice(1).toLowerCase();
+      return suggestionTerms.some((term) => normalizedToken.includes(term));
+    });
+    const merged = [...fromInput, ...candidates.filter((token) => !fromInput.includes(token))];
+    return merged.slice(0, MAX_TOKEN_SUGGESTIONS);
+  }, [contextSuggestionPool, selectedContexts, suggestionTerms]);
+  const tagCopilotSuggestions = useMemo(() => {
+    const selected = new Set(selectedTags);
+    const candidates = tagSuggestionPool.filter((token) => !selected.has(token));
+    if (candidates.length === 0) return [];
+    const fromInput = candidates.filter((token) => {
+      const normalizedToken = token.slice(1).toLowerCase();
+      return suggestionTerms.some((term) => normalizedToken.includes(term));
+    });
+    const merged = [...fromInput, ...candidates.filter((token) => !fromInput.includes(token))];
+    return merged.slice(0, MAX_TOKEN_SUGGESTIONS);
+  }, [selectedTags, suggestionTerms, tagSuggestionPool]);
 
   const filteredProjects = useMemo(() => {
     if (!projectSearch.trim()) return projects;
@@ -106,7 +223,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const resetProcessingState = () => {
     resetTitleFocus();
     setCurrentIndex(0);
-    setProcessingStep('refine');
+    setActionabilityChoice('actionable');
+    setTwoMinuteChoice('no');
+    setExecutionChoice('defer');
     setSkippedIds(new Set());
     setPendingStartDate(null);
     setShowStartDatePicker(false);
@@ -122,13 +241,15 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     setProcessingDescription('');
     setAiModal(null);
   };
+  const scrollProcessingToTop = useCallback((animated: boolean = false) => {
+    requestAnimationFrame(() => {
+      processingScrollRef.current?.scrollTo({ y: 0, animated });
+    });
+  }, []);
 
   const hasInitialized = useRef(false);
-  const closingRef = useRef(false);
 
   const handleClose = () => {
-    if (closingRef.current) return;
-    closingRef.current = true;
     resetProcessingState();
     onClose();
   };
@@ -136,7 +257,6 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   useEffect(() => {
     if (!visible) {
       hasInitialized.current = false;
-      closingRef.current = false;
       return;
     }
     if (hasInitialized.current) return;
@@ -147,7 +267,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     }
     const firstTask = inboxTasks[0];
     setCurrentIndex(0);
-    setProcessingStep('refine');
+    setActionabilityChoice('actionable');
+    setTwoMinuteChoice('no');
+    setExecutionChoice('defer');
     setSkippedIds(new Set());
     setPendingStartDate(null);
     setShowStartDatePicker(false);
@@ -181,7 +303,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
       const nextIndex = Math.max(0, processingQueue.length - 1);
       const nextTask = processingQueue[nextIndex];
       setCurrentIndex(nextIndex);
-      setProcessingStep('refine');
+      setActionabilityChoice('actionable');
+      setTwoMinuteChoice('no');
+      setExecutionChoice('defer');
       setPendingStartDate(null);
       setShowStartDatePicker(false);
       setDelegateWho('');
@@ -207,9 +331,12 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
       handleClose();
       return;
     }
+    scrollProcessingToTop(false);
     // Keep the same index since the current task will be removed from the queue.
     setCurrentIndex(currentIndex);
-    setProcessingStep('refine');
+    setActionabilityChoice('actionable');
+    setTwoMinuteChoice('no');
+    setExecutionChoice('defer');
     setPendingStartDate(null);
     setShowDelegateDatePicker(false);
     setDelegateWho('');
@@ -224,11 +351,26 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     setProcessingDescription(nextTask?.description ?? '');
   };
 
-  const handleSkip = () => {
-    if (currentTask) {
-      setSkippedIds(prev => new Set([...prev, currentTask.id]));
+  useEffect(() => {
+    if (!visible || !currentTask) return;
+    scrollProcessingToTop(false);
+  }, [visible, currentTask, scrollProcessingToTop]);
+
+  const handleNextTask = () => {
+    if (!currentTask) return;
+    if (actionabilityChoice === 'trash' || actionabilityChoice === 'someday' || actionabilityChoice === 'reference') {
+      handleNotActionable(actionabilityChoice);
+      return;
     }
-    moveToNext();
+    if (twoMinuteChoice === 'yes') {
+      handleTwoMinYes();
+      return;
+    }
+    if (executionChoice === 'delegate') {
+      handleConfirmWaitingMobile();
+      return;
+    }
+    finalizeNextAction(selectedProjectId);
   };
 
   const applyProcessingEdits = (updates?: Partial<Task>) => {
@@ -254,36 +396,11 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     moveToNext();
   };
 
-  const handleRefineNext = () => {
-    applyProcessingEdits();
-    setProcessingStep(twoMinuteFirst ? 'twomin' : 'actionable');
-  };
-
-  const handleActionable = () => {
-    setProcessingStep(twoMinuteFirst ? 'decide' : 'twomin');
-  };
-
   const handleTwoMinYes = () => {
     if (currentTask) {
       applyProcessingEdits({ status: 'done' });
     }
     moveToNext();
-  };
-
-  const handleTwoMinNo = () => {
-    setProcessingStep(twoMinuteFirst ? 'actionable' : 'decide');
-  };
-
-  const handleDecision = (decision: 'delegate' | 'defer') => {
-    if (!currentTask) return;
-    if (decision === 'delegate') {
-      setDelegateWho('');
-      setDelegateFollowUpDate(null);
-      setProcessingStep('delegate');
-    } else {
-      setSelectedContexts(currentTask.contexts ?? []);
-      setProcessingStep('context');
-    }
   };
 
   const handleConfirmWaitingMobile = () => {
@@ -359,6 +476,17 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     setNewContext('');
   };
 
+  const applyTokenSuggestion = (token: string) => {
+    if (token.startsWith('#')) {
+      if (!selectedTags.includes(token)) {
+        setSelectedTags((prev) => [...prev, token]);
+      }
+    } else if (!selectedContexts.includes(token)) {
+      setSelectedContexts((prev) => [...prev, token]);
+    }
+    setNewContext('');
+  };
+
   const selectProjectEarly = (projectId: string | null) => {
     setSelectedProjectId(projectId);
     setProjectSearch('');
@@ -387,24 +515,6 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
     });
     setPendingStartDate(null);
     moveToNext();
-  };
-
-  const handleConfirmContextsMobile = () => {
-    if (projectFirst) {
-      finalizeNextAction(selectedProjectId);
-      return;
-    }
-    setProcessingStep('project');
-  };
-
-  const handleSetProject = (projectId: string | null) => {
-    setSelectedProjectId(projectId);
-    setProjectSearch('');
-    if (projectFirst) {
-      setProcessingStep('context');
-      return;
-    }
-    finalizeNextAction(projectId);
   };
 
   const handleAIClarifyInbox = async () => {
@@ -482,13 +592,18 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
       <Modal
         visible={visible}
         animationType="slide"
-        presentationStyle="fullScreen"
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        allowSwipeDismissal
         onRequestClose={handleClose}
-        onDismiss={handleClose}
       >
-        <View style={[styles.fullScreenContainer, { backgroundColor: tc.bg }]}>
+        <View
+          style={[styles.fullScreenContainer, { backgroundColor: tc.bg }]}
+        >
           <View style={headerStyle}>
-            <TouchableOpacity onPress={handleClose}>
+            <TouchableOpacity
+              style={[styles.headerActionButton, styles.headerActionButtonLeft]}
+              onPress={handleClose}
+            >
               <Text style={[styles.headerClose, { color: tc.text }]}>✕</Text>
             </TouchableOpacity>
             <View style={styles.progressContainer}>
@@ -504,7 +619,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
                 />
               </View>
             </View>
-            <View style={{ width: 32 }} />
+            <View style={styles.headerActionSpacer} />
           </View>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={tc.tint} />
@@ -533,13 +648,18 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
       <Modal
         visible={visible}
         animationType="slide"
-        presentationStyle="fullScreen"
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        allowSwipeDismissal
         onRequestClose={handleClose}
-        onDismiss={handleClose}
       >
-        <View style={[styles.fullScreenContainer, { backgroundColor: tc.bg }]}>
+        <View
+          style={[styles.fullScreenContainer, { backgroundColor: tc.bg }]}
+        >
           <View style={headerStyle}>
-            <TouchableOpacity onPress={handleClose}>
+            <TouchableOpacity
+              style={[styles.headerActionButton, styles.headerActionButtonLeft]}
+              onPress={handleClose}
+            >
               <Text style={[styles.headerClose, { color: tc.text }]}>✕</Text>
             </TouchableOpacity>
             <View style={styles.progressContainer}>
@@ -555,121 +675,34 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
                 />
               </View>
             </View>
-            <TouchableOpacity onPress={handleSkip}>
-              <Text style={styles.skipBtn}>{t('inbox.skip')} →</Text>
+            <TouchableOpacity
+              style={[styles.headerActionButton, styles.headerActionButtonRight]}
+              onPress={handleNextTask}
+            >
+              <Text style={styles.skipBtn}>
+                {(() => {
+                  const translated = t('inbox.nextTask');
+                  return translated === 'inbox.nextTask' ? 'Next task →' : translated;
+                })()}
+              </Text>
             </TouchableOpacity>
           </View>
 
           <View style={[styles.taskDisplay, { maxHeight: taskDisplayMaxHeight }]}>
-            {processingStep === 'refine' ? (
+            <Text style={[styles.taskTitle, titleDirectionStyle, { color: tc.text }]}>
+              {processingTitle || currentTask.title}
+            </Text>
+            {displayDescription ? (
               <ScrollView
-                style={styles.refineScroll}
-                contentContainerStyle={styles.refineContainer}
-                showsVerticalScrollIndicator={false}
                 nestedScrollEnabled
+                style={[styles.descriptionScroll, { maxHeight: descriptionMaxHeight }]}
+                contentContainerStyle={styles.descriptionScrollContent}
               >
-                <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.titleLabel')}</Text>
-                <TextInput
-                  ref={titleInputRef}
-                  style={[styles.refineTitleInput, titleDirectionStyle, { borderColor: tc.border, color: tc.text, backgroundColor: tc.cardBg }]}
-                  value={processingTitle}
-                  onChangeText={setProcessingTitle}
-                  placeholder={t('taskEdit.titleLabel')}
-                  placeholderTextColor={tc.secondaryText}
-                  onFocus={() => setProcessingTitleFocused(true)}
-                  onBlur={() => setProcessingTitleFocused(false)}
-                  selection={processingTitleFocused ? undefined : { start: 0, end: 0 }}
-                />
-                <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.descriptionLabel')}</Text>
-                <TextInput
-                  style={[styles.refineDescriptionInput, { borderColor: tc.border, color: tc.text, backgroundColor: tc.cardBg }]}
-                  value={processingDescription}
-                  onChangeText={setProcessingDescription}
-                  placeholder={t('taskEdit.descriptionPlaceholder')}
-                  placeholderTextColor={tc.secondaryText}
-                  multiline
-                  numberOfLines={4}
-                />
-                {projectFirst && (
-                  <View style={styles.projectRefineSection}>
-                    <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>
-                      {t('taskEdit.projectLabel')}
-                    </Text>
-                    {currentProject && (
-                      <TouchableOpacity
-                        style={[styles.projectChip, { backgroundColor: tc.tint }]}
-                        onPress={() => selectProjectEarly(currentProject.id)}
-                      >
-                        <Text style={styles.projectChipText}>✓ {currentProject.title}</Text>
-                      </TouchableOpacity>
-                    )}
-                    <View style={styles.projectSearchRow}>
-                      <TextInput
-                        value={projectSearch}
-                        onChangeText={setProjectSearch}
-                        placeholder={t('projects.addPlaceholder')}
-                        placeholderTextColor={tc.secondaryText}
-                        style={[styles.projectSearchInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                        onSubmitEditing={handleCreateProjectEarly}
-                        returnKeyType="done"
-                      />
-                      {!hasExactProjectMatch && projectSearch.trim() && (
-                        <TouchableOpacity
-                          style={[styles.createProjectButton, { backgroundColor: tc.tint }]}
-                          onPress={handleCreateProjectEarly}
-                        >
-                          <Text style={styles.createProjectButtonText}>{t('projects.create')}</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                    <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
-                      <TouchableOpacity
-                        style={[styles.projectChip, { backgroundColor: '#10B981' }]}
-                        onPress={() => selectProjectEarly(null)}
-                      >
-                        <Text style={styles.projectChipText}>✓ {t('inbox.noProject')}</Text>
-                      </TouchableOpacity>
-                      {filteredProjects.map(proj => {
-                        const projectColor = proj.areaId ? areaById.get(proj.areaId)?.color : undefined;
-                        const isSelected = selectedProjectId === proj.id;
-                        return (
-                          <TouchableOpacity
-                            key={proj.id}
-                            style={[
-                              styles.projectChip,
-                              isSelected
-                                ? { backgroundColor: '#3B82F620', borderWidth: 1, borderColor: tc.tint }
-                                : { backgroundColor: tc.cardBg, borderWidth: 1, borderColor: tc.border },
-                            ]}
-                            onPress={() => selectProjectEarly(proj.id)}
-                          >
-                            <View style={[styles.projectDot, { backgroundColor: projectColor || '#6B7280' }]} />
-                            <Text style={[styles.projectChipText, { color: tc.text }]}>{proj.title}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
-              </ScrollView>
-            ) : (
-              <>
-                <Text style={[styles.taskTitle, titleDirectionStyle, { color: tc.text }]}>
-                  {processingTitle || currentTask.title}
+                <Text style={[styles.taskDescription, { color: tc.secondaryText }]}>
+                  {displayDescription}
                 </Text>
-                {displayDescription ? (
-                  <ScrollView
-                    nestedScrollEnabled
-                    style={[styles.descriptionScroll, { maxHeight: descriptionMaxHeight }]}
-                    contentContainerStyle={styles.descriptionScrollContent}
-                  >
-                    <Text style={[styles.taskDescription, { color: tc.secondaryText }]}>
-                      {displayDescription}
-                    </Text>
-                  </ScrollView>
-                ) : null}
-              </>
-            )}
+              </ScrollView>
+            ) : null}
             <View style={styles.taskMetaRow}>
               {projectTitle && (
                 <Text
@@ -756,439 +789,437 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
           </View>
 
           <View style={styles.stepContainer}>
-            {processingStep === 'refine' && (
-              <View style={styles.stepContent}>
+            <ScrollView
+              ref={processingScrollRef}
+              style={styles.singlePageScroll}
+              contentContainerStyle={styles.singlePageContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
                 <Text style={[styles.stepQuestion, { color: tc.text }]}>
                   {t('inbox.refineTitle')}
                 </Text>
                 <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
                   {t('inbox.refineHint')}
                 </Text>
-                <View style={styles.buttonRow}>
-                  <TouchableOpacity
-                    style={[styles.button, { backgroundColor: '#EF4444' }]}
-                    onPress={() => handleNotActionable('trash')}
-                  >
-                    <Text style={styles.buttonPrimaryText}>🗑️ {t('inbox.refineDelete')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.button, styles.buttonPrimary]}
-                    onPress={handleRefineNext}
-                  >
-                    <Text style={styles.buttonPrimaryText}>{t('inbox.refineNext')}</Text>
-                  </TouchableOpacity>
-                </View>
+                <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.titleLabel')}</Text>
+                <TextInput
+                  ref={titleInputRef}
+                  style={[styles.refineTitleInput, titleDirectionStyle, { borderColor: tc.border, color: tc.text, backgroundColor: tc.cardBg }]}
+                  value={processingTitle}
+                  onChangeText={setProcessingTitle}
+                  placeholder={t('taskEdit.titleLabel')}
+                  placeholderTextColor={tc.secondaryText}
+                  onFocus={() => setProcessingTitleFocused(true)}
+                  onBlur={() => setProcessingTitleFocused(false)}
+                  selection={processingTitleFocused ? undefined : { start: 0, end: 0 }}
+                />
+                <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('taskEdit.descriptionLabel')}</Text>
+                <TextInput
+                  style={[styles.refineDescriptionInput, { borderColor: tc.border, color: tc.text, backgroundColor: tc.cardBg }]}
+                  value={processingDescription}
+                  onChangeText={setProcessingDescription}
+                  placeholder={t('taskEdit.descriptionPlaceholder')}
+                  placeholderTextColor={tc.secondaryText}
+                  multiline
+                  numberOfLines={4}
+                />
               </View>
-            )}
 
-            {processingStep === 'actionable' && (
-              <View style={styles.stepContent}>
+              <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
                 <Text style={[styles.stepQuestion, { color: tc.text }]}>
                   {t('inbox.isActionable')}
                 </Text>
                 <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
                   {t('inbox.actionableHint')}
                 </Text>
-
                 <View style={styles.buttonColumn}>
                   <TouchableOpacity
-                    style={[styles.bigButton, styles.buttonPrimary]}
-                    onPress={handleActionable}
+                    style={[
+                      styles.bigButton,
+                      actionabilityChoice === 'actionable' ? styles.buttonPrimary : { backgroundColor: tc.border },
+                    ]}
+                    onPress={() => setActionabilityChoice('actionable')}
                   >
-                    <Text style={styles.bigButtonText}>✅ {t('inbox.yesActionable')}</Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.buttonRow}>
-                    <TouchableOpacity
-                      style={[styles.button, { backgroundColor: '#EF4444' }]}
-                      onPress={() => handleNotActionable('trash')}
-                    >
-                      <Text style={styles.buttonPrimaryText}>🗑️ {t('inbox.trash')}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.button, { backgroundColor: '#8B5CF6' }]}
-                      onPress={() => handleNotActionable('someday')}
-                    >
-                      <Text style={styles.buttonPrimaryText}>💭 {t('inbox.someday')}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.button, { backgroundColor: '#3B82F6' }]}
-                      onPress={() => handleNotActionable('reference')}
-                    >
-                      <Text style={styles.buttonPrimaryText}>📚 {t('nav.reference')}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {processingStep === 'twomin' && (
-              <View style={styles.stepContent}>
-                <Text style={[styles.stepQuestion, { color: tc.text }]}>
-                  ⏱️ {t('inbox.twoMinRule')}
-                </Text>
-                <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-                  {t('inbox.twoMinHint')}
-                </Text>
-
-                <View style={styles.buttonColumn}>
-                  <TouchableOpacity
-                    style={[styles.bigButton, styles.buttonSuccess]}
-                    onPress={handleTwoMinYes}
-                  >
-                    <Text style={styles.bigButtonText}>✅ {t('inbox.doneIt')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.bigButton, { backgroundColor: tc.border }]}
-                    onPress={handleTwoMinNo}
-                  >
-                    <Text style={[styles.bigButtonText, { color: tc.text }]}>
-                      {t('inbox.takesLonger')}
+                    <Text style={[styles.bigButtonText, actionabilityChoice !== 'actionable' && { color: tc.text }]}>
+                      ✅ {t('inbox.yesActionable')}
                     </Text>
                   </TouchableOpacity>
+                  <View style={styles.buttonRow}>
+                    <TouchableOpacity
+                      style={[styles.button, { backgroundColor: actionabilityChoice === 'trash' ? '#EF4444' : tc.border }]}
+                      onPress={() => setActionabilityChoice('trash')}
+                    >
+                      <Text style={[styles.buttonPrimaryText, actionabilityChoice !== 'trash' && { color: tc.text }]}>🗑️ {t('inbox.trash')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.button, { backgroundColor: actionabilityChoice === 'someday' ? '#8B5CF6' : tc.border }]}
+                      onPress={() => setActionabilityChoice('someday')}
+                    >
+                      <Text style={[styles.buttonPrimaryText, actionabilityChoice !== 'someday' && { color: tc.text }]}>💭 {t('inbox.someday')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.button, { backgroundColor: actionabilityChoice === 'reference' ? '#3B82F6' : tc.border }]}
+                      onPress={() => setActionabilityChoice('reference')}
+                    >
+                      <Text style={[styles.buttonPrimaryText, actionabilityChoice !== 'reference' && { color: tc.text }]}>📚 {t('nav.reference')}</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
-            )}
 
-            {processingStep === 'decide' && (
-              <View style={styles.stepContent}>
-                <Text style={[styles.stepQuestion, { color: tc.text }]}>
-                  {t('inbox.whatNext')}
-                </Text>
-
-                {scheduleEnabled && (
-                <View style={styles.startDateRow}>
-                  <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-                    {t('taskEdit.startDateLabel')} ({t('common.notSet')})
+              {actionabilityChoice === 'actionable' && (
+                <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                  <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                    ⏱️ {t('inbox.twoMinRule')}
                   </Text>
-                  <View style={styles.startDateActions}>
+                  <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
+                    {t('inbox.twoMinHint')}
+                  </Text>
+                  <View style={styles.buttonColumn}>
                     <TouchableOpacity
-                      style={[styles.startDateButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
-                      onPress={() => setShowStartDatePicker(true)}
+                      style={[styles.bigButton, twoMinuteChoice === 'yes' ? styles.buttonSuccess : { backgroundColor: tc.border }]}
+                      onPress={() => setTwoMinuteChoice('yes')}
                     >
-                      <Text style={[styles.startDateButtonText, { color: tc.text }]}>
-                        {pendingStartDate ? safeFormatDate(pendingStartDate.toISOString(), 'P') : t('common.notSet')}
+                      <Text style={[styles.bigButtonText, twoMinuteChoice !== 'yes' && { color: tc.text }]}>✅ {t('inbox.doneIt')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.bigButton, twoMinuteChoice === 'no' ? styles.buttonPrimary : { backgroundColor: tc.border }]}
+                      onPress={() => setTwoMinuteChoice('no')}
+                    >
+                      <Text style={[styles.bigButtonText, twoMinuteChoice !== 'no' && { color: tc.text }]}>
+                        {t('inbox.takesLonger')}
                       </Text>
                     </TouchableOpacity>
-                    {pendingStartDate && (
-                      <TouchableOpacity
-                        style={[styles.startDateClear, { borderColor: tc.border }]}
-                        onPress={() => setPendingStartDate(null)}
-                      >
-                        <Text style={[styles.startDateClearText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 </View>
-                )}
+              )}
 
-                <View style={styles.buttonColumn}>
-                  <TouchableOpacity
-                    style={[styles.bigButton, styles.buttonPrimary]}
-                    onPress={() => handleDecision('defer')}
-                  >
-                    <Text style={styles.bigButtonText}>📋 {t('inbox.illDoIt')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.bigButton, { backgroundColor: '#F59E0B' }]}
-                    onPress={() => handleDecision('delegate')}
-                  >
-                    <Text style={styles.bigButtonText}>👤 {t('inbox.delegate')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {scheduleEnabled && showStartDatePicker && (
-              <DateTimePicker
-                value={pendingStartDate ?? new Date()}
-                mode="date"
-                display="default"
-                onChange={(event, date) => {
-                  if (event.type === 'dismissed') {
-                    setShowStartDatePicker(false);
-                    return;
-                  }
-                  if (Platform.OS !== 'ios') setShowStartDatePicker(false);
-                  if (!date) return;
-                  const next = new Date(date);
-                  next.setHours(9, 0, 0, 0);
-                  setPendingStartDate(next);
-                }}
-              />
-            )}
-
-            {showDelegateDatePicker && (
-              <DateTimePicker
-                value={delegateFollowUpDate ?? new Date()}
-                mode="date"
-                display="default"
-                onChange={(event, date) => {
-                  if (event.type === 'dismissed') {
-                    setShowDelegateDatePicker(false);
-                    return;
-                  }
-                  if (Platform.OS !== 'ios') setShowDelegateDatePicker(false);
-                  if (!date) return;
-                  const next = new Date(date);
-                  next.setHours(9, 0, 0, 0);
-                  setDelegateFollowUpDate(next);
-                }}
-              />
-            )}
-
-            {processingStep === 'delegate' && (
-              <View style={styles.stepContent}>
-                <Text style={[styles.stepQuestion, { color: tc.text }]}>
-                  👤 {t('process.delegateTitle')}
-                </Text>
-                <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-                  {t('process.delegateDesc')}
-                </Text>
-
-                <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('process.delegateWhoLabel')}</Text>
-                <TextInput
-                  style={[styles.waitingInput, { borderColor: tc.border, color: tc.text }]}
-                  placeholder={t('process.delegateWhoPlaceholder')}
-                  placeholderTextColor={tc.secondaryText}
-                  value={delegateWho}
-                  onChangeText={setDelegateWho}
-                />
-
-                <View style={styles.startDateRow}>
-                  <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
-                    {t('process.delegateFollowUpLabel')}
-                  </Text>
-                  <View style={styles.startDateActions}>
-                    <TouchableOpacity
-                      style={[styles.startDateButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
-                      onPress={() => setShowDelegateDatePicker(true)}
-                    >
-                      <Text style={[styles.startDateButtonText, { color: tc.text }]}>
-                        {delegateFollowUpDate ? safeFormatDate(delegateFollowUpDate.toISOString(), 'P') : t('common.notSet')}
+              {actionabilityChoice === 'actionable' && twoMinuteChoice === 'no' && (
+                <>
+                  {scheduleEnabled && (
+                    <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                      <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                        {t('taskEdit.startDateLabel')}
                       </Text>
-                    </TouchableOpacity>
-                    {delegateFollowUpDate && (
-                      <TouchableOpacity
-                        style={[styles.startDateClear, { borderColor: tc.border }]}
-                        onPress={() => setDelegateFollowUpDate(null)}
-                      >
-                        <Text style={[styles.startDateClearText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.buttonSecondary, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
-                  onPress={handleSendDelegateRequest}
-                >
-                  <Text style={[styles.buttonText, { color: tc.text }]}>{t('process.delegateSendRequest')}</Text>
-                </TouchableOpacity>
-
-                <View style={styles.buttonRow}>
-                  <TouchableOpacity
-                    style={[styles.button, { backgroundColor: tc.border }]}
-                    onPress={() => setProcessingStep('decide')}
-                  >
-                    <Text style={[styles.buttonText, { color: tc.text }]}>{t('common.back')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.button, { backgroundColor: '#F59E0B' }]}
-                    onPress={handleConfirmWaitingMobile}
-                  >
-                    <Text style={styles.buttonPrimaryText}>{t('process.delegateMoveToWaiting')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {processingStep === 'context' && (
-              <View style={styles.stepContent}>
-                <Text style={[styles.stepQuestion, { color: tc.text }]}>
-                  {t('inbox.whereDoIt')} {t('inbox.selectMultipleHint')}
-                </Text>
-
-                {selectedContexts.length > 0 && (
-                  <View style={[styles.selectedContextsContainer, { backgroundColor: '#3B82F620' }]}>
-                    <Text style={{ fontSize: 12, color: '#3B82F6', marginBottom: 4 }}>{t('inbox.selectedLabel')}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {selectedContexts.map(ctx => (
-                        <View key={ctx} style={{ backgroundColor: '#3B82F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                          <Text style={{ color: '#FFF', fontSize: 12 }}>{ctx}</Text>
-                        </View>
-                      ))}
+                      <View style={styles.startDateActions}>
+                        <TouchableOpacity
+                          style={[styles.startDateButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                          onPress={() => setShowStartDatePicker(true)}
+                        >
+                          <Text style={[styles.startDateButtonText, { color: tc.text }]}>
+                            {pendingStartDate ? safeFormatDate(pendingStartDate.toISOString(), 'P') : t('common.notSet')}
+                          </Text>
+                        </TouchableOpacity>
+                        {pendingStartDate && (
+                          <TouchableOpacity
+                            style={[styles.startDateClear, { borderColor: tc.border }]}
+                            onPress={() => setPendingStartDate(null)}
+                          >
+                            <Text style={[styles.startDateClearText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </View>
-                  </View>
-                )}
-
-                {selectedTags.length > 0 && (
-                  <View style={[styles.selectedContextsContainer, { backgroundColor: '#8B5CF620' }]}>
-                    <Text style={{ fontSize: 12, color: '#8B5CF6', marginBottom: 4 }}>{t('taskEdit.tagsLabel')}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {selectedTags.map(tag => (
-                        <View key={tag} style={{ backgroundColor: '#8B5CF6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                          <Text style={{ color: '#FFF', fontSize: 12 }}>{tag}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                <View style={styles.customContextContainer}>
-                  <TextInput
-                    style={[styles.contextInput, { borderColor: tc.border, color: tc.text }]}
-                    placeholder={t('inbox.addContextPlaceholder')}
-                    placeholderTextColor={tc.secondaryText}
-                    value={newContext}
-                    onChangeText={setNewContext}
-                    onSubmitEditing={addCustomContextMobile}
-                  />
-                  <TouchableOpacity
-                    style={styles.addContextButton}
-                    onPress={addCustomContextMobile}
-                    disabled={!newContext.trim()}
-                  >
-                    <Text style={styles.addContextButtonText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.contextWrap}>
-                  {PRESET_CONTEXTS.filter((ctx) => ctx.startsWith('@')).map(ctx => (
-                    <TouchableOpacity
-                      key={ctx}
-                      style={[
-                        styles.contextChip,
-                        selectedContexts.includes(ctx)
-                          ? { backgroundColor: '#3B82F6' }
-                          : { backgroundColor: tc.cardBg, borderWidth: 1, borderColor: tc.border }
-                      ]}
-                      onPress={() => toggleContext(ctx)}
-                    >
-                      <Text style={[
-                        styles.contextChipText,
-                        { color: selectedContexts.includes(ctx) ? '#FFF' : tc.text }
-                      ]}>{ctx}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <View style={styles.contextWrap}>
-                  {PRESET_TAGS.map(tag => (
-                    <TouchableOpacity
-                      key={tag}
-                      style={[
-                        styles.contextChip,
-                        selectedTags.includes(tag)
-                          ? { backgroundColor: '#8B5CF6' }
-                          : { backgroundColor: tc.cardBg, borderWidth: 1, borderColor: tc.border }
-                      ]}
-                      onPress={() => toggleTag(tag)}
-                    >
-                      <Text style={[
-                        styles.contextChipText,
-                        { color: selectedTags.includes(tag) ? '#FFF' : tc.text }
-                      ]}>{tag}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.bigButton, styles.buttonPrimary, { marginTop: 16 }]}
-                  onPress={handleConfirmContextsMobile}
-                >
-                  <Text style={styles.bigButtonText}>
-                    {(selectedContexts.length + selectedTags.length) > 0
-                      ? `${t('common.done')} (${selectedContexts.length + selectedTags.length})`
-                      : t('common.done')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {processingStep === 'project' && (
-              <View style={styles.stepContent}>
-                <Text style={[styles.stepQuestion, { color: tc.text }]}>
-                  📁 {t('inbox.assignProjectQuestion')}
-                </Text>
-
-                {currentProject && (
-                  <TouchableOpacity
-                    style={[styles.projectChip, { backgroundColor: tc.tint }]}
-                    onPress={() => handleSetProject(currentProject.id)}
-                  >
-                    <Text style={styles.projectChipText}>✓ {currentProject.title}</Text>
-                  </TouchableOpacity>
-                )}
-
-                <View style={styles.projectSearchRow}>
-                  <TextInput
-                    value={projectSearch}
-                    onChangeText={setProjectSearch}
-                    placeholder={t('projects.addPlaceholder')}
-                    placeholderTextColor={tc.secondaryText}
-                    style={[styles.projectSearchInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
-                    onSubmitEditing={async () => {
-                      const title = projectSearch.trim();
-                      if (!title) return;
-                      const existing = projects.find((project) => project.title.toLowerCase() === title.toLowerCase());
-                      if (existing) {
-                        handleSetProject(existing.id);
-                        return;
-                      }
-                      const created = await addProject(title, '#94a3b8');
-                      if (!created) return;
-                      handleSetProject(created.id);
-                      setProjectSearch('');
-                    }}
-                    returnKeyType="done"
-                  />
-                  {!hasExactProjectMatch && projectSearch.trim() && (
-                    <TouchableOpacity
-                      style={[styles.createProjectButton, { backgroundColor: tc.tint }]}
-                      onPress={async () => {
-                        const title = projectSearch.trim();
-                        if (!title) return;
-                        const created = await addProject(title, '#94a3b8');
-                        if (!created) return;
-                        handleSetProject(created.id);
-                        setProjectSearch('');
-                      }}
-                    >
-                      <Text style={styles.createProjectButtonText}>{t('projects.create')}</Text>
-                    </TouchableOpacity>
                   )}
-                </View>
 
-                <ScrollView style={{ maxHeight: 300 }}>
-                  <TouchableOpacity
-                    style={[styles.projectChip, { backgroundColor: '#10B981' }]}
-                    onPress={() => handleSetProject(null)}
-                  >
-                    <Text style={styles.projectChipText}>✓ {t('inbox.noProject')}</Text>
-                  </TouchableOpacity>
-                  {filteredProjects.map(proj => {
-                    const projectColor = proj.areaId ? areaById.get(proj.areaId)?.color : undefined;
-                    const isSelected = selectedProjectId === proj.id;
-                    return (
+                  <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                    <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                      {t('inbox.whatNext')}
+                    </Text>
+                    <View style={styles.buttonColumn}>
                       <TouchableOpacity
-                        key={proj.id}
-                        style={[
-                          styles.projectChip,
-                          isSelected
-                            ? { backgroundColor: '#3B82F620', borderWidth: 1, borderColor: tc.tint }
-                            : { backgroundColor: tc.cardBg, borderWidth: 1, borderColor: tc.border },
-                        ]}
-                        onPress={() => handleSetProject(proj.id)}
+                        style={[styles.bigButton, executionChoice === 'defer' ? styles.buttonPrimary : { backgroundColor: tc.border }]}
+                        onPress={() => setExecutionChoice('defer')}
                       >
-                        <View style={[styles.projectDot, { backgroundColor: projectColor || '#6B7280' }]} />
-                        <Text style={[styles.projectChipText, { color: tc.text }]}>{proj.title}</Text>
+                        <Text style={[styles.bigButtonText, executionChoice !== 'defer' && { color: tc.text }]}>
+                          📋 {t('inbox.illDoIt')}
+                        </Text>
                       </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                      <TouchableOpacity
+                        style={[styles.bigButton, executionChoice === 'delegate' ? { backgroundColor: '#F59E0B' } : { backgroundColor: tc.border }]}
+                        onPress={() => setExecutionChoice('delegate')}
+                      >
+                        <Text style={[styles.bigButtonText, executionChoice !== 'delegate' && { color: tc.text }]}>
+                          👤 {t('inbox.delegate')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {executionChoice === 'delegate' ? (
+                    <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                      <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                        👤 {t('process.delegateTitle')}
+                      </Text>
+                      <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
+                        {t('process.delegateDesc')}
+                      </Text>
+                      <Text style={[styles.refineLabel, { color: tc.secondaryText }]}>{t('process.delegateWhoLabel')}</Text>
+                      <TextInput
+                        style={[styles.waitingInput, { borderColor: tc.border, color: tc.text }]}
+                        placeholder={t('process.delegateWhoPlaceholder')}
+                        placeholderTextColor={tc.secondaryText}
+                        value={delegateWho}
+                        onChangeText={setDelegateWho}
+                      />
+                      <View style={styles.startDateRow}>
+                        <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
+                          {t('process.delegateFollowUpLabel')}
+                        </Text>
+                        <View style={styles.startDateActions}>
+                          <TouchableOpacity
+                            style={[styles.startDateButton, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                            onPress={() => setShowDelegateDatePicker(true)}
+                          >
+                            <Text style={[styles.startDateButtonText, { color: tc.text }]}>
+                              {delegateFollowUpDate ? safeFormatDate(delegateFollowUpDate.toISOString(), 'P') : t('common.notSet')}
+                            </Text>
+                          </TouchableOpacity>
+                          {delegateFollowUpDate && (
+                            <TouchableOpacity
+                              style={[styles.startDateClear, { borderColor: tc.border }]}
+                              onPress={() => setDelegateFollowUpDate(null)}
+                            >
+                              <Text style={[styles.startDateClearText, { color: tc.secondaryText }]}>{t('common.clear')}</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.buttonSecondary, { borderColor: tc.border, backgroundColor: tc.cardBg }]}
+                        onPress={handleSendDelegateRequest}
+                      >
+                        <Text style={[styles.buttonText, { color: tc.text }]}>{t('process.delegateSendRequest')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                        <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                          {t('inbox.whereDoIt')} {t('inbox.selectMultipleHint')}
+                        </Text>
+                        {selectedContexts.length > 0 && (
+                          <View style={[styles.selectedContextsContainer, { backgroundColor: '#3B82F620' }]}>
+                            <Text style={{ fontSize: 12, color: '#3B82F6', marginBottom: 4 }}>{t('inbox.selectedLabel')}</Text>
+                            <View style={styles.selectedTokensRow}>
+                              {selectedContexts.map(ctx => (
+                                <TouchableOpacity
+                                  key={ctx}
+                                  onPress={() => toggleContext(ctx)}
+                                  style={[styles.selectedTokenChip, styles.selectedContextChip]}
+                                >
+                                  <Text style={styles.selectedTokenText}>{ctx} x</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                        {selectedTags.length > 0 && (
+                          <View style={[styles.selectedContextsContainer, { backgroundColor: '#8B5CF620' }]}>
+                            <Text style={{ fontSize: 12, color: '#8B5CF6', marginBottom: 4 }}>{t('taskEdit.tagsLabel')}</Text>
+                            <View style={styles.selectedTokensRow}>
+                              {selectedTags.map(tag => (
+                                <TouchableOpacity
+                                  key={tag}
+                                  onPress={() => toggleTag(tag)}
+                                  style={[styles.selectedTokenChip, styles.selectedTagChip]}
+                                >
+                                  <Text style={styles.selectedTokenText}>{tag} x</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                        <View style={styles.customContextContainer}>
+                          <TextInput
+                            style={[styles.contextInput, { borderColor: tc.border, color: tc.text }]}
+                            placeholder={t('inbox.addContextPlaceholder')}
+                            placeholderTextColor={tc.secondaryText}
+                            value={newContext}
+                            onChangeText={setNewContext}
+                            onSubmitEditing={addCustomContextMobile}
+                          />
+                          <TouchableOpacity
+                            style={styles.addContextButton}
+                            onPress={addCustomContextMobile}
+                            disabled={!newContext.trim()}
+                          >
+                            <Text style={styles.addContextButtonText}>+</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {tokenSuggestions.length > 0 && (
+                          <View style={[styles.tokenSuggestionsContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            {tokenSuggestions.map((token) => (
+                              <TouchableOpacity
+                                key={token}
+                                style={styles.tokenSuggestionChip}
+                                onPress={() => applyTokenSuggestion(token)}
+                              >
+                                <Text style={[styles.tokenSuggestionText, { color: tc.text }]}>{token}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                        {contextCopilotSuggestions.length > 0 && (
+                          <View style={[styles.tokenSuggestionsContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            <Text style={[styles.tokenSectionTitle, { color: tc.secondaryText }]}>Suggested contexts</Text>
+                            <View style={styles.tokenChipWrap}>
+                              {contextCopilotSuggestions.map((token) => (
+                                <TouchableOpacity
+                                  key={`ctx-${token}`}
+                                  style={[styles.suggestionChip, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                  onPress={() => applyTokenSuggestion(token)}
+                                >
+                                  <Text style={[styles.tokenSuggestionText, { color: tc.text }]}>{token}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                        {tagCopilotSuggestions.length > 0 && (
+                          <View style={[styles.tokenSuggestionsContainer, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            <Text style={[styles.tokenSectionTitle, { color: tc.secondaryText }]}>Suggested tags</Text>
+                            <View style={styles.tokenChipWrap}>
+                              {tagCopilotSuggestions.map((token) => (
+                                <TouchableOpacity
+                                  key={`tag-${token}`}
+                                  style={[styles.suggestionChip, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
+                                  onPress={() => applyTokenSuggestion(token)}
+                                >
+                                  <Text style={[styles.tokenSuggestionText, { color: tc.text }]}>{token}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                        <Text style={[styles.stepQuestion, { color: tc.text }]}>
+                          📁 {t('inbox.assignProjectQuestion')}
+                        </Text>
+                        {currentProject && (
+                          <TouchableOpacity
+                            style={[styles.projectChip, { backgroundColor: tc.tint }]}
+                            onPress={() => selectProjectEarly(currentProject.id)}
+                          >
+                            <Text style={styles.projectChipText}>✓ {currentProject.title}</Text>
+                          </TouchableOpacity>
+                        )}
+                        <View style={styles.projectSearchRow}>
+                          <TextInput
+                            value={projectSearch}
+                            onChangeText={setProjectSearch}
+                            placeholder={t('projects.addPlaceholder')}
+                            placeholderTextColor={tc.secondaryText}
+                            style={[styles.projectSearchInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                            onSubmitEditing={handleCreateProjectEarly}
+                            returnKeyType="done"
+                          />
+                          {!hasExactProjectMatch && projectSearch.trim() && (
+                            <TouchableOpacity
+                              style={[styles.createProjectButton, { backgroundColor: tc.tint }]}
+                              onPress={handleCreateProjectEarly}
+                            >
+                              <Text style={styles.createProjectButtonText}>{t('projects.create')}</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        <ScrollView style={{ maxHeight: 280 }} nestedScrollEnabled>
+                          <TouchableOpacity
+                            style={[styles.projectChip, { backgroundColor: '#10B981' }]}
+                            onPress={() => selectProjectEarly(null)}
+                          >
+                            <Text style={styles.projectChipText}>✓ {t('inbox.noProject')}</Text>
+                          </TouchableOpacity>
+                          {filteredProjects.map(proj => {
+                            const projectColor = proj.areaId ? areaById.get(proj.areaId)?.color : undefined;
+                            const isSelected = selectedProjectId === proj.id;
+                            return (
+                              <TouchableOpacity
+                                key={proj.id}
+                                style={[
+                                  styles.projectChip,
+                                  isSelected
+                                    ? { backgroundColor: '#3B82F620', borderWidth: 1, borderColor: tc.tint }
+                                    : { backgroundColor: tc.cardBg, borderWidth: 1, borderColor: tc.border },
+                                ]}
+                                onPress={() => selectProjectEarly(proj.id)}
+                              >
+                                <View style={[styles.projectDot, { backgroundColor: projectColor || '#6B7280' }]} />
+                                <Text style={[styles.projectChipText, { color: tc.text }]}>{proj.title}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    </>
+                  )}
+                </>
+              )}
+
+              {scheduleEnabled && showStartDatePicker && (
+                <DateTimePicker
+                  value={pendingStartDate ?? new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(event, date) => {
+                    if (event.type === 'dismissed') {
+                      setShowStartDatePicker(false);
+                      return;
+                    }
+                    if (Platform.OS !== 'ios') setShowStartDatePicker(false);
+                    if (!date) return;
+                    const next = new Date(date);
+                    next.setHours(9, 0, 0, 0);
+                    setPendingStartDate(next);
+                  }}
+                />
+              )}
+
+              {showDelegateDatePicker && (
+                <DateTimePicker
+                  value={delegateFollowUpDate ?? new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(event, date) => {
+                    if (event.type === 'dismissed') {
+                      setShowDelegateDatePicker(false);
+                      return;
+                    }
+                    if (Platform.OS !== 'ios') setShowDelegateDatePicker(false);
+                    if (!date) return;
+                    const next = new Date(date);
+                    next.setHours(9, 0, 0, 0);
+                    setDelegateFollowUpDate(next);
+                  }}
+                />
+              )}
+
+              <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
+                <Text style={[styles.stepHint, { color: tc.secondaryText }]}>
+                  {t('inbox.tapNextHint') === 'inbox.tapNextHint'
+                    ? 'Tap "Next task" at the bottom to apply your choices and move on.'
+                    : t('inbox.tapNextHint')}
+                </Text>
               </View>
-            )}
+            </ScrollView>
+            <View style={[styles.bottomActionBar, { borderTopColor: tc.border, paddingBottom: Math.max(insets.bottom, 10) }]}>
+              <TouchableOpacity
+                style={[styles.bottomNextButton, { backgroundColor: tc.tint }]}
+                onPress={handleNextTask}
+              >
+                <Text style={styles.bottomNextButtonText}>
+                  {(() => {
+                    const translated = t('inbox.nextTask');
+                    return translated === 'inbox.nextTask' ? 'Next task →' : translated;
+                  })()}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

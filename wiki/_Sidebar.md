@@ -14,6 +14,7 @@
   * [[Desktop Keyboard Shortcuts]]
 * [[User Guide Mobile]]
   * [[Mobile Installation]]
+* [[Pomodoro Focus]]
 * [[Docker Deployment]]
 
 ---
@@ -29,6 +30,7 @@
 
 **Data & Sync**
 * [[Data and Sync]]
+* [[Sync Algorithm]]
 * [[Cloud Sync]]
 * [[Local API]]
 * [[MCP Server]]
@@ -45,6 +47,9 @@
 * [[Developer Guide]]
 * [[Architecture]]
 * [[Core API]]
+* [[Deployment Guide]]
+* [[Testing Strategy]]
+* [[Performance Guide]]
 * [[Contributing]]
 
 ---

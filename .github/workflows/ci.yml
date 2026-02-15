@@ -11,6 +11,7 @@ jobs:
   core:
     runs-on: ubuntu-latest
     name: Core Package
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,7 +19,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: |
@@ -30,12 +31,12 @@ jobs:
 
       - name: Run unit tests
         run: cd packages/core && bun test
-        continue-on-error: true
 
   # Desktop app build and tests (Tauri)
   desktop:
     runs-on: ubuntu-latest
     name: Desktop App (Tauri)
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,7 +48,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        continue-on-error: true
 
       - name: Ensure Rust toolchain (retry)
         uses: nick-fields/retry@v3
@@ -58,36 +58,39 @@ jobs:
             rustup toolchain install stable --profile minimal --no-self-update
             rustup default stable
 
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install
 
       - name: TypeScript check
         run: cd apps/desktop && bun run tsc --noEmit
-        continue-on-error: true
 
       - name: Run tests
         run: cd apps/desktop && bun test
-        continue-on-error: true
 
       - name: Build Vite frontend
         run: cd apps/desktop && bun run build:vite
 
       - name: Build Tauri app (debug, no bundle)
         run: cd apps/desktop && cargo tauri build --debug --no-bundle
-        continue-on-error: true
 
   # Mobile app validation
   mobile:
     runs-on: ubuntu-latest
     name: Mobile App
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,14 +98,13 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install
 
       - name: TypeScript check
         run: cd apps/mobile && bunx tsc --noEmit
-        continue-on-error: true
 
       - name: Expo Doctor check
         run: cd apps/mobile && bunx expo-doctor
@@ -110,12 +112,12 @@ jobs:
 
       - name: Mobile tests
         run: bun run --filter mobile test
-        continue-on-error: true
 
   # Lint check
   lint:
     runs-on: ubuntu-latest
     name: Code Quality
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,7 +125,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install
@@ -133,4 +135,3 @@ jobs:
 
       - name: Check for lint errors (mobile)
         run: cd apps/mobile && bun run lint
-        continue-on-error: true

@@ -2,6 +2,8 @@ export type RetryOptions = {
     maxAttempts?: number;
     baseDelayMs?: number;
     maxDelayMs?: number;
+    jitterRatio?: number;
+    random?: () => number;
     shouldRetry?: (error: unknown, attempt: number) => boolean;
     onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
 };
@@ -9,6 +11,7 @@ export type RetryOptions = {
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_DELAY_MS = 30_000;
+const DEFAULT_JITTER_RATIO = 0.2;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -47,6 +50,8 @@ export async function withRetry<T>(
     const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     const baseDelayMs = Math.max(0, options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
     const maxDelayMs = Math.max(baseDelayMs, options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS);
+    const jitterRatio = Math.max(0, Math.min(1, options.jitterRatio ?? DEFAULT_JITTER_RATIO));
+    const random = options.random ?? Math.random;
     const shouldRetry = options.shouldRetry ?? isRetryableError;
 
     let lastError: unknown;
@@ -57,7 +62,10 @@ export async function withRetry<T>(
             lastError = error;
             const canRetry = attempt < maxAttempts && shouldRetry(error, attempt);
             if (!canRetry) break;
-            const delayMs = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1));
+            const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1));
+            const jitterSpan = exponentialDelay * jitterRatio;
+            const jitterOffset = jitterSpan > 0 ? ((random() * 2) - 1) * jitterSpan : 0;
+            const delayMs = Math.max(0, Math.min(maxDelayMs, exponentialDelay + jitterOffset));
             options.onRetry?.(error, attempt, delayMs);
             if (delayMs > 0) {
                 await sleep(delayMs);

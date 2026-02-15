@@ -1,0 +1,3 @@
+- Se agregaron notificaciones fiables para tareas programadas y recordatorios de revisión, con mejor navegación al tocar la notificación.
+- Se añadió el temporizador Pomodoro opcional en escritorio y móvil (desactivado por defecto).
+- Mejoras en móvil: corrección de navegación de tareas completadas, hueco de teclado en iOS, repetición de audio y comportamiento de cierre de modales.

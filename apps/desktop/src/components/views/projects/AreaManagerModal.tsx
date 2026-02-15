@@ -15,6 +15,7 @@ type AreaManagerModalProps = {
     newAreaName: string;
     onChangeNewAreaName: ChangeEventHandler<HTMLInputElement>;
     onCreateArea: () => void;
+    isCreatingArea?: boolean;
     onSortByName: () => void;
     onSortByColor: () => void;
     onClose: () => void;
@@ -32,6 +33,7 @@ export function AreaManagerModal({
     newAreaName,
     onChangeNewAreaName,
     onCreateArea,
+    isCreatingArea = false,
     onSortByName,
     onSortByColor,
     onClose,
@@ -125,9 +127,10 @@ export function AreaManagerModal({
                             <button
                                 type="button"
                                 onClick={onCreateArea}
+                                disabled={isCreatingArea}
                                 className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90"
                             >
-                                {t('projects.create')}
+                                {isCreatingArea ? (t('common.loading') || 'Loading...') : t('projects.create')}
                             </button>
                         </div>
                     </div>

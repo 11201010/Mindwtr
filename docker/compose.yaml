@@ -16,9 +16,9 @@ services:
     ports:
       - 8787:8787
     environment:
-      - MINDWTR_CLOUD_TOKEN=your_token_here
+      - MINDWTR_CLOUD_AUTH_TOKENS=your_token_here
     volumes:
-      - /path/data_dir:/app/cloud_data
+      - ./data:/app/cloud_data
 
   mindwtr-app:
     image: ghcr.io/dongdongbh/mindwtr-app:latest

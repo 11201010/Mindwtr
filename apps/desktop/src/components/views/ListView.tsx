@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { AlertTriangle, Folder } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { shallow, useTaskStore, TaskPriority, TimeEstimate, sortTasksBy, parseQuickAdd, matchesHierarchicalToken, safeParseDate, isTaskInActiveProject } from '@mindwtr/core';
+import { useTaskStore, TaskPriority, TimeEstimate, sortTasksBy, parseQuickAdd, matchesHierarchicalToken, safeParseDate, isTaskInActiveProject } from '@mindwtr/core';
 import type { Task, TaskStatus } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
@@ -38,48 +38,24 @@ const VIRTUAL_OVERSCAN = 600;
 
 export function ListView({ title, statusFilter }: ListViewProps) {
     const perf = usePerformanceMonitor('ListView');
-    const {
-        tasks,
-        projects,
-        areas,
-        settings,
-        updateSettings,
-        addTask,
-        addProject,
-        updateTask,
-        updateProject,
-        deleteTask,
-        moveTask,
-        batchMoveTasks,
-        batchDeleteTasks,
-        batchUpdateTasks,
-        queryTasks,
-        lastDataChangeAt,
-        highlightTaskId,
-        setHighlightTask,
-    } = useTaskStore(
-        (state) => ({
-            tasks: state.tasks,
-            projects: state.projects,
-            areas: state.areas,
-            settings: state.settings,
-            updateSettings: state.updateSettings,
-            addTask: state.addTask,
-            addProject: state.addProject,
-            updateTask: state.updateTask,
-            updateProject: state.updateProject,
-            deleteTask: state.deleteTask,
-            moveTask: state.moveTask,
-            batchMoveTasks: state.batchMoveTasks,
-            batchDeleteTasks: state.batchDeleteTasks,
-            batchUpdateTasks: state.batchUpdateTasks,
-            queryTasks: state.queryTasks,
-            lastDataChangeAt: state.lastDataChangeAt,
-            highlightTaskId: state.highlightTaskId,
-            setHighlightTask: state.setHighlightTask,
-        }),
-        shallow
-    );
+    const tasks = useTaskStore((state) => state.tasks);
+    const projects = useTaskStore((state) => state.projects);
+    const areas = useTaskStore((state) => state.areas);
+    const settings = useTaskStore((state) => state.settings);
+    const updateSettings = useTaskStore((state) => state.updateSettings);
+    const addTask = useTaskStore((state) => state.addTask);
+    const addProject = useTaskStore((state) => state.addProject);
+    const updateTask = useTaskStore((state) => state.updateTask);
+    const updateProject = useTaskStore((state) => state.updateProject);
+    const deleteTask = useTaskStore((state) => state.deleteTask);
+    const moveTask = useTaskStore((state) => state.moveTask);
+    const batchMoveTasks = useTaskStore((state) => state.batchMoveTasks);
+    const batchDeleteTasks = useTaskStore((state) => state.batchDeleteTasks);
+    const batchUpdateTasks = useTaskStore((state) => state.batchUpdateTasks);
+    const queryTasks = useTaskStore((state) => state.queryTasks);
+    const lastDataChangeAt = useTaskStore((state) => state.lastDataChangeAt);
+    const highlightTaskId = useTaskStore((state) => state.highlightTaskId);
+    const setHighlightTask = useTaskStore((state) => state.setHighlightTask);
     const { t } = useLanguage();
     const { registerTaskListScope } = useKeybindings();
     const sortBy = (settings?.taskSortBy ?? 'default') as TaskSortBy;
@@ -93,6 +69,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const listFilters = useUiStore((state) => state.listFilters);
     const setListFilters = useUiStore((state) => state.setListFilters);
     const resetListFilters = useUiStore((state) => state.resetListFilters);
+    const showToast = useUiStore((state) => state.showToast);
     const showListDetails = useUiStore((state) => state.listOptions.showDetails);
     const setListOptions = useUiStore((state) => state.setListOptions);
     const setProjectView = useUiStore((state) => state.setProjectView);
@@ -291,6 +268,57 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             return sortTasksBy(filtered, sortBy);
         });
     }, [baseTasks, statusFilter, selectedTokens, activePriorities, activeTimeEstimates, sequentialProjectFirstTasks, projectMap, sortBy, sortByProjectOrder, resolvedAreaFilter, areaById]);
+    const resolveText = useCallback((key: string, fallback: string) => {
+        const value = t(key);
+        return value === key ? fallback : value;
+    }, [t]);
+    const isReferenceAreaGrouping = statusFilter === 'reference';
+    const referenceAreaGroups = useMemo(() => {
+        if (!isReferenceAreaGrouping) return [] as Array<{ id: string; title: string; tasks: Task[]; muted?: boolean }>;
+        const activeAreas = [...areas]
+            .filter((area) => !area.deletedAt)
+            .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name));
+        const validAreaIds = new Set(activeAreas.map((area) => area.id));
+        const grouped = new Map<string, Task[]>();
+        const generalTasks: Task[] = [];
+
+        filteredTasks.forEach((task) => {
+            const projectAreaId = task.projectId ? projectMap.get(task.projectId)?.areaId : undefined;
+            const resolvedAreaId = task.areaId || projectAreaId;
+            if (resolvedAreaId && validAreaIds.has(resolvedAreaId)) {
+                const items = grouped.get(resolvedAreaId) ?? [];
+                items.push(task);
+                grouped.set(resolvedAreaId, items);
+            } else {
+                generalTasks.push(task);
+            }
+        });
+
+        const groups: Array<{ id: string; title: string; tasks: Task[]; muted?: boolean }> = [];
+        if (generalTasks.length > 0) {
+            groups.push({
+                id: 'general',
+                title: resolveText('settings.general', 'General'),
+                tasks: generalTasks,
+                muted: true,
+            });
+        }
+        activeAreas.forEach((area) => {
+            const tasksForArea = grouped.get(area.id) ?? [];
+            if (tasksForArea.length === 0) return;
+            groups.push({
+                id: area.id,
+                title: area.name,
+                tasks: tasksForArea,
+            });
+        });
+        return groups;
+    }, [areas, filteredTasks, isReferenceAreaGrouping, projectMap, t]);
+    const taskIndexById = useMemo(() => {
+        const map = new Map<string, number>();
+        filteredTasks.forEach((task, index) => map.set(task.id, index));
+        return map;
+    }, [filteredTasks]);
 
     const showDeferredProjects = statusFilter === 'someday' || statusFilter === 'waiting';
     const deferredProjects = showDeferredProjects
@@ -307,10 +335,13 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     }, [setProjectView]);
     const handleReactivateProject = useCallback((projectId: string) => {
         updateProject(projectId, { status: 'active' })
-            .catch((error) => reportError('Failed to reactivate project', error));
-    }, [updateProject]);
+            .catch((error) => {
+                reportError('Failed to reactivate project', error);
+                showToast(t('projects.reactivateFailed') || 'Failed to reactivate project', 'error');
+            });
+    }, [showToast, t, updateProject]);
 
-    const shouldVirtualize = filteredTasks.length > VIRTUALIZATION_THRESHOLD;
+    const shouldVirtualize = !isReferenceAreaGrouping && filteredTasks.length > VIRTUALIZATION_THRESHOLD;
     const rowVirtualizer = useVirtualizer({
         count: shouldVirtualize ? filteredTasks.length : 0,
         getScrollElement: () => listScrollRef.current,
@@ -476,9 +507,14 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 
     const handleBatchMove = useCallback(async (newStatus: TaskStatus) => {
         if (selectedIdsArray.length === 0) return;
-        await batchMoveTasks(selectedIdsArray, newStatus);
-        exitSelectionMode();
-    }, [batchMoveTasks, selectedIdsArray, exitSelectionMode]);
+        try {
+            await batchMoveTasks(selectedIdsArray, newStatus);
+            exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch move tasks', error);
+            showToast(t('bulk.moveFailed') || 'Failed to update selected tasks', 'error');
+        }
+    }, [batchMoveTasks, selectedIdsArray, exitSelectionMode, showToast, t]);
 
     const handleBatchDelete = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
@@ -488,10 +524,13 @@ export function ListView({ title, statusFilter }: ListViewProps) {
         try {
             await batchDeleteTasks(selectedIdsArray);
             exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch delete tasks', error);
+            showToast(t('bulk.deleteFailed') || 'Failed to delete selected tasks', 'error');
         } finally {
             setIsBatchDeleting(false);
         }
-    }, [batchDeleteTasks, selectedIdsArray, exitSelectionMode]);
+    }, [batchDeleteTasks, selectedIdsArray, exitSelectionMode, showToast, t]);
 
     const handleBatchAddTag = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
@@ -515,7 +554,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 
     const handleAddTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (newTaskTitle.trim()) {
+        if (!newTaskTitle.trim()) return;
+        try {
             const { title: parsedTitle, props, projectTitle } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
             const finalTitle = parsedTitle || newTaskTitle;
             const initialProps: Partial<Task> = { ...props };
@@ -542,6 +582,9 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             await addTask(finalTitle, initialProps);
             setNewTaskTitle('');
             resetCopilot();
+        } catch (error) {
+            reportError('Failed to add task from quick add', error);
+            showToast(t('task.addFailed') || 'Failed to add task', 'error');
         }
     };
 
@@ -605,11 +648,6 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             detail: { initialProps: { status: initialStatus }, captureMode },
         }));
     }, []);
-
-    const resolveText = useCallback((key: string, fallback: string) => {
-        const value = t(key);
-        return value === key ? fallback : value;
-    }, [t]);
 
     const emptyState = useMemo(() => {
         switch (statusFilter) {
@@ -683,6 +721,14 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                         }}
                         t={t}
                     />
+
+                    {(isProcessing || isBatchDeleting) && (
+                        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            {isBatchDeleting
+                                ? (t('bulk.deleting') || 'Deleting selected tasks...')
+                                : (t('common.loading') || 'Loading...')}
+                        </div>
+                    )}
 
                     {selectionMode && selectedIdsArray.length > 0 && (
                         <ListBulkActions
@@ -875,7 +921,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                                         transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                 >
-                                    <div className={cn(isCompact ? "pb-2" : "pb-3")}>
+                                    <div className={cn(isCompact ? "pb-1" : "pb-1.5")}>
                                         <TaskItem
                                             key={task.id}
                                             task={task}
@@ -890,13 +936,49 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                                             compactMetaEnabled={showListDetails}
                                             showProjectBadgeInActions={false}
                                         />
+                                        <div className="mx-3 mt-1 h-px bg-border/30" />
                                     </div>
                                 </div>
                             );
                         })}
                     </div>
+                ) : isReferenceAreaGrouping ? (
+                    <div className="space-y-2">
+                        {referenceAreaGroups.map((group) => (
+                            <div key={group.id} className="rounded-md border border-border/40 bg-card/30">
+                                <div className={cn(
+                                    'px-3 py-2 text-xs font-semibold uppercase tracking-wide border-b border-border/30',
+                                    group.muted ? 'text-muted-foreground' : 'text-foreground/90',
+                                )}>
+                                    <span>{group.title}</span>
+                                    <span className="ml-2 text-muted-foreground">{group.tasks.length}</span>
+                                </div>
+                                <div className="divide-y divide-border/30">
+                                    {group.tasks.map((task) => {
+                                        const index = taskIndexById.get(task.id) ?? 0;
+                                        return (
+                                            <TaskItem
+                                                key={task.id}
+                                                task={task}
+                                                project={task.projectId ? projectMap.get(task.projectId) : undefined}
+                                                isSelected={index === selectedIndex}
+                                                onSelect={() => handleSelectIndex(index)}
+                                                selectionMode={selectionMode}
+                                                isMultiSelected={multiSelectedIds.has(task.id)}
+                                                onToggleSelect={() => toggleMultiSelect(task.id)}
+                                                showQuickDone={showQuickDone}
+                                                readOnly={readOnly}
+                                                compactMetaEnabled={showListDetails}
+                                                showProjectBadgeInActions={false}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 ) : (
-                    <div className={cn(isCompact ? "space-y-2" : "space-y-3")}>
+                    <div className="divide-y divide-border/30">
                         {filteredTasks.map((task, index) => (
                             <TaskItem
                                 key={task.id}

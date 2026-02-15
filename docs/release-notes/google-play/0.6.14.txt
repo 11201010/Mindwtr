@@ -1,0 +1,18 @@
+<en-US>
+- Improved sync safety and conflict resolution to reduce cross-device data loss risks.
+- Mobile inbox processing is now faster with a single-page flow and better quick-add token handling.
+- Better task editing UX on mobile: improved date picker behavior, safer headers, and larger touch targets.
+- Performance and reliability upgrades across sync, SQLite locking, and network/offline handling.
+</en-US>
+<zh-CN>
+- 提升同步安全性与冲突处理，降低多设备数据丢失风险。
+- 移动端收件箱处理改为单页流程，快速添加的 token 输入体验更顺畅。
+- 移动端任务编辑体验改进：日期选择器行为更稳定，顶部栏更安全，触控区域更大。
+- 在同步、SQLite 锁竞争与网络离线处理方面进行了性能与可靠性优化。
+</zh-CN>
+<es-ES>
+- Mejoramos la seguridad del sync y la resolución de conflictos para reducir riesgos de pérdida de datos entre dispositivos.
+- El procesamiento de bandeja en móvil ahora es más rápido con flujo de una sola página y mejor manejo de tokens en quick-add.
+- Mejor UX al editar tareas en móvil: selector de fecha más estable, encabezados más seguros y objetivos táctiles más grandes.
+- Mejoras de rendimiento y fiabilidad en sync, bloqueo SQLite y manejo de red/offline.
+</es-ES>

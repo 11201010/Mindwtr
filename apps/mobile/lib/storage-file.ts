@@ -1,6 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Directory as ExpoDirectory, File as ExpoFile } from 'expo-file-system';
 import { AppData } from '@mindwtr/core';
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './app-log';
@@ -15,15 +16,116 @@ interface PickResult extends AppData {
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
 const READONLY_FOLDER_MESSAGE = 'Selected folder is read-only. Please choose a writable folder or make it available offline.';
+const syncUriResolutionCache = new Map<string, string>();
 
 const isReadOnlyError = (error: unknown): boolean => {
     const message = String(error);
     return /isn't writable|not writable|read-only|read only|permission denied|EACCES/i.test(message);
 };
 
+const isPickerCanceledError = (error: unknown): boolean => {
+    const message = String(error);
+    return /cancel/i.test(message);
+};
+
 function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+const normalizeDirectoryUri = (uri: string): string => uri.replace(/\/+$/, '');
+
+const buildSyncFileUri = (directoryUri: string, fileName = SYNC_FILE_NAME): string =>
+    `${normalizeDirectoryUri(directoryUri)}/${fileName}`;
+
+const decodeUriSafe = (value: string): string => {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+};
+
+const isLikelySyncFileUri = (uri: string): boolean => {
+    const decoded = decodeUriSafe(uri);
+    return decoded.endsWith(`/${SYNC_FILE_NAME}`)
+        || decoded.endsWith(`:${SYNC_FILE_NAME}`)
+        || decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`)
+        || decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`);
+};
+
+const buildChildDocId = (baseDocId: string, leafName: string): string => {
+    if (baseDocId.endsWith(':')) return `${baseDocId}${leafName}`;
+    return `${baseDocId}/${leafName}`;
+};
+
+type SafContext = {
+    prefix: string;
+    treeIdEncoded: string;
+    treeIdDecoded: string;
+};
+
+const parseSafContext = (uri: string): SafContext | null => {
+    const prefixMatch = uri.match(/^(content:\/\/[^/]+)/);
+    if (!prefixMatch) return null;
+    const prefix = prefixMatch[1];
+
+    const treeMatch = uri.match(/\/tree\/([^/?#]+)/);
+    if (treeMatch) {
+        const treeIdEncoded = treeMatch[1];
+        return {
+            prefix,
+            treeIdEncoded,
+            treeIdDecoded: decodeUriSafe(treeIdEncoded),
+        };
+    }
+
+    const docMatch = uri.match(/\/document\/([^/?#]+)/);
+    if (!docMatch) return null;
+    const documentId = decodeUriSafe(docMatch[1]);
+    if (!documentId) return null;
+
+    if (isLikelySyncFileUri(uri)) {
+        const lastSlash = documentId.lastIndexOf('/');
+        const parentDocumentId = lastSlash >= 0 ? documentId.slice(0, lastSlash) : documentId;
+        if (!parentDocumentId) return null;
+        return {
+            prefix,
+            treeIdEncoded: encodeURIComponent(parentDocumentId),
+            treeIdDecoded: parentDocumentId,
+        };
+    }
+
+    return {
+        prefix,
+        treeIdEncoded: encodeURIComponent(documentId),
+        treeIdDecoded: documentId,
+    };
+};
+
+const buildTreeDocumentUri = (context: SafContext, documentId: string): string => {
+    const documentIdEncoded = encodeURIComponent(documentId);
+    return `${context.prefix}/tree/${context.treeIdEncoded}/document/${documentIdEncoded}`;
+};
+
+const listDirectoryForSyncFile = async (directoryUri: string): Promise<string | null> => {
+    if (!StorageAccessFramework?.readDirectoryAsync) return null;
+    try {
+        const entries = await StorageAccessFramework.readDirectoryAsync(directoryUri);
+        const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
+            entry,
+            decoded: decodeUriSafe(entry),
+        }));
+        const matchEntry = decoded.find((item) =>
+            item.decoded.endsWith(`/${SYNC_FILE_NAME}`)
+            || item.decoded.endsWith(`:${SYNC_FILE_NAME}`)
+            || item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`)
+            || item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
+        );
+        return matchEntry?.entry ?? null;
+    } catch {
+        return null;
+    }
+};
 
 function sanitizeJsonText(raw: string): string {
     // Strip BOM and trailing NULs which can appear with partial/unsafe writes.
@@ -61,6 +163,14 @@ function parseAppData(text: string): AppData {
     }
 }
 
+const writeWithModernFileApi = (fileUri: string, content: string): void => {
+    const file = new ExpoFile(fileUri);
+    if (!file.exists) {
+        file.create({ intermediates: true, overwrite: false });
+    }
+    file.write(content);
+};
+
 async function readFileText(fileUri: string): Promise<string | null> {
     if (fileUri.startsWith('content://')) {
         if (!StorageAccessFramework?.readAsStringAsync) {
@@ -70,9 +180,22 @@ async function readFileText(fileUri: string): Promise<string | null> {
         return await StorageAccessFramework.readAsStringAsync(fileUri);
     }
 
+    if (Platform.OS === 'ios' && fileUri.startsWith('file://')) {
+        try {
+            const file = new ExpoFile(fileUri);
+            if (!file.exists) {
+                void logInfo('Sync file does not exist', { scope: 'sync', extra: { fileUri } });
+                return null;
+            }
+            return await file.text();
+        } catch {
+            // Fall back to legacy API for compatibility with older paths.
+        }
+    }
+
     const fileInfo = await FileSystem.getInfoAsync(fileUri);
     if (!fileInfo.exists) {
-        console.log('[Sync] File does not exist:', fileUri);
+        void logInfo('Sync file does not exist', { scope: 'sync', extra: { fileUri } });
         return null;
     }
     return await FileSystem.readAsStringAsync(fileUri);
@@ -106,28 +229,46 @@ export const pickAndParseSyncFile = async (): Promise<PickResult | null> => {
     }
 };
 
-const findSyncFileInDirectory = async (directoryUri: string): Promise<string | null> => {
-    if (!StorageAccessFramework?.readDirectoryAsync) return null;
-    try {
-        const entries = await StorageAccessFramework.readDirectoryAsync(directoryUri);
-        const decoded: Array<{ entry: string; decoded: string }> = entries.map((entry: string) => ({
-            entry,
-            decoded: decodeURIComponent(entry),
-        }));
-        const matchEntry = decoded.find((item) =>
-            item.decoded.endsWith(`/${SYNC_FILE_NAME}`) ||
-            item.decoded.endsWith(`:${SYNC_FILE_NAME}`) ||
-            item.decoded.endsWith(`/${LEGACY_SYNC_FILE_NAME}`) ||
-            item.decoded.endsWith(`:${LEGACY_SYNC_FILE_NAME}`)
-        );
-        return matchEntry?.entry ?? null;
-    } catch (error) {
-        void logWarn('Failed to read sync folder contents', {
-            scope: 'sync',
-            extra: { error: error instanceof Error ? error.message : String(error) },
-        });
-        return null;
+export const resolveSyncFileUri = async (
+    uri: string,
+    options?: { createIfMissing?: boolean }
+): Promise<string> => {
+    if (!uri.startsWith('content://')) return uri;
+    if (isLikelySyncFileUri(uri)) return uri;
+
+    const cached = syncUriResolutionCache.get(uri);
+    if (cached) return cached;
+
+    const context = parseSafContext(uri);
+    if (!context) return uri;
+    const createIfMissing = options?.createIfMissing ?? true;
+    const treeUri = `${context.prefix}/tree/${context.treeIdEncoded}`;
+    const documentUri = buildTreeDocumentUri(context, context.treeIdDecoded);
+    const candidates = [documentUri, treeUri];
+
+    for (const candidate of candidates) {
+        const match = await listDirectoryForSyncFile(candidate);
+        if (match) {
+            syncUriResolutionCache.set(uri, match);
+            return match;
+        }
     }
+
+    if (createIfMissing && StorageAccessFramework?.createFileAsync) {
+        for (const candidate of candidates) {
+            try {
+                const created = await StorageAccessFramework.createFileAsync(candidate, SYNC_FILE_NAME, 'application/json');
+                syncUriResolutionCache.set(uri, created);
+                return created;
+            } catch {
+                // Try the next candidate.
+            }
+        }
+    }
+
+    const fallback = buildTreeDocumentUri(context, buildChildDocId(context.treeIdDecoded, SYNC_FILE_NAME));
+    syncUriResolutionCache.set(uri, fallback);
+    return fallback;
 };
 
 const assertDirectoryWritable = async (
@@ -169,7 +310,78 @@ const assertDirectoryWritable = async (
     }
 };
 
+const assertIosDirectoryWritable = async (
+    directoryUri: string,
+): Promise<void> => {
+    const testFileUri = buildSyncFileUri(directoryUri, `mindwtr-write-test-${Date.now()}.txt`);
+    try {
+        writeWithModernFileApi(testFileUri, 'ok');
+    } catch (error) {
+        if (isReadOnlyError(error)) {
+            throw new Error(READONLY_FOLDER_MESSAGE);
+        }
+        throw error;
+    } finally {
+        try {
+            const file = new ExpoFile(testFileUri);
+            if (file.exists) {
+                file.delete();
+            }
+        } catch {
+            // Ignore cleanup failures for test file.
+        }
+    }
+};
+
+const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
+    try {
+        const directory = await ExpoDirectory.pickDirectoryAsync();
+        const directoryUri = directory?.uri;
+        if (!directoryUri) return null;
+
+        await assertIosDirectoryWritable(directoryUri);
+
+        const primaryFileUri = buildSyncFileUri(directoryUri, SYNC_FILE_NAME);
+        const legacyFileUri = buildSyncFileUri(directoryUri, LEGACY_SYNC_FILE_NAME);
+        let fileUri = primaryFileUri;
+        let fileContent = await readFileText(primaryFileUri);
+        if (fileContent === null) {
+            const legacyContent = await readFileText(legacyFileUri);
+            if (legacyContent !== null) {
+                fileUri = legacyFileUri;
+                fileContent = legacyContent;
+            }
+        }
+
+        if (!fileContent) {
+            return {
+                tasks: [],
+                projects: [],
+                sections: [],
+                areas: [],
+                settings: {},
+                __fileUri: primaryFileUri,
+            };
+        }
+        const data = parseAppData(fileContent);
+        return { ...data, __fileUri: fileUri };
+    } catch (error) {
+        if (isPickerCanceledError(error)) {
+            return null;
+        }
+        throw error;
+    }
+};
+
 export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
+    if (Platform.OS === 'ios' && typeof ExpoDirectory.pickDirectoryAsync === 'function') {
+        try {
+            return await pickAndParseIosSyncFolder();
+        } catch (error) {
+            void logError(error, { scope: 'sync', extra: { operation: 'import', message: 'Failed to import data from iOS folder' } });
+            throw error;
+        }
+    }
     if (Platform.OS !== 'android' || !StorageAccessFramework?.requestDirectoryPermissionsAsync) {
         return pickAndParseSyncFile();
     }
@@ -177,15 +389,12 @@ export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
         const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
         if (!permissions.granted) return null;
         const directoryUri = permissions.directoryUri;
-        let fileUri = await findSyncFileInDirectory(directoryUri);
+        let fileUri = await resolveSyncFileUri(directoryUri, { createIfMissing: true });
         let fileContent: string | null = null;
         if (fileUri) {
             fileContent = await readFileText(fileUri);
         }
         await assertDirectoryWritable(directoryUri, fileUri ?? undefined, fileContent ?? undefined);
-        if (!fileUri && StorageAccessFramework?.createFileAsync) {
-            fileUri = await StorageAccessFramework.createFileAsync(directoryUri, SYNC_FILE_NAME, 'application/json');
-        }
         if (!fileUri) {
             throw new Error('Unable to create sync file in selected folder');
         }
@@ -213,11 +422,15 @@ export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
 // Read sync file from a stored path
 export const readSyncFile = async (fileUri: string): Promise<AppData | null> => {
     try {
+        const resolvedUri = await resolveSyncFileUri(fileUri, { createIfMissing: false });
+        if (resolvedUri !== fileUri) {
+            void logInfo('Resolved sync path from directory URI to file URI', { scope: 'sync' });
+        }
         // Syncthing (or other tools) can replace files while we're reading. Retry a few times.
         let lastError: unknown = null;
         for (let attempt = 0; attempt < 4; attempt += 1) {
             try {
-                const fileContent = await readFileText(fileUri);
+                const fileContent = await readFileText(resolvedUri);
                 if (!fileContent) return null;
                 return parseAppData(fileContent);
             } catch (error) {
@@ -247,19 +460,32 @@ export const readSyncFile = async (fileUri: string): Promise<AppData | null> => 
 export const writeSyncFile = async (fileUri: string, data: AppData): Promise<void> => {
     try {
         const content = JSON.stringify(data, null, 2);
+        const resolvedUri = await resolveSyncFileUri(fileUri, { createIfMissing: true });
         // SAF URIs (content://) require special handling on Android
-        if (fileUri.startsWith('content://') && StorageAccessFramework) {
-            await StorageAccessFramework.writeAsStringAsync(fileUri, content);
-            console.log('[Sync] Written via SAF to:', fileUri);
+        if (resolvedUri.startsWith('content://') && StorageAccessFramework) {
+            await StorageAccessFramework.writeAsStringAsync(resolvedUri, content);
+            void logInfo('Written sync file via SAF', { scope: 'sync', extra: { fileUri: resolvedUri } });
         } else {
-            const tempUri = `${fileUri}.tmp`;
-            await FileSystem.writeAsStringAsync(tempUri, content);
-            const existing = await FileSystem.getInfoAsync(fileUri);
-            if (existing.exists) {
-                await FileSystem.deleteAsync(fileUri, { idempotent: true });
+            if (Platform.OS === 'ios' && resolvedUri.startsWith('file://')) {
+                try {
+                    writeWithModernFileApi(resolvedUri, content);
+                    void logInfo('Written sync file via modern iOS File API', { scope: 'sync', extra: { fileUri: resolvedUri } });
+                    return;
+                } catch (error) {
+                    void logWarn('Modern iOS sync write failed; falling back to legacy path', {
+                        scope: 'sync',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    });
+                }
             }
-            await FileSystem.moveAsync({ from: tempUri, to: fileUri });
-            console.log('[Sync] Written to sync file:', fileUri);
+            const tempUri = `${resolvedUri}.tmp`;
+            await FileSystem.writeAsStringAsync(tempUri, content);
+            const existing = await FileSystem.getInfoAsync(resolvedUri);
+            if (existing.exists) {
+                await FileSystem.deleteAsync(resolvedUri, { idempotent: true });
+            }
+            await FileSystem.moveAsync({ from: tempUri, to: resolvedUri });
+            void logInfo('Written sync file', { scope: 'sync', extra: { fileUri: resolvedUri } });
         }
     } catch (error) {
         void logError(error, { scope: 'sync', extra: { operation: 'write', message: 'Failed to write sync file' } });
@@ -277,10 +503,15 @@ export const exportData = async (data: AppData): Promise<void> => {
         // On Android, try SAF to let user pick save location
         if (Platform.OS === 'android' && StorageAccessFramework) {
             try {
-                console.log('[Export] Attempting SAF...');
+                void logInfo('Export attempting SAF', { scope: 'sync' });
                 // Request permission to a directory
                 const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
-                console.log('[Export] SAF permissions:', permissions);
+                void logInfo('Export SAF permissions', {
+                    scope: 'sync',
+                    extra: {
+                        granted: String(Boolean(permissions?.granted)),
+                    },
+                });
 
                 if (permissions.granted) {
                     // Create the file in the selected directory
@@ -291,19 +522,28 @@ export const exportData = async (data: AppData): Promise<void> => {
                     );
 
                     await StorageAccessFramework.writeAsStringAsync(fileUri, jsonContent);
-                    console.log('[Export] Saved via SAF to:', fileUri);
+                    void logInfo('Export saved via SAF', { scope: 'sync', extra: { fileUri } });
                     return;
                 }
             } catch (safError) {
-                console.log('[Export] SAF not available (Expo Go?), using share:', safError);
+                void logWarn('Export SAF unavailable; falling back to share', {
+                    scope: 'sync',
+                    extra: { error: safError instanceof Error ? safError.message : String(safError) },
+                });
             }
         } else {
-            console.log('[Export] SAF not available, Platform:', Platform.OS, 'SAF:', !!StorageAccessFramework);
+            void logInfo('Export SAF unavailable on this platform', {
+                scope: 'sync',
+                extra: {
+                    platform: Platform.OS,
+                    hasSaf: String(Boolean(StorageAccessFramework)),
+                },
+            });
         }
 
         // Fallback: Use cache + share sheet
         const fileUri = FileSystem.cacheDirectory + filename;
-        console.log('[Export] Writing to cache:', fileUri);
+        void logInfo('Export writing backup to cache before share', { scope: 'sync', extra: { fileUri } });
         await FileSystem.writeAsStringAsync(fileUri, jsonContent);
 
         const sharingAvailable = await Sharing.isAvailableAsync();

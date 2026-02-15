@@ -1,0 +1,3 @@
+- Se mejoró la estabilidad de sincronización entre dispositivos corrigiendo un caso límite de conflictos que podía revertir cambios más recientes.
+- Se mejoró la experiencia de revisión y edición en tablero, incluyendo sugerencias @/# más inteligentes y un editor de tareas más claro.
+- Se reforzó el flujo FOSS de Android para builds reproducibles y limpieza más estricta de permisos.

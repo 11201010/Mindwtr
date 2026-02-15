@@ -37,8 +37,10 @@ The cloud server requires a token for authentication. You need to set this in th
 In `docker/compose.yaml` (or via environment variable), set:
 
 ```yaml
-MINDWTR_CLOUD_TOKEN=your_token_here
+MINDWTR_CLOUD_AUTH_TOKENS=your_token_here
 ```
+
+`MINDWTR_CLOUD_TOKEN` is still accepted for backward compatibility, but deprecated.
 
 **Generating a Token:**
 You can generate a strong random token using:
@@ -56,7 +58,15 @@ To connect your Mindwtr clients (Desktop or Mobile) to this self-hosted cloud:
    http://localhost:8787/v1
    ```
    *Mindwtr will automatically append `/data` to this URL.*
-4. Enter the **same token** you configured in `MINDWTR_CLOUD_TOKEN`.
+4. Enter the **same token** you configured in `MINDWTR_CLOUD_AUTH_TOKENS`.
+
+### CORS Origin (Production)
+
+The cloud server defaults to `http://localhost:5173` for CORS. For production, set:
+
+```yaml
+MINDWTR_CLOUD_CORS_ORIGIN=https://your-app-domain.example
+```
 
 ---
 
@@ -68,7 +78,7 @@ In your `compose.yaml`:
 
 ```yaml
 volumes:
-  - /your/host/path/data_dir:/app/cloud_data
+  - ./data:/app/cloud_data
 ```
 
 ---

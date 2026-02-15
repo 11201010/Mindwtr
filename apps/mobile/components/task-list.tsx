@@ -139,6 +139,7 @@ function TaskListComponent({
   const aiEnabled = settings?.ai?.enabled === true;
   const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
   const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
   // Memoize filtered and sorted tasks for performance
   const filteredTasks = useMemo(() => {
@@ -179,6 +180,48 @@ function TaskListComponent({
     | { type: 'task'; task: Task };
 
   const listItems = useMemo<ListItem[]>(() => {
+    if (statusFilter === 'reference' && !projectId) {
+      const activeAreas = [...areas].filter((area) => !area.deletedAt).sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.name.localeCompare(b.name);
+      });
+      const areaIds = new Set(activeAreas.map((area) => area.id));
+      const grouped = new Map<string, Task[]>();
+      const generalTasks: Task[] = [];
+
+      orderedTasks.forEach((task) => {
+        const projectAreaId = task.projectId ? projectById.get(task.projectId)?.areaId : undefined;
+        const resolvedAreaId = task.areaId || projectAreaId;
+        if (resolvedAreaId && areaIds.has(resolvedAreaId)) {
+          const items = grouped.get(resolvedAreaId) ?? [];
+          items.push(task);
+          grouped.set(resolvedAreaId, items);
+        } else {
+          generalTasks.push(task);
+        }
+      });
+
+      const items: ListItem[] = [];
+      if (generalTasks.length > 0) {
+        items.push({
+          type: 'section',
+          id: 'general',
+          title: t('settings.general') === 'settings.general' ? 'General' : t('settings.general'),
+          count: generalTasks.length,
+          muted: true,
+        });
+        generalTasks.forEach((task) => items.push({ type: 'task', task }));
+      }
+
+      activeAreas.forEach((area) => {
+        const tasksForArea = grouped.get(area.id) ?? [];
+        if (tasksForArea.length === 0) return;
+        items.push({ type: 'section', id: area.id, title: area.name, count: tasksForArea.length });
+        tasksForArea.forEach((task) => items.push({ type: 'task', task }));
+      });
+      return items;
+    }
+
     const shouldGroup = Boolean(projectId) && (projectSections.length > 0 || orderedTasks.some((task) => task.sectionId));
     if (!shouldGroup) {
       return orderedTasks.map((task) => ({ type: 'task', task }));
@@ -214,7 +257,7 @@ function TaskListComponent({
       unsectioned.forEach((task) => items.push({ type: 'task', task }));
     }
     return items;
-  }, [orderedTasks, projectId, projectSections, t]);
+  }, [areas, orderedTasks, projectById, projectId, projectSections, statusFilter, t]);
 
   const contextOptions = useMemo(() => {
     const taskContexts = tasks.flatMap((task) => task.contexts || []);
@@ -680,7 +723,7 @@ function TaskListComponent({
             <View style={[styles.typeaheadContainer, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
               {typeaheadOptions.map((option, index) => (
                 <TouchableOpacity
-                  key={`${option.kind}-${option.value}-${index}`}
+                  key={`${option.kind}:${option.value}`}
                   onPress={() => applyTypeaheadOption(option)}
                   style={[
                     styles.typeaheadRow,
@@ -758,7 +801,7 @@ function TaskListComponent({
           maxToRenderPerBatch={12}
           windowSize={5}
           updateCellsBatchingPeriod={50}
-          removeClippedSubviews={false}
+          removeClippedSubviews={listItems.length >= 50}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
@@ -787,7 +830,7 @@ function TaskListComponent({
             <TextInput
               value={tagInput}
               onChangeText={setTagInput}
-              placeholder="#tag"
+              placeholder={t('taskEdit.tagsLabel')}
               placeholderTextColor={themeColors.secondaryText}
               style={[
                 styles.modalInput,

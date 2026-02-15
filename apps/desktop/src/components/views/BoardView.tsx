@@ -47,6 +47,7 @@ function DroppableColumn({
     tasks,
     emptyState,
     onQuickAdd,
+    dragLabel,
     compact,
 }: {
     id: TaskStatus;
@@ -54,6 +55,7 @@ function DroppableColumn({
     tasks: Task[];
     emptyState: { title: string; body: string; action: string };
     onQuickAdd: (status: TaskStatus) => void;
+    dragLabel: string;
     compact?: boolean;
 }) {
     const { setNodeRef } = useDroppable({ id });
@@ -65,11 +67,11 @@ function DroppableColumn({
     return (
         <div
             ref={setNodeRef}
-            className={`flex flex-col h-full ${columnMinWidth} flex-1 bg-muted/30 rounded-lg border border-border/50 border-t-4 ${columnPadding} ${STATUS_BORDER[id]}`}
+            className={`flex flex-col h-full ${columnMinWidth} flex-1 bg-muted/20 rounded-xl border border-border/30 border-t-[3px] ${columnPadding} ${STATUS_BORDER[id]}`}
         >
-            <h3 className={`font-semibold ${headerMargin} flex items-center justify-between`}>
+            <h3 className={`font-semibold ${headerMargin} flex items-center justify-between text-sm`}>
                 {label}
-                <span className="text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">{tasks.length}</span>
+                <span className="text-[11px] font-medium bg-muted/60 px-2 py-0.5 rounded-full text-muted-foreground">{tasks.length}</span>
             </h3>
             <div
                 className={`flex-1 ${listSpacing} overflow-y-auto min-h-[100px] focus:outline-none focus:ring-2 focus:ring-primary/50 rounded-md px-1`}
@@ -91,7 +93,7 @@ function DroppableColumn({
                     </div>
                 ) : (
                     tasks.map((task) => (
-                        <DraggableTask key={task.id} task={task} />
+                        <DraggableTask key={task.id} task={task} dragLabel={dragLabel} />
                     ))
                 )}
             </div>
@@ -99,7 +101,7 @@ function DroppableColumn({
     );
 }
 
-function DraggableTask({ task }: { task: Task }) {
+function DraggableTask({ task, dragLabel }: { task: Task; dragLabel: string }) {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: task.id,
         data: { task },
@@ -111,7 +113,7 @@ function DraggableTask({ task }: { task: Task }) {
 
     if (isDragging) {
         return (
-            <div ref={setNodeRef} style={style} className="opacity-50">
+            <div ref={setNodeRef} style={style} className="opacity-50" role="listitem">
                 <TaskItem
                     task={task}
                     readOnly={task.status === 'done'}
@@ -120,13 +122,14 @@ function DraggableTask({ task }: { task: Task }) {
                     actionsOverlay
                     showHoverHint={false}
                     enableDoubleClickEdit
+                    editorPresentation="modal"
                 />
             </div>
         );
     }
 
     return (
-        <div ref={setNodeRef} style={style} className="touch-none">
+        <div ref={setNodeRef} style={style} className="touch-none" role="listitem">
             <TaskItem
                 task={task}
                 readOnly={task.status === 'done'}
@@ -141,13 +144,14 @@ function DraggableTask({ task }: { task: Task }) {
                         {...attributes}
                         onClick={(event) => event.stopPropagation()}
                         className="text-muted-foreground/70 hover:text-foreground p-1 rounded hover:bg-muted/50 cursor-grab active:cursor-grabbing"
-                        aria-label="Drag task"
-                        title="Drag task"
+                        aria-label={dragLabel}
+                        title={dragLabel}
                     >
                         <GripVertical className="w-4 h-4" />
                     </button>
                 )}
                 enableDoubleClickEdit
+                editorPresentation="modal"
             />
         </div>
     );
@@ -491,6 +495,7 @@ export function BoardView() {
                             tasks={getColumnTasks(col.id)}
                             emptyState={getEmptyState(col.id)}
                             onQuickAdd={openQuickAdd}
+                            dragLabel={t('board.dragTask') || 'Drag task'}
                             compact={isCompact}
                         />
                     ))}

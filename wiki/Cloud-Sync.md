@@ -31,13 +31,22 @@ bun run dev -- --host 0.0.0.0 --port 8787
 
 ### Configuration
 
-| Variable                       | Default            | Description             |
-| ------------------------------ | ------------------ | ----------------------- |
-| `HOST`                         | `0.0.0.0`          | Bind address            |
-| `PORT`                         | `8787`             | Server port             |
-| `MINDWTR_CLOUD_DATA_DIR`       | `apps/cloud/data/` | Data directory          |
-| `MINDWTR_CLOUD_RATE_WINDOW_MS` | `60000`            | Rate limit window       |
-| `MINDWTR_CLOUD_RATE_MAX`       | `120`              | Max requests per window |
+| Variable                                | Default                  | Description |
+| --------------------------------------- | ------------------------ | ----------- |
+| `HOST`                                  | `0.0.0.0`                | Bind address |
+| `PORT`                                  | `8787`                   | Server port |
+| `MINDWTR_CLOUD_DATA_DIR`                | `<cwd>/data`             | Data directory |
+| `MINDWTR_CLOUD_AUTH_TOKENS`             | _(unset)_                | Comma-separated bearer token allowlist |
+| `MINDWTR_CLOUD_TOKEN`                   | _(legacy, deprecated)_   | Backward-compatible single-token alias |
+| `MINDWTR_CLOUD_CORS_ORIGIN`             | `http://localhost:5173`  | Allowed CORS origin (set explicitly in production) |
+| `MINDWTR_CLOUD_RATE_WINDOW_MS`          | `60000`                  | Rate limit window |
+| `MINDWTR_CLOUD_RATE_MAX`                | `120`                    | Max non-attachment requests per window |
+| `MINDWTR_CLOUD_ATTACHMENT_RATE_MAX`     | `120`                    | Max attachment requests per window |
+| `MINDWTR_CLOUD_RATE_CLEANUP_MS`         | `60000`                  | Rate-limit state cleanup interval |
+| `MINDWTR_CLOUD_MAX_BODY_BYTES`          | `2000000`                | Max JSON request body size |
+| `MINDWTR_CLOUD_MAX_ATTACHMENT_BYTES`    | `50000000`               | Max attachment upload size |
+| `MINDWTR_CLOUD_MAX_TASK_TITLE_LENGTH`   | `500`                    | Max task title length |
+| `MINDWTR_CLOUD_MAX_ITEMS_PER_COLLECTION`| `50000`                  | Max tasks/projects/sections/areas per payload |
 
 ---
 
@@ -59,6 +68,12 @@ Authorization: Bearer <token>
 
 The server hashes the token (SHA-256) and uses it as the filename, so each token maps to one data file.
 
+If `MINDWTR_CLOUD_AUTH_TOKENS` is unset, the server runs in **token namespace mode**:
+
+- Any non-empty bearer token is accepted.
+- Each token maps to its own namespace/file.
+- This mode is only safe behind trusted network controls (VPN/firewall/private reverse proxy).
+
 ---
 
 ## Client Setup
@@ -74,7 +89,7 @@ In **Settings → Sync**:
 ## Security Notes
 
 - The cloud server does **not** enforce HTTPS; deploy behind an HTTPS reverse proxy
-- CORS is `*` by design for self-hosted usage; protect the endpoint with a secret token and network controls
+- Set `MINDWTR_CLOUD_CORS_ORIGIN` for production deployments (default only allows `http://localhost:5173`)
 - Treat the bearer token like a password (anyone with it can read/write your data)
 
 ---

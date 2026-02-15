@@ -30,6 +30,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   macos:
     strategy:
@@ -44,6 +48,7 @@ jobs:
             artifact_name: release-macos-x64
     runs-on: ${{ matrix.platform }}
     name: macOS Build (${{ matrix.rust_target }})
+    timeout-minutes: 90
 
     steps:
       - name: Checkout code
@@ -78,7 +83,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.x"
 
       - name: Install dependencies
         run: bun install

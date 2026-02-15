@@ -62,6 +62,7 @@ apps/desktop/dist-electron/
 # Desktop (Tauri)
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/.tauri/
+apps/desktop/src-tauri/embedded.provisionprofile
 
 # Lock files (using bun)
 package-lock.json
