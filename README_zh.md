@@ -34,7 +34,7 @@
          height="56" />
   </a>
   <a href="https://apps.apple.com/app/mindwtr/id6758597144" target="_blank">
-    <img src="https://img.shields.io/badge/App_Store-iOS-0A84FF?logo=apple&logoColor=white"
+    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
          align="center"
          alt="App Store"
          style="height: 50px"
@@ -110,7 +110,7 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
 - 📅 **每周回顾** - 可定制的每周提醒
 
 ### 数据与同步
-- 🔄 **同步选项** - 支持后端与配置方式请见 Wiki：https://github.com/dongdongbh/Mindwtr/wiki/Data-and-Sync
+- 🔄 **同步选项** - 支持后端与配置方式请见 [数据与同步 Wiki](https://github.com/dongdongbh/Mindwtr/wiki/Data-and-Sync)
 - 📤 **导出/备份** - 导出 JSON 数据
 - 🗓️ **外部日历（ICS）** - 只读日历叠加
 

@@ -34,7 +34,7 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
          height="56" />
   </a>
   <a href="https://apps.apple.com/app/mindwtr/id6758597144" target="_blank">
-    <img src="https://img.shields.io/badge/App_Store-iOS-0A84FF?logo=apple&logoColor=white"
+    <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
          align="center"
          alt="App Store"
          style="height: 50px"
@@ -110,7 +110,7 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - 📅 **Weekly Review** - Customizable weekly reminder
 
 ### Data & Sync
-- 🔄 **Sync Options** - See the wiki for supported backends and setup: https://github.com/dongdongbh/Mindwtr/wiki/Data-and-Sync
+- 🔄 **Sync Options** - See the [Data & Sync wiki](https://github.com/dongdongbh/Mindwtr/wiki/Data-and-Sync) for supported backends and setup
 - 📤 **Export/Backup** - Export data to JSON
 - 🗓️ **External Calendars (ICS)** - View-only calendar overlay
 
