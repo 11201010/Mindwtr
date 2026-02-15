@@ -22,7 +22,7 @@ const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
 const WEBDAV_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 30_000 };
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const ATTACHMENT_CLEANUP_BATCH_LIMIT = 25;
-const SYNC_CONFIG_CACHE_TTL_MS = 3_000;
+const SYNC_CONFIG_CACHE_TTL_MS = 30_000;
 const SYNC_FILE_NAME = 'data.json';
 const syncConfigCache = new Map<string, { value: string | null; readAt: number }>();
 

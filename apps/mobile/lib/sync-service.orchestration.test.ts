@@ -66,7 +66,7 @@ describe('mobile sync orchestration', () => {
     const first = performMobileSync();
     const second = performMobileSync();
 
-    nowMs = 5_000;
+    nowMs = 86_400_000;
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.success).toBe(true);
     expect(secondResult.success).toBe(true);
