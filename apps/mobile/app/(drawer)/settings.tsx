@@ -122,6 +122,7 @@ const UPDATE_BADGE_AVAILABLE_KEY = 'mindwtr-update-available';
 const UPDATE_BADGE_LAST_CHECK_KEY = 'mindwtr-update-last-check';
 const UPDATE_BADGE_LATEST_KEY = 'mindwtr-update-latest';
 const UPDATE_BADGE_INTERVAL_MS = 1000 * 60 * 60 * 24;
+const AI_PROVIDER_CONSENT_KEY = 'mindwtr-ai-provider-consent-v1';
 
 const formatError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -556,6 +557,119 @@ export default function SettingsPage() {
     const openLink = (url: string) => Linking.openURL(url);
     const updateAISettings = (next: Partial<NonNullable<typeof settings.ai>>) => {
         updateSettings({ ai: { ...(settings.ai ?? {}), ...next } }).catch(logSettingsError);
+    };
+    const getAIProviderLabel = (provider: AIProviderId): string => (
+        provider === 'openai'
+            ? t('settings.aiProviderOpenAI')
+            : provider === 'gemini'
+                ? t('settings.aiProviderGemini')
+                : t('settings.aiProviderAnthropic')
+    );
+    const getAIProviderPolicyUrl = (provider: AIProviderId): string => (
+        provider === 'openai'
+            ? 'https://openai.com/policies/privacy-policy'
+            : provider === 'gemini'
+                ? 'https://policies.google.com/privacy'
+                : 'https://www.anthropic.com/privacy'
+    );
+    const loadAIProviderConsent = async (): Promise<Record<string, boolean>> => {
+        try {
+            const raw = await AsyncStorage.getItem(AI_PROVIDER_CONSENT_KEY);
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+            const entries = Object.entries(parsed as Record<string, unknown>)
+                .map(([provider, value]) => [provider, value === true] as const);
+            return Object.fromEntries(entries);
+        } catch (error) {
+            logSettingsWarn('Failed to load AI consent state', error);
+            return {};
+        }
+    };
+    const saveAIProviderConsent = async (provider: AIProviderId): Promise<void> => {
+        try {
+            const consentMap = await loadAIProviderConsent();
+            consentMap[provider] = true;
+            await AsyncStorage.setItem(AI_PROVIDER_CONSENT_KEY, JSON.stringify(consentMap));
+        } catch (error) {
+            logSettingsWarn('Failed to save AI consent state', error);
+        }
+    };
+    const requestAIProviderConsent = async (provider: AIProviderId): Promise<boolean> => {
+        const consentMap = await loadAIProviderConsent();
+        if (consentMap[provider]) return true;
+
+        const providerLabel = getAIProviderLabel(provider);
+        const policyUrl = getAIProviderPolicyUrl(provider);
+        const title = localize('Enable AI features?', '启用 AI 功能？');
+        const message = localize(
+            `To use AI assistant, your task text and optional notes will be sent directly to ${providerLabel} using your API key. No data is sent to Mindwtr servers. Provider privacy policy: ${policyUrl}. Do you want to continue?`,
+            `要使用 AI 助手，任务文本和可选备注会通过你的 API Key 直接发送到 ${providerLabel}。数据不会发送到 Mindwtr 服务器。服务商隐私政策：${policyUrl}。是否继续？`
+        );
+
+        return await new Promise<boolean>((resolve) => {
+            let settled = false;
+            const finish = (value: boolean) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+            Alert.alert(
+                title,
+                message,
+                [
+                    {
+                        text: localize('Cancel', '取消'),
+                        style: 'cancel',
+                        onPress: () => finish(false),
+                    },
+                    {
+                        text: localize('Agree', '同意'),
+                        onPress: () => {
+                            void saveAIProviderConsent(provider);
+                            finish(true);
+                        },
+                    },
+                ],
+                { cancelable: true, onDismiss: () => finish(false) }
+            );
+        });
+    };
+    const applyAIProviderDefaults = (provider: AIProviderId) => {
+        const defaults = getDefaultAIConfig(provider);
+        updateAISettings({
+            provider,
+            model: defaults.model,
+            copilotModel: getDefaultCopilotModel(provider),
+            reasoningEffort: defaults.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+            thinkingBudget: defaults.thinkingBudget
+                ?? (provider === 'gemini'
+                    ? DEFAULT_GEMINI_THINKING_BUDGET
+                    : provider === 'anthropic'
+                        ? DEFAULT_ANTHROPIC_THINKING_BUDGET
+                        : 0),
+        });
+    };
+    const handleAIProviderChange = (provider: AIProviderId) => {
+        if (provider === aiProvider) return;
+        void (async () => {
+            if (aiEnabled) {
+                const consented = await requestAIProviderConsent(provider);
+                if (!consented) return;
+            }
+            applyAIProviderDefaults(provider);
+        })();
+    };
+    const handleAIEnabledToggle = (value: boolean) => {
+        if (!value) {
+            updateAISettings({ enabled: false });
+            return;
+        }
+        void (async () => {
+            const consented = await requestAIProviderConsent(aiProvider);
+            if (!consented) return;
+            updateAISettings({ enabled: true });
+        })();
     };
     const updateSpeechSettings = (
         next: Partial<NonNullable<NonNullable<typeof settings.ai>['speechToText']>>
@@ -2016,10 +2130,16 @@ export default function SettingsPage() {
                             <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                                 <View style={styles.settingInfo}>
                                     <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.aiEnable')}</Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {localize(
+                                            `When enabled, task text is sent directly to ${getAIProviderLabel(aiProvider)} using your API key.`,
+                                            `启用后，任务文本将通过你的 API Key 直接发送到 ${getAIProviderLabel(aiProvider)}。`
+                                        )}
+                                    </Text>
                                 </View>
                                 <Switch
                                     value={aiEnabled}
-                                    onValueChange={(value) => updateAISettings({ enabled: value })}
+                                    onValueChange={handleAIEnabledToggle}
                                     trackColor={{ false: '#767577', true: '#3B82F6' }}
                                 />
                             </View>
@@ -2043,16 +2163,7 @@ export default function SettingsPage() {
                                             styles.backendOption,
                                             { borderColor: tc.border, backgroundColor: aiProvider === 'openai' ? tc.filterBg : 'transparent' },
                                         ]}
-                                        onPress={() => {
-                                            const defaults = getDefaultAIConfig('openai');
-                                            updateAISettings({
-                                                provider: 'openai',
-                                                model: defaults.model,
-                                                copilotModel: getDefaultCopilotModel('openai'),
-                                                reasoningEffort: defaults.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-                                                thinkingBudget: defaults.thinkingBudget ?? 0,
-                                            });
-                                        }}
+                                        onPress={() => handleAIProviderChange('openai')}
                                     >
                                         <Text style={[styles.backendOptionText, { color: aiProvider === 'openai' ? tc.tint : tc.secondaryText }]}>
                                             {t('settings.aiProviderOpenAI')}
@@ -2063,16 +2174,7 @@ export default function SettingsPage() {
                                             styles.backendOption,
                                             { borderColor: tc.border, backgroundColor: aiProvider === 'gemini' ? tc.filterBg : 'transparent' },
                                         ]}
-                                        onPress={() => {
-                                            const defaults = getDefaultAIConfig('gemini');
-                                            updateAISettings({
-                                                provider: 'gemini',
-                                                model: defaults.model,
-                                                copilotModel: getDefaultCopilotModel('gemini'),
-                                                reasoningEffort: defaults.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-                                                thinkingBudget: defaults.thinkingBudget ?? DEFAULT_GEMINI_THINKING_BUDGET,
-                                            });
-                                        }}
+                                        onPress={() => handleAIProviderChange('gemini')}
                                     >
                                         <Text style={[styles.backendOptionText, { color: aiProvider === 'gemini' ? tc.tint : tc.secondaryText }]}>
                                             {t('settings.aiProviderGemini')}
@@ -2083,16 +2185,7 @@ export default function SettingsPage() {
                                             styles.backendOption,
                                             { borderColor: tc.border, backgroundColor: aiProvider === 'anthropic' ? tc.filterBg : 'transparent' },
                                         ]}
-                                        onPress={() => {
-                                            const defaults = getDefaultAIConfig('anthropic');
-                                            updateAISettings({
-                                                provider: 'anthropic',
-                                                model: defaults.model,
-                                                copilotModel: getDefaultCopilotModel('anthropic'),
-                                                reasoningEffort: defaults.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-                                                thinkingBudget: defaults.thinkingBudget ?? DEFAULT_ANTHROPIC_THINKING_BUDGET,
-                                            });
-                                        }}
+                                        onPress={() => handleAIProviderChange('anthropic')}
                                     >
                                         <Text style={[styles.backendOptionText, { color: aiProvider === 'anthropic' ? tc.tint : tc.secondaryText }]}>
                                             {t('settings.aiProviderAnthropic')}
