@@ -60,4 +60,18 @@ describe('TaskItem', () => {
         fireEvent.click(checkbox);
         expect(onToggleSelect).toHaveBeenCalledTimes(1);
     });
+
+    it('shows due date metadata when compact details are enabled', () => {
+        const taskWithDueDate: Task = {
+            ...mockTask,
+            id: 'task-with-due-date',
+            dueDate: '2026-03-20',
+        };
+        const { getByText } = render(
+            <LanguageProvider>
+                <TaskItem task={taskWithDueDate} compactMetaEnabled />
+            </LanguageProvider>
+        );
+        expect(getByText('Mar 20')).toBeInTheDocument();
+    });
 });

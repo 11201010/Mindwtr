@@ -111,9 +111,22 @@ export function TaskItemDisplay({
     } = actions;
     const checklistProgress = getChecklistProgress(task);
     const ageLabel = getTaskAgeLabel(task.createdAt);
-    const showCompactMeta = compactMetaEnabled
-        && !isViewOpen
-        && (project || area || (task.contexts?.length ?? 0) > 0);
+    const showCompactMeta = compactMetaEnabled && !isViewOpen;
+    const showAgeBadge = task.status !== 'done' && Boolean(ageLabel);
+    const hasMetadata = Boolean(
+        project
+        || area
+        || task.startTime
+        || task.dueDate
+        || task.location
+        || recurrenceRule
+        || (prioritiesEnabled && task.priority)
+        || (task.contexts?.length ?? 0) > 0
+        || task.tags.length > 0
+        || checklistProgress
+        || showAgeBadge
+        || (timeEstimatesEnabled && task.timeEstimate)
+    );
     const resolvedDirection = resolveTaskTextDirection(task);
     const isRtl = resolvedDirection === 'rtl';
     const hoverHintText = showHoverHint
@@ -170,6 +183,112 @@ export function TaskItemDisplay({
         && task.status !== 'done'
         && task.status !== 'archived'
         && task.status !== 'reference';
+    const renderMetadataRow = (className?: string) => (
+        <div className={cn("flex flex-wrap items-center text-xs", className)}>
+            {renderProjectBadge()}
+            {!project && area && (
+                <MetadataBadge
+                    variant="project"
+                    label={area.name}
+                    dotColor={area.color || '#94a3b8'}
+                />
+            )}
+            {task.startTime && (
+                <MetadataBadge
+                    variant="info"
+                    icon={ArrowRight}
+                    label={safeFormatDate(task.startTime, hasTimeComponent(task.startTime) ? 'MMM d, HH:mm' : 'MMM d')}
+                />
+            )}
+            {task.dueDate && (
+                <div className="flex items-center gap-2">
+                    <MetadataBadge
+                        variant="info"
+                        icon={CalendarIcon}
+                        label={safeFormatDate(task.dueDate, hasTimeComponent(task.dueDate) ? 'MMM d, HH:mm' : 'MMM d')}
+                        className={cn(getUrgencyColor(task), isStagnant && "text-muted-foreground/70")}
+                    />
+                    {isStagnant && (
+                        <MetadataBadge
+                            variant="age"
+                            icon={Hourglass}
+                            label={`${task.pushCount ?? 0}`}
+                        />
+                    )}
+                </div>
+            )}
+            {task.location && (
+                <MetadataBadge
+                    variant="info"
+                    icon={MapPin}
+                    label={task.location}
+                />
+            )}
+            {recurrenceRule && (
+                <MetadataBadge
+                    variant="info"
+                    icon={Repeat}
+                    label={`${t(`recurrence.${recurrenceRule}`)}${recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.afterCompletionShort')}` : ''}`}
+                />
+            )}
+            {prioritiesEnabled && task.priority && (
+                <MetadataBadge
+                    variant="priority"
+                    label={t(`priority.${task.priority}`)}
+                />
+            )}
+            {task.contexts?.length > 0 && (
+                <div className="flex items-center gap-2">
+                    {task.contexts.map((ctx) => (
+                        <MetadataBadge key={ctx} variant="context" label={ctx} />
+                    ))}
+                </div>
+            )}
+            {task.tags.length > 0 && (
+                <div className="flex items-center gap-2">
+                    {task.tags.map((tag) => (
+                        <MetadataBadge key={tag} variant="tag" icon={Tag} label={tag} />
+                    ))}
+                </div>
+            )}
+            {checklistProgress && (
+                <div
+                    className="flex items-center gap-2 text-muted-foreground"
+                    title={t('checklist.progress')}
+                >
+                    <span className="font-medium">
+                        {checklistProgress.completed}/{checklistProgress.total}
+                    </span>
+                    <div className="w-16 h-1 bg-muted rounded overflow-hidden">
+                        <div
+                            className="h-full bg-primary"
+                            style={{ width: `${Math.round(checklistProgress.percent * 100)}%` }}
+                        />
+                    </div>
+                </div>
+            )}
+            {showAgeBadge && (
+                <MetadataBadge
+                    variant="age"
+                    icon={Clock}
+                    label={ageLabel!}
+                    className={cn(
+                        getTaskStaleness(task.createdAt) === 'fresh' && 'metadata-badge--age-fresh',
+                        getTaskStaleness(task.createdAt) === 'aging' && 'metadata-badge--age-aging',
+                        getTaskStaleness(task.createdAt) === 'stale' && 'metadata-badge--age-stale',
+                        getTaskStaleness(task.createdAt) === 'very-stale' && 'metadata-badge--age-very-stale'
+                    )}
+                />
+            )}
+            {timeEstimatesEnabled && task.timeEstimate && (
+                <MetadataBadge
+                    variant="estimate"
+                    icon={Timer}
+                    label={formatTimeEstimate(task.timeEstimate)}
+                />
+            )}
+        </div>
+    );
     const overlayDragHandle = actionsOverlay && !!dragHandle;
     const overlayQuickDone = actionsOverlay && showQuickDoneButton;
     const inlineLeftControls = !actionsOverlay && (showQuickDoneButton || dragHandle);
@@ -353,30 +472,11 @@ export function TaskItemDisplay({
                             </ReactMarkdown>
                         </div>
                     )}
-                    {showCompactMeta && (
-                        <div
-                            className={cn(
-                                "flex flex-wrap items-center gap-2 text-xs text-muted-foreground",
-                                dense ? "mt-0.5" : "mt-1",
-                                (overlayDragHandle || overlayQuickDone) && "pl-12"
-                            )}
-                        >
-                            {renderProjectBadge()}
-                            {!project && area && (
-                                <MetadataBadge
-                                    variant="project"
-                                    label={area.name}
-                                    dotColor={area.color || '#94a3b8'}
-                                />
-                            )}
-                            {(task.contexts ?? []).slice(0, 3).map((ctx) => (
-                                <MetadataBadge key={ctx} variant="context" label={ctx} />
-                            ))}
-                            {(task.contexts?.length ?? 0) > 3 && (
-                                <span className="text-[10px] text-muted-foreground">+{(task.contexts?.length ?? 0) - 3}</span>
-                            )}
-                        </div>
-                    )}
+                    {showCompactMeta && hasMetadata && renderMetadataRow(cn(
+                        "gap-2 text-muted-foreground",
+                        dense ? "mt-0.5" : "mt-1",
+                        (overlayDragHandle || overlayQuickDone) && "pl-12"
+                    ))}
 
                     {isViewOpen && (
                         <div onClick={(e) => e.stopPropagation()}>
@@ -408,111 +508,7 @@ export function TaskItemDisplay({
                                     })}
                                 </div>
                             )}
-
-                            <div className="flex flex-wrap items-center gap-3 mt-2 text-xs">
-                                {renderProjectBadge()}
-                                {!project && area && (
-                                    <MetadataBadge
-                                        variant="project"
-                                        label={area.name}
-                                        dotColor={area.color || '#94a3b8'}
-                                    />
-                                )}
-                                {task.startTime && (
-                                    <MetadataBadge
-                                        variant="info"
-                                        icon={ArrowRight}
-                                        label={safeFormatDate(task.startTime, hasTimeComponent(task.startTime) ? 'MMM d, HH:mm' : 'MMM d')}
-                                    />
-                                )}
-                                {task.dueDate && (
-                                    <div className="flex items-center gap-2">
-                                        <MetadataBadge
-                                            variant="info"
-                                            icon={CalendarIcon}
-                                            label={safeFormatDate(task.dueDate, hasTimeComponent(task.dueDate) ? 'MMM d, HH:mm' : 'MMM d')}
-                                            className={cn(getUrgencyColor(task), isStagnant && "text-muted-foreground/70")}
-                                        />
-                                        {isStagnant && (
-                                            <MetadataBadge
-                                                variant="age"
-                                                icon={Hourglass}
-                                                label={`${task.pushCount ?? 0}`}
-                                            />
-                                        )}
-                                    </div>
-                                )}
-                                {task.location && (
-                                    <MetadataBadge
-                                        variant="info"
-                                        icon={MapPin}
-                                        label={task.location}
-                                    />
-                                )}
-                                {recurrenceRule && (
-                                    <MetadataBadge
-                                        variant="info"
-                                        icon={Repeat}
-                                        label={`${t(`recurrence.${recurrenceRule}`)}${recurrenceStrategy === 'fluid' ? ` · ${t('recurrence.afterCompletionShort')}` : ''}`}
-                                    />
-                                )}
-                                {prioritiesEnabled && task.priority && (
-                                    <MetadataBadge
-                                        variant="priority"
-                                        label={t(`priority.${task.priority}`)}
-                                    />
-                                )}
-                                {task.contexts?.length > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        {task.contexts.map((ctx) => (
-                                            <MetadataBadge key={ctx} variant="context" label={ctx} />
-                                        ))}
-                                    </div>
-                                )}
-                                {task.tags.length > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        {task.tags.map((tag) => (
-                                            <MetadataBadge key={tag} variant="tag" icon={Tag} label={tag} />
-                                        ))}
-                                    </div>
-                                )}
-                                {checklistProgress && (
-                                    <div
-                                        className="flex items-center gap-2 text-muted-foreground"
-                                        title={t('checklist.progress')}
-                                    >
-                                        <span className="font-medium">
-                                            {checklistProgress.completed}/{checklistProgress.total}
-                                        </span>
-                                        <div className="w-16 h-1 bg-muted rounded overflow-hidden">
-                                            <div
-                                                className="h-full bg-primary"
-                                                style={{ width: `${Math.round(checklistProgress.percent * 100)}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-                                {task.status !== 'done' && ageLabel && (
-                                    <MetadataBadge
-                                        variant="age"
-                                        icon={Clock}
-                                        label={ageLabel}
-                                        className={cn(
-                                            getTaskStaleness(task.createdAt) === 'fresh' && 'metadata-badge--age-fresh',
-                                            getTaskStaleness(task.createdAt) === 'aging' && 'metadata-badge--age-aging',
-                                            getTaskStaleness(task.createdAt) === 'stale' && 'metadata-badge--age-stale',
-                                            getTaskStaleness(task.createdAt) === 'very-stale' && 'metadata-badge--age-very-stale'
-                                        )}
-                                    />
-                                )}
-                                {timeEstimatesEnabled && task.timeEstimate && (
-                                    <MetadataBadge
-                                        variant="estimate"
-                                        icon={Timer}
-                                        label={formatTimeEstimate(task.timeEstimate)}
-                                    />
-                                )}
-                            </div>
+                            {hasMetadata && renderMetadataRow("gap-3 mt-2")}
 
                             {(task.checklist || []).length > 0 && (
                                 <div
