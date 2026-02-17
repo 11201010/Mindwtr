@@ -45,6 +45,7 @@ vi.mock('@/hooks/use-theme-colors', () => ({
 
 vi.mock('../lib/ai-config', () => ({
   loadAIKey: vi.fn().mockResolvedValue(''),
+  isAIKeyRequired: vi.fn().mockReturnValue(false),
   buildAIConfig: vi.fn().mockReturnValue({}),
   buildCopilotConfig: vi.fn().mockReturnValue({}),
 }));
