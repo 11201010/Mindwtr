@@ -504,7 +504,7 @@ function createEmptyEntityStats(localTotal: number, incomingTotal: number): Enti
     };
 }
 
-const CONTENT_DIFF_IGNORED_KEYS = new Set(['rev', 'revBy', 'updatedAt', 'createdAt', 'localStatus']);
+const CONTENT_DIFF_IGNORED_KEYS = new Set(['rev', 'revBy', 'updatedAt', 'createdAt', 'localStatus', 'purgedAt']);
 
 const toComparableValue = (value: unknown): unknown => {
     if (Array.isArray(value)) {
