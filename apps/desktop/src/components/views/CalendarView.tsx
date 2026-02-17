@@ -117,6 +117,10 @@ export function CalendarView() {
     const openTaskFromCalendar = useCallback((task: Task) => {
         setOpenTaskId(task.id);
     }, []);
+    const markTaskDone = useCallback((taskId: string) => {
+        updateTask(taskId, { status: 'done', isFocusedToday: false })
+            .catch((error) => reportError('Failed to mark task done', error));
+    }, [updateTask]);
 
     const getExternalEventsForDay = (date: Date) => {
         const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -684,14 +688,22 @@ export function CalendarView() {
                             <div className="text-xs font-medium text-muted-foreground">{t('calendar.deadline')}</div>
                             <div className="space-y-1">
                                 {getDeadlinesForDay(selectedDate).map((task) => (
-                                    <button
-                                        key={task.id}
-                                        type="button"
-                                        onClick={() => openTaskFromCalendar(task)}
-                                        className="text-sm truncate text-left text-foreground hover:underline"
-                                    >
-                                        {task.title}
-                                    </button>
+                                    <div key={task.id} className="flex items-center justify-between gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => openTaskFromCalendar(task)}
+                                            className="min-w-0 flex-1 text-sm truncate text-left text-foreground hover:underline"
+                                        >
+                                            {task.title}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => markTaskDone(task.id)}
+                                            className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300"
+                                        >
+                                            {t('status.done')}
+                                        </button>
+                                    </div>
                                 ))}
                                 {getDeadlinesForDay(selectedDate).length === 0 && (
                                     <div className="text-sm text-muted-foreground">{t('calendar.noTasks')}</div>
@@ -742,6 +754,12 @@ export function CalendarView() {
                                                     </>
                                                 ) : (
                                                     <>
+                                                        <button
+                                                            className="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300"
+                                                            onClick={() => markTaskDone(task.id)}
+                                                        >
+                                                            {t('status.done')}
+                                                        </button>
                                                         <button
                                                             className="text-xs px-2 py-1 rounded bg-muted hover:bg-muted/80"
                                                             onClick={() => beginEditScheduledTime(task.id)}

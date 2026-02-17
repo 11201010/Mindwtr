@@ -404,6 +404,9 @@ export function CalendarView() {
     if (!ref?.setNativeProps) return;
     ref.setNativeProps({ scrollEnabled: enabled });
   };
+  const markTaskDone = (taskId: string) => {
+    updateTask(taskId, { status: 'done', isFocusedToday: false }).catch(logCalendarError);
+  };
 
   const openTaskActions = (taskId: string) => {
     const task = tasks.find((t) => t.id === taskId);
@@ -420,6 +423,12 @@ export function CalendarView() {
       buttons?.push({
         text: t('calendar.unschedule'),
         onPress: () => updateTask(task.id, { startTime: undefined }).catch(logCalendarError),
+      });
+    }
+    if (task.status !== 'done' && task.status !== 'archived') {
+      buttons?.push({
+        text: t('status.done'),
+        onPress: () => markTaskDone(task.id),
       });
     }
 
@@ -961,12 +970,22 @@ export function CalendarView() {
 
               {getDeadlinesForDate(selectedDate).map((task) => (
                 <View key={task.id} style={[styles.taskItem, { backgroundColor: tc.inputBg, borderLeftColor: tc.tint }]}>
-                  <Text style={[styles.taskItemTitle, { color: tc.text }]} numberOfLines={1}>
-                    {task.title}
-                  </Text>
-                  <Text style={[styles.taskItemTime, { color: tc.secondaryText }]}>
-                    {t('calendar.deadline')}
-                  </Text>
+                  <Pressable style={styles.taskItemMain} onPress={() => openTaskActions(task.id)}>
+                    <Text style={[styles.taskItemTitle, { color: tc.text }]} numberOfLines={1}>
+                      {task.title}
+                    </Text>
+                    <Text style={[styles.taskItemTime, { color: tc.secondaryText }]}>
+                      {t('calendar.deadline')}
+                    </Text>
+                  </Pressable>
+                  {task.status !== 'done' && task.status !== 'archived' && (
+                    <Pressable
+                      style={[styles.quickDoneButton, { borderColor: toRgba(tc.tint, 0.35), backgroundColor: toRgba(tc.tint, 0.16) }]}
+                      onPress={() => markTaskDone(task.id)}
+                    >
+                      <Text style={[styles.quickDoneButtonText, { color: tc.tint }]}>{t('status.done')}</Text>
+                    </Pressable>
+                  )}
                 </View>
               ))}
 
@@ -976,20 +995,33 @@ export function CalendarView() {
                   style={[styles.taskItem, { backgroundColor: tc.inputBg, borderLeftColor: tc.tint }]}
                   onPress={() => openTaskActions(task.id)}
                 >
-                  <Text style={[styles.taskItemTitle, { color: tc.text }]} numberOfLines={1}>
-                    {task.title}
-                  </Text>
-                  <Text style={[styles.taskItemTime, { color: tc.secondaryText }]}>
-                    {(() => {
-                      const start = safeParseDate(task.startTime);
-                      if (!start) return '';
-                      const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
-                      const end = new Date(start.getTime() + durMs);
-                      const startLabel = start.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-                      const endLabel = end.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-                      return `${startLabel}-${endLabel}`;
-                    })()}
-                  </Text>
+                  <View style={styles.taskItemMain}>
+                    <Text style={[styles.taskItemTitle, { color: tc.text }]} numberOfLines={1}>
+                      {task.title}
+                    </Text>
+                    <Text style={[styles.taskItemTime, { color: tc.secondaryText }]}>
+                      {(() => {
+                        const start = safeParseDate(task.startTime);
+                        if (!start) return '';
+                        const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
+                        const end = new Date(start.getTime() + durMs);
+                        const startLabel = start.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                        const endLabel = end.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                        return `${startLabel}-${endLabel}`;
+                      })()}
+                    </Text>
+                  </View>
+                  {task.status !== 'done' && task.status !== 'archived' && (
+                    <Pressable
+                      style={[styles.quickDoneButton, { borderColor: toRgba(tc.tint, 0.35), backgroundColor: toRgba(tc.tint, 0.16) }]}
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        markTaskDone(task.id);
+                      }}
+                    >
+                      <Text style={[styles.quickDoneButtonText, { color: tc.tint }]}>{t('status.done')}</Text>
+                    </Pressable>
+                  )}
                 </Pressable>
               ))}
 
@@ -1235,15 +1267,28 @@ const styles = StyleSheet.create({
   eventItem: {
     borderLeftColor: '#6B7280',
   },
-  taskItemTitle: {
+  taskItemMain: {
     flex: 1,
+    minWidth: 0,
+  },
+  taskItemTitle: {
     fontSize: 14,
     color: '#111827',
   },
   taskItemTime: {
     fontSize: 12,
     color: '#6B7280',
+  },
+  quickDoneButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     marginLeft: 8,
+  },
+  quickDoneButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   noTasks: {
     textAlign: 'center',
