@@ -141,7 +141,9 @@ describe('cloud server utils', () => {
     test('normalizes attachment paths with allowlist and segment checks', () => {
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder/file.txt')).toBe('folder/file.txt');
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('/folder/file.txt/')).toBe('folder/file.txt');
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('%2e%2e/secret')).toBeNull();
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('%252e%252e/secret')).toBeNull();
+        expect(__cloudTestUtils.normalizeAttachmentRelativePath('%25252e%25252e/secret')).toBeNull();
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('../secret')).toBeNull();
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder\\\\file.txt')).toBeNull();
         expect(__cloudTestUtils.normalizeAttachmentRelativePath('folder/file?.txt')).toBeNull();

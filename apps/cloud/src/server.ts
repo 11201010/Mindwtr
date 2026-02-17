@@ -71,18 +71,38 @@ const MAX_ITEMS_PER_COLLECTION = Number.isFinite(maxItemsPerCollectionValue) && 
     ? Math.floor(maxItemsPerCollectionValue)
     : 50_000;
 const ATTACHMENT_PATH_ALLOWLIST = /^[a-zA-Z0-9._/-]+$/;
+const ATTACHMENT_PATH_MAX_DECODE_PASSES = 3;
+
+function decodeAttachmentPath(rawPath: string): string | null {
+    let decoded = rawPath;
+    for (let i = 0; i < ATTACHMENT_PATH_MAX_DECODE_PASSES; i += 1) {
+        let next = '';
+        try {
+            next = decodeURIComponent(decoded);
+        } catch {
+            return null;
+        }
+        if (next === decoded) {
+            return next;
+        }
+        decoded = next;
+    }
+    try {
+        const next = decodeURIComponent(decoded);
+        if (next !== decoded) return null;
+    } catch {
+        return null;
+    }
+    return decoded;
+}
 
 function isPathWithinRoot(pathValue: string, rootPath: string): boolean {
     return pathValue === rootPath || pathValue.startsWith(`${rootPath}${sep}`);
 }
 
 function normalizeAttachmentRelativePath(rawPath: string): string | null {
-    let decoded = '';
-    try {
-        decoded = decodeURIComponent(rawPath);
-    } catch {
-        return null;
-    }
+    const decoded = decodeAttachmentPath(rawPath);
+    if (!decoded) return null;
     if (!decoded || !ATTACHMENT_PATH_ALLOWLIST.test(decoded)) {
         return null;
     }
