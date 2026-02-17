@@ -156,7 +156,7 @@ const DEFAULT_TASK_EDITOR_VISIBLE: TaskEditorFieldId[] = [
 
 type TaskEditTab = 'task' | 'view';
 
-export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, defaultTab }: TaskEditModalProps) {
+function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defaultTab }: TaskEditModalProps) {
     const {
         tasks,
         projects,
@@ -2985,3 +2985,15 @@ export function TaskEditModal({ visible, task, onClose, onSave, onFocusMode, def
         </Modal>
     );
 }
+
+const areTaskEditModalPropsEqual = (prev: TaskEditModalProps, next: TaskEditModalProps): boolean => (
+    prev.visible === next.visible
+    && prev.task === next.task
+    && prev.onClose === next.onClose
+    && prev.onSave === next.onSave
+    && prev.onFocusMode === next.onFocusMode
+    && prev.defaultTab === next.defaultTab
+);
+
+export const TaskEditModal = React.memo(TaskEditModalInner, areTaskEditModalPropsEqual);
+TaskEditModal.displayName = 'TaskEditModal';
