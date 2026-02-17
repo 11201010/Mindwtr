@@ -115,6 +115,7 @@ const STATUS_LABEL_FALLBACKS: Record<TaskStatus, string> = {
     archived: 'Archived',
 };
 const QUICK_TOKEN_LIMIT = 6;
+const DEFAULT_CONTEXT_SUGGESTIONS = ['@home', '@work', '@errands', '@computer', '@phone'];
 const getInitialWindowWidth = (): number => {
     const width = Dimensions?.get?.('window')?.width;
     return Number.isFinite(width) && width > 0 ? Math.round(width) : 1;
@@ -237,8 +238,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
             .map(([tag]) => tag);
 
         // Add default tags if we don't have enough history
-        const defaults = ['@home', '@work', '@errands', '@computer', '@phone'];
-        const unique = new Set([...sorted, ...defaults]);
+        const unique = new Set([...sorted, ...DEFAULT_CONTEXT_SUGGESTIONS]);
 
         return Array.from(unique).slice(0, MAX_SUGGESTED_TAGS);
     }, [tasks]);
