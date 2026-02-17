@@ -136,6 +136,8 @@ For advanced users, Mindwtr includes a simple sync server (`apps/cloud`) that ca
 - **Protocol**: Simple REST API (GET/PUT)
 - **Auth**: Bearer token (mapped to a specific data file on the server)
 - **Deployment**: Node.js/Bun
+- **Docker setup**: [[Docker Deployment]]
+- **Operations guide**: [[Cloud Deployment]]
 
 ---
 
