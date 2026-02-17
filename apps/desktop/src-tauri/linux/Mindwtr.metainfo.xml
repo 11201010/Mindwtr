@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>tech.dongdongbh.mindwtr</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>Mindwtr</name>
+  <summary>A complete Getting Things Done productivity system</summary>
+  <description>
+    <p>
+      Mindwtr is a local-first task manager built around the GTD method.
+      It helps you capture, clarify, organize, review, and do your work.
+    </p>
+    <p>
+      Mindwtr supports projects, areas, sections, recurring tasks, calendar sync,
+      and optional cloud sync while keeping your data under your control.
+    </p>
+  </description>
+  <launchable type="desktop-id">Mindwtr.desktop</launchable>
+  <url type="homepage">https://github.com/dongdongbh/Mindwtr</url>
+  <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
+  <developer id="tech.dongdongbh">
+    <name>dongdongbh</name>
+  </developer>
+  <provides>
+    <binary>mindwtr</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

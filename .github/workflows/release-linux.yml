@@ -93,6 +93,7 @@ jobs:
 
           TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
           TOOL_WORKDIR="$(mktemp -d)"
+          METAINFO_SOURCE="$GITHUB_WORKSPACE/apps/desktop/src-tauri/linux/Mindwtr.metainfo.xml"
           curl -fsSL "$TOOL_URL" -o "$TOOL_WORKDIR/appimagetool.AppImage"
           chmod +x "$TOOL_WORKDIR/appimagetool.AppImage"
           (
@@ -117,6 +118,12 @@ jobs:
                 echo "Injected missing .DirIcon"
               else
                 echo ".DirIcon already present"
+              fi
+
+              if [ -f "$METAINFO_SOURCE" ]; then
+                mkdir -p appdir/usr/share/metainfo
+                cp "$METAINFO_SOURCE" appdir/usr/share/metainfo/Mindwtr.metainfo.xml
+                echo "Injected AppStream metainfo"
               fi
 
               ARCH="$RUNNER_ARCH" "$APPIMAGETOOL" appdir fixed.AppImage
