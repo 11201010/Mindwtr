@@ -800,15 +800,24 @@ jobs:
         run: source/scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Update PKGBUILD version
+        id: pkgbuild_version
         shell: bash
         working-directory: aur-mindwtr
         run: |
           VERSION=${{ steps.version.outputs.version }}
           echo "Updating mindwtr PKGBUILD to version $VERSION"
-          sed -i "s/^pkgver=.*/pkgver=$VERSION/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          CURRENT_PKGVER="$(sed -n 's/^pkgver=//p' PKGBUILD | head -n 1)"
+          if [ "$CURRENT_PKGVER" != "$VERSION" ]; then
+            sed -i "s/^pkgver=.*/pkgver=$VERSION/" PKGBUILD
+            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            echo "pkgver_changed=true" >> "$GITHUB_OUTPUT"
+            echo "pkgver changed (${CURRENT_PKGVER} -> ${VERSION}); reset pkgrel to 1"
+          else
+            echo "pkgver_changed=false" >> "$GITHUB_OUTPUT"
+            echo "pkgver unchanged (${VERSION}); keep current pkgrel for now"
+          fi
 
-      - name: Update checksums and .SRCINFO
+      - name: Update checksums
         shell: bash
         working-directory: aur-mindwtr
         run: |
@@ -840,6 +849,41 @@ jobs:
                   cat /tmp/makepkg-sums.txt
                 } > /aur/PKGBUILD
               fi
+            '
+
+      - name: Bump pkgrel for checksum-only changes
+        shell: bash
+        working-directory: aur-mindwtr
+        run: |
+          if [ "${{ steps.pkgbuild_version.outputs.pkgver_changed }}" = "false" ] && ! git diff --quiet -- PKGBUILD; then
+            CURRENT_PKGREL="$(sed -n 's/^pkgrel=//p' PKGBUILD | head -n 1)"
+            if [[ "$CURRENT_PKGREL" =~ ^[0-9]+$ ]]; then
+              NEW_PKGREL="$((CURRENT_PKGREL + 1))"
+              sed -i "s/^pkgrel=.*/pkgrel=${NEW_PKGREL}/" PKGBUILD
+              echo "pkgver unchanged and checksums changed; bump pkgrel ${CURRENT_PKGREL} -> ${NEW_PKGREL}"
+            else
+              echo "::error::pkgrel is not numeric (${CURRENT_PKGREL}); cannot auto-bump."
+              exit 1
+            fi
+          fi
+
+      - name: Update .SRCINFO
+        shell: bash
+        working-directory: aur-mindwtr
+        run: |
+          HOST_UID="$(id -u)"
+          HOST_GID="$(id -g)"
+          docker run --rm \
+            -e HOST_UID="$HOST_UID" \
+            -e HOST_GID="$HOST_GID" \
+            -v "$PWD:/aur" \
+            -w /aur \
+            archlinux:latest \
+            bash -lc '
+              set -euo pipefail
+              pacman -Sy --noconfirm --needed base-devel git
+              getent group "$HOST_GID" >/dev/null 2>&1 || groupadd -g "$HOST_GID" builder
+              id -u builder >/dev/null 2>&1 || useradd -m -u "$HOST_UID" -g "$HOST_GID" builder
               su builder -c "makepkg --printsrcinfo > /aur/.SRCINFO"
             '
 
