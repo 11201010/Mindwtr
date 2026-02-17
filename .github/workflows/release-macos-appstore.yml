@@ -648,13 +648,14 @@ jobs:
               groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
               notify_external_testers: false,
               changelog: ENV.fetch("TESTFLIGHT_WHAT_TO_TEST"),
+              submit_beta_review: true,
               skip_submission: false,
               skip_waiting_for_build_processing: false,
               wait_processing_timeout_duration: 1800
             )
           rescue => e
             if e.message.include?("Another build is in review")
-              UI.important("Another TestFlight build is already in beta review; retrying distribution without beta review submission.")
+              UI.important("Another TestFlight build is already in beta review; retrying distribution with submit_beta_review disabled so group assignment can still succeed.")
               upload_to_testflight(
                 api_key: api_key,
                 app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
@@ -666,7 +667,8 @@ jobs:
                 groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
                 notify_external_testers: false,
                 changelog: ENV.fetch("TESTFLIGHT_WHAT_TO_TEST"),
-                skip_submission: true,
+                submit_beta_review: false,
+                skip_submission: false,
                 skip_waiting_for_build_processing: false,
                 wait_processing_timeout_duration: 1800
               )
