@@ -872,6 +872,7 @@ export function ProjectsView() {
                                             <button
                                                 type="button"
                                                 onClick={handleAddSection}
+                                                aria-label={t('projects.addSection')}
                                                 className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md border border-border bg-muted/40 hover:bg-muted transition-colors"
                                             >
                                                 <Plus className="h-3.5 w-3.5" />
