@@ -40,6 +40,13 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
          style="height: 50px"
          height="50" />
   </a>
+  <a href="https://apt.izzysoft.de/fdroid/index/apk/tech.dongdongbh.mindwtr" target="_blank">
+    <img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroidButtonGreyBorder_nofont.png"
+         align="center"
+         alt="Get it on IzzyOnDroid"
+         style="height: 50px"
+         height="50" />
+  </a>
   <a href="https://snapcraft.io/mindwtr" target="_blank">
     <img alt="Get it from the Snap Store"
          src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg"
@@ -241,6 +248,16 @@ brew install --cask mindwtr
 <a href="https://play.google.com/store/apps/details?id=tech.dongdongbh.mindwtr">
   <img src="https://img.shields.io/badge/Google_Play-Install-414141?logo=googleplay&logoColor=white" alt="Get it on Google Play">
 </a>
+<a href="https://apt.izzysoft.de/fdroid/index/apk/tech.dongdongbh.mindwtr">
+  <img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroidButtonGreyBorder_nofont.png" alt="Get it on IzzyOnDroid" style="height: 50px" height="50">
+</a>
+
+[![IzzyOnDroid](https://img.shields.io/endpoint?url=https://apt.izzysoft.de/fdroid/api/v1/shield/tech.dongdongbh.mindwtr&label=IzzyOnDroid&style=for-the-badge)](https://apt.izzysoft.de/fdroid/index/apk/tech.dongdongbh.mindwtr)
+
+Install with IzzyOnDroid:
+1. Install an F-Droid-compatible client (Droid-ify, Neo Store, or F-Droid).
+2. Add the IzzyOnDroid repository: `https://apt.izzysoft.de/fdroid/repo`.
+3. Open [Mindwtr on IzzyOnDroid](https://apt.izzysoft.de/fdroid/index/apk/tech.dongdongbh.mindwtr) and install.
 
 Other methods: APK from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases).
 
