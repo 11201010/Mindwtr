@@ -1,0 +1,4 @@
+// Manual overrides for language-specific wording.
+// Keys not listed here are auto-translated from English at runtime build step.
+
+export const ruOverrides: Record<string, string> = {};
