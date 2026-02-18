@@ -40,7 +40,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('packages/core/src/i18n-translations')) {
+          if (id.includes('packages/core/src/i18n/i18n-translations')) {
             return 'i18n';
           }
           if (id.includes('node_modules')) {

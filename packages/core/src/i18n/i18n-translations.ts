@@ -1,19 +1,19 @@
 import type { Language } from './i18n-types';
 import { autoTranslate } from './i18n-translate';
 
-import { en } from './i18n/locales/en';
-import { zh } from './i18n/locales/zh';
-import { esOverrides } from './i18n/locales/es';
-import { hiOverrides } from './i18n/locales/hi';
-import { arOverrides } from './i18n/locales/ar';
-import { deOverrides } from './i18n/locales/de';
-import { ruOverrides } from './i18n/locales/ru';
-import { jaOverrides } from './i18n/locales/ja';
-import { frOverrides } from './i18n/locales/fr';
-import { ptOverrides } from './i18n/locales/pt';
-import { koOverrides } from './i18n/locales/ko';
-import { itOverrides } from './i18n/locales/it';
-import { trOverrides } from './i18n/locales/tr';
+import { en } from './locales/en';
+import { zh } from './locales/zh';
+import { esOverrides } from './locales/es';
+import { hiOverrides } from './locales/hi';
+import { arOverrides } from './locales/ar';
+import { deOverrides } from './locales/de';
+import { ruOverrides } from './locales/ru';
+import { jaOverrides } from './locales/ja';
+import { frOverrides } from './locales/fr';
+import { ptOverrides } from './locales/pt';
+import { koOverrides } from './locales/ko';
+import { itOverrides } from './locales/it';
+import { trOverrides } from './locales/tr';
 
 const buildTranslations = (lang: Language, overrides: Record<string, string>) => {
     const result: Record<string, string> = {};

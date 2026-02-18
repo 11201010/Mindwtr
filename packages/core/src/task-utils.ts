@@ -5,7 +5,7 @@
 import { Task, TaskStatus, TaskSortBy, Project } from './types';
 import { safeParseDueDate } from './date';
 import { TASK_STATUS_ORDER } from './task-status';
-import type { Language } from './i18n-types';
+import type { Language } from './i18n/i18n-types';
 
 /**
  * Status sorting order for task list display
