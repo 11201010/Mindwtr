@@ -8,6 +8,10 @@ import { logError, logWarn } from './app-log';
 
 const DATA_KEY = WIDGET_DATA_KEY;
 const LEGACY_DATA_KEYS = ['focus-gtd-data', 'gtd-todo-data', 'gtd-data'];
+const EMPTY_APP_DATA: AppData = { tasks: [], projects: [], sections: [], areas: [], settings: {} };
+const SQLITE_STARTUP_TIMEOUT_MS = 3_500;
+const SQLITE_QUERY_TIMEOUT_MS = 2_500;
+const SQLITE_RETRY_COOLDOWN_MS = 60_000;
 
 let saveQueue: Promise<void> = Promise.resolve();
 
@@ -25,6 +29,7 @@ type SqliteState = {
 
 let sqliteStatePromise: Promise<SqliteState> | null = null;
 let preferJsonBackup = false;
+let preferJsonBackupUntil = 0;
 let didWarnPreferJsonBackup = false;
 
 const formatError = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -53,6 +58,34 @@ const warnPreferJsonBackup = () => {
     if (didWarnPreferJsonBackup) return;
     logStorageWarn('[Storage] SQLite unavailable; using JSON backup for reads until restart.');
     didWarnPreferJsonBackup = true;
+};
+
+const withOperationTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+    }
+};
+
+const shouldUseJsonBackupFastPath = () => preferJsonBackup && Date.now() < preferJsonBackupUntil;
+
+const markPreferJsonBackup = () => {
+    preferJsonBackup = true;
+    preferJsonBackupUntil = Date.now() + SQLITE_RETRY_COOLDOWN_MS;
+    warnPreferJsonBackup();
+};
+
+const clearPreferJsonBackup = () => {
+    preferJsonBackup = false;
+    preferJsonBackupUntil = 0;
+    didWarnPreferJsonBackup = false;
 };
 
 const createLegacyClient = (db: any): SqliteClient => {
@@ -284,6 +317,9 @@ const createStorage = (): StorageAdapter => {
         getData: async (): Promise<AppData> => {
             const loadJsonBackup = async () => {
                 const jsonValue = await getLegacyJson(AsyncStorage);
+                if (jsonValue == null) {
+                    return { ...EMPTY_APP_DATA };
+                }
                 if (jsonValue != null) {
                     try {
                         const data = JSON.parse(jsonValue) as AppData;
@@ -299,6 +335,10 @@ const createStorage = (): StorageAdapter => {
                 throw new Error('Data appears corrupted. Please restore from backup.');
             };
 
+            if (shouldUseJsonBackupFastPath()) {
+                warnPreferJsonBackup();
+                return loadJsonBackup();
+            }
             if (preferJsonBackup && !shouldUseSqlite) {
                 warnPreferJsonBackup();
                 return loadJsonBackup();
@@ -310,14 +350,21 @@ const createStorage = (): StorageAdapter => {
                 if (!shouldUseSqlite) {
                     throw new Error('SQLite disabled in Expo Go');
                 }
-                const { adapter } = await getSqliteState();
-                const data = await adapter.getData();
+                const { adapter } = await withOperationTimeout(
+                    getSqliteState(),
+                    SQLITE_STARTUP_TIMEOUT_MS,
+                    'SQLite initialization timed out'
+                );
+                const data = await withOperationTimeout(
+                    adapter.getData(),
+                    SQLITE_STARTUP_TIMEOUT_MS,
+                    'SQLite read timed out'
+                );
                 data.areas = Array.isArray(data.areas) ? data.areas : [];
                 updateAndroidWidgetFromData(data).catch((error) => {
                     logStorageWarn('[Widgets] Failed to update Android widget from storage load', error);
                 });
-                preferJsonBackup = false;
-                didWarnPreferJsonBackup = false;
+                clearPreferJsonBackup();
                 return data;
             } catch (e) {
                 if (__DEV__ && !shouldUseSqlite && String(e).includes('Expo Go')) {
@@ -325,6 +372,7 @@ const createStorage = (): StorageAdapter => {
                 } else {
                     logStorageWarn('[Storage] SQLite load failed, falling back to JSON backup', e);
                 }
+                markPreferJsonBackup();
                 return loadJsonBackup();
             }
         },
@@ -336,11 +384,9 @@ const createStorage = (): StorageAdapter => {
                     }
                     const { adapter } = await getSqliteState();
                     await adapter.saveData(data);
-                    preferJsonBackup = false;
-                    didWarnPreferJsonBackup = false;
+                    clearPreferJsonBackup();
                 } catch (error) {
-                    preferJsonBackup = true;
-                    warnPreferJsonBackup();
+                    markPreferJsonBackup();
                     if (__DEV__ && !shouldUseSqlite && String(error).includes('Expo Go')) {
                         logStorageWarn('[Storage] SQLite disabled in Expo Go, keeping JSON backup');
                     } else {
@@ -358,12 +404,37 @@ const createStorage = (): StorageAdapter => {
             });
         },
         queryTasks: async (options) => {
+            if (shouldUseJsonBackupFastPath()) {
+                warnPreferJsonBackup();
+                const data = await mobileStorage.getData();
+                const statusFilter = options.status;
+                const excludeStatuses = options.excludeStatuses ?? [];
+                const includeArchived = options.includeArchived === true;
+                const includeDeleted = options.includeDeleted === true;
+                return data.tasks.filter((task) => {
+                    if (!includeDeleted && task.deletedAt) return false;
+                    if (!includeArchived && task.status === 'archived') return false;
+                    if (statusFilter && statusFilter !== 'all' && task.status !== statusFilter) return false;
+                    if (excludeStatuses.length > 0 && excludeStatuses.includes(task.status)) return false;
+                    if (options.projectId && task.projectId !== options.projectId) return false;
+                    return true;
+                });
+            }
             try {
-                const { adapter } = await getSqliteState();
+                const { adapter } = await withOperationTimeout(
+                    getSqliteState(),
+                    SQLITE_QUERY_TIMEOUT_MS,
+                    'SQLite query initialization timed out'
+                );
                 if (typeof (adapter as any).queryTasks === 'function') {
-                    return (adapter as any).queryTasks(options);
+                    return withOperationTimeout(
+                        (adapter as any).queryTasks(options),
+                        SQLITE_QUERY_TIMEOUT_MS,
+                        'SQLite query timed out'
+                    );
                 }
             } catch (error) {
+                markPreferJsonBackup();
                 logStorageWarn('[Storage] SQLite query failed, falling back to in-memory filter', error);
             }
             const data = await mobileStorage.getData();
@@ -381,12 +452,26 @@ const createStorage = (): StorageAdapter => {
             });
         },
         searchAll: async (query: string) => {
+            if (shouldUseJsonBackupFastPath()) {
+                warnPreferJsonBackup();
+                const data = await mobileStorage.getData();
+                return searchAll(data.tasks, data.projects, query);
+            }
             try {
-                const { adapter } = await getSqliteState();
+                const { adapter } = await withOperationTimeout(
+                    getSqliteState(),
+                    SQLITE_QUERY_TIMEOUT_MS,
+                    'SQLite search initialization timed out'
+                );
                 if (typeof (adapter as any).searchAll === 'function') {
-                    return (adapter as any).searchAll(query);
+                    return withOperationTimeout(
+                        (adapter as any).searchAll(query),
+                        SQLITE_QUERY_TIMEOUT_MS,
+                        'SQLite search timed out'
+                    );
                 }
             } catch (error) {
+                markPreferJsonBackup();
                 logStorageWarn('[Storage] SQLite search failed, falling back to in-memory search', error);
             }
             const data = await mobileStorage.getData();

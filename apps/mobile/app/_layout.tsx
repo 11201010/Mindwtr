@@ -349,8 +349,10 @@ function RootLayoutContent() {
         if (storageInitError) {
           return;
         }
-        // Verify critical polyfills
-        verifyPolyfills();
+        // Keep expensive runtime checks in development only.
+        if (__DEV__) {
+          verifyPolyfills();
+        }
 
         const store = useTaskStore.getState();
         await store.fetchData();
