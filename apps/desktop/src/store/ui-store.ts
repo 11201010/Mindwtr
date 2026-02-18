@@ -85,7 +85,7 @@ export const useUiStore = createWithEqualityFn<UiState>()((set) => ({
             },
         })),
     listOptions: {
-        showDetails: true,
+        showDetails: false,
     },
     setListOptions: (partial) =>
         set((state) => ({ listOptions: { ...state.listOptions, ...partial } })),
