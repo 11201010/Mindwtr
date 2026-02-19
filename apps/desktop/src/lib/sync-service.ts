@@ -29,6 +29,7 @@ import {
     normalizeWebdavUrl,
     normalizeCloudUrl,
     sanitizeAppDataForRemote,
+    assertNoPendingAttachmentUploads,
     injectExternalCalendars as injectExternalCalendarsForSync,
     persistExternalCalendars as persistExternalCalendarsForSync,
     withRetry,
@@ -1548,6 +1549,7 @@ export class SyncService {
                 },
                 writeRemote: async (data) => {
                     ensureLocalSnapshotFresh();
+                    assertNoPendingAttachmentUploads(data);
                     const sanitized = sanitizeAppDataForRemote(data);
                     if (backend === 'webdav') {
                         if (isTauriRuntimeEnv()) {
