@@ -32,6 +32,52 @@ fi
 
 npx expo prebuild --clean --platform android
 
+python3 - <<'PY'
+from pathlib import Path
+
+candidates = [
+    Path("node_modules/react-native-alarm-notification/android/build.gradle"),
+    Path("../../node_modules/react-native-alarm-notification/android/build.gradle"),
+]
+
+patched_any = False
+for path in candidates:
+    if not path.exists():
+        continue
+
+    text = path.read_text()
+    original = text
+
+    # Gradle 8/AGP 8 compatibility:
+    # - legacy 'maven' plugin was removed
+    # - compileSdkVersion should use modern compileSdk DSL
+    text = text.replace("apply plugin: 'maven'\n", "")
+    text = text.replace(
+        "compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)",
+        "compileSdk safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)",
+    )
+
+    # Remove legacy publishing/javadoc tasks that rely on deprecated Gradle
+    # configurations (e.g. 'compile') and are not needed for app builds.
+    marker = "afterEvaluate { project ->"
+    marker_index = text.find(marker)
+    if marker_index != -1:
+        text = (
+            text[:marker_index].rstrip()
+            + "\n\n// Legacy publishing tasks removed for modern Gradle compatibility.\n"
+        )
+
+    if text != original:
+        path.write_text(text)
+        print(f"[android-build] patched {path} for Gradle 8/AGP 8 compatibility")
+    else:
+        print(f"[android-build] {path} already compatible")
+    patched_any = True
+
+if not patched_any:
+    print("[android-build] react-native-alarm-notification build.gradle not found; skipping compatibility patch")
+PY
+
 if [[ "${FOSS_BUILD}" == "1" ]]; then
   # Reproducible builds: pin RN gradle plugin dev-server host instead of host IP.
   python3 - <<'PY'
