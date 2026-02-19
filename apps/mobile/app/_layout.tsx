@@ -573,14 +573,7 @@ function RootLayoutContent() {
         textColor: isDark ? '#E2E8F0' : '#0F172A',
       };
     }
-    if (lastSyncStatus === 'conflict') {
-      return {
-        text: t('settings.lastSyncConflict'),
-        backgroundColor: isDark ? '#422006' : '#FEF3C7',
-        borderColor: isDark ? '#B45309' : '#F59E0B',
-        textColor: isDark ? '#FDE68A' : '#92400E',
-      };
-    }
+    if (lastSyncStatus === 'conflict') return null;
     return {
       text: lastSyncError ? `${t('settings.lastSyncError')}: ${lastSyncError}` : t('settings.lastSyncError'),
       backgroundColor: isDark ? '#3F1D1D' : '#FEE2E2',
