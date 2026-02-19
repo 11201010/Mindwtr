@@ -528,6 +528,8 @@ jobs:
             echo "::warning::Found existing iOS App Store submission in state ${ACTIVE_REVIEW_STATE:-unknown} (version ${ACTIVE_REVIEW_VERSION:-unknown}). Upload will proceed, but review submission is disabled."
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=true" >> "$GITHUB_ENV"
+            echo "SKIP_APP_VERSION_UPDATE_FOR_UPLOAD=true" >> "$GITHUB_ENV"
+            echo "SKIP_METADATA_FOR_UPLOAD=true" >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -547,6 +549,8 @@ jobs:
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
           IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
           SUBMIT_FOR_REVIEW: ${{ env.EFFECTIVE_SUBMIT_FOR_REVIEW || 'false' }}
+          SKIP_APP_VERSION_UPDATE: ${{ env.SKIP_APP_VERSION_UPDATE_FOR_UPLOAD || 'false' }}
+          SKIP_METADATA: ${{ env.SKIP_METADATA_FOR_UPLOAD || 'false' }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           FASTLANE_HIDE_CHANGELOG: "1"
           FASTLANE_OPT_OUT_USAGE: "1"
@@ -576,8 +580,9 @@ jobs:
                 api_key: api_key,
                 ipa: ENV.fetch("IPA_PATH"),
                 metadata_path: ENV.fetch("FASTLANE_METADATA_PATH"),
+                skip_metadata: ENV.fetch("SKIP_METADATA", "false") == "true",
                 skip_screenshots: true,
-                skip_app_version_update: true,
+                skip_app_version_update: ENV.fetch("SKIP_APP_VERSION_UPDATE", "false") == "true",
                 force: true,
                 run_precheck_before_submit: false,
                 submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
