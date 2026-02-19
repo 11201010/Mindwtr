@@ -1,0 +1,4 @@
+- Added mobile sync status indicator, sync connection checks, and dedicated empty-state UI.
+- Improved accessibility labels in mobile quick capture and settings screens.
+- Fixed stale sync error banner after switching backend to Off.
+- Increased sync reliability with attachment cleanup retries and safer upload/write behavior.

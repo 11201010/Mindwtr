@@ -1,0 +1,4 @@
+- Agregamos indicador de estado de sync, verificacion de conexion y estados vacios dedicados en mobile.
+- Mejoramos etiquetas de accesibilidad en quick capture y ajustes de mobile.
+- Corregimos el banner de error de sync que persistia tras cambiar backend a Off.
+- Aumentamos la fiabilidad de sync con reintentos de limpieza de adjuntos y escritura mas segura durante subidas.

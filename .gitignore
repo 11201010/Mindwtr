@@ -40,9 +40,11 @@ Thumbs.db
 
 # Testing
 coverage/
+.vitest/
 
 # Mobile (Expo)
 apps/mobile/.expo/
+apps/mobile/.expo-shared/
 .expo/
 apps/mobile/android/
 apps/mobile/ios/

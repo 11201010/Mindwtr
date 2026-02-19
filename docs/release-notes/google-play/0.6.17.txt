@@ -1,0 +1,18 @@
+<en-US>
+- Added mobile sync status indicator, sync connection checks, and dedicated empty-state UI.
+- Improved mobile accessibility labels in quick capture and settings screens.
+- Fixed stale sync error banner showing after switching sync backend to Off.
+- Increased sync reliability with attachment cleanup retry handling and safer upload/write guards.
+</en-US>
+<zh-CN>
+- 新增移动端同步状态指示、同步连接检查与专用空状态界面。
+- 改进 quick capture 与设置页面的无障碍标签。
+- 修复切换同步后端为 Off 后仍显示旧同步错误横幅的问题。
+- 提升同步可靠性：增强附件清理重试与上传期间写入保护。
+</zh-CN>
+<es-ES>
+- Agregamos indicador global de estado de sync, verificacion de conexion y estados vacios dedicados en mobile.
+- Mejoramos etiquetas de accesibilidad en quick capture y pantallas de ajustes.
+- Corregimos el banner de error de sync que quedaba visible al cambiar backend a Off.
+- Aumentamos la fiabilidad de sync con reintentos en limpieza de adjuntos y protecciones de escritura durante subidas.
+</es-ES>

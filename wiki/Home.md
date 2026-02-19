@@ -65,6 +65,7 @@ Mindwtr is **simple by default and powerful when needed**. We focus on reducing 
 - [[MCP Server]] — Local MCP server setup and tool usage
 - [[Deployment Guide]] — Platform deployment entry points
 - [[Performance Guide]] — Performance-focused implementation notes
+- [Release Notes (Repository)](https://github.com/dongdongbh/Mindwtr/tree/main/docs/release-notes) — Version-by-version release notes
 - [Contributing (Repository Guide)](https://github.com/dongdongbh/Mindwtr/blob/main/docs/CONTRIBUTING.md) — How to contribute to Mindwtr
 
 ---
