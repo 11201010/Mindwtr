@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, Modal, TouchableOpacity, ScrollView, Platform, Share, Alert, Animated, Pressable, Keyboard, Dimensions, Image } from 'react-native';
+import { View, Text, TextInput, Modal, TouchableOpacity, ScrollView, Platform, Share, Alert, Animated, Pressable, Keyboard, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     Attachment,
@@ -43,7 +43,6 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownText } from './markdown-text';
 import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../lib/ai-config';
 import { ensureAttachmentAvailable, persistAttachmentLocally } from '../lib/attachment-sync';
-import { logError, logWarn } from '../lib/app-log';
 import { AIResponseModal, type AIResponseAction } from './ai-response-modal';
 import { styles } from './task-edit/task-edit-modal.styles';
 import { TaskEditViewTab } from './task-edit/TaskEditViewTab';
@@ -67,6 +66,18 @@ import {
 } from './task-edit/recurrence-utils';
 import { useTaskEditCopilot } from './task-edit/use-task-edit-copilot';
 import {
+    DEFAULT_CONTEXT_SUGGESTIONS,
+    DEFAULT_TASK_EDITOR_ORDER,
+    DEFAULT_TASK_EDITOR_VISIBLE,
+    getInitialWindowWidth,
+    isReleasedAudioPlayerError,
+    isValidLinkUri,
+    logTaskError,
+    logTaskWarn,
+    QUICK_TOKEN_LIMIT,
+    STATUS_OPTIONS,
+} from './task-edit/task-edit-modal.utils';
+import {
     applyMarkdownChecklistToTask,
     getActiveTokenQuery,
     parseTokenList,
@@ -82,76 +93,6 @@ interface TaskEditModalProps {
     onFocusMode?: (taskId: string) => void;
     defaultTab?: 'task' | 'view';
 }
-
-const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'];
-const formatError = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const buildTaskExtra = (message?: string, error?: unknown): Record<string, string> | undefined => {
-    const extra: Record<string, string> = {};
-    if (message) extra.message = message;
-    if (error) extra.error = formatError(error);
-    return Object.keys(extra).length ? extra : undefined;
-};
-const logTaskWarn = (message: string, error?: unknown) => {
-    void logWarn(message, { scope: 'task', extra: buildTaskExtra(undefined, error) });
-};
-const logTaskError = (message: string, error?: unknown) => {
-    const err = error instanceof Error ? error : new Error(message);
-    void logError(err, { scope: 'task', extra: buildTaskExtra(message, error) });
-};
-const isReleasedAudioPlayerError = (error: unknown): boolean => {
-    const message = formatError(error).toLowerCase();
-    return (
-        message.includes('already released')
-        || message.includes('cannot use shared object')
-        || message.includes('cannot be cast to type expo.modules.audio.audioplayer')
-    );
-};
-const isValidLinkUri = (value: string): boolean => {
-    try {
-        const parsed = new URL(value);
-        return parsed.protocol.length > 0;
-    } catch {
-        return false;
-    }
-};
-const QUICK_TOKEN_LIMIT = 6;
-const DEFAULT_CONTEXT_SUGGESTIONS = ['@home', '@work', '@errands', '@computer', '@phone'];
-const getInitialWindowWidth = (): number => {
-    const width = Dimensions?.get?.('window')?.width;
-    return Number.isFinite(width) && width > 0 ? Math.round(width) : 1;
-};
-
-const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
-    'status',
-    'project',
-    'section',
-    'area',
-    'priority',
-    'contexts',
-    'description',
-    'tags',
-    'timeEstimate',
-    'recurrence',
-    'startTime',
-    'dueDate',
-    'reviewAt',
-    'attachments',
-    'checklist',
-];
-const DEFAULT_TASK_EDITOR_VISIBLE: TaskEditorFieldId[] = [
-    'status',
-    'project',
-    'section',
-    'area',
-    'description',
-    'checklist',
-    'contexts',
-    'dueDate',
-    'priority',
-    'timeEstimate',
-];
-
-
 
 type TaskEditTab = 'task' | 'view';
 
