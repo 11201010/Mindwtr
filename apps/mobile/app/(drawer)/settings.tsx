@@ -35,14 +35,18 @@ import {
     DEFAULT_REASONING_EFFORT,
     DEFAULT_ANTHROPIC_THINKING_BUDGET,
     DEFAULT_GEMINI_THINKING_BUDGET,
+    cloudGetJson,
     generateUUID,
     getDefaultAIConfig,
     normalizeDateFormatSetting,
+    normalizeCloudUrl,
+    normalizeWebdavUrl,
     getDefaultCopilotModel,
     getCopilotModelOptions,
     getModelOptions,
     resolveDateLocaleTag,
     translateText,
+    webdavGetJson,
     type AIProviderId,
     type AIReasoningEffort,
     type AppData,
@@ -227,6 +231,7 @@ export default function SettingsPage() {
     }, [router]);
     const [syncPath, setSyncPath] = useState<string | null>(null);
     const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud' | 'off'>('off');
+    const [isTestingConnection, setIsTestingConnection] = useState(false);
     const [webdavUrl, setWebdavUrl] = useState('');
     const [webdavUsername, setWebdavUsername] = useState('');
     const [webdavPassword, setWebdavPassword] = useState('');
@@ -1466,6 +1471,55 @@ export default function SettingsPage() {
             Alert.alert(localize('Error', '错误'), localize('Sync failed', '同步失败'));
         } finally {
             setIsSyncing(false);
+        }
+    };
+
+    const handleTestConnection = async (backend: 'webdav' | 'cloud') => {
+        setIsTestingConnection(true);
+        try {
+            if (backend === 'webdav') {
+                if (!webdavUrl.trim() || webdavUrlError) {
+                    Alert.alert(
+                        localize('Invalid URL', '地址无效'),
+                        localize('Please enter a valid WebDAV URL (http/https).', '请输入有效的 WebDAV 地址（http/https）。')
+                    );
+                    return;
+                }
+                await webdavGetJson<unknown>(normalizeWebdavUrl(webdavUrl.trim()), {
+                    username: webdavUsername.trim(),
+                    password: webdavPassword,
+                    timeoutMs: 10_000,
+                });
+                Alert.alert(
+                    localize('Connection OK', '连接成功'),
+                    localize('WebDAV endpoint is reachable.', 'WebDAV 端点可访问。')
+                );
+                return;
+            }
+
+            if (!cloudUrl.trim() || cloudUrlError) {
+                Alert.alert(
+                    localize('Invalid URL', '地址无效'),
+                    localize('Please enter a valid self-hosted URL (http/https).', '请输入有效的自托管地址（http/https）。')
+                );
+                return;
+            }
+            await cloudGetJson<unknown>(normalizeCloudUrl(cloudUrl.trim()), {
+                token: cloudToken,
+                timeoutMs: 10_000,
+            });
+            Alert.alert(
+                localize('Connection OK', '连接成功'),
+                localize('Self-hosted endpoint is reachable.', '自托管端点可访问。')
+            );
+        } catch (error) {
+            logSettingsWarn('Sync connection test failed', error);
+            Alert.alert(
+                localize('Connection failed', '连接失败'),
+                formatError(error)
+            );
+        } finally {
+            setIsTestingConnection(false);
         }
     };
 
@@ -3933,6 +3987,24 @@ export default function SettingsPage() {
                                     {isSyncing && <ActivityIndicator size="small" color={tc.tint} />}
                                 </TouchableOpacity>
 
+                                <TouchableOpacity
+                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={() => handleTestConnection('webdav')}
+                                    disabled={isSyncing || isTestingConnection || !webdavUrl.trim() || webdavUrlError}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={localize('Test WebDAV connection', '测试 WebDAV 连接')}
+                                >
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: webdavUrl.trim() && !webdavUrlError ? tc.tint : tc.secondaryText }]}>
+                                            {localize('Test connection', '测试连接')}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {localize('Verify URL and credentials without syncing data', '仅验证地址和凭据，不执行数据同步')}
+                                        </Text>
+                                    </View>
+                                    {isTestingConnection && <ActivityIndicator size="small" color={tc.tint} />}
+                                </TouchableOpacity>
+
                                 <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                                     <View style={styles.settingInfo}>
                                         <Text style={[styles.settingLabel, { color: tc.text }]}>
@@ -4065,6 +4137,24 @@ export default function SettingsPage() {
                                         </Text>
                                     </View>
                                     {isSyncing && <ActivityIndicator size="small" color={tc.tint} />}
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
+                                    onPress={() => handleTestConnection('cloud')}
+                                    disabled={isSyncing || isTestingConnection || !cloudUrl.trim() || cloudUrlError}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={localize('Test self-hosted connection', '测试自托管连接')}
+                                >
+                                    <View style={styles.settingInfo}>
+                                        <Text style={[styles.settingLabel, { color: cloudUrl.trim() && !cloudUrlError ? tc.tint : tc.secondaryText }]}>
+                                            {localize('Test connection', '测试连接')}
+                                        </Text>
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {localize('Verify URL and token without syncing data', '仅验证地址和令牌，不执行数据同步')}
+                                        </Text>
+                                    </View>
+                                    {isTestingConnection && <ActivityIndicator size="small" color={tc.tint} />}
                                 </TouchableOpacity>
 
                                 <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>

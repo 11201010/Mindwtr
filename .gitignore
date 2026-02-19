@@ -74,6 +74,9 @@ aur/*.deb
 aur/pkg/
 aur/src/
 
+# Flatpak build cache
+.flatpak-builder/
+
 # Agent files
 AGENTS.md
 .codex/

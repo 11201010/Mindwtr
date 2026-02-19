@@ -18,6 +18,7 @@ import {
 
 import { TaskEditModal } from './task-edit-modal';
 import { ErrorBoundary } from './ErrorBoundary';
+import { ListEmptyState } from './list-empty-state';
 import { SwipeableTaskItem } from './swipeable-task-item';
 import { useTheme } from '../contexts/theme-context';
 import { useLanguage } from '../contexts/language-context';
@@ -131,6 +132,7 @@ function TaskListComponent({
     }
     return [styles.listContent, { paddingBottom: 12 + contentPaddingBottom }];
   }, [contentPaddingBottom]);
+  const emptyMessage = emptyText || t('list.noTasks');
 
   const tasksById = useMemo(() => {
     return tasks.reduce((acc, task) => {
@@ -873,11 +875,12 @@ function TaskListComponent({
       {staticList ? (
         <View style={styles.staticList}>
           {listItems.length === 0 ? (
-            <View style={[styles.emptyContainer, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
-              <Text style={[styles.emptyText, { color: themeColors.text }]}>
-                {emptyText || t('list.noTasks')}
-              </Text>
-            </View>
+            <ListEmptyState
+              message={emptyMessage}
+              backgroundColor={themeColors.cardBg}
+              borderColor={themeColors.border}
+              textColor={themeColors.text}
+            />
           ) : (
             listItems.map((item) => (
               <View key={item.type === 'section' ? `section-${item.id}` : item.task.id} style={styles.staticItem}>
@@ -903,11 +906,12 @@ function TaskListComponent({
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            <View style={[styles.emptyContainer, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}>
-              <Text style={[styles.emptyText, { color: themeColors.text }]}>
-                {emptyText || t('list.noTasks')}
-              </Text>
-            </View>
+            <ListEmptyState
+              message={emptyMessage}
+              backgroundColor={themeColors.cardBg}
+              borderColor={themeColors.border}
+              textColor={themeColors.text}
+            />
           }
         />
       )}
@@ -1314,18 +1318,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     padding: 20,
-  },
-  emptyContainer: {
-    paddingVertical: 36,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  emptyText: {
-    fontSize: 15,
-    fontWeight: '600',
-    textAlign: 'center',
   },
   badgeContainer: {
     justifyContent: 'center',
