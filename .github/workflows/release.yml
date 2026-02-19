@@ -46,7 +46,7 @@ on:
         type: boolean
         default: false
       run_update_packages:
-        description: 'Run Homebrew/Scoop update job'
+        description: 'Run Scoop/Winget update job'
         required: false
         type: boolean
         default: false
@@ -215,7 +215,7 @@ jobs:
   update-packages:
     needs: release
     runs-on: ubuntu-latest
-    name: Update Homebrew/Scoop Packages
+    name: Update Scoop/Winget Packages
     timeout-minutes: 45
     permissions:
       contents: read
@@ -246,15 +246,11 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
 
-          URL_DMG_ARM="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_aarch64.dmg"
-          URL_DMG_INTEL="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_x64.dmg"
           URL_EXE="https://github.com/${{ github.repository }}/releases/download/${TAG}/mindwtr_${VERSION}_x64-setup.exe"
 
           echo "Waiting for release assets to become available..."
           for attempt in $(seq 1 10); do
-            if curl -fsI "$URL_DMG_ARM" >/dev/null && \
-               curl -fsI "$URL_DMG_INTEL" >/dev/null && \
-               curl -fsI "$URL_EXE" >/dev/null; then
+            if curl -fsI "$URL_EXE" >/dev/null; then
               echo "Release assets are available."
               break
             fi
@@ -265,27 +261,11 @@ jobs:
             sleep 15
           done
 
-          curl -fL -o mindwtr-arm.dmg "$URL_DMG_ARM"
-          curl -fL -o mindwtr-intel.dmg "$URL_DMG_INTEL"
           curl -fL -o mindwtr.exe "$URL_EXE"
 
-          SHA_ARM=$(sha256sum mindwtr-arm.dmg | awk '{print $1}')
-          SHA_INTEL=$(sha256sum mindwtr-intel.dmg | awk '{print $1}')
           SHA_EXE=$(sha256sum mindwtr.exe | awk '{print $1}')
 
-          echo "sha_arm=$SHA_ARM" >> "$GITHUB_OUTPUT"
-          echo "sha_intel=$SHA_INTEL" >> "$GITHUB_OUTPUT"
           echo "sha_exe=$SHA_EXE" >> "$GITHUB_OUTPUT"
-
-      - name: Update Homebrew cask
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SHA_ARM="${{ steps.hashes.outputs.sha_arm }}"
-          SHA_INTEL="${{ steps.hashes.outputs.sha_intel }}"
-
-          FILE="packages-repo/Casks/mindwtr.rb"
-          ruby -pi -e "sub(/^  version \".*\"/, \"  version \\\"$VERSION\\\"\")" "$FILE"
-          ruby -0777 -pi -e "sub(/sha256 arm:.*?intel: \\\"[^\\\"]+\\\"/m, \"sha256 arm:   \\\"$SHA_ARM\\\",\\n         intel: \\\"$SHA_INTEL\\\"\")" "$FILE"
 
       - name: Update Scoop manifest
         run: |
@@ -478,7 +458,7 @@ jobs:
           cd packages-repo
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add Casks/mindwtr.rb bucket/mindwtr.json
+          git add bucket/mindwtr.json
           if git diff --cached --quiet; then
             echo "No package changes to commit."
             exit 0
