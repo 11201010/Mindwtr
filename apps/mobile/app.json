@@ -106,7 +106,8 @@
         }
       ],
       "expo-secure-store",
-      "./plugins/android-manifest-fixes"
+      "./plugins/android-manifest-fixes",
+      "./plugins/patch-alarm-notification-gradle"
     ],
     "experiments": {
       "typedRoutes": true

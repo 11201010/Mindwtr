@@ -119,49 +119,15 @@ jobs:
           GITHUB_EVENT_INPUTS_TAG="${{ github.event.inputs.tag }}"
           scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Build Android APK + AAB (local EAS)
+      - name: Build Android AAB (local EAS)
         timeout-minutes: 60
         run: |
           VERSION=${{ steps.version.outputs.version }}
           cd apps/mobile
-          MINDWTR_ANDROID_ARCHS=arm64-v8a,armeabi-v7a eas build --platform android --profile production-apk --local --non-interactive --output ./build/mindwtr-${VERSION}.apk
           MINDWTR_ANDROID_ARCHS=arm64-v8a,armeabi-v7a eas build --platform android --profile production --local --non-interactive --output ./build/mindwtr-${VERSION}.aab
           ls -la ./build
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Verify Android APK permissions
-        run: |
-          APK_PATH="$(ls apps/mobile/build/mindwtr-*.apk | head -1)"
-          if [[ -z "${APK_PATH}" ]]; then
-            echo "No APK produced for permission verification" >&2
-            exit 1
-          fi
-          AAPT_BIN="$(command -v aapt || true)"
-          if [[ -z "${AAPT_BIN}" ]]; then
-            AAPT_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)"
-          fi
-          if [[ -z "${AAPT_BIN}" ]]; then
-            echo "aapt not found; cannot verify APK permissions" >&2
-            exit 1
-          fi
-          PERMS_DUMP="$(mktemp)"
-          "${AAPT_BIN}" dump permissions "${APK_PATH}" | tee "${PERMS_DUMP}"
-          for perm in \
-            android.permission.CAMERA \
-            android.permission.SYSTEM_ALERT_WINDOW \
-            android.permission.READ_EXTERNAL_STORAGE \
-            android.permission.WRITE_EXTERNAL_STORAGE; do
-            if grep -q "name='${perm}'" "${PERMS_DUMP}"; then
-              echo "${perm} still present in APK manifest" >&2
-              exit 1
-            fi
-          done
-          if ! grep -q "name='android.permission.RECORD_AUDIO'" "${PERMS_DUMP}"; then
-            echo "android.permission.RECORD_AUDIO missing in APK manifest" >&2
-            exit 1
-          fi
-          echo "Verified APK permissions: CAMERA/storage/alert removed; RECORD_AUDIO present."
 
       - name: Prepare Google Play release notes
         run: |
@@ -200,17 +166,3 @@ jobs:
           status: completed
           releaseName: ${{ steps.version.outputs.version }}
           whatsNewDirectory: apps/mobile/build/play-release-notes
-
-      - name: Collect Android artifacts
-        run: |
-          mkdir -p release-artifacts
-          cp apps/mobile/build/mindwtr-*.apk release-artifacts/
-          cp apps/mobile/build/mindwtr-*.aab release-artifacts/
-          ls -la release-artifacts
-
-      - name: Upload Android artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-android
-          path: release-artifacts/*
-          if-no-files-found: error
