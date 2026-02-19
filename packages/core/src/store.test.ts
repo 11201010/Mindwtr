@@ -255,6 +255,19 @@ describe('TaskStore', () => {
         expect(archived?.title).toBe('Lifecycle Task Updated');
     });
 
+    it('restores deleted tasks without forcing status changes', async () => {
+        const { addTask, deleteTask, restoreTask } = useTaskStore.getState();
+        addTask('Keep Archived', { status: 'archived' });
+        const taskId = useTaskStore.getState()._allTasks[0].id;
+
+        await deleteTask(taskId);
+        await restoreTask(taskId);
+
+        const restored = useTaskStore.getState()._allTasks.find((task) => task.id === taskId);
+        expect(restored?.deletedAt).toBeUndefined();
+        expect(restored?.status).toBe('archived');
+    });
+
     it('should coalesce saves and allow immediate flush', async () => {
         const { addTask } = useTaskStore.getState();
 

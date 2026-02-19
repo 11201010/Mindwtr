@@ -245,7 +245,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
     },
 
     /**
-     * Restore a soft-deleted task (returns to Inbox).
+     * Restore a soft-deleted task.
      */
     restoreTask: async (id: string) => {
         const changeAt = Date.now();
@@ -259,7 +259,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 ...oldTask,
                 deletedAt: undefined,
                 purgedAt: undefined,
-                status: oldTask.status === 'archived' ? 'inbox' : oldTask.status,
                 updatedAt: now,
                 rev: normalizeRevision(oldTask.rev) + 1,
                 revBy: deviceState.deviceId,
