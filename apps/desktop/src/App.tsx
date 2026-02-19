@@ -22,6 +22,7 @@ import { CloseBehaviorModal } from './components/CloseBehaviorModal';
 import { startDesktopNotifications, stopDesktopNotifications } from './lib/notification-service';
 import { SyncService } from './lib/sync-service';
 import type { ExternalSyncChange, ExternalSyncChangeResolution } from './lib/sync-service';
+import * as LocalDataWatcher from './lib/local-data-watcher';
 import { isFlatpakRuntime, isTauriRuntime } from './lib/runtime';
 import { logError } from './lib/app-log';
 import { THEME_STORAGE_KEY, applyThemeMode, mapSyncedThemeToDesktop, resolveNativeTheme } from './lib/theme';
@@ -199,6 +200,12 @@ function App() {
         if (isTauriRuntime()) {
             startDesktopNotifications().catch((error) => reportError('Notifications failed', error));
             SyncService.startFileWatcher().catch((error) => reportError('File watcher failed', error));
+
+            // Watch local data.json for external changes (e.g. from the CLI)
+            import('@tauri-apps/api/core')
+                .then((mod) => mod.invoke<string>('get_data_path_cmd'))
+                .then((dataPath) => LocalDataWatcher.start(dataPath))
+                .catch((error) => reportError('Local data watcher failed', error));
         }
 
         isActiveRef.current = true;
@@ -313,6 +320,7 @@ function App() {
                 clearTimeout(initialSyncTimerRef.current);
             }
             stopDesktopNotifications();
+            LocalDataWatcher.stop();
             SyncService.stopFileWatcher().catch((error) => reportError('File watcher failed', error));
             unsubscribeExternalSync();
         };

@@ -2677,6 +2677,16 @@ async fn get_data(app: tauri::AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn read_data_json(app: tauri::AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_path = get_data_path(&app);
+        read_json_with_retries(&data_path, 2).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn save_data(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_data_file(&app)?;
@@ -4077,6 +4087,7 @@ pub fn run() {
         .manage(AudioRecorderState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_data,
+            read_data_json,
             save_data,
             create_data_snapshot,
             list_data_snapshots,
