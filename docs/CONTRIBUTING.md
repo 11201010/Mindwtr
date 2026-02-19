@@ -15,15 +15,6 @@ Mindwtr is a Bun monorepo with:
 - Mobile app (`apps/mobile`): Expo + React Native
 - Shared core package (`packages/core`): state models, storage adapters, and shared logic
 
-## Canonical source and wiki sync
-
-`docs/CONTRIBUTING.md` is the canonical contributor policy and workflow for this repository.
-
-If you update contribution process, commands, or policy:
-
-1. Update this file first.
-2. Update wiki links to point to this document so guidance stays consistent.
-
 ## Before you begin
 
 ### 1) Follow our community standards
@@ -223,15 +214,15 @@ When changing docs:
 
 Useful references:
 
-- Developer Guide: https://github.com/dongdongbh/Mindwtr/wiki/Developer-Guide
-- Architecture: https://github.com/dongdongbh/Mindwtr/wiki/Architecture
-- Wiki index: https://github.com/dongdongbh/Mindwtr/wiki
+- [Developer Guide](https://github.com/dongdongbh/Mindwtr/wiki/Developer-Guide)
+- [Architecture](https://github.com/dongdongbh/Mindwtr/wiki/Architecture)
+- [Wiki index](https://github.com/dongdongbh/Mindwtr/wiki)
 
 ## Translation contributions
 
 Most translation strings live in:
 
-- `packages/core/src/i18n/locales/`
+- [`packages/core/src/i18n/locales/`](https://github.com/dongdongbh/Mindwtr/tree/main/packages/core/src/i18n/locales/)
 
 When updating translations:
 
