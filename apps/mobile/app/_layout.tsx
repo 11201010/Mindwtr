@@ -703,8 +703,6 @@ function RootLayoutContent() {
           )}
           <StatusBar
             barStyle={isDark ? 'light-content' : 'dark-content'}
-            backgroundColor={tc.cardBg}
-            translucent={false}
           />
         </NavigationThemeProvider>
       </QuickCaptureProvider>
