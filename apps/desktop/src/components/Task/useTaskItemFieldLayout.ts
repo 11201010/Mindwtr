@@ -11,7 +11,6 @@ type UseTaskItemFieldLayoutParams = {
     editPriority: TaskPriority | '';
     editContexts: string;
     editDescription: string;
-    editTextDirection: Task['textDirection'] | undefined;
     editDueDate: string;
     editRecurrence: RecurrenceRule | '';
     editReviewAt: string;
@@ -32,7 +31,6 @@ export function useTaskItemFieldLayout({
     editPriority,
     editContexts,
     editDescription,
-    editTextDirection,
     editDueDate,
     editRecurrence,
     editReviewAt,
@@ -93,8 +91,6 @@ export function useTaskItemFieldLayout({
                 return Boolean(editContexts.trim());
             case 'description':
                 return Boolean(editDescription.trim());
-            case 'textDirection':
-                return editTextDirection !== undefined && editTextDirection !== 'auto';
             case 'tags':
                 return Boolean(editTags.trim());
             case 'timeEstimate':
@@ -127,7 +123,6 @@ export function useTaskItemFieldLayout({
         editSectionId,
         editStartTime,
         editTags,
-        editTextDirection,
         editTimeEstimate,
         prioritiesEnabled,
         task.areaId,
@@ -175,7 +170,7 @@ export function useTaskItemFieldLayout({
         [filterVisibleFields, orderFields]
     );
     const detailsFields = useMemo(
-        () => filterVisibleFields(orderFields(['description', 'textDirection', 'attachments', 'checklist'])),
+        () => filterVisibleFields(orderFields(['description', 'attachments', 'checklist'])),
         [filterVisibleFields, orderFields]
     );
     const sectionCounts = useMemo(

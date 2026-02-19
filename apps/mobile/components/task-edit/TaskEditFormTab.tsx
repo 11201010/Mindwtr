@@ -208,8 +208,6 @@ export function TaskEditFormTab({
                     return (editedTask.checklist?.length ?? 0) > 0;
                 case 'attachments':
                     return (editedTask.attachments || []).some((attachment) => !attachment.deletedAt);
-                case 'textDirection':
-                    return Boolean(editedTask.textDirection);
                 default:
                     return false;
             }

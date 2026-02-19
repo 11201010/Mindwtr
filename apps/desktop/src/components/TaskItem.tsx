@@ -107,7 +107,7 @@ export const TaskItem = memo(function TaskItem({
         (value: string | null) => setProjectView({ selectedProjectId: value }),
         [setProjectView]
     );
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const [isEditing, setIsEditing] = useState(false);
     const [autoFocusTitle, setAutoFocusTitle] = useState(false);
     const {
@@ -160,8 +160,6 @@ export const TaskItem = memo(function TaskItem({
         setEditTags,
         editDescription,
         setEditDescription,
-        editTextDirection,
-        setEditTextDirection,
         editLocation,
         setEditLocation,
         editRecurrence,
@@ -183,10 +181,6 @@ export const TaskItem = memo(function TaskItem({
         task,
         resetAttachmentState,
     });
-    const editTextDirectionRef = useRef<Task['textDirection']>(editTextDirection);
-    useEffect(() => {
-        editTextDirectionRef.current = editTextDirection;
-    }, [editTextDirection]);
     const [isViewOpen, setIsViewOpen] = useState(false);
     const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -231,12 +225,6 @@ export const TaskItem = memo(function TaskItem({
         setEditRecurrence,
         setEditRecurrenceRRule,
     });
-
-    const handleSetEditTextDirection = useCallback((value: Task['textDirection']) => {
-        const nextValue = value ?? 'auto';
-        editTextDirectionRef.current = nextValue;
-        setEditTextDirection(nextValue);
-    }, [setEditTextDirection]);
 
     useEffect(() => {
         if (!isHighlighted) return;
@@ -376,7 +364,6 @@ export const TaskItem = memo(function TaskItem({
         editPriority,
         editContexts,
         editDescription,
-        editTextDirection,
         editDueDate,
         editRecurrence,
         editReviewAt,
@@ -412,7 +399,7 @@ export const TaskItem = memo(function TaskItem({
                 editTimeEstimate,
                 editContexts,
                 editTags,
-                editTextDirection,
+                language,
                 popularTagOptions,
             }}
             handlers={{
@@ -436,7 +423,6 @@ export const TaskItem = memo(function TaskItem({
                 setEditTimeEstimate,
                 setEditContexts,
                 setEditTags,
-                setEditTextDirection: handleSetEditTextDirection,
                 updateTask,
                 resetTaskChecklist,
             }}
@@ -548,8 +534,6 @@ export const TaskItem = memo(function TaskItem({
             }
             recurrenceValue.rrule = editRecurrenceRRule;
         }
-        const resolvedTextDirection = editTextDirectionRef.current ?? 'auto';
-        const nextTextDirection = resolvedTextDirection;
         const currentContexts = editContexts.split(',').map(c => c.trim()).filter(Boolean);
         const mergedContexts = Array.from(new Set([...currentContexts, ...(parsedProps.contexts || [])]));
         const currentTags = editTags.split(',').map(c => c.trim()).filter(Boolean);
@@ -580,7 +564,6 @@ export const TaskItem = memo(function TaskItem({
             tags: mergedTags,
             description: resolvedDescription,
             ...(resolvedChecklist ? { checklist: resolvedChecklist } : {}),
-            textDirection: nextTextDirection,
             location: editLocation || undefined,
             recurrence: recurrenceValue,
             timeEstimate: editTimeEstimate || undefined,
@@ -613,7 +596,6 @@ export const TaskItem = memo(function TaskItem({
         if (editStatus !== task.status) return true;
         if (editContexts.trim() !== (task.contexts?.join(', ') || '').trim()) return true;
         if (editTags.trim() !== (task.tags?.join(', ') || '').trim()) return true;
-        if (editTextDirection !== (task.textDirection ?? 'auto')) return true;
         if (editLocation !== (task.location || '')) return true;
         if (editRecurrence !== getRecurrenceRuleValue(task.recurrence)) return true;
         if (editRecurrenceStrategy !== getRecurrenceStrategyValue(task.recurrence)) return true;
@@ -633,7 +615,6 @@ export const TaskItem = memo(function TaskItem({
         editStatus,
         editContexts,
         editTags,
-        editTextDirection,
         editLocation,
         editRecurrence,
         editRecurrenceStrategy,
@@ -721,7 +702,7 @@ export const TaskItem = memo(function TaskItem({
             renderField={renderField}
             editLocation={editLocation}
             setEditLocation={setEditLocation}
-            editTextDirection={editTextDirection}
+            language={language}
             inputContexts={allContexts}
             onDuplicateTask={() => duplicateTask(task.id, false)}
             onCancel={handleEditorCancel}

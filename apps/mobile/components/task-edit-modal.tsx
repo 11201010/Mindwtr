@@ -25,7 +25,7 @@ import {
     safeFormatDate,
     safeParseDate,
     safeParseDueDate,
-    resolveTextDirection,
+    resolveAutoTextDirection,
     getAttachmentDisplayTitle,
     normalizeLinkAttachmentInput,
     validateAttachmentForUpload,
@@ -138,7 +138,6 @@ const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'priority',
     'contexts',
     'description',
-    'textDirection',
     'tags',
     'timeEstimate',
     'recurrence',
@@ -154,7 +153,6 @@ const DEFAULT_TASK_EDITOR_VISIBLE: TaskEditorFieldId[] = [
     'section',
     'area',
     'description',
-    'textDirection',
     'checklist',
     'contexts',
     'dueDate',
@@ -180,7 +178,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         addArea,
         deleteTask,
     } = useTaskStore();
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const tc = useThemeColors();
     const prioritiesEnabled = settings.features?.priorities === true;
     const timeEstimatesEnabled = settings.features?.timeEstimates === true;
@@ -1265,10 +1263,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                 return Boolean(contextInputDraft.trim());
             case 'description':
                 return Boolean(descriptionDraft.trim());
-            case 'textDirection': {
-                const direction = editedTask.textDirection ?? task?.textDirection;
-                return direction !== undefined && direction !== 'auto';
-            }
             case 'tags':
                 return Boolean(tagInputDraft.trim());
             case 'timeEstimate':
@@ -1302,7 +1296,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         editedTask.sectionId,
         editedTask.startTime,
         editedTask.status,
-        editedTask.textDirection,
         editedTask.timeEstimate,
         prioritiesEnabled,
         tagInputDraft,
@@ -1316,7 +1309,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         task?.sectionId,
         task?.startTime,
         task?.status,
-        task?.textDirection,
         task?.timeEstimate,
         timeEstimatesEnabled,
         visibleAttachments.length,
@@ -1345,7 +1337,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         [filterVisibleFields, orderFields]
     );
     const detailsFields = useMemo(
-        () => filterVisibleFields(orderFields(['description', 'textDirection', 'checklist', 'attachments'])),
+        () => filterVisibleFields(orderFields(['description', 'checklist', 'attachments'])),
         [filterVisibleFields, orderFields]
     );
 
@@ -1771,9 +1763,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
     };
 
     const inputStyle = { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text };
-    const textDirectionValue = (editedTask.textDirection ?? 'auto') as Task['textDirection'] | 'auto';
     const combinedText = `${titleDraft ?? ''}\n${descriptionDraft ?? ''}`.trim();
-    const resolvedDirection = resolveTextDirection(combinedText, textDirectionValue);
+    const resolvedDirection = resolveAutoTextDirection(combinedText, language);
     const textDirectionStyle = {
         writingDirection: resolvedDirection,
         textAlign: resolvedDirection === 'rtl' ? 'right' : 'left',
@@ -2367,35 +2358,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                             )}
                         </View>
                         {renderInlineIOSDatePicker(['review'])}
-                    </View>
-                );
-            case 'textDirection':
-                return (
-                    <View style={styles.formGroup}>
-                        <Text style={[styles.label, { color: tc.secondaryText }]}>{t('taskEdit.textDirectionLabel')}</Text>
-                        <View style={styles.statusContainer}>
-                            {([
-                                { value: 'auto', label: t('taskEdit.textDirection.auto') },
-                                { value: 'ltr', label: t('taskEdit.textDirection.ltr') },
-                                { value: 'rtl', label: t('taskEdit.textDirection.rtl') },
-                            ] as const).map((option) => {
-                                const isActive = (editedTask.textDirection ?? 'auto') === option.value;
-                                return (
-                                    <TouchableOpacity
-                                        key={option.value}
-                                        style={getStatusChipStyle(isActive)}
-                                        onPress={() => {
-                                            setEditedTask((prev) => ({
-                                                ...prev,
-                                                textDirection: option.value,
-                                            }));
-                                        }}
-                                    >
-                                        <Text style={getStatusTextStyle(isActive)}>{option.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
                     </View>
                 );
             case 'description':

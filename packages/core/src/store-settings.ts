@@ -20,7 +20,7 @@ const MIGRATION_VERSION = 1;
 // Run auto-archive at most twice a day to keep background work bounded.
 const AUTO_ARCHIVE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const TOMBSTONE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const TASK_EDITOR_DEFAULTS_VERSION = 3;
+const TASK_EDITOR_DEFAULTS_VERSION = 4;
 const TASK_EDITOR_ALWAYS_VISIBLE: TaskEditorFieldId[] = ['status', 'project', 'description', 'checklist', 'contexts'];
 const STORAGE_TIMEOUT_MS = 15_000;
 
@@ -135,15 +135,18 @@ export const createSettingsActions = ({
             if (taskEditorDefaultsVersion < TASK_EDITOR_DEFAULTS_VERSION) {
                 const hidden = new Set(nextSettings.gtd?.taskEditor?.hidden ?? []);
                 TASK_EDITOR_ALWAYS_VISIBLE.forEach((fieldId) => hidden.delete(fieldId));
-                if (taskEditorDefaultsVersion < 3) {
+                if (taskEditorDefaultsVersion < 4) {
                     hidden.delete('textDirection');
                 }
+                const existingOrder = nextSettings.gtd?.taskEditor?.order;
+                const normalizedOrder = existingOrder?.filter((fieldId) => fieldId !== 'textDirection');
                 nextSettings = {
                     ...nextSettings,
                     gtd: {
                         ...(nextSettings.gtd ?? {}),
                         taskEditor: {
                             ...(nextSettings.gtd?.taskEditor ?? {}),
+                            ...(normalizedOrder ? { order: normalizedOrder } : {}),
                             hidden: Array.from(hidden),
                             defaultsVersion: TASK_EDITOR_DEFAULTS_VERSION,
                         },

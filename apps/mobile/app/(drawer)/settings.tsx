@@ -3185,7 +3185,6 @@ export default function SettingsPage() {
             'priority',
             'contexts',
             'description',
-            'textDirection',
             'tags',
             'timeEstimate',
             'recurrence',
@@ -3201,7 +3200,6 @@ export default function SettingsPage() {
             'project',
             'area',
             'description',
-            'textDirection',
             'checklist',
             'contexts',
             'dueDate',
@@ -3248,8 +3246,6 @@ export default function SettingsPage() {
                     return t('attachments.title');
                 case 'checklist':
                     return t('taskEdit.checklist');
-                case 'textDirection':
-                    return t('taskEdit.textDirectionLabel');
                 default:
                     return fieldId;
             }
@@ -3302,7 +3298,7 @@ export default function SettingsPage() {
             { id: 'basic', title: t('taskEdit.basic') || 'Basic', fields: ['status', 'project', 'area', 'dueDate'] },
             { id: 'scheduling', title: t('taskEdit.scheduling'), fields: ['startTime', 'recurrence', 'reviewAt'] },
             { id: 'organization', title: t('taskEdit.organization'), fields: ['contexts', 'tags', 'priority', 'timeEstimate'] },
-            { id: 'details', title: t('taskEdit.details'), fields: ['description', 'textDirection', 'attachments', 'checklist'] },
+            { id: 'details', title: t('taskEdit.details'), fields: ['description', 'attachments', 'checklist'] },
         ];
 
         function TaskEditorRow({

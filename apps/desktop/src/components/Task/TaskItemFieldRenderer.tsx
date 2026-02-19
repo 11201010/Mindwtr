@@ -3,9 +3,9 @@ import {
     buildRRuleString,
     hasTimeComponent,
     parseRRuleString,
+    resolveAutoTextDirection,
     safeFormatDate,
     safeParseDate,
-    resolveTextDirection,
     type Attachment,
     type RecurrenceRule,
     type RecurrenceStrategy,
@@ -47,7 +47,7 @@ export type TaskItemFieldRendererData = {
     editTimeEstimate: TimeEstimate | '';
     editContexts: string;
     editTags: string;
-    editTextDirection: Task['textDirection'] | undefined;
+    language: string;
     popularTagOptions: string[];
 };
 
@@ -69,7 +69,6 @@ export type TaskItemFieldRendererHandlers = {
     setEditTimeEstimate: (value: TimeEstimate | '') => void;
     setEditContexts: (value: string) => void;
     setEditTags: (value: string) => void;
-    setEditTextDirection: (value: Task['textDirection']) => void;
     updateTask: (taskId: string, updates: Partial<Task>) => void;
     resetTaskChecklist: (taskId: string) => void;
 };
@@ -104,7 +103,7 @@ export function TaskItemFieldRenderer({
         editTimeEstimate,
         editContexts,
         editTags,
-        editTextDirection,
+        language,
         popularTagOptions,
     } = data;
 
@@ -133,15 +132,11 @@ export function TaskItemFieldRenderer({
         setEditTimeEstimate,
         setEditContexts,
         setEditTags,
-        setEditTextDirection,
         updateTask,
         resetTaskChecklist,
     } = handlers;
 
-    const resolvedDirection = resolveTextDirection(
-        [task.title, editDescription].filter(Boolean).join(' '),
-        editTextDirection
-    );
+    const resolvedDirection = resolveAutoTextDirection([task.title, editDescription].filter(Boolean).join(' '), language);
     const isRtl = resolvedDirection === 'rtl';
 
     switch (fieldId) {
@@ -228,21 +223,6 @@ export function TaskItemFieldRenderer({
                             dir={resolvedDirection}
                         />
                     )}
-                </div>
-            );
-        case 'textDirection':
-            return (
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.textDirectionLabel')}</label>
-                    <select
-                        value={editTextDirection ?? 'auto'}
-                        onChange={(event) => setEditTextDirection(event.target.value as Task['textDirection'])}
-                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-                    >
-                        <option value="auto">{t('taskEdit.textDirection.auto')}</option>
-                        <option value="ltr">{t('taskEdit.textDirection.ltr')}</option>
-                        <option value="rtl">{t('taskEdit.textDirection.rtl')}</option>
-                    </select>
                 </div>
             );
         case 'attachments':

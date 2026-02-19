@@ -18,7 +18,6 @@ export const DEFAULT_TASK_EDITOR_ORDER: TaskEditorFieldId[] = [
     'priority',
     'contexts',
     'description',
-    'textDirection',
     'tags',
     'timeEstimate',
     'recurrence',

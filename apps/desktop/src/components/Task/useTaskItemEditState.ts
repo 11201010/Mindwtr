@@ -33,8 +33,6 @@ type TaskItemEditState = {
     setEditTags: (value: string) => void;
     editDescription: string;
     setEditDescription: (value: string) => void;
-    editTextDirection: Task['textDirection'];
-    setEditTextDirection: (value: Task['textDirection']) => void;
     editLocation: string;
     setEditLocation: (value: string) => void;
     editRecurrence: RecurrenceRule | '';
@@ -68,9 +66,6 @@ export function useTaskItemEditState({
     const [editContexts, setEditContexts] = useState(task.contexts?.join(', ') || '');
     const [editTags, setEditTags] = useState(task.tags?.join(', ') || '');
     const [editDescription, setEditDescription] = useState(task.description || '');
-    const [editTextDirection, setEditTextDirection] = useState<Task['textDirection']>(
-        task.textDirection ?? 'auto'
-    );
     const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [editLocation, setEditLocation] = useState(task.location || '');
     const [editRecurrence, setEditRecurrence] = useState<RecurrenceRule | ''>(
@@ -97,7 +92,6 @@ export function useTaskItemEditState({
         setEditContexts(task.contexts?.join(', ') || '');
         setEditTags(task.tags?.join(', ') || '');
         setEditDescription(task.description || '');
-        setEditTextDirection(task.textDirection ?? 'auto');
         setEditLocation(task.location || '');
         setEditRecurrence(getRecurrenceRuleValue(task.recurrence));
         setEditRecurrenceStrategy(getRecurrenceStrategyValue(task.recurrence));
@@ -130,8 +124,6 @@ export function useTaskItemEditState({
         setEditTags,
         editDescription,
         setEditDescription,
-        editTextDirection,
-        setEditTextDirection,
         editLocation,
         setEditLocation,
         editRecurrence,

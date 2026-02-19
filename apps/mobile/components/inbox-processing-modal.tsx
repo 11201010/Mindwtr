@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Modal, ScrollView, TextInput, Platform, A
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DEFAULT_PROJECT_COLOR, useTaskStore, PRESET_CONTEXTS, PRESET_TAGS, createAIProvider, safeFormatDate, safeParseDate, resolveTextDirection, type Task, type AIProviderId } from '@mindwtr/core';
+import { DEFAULT_PROJECT_COLOR, useTaskStore, PRESET_CONTEXTS, PRESET_TAGS, createAIProvider, safeFormatDate, safeParseDate, resolveAutoTextDirection, type Task, type AIProviderId } from '@mindwtr/core';
 
 import { AIResponseModal, type AIResponseAction } from './ai-response-modal';
 import { useLanguage } from '../contexts/language-context';
@@ -22,7 +22,7 @@ const MAX_TOKEN_SUGGESTIONS = 6;
 
 export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalProps) {
   const { tasks, projects, areas, settings, updateTask, deleteTask, addProject } = useTaskStore();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { isDark } = useTheme();
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -73,8 +73,8 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const resolvedTitleDirection = useMemo(() => {
     if (!currentTask) return 'ltr';
     const text = (processingTitle || currentTask.title || '').trim();
-    return resolveTextDirection(text, currentTask.textDirection);
-  }, [currentTask, processingTitle]);
+    return resolveAutoTextDirection(text, language);
+  }, [currentTask, language, processingTitle]);
   const titleDirectionStyle = useMemo<TextStyle>(() => ({
     writingDirection: resolvedTitleDirection,
     textAlign: resolvedTitleDirection === 'rtl' ? 'right' : 'left',
