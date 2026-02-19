@@ -91,8 +91,44 @@ jobs:
       - name: Build App
         timeout-minutes: 40
         run: |
+          set -euo pipefail
           cd apps/desktop
-          cargo tauri build --target ${{ matrix.rust_target }}
+
+          cleanup_dmg_mounts() {
+            # Detach stale Mindwtr DMG mounts that can make hdiutil report "Resource busy".
+            local devices
+            devices="$(hdiutil info | awk '
+              /^\/dev\// { dev=$1 }
+              /\/Volumes\/Mindwtr/ { if (dev != "") print dev }
+            ' | sort -u)"
+            if [ -n "${devices}" ]; then
+              while IFS= read -r dev; do
+                [ -n "${dev}" ] || continue
+                hdiutil detach "${dev}" -force || true
+              done <<< "${devices}"
+            fi
+          }
+
+          for attempt in 1 2 3; do
+            log_file="${RUNNER_TEMP}/tauri-macos-build-${{ matrix.rust_target }}-${attempt}.log"
+            echo "Running macOS bundle build (attempt ${attempt}/3)..."
+            if cargo tauri build --target ${{ matrix.rust_target }} 2>&1 | tee "${log_file}"; then
+              exit 0
+            fi
+
+            if grep -q "hdiutil: create failed - Resource busy" "${log_file}"; then
+              echo "Detected transient hdiutil resource-busy failure. Cleaning stale mounts and retrying..."
+              cleanup_dmg_mounts
+              sleep $((attempt * 5))
+              continue
+            fi
+
+            echo "Non-retryable macOS build failure."
+            exit 1
+          done
+
+          echo "::error::macOS bundle build failed after retries."
+          exit 1
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
