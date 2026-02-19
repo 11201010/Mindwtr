@@ -119,7 +119,11 @@ export const flushPendingSave = async (): Promise<void> => {
                 }
             });
         await saveInFlight;
-        if (!saveSucceeded) return;
+        if (!saveSucceeded) {
+            const hasQueuedSaves = pendingSaves.some((item) => item.version > targetVersion);
+            if (hasQueuedSaves) continue;
+            return;
+        }
     }
 };
 
