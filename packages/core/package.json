@@ -19,6 +19,7 @@
     "./i18n-loader": "./src/i18n-loader.ts",
     "./i18n-constants": "./src/i18n-constants.ts",
     "./recurrence": "./src/recurrence.ts",
+    "./recurrence-constants": "./src/recurrence-constants.ts",
     "./review-utils": "./src/review-utils.ts",
     "./project-utils": "./src/project-utils.ts",
     "./uuid": "./src/uuid.ts",
@@ -62,7 +63,7 @@
   },
   "devDependencies": {
     "@types/uuid": "^9.0.8",
-    "typescript": "^5.2.2",
+    "typescript": "~5.9.2",
     "vitest": "^2.1.8"
   }
 }

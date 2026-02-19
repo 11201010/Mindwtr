@@ -13,6 +13,7 @@ export * from './i18n/i18n-storage';
 export * from './i18n/i18n-loader';
 export * from './i18n/i18n-constants';
 export * from './recurrence';
+export * from './recurrence-constants';
 export * from './review-utils';
 export * from './project-utils';
 export { generateUUID } from './uuid';
