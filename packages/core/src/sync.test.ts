@@ -747,6 +747,40 @@ describe('Sync Logic', () => {
             expect(merged.settings.theme).toBe('light');
         });
 
+        it('deep-clones merged settings arrays to avoid shared references', () => {
+            const incomingCalendars = [
+                { id: 'cal-1', name: 'Team', url: 'https://calendar.example.com/team.ics', enabled: true },
+            ];
+            const local: AppData = {
+                ...mockAppData(),
+                settings: {
+                    externalCalendars: [
+                        { id: 'cal-local', name: 'Local', url: 'https://calendar.example.com/local.ics', enabled: true },
+                    ],
+                    syncPreferencesUpdatedAt: {
+                        externalCalendars: '2024-01-01T00:00:00.000Z',
+                    },
+                },
+            };
+            const incoming: AppData = {
+                ...mockAppData(),
+                settings: {
+                    externalCalendars: incomingCalendars,
+                    syncPreferencesUpdatedAt: {
+                        externalCalendars: '2024-01-02T00:00:00.000Z',
+                    },
+                },
+            };
+
+            const merged = mergeAppData(local, incoming);
+
+            expect(merged.settings.externalCalendars).toEqual(incomingCalendars);
+            expect(merged.settings.externalCalendars).not.toBe(incomingCalendars);
+
+            incomingCalendars[0].name = 'Mutated Incoming';
+            expect(merged.settings.externalCalendars?.[0]?.name).toBe('Team');
+        });
+
         it('keeps area tombstones so deletions sync across devices', () => {
             const local: AppData = {
                 ...mockAppData(),

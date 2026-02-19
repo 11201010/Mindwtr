@@ -377,7 +377,21 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
     const incomingPrefsWins = isIncomingNewer(localPrefsAt, incomingPrefsAt);
     const mergedPrefs = incomingPrefsWins ? incomingPrefs : localPrefs;
 
-    merged.syncPreferences = mergedPrefs;
+    const cloneSettingValue = <T>(value: T): T => {
+        if (Array.isArray(value)) {
+            return value.map((item) => cloneSettingValue(item)) as unknown as T;
+        }
+        if (value && typeof value === 'object') {
+            const cloned: Record<string, unknown> = {};
+            for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+                cloned[key] = cloneSettingValue(item);
+            }
+            return cloned as T;
+        }
+        return value;
+    };
+
+    merged.syncPreferences = cloneSettingValue(mergedPrefs);
     if (incomingPrefsWins) {
         if (incomingPrefsAt) nextSyncUpdatedAt.preferences = incomingPrefsAt;
     } else if (localPrefsAt) {
@@ -389,10 +403,10 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
         return JSON.stringify(left) === JSON.stringify(right);
     };
     const chooseGroupFieldValue = <T>(localValue: T, incomingValue: T, incomingWins: boolean): T => {
-        if (incomingValue === undefined) return localValue;
-        if (localValue === undefined) return incomingValue;
-        if (isSameValue(localValue, incomingValue)) return localValue;
-        return incomingWins ? incomingValue : localValue;
+        if (incomingValue === undefined) return cloneSettingValue(localValue);
+        if (localValue === undefined) return cloneSettingValue(incomingValue);
+        if (isSameValue(localValue, incomingValue)) return cloneSettingValue(localValue);
+        return cloneSettingValue(incomingWins ? incomingValue : localValue);
     };
     const mergeRecordFields = <T extends Record<string, unknown>>(localValue: T, incomingValue: T, incomingWins: boolean): T => {
         const mergedValue: Record<string, unknown> = {};
@@ -417,7 +431,7 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
         const resolvedValue = mergeValues
             ? mergeValues(localValue, incomingValue, incomingWins)
             : (incomingWins ? incomingValue : localValue);
-        apply(resolvedValue, incomingWins);
+        apply(cloneSettingValue(resolvedValue), incomingWins);
         const winnerAt = incomingWins ? incomingAt : localAt;
         if (winnerAt) nextSyncUpdatedAt[key] = winnerAt;
     };
