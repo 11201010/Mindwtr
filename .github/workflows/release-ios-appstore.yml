@@ -628,6 +628,14 @@ jobs:
 
           platform :ios do
             lane :distribute_external_group do
+              beta_review_locked_error = lambda do |error|
+                message = error.to_s
+                message.match?(/cannot accept new beta review submission/i) ||
+                  message.match?(/another build.*beta review/i) ||
+                  message.match?(/another build.*in review/i) ||
+                  message.match?(/same train.*beta review/i)
+              end
+
               api_key = app_store_connect_api_key(
                 key_id: ENV.fetch("IOS_ASC_KEY_ID"),
                 issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID"),
@@ -653,24 +661,32 @@ jobs:
                 wait_processing_timeout_duration: 1800
               )
             rescue => e
-              if e.message.include?("Another build is in review")
-                UI.important("Another TestFlight build is already in beta review; retrying distribution with submit_beta_review disabled so group assignment can still succeed.")
-                upload_to_testflight(
-                  api_key: api_key,
-                  app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
-                  app_platform: "ios",
-                  distribute_only: true,
-                  app_version: ENV.fetch("APP_VERSION"),
-                  build_number: ENV.fetch("APP_BUILD_NUMBER"),
-                  distribute_external: true,
-                  groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
-                  notify_external_testers: false,
-                  changelog: ENV.fetch("TESTFLIGHT_WHAT_TO_TEST"),
-                  submit_beta_review: false,
-                  skip_submission: false,
-                  skip_waiting_for_build_processing: false,
-                  wait_processing_timeout_duration: 1800
-                )
+              if beta_review_locked_error.call(e)
+                UI.important("Another TestFlight build is already in beta review for this train. Skipping beta review submission for this run.")
+                begin
+                  upload_to_testflight(
+                    api_key: api_key,
+                    app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
+                    app_platform: "ios",
+                    distribute_only: true,
+                    app_version: ENV.fetch("APP_VERSION"),
+                    build_number: ENV.fetch("APP_BUILD_NUMBER"),
+                    distribute_external: true,
+                    groups: [ENV.fetch("TESTFLIGHT_EXTERNAL_GROUP")],
+                    notify_external_testers: false,
+                    changelog: ENV.fetch("TESTFLIGHT_WHAT_TO_TEST"),
+                    submit_beta_review: false,
+                    skip_submission: true,
+                    skip_waiting_for_build_processing: false,
+                    wait_processing_timeout_duration: 1800
+                  )
+                rescue => retry_error
+                  if beta_review_locked_error.call(retry_error)
+                    UI.important("Beta review lock is still active. Continuing without failing this workflow.")
+                  else
+                    raise retry_error
+                  end
+                end
               else
                 raise e
               end
