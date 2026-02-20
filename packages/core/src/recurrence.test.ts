@@ -80,6 +80,7 @@ describe('recurrence', () => {
 
         const next = createNextRecurringTask(task, '2025-01-05T14:00:00.000Z', 'done');
         expect(next?.dueDate).toBe('2025-01-04T09:00:00.000Z');
+        expect(next?.startTime).toBe('2025-01-04T09:00:00.000Z');
     });
 
     it('respects daily interval for fluid recurrence', () => {
@@ -97,6 +98,7 @@ describe('recurrence', () => {
 
         const next = createNextRecurringTask(task, '2025-01-05T14:00:00.000Z', 'done');
         expect(next?.dueDate).toBe('2025-01-08T14:00:00.000Z');
+        expect(next?.startTime).toBe('2025-01-08T14:00:00.000Z');
     });
 
     it('falls back to weekly interval when BYDAY is empty', () => {

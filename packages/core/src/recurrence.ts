@@ -373,6 +373,7 @@ function resetChecklist(checklist: ChecklistItem[] | undefined): ChecklistItem[]
  *
  * - Advances dueDate only when the original task has a dueDate.
  * - Shifts startTime/reviewAt forward if present.
+ * - For due/review-only recurrences, derives startTime to keep deferred instances out of Next until scheduled.
  * - Resets checklist completion and IDs.
  * - New instance status is based on the previous status, with done -> next.
  */
@@ -402,6 +403,9 @@ export function createNextRecurringTask(
     const nextReviewAt = task.reviewAt
         ? nextIsoFrom(strategy === 'fluid' ? completedAtIso : task.reviewAt, rule, completedAtDate, byDay, interval, byMonthDay)
         : undefined;
+    if (!nextStartTime) {
+        nextStartTime = nextDueDate ?? nextReviewAt;
+    }
 
     let newStatus: TaskStatus = previousStatus;
     if (newStatus === 'done' || newStatus === 'archived') {
