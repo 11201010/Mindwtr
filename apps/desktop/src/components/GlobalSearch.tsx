@@ -19,7 +19,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
     const [showSavePrompt, setShowSavePrompt] = useState(false);
     const [savePromptDefault, setSavePromptDefault] = useState('');
     const [includeCompleted, setIncludeCompleted] = useState(false);
-    const [includeReference, setIncludeReference] = useState(false);
+    const [includeReference, setIncludeReference] = useState(true);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [selectedStatuses, setSelectedStatuses] = useState<TaskStatus[]>([]);
     const [selectedArea, setSelectedArea] = useState<string>('all');
@@ -87,7 +87,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
             setSelectedIndex(0);
             setShowSavePrompt(false);
             setIncludeCompleted(false);
-            setIncludeReference(false);
+            setIncludeReference(true);
             setFiltersOpen(false);
             setSelectedStatuses([]);
             const initialArea = globalAreaFilter === AREA_FILTER_ALL
@@ -556,7 +556,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                                     setDuePreset('any');
                                     setScope('all');
                                     setIncludeCompleted(false);
-                                    setIncludeReference(false);
+                                    setIncludeReference(true);
                                 }}
                                 className="text-xs text-muted-foreground hover:text-foreground"
                             >

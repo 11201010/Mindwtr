@@ -20,7 +20,7 @@ export default function SearchScreen() {
     const [saveName, setSaveName] = useState('');
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [includeCompleted, setIncludeCompleted] = useState(false);
-    const [includeReference, setIncludeReference] = useState(false);
+    const [includeReference, setIncludeReference] = useState(true);
     const [selectedStatuses, setSelectedStatuses] = useState<TaskStatus[]>([]);
     const [selectedArea, setSelectedArea] = useState<'all' | 'none' | string>('all');
     const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
@@ -258,7 +258,7 @@ export default function SearchScreen() {
         setDuePreset('any');
         setScope('all');
         setIncludeCompleted(false);
-        setIncludeReference(false);
+        setIncludeReference(true);
     };
     const activeChips: Array<{ key: string; label: string; onPress: () => void }> = [];
     selectedStatuses.forEach((status) => {
