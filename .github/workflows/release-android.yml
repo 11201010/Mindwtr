@@ -130,6 +130,17 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
 
+      - name: Build Android APK (local EAS)
+        timeout-minutes: 60
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd apps/mobile
+          MINDWTR_ANDROID_ARCHS=arm64-v8a,armeabi-v7a eas build --platform android --profile production-apk --local --non-interactive --output ./build/mindwtr-${VERSION}.apk
+          ls -la ./build
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
+
       - name: Prepare Google Play release notes
         run: |
           VERSION=${{ steps.version.outputs.version }}
@@ -167,3 +178,22 @@ jobs:
           status: completed
           releaseName: ${{ steps.version.outputs.version }}
           whatsNewDirectory: apps/mobile/build/play-release-notes
+
+      - name: Collect Android release artifacts
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          APK_PATH="apps/mobile/build/mindwtr-${VERSION}.apk"
+          if [ ! -f "${APK_PATH}" ]; then
+            echo "Missing APK artifact: ${APK_PATH}" >&2
+            exit 1
+          fi
+          mkdir -p release-artifacts
+          cp "${APK_PATH}" "release-artifacts/mindwtr-${VERSION}.apk"
+          ls -la release-artifacts
+
+      - name: Upload Android release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-android
+          path: release-artifacts/*
+          if-no-files-found: error
