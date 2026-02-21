@@ -25,7 +25,7 @@ Mindwtr is a Bun monorepo with:
 ### 2) Report security issues privately
 
 - Do not open public issues for security vulnerabilities.
-- Use [SECURITY.md](../SECURITY.md) for responsible disclosure instructions.
+- Use [SECURITY.md](https://github.com/dongdongbh/Mindwtr/blob/main/SECURITY.md) for responsible disclosure instructions.
 
 ### 3) Start with an issue for non-trivial changes
 
