@@ -12,6 +12,7 @@ const TOKEN_PATTERN = /(password|pass|token|access_token|api_key|apikey|authoriz
 const AUTH_HEADER_PATTERN = /(Authorization:\s*)(Basic|Bearer)\s+[A-Za-z0-9+\/=._-]+/gi;
 const READONLY_ERROR_PATTERN = /isn't writable|not writable|read-only|read only|permission denied|EACCES/i;
 const IOS_TEMP_INBOX_PATTERN = /\/tmp\/[^/\s]*-Inbox\//i;
+const IOS_ABSOLUTE_PATH_PATTERN = /^\/(private\/)?var\/mobile\//i;
 const OFFLINE_ERROR_PATTERNS = [
   /network request failed/i,
   /internet connection appears to be offline/i,
@@ -48,6 +49,9 @@ export const formatSyncErrorMessage = (error: unknown, backend: SyncBackend): st
     if (IOS_TEMP_INBOX_PATTERN.test(raw) && READONLY_ERROR_PATTERN.test(raw)) {
       return 'Selected iOS sync file is in a temporary Inbox location and is read-only. Re-select a folder in Settings -> Data & Sync.';
     }
+    if (READONLY_ERROR_PATTERN.test(raw)) {
+      return 'Sync file is not writable. Re-select the sync folder in Settings -> Data & Sync, then sync again.';
+    }
     return raw;
   }
   if (backend !== 'webdav') return raw;
@@ -68,6 +72,18 @@ export const formatSyncErrorMessage = (error: unknown, backend: SyncBackend): st
 export const isLikelyOfflineSyncError = (errorOrMessage: unknown): boolean => {
   const message = String(errorOrMessage || '');
   return OFFLINE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+};
+
+export const normalizeFileSyncPath = (path: string, platformOs: string): string => {
+  const trimmed = path.trim();
+  if (!trimmed) return trimmed;
+  if (platformOs !== 'ios') return trimmed;
+  if (trimmed.startsWith('content://')) return trimmed;
+  if (trimmed.startsWith('file://')) return trimmed;
+  if (IOS_ABSOLUTE_PATH_PATTERN.test(trimmed)) {
+    return `file://${trimmed}`;
+  }
+  return trimmed;
 };
 
 export const isSyncFilePath = (path: string) => isCoreSyncFilePath(path, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME);

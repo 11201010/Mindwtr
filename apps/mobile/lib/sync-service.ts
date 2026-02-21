@@ -7,7 +7,7 @@ import { getBaseSyncUrl, getCloudBaseUrl, syncCloudAttachments, syncFileAttachme
 import { getExternalCalendars, saveExternalCalendars } from './external-calendar';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Network from 'expo-network';
-import { formatSyncErrorMessage, getFileSyncBaseDir, isSyncFilePath, resolveBackend, type SyncBackend } from './sync-service-utils';
+import { formatSyncErrorMessage, getFileSyncBaseDir, isSyncFilePath, normalizeFileSyncPath, resolveBackend, type SyncBackend } from './sync-service-utils';
 import {
   SYNC_PATH_KEY,
   SYNC_BACKEND_KEY,
@@ -228,6 +228,13 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         fileSyncPath = syncPathOverride || await getCachedConfigValue(SYNC_PATH_KEY);
         if (!fileSyncPath) {
           return { success: true };
+        }
+        const normalizedPath = normalizeFileSyncPath(fileSyncPath, Platform.OS);
+        if (normalizedPath && normalizedPath !== fileSyncPath) {
+          fileSyncPath = normalizedPath;
+          await AsyncStorage.setItem(SYNC_PATH_KEY, normalizedPath);
+          syncConfigCache.set(SYNC_PATH_KEY, { value: normalizedPath, readAt: Date.now() });
+          logSyncInfo('Normalized file sync path to iOS file URI');
         }
         if (fileSyncPath.startsWith('file://') && IOS_TEMP_INBOX_PATH_PATTERN.test(decodeUriSafe(fileSyncPath))) {
           throw new Error('Selected iOS sync file is in a temporary Inbox location and is read-only. Re-select a folder in Settings -> Data & Sync.');
