@@ -68,6 +68,24 @@
   </p>
 </div>
 
+## 为什么选择 Mindwtr（快速对比）
+
+Mindwtr 面向想要完整 GTD 且不被平台锁定的用户。下面是与常见任务应用的简短、尊重事实的对比。
+
+| 能力 | Mindwtr | Todoist | Things 3 | TickTick | OmniFocus | Microsoft To Do |
+|---|---|---|---|---|---|---|
+| 默认本地优先 | ✅ 是 | ❌ 云优先（离线后会回传到 Todoist 服务器） | ⚠️ 本地应用，可选 Things Cloud 同步 | ❌ 以云同步为主 | ✅ 本地数据库，可选同步 | ❌ 云优先（任务存储在 Exchange Online 服务器） |
+| 开源 | ✅ 是 | ❌ 核心应用源码未公开发布 | ❌ 核心应用源码未公开发布 | ❌ 核心应用源码未公开发布 | ❌ 核心应用源码未公开发布 | ❌ 核心应用源码未公开发布 |
+| 平台覆盖 | ✅ macOS、Windows、Linux、iOS、Android、Web/PWA | ✅ macOS、Windows、Linux、iOS、Android、Web | ❌ 仅 Apple 生态 | ✅ macOS、Windows、Linux、iOS、Android、Web | ⚠️ Apple 应用（macOS、iOS/iPadOS、watchOS、visionOS）+ Web 伴随端 | ✅ Windows、macOS、iOS、Android、Web |
+| 原生 Linux 桌面端 | ✅ 有 | ✅ 有 | ❌ 无 | ✅ 有 | ❌ 无 | ❌ 无 |
+| 开箱即用 GTD 工作流 | ✅ 内置端到端 GTD 流程 | ◑ 通用任务管理器（可自行改造成 GTD） | ◑ 通用任务管理器（可自行改造成 GTD） | ◑ 通用任务管理器（可自行改造成 GTD） | ✅ 设计上以 GTD 方法为核心 | ◑ 通用任务管理器（可自行改造成 GTD） |
+| 价格模式 | ✅ 免费 | Freemium（免费+订阅） | 一次性买断（Apple 各平台分别购买） | Freemium（免费+订阅） | 付费（买断或订阅） | 免费 |
+| AI 模型控制权 | ✅ BYOK（OpenAI、Gemini、Claude，以及本地/自托管 OpenAI 兼容 LLM） | ❌ 内置 AI，不支持 BYOK | ❌ 无原生 BYOK AI 工作流 | ❌ 无原生 BYOK AI 工作流 | ❌ 无原生 BYOK AI 工作流 | ❌ 无原生 BYOK AI 工作流 |
+| 自托管同步选项 | ✅ 有 | ❌ 无官方自托管方案 | ❌ 仅 Things Cloud | ❌ 无官方自托管方案 | ✅ 有（高级/WebDAV 同步） | ❌ 无官方自托管方案（不支持本地 Exchange 账户） |
+| 无账号可用 | ✅ 是 | ❌ 否 | ✅ 是（单设备使用，不同步） | ⚠️ 官方说明不够明确（Web 流程以注册/登录为主） | ⚠️ 本地可用；同步/Web 与部分授权流程会用到 Omni Account | ❌ 否（需要 Microsoft 账号） |
+
+*以上信息基于 2026 年 2 月 21 日官方产品页面/文档整理。如有变更，欢迎附来源提交 issue/PR。*
+
 ## 理念
 
 Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认知负担、删繁就简，让你保持顺畅的工作流：
@@ -86,7 +104,7 @@ Mindwtr **默认简单，需要时也足够强大**。我们专注于降低认�
 - **组织** - 项目、情境与状态清单
 - **回顾** - 带提醒的每周回顾向导
 - **执行** - 基于情境筛选的下一步行动
-- **AI 辅助（可选）** - 使用自带密钥的 AI 完成澄清、拆解与回顾（OpenAI、Gemini、Claude）
+- **AI 辅助（可选）** - 使用自带密钥的 AI 完成澄清、拆解与回顾（OpenAI、Gemini、Claude，或本地/自托管 OpenAI 兼容 LLM）
 
 ### 视图
 - 📥 **收件箱** - 任务收集区与处理向导

@@ -68,6 +68,24 @@ A complete Getting Things Done (GTD) productivity system for desktop and mobile.
   </p>
 </div>
 
+## Why Mindwtr (Quick Comparison)
+
+Mindwtr is built for people who want a complete GTD system without lock-in. Here is a brief, respectful comparison with popular task apps.
+
+| Capability | Mindwtr | Todoist | Things 3 | TickTick | OmniFocus | Microsoft To Do |
+|---|---|---|---|---|---|---|
+| Local-first by default | ✅ Yes | ❌ Cloud-first (offline mode syncs back to Todoist servers) | ⚠️ Local app with optional Things Cloud sync | ❌ Cloud-sync focused | ✅ Local database with optional sync | ❌ Cloud-first (tasks stored on Exchange Online servers) |
+| Open source | ✅ Yes | ❌ Core app source not publicly published | ❌ Core app source not publicly published | ❌ Core app source not publicly published | ❌ Core app source not publicly published | ❌ Core app source not publicly published |
+| Platforms | ✅ macOS, Windows, Linux, iOS, Android, Web/PWA | ✅ macOS, Windows, Linux, iOS, Android, Web | ❌ Apple only | ✅ macOS, Windows, Linux, iOS, Android, Web | ⚠️ Apple apps (macOS, iOS/iPadOS, watchOS, visionOS) + Web companion | ✅ Windows, macOS, iOS, Android, Web |
+| Native Linux desktop app | ✅ Yes | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No |
+| GTD-first workflow out of the box | ✅ End-to-end GTD flow built in | ◑ General task manager (can be adapted to GTD) | ◑ General task manager (can be adapted to GTD) | ◑ General task manager (can be adapted to GTD) | ✅ Designed with GTD in mind | ◑ General task manager (can be adapted to GTD) |
+| Pricing model | ✅ Free | Freemium | Paid upfront (one-time purchase per Apple platform) | Freemium | Paid (perpetual license or subscription) | Free |
+| AI model ownership | ✅ BYOK (OpenAI, Gemini, Claude, plus local/self-hosted OpenAI-compatible LLMs) | ❌ Built-in AI features, not BYOK | ❌ No native BYOK AI workflow | ❌ No native BYOK AI workflow | ❌ No native BYOK AI workflow | ❌ No native BYOK AI workflow |
+| Self-hosted sync option | ✅ Yes | ❌ No official self-hosted option | ❌ Things Cloud only | ❌ No official self-hosted option | ✅ Yes (Advanced/WebDAV sync) | ❌ No official self-hosted option (on-prem Exchange accounts not supported) |
+| Works without an account | ✅ Yes | ❌ No | ✅ Yes (single-device use, no sync) | ⚠️ Not clearly documented (web flow is sign-up first) | ⚠️ Local use is possible; sync/web and some license flows use Omni Account | ❌ No (Microsoft account required) |
+
+*Checked against official product docs/pages on February 21, 2026. If any entry is outdated, feel free to open an issue/PR with sources.*
+
 ## Philosophy
 
 Mindwtr is built to be **simple by default and powerful when you need it**. We focus on reducing cognitive load, cutting the fat, and keeping you in flow. That means:
@@ -86,7 +104,7 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - **Organize** - Projects, contexts, and status lists
 - **Reflect** - Weekly review wizard with reminders
 - **Engage** - Context-filtered next actions
-- **AI Assist (Optional)** - Clarify, break down, and review with BYOK AI (OpenAI, Gemini, Claude)
+- **AI Assist (Optional)** - Clarify, break down, and review with BYOK AI (OpenAI, Gemini, Claude, or local/self-hosted OpenAI-compatible LLMs)
 
 ### Views
 - 📥 **Inbox** - Capture zone with processing wizard
