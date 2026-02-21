@@ -206,6 +206,9 @@ export interface AppData {
                 projectFirst?: boolean;
                 scheduleEnabled?: boolean;
             };
+            weeklyReview?: {
+                includeContextStep?: boolean;
+            };
         };
         attachments?: {
             lastCleanupAt?: string;

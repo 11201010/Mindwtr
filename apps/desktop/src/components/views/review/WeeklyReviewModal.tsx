@@ -15,7 +15,7 @@ import {
     type TaskStatus,
     type AIProviderId,
 } from '@mindwtr/core';
-import { Archive, ArrowRight, Calendar, Check, CheckSquare, ChevronLeft, Layers, RefreshCw, Sparkles, X, type LucideIcon } from 'lucide-react';
+import { Archive, ArrowRight, Calendar, Check, CheckSquare, ChevronLeft, Layers, MapPin, RefreshCw, Sparkles, X, type LucideIcon } from 'lucide-react';
 
 import { TaskItem } from '../../TaskItem';
 import { PromptModal } from '../../PromptModal';
@@ -24,11 +24,15 @@ import { useLanguage } from '../../../contexts/language-context';
 import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../../../lib/ai-config';
 import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
 
-type ReviewStep = 'inbox' | 'ai' | 'calendar' | 'waiting' | 'projects' | 'someday' | 'completed';
+type ReviewStep = 'inbox' | 'ai' | 'calendar' | 'waiting' | 'contexts' | 'projects' | 'someday' | 'completed';
 type CalendarReviewEntry = {
     task: Task;
     date: Date;
     kind: 'due' | 'start';
+};
+type ContextReviewGroup = {
+    context: string;
+    tasks: Task[];
 };
 type ExternalCalendarDaySummary = {
     dayStart: Date;
@@ -67,6 +71,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
     const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
 
     const aiEnabled = settings?.ai?.enabled === true;
+    const includeContextStep = settings?.gtd?.weeklyReview?.includeContextStep !== false;
     const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
     const staleItems = useMemo(() => getStaleItems(tasks, projects), [tasks, projects]);
     const staleItemTitleMap = useMemo(() => {
@@ -128,6 +133,26 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         }
         return summaries;
     }, [externalCalendarEvents]);
+    const contextReviewGroups = useMemo<ContextReviewGroup[]>(() => {
+        const groups = new Map<string, Task[]>();
+        tasks.forEach((task) => {
+            if (task.deletedAt) return;
+            if (task.status === 'done' || task.status === 'archived' || task.status === 'reference') return;
+            (task.contexts ?? []).forEach((contextValue) => {
+                const normalized = contextValue.trim();
+                if (!normalized) return;
+                const existing = groups.get(normalized) ?? [];
+                existing.push(task);
+                groups.set(normalized, existing);
+            });
+        });
+        return Array.from(groups.entries())
+            .map(([context, contextTasks]) => ({
+                context,
+                tasks: contextTasks.sort((a, b) => a.title.localeCompare(b.title)),
+            }))
+            .sort((a, b) => (b.tasks.length - a.tasks.length) || a.context.localeCompare(b.context));
+    }, [tasks]);
 
     const steps = useMemo<{ id: ReviewStep; title: string; description: string; icon: LucideIcon }[]>(() => {
         const list: { id: ReviewStep; title: string; description: string; icon: LucideIcon }[] = [
@@ -139,12 +164,17 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         list.push(
             { id: 'calendar', title: t('review.calendarStep'), description: t('review.calendarStepDesc'), icon: Calendar },
             { id: 'waiting', title: t('review.waitingStep'), description: t('review.waitingStepDesc'), icon: ArrowRight },
+        );
+        if (includeContextStep) {
+            list.push({ id: 'contexts', title: t('review.contexts'), description: t('review.contextsStepDesc'), icon: MapPin });
+        }
+        list.push(
             { id: 'projects', title: t('review.projectsStep'), description: t('review.projectsStepDesc'), icon: Layers },
             { id: 'someday', title: t('review.somedayStep'), description: t('review.somedayStepDesc'), icon: Archive },
             { id: 'completed', title: t('review.allDone'), description: t('review.allDoneDesc'), icon: Check },
         );
         return list;
-    }, [aiEnabled, t]);
+    }, [aiEnabled, includeContextStep, t]);
 
     const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
     const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0;
@@ -474,6 +504,35 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                                 </>
                             )}
                         </div>
+                    </div>
+                );
+            }
+            case 'contexts': {
+                return (
+                    <div className="space-y-4">
+                        <p className="text-muted-foreground">{t('review.contextsStepDesc')}</p>
+                        {contextReviewGroups.length === 0 ? (
+                            <div className="text-center py-12 text-muted-foreground">
+                                <p>{t('review.contextsEmpty')}</p>
+                            </div>
+                        ) : (
+                            contextReviewGroups.map((group) => (
+                                <div key={group.context} className="border border-border rounded-lg p-4 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="font-semibold">{group.context}</h3>
+                                        <span className="text-xs text-muted-foreground">{group.tasks.length}</span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {group.tasks.slice(0, 4).map((task) => (
+                                            <TaskItem key={`${group.context}-${task.id}`} task={task} showProjectBadgeInActions={false} />
+                                        ))}
+                                        {group.tasks.length > 4 && (
+                                            <div className="text-xs text-muted-foreground">+{group.tasks.length - 4} {t('common.more').toLowerCase()}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        )}
                     </div>
                 );
             }

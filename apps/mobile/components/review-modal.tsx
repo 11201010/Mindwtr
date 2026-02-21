@@ -27,11 +27,15 @@ import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../lib/ai-config';
 import { logError } from '../lib/app-log';
 import { fetchExternalCalendarEvents } from '../lib/external-calendar';
 
-type ReviewStep = 'inbox' | 'ai' | 'calendar' | 'waiting' | 'projects' | 'someday' | 'completed';
+type ReviewStep = 'inbox' | 'ai' | 'calendar' | 'waiting' | 'contexts' | 'projects' | 'someday' | 'completed';
 type ExternalCalendarDaySummary = {
     dayStart: Date;
     events: ExternalCalendarEvent[];
     totalCount: number;
+};
+type ContextReviewGroup = {
+    context: string;
+    tasks: Task[];
 };
 type CalendarTaskReviewEntry = {
     task: Task;
@@ -58,6 +62,7 @@ const getReviewLabels = (lang: string) => {
             ai: 'AI 洞察',
             calendar: '日历',
             waiting: '等待中',
+            contexts: '情境',
             projects: '项目',
             someday: '将来/也许',
             done: '完成!',
@@ -94,6 +99,8 @@ const getReviewLabels = (lang: string) => {
             add: '添加',
             waitingDesc: '跟进等待项目',
             waitingGuide: '检查每个等待项：是否需要跟进？已完成可以标记完成，需要再次跟进可以加注释。',
+            contextsDesc: '回顾你的情境，确保每个情境下有清晰的下一步行动。',
+            contextsEmpty: '没有带有活动任务的情境。',
             nothingWaiting: '没有等待项目',
             projectsDesc: '检查项目状态',
             projectsGuide: '确保每个活跃项目都有明确的下一步行动。没有下一步的项目会卡住！',
@@ -118,6 +125,7 @@ const getReviewLabels = (lang: string) => {
         ai: 'AI Insight',
         calendar: 'Calendar',
         waiting: 'Waiting For',
+        contexts: 'Contexts',
         projects: 'Projects',
         someday: 'Someday/Maybe',
         done: 'Done!',
@@ -154,6 +162,8 @@ const getReviewLabels = (lang: string) => {
         add: 'Add',
         waitingDesc: 'Follow Up on Waiting Items',
         waitingGuide: 'Check each item: need to follow up? Mark done if resolved. Add notes for context.',
+        contextsDesc: 'Review your contexts and make sure each one has clear next actions.',
+        contextsEmpty: 'No contexts with active tasks.',
         nothingWaiting: 'Nothing waiting - all clear!',
         projectsDesc: 'Review Your Projects',
         projectsGuide: 'Each active project needs a clear next action. Projects without next actions get stuck!',
@@ -198,6 +208,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const labels = getReviewLabels(language);
     const tc = useThemeColors();
     const aiEnabled = settings?.ai?.enabled === true;
+    const includeContextStep = settings?.gtd?.weeklyReview?.includeContextStep !== false;
     const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
 
     const steps = useMemo<{ id: ReviewStep; title: string; icon: string }[]>(() => {
@@ -210,12 +221,17 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
         list.push(
             { id: 'calendar', title: labels.calendar, icon: '📅' },
             { id: 'waiting', title: labels.waiting, icon: '⏳' },
+        );
+        if (includeContextStep) {
+            list.push({ id: 'contexts', title: labels.contexts, icon: '🏷️' });
+        }
+        list.push(
             { id: 'projects', title: labels.projects, icon: '📂' },
             { id: 'someday', title: labels.someday, icon: '💭' },
             { id: 'completed', title: labels.done, icon: '✅' },
         );
         return list;
-    }, [aiEnabled, labels]);
+    }, [aiEnabled, includeContextStep, labels]);
 
     const currentStepIndex = steps.findIndex(s => s.id === currentStep);
     const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0;
@@ -487,6 +503,26 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
         }
         return summaries;
     }, [externalCalendarEvents]);
+    const contextReviewGroups = useMemo<ContextReviewGroup[]>(() => {
+        const groups = new Map<string, Task[]>();
+        tasks.forEach((task) => {
+            if (task.deletedAt) return;
+            if (task.status === 'done' || task.status === 'archived' || task.status === 'reference') return;
+            (task.contexts ?? []).forEach((contextValue) => {
+                const normalized = contextValue.trim();
+                if (!normalized) return;
+                const existing = groups.get(normalized) ?? [];
+                existing.push(task);
+                groups.set(normalized, existing);
+            });
+        });
+        return Array.from(groups.entries())
+            .map(([context, contextTasks]) => ({
+                context,
+                tasks: contextTasks.sort((a, b) => a.title.localeCompare(b.title)),
+            }))
+            .sort((a, b) => (b.tasks.length - a.tasks.length) || a.context.localeCompare(b.context));
+    }, [tasks]);
 
     const renderTaskList = (taskList: Task[]) => (
         <ScrollView style={styles.taskList}>
@@ -742,6 +778,52 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                             </View>
                         ) : (
                             renderTaskList(orderedWaitingTasks)
+                        )}
+                    </View>
+                );
+
+            case 'contexts':
+                return (
+                    <View style={styles.stepContent}>
+                        <Text style={[styles.stepTitle, { color: tc.text }]}>
+                            🏷️ {labels.contexts}
+                        </Text>
+                        <Text style={[styles.hint, { color: tc.secondaryText }]}>
+                            {labels.contextsDesc}
+                        </Text>
+                        {contextReviewGroups.length === 0 ? (
+                            <View style={styles.emptyState}>
+                                <Text style={[styles.emptyText, { color: tc.secondaryText }]}>
+                                    {labels.contextsEmpty}
+                                </Text>
+                            </View>
+                        ) : (
+                            <ScrollView style={styles.taskList}>
+                                {contextReviewGroups.map((group) => (
+                                    <View key={group.context} style={[styles.contextGroupCard, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
+                                        <View style={styles.contextGroupHeader}>
+                                            <Text style={[styles.contextGroupTitle, { color: tc.text }]}>{group.context}</Text>
+                                            <Text style={[styles.contextGroupCount, { color: tc.secondaryText }]}>{group.tasks.length}</Text>
+                                        </View>
+                                        {group.tasks.slice(0, 4).map((task) => (
+                                            <TouchableOpacity
+                                                key={`${group.context}-${task.id}`}
+                                                style={[styles.contextTaskRow, { borderTopColor: tc.border }]}
+                                                onPress={() => handleTaskPress(task)}
+                                            >
+                                                <Text style={[styles.contextTaskTitle, { color: tc.text }]} numberOfLines={1}>
+                                                    {task.title}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                        {group.tasks.length > 4 && (
+                                            <Text style={[styles.contextMoreText, { color: tc.secondaryText }]}>
+                                                +{group.tasks.length - 4} {labels.more}
+                                            </Text>
+                                        )}
+                                    </View>
+                                ))}
+                            </ScrollView>
                         )}
                     </View>
                 );
@@ -1195,6 +1277,42 @@ const styles = StyleSheet.create({
     reviewProjectAddTaskButtonText: {
         fontSize: 12,
         fontWeight: '600',
+    },
+    contextGroupCard: {
+        borderWidth: 1,
+        borderRadius: 10,
+        marginBottom: 10,
+        overflow: 'hidden',
+    },
+    contextGroupHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    contextGroupTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    contextGroupCount: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    contextTaskRow: {
+        borderTopWidth: 1,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+    },
+    contextTaskTitle: {
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    contextMoreText: {
+        fontSize: 12,
+        paddingHorizontal: 10,
+        paddingBottom: 8,
+        paddingTop: 2,
     },
     promptBackdrop: {
         flex: 1,

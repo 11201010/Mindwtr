@@ -49,6 +49,10 @@ type Labels = {
     featureTimeEstimatesDesc: string;
     featurePomodoro: string;
     featurePomodoroDesc: string;
+    weeklyReviewConfig: string;
+    weeklyReviewConfigDesc: string;
+    weeklyReviewIncludeContextsStep: string;
+    weeklyReviewIncludeContextsStepDesc: string;
     visible: string;
     hidden: string;
 };
@@ -147,6 +151,7 @@ export function SettingsGtdPage({
     const inboxTwoMinuteFirst = inboxProcessing.twoMinuteFirst === true;
     const inboxProjectFirst = inboxProcessing.projectFirst === true;
     const inboxScheduleEnabled = inboxProcessing.scheduleEnabled !== false;
+    const includeContextStep = safeSettings.gtd?.weeklyReview?.includeContextStep !== false;
     const pomodoroEnabled = safeSettings.features?.pomodoro === true;
     const fieldLabel = (fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
@@ -225,6 +230,17 @@ export function SettingsGtdPage({
                 },
             },
         }).then(showSaved).catch((error) => reportError('Failed to update inbox processing settings', error));
+    };
+    const updateWeeklyReviewConfig = (partial: NonNullable<AppData['settings']['gtd']>['weeklyReview']) => {
+        updateSettings({
+            gtd: {
+                ...(safeSettings.gtd ?? {}),
+                weeklyReview: {
+                    ...(safeSettings.gtd?.weeklyReview ?? {}),
+                    ...partial,
+                },
+            },
+        }).then(showSaved).catch((error) => reportError('Failed to update weekly review settings', error));
     };
     const moveFieldInGroup = (fieldId: TaskEditorFieldId, delta: number, groupFields: TaskEditorFieldId[]) => {
         const groupOrder = taskEditorOrder.filter((id) => groupFields.includes(id));
@@ -397,77 +413,115 @@ export function SettingsGtdPage({
                 ) : null}
             </div>
             <div className="bg-card border border-border rounded-lg divide-y divide-border">
-                <div className="p-4">
-                    <div className="text-sm font-medium">{t.inboxProcessing}</div>
-                    <div className="text-xs text-muted-foreground mt-1">{t.inboxProcessingDesc}</div>
+                <div className="p-4 flex items-center justify-between gap-6">
+                    <div className="min-w-0">
+                        <div className="text-sm font-medium">{t.weeklyReviewConfig}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.weeklyReviewConfigDesc}</div>
+                    </div>
                 </div>
                 <div className="p-4 flex items-center justify-between gap-6">
                     <div className="min-w-0">
-                        <div className="text-sm font-medium">{t.inboxTwoMinuteFirst}</div>
+                        <div className="text-sm font-medium">{t.weeklyReviewIncludeContextsStep}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{t.weeklyReviewIncludeContextsStepDesc}</div>
                     </div>
                     <button
                         type="button"
                         role="switch"
-                        aria-checked={inboxTwoMinuteFirst}
-                        onClick={() => updateInboxProcessing({ twoMinuteFirst: !inboxTwoMinuteFirst })}
+                        aria-checked={includeContextStep}
+                        onClick={() => updateWeeklyReviewConfig({ includeContextStep: !includeContextStep })}
                         className={cn(
                             'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
-                            inboxTwoMinuteFirst ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                            includeContextStep ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
                         )}
                     >
                         <span
                             className={cn(
                                 'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                                inboxTwoMinuteFirst ? 'translate-x-4' : 'translate-x-1'
-                            )}
-                        />
-                    </button>
-                </div>
-                <div className="p-4 flex items-center justify-between gap-6">
-                    <div className="min-w-0">
-                        <div className="text-sm font-medium">{t.inboxProjectFirst}</div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={inboxProjectFirst}
-                        onClick={() => updateInboxProcessing({ projectFirst: !inboxProjectFirst })}
-                        className={cn(
-                            'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
-                            inboxProjectFirst ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
-                        )}
-                    >
-                        <span
-                            className={cn(
-                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                                inboxProjectFirst ? 'translate-x-4' : 'translate-x-1'
-                            )}
-                        />
-                    </button>
-                </div>
-                <div className="p-4 flex items-center justify-between gap-6">
-                    <div className="min-w-0">
-                        <div className="text-sm font-medium">{t.inboxScheduleEnabled}</div>
-                    </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={inboxScheduleEnabled}
-                        onClick={() => updateInboxProcessing({ scheduleEnabled: !inboxScheduleEnabled })}
-                        className={cn(
-                            'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
-                            inboxScheduleEnabled ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
-                        )}
-                    >
-                        <span
-                            className={cn(
-                                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                                inboxScheduleEnabled ? 'translate-x-4' : 'translate-x-1'
+                                includeContextStep ? 'translate-x-4' : 'translate-x-1'
                             )}
                         />
                     </button>
                 </div>
             </div>
+            <details className="bg-card border border-border rounded-lg">
+                <summary className="list-none cursor-pointer p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.inboxProcessing}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.inboxProcessingDesc}</div>
+                        </div>
+                        <span className="text-xs text-muted-foreground">▸</span>
+                    </div>
+                </summary>
+                <div className="divide-y divide-border border-t border-border">
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.inboxTwoMinuteFirst}</div>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={inboxTwoMinuteFirst}
+                            onClick={() => updateInboxProcessing({ twoMinuteFirst: !inboxTwoMinuteFirst })}
+                            className={cn(
+                                'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                                inboxTwoMinuteFirst ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                    inboxTwoMinuteFirst ? 'translate-x-4' : 'translate-x-1'
+                                )}
+                            />
+                        </button>
+                    </div>
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.inboxProjectFirst}</div>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={inboxProjectFirst}
+                            onClick={() => updateInboxProcessing({ projectFirst: !inboxProjectFirst })}
+                            className={cn(
+                                'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                                inboxProjectFirst ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                    inboxProjectFirst ? 'translate-x-4' : 'translate-x-1'
+                                )}
+                            />
+                        </button>
+                    </div>
+                    <div className="p-4 flex items-center justify-between gap-6">
+                        <div className="min-w-0">
+                            <div className="text-sm font-medium">{t.inboxScheduleEnabled}</div>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={inboxScheduleEnabled}
+                            onClick={() => updateInboxProcessing({ scheduleEnabled: !inboxScheduleEnabled })}
+                            className={cn(
+                                'relative inline-flex h-5 w-9 items-center rounded-full border transition-colors',
+                                inboxScheduleEnabled ? 'bg-primary border-primary' : 'bg-muted/50 border-border'
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                                    inboxScheduleEnabled ? 'translate-x-4' : 'translate-x-1'
+                                )}
+                            />
+                        </button>
+                    </div>
+                </div>
+            </details>
             <details className="bg-card border border-border rounded-lg p-4">
                 <summary className="list-none cursor-pointer">
                     <div className="flex items-center justify-between">

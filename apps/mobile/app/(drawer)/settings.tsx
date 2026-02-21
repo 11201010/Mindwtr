@@ -244,6 +244,7 @@ export default function SettingsPage() {
     const [weeklyReviewTimePicker, setWeeklyReviewTimePicker] = useState(false);
     const [weeklyReviewTimeDraft, setWeeklyReviewTimeDraft] = useState<Date | null>(null);
     const [weeklyReviewDayPickerOpen, setWeeklyReviewDayPickerOpen] = useState(false);
+    const [gtdInboxProcessingExpanded, setGtdInboxProcessingExpanded] = useState(false);
     const [modelPicker, setModelPicker] = useState<null | 'model' | 'copilot' | 'speech'>(null);
     const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
     const [weekStartPickerOpen, setWeekStartPickerOpen] = useState(false);
@@ -336,6 +337,7 @@ export default function SettingsPage() {
     const inboxTwoMinuteFirst = inboxProcessing.twoMinuteFirst === true;
     const inboxProjectFirst = inboxProcessing.projectFirst === true;
     const inboxScheduleEnabled = inboxProcessing.scheduleEnabled !== false;
+    const includeContextStep = settings.gtd?.weeklyReview?.includeContextStep !== false;
     const autoArchiveDays = Number.isFinite(settings.gtd?.autoArchiveDays)
         ? Math.max(0, Math.floor(settings.gtd?.autoArchiveDays as number))
         : 7;
@@ -376,6 +378,17 @@ export default function SettingsPage() {
                 ...(settings.gtd ?? {}),
                 inboxProcessing: {
                     ...(settings.gtd?.inboxProcessing ?? {}),
+                    ...partial,
+                },
+            },
+        }).catch(logSettingsError);
+    };
+    const updateWeeklyReviewConfig = (partial: NonNullable<AppData['settings']['gtd']>['weeklyReview']) => {
+        updateSettings({
+            gtd: {
+                ...(settings.gtd ?? {}),
+                weeklyReview: {
+                    ...(settings.gtd?.weeklyReview ?? {}),
                     ...partial,
                 },
             },
@@ -3082,12 +3095,46 @@ export default function SettingsPage() {
                     <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                         <View style={styles.settingRow}>
                             <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.weeklyReviewConfig')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.weeklyReviewConfigDesc')}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.weeklyReviewIncludeContextsStep')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('settings.weeklyReviewIncludeContextsStepDesc')}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={includeContextStep}
+                                onValueChange={(value) => updateWeeklyReviewConfig({ includeContextStep: value })}
+                                trackColor={{ false: '#767577', true: '#3B82F6' }}
+                            />
+                        </View>
+                    </View>
+
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                        <View style={styles.settingRow}>
+                            <TouchableOpacity
+                                style={styles.settingInfo}
+                                onPress={() => setGtdInboxProcessingExpanded((prev) => !prev)}
+                                activeOpacity={0.7}
+                            >
                                 <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.inboxProcessing')}</Text>
                                 <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
                                     {t('settings.inboxProcessingDesc')}
                                 </Text>
-                            </View>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => setGtdInboxProcessingExpanded((prev) => !prev)} activeOpacity={0.7}>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {gtdInboxProcessingExpanded ? '▾' : '▸'}
+                                </Text>
+                            </TouchableOpacity>
                         </View>
+                        {gtdInboxProcessingExpanded && (
                         <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                             <View style={styles.settingInfo}>
                                 <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.inboxTwoMinuteFirst')}</Text>
@@ -3098,6 +3145,8 @@ export default function SettingsPage() {
                                 trackColor={{ false: '#767577', true: '#3B82F6' }}
                             />
                         </View>
+                        )}
+                        {gtdInboxProcessingExpanded && (
                         <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                             <View style={styles.settingInfo}>
                                 <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.inboxProjectFirst')}</Text>
@@ -3108,6 +3157,8 @@ export default function SettingsPage() {
                                 trackColor={{ false: '#767577', true: '#3B82F6' }}
                             />
                         </View>
+                        )}
+                        {gtdInboxProcessingExpanded && (
                         <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                             <View style={styles.settingInfo}>
                                 <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.inboxScheduleEnabled')}</Text>
@@ -3118,6 +3169,7 @@ export default function SettingsPage() {
                                 trackColor={{ false: '#767577', true: '#3B82F6' }}
                             />
                         </View>
+                        )}
                     </View>
                 </ScrollView>
             </SafeAreaView>

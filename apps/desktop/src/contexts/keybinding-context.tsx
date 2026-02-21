@@ -507,7 +507,6 @@ export function KeybindingProvider({
                     onClose={() => setIsHelpOpen(false)}
                     currentView={currentView}
                     quickAddShortcut={quickAddShortcut}
-                    onQuickAddShortcutChange={setQuickAddShortcut}
                     t={t}
                 />
             )}

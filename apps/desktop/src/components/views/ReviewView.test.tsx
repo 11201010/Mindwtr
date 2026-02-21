@@ -53,8 +53,13 @@ describe('ReviewView', () => {
         fireEvent.click(getByText('review.nextStepBtn'));
         expect(getByText('review.waitingStep')).toBeInTheDocument();
 
-        // Waiting For -> Projects
+        // Waiting For -> Contexts (optional) -> Projects
         fireEvent.click(getByText('review.nextStepBtn'));
+        const contextsVisible = queryByText('review.contexts');
+        if (contextsVisible) {
+            expect(contextsVisible).toBeInTheDocument();
+            fireEvent.click(getByText('review.nextStepBtn'));
+        }
         expect(getByText('review.projectsStep')).toBeInTheDocument();
 
         // Projects -> Someday/Maybe

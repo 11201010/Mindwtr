@@ -2,7 +2,6 @@ import { KeybindingStyle } from '../contexts/keybinding-context';
 import {
     type GlobalQuickAddShortcutSetting,
     formatGlobalQuickAddShortcutForDisplay,
-    getGlobalQuickAddShortcutOptions,
 } from '../lib/global-quick-add-shortcut';
 
 interface KeybindingHelpModalProps {
@@ -10,25 +9,22 @@ interface KeybindingHelpModalProps {
     onClose: () => void;
     currentView: string;
     quickAddShortcut: GlobalQuickAddShortcutSetting;
-    onQuickAddShortcutChange: (shortcut: GlobalQuickAddShortcutSetting) => void;
     t: (key: string) => string;
 }
 
-type HelpItem = { keys: string; labelKey: string; editableShortcut?: boolean };
+type HelpItem = { keys: string; labelKey: string };
 
 export function KeybindingHelpModal({
     style,
     onClose,
     currentView,
     quickAddShortcut,
-    onQuickAddShortcutChange,
     t,
 }: KeybindingHelpModalProps) {
     const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
     const quickAddShortcutDisplay = formatGlobalQuickAddShortcutForDisplay(quickAddShortcut, isMac);
-    const quickAddOptions = getGlobalQuickAddShortcutOptions(isMac);
     const vimGlobal: HelpItem[] = [
-        { keys: quickAddShortcutDisplay, labelKey: 'keybindings.quickAdd', editableShortcut: true },
+        { keys: quickAddShortcutDisplay, labelKey: 'keybindings.quickAdd' },
         { keys: '/', labelKey: 'keybindings.openSearch' },
         { keys: '?', labelKey: 'keybindings.openHelp' },
         { keys: 'Ctrl-b', labelKey: 'keybindings.toggleSidebar' },
@@ -65,7 +61,7 @@ export function KeybindingHelpModal({
     ];
 
     const emacsGlobal: HelpItem[] = [
-        { keys: quickAddShortcutDisplay, labelKey: 'keybindings.quickAdd', editableShortcut: true },
+        { keys: quickAddShortcutDisplay, labelKey: 'keybindings.quickAdd' },
         { keys: 'Ctrl-s', labelKey: 'keybindings.openSearch' },
         { keys: 'Ctrl-h', labelKey: 'keybindings.openHelp' },
         { keys: 'Ctrl-b', labelKey: 'keybindings.toggleSidebar' },
@@ -137,22 +133,7 @@ export function KeybindingHelpModal({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {globalItems.map((item, index) => (
                                 <div key={`${item.labelKey}-${index}`} className="flex items-center justify-between bg-muted/30 rounded-md px-3 py-2">
-                                    {item.editableShortcut ? (
-                                        <select
-                                            value={quickAddShortcut}
-                                            onChange={(event) => onQuickAddShortcutChange(event.target.value as GlobalQuickAddShortcutSetting)}
-                                            className="text-xs bg-muted border border-border rounded px-2 py-1 max-w-[210px]"
-                                            aria-label={t('keybindings.quickAdd')}
-                                        >
-                                            {quickAddOptions.map((option) => (
-                                                <option key={option.value} value={option.value}>
-                                                    {option.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    ) : (
-                                        <code className="text-xs bg-muted px-2 py-0.5 rounded">{item.keys}</code>
-                                    )}
+                                    <code className="text-xs bg-muted px-2 py-0.5 rounded">{item.keys}</code>
                                     <span className="text-sm">{t(item.labelKey)}</span>
                                 </div>
                             ))}
