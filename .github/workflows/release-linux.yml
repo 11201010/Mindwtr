@@ -114,7 +114,18 @@ jobs:
               ./original.AppImage --appimage-extract >/dev/null
               mv squashfs-root appdir
 
-              if [ ! -e appdir/.DirIcon ]; then
+              # Some Tauri builds emit .DirIcon as an absolute symlink into the CI workspace.
+              # That symlink is broken for downstream users and AppImageHub lint.
+              if [ -L appdir/.DirIcon ]; then
+                DIRICON_TARGET="$(readlink appdir/.DirIcon || true)"
+                if [[ "$DIRICON_TARGET" = /* ]] || [ ! -e appdir/.DirIcon ]; then
+                  rm -f appdir/.DirIcon
+                  cp "$GITHUB_WORKSPACE/apps/desktop/src-tauri/icons/128x128.png" appdir/.DirIcon
+                  echo "Replaced broken/absolute .DirIcon symlink with regular file"
+                else
+                  echo ".DirIcon symlink is relative and valid"
+                fi
+              elif [ ! -e appdir/.DirIcon ]; then
                 cp "$GITHUB_WORKSPACE/apps/desktop/src-tauri/icons/128x128.png" appdir/.DirIcon
                 echo "Injected missing .DirIcon"
               else
