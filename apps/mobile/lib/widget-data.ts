@@ -1,4 +1,5 @@
 import { type AppData, type Language, safeParseDate, SUPPORTED_LANGUAGES, getTranslationsSync, loadTranslations } from '@mindwtr/core';
+import type { ColorProp } from 'react-native-android-widget';
 
 export const WIDGET_DATA_KEY = 'mindwtr-data';
 export const WIDGET_LANGUAGE_KEY = 'mindwtr-language';
@@ -14,13 +15,13 @@ export interface WidgetTaskItem {
 }
 
 export interface WidgetPalette {
-    background: string;
-    card: string;
-    border: string;
-    text: string;
-    mutedText: string;
-    accent: string;
-    onAccent: string;
+    background: ColorProp;
+    card: ColorProp;
+    border: ColorProp;
+    text: ColorProp;
+    mutedText: ColorProp;
+    accent: ColorProp;
+    onAccent: ColorProp;
 }
 
 export interface TasksWidgetPayload {
