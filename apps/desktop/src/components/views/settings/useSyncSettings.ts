@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SyncService } from '../../../lib/sync-service';
+import { SyncService, type CloudProvider } from '../../../lib/sync-service';
 import { useUiStore } from '../../../store/ui-store';
 import { logError } from '../../../lib/app-log';
 
 export type SyncBackend = 'off' | 'file' | 'webdav' | 'cloud';
+export type DropboxTestState = 'idle' | 'success' | 'error';
 
 type UseSyncSettingsOptions = {
     isTauri: boolean;
@@ -23,6 +24,12 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
     const [isSavingWebDav, setIsSavingWebDav] = useState(false);
     const [cloudUrl, setCloudUrl] = useState('');
     const [cloudToken, setCloudToken] = useState('');
+    const [cloudProvider, setCloudProvider] = useState<CloudProvider>('selfhosted');
+    const [dropboxAppKey, setDropboxAppKey] = useState('');
+    const [dropboxConnected, setDropboxConnected] = useState(false);
+    const [dropboxBusy, setDropboxBusy] = useState(false);
+    const [dropboxRedirectUri, setDropboxRedirectUri] = useState('http://127.0.0.1:53682/oauth/dropbox/callback');
+    const [dropboxTestState, setDropboxTestState] = useState<DropboxTestState>('idle');
     const [snapshots, setSnapshots] = useState<string[]>([]);
     const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
     const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
@@ -37,6 +44,12 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             return 'Mindwtr cannot access this folder. Choose a folder you own, then try again.';
         }
         return message || 'Failed to save sync folder.';
+    }, []);
+
+    const toErrorMessage = useCallback((error: unknown, fallback: string): string => {
+        if (error instanceof Error && error.message.trim()) return error.message.trim();
+        const text = String(error || '').trim();
+        return text || fallback;
     }, []);
 
     useEffect(() => {
@@ -82,11 +95,61 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
                 setSyncError('Failed to load Cloud config.');
                 void logError(error, { scope: 'sync', step: 'loadCloud' });
             });
+        SyncService.getCloudProvider()
+            .then(setCloudProvider)
+            .catch((error) => {
+                setSyncError('Failed to load cloud provider.');
+                void logError(error, { scope: 'sync', step: 'loadCloudProvider' });
+            });
+        SyncService.getDropboxAppKey()
+            .then(setDropboxAppKey)
+            .catch((error) => {
+                setSyncError('Failed to load Dropbox app key.');
+                void logError(error, { scope: 'sync', step: 'loadDropboxAppKey' });
+            });
+        SyncService.getDropboxRedirectUri()
+            .then(setDropboxRedirectUri)
+            .catch((error) => {
+                void logError(error, { scope: 'sync', step: 'loadDropboxRedirectUri' });
+            });
         loadSnapshots().catch((error) => {
             void logError(error, { scope: 'sync', step: 'loadSnapshots' });
         });
         return unsubscribe;
     }, [isTauri]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadDropboxConnection = async () => {
+            const appKey = dropboxAppKey.trim();
+            if (!appKey) {
+                if (!cancelled) {
+                    setDropboxConnected(false);
+                    setDropboxTestState('idle');
+                }
+                return;
+            }
+            try {
+                const connected = await SyncService.isDropboxConnected(appKey);
+                if (!cancelled) {
+                    setDropboxConnected(connected);
+                    if (!connected) {
+                        setDropboxTestState('idle');
+                    }
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setDropboxConnected(false);
+                    setDropboxTestState('idle');
+                }
+                void logError(error, { scope: 'sync', step: 'loadDropboxConnected' });
+            }
+        };
+        void loadDropboxConnection();
+        return () => {
+            cancelled = true;
+        };
+    }, [dropboxAppKey]);
 
     const handleSaveSyncPath = useCallback(async () => {
         if (!syncPath.trim()) return;
@@ -166,6 +229,107 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         showSaved();
     }, [cloudUrl, cloudToken, showSaved]);
 
+    const handleSetCloudProvider = useCallback(async (provider: CloudProvider) => {
+        setCloudProvider(provider);
+        if (provider !== 'dropbox') {
+            setDropboxTestState('idle');
+        }
+        await SyncService.setCloudProvider(provider);
+        showSaved();
+    }, [showSaved]);
+
+    const handleSaveDropboxAppKey = useCallback(async () => {
+        const trimmed = dropboxAppKey.trim();
+        await SyncService.setDropboxAppKey(trimmed);
+        setDropboxAppKey(trimmed);
+        if (!trimmed) {
+            setDropboxConnected(false);
+            setDropboxTestState('idle');
+        } else {
+            setDropboxConnected(await SyncService.isDropboxConnected(trimmed));
+            setDropboxTestState('idle');
+        }
+        showSaved();
+    }, [dropboxAppKey, showSaved]);
+
+    const handleConnectDropbox = useCallback(async () => {
+        const appKey = dropboxAppKey.trim();
+        if (!appKey) {
+            showToast('Enter Dropbox app key first.', 'error');
+            return;
+        }
+        setDropboxBusy(true);
+        try {
+            await SyncService.connectDropbox(appKey);
+            await SyncService.setDropboxAppKey(appKey);
+            setDropboxConnected(true);
+            setDropboxTestState('idle');
+            showToast('Connected to Dropbox.', 'success');
+            showSaved();
+        } catch (error) {
+            const message = toErrorMessage(error, 'Failed to connect Dropbox.');
+            setDropboxConnected(false);
+            setDropboxTestState('error');
+            setSyncError(message);
+            showToast(message, 'error');
+        } finally {
+            setDropboxBusy(false);
+        }
+    }, [dropboxAppKey, showSaved, showToast, toErrorMessage]);
+
+    const handleDisconnectDropbox = useCallback(async () => {
+        const appKey = dropboxAppKey.trim();
+        if (!appKey) {
+            setDropboxConnected(false);
+            setDropboxTestState('idle');
+            return;
+        }
+        setDropboxBusy(true);
+        try {
+            await SyncService.disconnectDropbox(appKey);
+            setDropboxConnected(false);
+            setDropboxTestState('idle');
+            showToast('Disconnected from Dropbox.', 'success');
+        } catch (error) {
+            const message = toErrorMessage(error, 'Failed to disconnect Dropbox.');
+            setDropboxTestState('error');
+            setSyncError(message);
+            showToast(message, 'error');
+        } finally {
+            setDropboxBusy(false);
+        }
+    }, [dropboxAppKey, showToast, toErrorMessage]);
+
+    const handleTestDropboxConnection = useCallback(async () => {
+        const appKey = dropboxAppKey.trim();
+        if (!appKey) {
+            showToast('Enter Dropbox app key first.', 'error');
+            return;
+        }
+        setDropboxBusy(true);
+        try {
+            const connected = await SyncService.isDropboxConnected(appKey);
+            if (!connected) {
+                setDropboxConnected(false);
+                setDropboxTestState('error');
+                showToast('Connect Dropbox first.', 'error');
+                return;
+            }
+            await SyncService.testDropboxConnection(appKey);
+            setDropboxConnected(true);
+            setDropboxTestState('success');
+            showToast('Dropbox account is reachable.', 'success');
+        } catch (error) {
+            const message = toErrorMessage(error, 'Dropbox connection failed.');
+            setDropboxConnected(false);
+            setDropboxTestState('error');
+            setSyncError(message);
+            showToast(message, 'error');
+        } finally {
+            setDropboxBusy(false);
+        }
+    }, [dropboxAppKey, showToast, toErrorMessage]);
+
     const handleSync = useCallback(async () => {
         try {
             setSyncError(null);
@@ -178,8 +342,27 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
                 await handleSaveWebDav();
             }
             if (syncBackend === 'cloud') {
-                if (!cloudUrl.trim()) return;
-                await handleSaveCloud();
+                if (cloudProvider === 'selfhosted') {
+                    if (!cloudUrl.trim()) return;
+                    await handleSaveCloud();
+                } else {
+                    const appKey = dropboxAppKey.trim();
+                    if (!appKey) {
+                        const message = 'Dropbox app key is not configured.';
+                        setSyncError(message);
+                        showToast(message, 'error');
+                        return;
+                    }
+                    const connected = await SyncService.isDropboxConnected(appKey);
+                    if (!connected) {
+                        const message = 'Connect Dropbox first.';
+                        setSyncError(message);
+                        showToast(message, 'error');
+                        setDropboxConnected(false);
+                        return;
+                    }
+                    setDropboxConnected(true);
+                }
             }
             if (syncBackend === 'file') {
                 const path = syncPath.trim();
@@ -205,10 +388,24 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             }
         } catch (error) {
             void logError(error, { scope: 'sync', step: 'perform' });
-            setSyncError(String(error));
-            showToast(String(error), 'error');
+            const message = toErrorMessage(error, 'Sync failed');
+            setSyncError(message);
+            showToast(message, 'error');
         }
-    }, [cloudUrl, formatSyncPathError, handleSaveCloud, handleSaveWebDav, isTauri, showToast, syncBackend, syncPath, webdavUrl]);
+    }, [
+        cloudProvider,
+        cloudUrl,
+        dropboxAppKey,
+        formatSyncPathError,
+        handleSaveCloud,
+        handleSaveWebDav,
+        isTauri,
+        showToast,
+        syncBackend,
+        syncPath,
+        toErrorMessage,
+        webdavUrl,
+    ]);
 
     const handleRestoreSnapshot = useCallback(async (snapshotFileName: string) => {
         if (!snapshotFileName) return false;
@@ -249,6 +446,14 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         setCloudUrl,
         cloudToken,
         setCloudToken,
+        cloudProvider,
+        setCloudProvider,
+        dropboxAppKey,
+        setDropboxAppKey,
+        dropboxConnected,
+        dropboxBusy,
+        dropboxRedirectUri,
+        dropboxTestState,
         snapshots,
         isLoadingSnapshots,
         isRestoringSnapshot,
@@ -257,6 +462,11 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         handleSetSyncBackend,
         handleSaveWebDav,
         handleSaveCloud,
+        handleSetCloudProvider,
+        handleSaveDropboxAppKey,
+        handleConnectDropbox,
+        handleDisconnectDropbox,
+        handleTestDropboxConnection,
         handleSync,
         handleRestoreSnapshot,
     };

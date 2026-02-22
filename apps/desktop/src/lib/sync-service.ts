@@ -73,6 +73,17 @@ import {
     writeFileSafelyAbsolute,
 } from './sync-service-utils';
 import type { SyncBackend } from './sync-service-utils';
+import {
+    deleteDropboxFile,
+    downloadDropboxAppData,
+    downloadDropboxFile,
+    DropboxConflictError,
+    DropboxFileNotFoundError,
+    DropboxUnauthorizedError,
+    testDropboxAccess,
+    uploadDropboxAppData,
+    uploadDropboxFile,
+} from './dropbox-sync';
 
 export type ExternalSyncChangeResolution = 'keep-local' | 'use-external' | 'merge';
 
@@ -91,8 +102,11 @@ const WEBDAV_USERNAME_KEY = 'mindwtr-webdav-username';
 const WEBDAV_PASSWORD_KEY = 'mindwtr-webdav-password';
 const CLOUD_URL_KEY = 'mindwtr-cloud-url';
 const CLOUD_TOKEN_KEY = 'mindwtr-cloud-token';
+const CLOUD_PROVIDER_KEY = 'mindwtr-cloud-provider';
+const DROPBOX_APP_KEY_KEY = 'mindwtr-dropbox-app-key';
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
+const DEFAULT_DROPBOX_APP_KEY = String(import.meta.env.VITE_DROPBOX_APP_KEY || '').trim();
 const WEBDAV_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
 const CLOUD_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
 const WEBDAV_ATTACHMENT_MIN_INTERVAL_MS = 400;
@@ -291,12 +305,20 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
 
     let webdavConfig: WebDavConfig | null = null;
     let cloudConfig: CloudConfig | null = null;
+    let cloudProvider: CloudProvider = 'selfhosted';
+    let dropboxAppKey = '';
+    let dropboxAccessToken: string | null = null;
     let fileBaseDir: string | null = null;
 
     if (backend === 'webdav') {
         webdavConfig = await SyncService.getWebDavConfig();
     } else if (backend === 'cloud') {
-        cloudConfig = await SyncService.getCloudConfig();
+        cloudProvider = await SyncService.getCloudProvider();
+        if (cloudProvider === 'dropbox') {
+            dropboxAppKey = (await SyncService.getDropboxAppKey()).trim();
+        } else {
+            cloudConfig = await SyncService.getCloudConfig();
+        }
     } else if (backend === 'file') {
         const syncPath = await SyncService.getSyncPath();
         const baseDir = getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME);
@@ -304,8 +326,33 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
     }
 
     const fetcher = await getTauriFetch();
+    const dropboxFetcher = fetcher ?? fetch;
     const webdavPassword = webdavConfig ? await resolveWebdavPassword(webdavConfig) : '';
     const nextPendingRemoteDeletes = new Map<string, PendingRemoteAttachmentDeleteEntry>();
+    const resolveDropboxAccessToken = async (forceRefresh = false): Promise<string> => {
+        if (!dropboxAppKey) {
+            throw new Error('Dropbox app key is not configured');
+        }
+        if (!dropboxAccessToken || forceRefresh) {
+            dropboxAccessToken = await SyncService.getDropboxAccessToken(dropboxAppKey, { forceRefresh });
+        }
+        return dropboxAccessToken;
+    };
+    const deleteDropboxAttachment = async (cloudKey: string): Promise<void> => {
+        const run = async (forceRefresh: boolean) => {
+            const token = await resolveDropboxAccessToken(forceRefresh);
+            await deleteDropboxFile(token, cloudKey, dropboxFetcher);
+        };
+        try {
+            await run(false);
+        } catch (error) {
+            if (error instanceof DropboxUnauthorizedError) {
+                await run(true);
+                return;
+            }
+            throw error;
+        }
+    };
 
     for (const attachment of cleanupTargets.values()) {
         await deleteAttachmentFile(attachment);
@@ -313,7 +360,8 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
 
     const canAttemptRemoteDelete = (
         (backend === 'webdav' && !!webdavConfig?.url)
-        || (backend === 'cloud' && !!cloudConfig?.url)
+        || (backend === 'cloud' && cloudProvider === 'selfhosted' && !!cloudConfig?.url)
+        || (backend === 'cloud' && cloudProvider === 'dropbox' && !!dropboxAppKey)
         || (backend === 'file' && !!fileBaseDir)
     );
     for (const target of remoteCleanupTargets.values()) {
@@ -335,12 +383,14 @@ const cleanupOrphanedAttachments = async (appData: AppData, backend: SyncBackend
                     password: webdavPassword,
                     fetcher,
                 });
-            } else if (backend === 'cloud' && cloudConfig?.url) {
+            } else if (backend === 'cloud' && cloudProvider === 'selfhosted' && cloudConfig?.url) {
                 const baseUrl = getCloudBaseUrl(cloudConfig.url);
                 await cloudDeleteFile(`${baseUrl}/${target.cloudKey}`, {
                     token: cloudConfig.token,
                     fetcher,
                 });
+            } else if (backend === 'cloud' && cloudProvider === 'dropbox') {
+                await deleteDropboxAttachment(target.cloudKey);
             } else if (backend === 'file' && fileBaseDir) {
                 const { remove } = await import('@tauri-apps/plugin-fs');
                 const { join } = await import('@tauri-apps/api/path');
@@ -381,6 +431,25 @@ async function tauriInvoke<T>(command: string, args?: Record<string, unknown>): 
 
 type WebDavConfig = { url: string; username: string; password?: string; hasPassword?: boolean };
 type CloudConfig = { url: string; token: string };
+export type CloudProvider = 'selfhosted' | 'dropbox';
+
+const normalizeCloudProvider = (value: string | null | undefined): CloudProvider => {
+    return value === 'dropbox' ? 'dropbox' : 'selfhosted';
+};
+const DROPBOX_REDIRECT_URI_FALLBACK = 'http://127.0.0.1:53682/oauth/dropbox/callback';
+const DROPBOX_TEST_TIMEOUT_MS = 15_000;
+
+const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+};
 
 async function getTauriFetch(): Promise<typeof fetch | undefined> {
     return syncServiceDependencies.getTauriFetch();
@@ -855,6 +924,162 @@ async function syncCloudAttachments(
     });
 }
 
+async function syncDropboxAttachments(
+    appData: AppData,
+    resolveAccessToken: (forceRefresh?: boolean) => Promise<string>
+): Promise<boolean> {
+    if (!isTauriRuntimeEnv()) return false;
+
+    const fetcher = await getTauriFetch();
+    const dropboxFetcher = fetcher ?? fetch;
+    const { BaseDirectory, exists, mkdir, readFile, writeFile, rename, remove } = await import('@tauri-apps/plugin-fs');
+    const { dataDir, join } = await import('@tauri-apps/api/path');
+
+    try {
+        await mkdir(LOCAL_ATTACHMENTS_DIR, { baseDir: BaseDirectory.Data, recursive: true });
+    } catch (error) {
+        logSyncWarning('Failed to ensure local attachments directory', error);
+    }
+
+    const baseDataDir = await dataDir();
+    const attachmentsById = collectAttachmentsById(appData);
+
+    const withDropboxAccess = async <T>(operation: (accessToken: string) => Promise<T>): Promise<T> => {
+        try {
+            const token = await resolveAccessToken(false);
+            return await operation(token);
+        } catch (error) {
+            if (error instanceof DropboxUnauthorizedError) {
+                const refreshed = await resolveAccessToken(true);
+                return await operation(refreshed);
+            }
+            throw error;
+        }
+    };
+
+    const readLocalFile = async (path: string): Promise<Uint8Array> => {
+        if (path.startsWith(baseDataDir)) {
+            const relative = path.slice(baseDataDir.length).replace(/^[\\/]/, '');
+            return await readFile(relative, { baseDir: BaseDirectory.Data });
+        }
+        return await readFile(path);
+    };
+
+    const localFileExists = async (path: string): Promise<boolean> => {
+        try {
+            if (path.startsWith(baseDataDir)) {
+                const relative = path.slice(baseDataDir.length).replace(/^[\\/]/, '');
+                return await exists(relative, { baseDir: BaseDirectory.Data });
+            }
+            return await exists(path);
+        } catch (error) {
+            logSyncWarning('Failed to check attachment file', error);
+            return false;
+        }
+    };
+
+    return await syncBasicRemoteAttachments({
+        attachmentsById,
+        localFileExists,
+        onUpload: async (attachment, localPath) => {
+            const cloudKey = buildCloudKey(attachment);
+            const fileData = await readLocalFile(localPath);
+            const validation = await validateAttachmentForUpload(attachment, fileData.length);
+            if (!validation.valid) {
+                logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                return false;
+            }
+            reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
+            await withRetry(
+                () => withDropboxAccess((token) =>
+                    uploadDropboxFile(
+                        token,
+                        cloudKey,
+                        fileData,
+                        attachment.mimeType || 'application/octet-stream',
+                        dropboxFetcher
+                    )
+                ),
+                {
+                    ...CLOUD_ATTACHMENT_RETRY_OPTIONS,
+                    onRetry: (error, attempt, delayMs) => {
+                        logSyncInfo('Retrying Dropbox attachment upload', {
+                            id: attachment.id,
+                            attempt: String(attempt + 1),
+                            delayMs: String(delayMs),
+                            error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)),
+                        });
+                    },
+                }
+            );
+            attachment.cloudKey = cloudKey;
+            attachment.localStatus = 'available';
+            reportProgress(attachment.id, 'upload', fileData.length, fileData.length, 'completed');
+            return true;
+        },
+        onUploadError: (attachment, error) => {
+            reportProgress(
+                attachment.id,
+                'upload',
+                0,
+                attachment.size ?? 0,
+                'failed',
+                error instanceof Error ? error.message : String(error)
+            );
+            logSyncWarning(`Failed to upload attachment ${attachment.title}`, error);
+        },
+        onDownload: async (attachment) => {
+            if (!attachment.cloudKey) return false;
+            reportProgress(attachment.id, 'download', 0, attachment.size ?? 0, 'active');
+            let fileData: ArrayBuffer;
+            try {
+                fileData = await withRetry(() =>
+                    withDropboxAccess((token) => downloadDropboxFile(token, attachment.cloudKey!, dropboxFetcher))
+                );
+            } catch (error) {
+                if (error instanceof DropboxFileNotFoundError) {
+                    attachment.cloudKey = undefined;
+                    const statusChanged = attachment.localStatus !== 'missing';
+                    if (statusChanged) {
+                        attachment.localStatus = 'missing';
+                    }
+                    return true;
+                }
+                throw error;
+            }
+            const bytes = fileData instanceof ArrayBuffer ? new Uint8Array(fileData) : new Uint8Array(fileData as ArrayBuffer);
+            await validateAttachmentHash(attachment, bytes);
+            const filename = attachment.cloudKey.split('/').pop() || `${attachment.id}${extractExtension(attachment.uri)}`;
+            const relativePath = `${LOCAL_ATTACHMENTS_DIR}/${filename}`;
+            await writeAttachmentFileSafely(relativePath, bytes, {
+                baseDir: BaseDirectory.Data,
+                writeFile,
+                rename,
+                remove,
+            });
+            const absolutePath = await join(baseDataDir, relativePath);
+            attachment.uri = absolutePath;
+            const statusChanged = attachment.localStatus !== 'available';
+            if (statusChanged) {
+                attachment.localStatus = 'available';
+            }
+            reportProgress(attachment.id, 'download', bytes.length, bytes.length, 'completed');
+            return statusChanged;
+        },
+        onDownloadError: (attachment, error) => {
+            reportProgress(
+                attachment.id,
+                'download',
+                0,
+                attachment.size ?? 0,
+                'failed',
+                error instanceof Error ? error.message : String(error)
+            );
+            logSyncWarning(`Failed to download attachment ${attachment.title}`, error);
+        },
+    });
+}
+
 async function syncFileAttachments(
     appData: AppData,
     baseSyncDir: string
@@ -1091,6 +1316,29 @@ export class SyncService {
         localStorage.removeItem(CLOUD_TOKEN_KEY);
     }
 
+    private static getCloudProviderLocal(): CloudProvider {
+        return normalizeCloudProvider(localStorage.getItem(CLOUD_PROVIDER_KEY));
+    }
+
+    private static setCloudProviderLocal(provider: CloudProvider) {
+        localStorage.setItem(CLOUD_PROVIDER_KEY, normalizeCloudProvider(provider));
+    }
+
+    private static getDropboxAppKeyLocal(): string {
+        const stored = localStorage.getItem(DROPBOX_APP_KEY_KEY);
+        if (stored && stored.trim()) return stored.trim();
+        return DEFAULT_DROPBOX_APP_KEY;
+    }
+
+    private static setDropboxAppKeyLocal(value: string) {
+        const trimmed = value.trim();
+        if (trimmed) {
+            localStorage.setItem(DROPBOX_APP_KEY_KEY, trimmed);
+        } else {
+            localStorage.removeItem(DROPBOX_APP_KEY_KEY);
+        }
+    }
+
     private static async maybeMigrateLegacyLocalStorageToConfig() {
         if (!isTauriRuntimeEnv() || SyncService.didMigrate) return;
         SyncService.didMigrate = true;
@@ -1220,6 +1468,104 @@ export class SyncService {
             });
         } catch (error) {
             reportError('Failed to set Self-Hosted config', error);
+        }
+    }
+
+    static async getCloudProvider(): Promise<CloudProvider> {
+        return SyncService.getCloudProviderLocal();
+    }
+
+    static async setCloudProvider(provider: CloudProvider): Promise<void> {
+        SyncService.setCloudProviderLocal(provider);
+    }
+
+    static async getDropboxAppKey(): Promise<string> {
+        return SyncService.getDropboxAppKeyLocal();
+    }
+
+    static async setDropboxAppKey(value: string): Promise<void> {
+        SyncService.setDropboxAppKeyLocal(value);
+    }
+
+    static async getDropboxRedirectUri(): Promise<string> {
+        if (!isTauriRuntimeEnv()) return DROPBOX_REDIRECT_URI_FALLBACK;
+        try {
+            return await tauriInvoke<string>('get_dropbox_redirect_uri');
+        } catch {
+            return DROPBOX_REDIRECT_URI_FALLBACK;
+        }
+    }
+
+    static async isDropboxConnected(clientId: string): Promise<boolean> {
+        const normalized = clientId.trim();
+        if (!normalized) return false;
+        if (!isTauriRuntimeEnv()) return false;
+        try {
+            return await tauriInvoke<boolean>('is_dropbox_connected', { clientId: normalized });
+        } catch (error) {
+            reportError('Failed to check Dropbox connection status', error);
+            return false;
+        }
+    }
+
+    static async connectDropbox(clientId: string): Promise<void> {
+        const normalized = clientId.trim();
+        if (!normalized) {
+            throw new Error('Dropbox app key is required');
+        }
+        if (!isTauriRuntimeEnv()) {
+            throw new Error('Dropbox sync is only available in the desktop app.');
+        }
+        await tauriInvoke('connect_dropbox', { clientId: normalized });
+    }
+
+    static async disconnectDropbox(clientId: string): Promise<void> {
+        const normalized = clientId.trim();
+        if (!normalized) {
+            throw new Error('Dropbox app key is required');
+        }
+        if (!isTauriRuntimeEnv()) {
+            throw new Error('Dropbox sync is only available in the desktop app.');
+        }
+        await tauriInvoke('disconnect_dropbox', { clientId: normalized });
+    }
+
+    static async getDropboxAccessToken(clientId: string, options?: { forceRefresh?: boolean }): Promise<string> {
+        const normalized = clientId.trim();
+        if (!normalized) {
+            throw new Error('Dropbox app key is required');
+        }
+        if (!isTauriRuntimeEnv()) {
+            throw new Error('Dropbox sync is only available in the desktop app.');
+        }
+        return await tauriInvoke<string>('get_dropbox_access_token', {
+            clientId: normalized,
+            forceRefresh: options?.forceRefresh === true,
+        });
+    }
+
+    static async testDropboxConnection(clientId: string): Promise<void> {
+        const normalized = clientId.trim();
+        if (!normalized) {
+            throw new Error('Dropbox app key is required');
+        }
+        const fetcher = await getTauriFetch();
+        const runTest = async (forceRefresh: boolean) => {
+            const accessToken = await SyncService.getDropboxAccessToken(normalized, { forceRefresh });
+            await withTimeout(
+                testDropboxAccess(accessToken, fetcher ?? fetch),
+                DROPBOX_TEST_TIMEOUT_MS,
+                'Dropbox connection test timed out. Please try again.'
+            );
+        };
+        try {
+            await runTest(false);
+        } catch (error) {
+            if (error instanceof DropboxUnauthorizedError) {
+                await runTest(true);
+                return;
+            }
+            throw error;
         }
     }
 
@@ -1558,7 +1904,39 @@ export class SyncService {
                 throw new Error('Offline: network connection is unavailable for remote sync.');
             }
             const webdavConfig = backend === 'webdav' ? await SyncService.getWebDavConfig() : null;
-            const cloudConfig = backend === 'cloud' ? await SyncService.getCloudConfig() : null;
+            const cloudProvider = backend === 'cloud' ? await SyncService.getCloudProvider() : 'selfhosted';
+            const cloudConfig = backend === 'cloud' && cloudProvider === 'selfhosted'
+                ? await SyncService.getCloudConfig()
+                : null;
+            const dropboxAppKey = backend === 'cloud' && cloudProvider === 'dropbox'
+                ? (await SyncService.getDropboxAppKey()).trim()
+                : '';
+            if (backend === 'cloud' && cloudProvider === 'dropbox' && !dropboxAppKey) {
+                throw new Error('Dropbox app key is not configured');
+            }
+            let dropboxDataRev: string | null = null;
+            let cachedDropboxAccessToken: string | null = null;
+            const resolveDropboxAccessToken = async (forceRefresh = false): Promise<string> => {
+                if (!dropboxAppKey) {
+                    throw new Error('Dropbox app key is not configured');
+                }
+                if (!cachedDropboxAccessToken || forceRefresh) {
+                    cachedDropboxAccessToken = await SyncService.getDropboxAccessToken(dropboxAppKey, { forceRefresh });
+                }
+                return cachedDropboxAccessToken;
+            };
+            const runDropboxWithRetry = async <T>(operation: (token: string) => Promise<T>): Promise<T> => {
+                try {
+                    const token = await resolveDropboxAccessToken(false);
+                    return await operation(token);
+                } catch (error) {
+                    if (error instanceof DropboxUnauthorizedError) {
+                        const refreshed = await resolveDropboxAccessToken(true);
+                        return await operation(refreshed);
+                    }
+                    throw error;
+                }
+            };
             const syncPath = backend === 'file' ? await SyncService.getSyncPath() : '';
             const fileBaseDir = backend === 'file' ? getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME) : '';
             let preSyncedLocalData: AppData | null = null;
@@ -1582,9 +1960,11 @@ export class SyncService {
                         preMutated = await syncAttachments(localData, webdavConfig, baseUrl);
                     } else if (backend === 'file' && fileBaseDir) {
                         preMutated = await syncFileAttachments(localData, fileBaseDir);
-                    } else if (backend === 'cloud' && cloudConfig?.url) {
+                    } else if (backend === 'cloud' && cloudProvider === 'selfhosted' && cloudConfig?.url) {
                         const baseUrl = getCloudBaseUrl(cloudConfig.url);
                         preMutated = await syncCloudAttachments(localData, cloudConfig, baseUrl);
+                    } else if (backend === 'cloud' && cloudProvider === 'dropbox') {
+                        preMutated = await syncDropboxAttachments(localData, resolveDropboxAccessToken);
                     }
                     if (preMutated) {
                         ensureLocalSnapshotFresh();
@@ -1634,15 +2014,28 @@ export class SyncService {
                         return data;
                     }
                     if (backend === 'cloud') {
-                        if (!cloudConfig?.url) {
-                            throw new Error('Self-hosted URL not configured');
+                        if (cloudProvider === 'selfhosted') {
+                            if (!cloudConfig?.url) {
+                                throw new Error('Self-hosted URL not configured');
+                            }
+                            const normalizedUrl = normalizeCloudUrl(cloudConfig.url);
+                            syncUrl = normalizedUrl;
+                            const fetcher = await getTauriFetch();
+                            const data = await cloudGetJson<AppData>(normalizedUrl, { token: cloudConfig.token, fetcher });
+                            remoteDataForCompare = data ?? null;
+                            return data;
                         }
-                        const normalizedUrl = normalizeCloudUrl(cloudConfig.url);
-                        syncUrl = normalizedUrl;
+                        if (!dropboxAppKey) {
+                            throw new Error('Dropbox app key is not configured');
+                        }
+                        syncUrl = 'dropbox:///Apps/Mindwtr/data.json';
                         const fetcher = await getTauriFetch();
-                        const data = await cloudGetJson<AppData>(normalizedUrl, { token: cloudConfig.token, fetcher });
-                        remoteDataForCompare = data ?? null;
-                        return data;
+                        const remote = await runDropboxWithRetry((token) =>
+                            downloadDropboxAppData(token, fetcher ?? fetch)
+                        );
+                        dropboxDataRev = remote.rev;
+                        remoteDataForCompare = remote.data ?? null;
+                        return remote.data;
                     }
                     if (!isTauriRuntimeEnv()) {
                         throw new Error('File sync is not available in the web app.');
@@ -1683,12 +2076,31 @@ export class SyncService {
                         return;
                     }
                     if (backend === 'cloud') {
-                        const { url, token } = await SyncService.getCloudConfig();
-                        const normalizedUrl = normalizeCloudUrl(url);
+                        if (cloudProvider === 'selfhosted') {
+                            const { url, token } = await SyncService.getCloudConfig();
+                            const normalizedUrl = normalizeCloudUrl(url);
+                            const fetcher = await getTauriFetch();
+                            await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
+                            remoteDataForCompare = sanitized;
+                            return;
+                        }
+                        if (!dropboxAppKey) {
+                            throw new Error('Dropbox app key is not configured');
+                        }
                         const fetcher = await getTauriFetch();
-                        await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
-                        remoteDataForCompare = sanitized;
-                        return;
+                        try {
+                            const uploaded = await runDropboxWithRetry((token) =>
+                                uploadDropboxAppData(token, sanitized, dropboxDataRev, fetcher ?? fetch)
+                            );
+                            dropboxDataRev = uploaded.rev;
+                            remoteDataForCompare = sanitized;
+                            return;
+                        } catch (error) {
+                            if (error instanceof DropboxConflictError) {
+                                throw new Error('Dropbox changed during sync. Please run Sync again.');
+                            }
+                            throw error;
+                        }
                     }
                     await SyncService.markSyncWrite(sanitized);
                     await tauriInvoke('write_sync_file', { data: sanitized });
@@ -1766,11 +2178,20 @@ export class SyncService {
                             }
                         }
                     } else if (backend === 'cloud') {
-                        const config = cloudConfig ?? await SyncService.getCloudConfig();
-                        const baseUrl = config.url ? getCloudBaseUrl(config.url) : '';
-                        if (baseUrl) {
+                        if (cloudProvider === 'selfhosted') {
+                            const config = cloudConfig ?? await SyncService.getCloudConfig();
+                            const baseUrl = config.url ? getCloudBaseUrl(config.url) : '';
+                            if (baseUrl) {
+                                const candidateData = cloneAppData(mergedData);
+                                const mutated = await syncCloudAttachments(candidateData, config, baseUrl);
+                                if (mutated) {
+                                    mergedData = candidateData;
+                                    await tauriInvoke('save_data', { data: mergedData });
+                                }
+                            }
+                        } else if (cloudProvider === 'dropbox') {
                             const candidateData = cloneAppData(mergedData);
-                            const mutated = await syncCloudAttachments(candidateData, config, baseUrl);
+                            const mutated = await syncDropboxAttachments(candidateData, resolveDropboxAccessToken);
                             if (mutated) {
                                 mergedData = candidateData;
                                 await tauriInvoke('save_data', { data: mergedData });

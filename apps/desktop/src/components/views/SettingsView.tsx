@@ -828,6 +828,13 @@ export function SettingsView() {
         setCloudUrl,
         cloudToken,
         setCloudToken,
+        cloudProvider,
+        dropboxAppKey,
+        setDropboxAppKey,
+        dropboxConnected,
+        dropboxBusy,
+        dropboxRedirectUri,
+        dropboxTestState,
         snapshots,
         isLoadingSnapshots,
         isRestoringSnapshot,
@@ -836,6 +843,11 @@ export function SettingsView() {
         handleSetSyncBackend,
         handleSaveWebDav,
         handleSaveCloud,
+        handleSetCloudProvider,
+        handleSaveDropboxAppKey,
+        handleConnectDropbox,
+        handleDisconnectDropbox,
+        handleTestDropboxConnection,
         handleSync,
         handleRestoreSnapshot,
     } = useSyncSettings({
@@ -1018,9 +1030,21 @@ export function SettingsView() {
                     onSaveWebDav={handleSaveWebDav}
                     cloudUrl={cloudUrl}
                     cloudToken={cloudToken}
+                    cloudProvider={cloudProvider}
+                    dropboxAppKey={dropboxAppKey}
+                    dropboxConnected={dropboxConnected}
+                    dropboxBusy={dropboxBusy}
+                    dropboxRedirectUri={dropboxRedirectUri}
+                    dropboxTestState={dropboxTestState}
                     onCloudUrlChange={setCloudUrl}
                     onCloudTokenChange={setCloudToken}
+                    onCloudProviderChange={handleSetCloudProvider}
+                    onDropboxAppKeyChange={setDropboxAppKey}
                     onSaveCloud={handleSaveCloud}
+                    onSaveDropboxAppKey={handleSaveDropboxAppKey}
+                    onConnectDropbox={handleConnectDropbox}
+                    onDisconnectDropbox={handleDisconnectDropbox}
+                    onTestDropboxConnection={handleTestDropboxConnection}
                     onSyncNow={handleSync}
                     isSyncing={isSyncing}
                     syncQueued={syncQueued}

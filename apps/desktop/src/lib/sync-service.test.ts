@@ -5,6 +5,8 @@ import { SyncService, __syncServiceTestUtils } from './sync-service';
 afterEach(async () => {
     __syncServiceTestUtils.resetDependenciesForTests();
     await SyncService.resetForTests();
+    localStorage.clear();
+    sessionStorage.clear();
 });
 
 describe('sync-service test utils', () => {
@@ -73,6 +75,21 @@ describe('SyncService testability hooks', () => {
 
         expect(backend).toBe('cloud');
         expect(invoke).toHaveBeenCalledWith('get_sync_backend', undefined);
+    });
+
+    it('defaults cloud provider to selfhosted and persists selection', async () => {
+        expect(await SyncService.getCloudProvider()).toBe('selfhosted');
+        await SyncService.setCloudProvider('dropbox');
+        expect(await SyncService.getCloudProvider()).toBe('dropbox');
+        await SyncService.setCloudProvider('selfhosted');
+        expect(await SyncService.getCloudProvider()).toBe('selfhosted');
+    });
+
+    it('stores and reads Dropbox app key locally', async () => {
+        await SyncService.setDropboxAppKey('abc123');
+        expect(await SyncService.getDropboxAppKey()).toBe('abc123');
+        await SyncService.setDropboxAppKey('');
+        expect(await SyncService.getDropboxAppKey()).toBe('');
     });
 });
 

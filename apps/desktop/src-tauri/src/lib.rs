@@ -1,17 +1,21 @@
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -24,6 +28,9 @@ use tauri::image::Image;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use rusqlite::{params, Connection, OptionalExtension, params_from_iter, ToSql};
 use keyring::{Entry, Error as KeyringError};
+use rand::RngCore;
+use reqwest::StatusCode;
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -39,9 +46,20 @@ const SNAPSHOT_RETENTION_MAX_COUNT: usize = 5;
 const SNAPSHOT_RETENTION_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 const KEYRING_WEB_DAV_PASSWORD: &str = "webdav_password";
 const KEYRING_CLOUD_TOKEN: &str = "cloud_token";
+const KEYRING_DROPBOX_TOKENS: &str = "dropbox_tokens";
 const KEYRING_AI_OPENAI: &str = "ai_key_openai";
 const KEYRING_AI_ANTHROPIC: &str = "ai_key_anthropic";
 const KEYRING_AI_GEMINI: &str = "ai_key_gemini";
+const DROPBOX_AUTH_ENDPOINT: &str = "https://www.dropbox.com/oauth2/authorize";
+const DROPBOX_TOKEN_ENDPOINT: &str = "https://api.dropboxapi.com/oauth2/token";
+const DROPBOX_REVOKE_ENDPOINT: &str = "https://api.dropboxapi.com/2/auth/token/revoke";
+const DROPBOX_REDIRECT_HOST: &str = "127.0.0.1";
+const DROPBOX_REDIRECT_PORT: u16 = 53682;
+const DROPBOX_REDIRECT_PATH: &str = "/oauth/dropbox/callback";
+const DROPBOX_SCOPES: &str = "files.content.read files.content.write files.metadata.read";
+const DROPBOX_OAUTH_TIMEOUT_SECS: u64 = 180;
+const DROPBOX_TOKEN_REFRESH_SKEW_MS: i64 = 60_000;
+const DROPBOX_DEFAULT_TOKEN_LIFETIME_SECS: i64 = 4 * 60 * 60;
 const GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT: &str = "Control+Alt+M";
 const GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N: &str = "Control+Alt+N";
 const GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_Q: &str = "Control+Alt+Q";
@@ -259,6 +277,23 @@ struct ExternalCalendarSubscription {
 struct LinuxDistroInfo {
     id: Option<String>,
     id_like: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct DropboxTokenBundle {
+    client_id: String,
+    access_token: String,
+    refresh_token: String,
+    expires_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DropboxTokenResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    error_description: Option<String>,
+    error_summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1997,6 +2032,403 @@ fn set_keyring_secret(app: &tauri::AppHandle, key: &str, value: Option<String>) 
     }
 }
 
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn normalize_dropbox_client_id(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Dropbox app key is required".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn dropbox_redirect_uri() -> String {
+    format!(
+        "http://{}:{}{}",
+        DROPBOX_REDIRECT_HOST, DROPBOX_REDIRECT_PORT, DROPBOX_REDIRECT_PATH
+    )
+}
+
+fn decode_query_component(raw: &str) -> String {
+    let mut bytes: Vec<u8> = Vec::with_capacity(raw.len());
+    let mut idx = 0usize;
+    let raw_bytes = raw.as_bytes();
+    while idx < raw_bytes.len() {
+        match raw_bytes[idx] {
+            b'+' => {
+                bytes.push(b' ');
+                idx += 1;
+            }
+            b'%' if idx + 2 < raw_bytes.len() => {
+                let hex = &raw[idx + 1..idx + 3];
+                if let Ok(value) = u8::from_str_radix(hex, 16) {
+                    bytes.push(value);
+                    idx += 3;
+                } else {
+                    bytes.push(raw_bytes[idx]);
+                    idx += 1;
+                }
+            }
+            value => {
+                bytes.push(value);
+                idx += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn parse_query_string(query: &str) -> HashMap<String, String> {
+    let mut values: HashMap<String, String> = HashMap::new();
+    for part in query.split('&') {
+        if part.is_empty() {
+            continue;
+        }
+        let (key, value) = match part.split_once('=') {
+            Some((key, value)) => (key, value),
+            None => (part, ""),
+        };
+        values.insert(
+            decode_query_component(key),
+            decode_query_component(value),
+        );
+    }
+    values
+}
+
+fn write_oauth_http_response(
+    stream: &mut std::net::TcpStream,
+    status_line: &str,
+    body: &str,
+) -> Result<(), String> {
+    let response = format!(
+        "HTTP/1.1 {status_line}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|error| format!("Failed to write OAuth response: {error}"))?;
+    stream
+        .flush()
+        .map_err(|error| format!("Failed to flush OAuth response: {error}"))?;
+    Ok(())
+}
+
+fn wait_for_dropbox_auth_code(listener: &TcpListener, expected_state: &str) -> Result<String, String> {
+    let deadline = Instant::now() + Duration::from_secs(DROPBOX_OAUTH_TIMEOUT_SECS);
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok((mut stream, _addr)) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut buffer = [0u8; 8192];
+                let read_len = stream
+                    .read(&mut buffer)
+                    .map_err(|error| format!("Failed to read OAuth callback: {error}"))?;
+                if read_len == 0 {
+                    continue;
+                }
+                let request = String::from_utf8_lossy(&buffer[..read_len]);
+                let request_line = request
+                    .lines()
+                    .next()
+                    .ok_or_else(|| "Invalid OAuth callback request".to_string())?;
+                let target = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("/");
+                if !target.starts_with(DROPBOX_REDIRECT_PATH) {
+                    let _ = write_oauth_http_response(
+                        &mut stream,
+                        "404 Not Found",
+                        "Mindwtr OAuth callback endpoint not found.",
+                    );
+                    continue;
+                }
+
+                let query = target
+                    .split_once('?')
+                    .map(|(_, query)| query)
+                    .unwrap_or("");
+                let params = parse_query_string(query);
+
+                if let Some(error_value) = params.get("error") {
+                    let details = params
+                        .get("error_description")
+                        .or_else(|| params.get("error_summary"))
+                        .cloned()
+                        .unwrap_or_else(|| error_value.clone());
+                    let _ = write_oauth_http_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "Dropbox authorization failed. You can return to Mindwtr.",
+                    );
+                    return Err(format!("Dropbox authorization failed: {details}"));
+                }
+
+                let state = params.get("state").cloned().unwrap_or_default();
+                if state != expected_state {
+                    let _ = write_oauth_http_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "Dropbox state validation failed. Please retry from Mindwtr.",
+                    );
+                    return Err("Dropbox authorization failed: state mismatch".to_string());
+                }
+
+                let code = params.get("code").cloned().unwrap_or_default();
+                if code.trim().is_empty() {
+                    let _ = write_oauth_http_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "Dropbox authorization failed. Missing authorization code.",
+                    );
+                    return Err("Dropbox authorization failed: missing code".to_string());
+                }
+
+                let _ = write_oauth_http_response(
+                    &mut stream,
+                    "200 OK",
+                    "Dropbox connected. You can close this tab and return to Mindwtr.",
+                );
+                return Ok(code);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => {
+                return Err(format!("Failed to accept OAuth callback: {error}"));
+            }
+        }
+    }
+    Err("Dropbox authorization timed out. Please try again.".to_string())
+}
+
+fn generate_random_urlsafe(size: usize) -> String {
+    let mut bytes = vec![0u8; size];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn generate_dropbox_pkce_verifier() -> String {
+    generate_random_urlsafe(64)
+}
+
+fn generate_dropbox_pkce_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn dropbox_token_error_message(status: StatusCode, response_body: &str) -> String {
+    if let Ok(parsed) = serde_json::from_str::<DropboxTokenResponse>(response_body) {
+        if let Some(message) = parsed.error_description {
+            let trimmed = message.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        if let Some(message) = parsed.error_summary {
+            let trimmed = message.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    format!("HTTP {status}")
+}
+
+fn exchange_dropbox_auth_code(
+    client_id: &str,
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+) -> Result<DropboxTokenBundle, String> {
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .post(DROPBOX_TOKEN_ENDPOINT)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", verifier),
+        ])
+        .send()
+        .map_err(|error| format!("Dropbox token exchange failed: {error}"))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("Failed to read Dropbox token response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Dropbox token exchange failed: {}",
+            dropbox_token_error_message(status, &body)
+        ));
+    }
+    let payload: DropboxTokenResponse = serde_json::from_str(&body)
+        .map_err(|error| format!("Dropbox token exchange returned invalid JSON: {error}"))?;
+    let access_token = payload
+        .access_token
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let refresh_token = payload
+        .refresh_token
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let expires_in = payload
+        .expires_in
+        .filter(|value| *value > 0)
+        .unwrap_or(DROPBOX_DEFAULT_TOKEN_LIFETIME_SECS);
+    if access_token.is_empty() || refresh_token.is_empty() {
+        return Err("Dropbox token exchange returned an invalid payload".to_string());
+    }
+    Ok(DropboxTokenBundle {
+        client_id: client_id.to_string(),
+        access_token,
+        refresh_token,
+        expires_at: now_unix_ms() + expires_in * 1000,
+    })
+}
+
+fn refresh_dropbox_token(
+    client_id: &str,
+    refresh_token: &str,
+) -> Result<(String, i64), String> {
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .post(DROPBOX_TOKEN_ENDPOINT)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ])
+        .send()
+        .map_err(|error| format!("Dropbox token refresh failed: {error}"))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("Failed to read Dropbox refresh response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Dropbox token refresh failed: {}",
+            dropbox_token_error_message(status, &body)
+        ));
+    }
+    let payload: DropboxTokenResponse = serde_json::from_str(&body)
+        .map_err(|error| format!("Dropbox token refresh returned invalid JSON: {error}"))?;
+    let access_token = payload
+        .access_token
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let expires_in = payload
+        .expires_in
+        .filter(|value| *value > 0)
+        .unwrap_or(DROPBOX_DEFAULT_TOKEN_LIFETIME_SECS);
+    if access_token.is_empty() {
+        return Err("Dropbox token refresh returned an invalid payload".to_string());
+    }
+    Ok((access_token, now_unix_ms() + expires_in * 1000))
+}
+
+fn read_dropbox_tokens(app: &tauri::AppHandle) -> Result<Option<DropboxTokenBundle>, String> {
+    let Some(raw) = get_keyring_secret(app, KEYRING_DROPBOX_TOKENS)? else {
+        return Ok(None);
+    };
+    let parsed: DropboxTokenBundle = serde_json::from_str(&raw)
+        .map_err(|_| "Stored Dropbox token payload is invalid. Please reconnect Dropbox.".to_string())?;
+    if parsed.client_id.trim().is_empty()
+        || parsed.access_token.trim().is_empty()
+        || parsed.refresh_token.trim().is_empty()
+    {
+        return Err("Stored Dropbox token payload is invalid. Please reconnect Dropbox.".to_string());
+    }
+    Ok(Some(parsed))
+}
+
+fn write_dropbox_tokens(app: &tauri::AppHandle, tokens: &DropboxTokenBundle) -> Result<(), String> {
+    let payload = serde_json::to_string(tokens)
+        .map_err(|error| format!("Failed to serialize Dropbox tokens: {error}"))?;
+    set_keyring_secret(app, KEYRING_DROPBOX_TOKENS, Some(payload))
+}
+
+fn clear_dropbox_tokens(app: &tauri::AppHandle) -> Result<(), String> {
+    set_keyring_secret(app, KEYRING_DROPBOX_TOKENS, None)
+}
+
+fn get_valid_dropbox_access_token(
+    app: &tauri::AppHandle,
+    client_id: &str,
+    force_refresh: bool,
+) -> Result<String, String> {
+    let client_id = normalize_dropbox_client_id(client_id)?;
+    let mut tokens = read_dropbox_tokens(app)?
+        .ok_or_else(|| "Dropbox is not connected".to_string())?;
+    if tokens.client_id != client_id {
+        return Err("Dropbox token was issued for a different app key. Reconnect Dropbox.".to_string());
+    }
+    if !force_refresh && now_unix_ms() < tokens.expires_at - DROPBOX_TOKEN_REFRESH_SKEW_MS {
+        return Ok(tokens.access_token);
+    }
+    let (access_token, expires_at) = refresh_dropbox_token(&client_id, &tokens.refresh_token)?;
+    tokens.access_token = access_token;
+    tokens.expires_at = expires_at;
+    write_dropbox_tokens(app, &tokens)?;
+    Ok(tokens.access_token)
+}
+
+fn run_dropbox_oauth(app: &tauri::AppHandle, client_id: &str) -> Result<(), String> {
+    let normalized_client_id = normalize_dropbox_client_id(client_id)?;
+    let listener = TcpListener::bind((DROPBOX_REDIRECT_HOST, DROPBOX_REDIRECT_PORT))
+        .map_err(|error| {
+            format!(
+                "Failed to start Dropbox OAuth callback listener on {}:{} ({error})",
+                DROPBOX_REDIRECT_HOST, DROPBOX_REDIRECT_PORT
+            )
+        })?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("Failed to set Dropbox callback listener mode: {error}"))?;
+
+    let redirect_uri = dropbox_redirect_uri();
+    let state = generate_random_urlsafe(24);
+    let verifier = generate_dropbox_pkce_verifier();
+    let challenge = generate_dropbox_pkce_challenge(&verifier);
+
+    let mut authorize_url = reqwest::Url::parse(DROPBOX_AUTH_ENDPOINT)
+        .map_err(|error| format!("Failed to build Dropbox OAuth URL: {error}"))?;
+    {
+        let mut query = authorize_url.query_pairs_mut();
+        query.append_pair("client_id", &normalized_client_id);
+        query.append_pair("response_type", "code");
+        query.append_pair("redirect_uri", &redirect_uri);
+        query.append_pair("code_challenge", &challenge);
+        query.append_pair("code_challenge_method", "S256");
+        query.append_pair("token_access_type", "offline");
+        query.append_pair("scope", DROPBOX_SCOPES);
+        query.append_pair("state", &state);
+    }
+
+    open::that(authorize_url.as_str())
+        .map_err(|error| format!("Failed to open Dropbox authorization URL: {error}"))?;
+
+    let code = wait_for_dropbox_auth_code(&listener, &state)?;
+    let tokens = exchange_dropbox_auth_code(&normalized_client_id, &code, &verifier, &redirect_uri)?;
+    write_dropbox_tokens(app, &tokens)?;
+    Ok(())
+}
+
 fn bootstrap_storage_layout(app: &tauri::AppHandle) -> Result<(), String> {
     let config_dir = get_config_dir(app);
     let data_dir = get_data_dir(app);
@@ -2719,6 +3151,71 @@ fn set_cloud_config(app: tauri::AppHandle, url: String, token: String) -> Result
 }
 
 #[tauri::command]
+fn get_dropbox_redirect_uri() -> String {
+    dropbox_redirect_uri()
+}
+
+#[tauri::command]
+fn is_dropbox_connected(app: tauri::AppHandle, client_id: String) -> Result<bool, String> {
+    let normalized_client_id = normalize_dropbox_client_id(&client_id)?;
+    match read_dropbox_tokens(&app) {
+        Ok(Some(tokens)) => Ok(
+            tokens.client_id == normalized_client_id
+                && !tokens.access_token.trim().is_empty()
+                && !tokens.refresh_token.trim().is_empty(),
+        ),
+        Ok(None) => Ok(false),
+        Err(_error) => {
+            let _ = clear_dropbox_tokens(&app);
+            Ok(false)
+        }
+    }
+}
+
+#[tauri::command]
+async fn connect_dropbox(app: tauri::AppHandle, client_id: String) -> Result<bool, String> {
+    let oauth_result = tauri::async_runtime::spawn_blocking(move || run_dropbox_oauth(&app, &client_id))
+        .await
+        .map_err(|error| format!("Dropbox OAuth task failed: {error}"))?;
+    oauth_result?;
+    Ok(true)
+}
+
+#[tauri::command]
+async fn get_dropbox_access_token(
+    app: tauri::AppHandle,
+    client_id: String,
+    force_refresh: Option<bool>,
+) -> Result<String, String> {
+    let should_force_refresh = force_refresh.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        get_valid_dropbox_access_token(&app, &client_id, should_force_refresh)
+    })
+    .await
+    .map_err(|error| format!("Dropbox token task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn disconnect_dropbox(app: tauri::AppHandle, client_id: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let normalized_client_id = normalize_dropbox_client_id(&client_id)?;
+        if let Ok(Some(tokens)) = read_dropbox_tokens(&app) {
+            if tokens.client_id == normalized_client_id && !tokens.access_token.trim().is_empty() {
+                let _ = reqwest::blocking::Client::new()
+                    .post(DROPBOX_REVOKE_ENDPOINT)
+                    .bearer_auth(tokens.access_token)
+                    .send();
+            }
+        }
+        clear_dropbox_tokens(&app)?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("Dropbox disconnect task failed: {error}"))??;
+    Ok(true)
+}
+
+#[tauri::command]
 fn get_external_calendars(app: tauri::AppHandle) -> Result<Vec<ExternalCalendarSubscription>, String> {
     let config = read_config(&app);
     let raw = config.external_calendars.unwrap_or_else(|| "[]".to_string());
@@ -3165,6 +3662,11 @@ pub fn run() {
             webdav_put_json,
             get_cloud_config,
             set_cloud_config,
+            get_dropbox_redirect_uri,
+            is_dropbox_connected,
+            connect_dropbox,
+            get_dropbox_access_token,
+            disconnect_dropbox,
             get_external_calendars,
             set_external_calendars,
             open_path,
