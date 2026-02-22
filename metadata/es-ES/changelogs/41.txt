@@ -1,0 +1,4 @@
+- Añadimos integracion con calendario del sistema en mobile.
+- Añadimos sincronizacion OAuth con Dropbox y soporte de adjuntos.
+- Reducimos conflictos falsos causados solo por desfase de marcas de tiempo.
+- Mejoramos el comportamiento del widget de Android y la estabilidad al iniciar.

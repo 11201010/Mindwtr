@@ -1,0 +1,18 @@
+<en-US>
+- Added system calendar integration on mobile.
+- Added Dropbox OAuth sync with attachment support.
+- Reduced false sync conflict counts caused by timestamp-only skew.
+- Improved Android widget focus behavior and startup reliability.
+</en-US>
+<zh-CN>
+- 新增移动端系统日历集成。
+- 新增 Dropbox OAuth 同步并支持附件同步。
+- 降低仅由时间戳偏差导致的误报冲突计数。
+- 提升 Android 小组件焦点任务展示与启动稳定性。
+</zh-CN>
+<es-ES>
+- Añadimos integracion con calendario del sistema en mobile.
+- Añadimos sincronizacion OAuth con Dropbox y soporte de adjuntos.
+- Reducimos conflictos falsos causados solo por desfase de marcas de tiempo.
+- Mejoramos el comportamiento del widget de Android y la estabilidad al iniciar.
+</es-ES>

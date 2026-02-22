@@ -1,3 +1,3 @@
-- Fixed intermittent mobile startup failures by hardening startup initialization.
-- Improved keep-awake activation reliability during app launch.
-- General stability and quality improvements.
+- Added system calendar integration on mobile.
+- Added Dropbox OAuth sync with attachment support on mobile.
+- Reduced false sync conflict counts caused by timestamp-only skew.

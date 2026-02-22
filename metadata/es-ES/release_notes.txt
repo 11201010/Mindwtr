@@ -1,3 +1,3 @@
-- Corregimos fallos intermitentes de inicio en mobile reforzando la inicializacion.
-- Mejoramos la fiabilidad al activar keep-awake durante el arranque.
-- Mejoras generales de estabilidad y calidad.
+- Añadimos integracion con calendario del sistema en mobile.
+- Añadimos sincronizacion OAuth con Dropbox y soporte de adjuntos en mobile.
+- Reducimos conflictos falsos causados solo por desfase de marcas de tiempo.

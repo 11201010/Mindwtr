@@ -240,6 +240,8 @@ Mindwtr will automatically sync on startup and when data changes.
    - **Password** — Your WebDAV password
 4. Click **Save WebDAV**
 
+> **Linux note:** If your desktop session does not provide a Secret Service keyring (for example `org.freedesktop.secrets` is unavailable), Mindwtr falls back to local secrets storage in `~/.config/mindwtr/secrets.toml`.
+
 > **Tip:** For Nextcloud, the URL format is:
 > `https://your-server.com/remote.php/dav/files/USERNAME/path/to/folder`
 >

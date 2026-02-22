@@ -1,0 +1,4 @@
+- Added system calendar integration on mobile.
+- Added Dropbox OAuth sync with attachment support.
+- Reduced false sync conflict counts caused by timestamp-only skew.
+- Improved Android widget focus behavior and startup reliability.

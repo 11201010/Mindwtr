@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 在 Contexts 视图新增批量操作，可更高效地更新多条任务。\n• 优化桌面端启动体验，避免终端/翻译键闪现。\n• 其他稳定性与质量改进。",
+        "ReleaseNotes": "• 新增桌面端 Dropbox 同步支持。\n• 在 Linux 缺少安全钥匙串服务时，新增 WebDAV 凭据回退存储。\n• 降低仅由时间戳偏差导致的误报冲突计数。\n• 改进 Homebrew 与 Microsoft Store 安装来源识别。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Added bulk actions in Contexts view for faster multi-task updates.\n• Improved desktop startup polish to avoid terminal/translation key flash.\n• General stability and quality improvements.",
+        "ReleaseNotes": "• Added desktop Dropbox sync support.\n• Added Linux WebDAV credential fallback when secure keyring services are unavailable.\n• Reduced false sync conflict counts caused by timestamp-only skew.\n• Improved install-source detection for Homebrew and Microsoft Store channel tracking.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Añadimos acciones en lote en la vista de Contextos para actualizar varias tareas mas rapido.\n• Mejoramos el inicio en desktop para evitar parpadeos de terminal/claves de traduccion.\n• Mejoras generales de estabilidad y calidad.",
+        "ReleaseNotes": "• Añadimos soporte de sincronizacion Dropbox en desktop.\n• Añadimos respaldo de credenciales WebDAV en Linux cuando no hay servicio de llavero seguro.\n• Reducimos conflictos falsos causados solo por desfase de marcas de tiempo.\n• Mejoramos la deteccion de origen de instalacion para Homebrew y Microsoft Store.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
