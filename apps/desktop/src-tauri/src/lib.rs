@@ -2999,12 +2999,16 @@ fn set_sync_backend(app: tauri::AppHandle, backend: String) -> Result<bool, Stri
 #[tauri::command]
 fn get_webdav_config(app: tauri::AppHandle) -> Result<Value, String> {
     let mut config = read_config(&app);
-    let mut password = get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD)?;
+    let mut password = match get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD) {
+        Ok(value) => value,
+        Err(_) => None,
+    };
     if password.is_none() {
         if let Some(legacy) = config.webdav_password.clone() {
-            set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, Some(legacy.clone()))?;
-            config.webdav_password = None;
-            write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config)?;
+            if set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, Some(legacy.clone())).is_ok() {
+                config.webdav_password = None;
+                write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config)?;
+            }
             password = Some(legacy);
         }
     }
@@ -3025,13 +3029,20 @@ fn set_webdav_config(app: tauri::AppHandle, url: String, username: String, passw
         config.webdav_url = None;
         config.webdav_username = None;
         config.webdav_password = None;
-        set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, None)?;
+        let _ = set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, None);
     } else {
         config.webdav_url = Some(url);
         config.webdav_username = Some(username.trim().to_string());
-        config.webdav_password = None;
         if !password.trim().is_empty() {
-            set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, Some(password))?;
+            let next_password = password.trim().to_string();
+            match set_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD, Some(next_password.clone())) {
+                Ok(_) => {
+                    config.webdav_password = None;
+                }
+                Err(_) => {
+                    config.webdav_password = Some(next_password);
+                }
+            }
         }
     }
 
@@ -3059,7 +3070,11 @@ fn webdav_get_json(app: tauri::AppHandle) -> Result<Value, String> {
         return Err("WebDAV URL not configured".to_string());
     }
     let username = config.webdav_username.unwrap_or_default();
-    let password = get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD)?
+    let password = match get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD) {
+        Ok(value) => value,
+        Err(_) => None,
+    }
+        .or(config.webdav_password.clone())
         .ok_or_else(|| "WebDAV password not configured".to_string())?;
 
     let client = reqwest::blocking::Client::new();
@@ -3090,7 +3105,11 @@ fn webdav_put_json(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
         return Err("WebDAV URL not configured".to_string());
     }
     let username = config.webdav_username.unwrap_or_default();
-    let password = get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD)?
+    let password = match get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD) {
+        Ok(value) => value,
+        Err(_) => None,
+    }
+        .or(config.webdav_password.clone())
         .ok_or_else(|| "WebDAV password not configured".to_string())?;
 
     let client = reqwest::blocking::Client::new();
@@ -3109,7 +3128,13 @@ fn webdav_put_json(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
 
 #[tauri::command]
 fn get_webdav_password(app: tauri::AppHandle) -> Result<String, String> {
-    Ok(get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD)?.unwrap_or_default())
+    let config = read_config(&app);
+    let password = match get_keyring_secret(&app, KEYRING_WEB_DAV_PASSWORD) {
+        Ok(value) => value,
+        Err(_) => None,
+    }
+        .or(config.webdav_password);
+    Ok(password.unwrap_or_default())
 }
 
 #[tauri::command]
