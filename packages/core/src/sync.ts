@@ -492,7 +492,9 @@ const sanitizeAiSettings = (
 ): AppData['settings']['ai'] | undefined => {
     if (value === undefined) return fallback ? sanitizeAiForSync(cloneSettingValue(fallback), fallback) : undefined;
     if (!isObjectRecord(value)) return fallback ? sanitizeAiForSync(cloneSettingValue(fallback), fallback) : undefined;
-    const next: AppData['settings']['ai'] = cloneSettingValue(value as AppData['settings']['ai']);
+    const next: NonNullable<AppData['settings']['ai']> = cloneSettingValue(
+        value as NonNullable<AppData['settings']['ai']>
+    );
     if (next.enabled !== undefined && typeof next.enabled !== 'boolean') {
         next.enabled = fallback?.enabled;
     }
