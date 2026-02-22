@@ -698,7 +698,7 @@ function TaskListComponent({
                 accessibilityRole="button"
                 accessibilityLabel={t('sort.label')}
               >
-                <Text style={[styles.sortButtonText, { color: themeColors.secondaryText }]}>
+                <Text style={[styles.sortButtonText, { color: themeColorsMemo.secondaryText }]}>
                   {t(`sort.${sortBy}`)}
                 </Text>
               </TouchableOpacity>
