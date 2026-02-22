@@ -2,11 +2,14 @@ import { useState, useEffect, useMemo } from 'react';
 import { useTaskStore, matchesHierarchicalToken, isTaskInActiveProject, shallow, TaskStatus } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
 import { Tag, Filter } from 'lucide-react';
+import { PromptModal } from '../PromptModal';
+import { ListBulkActions } from './list/ListBulkActions';
 import { cn } from '../../lib/utils';
 import { useLanguage } from '../../contexts/language-context';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { resolveAreaFilter, taskMatchesAreaFilter } from '../../lib/area-filter';
+import { reportError } from '../../lib/report-error';
 
 export function ContextsView() {
     const perf = usePerformanceMonitor('ContextsView');
@@ -14,10 +17,21 @@ export function ContextsView() {
         (state) => ({ tasks: state.tasks, projects: state.projects, areas: state.areas, settings: state.settings }),
         shallow
     );
+    const batchMoveTasks = useTaskStore((state) => state.batchMoveTasks);
+    const batchDeleteTasks = useTaskStore((state) => state.batchDeleteTasks);
+    const batchUpdateTasks = useTaskStore((state) => state.batchUpdateTasks);
     const { t } = useLanguage();
     const [selectedContext, setSelectedContext] = useState<string | null>(null);
     const NO_CONTEXT_TOKEN = '__no_context__';
     const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
+    const [tagPromptOpen, setTagPromptOpen] = useState(false);
+    const [tagPromptIds, setTagPromptIds] = useState<string[]>([]);
+    const [contextPromptOpen, setContextPromptOpen] = useState(false);
+    const [contextPromptMode, setContextPromptMode] = useState<'add' | 'remove'>('add');
+    const [contextPromptIds, setContextPromptIds] = useState<string[]>([]);
+    const [isBatchDeleting, setIsBatchDeleting] = useState(false);
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const resolvedAreaFilter = useMemo(
         () => resolveAreaFilter(settings?.filters?.areaId, areas),
@@ -62,6 +76,77 @@ export function ContextsView() {
         : selectedContext
             ? scopedTasks.filter(t => matchesSelected(t, selectedContext))
             : scopedTasks.filter((t) => hasContext(t));
+    const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+
+    const exitSelectionMode = () => {
+        setSelectionMode(false);
+        setMultiSelectedIds(new Set());
+    };
+
+    const toggleMultiSelect = (taskId: string) => {
+        setMultiSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(taskId)) next.delete(taskId);
+            else next.add(taskId);
+            return next;
+        });
+    };
+
+    const selectedIdsArray = useMemo(() => Array.from(multiSelectedIds), [multiSelectedIds]);
+
+    const handleBatchMove = async (newStatus: TaskStatus) => {
+        if (selectedIdsArray.length === 0) return;
+        try {
+            await batchMoveTasks(selectedIdsArray, newStatus);
+            exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch move tasks in contexts view', error);
+        }
+    };
+
+    const handleBatchDelete = async () => {
+        if (selectedIdsArray.length === 0) return;
+        const confirmMessage = t('list.confirmBatchDelete') || 'Delete selected tasks?';
+        if (!window.confirm(confirmMessage)) return;
+        setIsBatchDeleting(true);
+        try {
+            await batchDeleteTasks(selectedIdsArray);
+            exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch delete tasks in contexts view', error);
+        } finally {
+            setIsBatchDeleting(false);
+        }
+    };
+
+    const handleBatchAddTag = () => {
+        if (selectedIdsArray.length === 0) return;
+        setTagPromptIds(selectedIdsArray);
+        setTagPromptOpen(true);
+    };
+
+    const handleBatchAddContext = () => {
+        if (selectedIdsArray.length === 0) return;
+        setContextPromptIds(selectedIdsArray);
+        setContextPromptMode('add');
+        setContextPromptOpen(true);
+    };
+
+    const handleBatchRemoveContext = () => {
+        if (selectedIdsArray.length === 0) return;
+        setContextPromptIds(selectedIdsArray);
+        setContextPromptMode('remove');
+        setContextPromptOpen(true);
+    };
+
+    useEffect(() => {
+        setMultiSelectedIds((prev) => {
+            const visible = new Set(filteredTasks.map((task) => task.id));
+            const next = new Set(Array.from(prev).filter((id) => visible.has(id)));
+            if (next.size === prev.size) return prev;
+            return next;
+        });
+    }, [filteredTasks]);
 
     const statusOptions: Array<{ value: TaskStatus | 'all'; label: string }> = [
         { value: 'next', label: t('status.next') },
@@ -71,7 +156,8 @@ export function ContextsView() {
     ];
 
     return (
-        <div className="flex h-full gap-6">
+        <>
+            <div className="flex h-full gap-6">
             {/* Sidebar List of Contexts */}
             <div className="w-64 flex-shrink-0 flex flex-col gap-4 border-r border-border pr-6">
                 <div className="flex items-center justify-between">
@@ -148,24 +234,62 @@ export function ContextsView() {
                         </p>
                     </div>
                     <div className="ml-auto">
-                        <select
-                            value={statusFilter}
-                            onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')}
-                            className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-                        >
-                            {statusOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                    {option.label}
-                                </option>
-                            ))}
-                        </select>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => {
+                                    if (selectionMode) exitSelectionMode();
+                                    else setSelectionMode(true);
+                                }}
+                                className={cn(
+                                    "text-xs px-3 py-1 rounded-md border transition-colors",
+                                    selectionMode
+                                        ? "bg-primary/10 text-primary border-primary"
+                                        : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                )}
+                            >
+                                {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
+                            </button>
+                            <select
+                                value={statusFilter}
+                                onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')}
+                                className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                            >
+                                {statusOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
                 </header>
+
+                {selectionMode && selectedIdsArray.length > 0 && (
+                    <div className="mb-4">
+                        <ListBulkActions
+                            selectionCount={selectedIdsArray.length}
+                            onMoveToStatus={handleBatchMove}
+                            onAddTag={handleBatchAddTag}
+                            onAddContext={handleBatchAddContext}
+                            onRemoveContext={handleBatchRemoveContext}
+                            onDelete={handleBatchDelete}
+                            isDeleting={isBatchDeleting}
+                            t={t}
+                        />
+                    </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto divide-y divide-border/30 pr-2">
                     {filteredTasks.length > 0 ? (
                         filteredTasks.map(task => (
-                            <TaskItem key={task.id} task={task} showProjectBadgeInActions={false} />
+                            <TaskItem
+                                key={task.id}
+                                task={task}
+                                selectionMode={selectionMode}
+                                isMultiSelected={multiSelectedIds.has(task.id)}
+                                onToggleSelect={() => toggleMultiSelect(task.id)}
+                                showProjectBadgeInActions={false}
+                            />
                         ))
                     ) : (
                         <div className="text-center text-muted-foreground py-12">
@@ -174,6 +298,63 @@ export function ContextsView() {
                     )}
                 </div>
             </div>
-        </div>
+            </div>
+            <PromptModal
+                isOpen={tagPromptOpen}
+                title={t('bulk.addTag')}
+                description={t('bulk.addTag')}
+                placeholder="#tag"
+                defaultValue=""
+                confirmLabel={t('common.save')}
+                cancelLabel={t('common.cancel')}
+                onCancel={() => setTagPromptOpen(false)}
+                onConfirm={async (value) => {
+                    const input = value.trim();
+                    if (!input) return;
+                    const tag = input.startsWith('#') ? input : `#${input}`;
+                    try {
+                        await batchUpdateTasks(tagPromptIds.map((id) => {
+                            const task = tasksById.get(id);
+                            const existingTags = task?.tags || [];
+                            const nextTags = Array.from(new Set([...existingTags, tag]));
+                            return { id, updates: { tags: nextTags } };
+                        }));
+                        setTagPromptOpen(false);
+                        exitSelectionMode();
+                    } catch (error) {
+                        reportError('Failed to batch add tag in contexts view', error);
+                    }
+                }}
+            />
+            <PromptModal
+                isOpen={contextPromptOpen}
+                title={contextPromptMode === 'add' ? t('bulk.addContext') : t('bulk.removeContext')}
+                description={contextPromptMode === 'add' ? t('bulk.addContext') : t('bulk.removeContext')}
+                placeholder="@context"
+                defaultValue=""
+                confirmLabel={t('common.save')}
+                cancelLabel={t('common.cancel')}
+                onCancel={() => setContextPromptOpen(false)}
+                onConfirm={async (value) => {
+                    const input = value.trim();
+                    if (!input) return;
+                    const ctx = input.startsWith('@') ? input : `@${input}`;
+                    try {
+                        await batchUpdateTasks(contextPromptIds.map((id) => {
+                            const task = tasksById.get(id);
+                            const existing = task?.contexts || [];
+                            const nextContexts = contextPromptMode === 'add'
+                                ? Array.from(new Set([...existing, ctx]))
+                                : existing.filter((token) => token !== ctx);
+                            return { id, updates: { contexts: nextContexts } };
+                        }));
+                        setContextPromptOpen(false);
+                        exitSelectionMode();
+                    } catch (error) {
+                        reportError('Failed to batch update context in contexts view', error);
+                    }
+                }}
+            />
+        </>
     );
 }
