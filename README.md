@@ -77,7 +77,6 @@ Mindwtr is built for people who want a complete GTD system without lock-in. Here
 | Local-first | ✅ | ❌ | ⚠️ | ❌ |
 | Open source | ✅ | ❌ | ❌ | ❌ |
 | Platforms | ✅ All major | ✅ All major | Apple only | ✅ All major |
-| Native Linux app | ✅ | ✅ | ❌ | ✅ |
 | GTD-first | ✅ | ◑ Adaptable | ◑ Adaptable | ◑ Adaptable |
 | Free to use | ✅ | ◑ Freemium | ❌ Paid | ◑ Freemium |
 | AI (BYOK + local LLM) | ✅ | ❌ | ❌ | ❌ |
