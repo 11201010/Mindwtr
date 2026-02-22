@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
-import { type Language, getSystemDefaultLanguage, loadTranslations, loadStoredLanguageSync, saveStoredLanguageSync } from '@mindwtr/core';
+import { type Language, getSystemDefaultLanguage, getTranslationsSync, loadTranslations, loadStoredLanguageSync, saveStoredLanguageSync } from '@mindwtr/core';
 export type { Language };
 
 interface LanguageContextType {
@@ -23,15 +23,17 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         return 'en';
     });
     const [translationsMap, setTranslationsMap] = useState<Record<string, string>>({});
-    const [fallbackTranslations, setFallbackTranslations] = useState<Record<string, string>>({});
+    const [fallbackTranslations, setFallbackTranslations] = useState<Record<string, string>>(() => getTranslationsSync('en'));
 
     useEffect(() => {
         if (isTest) return;
         if (typeof localStorage !== 'undefined') {
             setLanguageState(loadStoredLanguageSync(localStorage, getSystemDefaultLanguage()));
         }
-        loadTranslations('en').then(setFallbackTranslations).catch(() => setFallbackTranslations({}));
-    }, [isTest]);
+        if (!fallbackTranslations['app.name']) {
+            loadTranslations('en').then(setFallbackTranslations).catch(() => setFallbackTranslations({}));
+        }
+    }, [fallbackTranslations, isTest]);
 
     useEffect(() => {
         if (isTest) return;

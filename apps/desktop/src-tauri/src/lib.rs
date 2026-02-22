@@ -5,6 +5,8 @@ use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -49,6 +51,8 @@ const GLOBAL_QUICK_ADD_SHORTCUT_DISABLED: &str = "disabled";
 const MENU_HELP_DOCS_ID: &str = "help_docs";
 #[cfg(target_os = "macos")]
 const MENU_HELP_ISSUES_ID: &str = "help_report_issue";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const SQLITE_SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -394,6 +398,17 @@ fn current_exe_canonical_path_lowercase() -> Option<String> {
         .and_then(|path| path.to_str().map(|value| value.to_lowercase()))
 }
 
+#[cfg(target_os = "windows")]
+fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
+    Command::new(cmd)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
 fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd)
         .args(args)
@@ -404,7 +419,11 @@ fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
 
 #[cfg(target_os = "windows")]
 fn command_output_lowercase(cmd: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(cmd).args(args).output().ok()?;
+    let output = Command::new(cmd)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }

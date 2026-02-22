@@ -1,6 +1,9 @@
 import type { Language } from './i18n-types';
+import { en } from './locales/en';
 
-const translationsCache = new Map<Language, Record<string, string>>();
+const translationsCache = new Map<Language, Record<string, string>>([
+    ['en', en],
+]);
 const loadPromises = new Map<Language, Promise<void>>();
 
 const buildTranslations = (base: Record<string, string>, overrides: Record<string, string>) => {
