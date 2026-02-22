@@ -462,4 +462,112 @@ describe('cloud server api', () => {
         expect(taskIds.has(taskA.id)).toBe(true);
         expect(taskIds.has(taskB.id)).toBe(true);
     });
+
+    test('keeps newer live update over older delete during /v1/data merge', async () => {
+        const base = { projects: [], sections: [], areas: [], settings: {} };
+        const taskId = 'merge-race-live-wins';
+
+        const seed = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [{
+                    id: taskId,
+                    title: 'Live task',
+                    status: 'inbox',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.100Z',
+                }],
+            }),
+        });
+        expect(seed.status).toBe(200);
+
+        const staleDelete = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [{
+                    id: taskId,
+                    title: 'Live task',
+                    status: 'inbox',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                    deletedAt: '2026-01-01T00:00:00.000Z',
+                }],
+            }),
+        });
+        expect(staleDelete.status).toBe(200);
+
+        const getResponse = await fetch(`${baseUrl}/v1/data`, {
+            headers: authHeaders,
+        });
+        expect(getResponse.status).toBe(200);
+        const body = await getResponse.json();
+        const mergedTask = (body.tasks as Array<{ id: string; updatedAt: string; deletedAt?: string }>).find((task) => task.id === taskId);
+        expect(mergedTask).toBeTruthy();
+        expect(mergedTask?.deletedAt).toBeUndefined();
+        expect(mergedTask?.updatedAt).toBe('2026-01-01T00:00:00.100Z');
+    });
+
+    test('keeps newer delete over older live update during /v1/data merge', async () => {
+        const base = { projects: [], sections: [], areas: [], settings: {} };
+        const taskId = 'merge-race-delete-wins';
+
+        const seed = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [{
+                    id: taskId,
+                    title: 'Task deleted later',
+                    status: 'inbox',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.100Z',
+                    deletedAt: '2026-01-01T00:00:00.100Z',
+                }],
+            }),
+        });
+        expect(seed.status).toBe(200);
+
+        const staleLiveUpdate = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                ...base,
+                tasks: [{
+                    id: taskId,
+                    title: 'Task deleted later',
+                    status: 'inbox',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                }],
+            }),
+        });
+        expect(staleLiveUpdate.status).toBe(200);
+
+        const getResponse = await fetch(`${baseUrl}/v1/data`, {
+            headers: authHeaders,
+        });
+        expect(getResponse.status).toBe(200);
+        const body = await getResponse.json();
+        const mergedTask = (body.tasks as Array<{ id: string; updatedAt: string; deletedAt?: string }>).find((task) => task.id === taskId);
+        expect(mergedTask).toBeTruthy();
+        expect(mergedTask?.deletedAt).toBe('2026-01-01T00:00:00.100Z');
+        expect(mergedTask?.updatedAt).toBe('2026-01-01T00:00:00.100Z');
+    });
 });
