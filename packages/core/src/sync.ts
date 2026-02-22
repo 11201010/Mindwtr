@@ -615,23 +615,26 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
 
         if (!localItem || !incomingItem) continue;
 
-        const safeLocalTime = parseMergeTimestamp(localItem.updatedAt);
-        const safeIncomingTime = parseMergeTimestamp(incomingItem.updatedAt);
-        const localRev = typeof (localItem as any).rev === 'number' && Number.isFinite((localItem as any).rev)
-            ? (localItem as any).rev as number
+        const normalizedLocalItem = normalizeTimestamps(localItem as unknown as { updatedAt: string; createdAt?: string }) as T;
+        const normalizedIncomingItem = normalizeTimestamps(incomingItem as unknown as { updatedAt: string; createdAt?: string }) as T;
+
+        const safeLocalTime = parseMergeTimestamp(normalizedLocalItem.updatedAt);
+        const safeIncomingTime = parseMergeTimestamp(normalizedIncomingItem.updatedAt);
+        const localRev = typeof (normalizedLocalItem as any).rev === 'number' && Number.isFinite((normalizedLocalItem as any).rev)
+            ? (normalizedLocalItem as any).rev as number
             : 0;
-        const incomingRev = typeof (incomingItem as any).rev === 'number' && Number.isFinite((incomingItem as any).rev)
-            ? (incomingItem as any).rev as number
+        const incomingRev = typeof (normalizedIncomingItem as any).rev === 'number' && Number.isFinite((normalizedIncomingItem as any).rev)
+            ? (normalizedIncomingItem as any).rev as number
             : 0;
-        const localRevBy = typeof (localItem as any).revBy === 'string' ? (localItem as any).revBy as string : '';
-        const incomingRevBy = typeof (incomingItem as any).revBy === 'string' ? (incomingItem as any).revBy as string : '';
+        const localRevBy = typeof (normalizedLocalItem as any).revBy === 'string' ? (normalizedLocalItem as any).revBy as string : '';
+        const incomingRevBy = typeof (normalizedIncomingItem as any).revBy === 'string' ? (normalizedIncomingItem as any).revBy as string : '';
         const hasRevision = localRev > 0 || incomingRev > 0 || !!localRevBy || !!incomingRevBy;
-        const localDeleted = !!localItem.deletedAt;
-        const incomingDeleted = !!incomingItem.deletedAt;
+        const localDeleted = !!normalizedLocalItem.deletedAt;
+        const incomingDeleted = !!normalizedIncomingItem.deletedAt;
         const revDiff = localRev - incomingRev;
         const revByDiff = localRevBy !== incomingRevBy;
         const shouldCheckContentDiff = hasRevision && revDiff === 0 && !revByDiff && localDeleted === incomingDeleted;
-        const contentDiff = shouldCheckContentDiff ? hasContentDifference(localItem, incomingItem) : false;
+        const contentDiff = shouldCheckContentDiff ? hasContentDifference(normalizedLocalItem, normalizedIncomingItem) : false;
 
         const differs = hasRevision
             ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted || contentDiff
@@ -667,50 +670,50 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
 
             return Math.max(updatedTime, deletedTimeRaw);
         };
-        let winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
+        let winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
         if (hasRevision) {
             if (localDeleted !== incomingDeleted) {
-                const localOpTime = resolveOperationTime(localItem);
-                const incomingOpTime = resolveOperationTime(incomingItem);
+                const localOpTime = resolveOperationTime(normalizedLocalItem);
+                const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
                 if (incomingOpTime > localOpTime) {
-                    winner = incomingItem;
+                    winner = normalizedIncomingItem;
                 } else if (localOpTime > incomingOpTime) {
-                    winner = localItem;
+                    winner = normalizedLocalItem;
                 } else {
-                    winner = localDeleted ? localItem : incomingItem;
+                    winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
                 }
             } else if (revDiff !== 0) {
-                winner = revDiff > 0 ? localItem : incomingItem;
+                winner = revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
             } else if (safeIncomingTime !== safeLocalTime) {
                 // When revisions tie, prefer fresher timestamps before revBy tie-break.
-                winner = safeIncomingTime > safeLocalTime ? incomingItem : localItem;
+                winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
             } else if (revByDiff && localRevBy && incomingRevBy) {
-                winner = incomingRevBy > localRevBy ? incomingItem : localItem;
+                winner = incomingRevBy > localRevBy ? normalizedIncomingItem : normalizedLocalItem;
             } else {
                 // Preserve deterministic convergence when metadata ties but content differs.
-                winner = chooseDeterministicWinner(localItem, incomingItem);
+                winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
             }
         } else if (localDeleted !== incomingDeleted) {
-            const localOpTime = resolveOperationTime(localItem);
-            const incomingOpTime = resolveOperationTime(incomingItem);
+            const localOpTime = resolveOperationTime(normalizedLocalItem);
+            const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
             if (incomingOpTime > localOpTime) {
-                winner = incomingItem;
+                winner = normalizedIncomingItem;
             } else if (localOpTime > incomingOpTime) {
-                winner = localItem;
+                winner = normalizedLocalItem;
             } else {
-                winner = localDeleted ? localItem : incomingItem;
+                winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
             }
         } else if (withinSkew && safeIncomingTime === safeLocalTime) {
-            winner = chooseDeterministicWinner(localItem, incomingItem);
+            winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
         }
-        if (winner === incomingItem) stats.resolvedUsingIncoming += 1;
+        if (winner === normalizedIncomingItem) stats.resolvedUsingIncoming += 1;
         else stats.resolvedUsingLocal += 1;
 
-        if (winner.deletedAt && (!localItem.deletedAt || !incomingItem.deletedAt || differs)) {
+        if (winner.deletedAt && (!normalizedLocalItem.deletedAt || !normalizedIncomingItem.deletedAt || differs)) {
             stats.deletionsWon += 1;
         }
 
-        const mergedItem = mergeConflict ? mergeConflict(localItem, incomingItem, winner) : winner;
+        const mergedItem = mergeConflict ? mergeConflict(normalizedLocalItem, normalizedIncomingItem, winner) : winner;
         merged.push(normalizeTimestamps(mergedItem as unknown as { updatedAt: string; createdAt?: string }) as T);
     }
 
