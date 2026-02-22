@@ -1,4 +1,4 @@
-import { useState, memo, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, memo, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import {
     DEFAULT_PROJECT_COLOR,
     Task,
@@ -376,56 +376,102 @@ export const TaskItem = memo(function TaskItem({
     });
     const activeProjectId = editProjectId || task.projectId || '';
     const projectSections = activeProjectId ? (sectionsByProject.get(activeProjectId) ?? []) : [];
+    const toggleDescriptionPreview = useCallback(() => {
+        setShowDescriptionPreview((prev) => !prev);
+    }, []);
+    const handleSetEditDescription = useCallback((value: string) => {
+        setEditDescription(value);
+        resetCopilotDraft();
+    }, [resetCopilotDraft, setEditDescription]);
+    const fieldRendererData = useMemo(() => ({
+        t,
+        task,
+        taskId: task.id,
+        showDescriptionPreview,
+        editDescription,
+        attachmentError,
+        visibleEditAttachments,
+        editStartTime,
+        editReviewAt,
+        editStatus,
+        editPriority,
+        editRecurrence,
+        editRecurrenceStrategy,
+        editRecurrenceRRule,
+        monthlyRecurrence,
+        editTimeEstimate,
+        editContexts,
+        editTags,
+        language,
+        popularTagOptions,
+    }), [
+        t,
+        task,
+        showDescriptionPreview,
+        editDescription,
+        attachmentError,
+        visibleEditAttachments,
+        editStartTime,
+        editReviewAt,
+        editStatus,
+        editPriority,
+        editRecurrence,
+        editRecurrenceStrategy,
+        editRecurrenceRRule,
+        monthlyRecurrence,
+        editTimeEstimate,
+        editContexts,
+        editTags,
+        language,
+        popularTagOptions,
+    ]);
+    const fieldRendererHandlers = useMemo(() => ({
+        toggleDescriptionPreview,
+        setEditDescription: handleSetEditDescription,
+        addFileAttachment,
+        addLinkAttachment,
+        openAttachment,
+        removeAttachment,
+        setEditStartTime,
+        setEditReviewAt,
+        setEditStatus,
+        setEditPriority,
+        setEditRecurrence,
+        setEditRecurrenceStrategy,
+        setEditRecurrenceRRule,
+        openCustomRecurrence,
+        setEditTimeEstimate,
+        setEditContexts,
+        setEditTags,
+        updateTask,
+        resetTaskChecklist,
+    }), [
+        toggleDescriptionPreview,
+        handleSetEditDescription,
+        addFileAttachment,
+        addLinkAttachment,
+        openAttachment,
+        removeAttachment,
+        setEditStartTime,
+        setEditReviewAt,
+        setEditStatus,
+        setEditPriority,
+        setEditRecurrence,
+        setEditRecurrenceStrategy,
+        setEditRecurrenceRRule,
+        openCustomRecurrence,
+        setEditTimeEstimate,
+        setEditContexts,
+        setEditTags,
+        updateTask,
+        resetTaskChecklist,
+    ]);
 
     const renderField = (fieldId: TaskEditorFieldId) => (
         <TaskItemFieldRenderer
             fieldId={fieldId}
-            data={{
-                t,
-                task,
-                taskId: task.id,
-                showDescriptionPreview,
-                editDescription,
-                attachmentError,
-                visibleEditAttachments,
-                editStartTime,
-                editReviewAt,
-                editStatus,
-                editPriority,
-                editRecurrence,
-                editRecurrenceStrategy,
-                editRecurrenceRRule,
-                monthlyRecurrence,
-                editTimeEstimate,
-                editContexts,
-                editTags,
-                language,
-                popularTagOptions,
-            }}
-            handlers={{
-                toggleDescriptionPreview: () => setShowDescriptionPreview((prev) => !prev),
-                setEditDescription: (value) => {
-                    setEditDescription(value);
-                    resetCopilotDraft();
-                },
-                addFileAttachment,
-                addLinkAttachment,
-                openAttachment,
-                removeAttachment,
-                setEditStartTime,
-                setEditReviewAt,
-                setEditStatus,
-                setEditPriority,
-                setEditRecurrence,
-                setEditRecurrenceStrategy,
-                setEditRecurrenceRRule,
-                openCustomRecurrence,
-                setEditTimeEstimate,
-                setEditContexts,
-                setEditTags,
-                updateTask,
-                resetTaskChecklist,
-            }}
+            data={fieldRendererData}
+            handlers={fieldRendererHandlers}
         />
     );
 
