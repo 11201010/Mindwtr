@@ -67,7 +67,7 @@ See [[Data and Sync]] for details.
 
 ### Is there cloud sync?
 
-Mindwtr supports File Sync, WebDAV, and optional Cloud Sync. See [[Data and Sync]].
+Mindwtr supports File Sync, WebDAV, self-hosted Cloud Sync, and Dropbox sync (supported builds). See [[Data and Sync]].
 
 ### Does Mindwtr support iCloud sync directly?
 
@@ -86,10 +86,12 @@ This is the same approach used by local‑first apps like Obsidian.
 
 ### Why doesn’t Mindwtr have a “Sign in with OneDrive / Google Drive” button?
 
-Mindwtr is local‑first and offline‑first. Native cloud integrations require OAuth flows, token storage, and long‑term maintenance.
-They also create strong pressure to add *every* provider (Drive, OneDrive, Dropbox, etc.).
+Mindwtr is local‑first and offline‑first.
 
-File sync keeps your data in your control and avoids a large maintenance and security burden.
+Mindwtr now supports native **Dropbox OAuth** sync in supported builds, but does **not** provide native OneDrive/Google Drive OAuth integration.
+Expanding to every provider adds significant maintenance and compliance overhead.
+
+For OneDrive/Google Drive, File Sync keeps your data in your control and avoids a large maintenance/security burden.
 
 ### Can Mindwtr integrate with email (Gmail/Outlook) or accept forwarded emails?
 

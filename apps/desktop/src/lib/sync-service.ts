@@ -103,7 +103,6 @@ const WEBDAV_PASSWORD_KEY = 'mindwtr-webdav-password';
 const CLOUD_URL_KEY = 'mindwtr-cloud-url';
 const CLOUD_TOKEN_KEY = 'mindwtr-cloud-token';
 const CLOUD_PROVIDER_KEY = 'mindwtr-cloud-provider';
-const DROPBOX_APP_KEY_KEY = 'mindwtr-dropbox-app-key';
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
 const DEFAULT_DROPBOX_APP_KEY = String(import.meta.env.VITE_DROPBOX_APP_KEY || '').trim();
@@ -1325,18 +1324,11 @@ export class SyncService {
     }
 
     private static getDropboxAppKeyLocal(): string {
-        const stored = localStorage.getItem(DROPBOX_APP_KEY_KEY);
-        if (stored && stored.trim()) return stored.trim();
         return DEFAULT_DROPBOX_APP_KEY;
     }
 
-    private static setDropboxAppKeyLocal(value: string) {
-        const trimmed = value.trim();
-        if (trimmed) {
-            localStorage.setItem(DROPBOX_APP_KEY_KEY, trimmed);
-        } else {
-            localStorage.removeItem(DROPBOX_APP_KEY_KEY);
-        }
+    private static setDropboxAppKeyLocal(_value: string) {
+        // Dropbox app key is provided via build env (VITE_DROPBOX_APP_KEY).
     }
 
     private static async maybeMigrateLegacyLocalStorageToConfig() {

@@ -26,6 +26,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
     const [cloudToken, setCloudToken] = useState('');
     const [cloudProvider, setCloudProvider] = useState<CloudProvider>('selfhosted');
     const [dropboxAppKey, setDropboxAppKey] = useState('');
+    const [dropboxConfigured, setDropboxConfigured] = useState(false);
     const [dropboxConnected, setDropboxConnected] = useState(false);
     const [dropboxBusy, setDropboxBusy] = useState(false);
     const [dropboxRedirectUri, setDropboxRedirectUri] = useState('http://127.0.0.1:53682/oauth/dropbox/callback');
@@ -102,8 +103,13 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
                 void logError(error, { scope: 'sync', step: 'loadCloudProvider' });
             });
         SyncService.getDropboxAppKey()
-            .then(setDropboxAppKey)
+            .then((value) => {
+                const trimmed = value.trim();
+                setDropboxAppKey(trimmed);
+                setDropboxConfigured(Boolean(trimmed));
+            })
             .catch((error) => {
+                setDropboxConfigured(false);
                 setSyncError('Failed to load Dropbox app key.');
                 void logError(error, { scope: 'sync', step: 'loadDropboxAppKey' });
             });
@@ -238,30 +244,15 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         showSaved();
     }, [showSaved]);
 
-    const handleSaveDropboxAppKey = useCallback(async () => {
-        const trimmed = dropboxAppKey.trim();
-        await SyncService.setDropboxAppKey(trimmed);
-        setDropboxAppKey(trimmed);
-        if (!trimmed) {
-            setDropboxConnected(false);
-            setDropboxTestState('idle');
-        } else {
-            setDropboxConnected(await SyncService.isDropboxConnected(trimmed));
-            setDropboxTestState('idle');
-        }
-        showSaved();
-    }, [dropboxAppKey, showSaved]);
-
     const handleConnectDropbox = useCallback(async () => {
         const appKey = dropboxAppKey.trim();
         if (!appKey) {
-            showToast('Enter Dropbox app key first.', 'error');
+            showToast('Dropbox app key is not configured in this build.', 'error');
             return;
         }
         setDropboxBusy(true);
         try {
             await SyncService.connectDropbox(appKey);
-            await SyncService.setDropboxAppKey(appKey);
             setDropboxConnected(true);
             setDropboxTestState('idle');
             showToast('Connected to Dropbox.', 'success');
@@ -303,7 +294,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
     const handleTestDropboxConnection = useCallback(async () => {
         const appKey = dropboxAppKey.trim();
         if (!appKey) {
-            showToast('Enter Dropbox app key first.', 'error');
+            showToast('Dropbox app key is not configured in this build.', 'error');
             return;
         }
         setDropboxBusy(true);
@@ -348,7 +339,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
                 } else {
                     const appKey = dropboxAppKey.trim();
                     if (!appKey) {
-                        const message = 'Dropbox app key is not configured.';
+                        const message = 'Dropbox app key is not configured in this build.';
                         setSyncError(message);
                         showToast(message, 'error');
                         return;
@@ -449,7 +440,7 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         cloudProvider,
         setCloudProvider,
         dropboxAppKey,
-        setDropboxAppKey,
+        dropboxConfigured,
         dropboxConnected,
         dropboxBusy,
         dropboxRedirectUri,
@@ -463,7 +454,6 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
         handleSaveWebDav,
         handleSaveCloud,
         handleSetCloudProvider,
-        handleSaveDropboxAppKey,
         handleConnectDropbox,
         handleDisconnectDropbox,
         handleTestDropboxConnection,

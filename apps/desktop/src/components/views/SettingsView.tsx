@@ -830,7 +830,7 @@ export function SettingsView() {
         setCloudToken,
         cloudProvider,
         dropboxAppKey,
-        setDropboxAppKey,
+        dropboxConfigured,
         dropboxConnected,
         dropboxBusy,
         dropboxRedirectUri,
@@ -844,7 +844,6 @@ export function SettingsView() {
         handleSaveWebDav,
         handleSaveCloud,
         handleSetCloudProvider,
-        handleSaveDropboxAppKey,
         handleConnectDropbox,
         handleDisconnectDropbox,
         handleTestDropboxConnection,
@@ -1032,6 +1031,7 @@ export function SettingsView() {
                     cloudToken={cloudToken}
                     cloudProvider={cloudProvider}
                     dropboxAppKey={dropboxAppKey}
+                    dropboxConfigured={dropboxConfigured}
                     dropboxConnected={dropboxConnected}
                     dropboxBusy={dropboxBusy}
                     dropboxRedirectUri={dropboxRedirectUri}
@@ -1039,9 +1039,7 @@ export function SettingsView() {
                     onCloudUrlChange={setCloudUrl}
                     onCloudTokenChange={setCloudToken}
                     onCloudProviderChange={handleSetCloudProvider}
-                    onDropboxAppKeyChange={setDropboxAppKey}
                     onSaveCloud={handleSaveCloud}
-                    onSaveDropboxAppKey={handleSaveDropboxAppKey}
                     onConnectDropbox={handleConnectDropbox}
                     onDisconnectDropbox={handleDisconnectDropbox}
                     onTestDropboxConnection={handleTestDropboxConnection}

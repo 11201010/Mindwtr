@@ -51,6 +51,7 @@ jobs:
       EXPECTED_TEAM_ID: 5X9JC5PL7T
       EXPECTED_BUNDLE_ID: tech.dongdongbh.mindwtr
       ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
+      DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

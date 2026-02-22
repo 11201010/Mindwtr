@@ -324,7 +324,6 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
 - 📦 上架 Flathub
 - 🤖 上架 F-Droid
 - ☁️ 原生 iCloud / CloudKit 同步（Apple 生态）
-- 🔐 可选 OAuth 云同步提供商（Dropbox / Google Drive），降低配置门槛
 - 🗣️ iOS 提醒事项收件箱导入（Siri 收集 -> Mindwtr 收件箱）
 - ⚡ iOS 快捷指令 + URL Scheme 快速收集
 - 🧩 iOS 主屏幕小组件

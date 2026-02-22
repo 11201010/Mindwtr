@@ -85,11 +85,12 @@ describe('SyncService testability hooks', () => {
         expect(await SyncService.getCloudProvider()).toBe('selfhosted');
     });
 
-    it('stores and reads Dropbox app key locally', async () => {
+    it('treats Dropbox app key as build-time config', async () => {
+        const baseline = await SyncService.getDropboxAppKey();
         await SyncService.setDropboxAppKey('abc123');
-        expect(await SyncService.getDropboxAppKey()).toBe('abc123');
+        expect(await SyncService.getDropboxAppKey()).toBe(baseline);
         await SyncService.setDropboxAppKey('');
-        expect(await SyncService.getDropboxAppKey()).toBe('');
+        expect(await SyncService.getDropboxAppKey()).toBe(baseline);
     });
 });
 

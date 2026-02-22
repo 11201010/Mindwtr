@@ -323,7 +323,6 @@ You can help in several ways:
 
 - 📦 Add to Flathub
 - ☁️ Native iCloud/CloudKit sync (Apple ecosystem)
-- 🔐 Optional OAuth cloud sync provider (Dropbox / Google Drive) for simpler setup
 - 🗣️ iOS Reminders Inbox import (Siri capture -> Mindwtr Inbox)
 - ⚡ iOS Shortcuts + URL scheme quick capture
 - 🧩 iOS Home Screen widget

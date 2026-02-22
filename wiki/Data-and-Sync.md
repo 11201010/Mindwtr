@@ -39,22 +39,24 @@ Data is stored in a local SQLite database, with a JSON sync/backup file:
 
 ## Sync Backends
 
-Mindwtr directly supports three sync backends:
+Mindwtr directly supports four sync backends:
 
 - **File Sync**: a user-selected folder/file (`data.json` + `attachments/`)
 - **WebDAV**: any compatible WebDAV endpoint
 - **Mindwtr Cloud (Self-Hosted)**: your own `apps/cloud` endpoint
+- **Dropbox OAuth Sync**: direct Dropbox App Folder sync in supported builds
 
 ### Direct vs indirect provider support
 
-- **Directly supported providers/protocols**: WebDAV servers and the Mindwtr self-hosted endpoint.
-- **Indirectly supported providers**: iCloud Drive, Dropbox, Google Drive, OneDrive, Syncthing, network shares.
+- **Directly supported providers/protocols**: WebDAV servers, the Mindwtr self-hosted endpoint, and Dropbox OAuth (supported builds).
+- **Indirectly supported providers**: iCloud Drive, Google Drive, OneDrive, Syncthing, network shares, and Dropbox via File Sync.
 - **Important**: iCloud is not a native backend in Mindwtr. It can work through **File Sync** when your OS/file picker gives Mindwtr a writable folder.
 
 **Quick guidance:**
 - **Syncthing**: device-to-device file sync. Best on the same LAN/subnet. For remote sync, use a Syncthing relay or a mesh VPN (Nebula/Tailscale).
 - **WebDAV**: use a provider that supports WebDAV (e.g., Nextcloud, ownCloud, Fastmail, self-hosted).
-- **Dropbox/Google Drive/OneDrive/iCloud Drive**: use File Sync (and Android bridge apps when needed).
+- **Dropbox**: use native Dropbox sync (supported builds) or File Sync.
+- **Google Drive/OneDrive/iCloud Drive**: use File Sync (and Android bridge apps when needed).
 
 ## Sync Recommendations
 
@@ -112,9 +114,11 @@ Syncthing creates duplicate folders when both devices create or modify the same 
 **Important:** Don’t sync `~/.local/share/mindwtr` directly. Mobile storage is sandboxed. Use the file sync folder + `data.json` instead.
 If you already synced the app data directory, switch to a dedicated sync folder and re-select it in Settings.
 
-#### Dropbox / Google Drive on Android (File Sync)
+#### Google Drive on Android (File Sync) and Dropbox File-Sync Fallback
 
-Dropbox and Google Drive do **not** provide WebDAV. If you want to use them with file sync on Android, you need a bridge app that keeps a local folder in sync (so Mindwtr can read/write `data.json` directly).
+Google Drive does **not** provide WebDAV. If you want to use Google Drive with file sync on Android, you need a bridge app that keeps a local folder in sync (so Mindwtr can read/write `data.json` directly).
+
+Dropbox users on Android can use native Dropbox sync in supported builds. If you prefer file sync, the same bridge-app approach also works for Dropbox.
 
 Examples:
 - **Dropsync** (Dropbox)
@@ -154,6 +158,15 @@ For advanced users, Mindwtr includes a simple sync server (`apps/cloud`) that ca
 - **Deployment**: Node.js/Bun
 - **Docker setup**: [[Docker Deployment]]
 - **Operations guide**: [[Cloud Deployment]]
+
+### 4. Dropbox OAuth Sync
+
+Mindwtr also supports direct Dropbox sync in supported desktop/mobile builds.
+
+- **Scope**: Dropbox App Folder (`/Apps/Mindwtr/`)
+- **Synced data**: `data.json` and `attachments/*`
+- **Auth**: OAuth 2.0 + PKCE
+- **Guide**: [[Dropbox Sync]]
 
 ---
 

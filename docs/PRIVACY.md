@@ -1,6 +1,6 @@
 # Privacy Policy for Mindwtr
 
-**Effective Date:** February 19, 2026
+**Effective Date:** February 22, 2026
 
 Mindwtr ("we", "our", or "us") is designed as a local-first application. We respect your privacy and aim to minimize data collection by design.
 
@@ -8,7 +8,12 @@ Mindwtr ("we", "our", or "us") is designed as a local-first application. We resp
 All data created within the app (tasks, projects, notes) is stored locally on your device.
 
 **2. Data Sync**
-If you choose to use sync features (e.g., File Sync, WebDAV, or self-hosted sync), your data is transmitted directly between your device and your chosen storage provider. We (the developer) do not have access to this data. Some providers (such as iCloud Drive, Dropbox, or OneDrive) can work indirectly through File Sync.
+If you choose to use sync features (for example File Sync, WebDAV, self-hosted sync, or Dropbox OAuth in supported builds), your data is transmitted directly between your device and your chosen storage/sync provider. We (the developer) do not have access to this data.
+
+- **Dropbox OAuth sync (supported builds):** Mindwtr requests Dropbox App Folder access and syncs only app data files under `/Apps/Mindwtr/` (for example `data.json` and `attachments/*`).
+- **Token handling:** OAuth access/refresh tokens are stored locally on your device and used only to call Dropbox APIs for your account.
+- **FOSS builds:** Dropbox OAuth may be disabled in FOSS distributions.
+- **Other providers via File Sync:** iCloud Drive, Google Drive, OneDrive, Syncthing, and similar tools can still be used indirectly through File Sync.
 
 **3. Anonymous Usage Analytics (Heartbeat)**
 In official non-FOSS builds, Mindwtr may send a small heartbeat event at most once per day to help us measure app health and adoption (for example DAU/MAU and distribution-channel usage).

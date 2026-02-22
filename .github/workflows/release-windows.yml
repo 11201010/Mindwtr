@@ -39,6 +39,8 @@ jobs:
     runs-on: windows-latest
     name: Windows Build (EXE + MSIX)
     timeout-minutes: 90
+    env:
+      VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY || secrets.VITE_DROPBOX_APP_KEY }}
 
     steps:
       - name: Checkout code

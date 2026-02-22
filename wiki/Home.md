@@ -51,6 +51,7 @@ Mindwtr is **simple by default and powerful when needed**. We focus on reducing 
 - [[Data and Sync]] — Storage locations and sync setup
 - [[Sync Algorithm]] — Conflict rules, tombstones, and merge behavior
 - [[Cloud Sync]] — Self-hosted cloud sync backend overview
+- [[Dropbox Sync]] — Native Dropbox OAuth sync setup
 - [[Cloud Deployment]] — Cloud deployment and operations runbook
 - [[Calendar Integration]] — External calendars (ICS)
 - [[AI Assistant]] — Optional BYOK assistant

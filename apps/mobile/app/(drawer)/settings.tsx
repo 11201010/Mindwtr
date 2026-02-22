@@ -264,7 +264,7 @@ export default function SettingsPage() {
     const extraConfig = Constants.expoConfig?.extra as MobileExtraConfig | undefined;
     const isFossBuild = extraConfig?.isFossBuild === true || extraConfig?.isFossBuild === 'true';
     const dropboxAppKey = typeof extraConfig?.dropboxAppKey === 'string' ? extraConfig.dropboxAppKey.trim() : '';
-    const dropboxConfigured = isDropboxClientConfigured(dropboxAppKey);
+    const dropboxConfigured = !isFossBuild && isDropboxClientConfigured(dropboxAppKey);
     const [isSyncing, setIsSyncing] = useState(false);
     const currentScreen = useMemo<SettingsScreen>(() => {
         const rawScreen = Array.isArray(settingsScreen) ? settingsScreen[0] : settingsScreen;
@@ -625,9 +625,16 @@ export default function SettingsPage() {
             if (password) setWebdavPassword(password);
             if (cloudSyncUrl) setCloudUrl(cloudSyncUrl);
             if (cloudSyncToken) setCloudToken(cloudSyncToken);
-            setCloudProvider(storedCloudProvider === 'dropbox' ? 'dropbox' : 'selfhosted');
+            const resolvedCloudProvider =
+                storedCloudProvider === 'dropbox' && !isFossBuild
+                    ? 'dropbox'
+                    : 'selfhosted';
+            setCloudProvider(resolvedCloudProvider);
+            if (isFossBuild && storedCloudProvider === 'dropbox') {
+                AsyncStorage.setItem(CLOUD_PROVIDER_KEY, 'selfhosted').catch(logSettingsError);
+            }
         }).catch(logSettingsError);
-    }, []);
+    }, [isFossBuild]);
 
     useEffect(() => {
         void loadSystemCalendarState();
@@ -1553,6 +1560,13 @@ export default function SettingsPage() {
     };
 
     const handleConnectDropbox = async () => {
+        if (isFossBuild) {
+            Alert.alert(
+                localize('Dropbox unavailable', 'Dropbox 不可用'),
+                localize('Dropbox is disabled in FOSS builds.', 'FOSS 构建不支持 Dropbox。')
+            );
+            return;
+        }
         if (!dropboxConfigured) {
             Alert.alert(
                 localize('Dropbox unavailable', 'Dropbox 不可用'),
@@ -1621,6 +1635,13 @@ export default function SettingsPage() {
     };
 
     const handleTestDropboxConnection = async () => {
+        if (isFossBuild) {
+            Alert.alert(
+                localize('Dropbox unavailable', 'Dropbox 不可用'),
+                localize('Dropbox is disabled in FOSS builds.', 'FOSS 构建不支持 Dropbox。')
+            );
+            return;
+        }
         if (!dropboxConfigured) {
             Alert.alert(
                 localize('Dropbox unavailable', 'Dropbox 不可用'),
@@ -1685,6 +1706,13 @@ export default function SettingsPage() {
                 ]);
             } else if (syncBackend === 'cloud') {
                 if (cloudProvider === 'dropbox') {
+                    if (isFossBuild) {
+                        Alert.alert(
+                            localize('Dropbox unavailable', 'Dropbox 不可用'),
+                            localize('Dropbox is disabled in FOSS builds.', 'FOSS 构建不支持 Dropbox。')
+                        );
+                        return;
+                    }
                     if (!dropboxConfigured) {
                         Alert.alert(
                             localize('Dropbox unavailable', 'Dropbox 不可用'),
@@ -1793,6 +1821,13 @@ export default function SettingsPage() {
             }
 
             if (cloudProvider === 'dropbox') {
+                if (isFossBuild) {
+                    Alert.alert(
+                        localize('Dropbox unavailable', 'Dropbox 不可用'),
+                        localize('Dropbox is disabled in FOSS builds.', 'FOSS 构建不支持 Dropbox。')
+                    );
+                    return;
+                }
                 await runDropboxConnectionTest();
                 setDropboxConnected(true);
                 Alert.alert(
@@ -4553,29 +4588,31 @@ export default function SettingsPage() {
                                                 {localize('Self-hosted', '自托管')}
                                             </Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.backendOption,
-                                                {
-                                                    borderColor: tc.border,
-                                                    backgroundColor: cloudProvider === 'dropbox' ? tc.filterBg : 'transparent',
-                                                },
-                                            ]}
-                                            onPress={() => {
-                                                setCloudProvider('dropbox');
-                                                AsyncStorage.setItem(CLOUD_PROVIDER_KEY, 'dropbox').catch(logSettingsError);
-                                                resetSyncStatusForBackendSwitch();
-                                            }}
-                                        >
-                                            <Text style={[styles.backendOptionText, { color: cloudProvider === 'dropbox' ? tc.tint : tc.secondaryText }]}>
-                                                Dropbox
-                                            </Text>
-                                        </TouchableOpacity>
+                                        {!isFossBuild && (
+                                            <TouchableOpacity
+                                                style={[
+                                                    styles.backendOption,
+                                                    {
+                                                        borderColor: tc.border,
+                                                        backgroundColor: cloudProvider === 'dropbox' ? tc.filterBg : 'transparent',
+                                                    },
+                                                ]}
+                                                onPress={() => {
+                                                    setCloudProvider('dropbox');
+                                                    AsyncStorage.setItem(CLOUD_PROVIDER_KEY, 'dropbox').catch(logSettingsError);
+                                                    resetSyncStatusForBackendSwitch();
+                                                }}
+                                            >
+                                                <Text style={[styles.backendOptionText, { color: cloudProvider === 'dropbox' ? tc.tint : tc.secondaryText }]}>
+                                                    Dropbox
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
                                     </View>
                                 </View>
                             </View>
 
-                            {cloudProvider === 'selfhosted' ? (
+                            {cloudProvider === 'selfhosted' || isFossBuild ? (
                                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                                     <View style={styles.inputGroup}>
                                         <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.cloudUrl')}</Text>

@@ -42,6 +42,11 @@ const INVALID_CONFIG_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const CLOUD_PROVIDER_SELF_HOSTED = 'selfhosted';
 const CLOUD_PROVIDER_DROPBOX = 'dropbox';
 type CloudProvider = typeof CLOUD_PROVIDER_SELF_HOSTED | typeof CLOUD_PROVIDER_DROPBOX;
+const isFossBuild = (() => {
+  const extra = Constants.expoConfig?.extra as { isFossBuild?: unknown } | undefined;
+  return extra?.isFossBuild === true || extra?.isFossBuild === 'true';
+})();
+const DROPBOX_SYNC_ENABLED = !isFossBuild;
 
 const decodeUriSafe = (value: string): string => {
   try {
@@ -68,7 +73,9 @@ const sanitizeConfigValue = (value: unknown): string | null => {
 };
 
 const normalizeCloudProvider = (value: string | null): CloudProvider => (
-  value === CLOUD_PROVIDER_DROPBOX ? CLOUD_PROVIDER_DROPBOX : CLOUD_PROVIDER_SELF_HOSTED
+  DROPBOX_SYNC_ENABLED && value === CLOUD_PROVIDER_DROPBOX
+    ? CLOUD_PROVIDER_DROPBOX
+    : CLOUD_PROVIDER_SELF_HOSTED
 );
 
 const getDropboxAppKey = (): string => {
@@ -310,7 +317,11 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         webdavConfig = { url: syncUrl, username, password };
       }
       if (backend === 'cloud') {
-        cloudProvider = normalizeCloudProvider((await getCachedConfigValue(CLOUD_PROVIDER_KEY))?.trim() ?? null);
+        const storedCloudProvider = (await getCachedConfigValue(CLOUD_PROVIDER_KEY))?.trim() ?? null;
+        cloudProvider = normalizeCloudProvider(storedCloudProvider);
+        if (!DROPBOX_SYNC_ENABLED && storedCloudProvider === CLOUD_PROVIDER_DROPBOX) {
+          logSyncInfo('Dropbox cloud provider disabled in FOSS build; using self-hosted backend');
+        }
         if (cloudProvider === CLOUD_PROVIDER_DROPBOX) {
           dropboxClientId = getDropboxAppKey();
           if (!dropboxClientId) {

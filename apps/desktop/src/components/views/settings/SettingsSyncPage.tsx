@@ -105,6 +105,7 @@ type SettingsSyncPageProps = {
     cloudToken: string;
     cloudProvider: CloudProvider;
     dropboxAppKey: string;
+    dropboxConfigured: boolean;
     dropboxConnected: boolean;
     dropboxBusy: boolean;
     dropboxRedirectUri: string;
@@ -112,9 +113,7 @@ type SettingsSyncPageProps = {
     onCloudUrlChange: (value: string) => void;
     onCloudTokenChange: (value: string) => void;
     onCloudProviderChange: (provider: CloudProvider) => void;
-    onDropboxAppKeyChange: (value: string) => void;
     onSaveCloud: () => Promise<void> | void;
-    onSaveDropboxAppKey: () => Promise<void> | void;
     onConnectDropbox: () => Promise<void> | void;
     onDisconnectDropbox: () => Promise<void> | void;
     onTestDropboxConnection: () => Promise<void> | void;
@@ -186,6 +185,7 @@ export function SettingsSyncPage({
     cloudToken,
     cloudProvider,
     dropboxAppKey,
+    dropboxConfigured,
     dropboxConnected,
     dropboxBusy,
     dropboxRedirectUri,
@@ -193,9 +193,7 @@ export function SettingsSyncPage({
     onCloudUrlChange,
     onCloudTokenChange,
     onCloudProviderChange,
-    onDropboxAppKeyChange,
     onSaveCloud,
-    onSaveDropboxAppKey,
     onConnectDropbox,
     onDisconnectDropbox,
     onTestDropboxConnection,
@@ -229,7 +227,7 @@ export function SettingsSyncPage({
                 : syncBackend === 'cloud'
                     ? (cloudProvider === 'selfhosted'
                         ? !!cloudUrl.trim() && !cloudUrlError
-                        : !!dropboxAppKey.trim() && dropboxConnected)
+                        : dropboxConfigured && !!dropboxAppKey.trim() && dropboxConnected)
                     : false;
     const maxClockSkewMs = Math.max(lastSyncStats?.tasks.maxClockSkewMs ?? 0, lastSyncStats?.projects.maxClockSkewMs ?? 0);
     const timestampAdjustments = (lastSyncStats?.tasks.timestampAdjustments ?? 0) + (lastSyncStats?.projects.timestampAdjustments ?? 0);
@@ -536,26 +534,15 @@ export function SettingsSyncPage({
                                 <div className="space-y-3">
                                     <div className="flex flex-col gap-2">
                                         <label className="text-sm font-medium">{t.dropboxAppKey}</label>
-                                        <div className="flex gap-2">
-                                            <input
-                                                type="text"
-                                                value={dropboxAppKey}
-                                                onChange={(e) => onDropboxAppKeyChange(e.target.value)}
-                                                placeholder="7ob82zg0lx0arkp"
-                                                className="flex-1 bg-muted p-2 rounded text-sm font-mono border border-border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                            <button
-                                                onClick={onSaveDropboxAppKey}
-                                                disabled={dropboxBusy}
-                                                className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 whitespace-nowrap disabled:bg-gray-400"
-                                            >
-                                                {t.savePath}
-                                            </button>
-                                        </div>
                                         <p className="text-xs text-muted-foreground">{t.dropboxAppKeyHint}</p>
                                         <p className="text-xs text-muted-foreground">
                                             {t.dropboxRedirectUri}: <span className="font-mono break-all">{dropboxRedirectUri}</span>
                                         </p>
+                                        {!dropboxConfigured && (
+                                            <p className="text-xs text-destructive">
+                                                Dropbox app key is not configured in this build.
+                                            </p>
+                                        )}
                                         <p className="text-xs text-muted-foreground">
                                             {t.dropboxStatus}: {dropboxConnected ? t.dropboxConnected : t.dropboxNotConnected}
                                         </p>
@@ -564,14 +551,14 @@ export function SettingsSyncPage({
                                     <div className="flex flex-wrap justify-end gap-2">
                                         <button
                                             onClick={dropboxConnected ? onDisconnectDropbox : onConnectDropbox}
-                                            disabled={dropboxBusy || !dropboxAppKey.trim()}
+                                            disabled={dropboxBusy || !dropboxConfigured}
                                             className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 whitespace-nowrap disabled:bg-gray-400"
                                         >
                                             {dropboxConnected ? t.dropboxDisconnect : t.dropboxConnect}
                                         </button>
                                         <button
                                             onClick={onTestDropboxConnection}
-                                            disabled={dropboxBusy || !dropboxAppKey.trim()}
+                                            disabled={dropboxBusy || !dropboxConfigured}
                                             className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/90 whitespace-nowrap disabled:opacity-50"
                                         >
                                             {dropboxBusy ? t.syncing : t.dropboxTest}
