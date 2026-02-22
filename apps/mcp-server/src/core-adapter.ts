@@ -104,6 +104,13 @@ const runSerialized = async <T>(fn: () => Promise<T>): Promise<T> => {
   return result;
 };
 
+const getErrorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+const isDuplicateColumnError = (error: unknown): boolean => {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('duplicate column name');
+};
+
 const ensureCoreReady = async (options: DbOptions) => {
   const resolvedPath = resolveMindwtrDbPath(options.dbPath);
   if (coreReady && coreDbPath === resolvedPath && coreReadonly === Boolean(options.readonly)) {
@@ -122,25 +129,25 @@ const ensureCoreReady = async (options: DbOptions) => {
   coreReady = (async () => {
     const core = await loadCoreModules();
     const { client } = await createSqliteClient(coreDbPath!, coreReadonly);
+    const ensureOrderNumColumn = async (tableName: 'tasks' | 'projects') => {
+      let columns: Array<{ name?: string }> = [];
+      try {
+        columns = await client.all<{ name?: string }>(`PRAGMA table_info(${tableName})`);
+      } catch (error) {
+        throw new Error(`Failed to inspect ${tableName} schema during MCP preflight: ${getErrorMessage(error)}`);
+      }
+      const hasOrderNum = columns.some((col) => col.name === 'orderNum');
+      if (hasOrderNum || coreReadonly) return;
+      try {
+        await client.run(`ALTER TABLE ${tableName} ADD COLUMN orderNum INTEGER`);
+      } catch (error) {
+        if (isDuplicateColumnError(error)) return;
+        throw new Error(`Failed to add ${tableName}.orderNum during MCP preflight: ${getErrorMessage(error)}`);
+      }
+    };
     // Preflight for older DBs missing orderNum column.
-    try {
-      const taskColumns = await client.all<{ name?: string }>('PRAGMA table_info(tasks)');
-      const hasTasksOrderNum = taskColumns.some((col) => col.name === 'orderNum');
-      if (!hasTasksOrderNum) {
-        await client.run('ALTER TABLE tasks ADD COLUMN orderNum INTEGER');
-      }
-    } catch {
-      // ignore preflight errors; sqlite adapter will attempt migrations
-    }
-    try {
-      const projectColumns = await client.all<{ name?: string }>('PRAGMA table_info(projects)');
-      const hasProjectsOrderNum = projectColumns.some((col) => col.name === 'orderNum');
-      if (!hasProjectsOrderNum) {
-        await client.run('ALTER TABLE projects ADD COLUMN orderNum INTEGER');
-      }
-    } catch {
-      // ignore preflight errors
-    }
+    await ensureOrderNumColumn('tasks');
+    await ensureOrderNumColumn('projects');
     const sqliteAdapter = new core.SqliteAdapter(client);
     await sqliteAdapter.ensureSchema();
     core.setStorageAdapter(sqliteAdapter);
