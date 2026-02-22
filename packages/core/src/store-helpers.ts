@@ -132,6 +132,7 @@ export const computeDerivedState = (tasks: Task[], projects: Project[]): Derived
     const contextsSet = new Set<string>(PRESET_CONTEXTS);
     const tagsSet = new Set<string>(PRESET_TAGS);
     const sequentialProjectIds = new Set<string>();
+    let focusedCount = 0;
 
     projects.forEach((project) => {
         projectMap.set(project.id, project);
@@ -146,6 +147,9 @@ export const computeDerivedState = (tasks: Task[], projects: Project[]): Derived
         const list = activeTasksByStatus.get(task.status) ?? [];
         list.push(task);
         activeTasksByStatus.set(task.status, list);
+        if (task.isFocusedToday && task.status !== 'done' && task.status !== 'reference') {
+            focusedCount += 1;
+        }
         task.contexts?.forEach((ctx) => contextsSet.add(ctx));
         task.tags?.forEach((tag) => tagsSet.add(tag));
     });
@@ -157,6 +161,7 @@ export const computeDerivedState = (tasks: Task[], projects: Project[]): Derived
         allContexts: Array.from(contextsSet).sort(),
         allTags: Array.from(tagsSet).sort(),
         sequentialProjectIds,
+        focusedCount,
     };
 };
 

@@ -56,13 +56,12 @@ export function SwipeableTaskItem({
     const swipeableRef = useRef<Swipeable>(null);
     const ignorePressUntil = useRef<number>(0);
     const { t, language } = useLanguage();
-    const { updateTask, projects, areas, settings, tasks } = useTaskStore();
+    const updateTask = useTaskStore((state) => state.updateTask);
+    const projects = useTaskStore((state) => state.projects);
+    const areas = useTaskStore((state) => state.areas);
+    const settings = useTaskStore((state) => state.settings);
+    const focusedCount = useTaskStore((state) => state.getDerivedState().focusedCount);
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
-
-    const focusedCount = useMemo(
-        () => tasks.filter((taskItem) => taskItem.isFocusedToday && !taskItem.deletedAt && taskItem.status !== 'done' && taskItem.status !== 'reference').length,
-        [tasks]
-    );
 
     const toggleFocus = () => {
         if (selectionMode) return;

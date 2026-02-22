@@ -120,6 +120,7 @@ export type DerivedState = {
     allContexts: string[];
     allTags: string[];
     sequentialProjectIds: Set<string>;
+    focusedCount: number;
 };
 
 export type DerivedCache = {
