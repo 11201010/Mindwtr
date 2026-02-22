@@ -953,11 +953,17 @@ describe('Sync Logic', () => {
     describe('mergeAppDataWithStats', () => {
         it('should report conflicts and resolution counts', () => {
             const local = mockAppData([
-                createMockTask('1', '2023-01-02'),
+                {
+                    ...createMockTask('1', '2023-01-02'),
+                    title: 'Local title',
+                },
                 createMockTask('2', '2023-01-01'),
             ]);
             const incoming = mockAppData([
-                createMockTask('1', '2023-01-01'), // older -> local wins conflict
+                {
+                    ...createMockTask('1', '2023-01-01'), // older -> local wins conflict
+                    title: 'Incoming title',
+                },
                 createMockTask('3', '2023-01-01'), // incoming only
             ]);
 
@@ -969,12 +975,29 @@ describe('Sync Logic', () => {
             expect(result.stats.tasks.conflicts).toBe(1);
             expect(result.stats.tasks.resolvedUsingLocal).toBeGreaterThan(0);
         });
+
+        it('does not count conflict when only timestamp differs for legacy items', () => {
+            const local = mockAppData([createMockTask('1', '2026-02-22T22:30:40.000Z')]);
+            const incoming = mockAppData([createMockTask('1', '2026-02-22T22:30:11.000Z')]);
+
+            const result = mergeAppDataWithStats(local, incoming);
+
+            expect(result.stats.tasks.conflicts).toBe(0);
+            expect(result.stats.tasks.maxClockSkewMs).toBe(29000);
+            expect(result.data.tasks[0].updatedAt).toBe('2026-02-22T22:30:40.000Z');
+        });
     });
 
     describe('performSyncCycle', () => {
         it('returns conflict status when merge finds conflicts', async () => {
-            const local = mockAppData([createMockTask('1', '2023-01-02')]);
-            const incoming = mockAppData([createMockTask('1', '2023-01-01')]);
+            const local = mockAppData([{
+                ...createMockTask('1', '2023-01-02'),
+                title: 'Local title',
+            }]);
+            const incoming = mockAppData([{
+                ...createMockTask('1', '2023-01-01'),
+                title: 'Incoming title',
+            }]);
 
             const result = await performSyncCycle({
                 readLocal: async () => local,

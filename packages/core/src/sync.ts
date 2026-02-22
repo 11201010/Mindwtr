@@ -821,12 +821,14 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const incomingDeleted = !!normalizedIncomingItem.deletedAt;
         const revDiff = localRev - incomingRev;
         const revByDiff = localRevBy !== incomingRevBy;
-        const shouldCheckContentDiff = hasRevision && revDiff === 0 && !revByDiff && localDeleted === incomingDeleted;
+        const shouldCheckContentDiff = hasRevision
+            ? revDiff === 0 && !revByDiff && localDeleted === incomingDeleted
+            : localDeleted === incomingDeleted;
         const contentDiff = shouldCheckContentDiff ? hasContentDifference(normalizedLocalItem, normalizedIncomingItem) : false;
 
         const differs = hasRevision
             ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted || contentDiff
-            : safeLocalTime !== safeIncomingTime || localDeleted !== incomingDeleted;
+            : localDeleted !== incomingDeleted || contentDiff;
 
         if (differs) {
             stats.conflicts += 1;
