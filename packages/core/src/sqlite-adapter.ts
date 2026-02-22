@@ -131,11 +131,10 @@ export class SqliteAdapter {
                 );
                 if (page.length === 0) break;
                 page.forEach((row) => {
-                    const { _rowid, ...rest } = row;
-                    if (typeof _rowid === 'number') {
-                        lastRowId = _rowid;
+                    if (typeof row._rowid === 'number') {
+                        lastRowId = row._rowid;
                     }
-                    rows.push(rest);
+                    rows.push(row);
                 });
                 if (page.length < READ_PAGE_SIZE) break;
             }
@@ -149,8 +148,8 @@ export class SqliteAdapter {
         }
         let offset = 0;
         while (true) {
-            const page = await this.client.all<Record<string, unknown>>(
-                `SELECT * FROM ${table} ORDER BY rowid LIMIT ? OFFSET ?`,
+            const page = await this.client.all<Record<string, unknown> & { _rowid: number }>(
+                `SELECT rowid as _rowid, * FROM ${table} ORDER BY rowid LIMIT ? OFFSET ?`,
                 [READ_PAGE_SIZE, offset]
             );
             rows.push(...page);
@@ -545,12 +544,14 @@ export class SqliteAdapter {
     }
 
     private mapProjectRow(row: Record<string, unknown>): Project {
+        const orderNumRaw = row.orderNum;
+        const fallbackOrder = typeof row._rowid === 'number' ? row._rowid : 0;
         return {
             id: String(row.id),
             title: String(row.title ?? ''),
             status: normalizeProjectStatus(row.status),
             color: String(row.color ?? '#6B7280'),
-            order: row.orderNum === null || row.orderNum === undefined ? 0 : Number(row.orderNum),
+            order: orderNumRaw === null || orderNumRaw === undefined ? fallbackOrder : Number(orderNumRaw),
             tagIds: toStringArray(fromJson<unknown>(row.tagIds, [])),
             isSequential: fromBool(row.isSequential),
             isFocused: fromBool(row.isFocused),
@@ -568,12 +569,14 @@ export class SqliteAdapter {
     }
 
     private mapSectionRow(row: Record<string, unknown>): Section {
+        const orderNumRaw = row.orderNum;
+        const fallbackOrder = typeof row._rowid === 'number' ? row._rowid : 0;
         return {
             id: String(row.id),
             projectId: String(row.projectId ?? ''),
             title: String(row.title ?? ''),
             description: row.description as string | undefined,
-            order: row.orderNum === null || row.orderNum === undefined ? 0 : Number(row.orderNum),
+            order: orderNumRaw === null || orderNumRaw === undefined ? fallbackOrder : Number(orderNumRaw),
             isCollapsed: fromBool(row.isCollapsed),
             rev: row.rev === null || row.rev === undefined ? undefined : Number(row.rev),
             revBy: row.revBy as string | undefined,

@@ -226,6 +226,67 @@ describeSqlite('SqliteAdapter', () => {
         expect(area.revBy).toBe('device-desktop');
     });
 
+    it('derives stable fallback order when project/section orderNum is null', async () => {
+        const now = new Date().toISOString();
+        await adapter.saveData({
+            tasks: [],
+            projects: [
+                {
+                    id: 'proj-1',
+                    title: 'One',
+                    status: 'active',
+                    color: '#111111',
+                    order: 0,
+                    tagIds: [],
+                    createdAt: now,
+                    updatedAt: now,
+                },
+                {
+                    id: 'proj-2',
+                    title: 'Two',
+                    status: 'active',
+                    color: '#222222',
+                    order: 0,
+                    tagIds: [],
+                    createdAt: now,
+                    updatedAt: now,
+                },
+            ],
+            sections: [
+                {
+                    id: 'sec-1',
+                    projectId: 'proj-1',
+                    title: 'A',
+                    order: 0,
+                    createdAt: now,
+                    updatedAt: now,
+                },
+                {
+                    id: 'sec-2',
+                    projectId: 'proj-1',
+                    title: 'B',
+                    order: 0,
+                    createdAt: now,
+                    updatedAt: now,
+                },
+            ],
+            areas: [],
+            settings: {},
+        });
+
+        runSql(db, 'UPDATE projects SET orderNum = NULL');
+        runSql(db, 'UPDATE sections SET orderNum = NULL');
+
+        const loaded = await adapter.getData();
+        const projectOrders = loaded.projects.map((project) => project.order);
+        const sectionOrders = loaded.sections.map((section) => section.order);
+
+        expect(new Set(projectOrders).size).toBe(projectOrders.length);
+        expect(projectOrders.every((order) => order > 0)).toBe(true);
+        expect(new Set(sectionOrders).size).toBe(sectionOrders.length);
+        expect(sectionOrders.every((order) => order > 0)).toBe(true);
+    });
+
     it('preserves attachments with empty URIs when loading tasks', async () => {
         const now = new Date().toISOString();
         const data: AppData = {

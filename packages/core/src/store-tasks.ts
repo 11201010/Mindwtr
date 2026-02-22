@@ -188,11 +188,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 now
             );
 
-            const updatedAllTasks = state._allTasks.map((task) =>
+            const updatedAllTasksBase = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
             );
-
-            if (nextRecurringTask) updatedAllTasks.push(nextRecurringTask);
+            const updatedAllTasks = nextRecurringTask
+                ? [...updatedAllTasksBase, nextRecurringTask]
+                : updatedAllTasksBase;
 
             let updatedVisibleTasks = updateVisibleTasks(state.tasks, oldTask, updatedTask);
             if (nextRecurringTask) {
@@ -506,13 +507,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         const updatesById = new Map(updatesList.map((u) => [u.id, u.updates]));
-        const nextRecurringTasks: Task[] = [];
         let snapshot: AppData | null = null;
 
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
             let newVisibleTasks = state.tasks;
-            const newAllTasks = state._allTasks.map((task) => {
+            let nextRecurringTasks: Task[] = [];
+            const newAllTasksBase = state._allTasks.map((task) => {
                 const updates = updatesById.get(task.id);
                 if (!updates) return task;
                 const { updatedTask, nextRecurringTask } = applyTaskUpdates(
@@ -524,13 +525,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                     },
                     now
                 );
-                if (nextRecurringTask) nextRecurringTasks.push(nextRecurringTask);
+                if (nextRecurringTask) nextRecurringTasks = [...nextRecurringTasks, nextRecurringTask];
                 newVisibleTasks = updateVisibleTasks(newVisibleTasks, task, updatedTask);
                 return updatedTask;
             });
 
+            const newAllTasks = nextRecurringTasks.length > 0
+                ? [...newAllTasksBase, ...nextRecurringTasks]
+                : newAllTasksBase;
             if (nextRecurringTasks.length > 0) {
-                newAllTasks.push(...nextRecurringTasks);
                 nextRecurringTasks.forEach((task) => {
                     newVisibleTasks = updateVisibleTasks(newVisibleTasks, null, task);
                 });
