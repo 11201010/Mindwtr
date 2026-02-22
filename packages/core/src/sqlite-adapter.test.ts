@@ -365,6 +365,8 @@ describeSqlite('SqliteAdapter', () => {
         const sectionColumnNames = sectionColumns.map((col) => col.name);
         expect(sectionColumnNames).toContain('rev');
         expect(sectionColumnNames).toContain('revBy');
+        const sectionIndexes = allSql<{ name: string }>(db, 'PRAGMA index_list(sections)');
+        expect(sectionIndexes.map((row) => row.name)).toContain('idx_sections_project_deletedAt');
 
         const areaColumns = allSql<{ name: string }>(db, 'PRAGMA table_info(areas)');
         const areaColumnNames = areaColumns.map((col) => col.name);

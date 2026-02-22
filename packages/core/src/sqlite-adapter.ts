@@ -314,6 +314,9 @@ export class SqliteAdapter {
                 await this.client.run(definition.sql);
             }
         }
+        await this.client.run(
+            'CREATE INDEX IF NOT EXISTS idx_sections_project_deletedAt ON sections(projectId, deletedAt)'
+        );
     }
 
     private async ensureProjectColumns() {

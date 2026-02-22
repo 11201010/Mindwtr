@@ -245,6 +245,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter(t => !t.deletedAt && t.status !== 'archived');
             const newVisibleSections = newAllSections.filter((section) => !section.deletedAt);
+            clearDerivedCache();
             snapshot = buildSaveSnapshot(state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,

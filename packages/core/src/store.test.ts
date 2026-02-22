@@ -735,8 +735,11 @@ describe('TaskStore', () => {
 
             await deleteProject(project.id);
             const deletedTask = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+            const deletedSection = useTaskStore.getState()._allSections.find((item) => item.id === section.id)!;
             expect(deletedTask.deletedAt).toBeTruthy();
             expect(deletedTask.sectionId).toBeUndefined();
+            expect(deletedSection.deletedAt).toBeTruthy();
+            expect(useTaskStore.getState().sections.find((item) => item.id === section.id)).toBeUndefined();
         });
     });
 });
