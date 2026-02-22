@@ -8,7 +8,8 @@ import type { AppData, Area, Project, TaskEditorFieldId } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
 import {
     buildSaveSnapshot,
-    computeDerivedState,
+    computeProjectDerivedState,
+    computeTaskDerivedState,
     ensureDeviceId,
     normalizeAiSettingsForSync,
     normalizeRevision,
@@ -591,11 +592,34 @@ export const createSettingsActions = ({
 
     getDerivedState: () => {
         const state = get();
-        if (derivedCache && derivedCache.lastDataChangeAt === state.lastDataChangeAt) {
+        if (derivedCache && derivedCache.tasksRef === state.tasks && derivedCache.projectsRef === state.projects) {
             return derivedCache.value;
         }
-        const derived = computeDerivedState(state.tasks, state.projects);
+        const previous = derivedCache?.value;
+        const taskDerived =
+            derivedCache && derivedCache.tasksRef === state.tasks && previous
+                ? {
+                    tasksById: previous.tasksById,
+                    activeTasksByStatus: previous.activeTasksByStatus,
+                    allContexts: previous.allContexts,
+                    allTags: previous.allTags,
+                    focusedCount: previous.focusedCount,
+                }
+                : computeTaskDerivedState(state.tasks);
+        const projectDerived =
+            derivedCache && derivedCache.projectsRef === state.projects && previous
+                ? {
+                    projectMap: previous.projectMap,
+                    sequentialProjectIds: previous.sequentialProjectIds,
+                }
+                : computeProjectDerivedState(state.projects);
+        const derived = {
+            ...projectDerived,
+            ...taskDerived,
+        };
         derivedCache = {
+            tasksRef: state.tasks,
+            projectsRef: state.projects,
             lastDataChangeAt: state.lastDataChangeAt,
             value: derived,
         };

@@ -126,13 +126,18 @@ export const buildSaveSnapshot = (state: SaveBaseState, overrides?: Partial<AppD
 });
 
 export const computeDerivedState = (tasks: Task[], projects: Project[]): DerivedState => {
+    const projectDerived = computeProjectDerivedState(projects);
+    const taskDerived = computeTaskDerivedState(tasks);
+
+    return {
+        ...projectDerived,
+        ...taskDerived,
+    };
+};
+
+export const computeProjectDerivedState = (projects: Project[]): Pick<DerivedState, 'projectMap' | 'sequentialProjectIds'> => {
     const projectMap = new Map<string, Project>();
-    const tasksById = new Map<string, Task>();
-    const activeTasksByStatus = new Map<TaskStatus, Task[]>();
-    const contextsSet = new Set<string>(PRESET_CONTEXTS);
-    const tagsSet = new Set<string>(PRESET_TAGS);
     const sequentialProjectIds = new Set<string>();
-    let focusedCount = 0;
 
     projects.forEach((project) => {
         projectMap.set(project.id, project);
@@ -140,6 +145,21 @@ export const computeDerivedState = (tasks: Task[], projects: Project[]): Derived
             sequentialProjectIds.add(project.id);
         }
     });
+
+    return {
+        projectMap,
+        sequentialProjectIds,
+    };
+};
+
+export const computeTaskDerivedState = (
+    tasks: Task[]
+): Pick<DerivedState, 'tasksById' | 'activeTasksByStatus' | 'allContexts' | 'allTags' | 'focusedCount'> => {
+    const tasksById = new Map<string, Task>();
+    const activeTasksByStatus = new Map<TaskStatus, Task[]>();
+    const contextsSet = new Set<string>(PRESET_CONTEXTS);
+    const tagsSet = new Set<string>(PRESET_TAGS);
+    let focusedCount = 0;
 
     tasks.forEach((task) => {
         tasksById.set(task.id, task);
@@ -155,12 +175,10 @@ export const computeDerivedState = (tasks: Task[], projects: Project[]): Derived
     });
 
     return {
-        projectMap,
         tasksById,
         activeTasksByStatus,
         allContexts: Array.from(contextsSet).sort(),
         allTags: Array.from(tagsSet).sort(),
-        sequentialProjectIds,
         focusedCount,
     };
 };
