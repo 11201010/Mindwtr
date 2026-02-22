@@ -63,23 +63,46 @@ jobs:
       - name: Install Fastlane
         run: gem install fastlane --no-document
 
-      - name: Select Xcode
+      - name: Select Xcode (iOS 26 SDK required)
         run: |
           set -euo pipefail
-          XCODE_16_PATH="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [ -n "${XCODE_16_PATH:-}" ]; then
-            sudo xcode-select -s "$XCODE_16_PATH"
+          XCODE_26_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "${XCODE_26_PATH:-}" ]; then
+            sudo xcode-select -s "$XCODE_26_PATH"
           else
-            echo "::warning::No Xcode_16*.app found; using runner default Xcode."
+            XCODE_FALLBACK_PATH="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+            if [ -n "${XCODE_FALLBACK_PATH:-}" ]; then
+              echo "::warning::No Xcode_26*.app found; falling back to latest available: ${XCODE_FALLBACK_PATH}"
+              sudo xcode-select -s "$XCODE_FALLBACK_PATH"
+            else
+              echo "::warning::No explicit Xcode*.app found; using runner default Xcode."
+            fi
           fi
+
+          echo "Selected DEVELOPER_DIR: $(xcode-select -p)"
           xcodebuild -version
-          IOS_SDK_LINE="$(xcodebuild -showsdks | awk '/-sdk iphoneos/{line=$0} END{print line}')"
-          if [ -z "${IOS_SDK_LINE:-}" ]; then
+
+          IOS_SDK_VERSION="$(xcodebuild -showsdks | awk '/-sdk iphoneos/{gsub(/iphoneos/, "", $NF); ver=$NF} END{print ver}')"
+          if [ -z "${IOS_SDK_VERSION:-}" ]; then
             echo "::error::No iPhoneOS SDK found on runner. Current SDKs:"
             xcodebuild -showsdks
             exit 1
           fi
-          echo "Using SDK line: ${IOS_SDK_LINE}"
+
+          IOS_SDK_MAJOR="${IOS_SDK_VERSION%%.*}"
+          if ! [[ "${IOS_SDK_MAJOR}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unable to parse iPhoneOS SDK version: ${IOS_SDK_VERSION}"
+            xcodebuild -showsdks
+            exit 1
+          fi
+
+          if [ "${IOS_SDK_MAJOR}" -lt 26 ]; then
+            echo "::error::Detected iPhoneOS SDK ${IOS_SDK_VERSION}. App Store Connect requires iOS 26 SDK or later (ITMS-90725)."
+            echo "::error::Install/select Xcode 26+ on the runner before uploading."
+            exit 1
+          fi
+
+          echo "Using iPhoneOS SDK ${IOS_SDK_VERSION}"
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
