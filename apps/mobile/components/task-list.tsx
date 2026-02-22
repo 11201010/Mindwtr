@@ -86,6 +86,7 @@ function TaskListComponent({
   const [copilotApplied, setCopilotApplied] = useState(false);
   const [copilotContext, setCopilotContext] = useState<string | undefined>(undefined);
   const [copilotTags, setCopilotTags] = useState<string[]>([]);
+  const [copilotThinking, setCopilotThinking] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,6 +102,7 @@ function TaskListComponent({
   const [typeaheadIndex, setTypeaheadIndex] = useState(0);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copilotAbortRef = useRef<AbortController | null>(null);
+  const copilotRequestIdRef = useRef(0);
 
   // Dynamic colors based on theme
   const themeColors = useThemeColors();
@@ -392,15 +394,20 @@ function TaskListComponent({
   useEffect(() => {
     if (!enableCopilot || !aiEnabled || (keyRequired && !aiKey)) {
       setCopilotSuggestion(null);
+      setCopilotThinking(false);
       return;
     }
     const title = newTaskTitle.trim();
     if (title.length < 4) {
       setCopilotSuggestion(null);
+      setCopilotThinking(false);
       return;
     }
     let cancelled = false;
     const handle = setTimeout(async () => {
+      const requestId = copilotRequestIdRef.current + 1;
+      copilotRequestIdRef.current = requestId;
+      setCopilotThinking(true);
       try {
         if (copilotAbortRef.current) copilotAbortRef.current.abort();
         const abortController = typeof AbortController === 'function' ? new AbortController() : null;
@@ -419,6 +426,10 @@ function TaskListComponent({
       } catch {
         if (!cancelled) {
           setCopilotSuggestion(null);
+        }
+      } finally {
+        if (!cancelled && copilotRequestIdRef.current === requestId) {
+          setCopilotThinking(false);
         }
       }
     }, 800);
@@ -855,6 +866,14 @@ function TaskListComponent({
               </Text>
             </TouchableOpacity>
           )}
+          {enableCopilot && aiEnabled && copilotThinking && !copilotSuggestion && !copilotApplied && (
+            <View style={[styles.copilotPill, styles.copilotLoadingRow, { borderColor: themeColors.border, backgroundColor: themeColors.inputBg }]}>
+              <ActivityIndicator size="small" color={themeColors.tint} />
+              <Text style={[styles.copilotHint, { color: themeColors.secondaryText, marginTop: 0 }]}>
+                {t('common.loading')}
+              </Text>
+            </View>
+          )}
           {enableCopilot && aiEnabled && copilotApplied && (
             <View style={[styles.copilotPill, { borderColor: themeColors.border, backgroundColor: themeColors.inputBg }]}>
               <Text style={[styles.copilotText, { color: themeColors.text }]}>
@@ -1206,6 +1225,11 @@ const styles = StyleSheet.create({
   copilotHint: {
     fontSize: 11,
     marginTop: 2,
+  },
+  copilotLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   addButton: {
     width: 44,
