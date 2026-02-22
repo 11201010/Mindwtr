@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 增强同步可靠性，改进时间戳、设置与附件状态的合并处理。\n• 提升桌面端响应速度，并改进附件可访问性与错误提示。\n• 强化 Cloud 与 MCP 接口的校验、分页与限流安全性。\n• 更新 TestFlight 外部分发流程，自动通知测试者。",
+        "ReleaseNotes": "• 在 Contexts 视图新增批量操作，可更高效地更新多条任务。\n• 优化桌面端启动体验，避免终端/翻译键闪现。\n• 其他稳定性与质量改进。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Improved sync reliability with stronger merge handling for timestamps, settings, and attachment state persistence.\n• Improved desktop responsiveness and attachment accessibility/error messaging.\n• Hardened cloud and MCP APIs with stricter validation, pagination, and safer rate limiting.\n• Updated TestFlight external distribution to notify testers automatically.",
+        "ReleaseNotes": "• Added bulk actions in Contexts view for faster multi-task updates.\n• Improved desktop startup polish to avoid terminal/translation key flash.\n• General stability and quality improvements.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Mejoramos la fiabilidad del sync con un manejo mas solido de merge para timestamps, ajustes y estado de adjuntos.\n• Mejoramos la respuesta en desktop y la accesibilidad/mensajes de error para adjuntos.\n• Endurecimos APIs de cloud y MCP con validacion mas estricta, paginacion y limites mas seguros.\n• Actualizamos la distribucion externa de TestFlight para notificar automaticamente a testers.",
+        "ReleaseNotes": "• Añadimos acciones en lote en la vista de Contextos para actualizar varias tareas mas rapido.\n• Mejoramos el inicio en desktop para evitar parpadeos de terminal/claves de traduccion.\n• Mejoras generales de estabilidad y calidad.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

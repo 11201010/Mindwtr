@@ -1,4 +1,3 @@
-- Improved sync reliability with stronger merge handling for timestamps, settings, and attachment state.
-- Fixed mobile sync edge cases, including iOS version/path checks and sync cadence timing.
-- Improved mobile capture UX with Copilot loading feedback and better quick-add behavior.
-- Hardened attachment handling to reduce pending-upload sync failures.
+- Fixed intermittent mobile startup failures by hardening startup initialization.
+- Improved keep-awake activation reliability during app launch.
+- General stability and quality improvements.

@@ -1,0 +1,15 @@
+<en-US>
+- Fixed intermittent startup errors by hardening mobile startup initialization paths.
+- Improved startup reliability for keep-awake activation and widget scheduling.
+- General stability and quality improvements.
+</en-US>
+<zh-CN>
+- 修复了启动阶段的间歇性错误，增强了移动端初始化路径稳定性。
+- 提升了 keep-awake 激活与小组件调度的启动可靠性。
+- 其他稳定性与质量改进。
+</zh-CN>
+<es-ES>
+- Corregimos errores intermitentes de inicio reforzando rutas de inicializacion en mobile.
+- Mejoramos la fiabilidad al iniciar keep-awake y la programacion de widgets.
+- Mejoras generales de estabilidad y calidad.
+</es-ES>

@@ -1,4 +1,3 @@
-- Mejoramos la fiabilidad del sync con un manejo mas solido de merge para timestamps, ajustes y estado de adjuntos.
-- Corregimos casos limite de sync en mobile, incluyendo checks de version/ruta en iOS y el timing de cadencia.
-- Mejoramos la captura en mobile con feedback de carga de Copilot y un flujo de alta rapida mas fluido.
-- Endurecimos el manejo de adjuntos para reducir fallos de sync por subidas pendientes.
+- Corregimos fallos intermitentes de inicio en mobile reforzando la inicializacion.
+- Mejoramos la fiabilidad al activar keep-awake durante el arranque.
+- Mejoras generales de estabilidad y calidad.
