@@ -803,20 +803,23 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const localItem = localMap.get(id);
         const incomingItem = incomingMap.get(id);
 
-        if (localItem && !incomingItem) {
+        if (!localItem && !incomingItem) {
+            continue;
+        }
+
+        if (!incomingItem) {
             stats.localOnly += 1;
             stats.resolvedUsingLocal += 1;
             merged.push(normalizeTimestamps(localItem as unknown as { updatedAt: string; createdAt?: string }) as T);
             continue;
         }
-        if (incomingItem && !localItem) {
+
+        if (!localItem) {
             stats.incomingOnly += 1;
             stats.resolvedUsingIncoming += 1;
             merged.push(normalizeTimestamps(incomingItem as unknown as { updatedAt: string; createdAt?: string }) as T);
             continue;
         }
-
-        if (!localItem || !incomingItem) continue;
 
         const normalizedLocalItem = normalizeTimestamps(localItem as unknown as { updatedAt: string; createdAt?: string }) as T;
         const normalizedIncomingItem = normalizeTimestamps(incomingItem as unknown as { updatedAt: string; createdAt?: string }) as T;
