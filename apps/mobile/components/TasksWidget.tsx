@@ -5,22 +5,30 @@ import type { TasksWidgetPayload } from '../lib/widget-data';
 
 export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
     const { headerTitle, subtitle, items, emptyMessage, captureLabel, palette } = payload;
-    const children: React.ReactElement[] = [
+    const focusUri = 'mindwtr:///focus';
+    const quickCaptureUri = 'mindwtr:///capture-quick?mode=text';
+    const contentChildren: React.ReactElement[] = [
         React.createElement(TextWidget, {
             key: 'header',
             text: headerTitle,
             style: { color: palette.text, fontSize: 14, fontWeight: '600' },
+            maxLines: 1,
+            truncate: 'END',
+            clickAction: 'OPEN_URI',
+            clickActionData: { uri: focusUri },
         }),
         React.createElement(TextWidget, {
             key: 'subtitle',
             text: subtitle,
             style: { color: palette.mutedText, fontSize: 11, marginTop: 4 },
+            clickAction: 'OPEN_URI',
+            clickActionData: { uri: focusUri },
         }),
     ];
 
     if (items.length > 0) {
         items.forEach((item, index) => {
-            children.push(
+            contentChildren.push(
                 React.createElement(TextWidget, {
                     key: `item-${item.id}`,
                     text: `• ${item.title}`,
@@ -37,11 +45,13 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                     },
                     maxLines: 1,
                     truncate: 'END',
+                    clickAction: 'OPEN_URI',
+                    clickActionData: { uri: focusUri },
                 })
             );
         });
     } else {
-        children.push(
+        contentChildren.push(
             React.createElement(TextWidget, {
                 key: 'empty',
                 text: emptyMessage,
@@ -56,28 +66,11 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                     paddingVertical: 4,
                     paddingHorizontal: 8,
                 },
+                clickAction: 'OPEN_URI',
+                clickActionData: { uri: focusUri },
             })
         );
     }
-
-    children.push(
-        React.createElement(TextWidget, {
-            key: 'capture',
-            text: captureLabel,
-            style: {
-                color: palette.onAccent,
-                fontSize: 12,
-                fontWeight: '600',
-                backgroundColor: palette.accent,
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                marginTop: 12,
-                borderRadius: 999,
-            },
-            clickAction: 'OPEN_URI',
-            clickActionData: { uri: 'mindwtr:///capture-quick?mode=text' },
-        })
-    );
 
     return React.createElement(
         FlexWidget,
@@ -87,10 +80,37 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                 height: 'match_parent',
                 padding: 12,
                 backgroundColor: palette.background,
+                justifyContent: 'space-between',
+            },
+        },
+        React.createElement(
+            FlexWidget,
+            {
+                key: 'content',
+                style: {
+                    width: 'match_parent',
+                    flexGrow: 1,
+                    flexShrink: 1,
+                },
+            },
+            ...contentChildren
+        ),
+        React.createElement(TextWidget, {
+            key: 'capture-bottom',
+            text: captureLabel,
+            style: {
+                color: palette.onAccent,
+                fontSize: 12,
+                fontWeight: '600',
+                backgroundColor: palette.accent,
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                marginTop: 10,
+                borderRadius: 999,
+                textAlign: 'center',
             },
             clickAction: 'OPEN_URI',
-            clickActionData: { uri: 'mindwtr:///focus' },
-        },
-        ...children
+            clickActionData: { uri: quickCaptureUri },
+        })
     );
 }

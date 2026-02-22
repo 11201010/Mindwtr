@@ -100,10 +100,7 @@ export function buildWidgetPayload(
     });
 
     const focusedTasks = activeTasks.filter((task) => task.isFocusedToday);
-    const showFocused = focusedTasks.length > 0;
-    const listSource = showFocused
-        ? focusedTasks
-        : activeTasks.filter((task) => task.status === 'next');
+    const listSource = focusedTasks;
 
     const items = listSource.slice(0, 3).map((task) => ({
         id: task.id,
@@ -114,9 +111,7 @@ export function buildWidgetPayload(
     const inboxCount = activeTasks.filter((task) => task.status === 'inbox').length;
 
     return {
-        headerTitle: showFocused
-            ? (tr['agenda.todaysFocus'] ?? 'Today')
-            : (tr['agenda.nextActions'] ?? 'Next actions'),
+        headerTitle: tr['agenda.todaysFocus'] ?? 'Today',
         subtitle: `${tr['nav.inbox'] ?? 'Inbox'}: ${inboxCount}`,
         inboxLabel: tr['nav.inbox'] ?? 'Inbox',
         inboxCount,
