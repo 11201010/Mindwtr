@@ -7,6 +7,7 @@ import {
     ensureDeviceId,
     getNextProjectOrder,
     getReferenceTaskFieldClears,
+    isTaskVisible,
     normalizeRevision,
     updateVisibleTasks,
 } from './store-helpers';
@@ -592,8 +593,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const includeArchived = options.includeArchived === true;
         const includeDeleted = options.includeDeleted === true;
         return tasks.filter((task) => {
-            if (!includeDeleted && task.deletedAt) return false;
-            if (!includeArchived && task.status === 'archived') return false;
+            if (!isTaskVisible(task, { includeArchived, includeDeleted })) return false;
             if (statusFilter && statusFilter !== 'all' && task.status !== statusFilter) return false;
             if (excludeStatuses.length > 0 && excludeStatuses.includes(task.status)) return false;
             if (options.projectId && task.projectId !== options.projectId) return false;

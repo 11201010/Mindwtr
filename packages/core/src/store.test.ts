@@ -311,6 +311,32 @@ describe('TaskStore', () => {
         expect(archived?.title).toBe('Lifecycle Task Updated');
     });
 
+    it('queryTasks defaults to visible tasks and can include archived/deleted when requested', async () => {
+        const { addTask, moveTask, deleteTask, queryTasks } = useTaskStore.getState();
+        addTask('Visible task');
+        addTask('Archived task');
+        addTask('Deleted task');
+        const allTasks = useTaskStore.getState()._allTasks;
+        const archivedId = allTasks.find((task) => task.title === 'Archived task')?.id;
+        const deletedId = allTasks.find((task) => task.title === 'Deleted task')?.id;
+
+        if (!archivedId || !deletedId) throw new Error('Failed to seed tasks for query test');
+
+        await moveTask(archivedId, 'archived');
+        await deleteTask(deletedId);
+
+        const visibleOnly = await queryTasks({});
+        expect(visibleOnly.map((task) => task.title)).toContain('Visible task');
+        expect(visibleOnly.map((task) => task.title)).not.toContain('Archived task');
+        expect(visibleOnly.map((task) => task.title)).not.toContain('Deleted task');
+
+        const withArchived = await queryTasks({ includeArchived: true });
+        expect(withArchived.map((task) => task.title)).toContain('Archived task');
+
+        const withDeleted = await queryTasks({ includeDeleted: true });
+        expect(withDeleted.map((task) => task.title)).toContain('Deleted task');
+    });
+
     it('restores deleted tasks without forcing status changes', async () => {
         const { addTask, deleteTask, restoreTask } = useTaskStore.getState();
         addTask('Keep Archived', { status: 'archived' });

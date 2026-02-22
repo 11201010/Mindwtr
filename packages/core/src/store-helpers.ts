@@ -88,7 +88,19 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
     };
 }
 
-const isTaskVisible = (task?: Task | null) => Boolean(task && !task.deletedAt && task.status !== 'archived');
+export type TaskVisibilityOptions = {
+    includeArchived?: boolean;
+    includeDeleted?: boolean;
+};
+
+export const isTaskVisible = (task?: Task | null, options?: TaskVisibilityOptions): boolean => {
+    if (!task) return false;
+    const includeArchived = options?.includeArchived === true;
+    const includeDeleted = options?.includeDeleted === true;
+    if (!includeDeleted && task.deletedAt) return false;
+    if (!includeArchived && task.status === 'archived') return false;
+    return true;
+};
 
 export const updateVisibleTasks = (visible: Task[], previous?: Task | null, next?: Task | null): Task[] => {
     const wasVisible = isTaskVisible(previous);
