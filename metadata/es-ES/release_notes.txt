@@ -1,4 +1,4 @@
-- Corregimos el banner de sync en mobile (“Conflicts resolved”) que aparecia de forma inesperada.
-- Mejoramos la fiabilidad de subida a App Store cuando no existe una version editable.
-- Estandarizamos la configuracion del endpoint de heartbeat en pipelines de release oficiales.
-- Mantuvimos el comportamiento de heartbeat totalmente silencioso para usuarios de mobile.
+- Mejoramos la fiabilidad del sync con un manejo mas solido de merge para timestamps, ajustes y estado de adjuntos.
+- Corregimos casos limite de sync en mobile, incluyendo checks de version/ruta en iOS y el timing de cadencia.
+- Mejoramos la captura en mobile con feedback de carga de Copilot y un flujo de alta rapida mas fluido.
+- Endurecimos el manejo de adjuntos para reducir fallos de sync por subidas pendientes.

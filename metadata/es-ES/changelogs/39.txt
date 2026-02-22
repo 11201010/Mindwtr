@@ -1,0 +1,4 @@
+- Mejoramos la fiabilidad del sync con un manejo mas solido de merge para timestamps, ajustes y adjuntos.
+- Añadimos accesos directos del launcher en Android y mejoramos el comportamiento de inicio/tema del widget.
+- Mejoramos la captura en mobile con feedback de carga de Copilot y mejor flujo de alta rapida.
+- Endurecimos las APIs de sync cloud/mobile con validacion, paginacion y limites mas seguros.

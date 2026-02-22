@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 修复 Winget 元数据，避免因依赖缺失导致安装失败。\n• 改进无可编辑版本时的 App Store 上传处理。\n• 统一官方非 FOSS 发布流水线中的心跳端点配置。\n• 保持移动端心跳行为对用户完全静默。",
+        "ReleaseNotes": "• 增强同步可靠性，改进时间戳、设置与附件状态的合并处理。\n• 提升桌面端响应速度，并改进附件可访问性与错误提示。\n• 强化 Cloud 与 MCP 接口的校验、分页与限流安全性。\n• 更新 TestFlight 外部分发流程，自动通知测试者。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Fixed Winget package metadata to avoid missing-dependency install failures.\n• Improved App Store upload handling when no editable version is available.\n• Standardized heartbeat endpoint configuration across official non-FOSS release pipelines.\n• Kept mobile heartbeat behavior fully silent for users.",
+        "ReleaseNotes": "• Improved sync reliability with stronger merge handling for timestamps, settings, and attachment state persistence.\n• Improved desktop responsiveness and attachment accessibility/error messaging.\n• Hardened cloud and MCP APIs with stricter validation, pagination, and safer rate limiting.\n• Updated TestFlight external distribution to notify testers automatically.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Corregimos metadatos de Winget para evitar fallos de instalacion por dependencias faltantes.\n• Mejoramos la subida a App Store cuando no hay una version editable disponible.\n• Estandarizamos la configuracion del endpoint de heartbeat en pipelines oficiales no FOSS.\n• Mantuvimos el comportamiento de heartbeat en mobile totalmente silencioso para usuarios.",
+        "ReleaseNotes": "• Mejoramos la fiabilidad del sync con un manejo mas solido de merge para timestamps, ajustes y estado de adjuntos.\n• Mejoramos la respuesta en desktop y la accesibilidad/mensajes de error para adjuntos.\n• Endurecimos APIs de cloud y MCP con validacion mas estricta, paginacion y limites mas seguros.\n• Actualizamos la distribucion externa de TestFlight para notificar automaticamente a testers.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

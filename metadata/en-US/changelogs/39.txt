@@ -1,0 +1,4 @@
+- Improved sync reliability with stronger merge handling for timestamps, settings, and attachments.
+- Added Android launcher shortcuts and improved widget launch/theme behavior.
+- Improved mobile capture UX with Copilot loading feedback and better quick-add flow.
+- Hardened cloud/mobile sync APIs with safer validation, pagination, and rate-limit behavior.

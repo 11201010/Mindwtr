@@ -1,4 +1,4 @@
-- Fixed stale mobile sync banner (“Conflicts resolved”) showing unexpectedly.
-- Improved App Store upload reliability when no editable App Store version exists.
-- Standardized official-build heartbeat endpoint wiring across release pipelines.
-- Kept heartbeat behavior fully silent for users on mobile.
+- Improved sync reliability with stronger merge handling for timestamps, settings, and attachment state.
+- Fixed mobile sync edge cases, including iOS version/path checks and sync cadence timing.
+- Improved mobile capture UX with Copilot loading feedback and better quick-add behavior.
+- Hardened attachment handling to reduce pending-upload sync failures.
