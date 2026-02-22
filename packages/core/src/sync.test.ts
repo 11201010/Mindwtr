@@ -662,8 +662,7 @@ describe('Sync Logic', () => {
         });
 
         it('clamps far-future timestamps during merge conflict evaluation', () => {
-            vi.useFakeTimers();
-            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+            const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:00:00.000Z').getTime());
             try {
                 const local = mockAppData([
                     createMockTask('1', '2099-01-01T00:00:00.000Z'),
@@ -675,7 +674,7 @@ describe('Sync Logic', () => {
                 const result = mergeAppDataWithStats(local, incoming);
                 expect(result.stats.tasks.maxClockSkewMs).toBeLessThanOrEqual(CLOCK_SKEW_THRESHOLD_MS);
             } finally {
-                vi.useRealTimers();
+                nowSpy.mockRestore();
             }
         });
 
