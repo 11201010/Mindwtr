@@ -737,10 +737,14 @@ const chooseDeterministicWinner = <T>(localItem: T, incomingItem: T): T => {
     return incomingSignature > localSignature ? incomingItem : localItem;
 };
 
-const parseMergeTimestamp = (value: unknown): number => {
+const parseMergeTimestamp = (value: unknown, maxAllowedMs?: number): number => {
     if (typeof value !== 'string') return -1;
     const parsed = new Date(value).getTime();
-    return Number.isFinite(parsed) ? parsed : -1;
+    if (!Number.isFinite(parsed)) return -1;
+    if (maxAllowedMs !== undefined && parsed > maxAllowedMs) {
+        return maxAllowedMs;
+    }
+    return parsed;
 };
 
 function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; deletedAt?: string; rev?: number; revBy?: string }>(
@@ -755,6 +759,8 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
     const stats = createEmptyEntityStats(local.length, incoming.length);
     const merged: T[] = [];
     let invalidDeletedAtWarnings = 0;
+    // Reject timestamps in the future so a clock-skewed device cannot permanently dominate merges.
+    const maxAllowedMergeTime = Date.now();
     const normalizeTimestamps = <Item extends { id?: string; updatedAt: string; createdAt?: string }>(item: Item): Item => {
         if (!('createdAt' in item) || !item.createdAt) return item;
         const createdTime = new Date(item.createdAt).getTime();
@@ -800,8 +806,8 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const normalizedLocalItem = normalizeTimestamps(localItem as unknown as { updatedAt: string; createdAt?: string }) as T;
         const normalizedIncomingItem = normalizeTimestamps(incomingItem as unknown as { updatedAt: string; createdAt?: string }) as T;
 
-        const safeLocalTime = parseMergeTimestamp(normalizedLocalItem.updatedAt);
-        const safeIncomingTime = parseMergeTimestamp(normalizedIncomingItem.updatedAt);
+        const safeLocalTime = parseMergeTimestamp(normalizedLocalItem.updatedAt, maxAllowedMergeTime);
+        const safeIncomingTime = parseMergeTimestamp(normalizedIncomingItem.updatedAt, maxAllowedMergeTime);
         const localRev = typeof normalizedLocalItem.rev === 'number' && Number.isFinite(normalizedLocalItem.rev)
             ? normalizedLocalItem.rev
             : 0;
@@ -834,7 +840,7 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         }
         const withinSkew = Math.abs(timeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
         const resolveOperationTime = (item: T): number => {
-            const updatedTime = parseMergeTimestamp(item.updatedAt);
+            const updatedTime = parseMergeTimestamp(item.updatedAt, maxAllowedMergeTime);
             if (!item.deletedAt) return updatedTime;
 
             const deletedTimeRaw = new Date(item.deletedAt).getTime();
@@ -850,7 +856,7 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
                 return updatedTime;
             }
 
-            return Math.max(updatedTime, deletedTimeRaw);
+            return deletedTimeRaw > maxAllowedMergeTime ? maxAllowedMergeTime : deletedTimeRaw;
         };
         let winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
         if (hasRevision) {
@@ -1005,8 +1011,12 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
 
             return {
                 ...winner,
-                cloudKey: winner.cloudKey || localAttachment.cloudKey || incomingAttachment.cloudKey,
-                fileHash: winner.fileHash || localAttachment.fileHash || incomingAttachment.fileHash,
+                cloudKey: winner.deletedAt
+                    ? winner.cloudKey
+                    : winner.cloudKey || localAttachment.cloudKey || incomingAttachment.cloudKey,
+                fileHash: winner.deletedAt
+                    ? winner.fileHash
+                    : winner.fileHash || localAttachment.fileHash || incomingAttachment.fileHash,
                 uri,
                 localStatus,
             };
@@ -1021,8 +1031,12 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
             const uriAvailable = hasAvailableUri(attachment);
             return {
                 ...attachment,
-                cloudKey: attachment.cloudKey || localFile?.cloudKey || incomingFile?.cloudKey,
-                fileHash: attachment.fileHash || localFile?.fileHash || incomingFile?.fileHash,
+                cloudKey: attachment.deletedAt
+                    ? attachment.cloudKey
+                    : attachment.cloudKey || localFile?.cloudKey || incomingFile?.cloudKey,
+                fileHash: attachment.deletedAt
+                    ? attachment.fileHash
+                    : attachment.fileHash || localFile?.fileHash || incomingFile?.fileHash,
                 localStatus: attachment.localStatus ?? (uriAvailable ? 'available' : undefined),
             };
         });

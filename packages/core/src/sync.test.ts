@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { mergeAppData, mergeAppDataWithStats, filterDeleted, appendSyncHistory, performSyncCycle } from './sync';
+import { describe, it, expect, vi } from 'vitest';
+import { CLOCK_SKEW_THRESHOLD_MS, mergeAppData, mergeAppDataWithStats, filterDeleted, appendSyncHistory, performSyncCycle } from './sync';
 import { AppData, Task, Project, Attachment, Section, Area } from './types';
 
 describe('Sync Logic', () => {
@@ -301,6 +301,43 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
             const attachment = merged.tasks[0].attachments?.find(a => a.id === 'att-1');
             expect(attachment?.deletedAt).toBe('2023-01-04T00:00:00.000Z');
+        });
+
+        it('does not resurrect cloud metadata for deleted attachments', () => {
+            const localAttachment: Attachment = {
+                id: 'att-1',
+                kind: 'file',
+                title: 'local.txt',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-04T00:00:00.000Z',
+                deletedAt: '2023-01-04T00:00:00.000Z',
+            };
+            const incomingAttachment: Attachment = {
+                id: 'att-1',
+                kind: 'file',
+                title: 'local.txt',
+                uri: '/tmp/incoming.txt',
+                cloudKey: 'attachments/att-1.txt',
+                fileHash: 'hash-1',
+                createdAt: '2023-01-01T00:00:00.000Z',
+                updatedAt: '2023-01-03T00:00:00.000Z',
+            };
+
+            const localTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [localAttachment],
+            };
+            const incomingTask: Task = {
+                ...createMockTask('1', '2023-01-03'),
+                attachments: [incomingAttachment],
+            };
+
+            const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+            const attachment = merged.tasks[0].attachments?.find((item) => item.id === 'att-1');
+
+            expect(attachment?.deletedAt).toBe('2023-01-04T00:00:00.000Z');
+            expect(attachment?.cloudKey).toBeUndefined();
+            expect(attachment?.fileHash).toBeUndefined();
         });
 
         it('should merge unique items from both sources', () => {
@@ -609,7 +646,7 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('uses max(deletedAt, updatedAt) for delete operation time', () => {
+        it('uses deletedAt as delete operation time when deciding delete-vs-live', () => {
             const local = mockAppData([
                 createMockTask('1', '2023-01-02T00:06:00.000Z', '2023-01-02T00:05:00.000Z'),
             ]);
@@ -620,8 +657,26 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:05:00.000Z');
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:06:00.000Z');
+            expect(merged.tasks[0].deletedAt).toBeUndefined();
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:05:30.000Z');
+        });
+
+        it('clamps far-future timestamps during merge conflict evaluation', () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+            try {
+                const local = mockAppData([
+                    createMockTask('1', '2099-01-01T00:00:00.000Z'),
+                ]);
+                const incoming = mockAppData([
+                    createMockTask('1', '2026-01-01T00:00:00.000Z'),
+                ]);
+
+                const result = mergeAppDataWithStats(local, incoming);
+                expect(result.stats.tasks.maxClockSkewMs).toBeLessThanOrEqual(CLOCK_SKEW_THRESHOLD_MS);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('prefers newer item when timestamps are within skew threshold', () => {
