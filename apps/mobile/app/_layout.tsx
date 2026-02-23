@@ -214,6 +214,11 @@ function RootLayoutContent() {
     markStartupPhase('js.root_layout.mounted');
   }, []);
 
+  useEffect(() => {
+    if (Platform.OS !== 'android' || isExpoGo) return;
+    SplashScreen.setOptions({ duration: 0, fade: false });
+  }, [isExpoGo]);
+
   const refreshSyncCadence = useCallback(async (): Promise<AutoSyncCadence> => {
     const now = Date.now();
     const cached = syncBackendCacheRef.current;
