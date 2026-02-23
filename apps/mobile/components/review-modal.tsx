@@ -202,6 +202,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const [externalCalendarLoading, setExternalCalendarLoading] = useState(false);
     const [externalCalendarError, setExternalCalendarError] = useState<string | null>(null);
     const [expandedExternalDays, setExpandedExternalDays] = useState<Set<string>>(new Set());
+    const [expandedContextGroups, setExpandedContextGroups] = useState<Set<string>>(new Set());
     const [projectTaskPrompt, setProjectTaskPrompt] = useState<{ projectId: string; projectTitle: string } | null>(null);
     const [projectTaskTitle, setProjectTaskTitle] = useState('');
 
@@ -260,6 +261,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
     const handleClose = () => {
         setCurrentStep('inbox');
         setExpandedExternalDays(new Set());
+        setExpandedContextGroups(new Set());
         onClose();
     };
 
@@ -312,6 +314,18 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                 next.delete(dayKey);
             } else {
                 next.add(dayKey);
+            }
+            return next;
+        });
+    };
+
+    const toggleContextGroupExpanded = (contextKey: string) => {
+        setExpandedContextGroups((prev) => {
+            const next = new Set(prev);
+            if (next.has(contextKey)) {
+                next.delete(contextKey);
+            } else {
+                next.add(contextKey);
             }
             return next;
         });
@@ -805,22 +819,35 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                                             <Text style={[styles.contextGroupTitle, { color: tc.text }]}>{group.context}</Text>
                                             <Text style={[styles.contextGroupCount, { color: tc.secondaryText }]}>{group.tasks.length}</Text>
                                         </View>
-                                        {group.tasks.slice(0, 4).map((task) => (
-                                            <TouchableOpacity
-                                                key={`${group.context}-${task.id}`}
-                                                style={[styles.contextTaskRow, { borderTopColor: tc.border }]}
-                                                onPress={() => handleTaskPress(task)}
-                                            >
-                                                <Text style={[styles.contextTaskTitle, { color: tc.text }]} numberOfLines={1}>
-                                                    {task.title}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        ))}
-                                        {group.tasks.length > 4 && (
-                                            <Text style={[styles.contextMoreText, { color: tc.secondaryText }]}>
-                                                +{group.tasks.length - 4} {labels.more}
-                                            </Text>
-                                        )}
+                                        {(() => {
+                                            const contextKey = group.context;
+                                            const isExpanded = expandedContextGroups.has(contextKey);
+                                            const visibleTasks = isExpanded ? group.tasks : group.tasks.slice(0, 4);
+                                            return (
+                                                <>
+                                                    {visibleTasks.map((task) => (
+                                                        <TouchableOpacity
+                                                            key={`${group.context}-${task.id}`}
+                                                            style={[styles.contextTaskRow, { borderTopColor: tc.border }]}
+                                                            onPress={() => handleTaskPress(task)}
+                                                        >
+                                                            <Text style={[styles.contextTaskTitle, { color: tc.text }]} numberOfLines={1}>
+                                                                {task.title}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                    {group.tasks.length > 4 && (
+                                                        <TouchableOpacity onPress={() => toggleContextGroupExpanded(contextKey)}>
+                                                            <Text style={[styles.contextMoreText, { color: tc.secondaryText }]}>
+                                                                {isExpanded
+                                                                    ? labels.less
+                                                                    : `+${group.tasks.length - visibleTasks.length} ${labels.more}`}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                     </View>
                                 ))}
                             </ScrollView>

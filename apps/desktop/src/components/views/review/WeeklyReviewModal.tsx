@@ -47,6 +47,7 @@ type WeeklyReviewGuideModalProps = {
 export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps) {
     const [currentStep, setCurrentStep] = useState<ReviewStep>('inbox');
     const [expandedExternalDays, setExpandedExternalDays] = useState<Set<string>>(new Set());
+    const [expandedContextGroups, setExpandedContextGroups] = useState<Set<string>>(new Set());
     const [projectTaskPrompt, setProjectTaskPrompt] = useState<{ projectId: string; projectTitle: string } | null>(null);
     const { tasks, projects, areas, settings, batchUpdateTasks } = useTaskStore(
         (state) => ({
@@ -335,6 +336,18 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
         });
     };
 
+    const toggleContextGroupExpanded = (contextKey: string) => {
+        setExpandedContextGroups((prev) => {
+            const next = new Set(prev);
+            if (next.has(contextKey)) {
+                next.delete(contextKey);
+            } else {
+                next.add(contextKey);
+            }
+            return next;
+        });
+    };
+
     const renderCalendarList = (items: CalendarReviewEntry[]) => {
         if (items.length === 0) {
             return <div className="text-sm text-muted-foreground">{t('calendar.noTasks')}</div>;
@@ -523,12 +536,29 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                                         <span className="text-xs text-muted-foreground">{group.tasks.length}</span>
                                     </div>
                                     <div className="space-y-1.5">
-                                        {group.tasks.slice(0, 4).map((task) => (
-                                            <TaskItem key={`${group.context}-${task.id}`} task={task} showProjectBadgeInActions={false} />
-                                        ))}
-                                        {group.tasks.length > 4 && (
-                                            <div className="text-xs text-muted-foreground">+{group.tasks.length - 4} {t('common.more').toLowerCase()}</div>
-                                        )}
+                                        {(() => {
+                                            const contextKey = group.context;
+                                            const isExpanded = expandedContextGroups.has(contextKey);
+                                            const visibleTasks = isExpanded ? group.tasks : group.tasks.slice(0, 4);
+                                            return (
+                                                <>
+                                                    {visibleTasks.map((task) => (
+                                                        <TaskItem key={`${group.context}-${task.id}`} task={task} showProjectBadgeInActions={false} />
+                                                    ))}
+                                                    {group.tasks.length > 4 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleContextGroupExpanded(contextKey)}
+                                                            className="text-xs text-primary hover:text-primary/80 font-medium"
+                                                        >
+                                                            {isExpanded
+                                                                ? t('common.less')
+                                                                : `+${group.tasks.length - visibleTasks.length} ${t('common.more').toLowerCase()}`}
+                                                        </button>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             ))
