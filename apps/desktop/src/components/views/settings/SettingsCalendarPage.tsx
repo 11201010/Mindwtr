@@ -1,3 +1,4 @@
+import type { SystemCalendarPermissionStatus } from '../../../lib/system-calendar';
 import type { ExternalCalendarSubscription } from '@mindwtr/core';
 
 import { cn } from '../../../lib/utils';
@@ -9,6 +10,15 @@ type Labels = {
     calendarAdd: string;
     calendarRemove: string;
     externalCalendars: string;
+    calendarSystemTitle: string;
+    calendarSystemDesc: string;
+    calendarSystemStatus: string;
+    calendarSystemPermissionGranted: string;
+    calendarSystemPermissionUndetermined: string;
+    calendarSystemPermissionDenied: string;
+    calendarSystemPermissionUnsupported: string;
+    calendarSystemRequestAccess: string;
+    calendarSystemDeniedHint: string;
 };
 
 type SettingsCalendarPageProps = {
@@ -17,11 +27,14 @@ type SettingsCalendarPageProps = {
     newCalendarUrl: string;
     calendarError: string | null;
     externalCalendars: ExternalCalendarSubscription[];
+    showSystemCalendarSection: boolean;
+    systemCalendarPermission: SystemCalendarPermissionStatus;
     onCalendarNameChange: (value: string) => void;
     onCalendarUrlChange: (value: string) => void;
     onAddCalendar: () => void;
     onToggleCalendar: (id: string, enabled: boolean) => void;
     onRemoveCalendar: (id: string) => void;
+    onRequestSystemCalendarPermission: () => void;
     maskCalendarUrl: (url: string) => string;
 };
 
@@ -31,15 +44,52 @@ export function SettingsCalendarPage({
     newCalendarUrl,
     calendarError,
     externalCalendars,
+    showSystemCalendarSection,
+    systemCalendarPermission,
     onCalendarNameChange,
     onCalendarUrlChange,
     onAddCalendar,
     onToggleCalendar,
     onRemoveCalendar,
+    onRequestSystemCalendarPermission,
     maskCalendarUrl,
 }: SettingsCalendarPageProps) {
+    const permissionLabel = (() => {
+        if (systemCalendarPermission === 'granted') return t.calendarSystemPermissionGranted;
+        if (systemCalendarPermission === 'undetermined') return t.calendarSystemPermissionUndetermined;
+        if (systemCalendarPermission === 'denied') return t.calendarSystemPermissionDenied;
+        return t.calendarSystemPermissionUnsupported;
+    })();
+
     return (
         <div className="space-y-6">
+            {showSystemCalendarSection && (
+                <div className="bg-card border border-border rounded-lg p-6 space-y-4">
+                    <div className="space-y-1">
+                        <div className="text-sm font-semibold">{t.calendarSystemTitle}</div>
+                        <p className="text-sm text-muted-foreground">{t.calendarSystemDesc}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm">
+                            <span className="text-muted-foreground">{t.calendarSystemStatus}: </span>
+                            <span className="font-medium">{permissionLabel}</span>
+                        </div>
+                        {systemCalendarPermission !== 'granted' && (
+                            <button
+                                type="button"
+                                onClick={onRequestSystemCalendarPermission}
+                                className="text-sm px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                {t.calendarSystemRequestAccess}
+                            </button>
+                        )}
+                    </div>
+                    {systemCalendarPermission === 'denied' && (
+                        <p className="text-xs text-muted-foreground">{t.calendarSystemDeniedHint}</p>
+                    )}
+                </div>
+            )}
+
             <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <p className="text-sm text-muted-foreground">{t.calendarDesc}</p>
 

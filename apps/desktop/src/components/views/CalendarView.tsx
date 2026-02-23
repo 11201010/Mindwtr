@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { addMonths, endOfMonth, endOfWeek, format, getMonth, getYear, isSameDay, isSameMonth, isToday, setMonth, setYear, startOfMonth, startOfWeek, subMonths, eachDayOfInterval } from 'date-fns';
-import { shallow, parseIcs, safeParseDate, safeParseDueDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore, type Task, isTaskInActiveProject } from '@mindwtr/core';
+import { shallow, safeParseDate, safeParseDueDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore, type Task, isTaskInActiveProject } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
-import { isTauriRuntime } from '../../lib/runtime';
-import { ExternalCalendarService } from '../../lib/external-calendar-service';
 import { cn } from '../../lib/utils';
 import { reportError } from '../../lib/report-error';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
 import { TaskItem } from '../TaskItem';
 import { resolveAreaFilter, taskMatchesAreaFilter } from '../../lib/area-filter';
+import { fetchExternalCalendarEvents } from '../../lib/external-calendar-events';
 
 const dayKey = (date: Date) => format(date, 'yyyy-MM-dd');
 
@@ -258,59 +257,11 @@ export function CalendarView() {
             setIsExternalLoading(true);
             setExternalError(null);
             try {
-                const calendars = await ExternalCalendarService.getCalendars();
-                if (cancelled) return;
-                setExternalCalendars(calendars);
-
-                const enabled = calendars.filter((c) => c.enabled);
-                if (enabled.length === 0) {
-                    setExternalEvents([]);
-                    return;
-                }
-
                 const rangeStart = startOfMonth(currentMonth);
                 const rangeEnd = endOfMonth(currentMonth);
-
-                const fetchTextWithTimeout = async (url: string, timeoutMs: number) => {
-                    if (isTauriRuntime()) {
-                        const mod: any = await import('@tauri-apps/plugin-http');
-                        const tauriFetch: any = mod.fetch;
-                        const controller = new AbortController();
-                        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-                        try {
-                            const res = await tauriFetch(url, { method: 'GET', signal: controller.signal });
-                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                            return await res.text();
-                        } finally {
-                            clearTimeout(timeout);
-                        }
-                    }
-
-                    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-                    const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-                    try {
-                        const res = await fetch(url, controller ? { signal: controller.signal } : undefined);
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        return await res.text();
-                    } finally {
-                        if (timeout) clearTimeout(timeout);
-                    }
-                };
-
-                const results = await Promise.allSettled(
-                    enabled.map(async (calendar) => {
-                        const text = await fetchTextWithTimeout(calendar.url, 15_000);
-                        return parseIcs(text, { sourceId: calendar.id, rangeStart, rangeEnd });
-                    })
-                );
-
-                const events: ExternalCalendarEvent[] = [];
-                for (const result of results) {
-                    if (result.status !== 'fulfilled') continue;
-                    events.push(...result.value);
-                }
-
+                const { calendars, events } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
                 if (cancelled) return;
+                setExternalCalendars(calendars);
                 setExternalEvents(events);
             } catch (error) {
                 if (cancelled) return;

@@ -126,6 +126,14 @@ export function SettingsView() {
             return false;
         }
     }, [isTauri]);
+    const isMac = useMemo(() => {
+        if (!isTauri) return false;
+        try {
+            return /mac/i.test(navigator.userAgent);
+        } catch {
+            return false;
+        }
+    }, [isTauri]);
     const [installSource, setInstallSource] = useState<InstallSource>('unknown');
     const windowDecorationsEnabled = settings?.window?.decorations !== false;
     const closeBehavior = settings?.window?.closeBehavior ?? 'ask';
@@ -868,12 +876,14 @@ export function SettingsView() {
             newCalendarName,
             newCalendarUrl,
             calendarError,
+            systemCalendarPermission,
             setNewCalendarName,
             setNewCalendarUrl,
             handleAddCalendar,
             handleToggleCalendar,
             handleRemoveCalendar,
-        } = useCalendarSettings({ showSaved, settings, updateSettings });
+            handleRequestSystemCalendarPermission,
+        } = useCalendarSettings({ showSaved, settings, updateSettings, isMac });
 
         return (
             <SettingsCalendarPage
@@ -882,11 +892,14 @@ export function SettingsView() {
                 newCalendarUrl={newCalendarUrl}
                 calendarError={calendarError}
                 externalCalendars={externalCalendars}
+                showSystemCalendarSection={isMac}
+                systemCalendarPermission={systemCalendarPermission}
                 onCalendarNameChange={setNewCalendarName}
                 onCalendarUrlChange={setNewCalendarUrl}
                 onAddCalendar={handleAddCalendar}
                 onToggleCalendar={handleToggleCalendar}
                 onRemoveCalendar={handleRemoveCalendar}
+                onRequestSystemCalendarPermission={handleRequestSystemCalendarPermission}
                 maskCalendarUrl={maskCalendarUrl}
             />
         );

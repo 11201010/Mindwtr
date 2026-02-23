@@ -1,6 +1,7 @@
 import { parseIcs, type ExternalCalendarEvent, type ExternalCalendarSubscription } from '@mindwtr/core';
 import { ExternalCalendarService } from './external-calendar-service';
 import { isTauriRuntime } from './runtime';
+import { fetchSystemCalendarEvents } from './system-calendar';
 
 async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<string> {
     if (isTauriRuntime()) {
@@ -37,22 +38,37 @@ export async function fetchExternalCalendarEvents(
 }> {
     const calendars = await ExternalCalendarService.getCalendars();
     const enabled = calendars.filter((calendar) => calendar.enabled);
-    if (enabled.length === 0) {
-        return { calendars, events: [] };
-    }
 
-    const results = await Promise.allSettled(
-        enabled.map(async (calendar) => {
-            const text = await fetchTextWithTimeout(calendar.url, 15_000);
-            return parseIcs(text, { sourceId: calendar.id, rangeStart, rangeEnd });
-        })
-    );
+    const [icsResults, systemResults] = await Promise.all([
+        Promise.allSettled(
+            enabled.map(async (calendar) => {
+                const text = await fetchTextWithTimeout(calendar.url, 15_000);
+                return parseIcs(text, { sourceId: calendar.id, rangeStart, rangeEnd });
+            })
+        ),
+        fetchSystemCalendarEvents(rangeStart, rangeEnd),
+    ]);
 
-    const events: ExternalCalendarEvent[] = [];
-    for (const result of results) {
-        if (result.status !== 'fulfilled') continue;
+    const events: ExternalCalendarEvent[] = [...systemResults.events];
+    for (const result of icsResults) {
+        if (result.status !== 'fulfilled') {
+            continue;
+        }
         events.push(...result.value);
     }
 
-    return { calendars, events };
+    const mergedCalendars = [...calendars];
+    const existingIds = new Set(mergedCalendars.map((calendar) => calendar.id));
+    for (const systemCalendar of systemResults.calendars) {
+        if (existingIds.has(systemCalendar.id)) continue;
+        existingIds.add(systemCalendar.id);
+        mergedCalendars.push(systemCalendar);
+    }
+
+    events.sort((a, b) => {
+        if (a.start === b.start) return a.title.localeCompare(b.title);
+        return a.start.localeCompare(b.start);
+    });
+
+    return { calendars: mergedCalendars, events };
 }

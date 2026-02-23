@@ -2,18 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { generateUUID, type AppData, type ExternalCalendarSubscription } from '@mindwtr/core';
 import { ExternalCalendarService } from '../../../lib/external-calendar-service';
 import { reportError } from '../../../lib/report-error';
+import {
+    getSystemCalendarPermissionStatus,
+    requestSystemCalendarPermission,
+    type SystemCalendarPermissionStatus,
+} from '../../../lib/system-calendar';
 
 type UseCalendarSettingsOptions = {
     showSaved: () => void;
     settings: AppData['settings'] | undefined;
     updateSettings: (updates: Partial<AppData['settings']>) => Promise<void>;
+    isMac: boolean;
 };
 
-export function useCalendarSettings({ showSaved, settings, updateSettings }: UseCalendarSettingsOptions) {
+export function useCalendarSettings({ showSaved, settings, updateSettings, isMac }: UseCalendarSettingsOptions) {
     const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
     const [newCalendarName, setNewCalendarName] = useState('');
     const [newCalendarUrl, setNewCalendarUrl] = useState('');
     const [calendarError, setCalendarError] = useState<string | null>(null);
+    const [systemCalendarPermission, setSystemCalendarPermission] = useState<SystemCalendarPermissionStatus>('unsupported');
 
     useEffect(() => {
         let cancelled = false;
@@ -34,6 +41,28 @@ export function useCalendarSettings({ showSaved, settings, updateSettings }: Use
             cancelled = true;
         };
     }, [settings?.externalCalendars]);
+
+    const refreshSystemCalendarPermission = useCallback(async () => {
+        if (!isMac) {
+            setSystemCalendarPermission('unsupported');
+            return;
+        }
+        const status = await getSystemCalendarPermissionStatus();
+        setSystemCalendarPermission(status);
+    }, [isMac]);
+
+    useEffect(() => {
+        void refreshSystemCalendarPermission();
+        const onFocus = () => {
+            void refreshSystemCalendarPermission();
+        };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+        };
+    }, [refreshSystemCalendarPermission]);
 
     const persistCalendars = useCallback(async (next: ExternalCalendarSubscription[]) => {
         setCalendarError(null);
@@ -71,15 +100,26 @@ export function useCalendarSettings({ showSaved, settings, updateSettings }: Use
         persistCalendars(next);
     }, [externalCalendars, persistCalendars]);
 
+    const handleRequestSystemCalendarPermission = useCallback(async () => {
+        if (!isMac) return;
+        const status = await requestSystemCalendarPermission();
+        setSystemCalendarPermission(status);
+        if (status === 'granted') {
+            showSaved();
+        }
+    }, [isMac, showSaved]);
+
     return {
         externalCalendars,
         newCalendarName,
         newCalendarUrl,
         calendarError,
+        systemCalendarPermission,
         setNewCalendarName,
         setNewCalendarUrl,
         handleAddCalendar,
         handleToggleCalendar,
         handleRemoveCalendar,
+        handleRequestSystemCalendarPermission,
     };
 }

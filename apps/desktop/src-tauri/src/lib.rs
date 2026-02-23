@@ -14,6 +14,8 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::process::Stdio;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -271,6 +273,27 @@ struct ExternalCalendarSubscription {
     name: String,
     url: String,
     enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ExternalCalendarEventRecord {
+    id: String,
+    source_id: String,
+    title: String,
+    start: String,
+    end: String,
+    all_day: bool,
+    description: Option<String>,
+    location: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MacOsCalendarReadResult {
+    permission: String,
+    calendars: Vec<ExternalCalendarSubscription>,
+    events: Vec<ExternalCalendarEventRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -3292,6 +3315,262 @@ async fn disconnect_dropbox(app: tauri::AppHandle, client_id: String) -> Result<
     Ok(true)
 }
 
+#[cfg(target_os = "macos")]
+const EVENTKIT_SWIFT_SCRIPT: &str = r#"
+import Foundation
+import EventKit
+
+typealias JsonObject = [String: Any]
+
+func statusString(_ status: EKAuthorizationStatus) -> String {
+    switch status {
+    case .notDetermined:
+        return "undetermined"
+    case .restricted, .denied:
+        return "denied"
+    case .authorized:
+        return "granted"
+    @unknown default:
+        return "denied"
+    }
+}
+
+func printJson(_ object: Any) {
+    guard JSONSerialization.isValidJSONObject(object),
+          let data = try? JSONSerialization.data(withJSONObject: object, options: []),
+          let text = String(data: data, encoding: .utf8) else {
+        print("{\"error\":\"invalid-json\"}")
+        return
+    }
+    print(text)
+}
+
+func parseIsoDate(_ raw: String) -> Date? {
+    let formatterWithFraction = ISO8601DateFormatter()
+    formatterWithFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatterWithFraction.date(from: raw) {
+        return date
+    }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: raw)
+}
+
+let env = ProcessInfo.processInfo.environment
+let mode = env["MINDWTR_EVENTKIT_MODE"] ?? "permission_status"
+let store = EKEventStore()
+
+if mode == "permission_status" {
+    let status = statusString(EKEventStore.authorizationStatus(for: .event))
+    printJson(["status": status])
+    exit(0)
+}
+
+if mode == "request_permission" {
+    let semaphore = DispatchSemaphore(value: 0)
+    var requestError: String?
+    store.requestAccess(to: .event) { _, error in
+        if let error = error {
+            requestError = error.localizedDescription
+        }
+        semaphore.signal()
+    }
+    _ = semaphore.wait(timeout: .now() + .seconds(20))
+    let status = statusString(EKEventStore.authorizationStatus(for: .event))
+    var payload: JsonObject = ["status": status]
+    if let requestError {
+        payload["error"] = requestError
+    }
+    printJson(payload)
+    exit(0)
+}
+
+if mode == "read_events" {
+    let permission = statusString(EKEventStore.authorizationStatus(for: .event))
+    if permission != "granted" {
+        printJson([
+            "permission": permission,
+            "calendars": [],
+            "events": []
+        ])
+        exit(0)
+    }
+
+    guard
+        let rangeStartRaw = env["MINDWTR_EVENTKIT_RANGE_START"],
+        let rangeEndRaw = env["MINDWTR_EVENTKIT_RANGE_END"],
+        let rangeStart = parseIsoDate(rangeStartRaw),
+        let rangeEnd = parseIsoDate(rangeEndRaw)
+    else {
+        printJson(["error": "invalid-range"])
+        exit(0)
+    }
+
+    let calendars = store.calendars(for: .event)
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let selectedCalendars = calendars.filter { !$0.calendarIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    let calendarPayload: [JsonObject] = selectedCalendars.map { calendar in
+        let identifier = calendar.calendarIdentifier
+        let encoded = identifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? identifier
+        return [
+            "id": "system:\(identifier)",
+            "name": calendar.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Calendar" : calendar.title,
+            "url": "system://\(encoded)",
+            "enabled": true
+        ]
+    }
+
+    let predicate = store.predicateForEvents(withStart: rangeStart, end: rangeEnd, calendars: selectedCalendars)
+    let events = store.events(matching: predicate)
+    var eventPayload: [JsonObject] = []
+    eventPayload.reserveCapacity(events.count)
+
+    for event in events {
+        guard let startDate = event.startDate else { continue }
+        let endCandidate = event.endDate ?? startDate.addingTimeInterval(event.isAllDay ? 24 * 60 * 60 : 60 * 60)
+        let endDate = endCandidate > startDate ? endCandidate : startDate.addingTimeInterval(event.isAllDay ? 24 * 60 * 60 : 60 * 60)
+        let calendarIdentifier = event.calendar.calendarIdentifier
+        if calendarIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+        let sourceId = "system:\(calendarIdentifier)"
+        let eventId = event.eventIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? event.eventIdentifier!
+            : UUID().uuidString
+        let startIso = iso.string(from: startDate)
+        var payload: JsonObject = [
+            "id": "\(sourceId):\(eventId):\(startIso)",
+            "sourceId": sourceId,
+            "title": event.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? event.title! : "Event",
+            "start": startIso,
+            "end": iso.string(from: endDate),
+            "allDay": event.isAllDay
+        ]
+        if let notes = event.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+            payload["description"] = notes
+        }
+        if let location = event.location?.trimmingCharacters(in: .whitespacesAndNewlines), !location.isEmpty {
+            payload["location"] = location
+        }
+        eventPayload.append(payload)
+    }
+
+    eventPayload.sort {
+        let aStart = ($0["start"] as? String) ?? ""
+        let bStart = ($1["start"] as? String) ?? ""
+        if aStart == bStart {
+            return (($0["title"] as? String) ?? "") < (($1["title"] as? String) ?? "")
+        }
+        return aStart < bStart
+    }
+
+    printJson([
+        "permission": permission,
+        "calendars": calendarPayload,
+        "events": eventPayload
+    ])
+    exit(0)
+}
+
+printJson(["status": "unsupported"])
+"#;
+
+#[cfg(target_os = "macos")]
+fn run_eventkit_swift(mode: &str, range_start: Option<&str>, range_end: Option<&str>) -> Result<Value, String> {
+    let mut child = Command::new("/usr/bin/xcrun")
+        .arg("swift")
+        .arg("-")
+        .env("MINDWTR_EVENTKIT_MODE", mode)
+        .env("MINDWTR_EVENTKIT_RANGE_START", range_start.unwrap_or_default())
+        .env("MINDWTR_EVENTKIT_RANGE_END", range_end.unwrap_or_default())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to run EventKit helper: {error}"))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(EVENTKIT_SWIFT_SCRIPT.as_bytes())
+            .map_err(|error| format!("Failed to feed EventKit helper script: {error}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Failed to read EventKit helper output: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let message = if stderr.is_empty() {
+            format!("EventKit helper exited with status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(message);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Err("EventKit helper returned empty output".to_string());
+    }
+    serde_json::from_str::<Value>(&stdout)
+        .map_err(|error| format!("Failed to parse EventKit helper output: {error}"))
+}
+
+#[tauri::command]
+fn get_macos_calendar_permission_status() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let value = run_eventkit_swift("permission_status", None, None)?;
+        let status = value
+            .get("status")
+            .and_then(|item| item.as_str())
+            .unwrap_or("denied");
+        return Ok(status.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("unsupported".to_string())
+    }
+}
+
+#[tauri::command]
+fn request_macos_calendar_permission() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let value = run_eventkit_swift("request_permission", None, None)?;
+        let status = value
+            .get("status")
+            .and_then(|item| item.as_str())
+            .unwrap_or("denied");
+        return Ok(status.to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok("unsupported".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_macos_calendar_events(range_start: String, range_end: String) -> Result<MacOsCalendarReadResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let value = run_eventkit_swift("read_events", Some(&range_start), Some(&range_end))?;
+        let parsed = serde_json::from_value::<MacOsCalendarReadResult>(value)
+            .map_err(|error| format!("Failed to decode EventKit payload: {error}"))?;
+        return Ok(parsed);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = range_start;
+        let _ = range_end;
+        Ok(MacOsCalendarReadResult {
+            permission: "unsupported".to_string(),
+            calendars: Vec::new(),
+            events: Vec::new(),
+        })
+    }
+}
+
 #[tauri::command]
 fn get_external_calendars(app: tauri::AppHandle) -> Result<Vec<ExternalCalendarSubscription>, String> {
     let config = read_config(&app);
@@ -3746,6 +4025,9 @@ pub fn run() {
             disconnect_dropbox,
             get_external_calendars,
             set_external_calendars,
+            get_macos_calendar_permission_status,
+            request_macos_calendar_permission,
+            get_macos_calendar_events,
             open_path,
             read_sync_file,
             write_sync_file,
