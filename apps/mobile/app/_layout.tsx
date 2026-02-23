@@ -349,7 +349,11 @@ function RootLayoutContent() {
       ...(tags.length > 0 ? { tags } : {}),
     });
 
-    router.replace('/inbox');
+    if (router.canGoBack()) {
+      router.push('/inbox');
+    } else {
+      router.replace('/inbox');
+    }
   }, [router]);
 
   // Auto-sync on data changes with debounce
