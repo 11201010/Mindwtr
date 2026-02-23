@@ -53,7 +53,7 @@ export function ContextsView() {
         && isTaskInActiveProject(t, projectMap)
         && taskMatchesAreaFilter(t, resolvedAreaFilter, projectMap, areaById)
     );
-    const baseTasks = activeTasks.filter(t => t.status !== 'done' && t.status !== 'archived' && t.status !== 'reference');
+    const baseTasks = activeTasks.filter(t => t.status !== 'archived');
     const scopedTasks = statusFilter === 'all'
         ? baseTasks
         : baseTasks.filter(t => t.status === statusFilter);

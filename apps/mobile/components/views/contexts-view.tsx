@@ -23,8 +23,9 @@ export function ContextsView() {
   const NO_CONTEXT_TOKEN = '__no_context__';
 
   // Combine preset contexts with contexts from tasks
+  const contextSourceTasks = tasks.filter((t) => !t.deletedAt && t.status !== 'archived');
   const allContexts = Array.from(
-    new Set([...PRESET_CONTEXTS, ...tasks.flatMap((t) => [...(t.contexts || []), ...(t.tags || [])])])
+    new Set([...PRESET_CONTEXTS, ...contextSourceTasks.flatMap((t) => [...(t.contexts || []), ...(t.tags || [])])])
   ).sort();
 
   // Filter contexts by search query
@@ -34,7 +35,7 @@ export function ContextsView() {
 
   // ...
 
-  const activeTasks = tasks.filter((t) => t.status !== 'done' && t.status !== 'reference' && !t.deletedAt);
+  const activeTasks = contextSourceTasks;
   const hasContext = (task: Task) => (task.contexts?.length || 0) > 0 || (task.tags?.length || 0) > 0;
   const matchesSelected = (task: Task, context: string) => {
     const tokens = [...(task.contexts || []), ...(task.tags || [])];
