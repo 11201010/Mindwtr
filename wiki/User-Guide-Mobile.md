@@ -102,6 +102,30 @@ Add the Mindwtr widget to your home screen for quick access:
 3. Find and add the **Mindwtr** widget
 4. Tap the widget to open quick capture or view focus items
 
+### URL Scheme Quick Capture (iOS Shortcuts / Android Automations)
+
+Mindwtr registers the URL scheme `mindwtr://`, so you can capture tasks from iOS Shortcuts, Tasker, or other automation tools.
+
+Supported URLs:
+
+| URL | Action |
+| --- | --- |
+| `mindwtr://capture?title=Buy%20groceries` | Create Inbox task with title |
+| `mindwtr://capture?title=Buy%20groceries&note=From%20store` | Create Inbox task + note |
+| `mindwtr://capture?title=Buy%20groceries&project=Shopping&tags=errands,home` | Create Inbox task + project (auto-create if missing) + tags |
+
+Notes:
+- `title` is required (alias: `text`).
+- `note` is optional (alias: `description`).
+- `project` matches an existing active project by title (case-insensitive), or creates it.
+- `tags` is comma-separated and normalized to `#tag` format before saving.
+
+iOS Shortcuts example:
+1. Open **Shortcuts** and create a shortcut.
+2. Add **Ask for Input** (prompt: task title).
+3. Add **Open URLs** with: `mindwtr://capture?title=[Provided Input]`.
+4. Run the shortcut; Mindwtr opens and adds the task to Inbox.
+
 ### Quick-Add Syntax
 
 Mindwtr parses natural language when adding tasks:

@@ -326,8 +326,6 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
 - 🤖 上架 F-Droid
 - ☁️ 原生 iCloud / CloudKit 同步（Apple 生态）
 - 🗣️ iOS 提醒事项收件箱导入（Siri 收集 -> Mindwtr 收件箱）
-- ⚡ iOS 快捷指令 + URL Scheme 快速收集
-- 🧩 iOS 主屏幕小组件
 - 🔗 与 Obsidian 集成（任务深度链接）
 - ✉️ 邮件添加到收件箱
 

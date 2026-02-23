@@ -2,6 +2,7 @@ import '../polyfills';
 import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
 import { Stack, useRouter } from 'expo-router';
 import 'react-native-reanimated';
 import * as SplashScreen from 'expo-splash-screen';
@@ -16,6 +17,7 @@ import { ThemeProvider, useTheme } from '../contexts/theme-context';
 import { LanguageProvider, useLanguage } from '../contexts/language-context';
 import {
   configureDateFormatting,
+  DEFAULT_PROJECT_COLOR,
   setStorageAdapter,
   useTaskStore,
   flushPendingSave,
@@ -34,6 +36,7 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { verifyPolyfills } from '../utils/verify-polyfills';
 import { logError, logWarn, setupGlobalErrorLogging } from '../lib/app-log';
 import { useThemeColors } from '../hooks/use-theme-colors';
+import { parseShortcutCaptureUrl, type ShortcutCapturePayload } from '../lib/capture-deeplink';
 
 type AutoSyncCadence = {
   minIntervalMs: number;
@@ -134,6 +137,21 @@ const getDeviceLocale = (): string => {
   }
 };
 
+const normalizeShortcutTags = (tags: string[]): string[] => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawTag of tags) {
+    const trimmed = String(rawTag || '').trim();
+    if (!trimmed) continue;
+    const prefixed = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+    const key = prefixed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(prefixed);
+  }
+  return normalized;
+};
+
 // Initialize storage for mobile
 let storageInitError: Error | null = null;
 const logAppError = (error: unknown) => {
@@ -153,9 +171,10 @@ markStartupPhase('js.root_layout.module_loaded');
 
 function RootLayoutContent() {
   const router = useRouter();
+  const incomingUrl = Linking.useURL();
   const { isDark, isReady: themeReady } = useTheme();
   const tc = useThemeColors();
-  const { language, setLanguage, isReady: languageReady, t } = useLanguage();
+  const { language, setLanguage, isReady: languageReady } = useLanguage();
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const extraConfig = Constants.expoConfig?.extra as MobileExtraConfig | undefined;
   const isFossBuild = parseBool(extraConfig?.isFossBuild);
@@ -163,6 +182,7 @@ function RootLayoutContent() {
   const isExpoGo = Constants.appOwnership === 'expo';
   const appVersion = Constants.expoConfig?.version ?? '0.0.0';
   const [storageWarningShown, setStorageWarningShown] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
   const settingsLanguage = useTaskStore((state) => state.settings?.language);
   const settingsDateFormat = useTaskStore((state) => state.settings?.dateFormat);
   const appState = useRef(AppState.currentState);
@@ -177,6 +197,7 @@ function RootLayoutContent() {
   const backgroundSyncPending = useRef(false);
   const isActive = useRef(true);
   const loadAttempts = useRef(0);
+  const lastHandledCaptureUrl = useRef<string | null>(null);
   const lastSyncErrorShown = useRef<string | null>(null);
   const lastSyncErrorAt = useRef(0);
   const syncCadenceRef = useRef<AutoSyncCadence>(AUTO_SYNC_CADENCE_REMOTE);
@@ -301,6 +322,36 @@ function RootLayoutContent() {
       .catch(logAppError);
   }, [refreshSyncCadence, runSync]);
 
+  const captureFromShortcut = useCallback(async (payload: ShortcutCapturePayload) => {
+    const store = useTaskStore.getState();
+    const requestedProject = String(payload.project || '').trim();
+    let projectId: string | undefined;
+    if (requestedProject) {
+      const existing = store.projects.find(
+        (project) =>
+          !project.deletedAt &&
+          project.status !== 'archived' &&
+          project.title.trim().toLowerCase() === requestedProject.toLowerCase()
+      );
+      if (existing) {
+        projectId = existing.id;
+      } else {
+        const created = await store.addProject(requestedProject, DEFAULT_PROJECT_COLOR);
+        projectId = created?.id;
+      }
+    }
+
+    const tags = normalizeShortcutTags(payload.tags);
+    await store.addTask(payload.title, {
+      status: 'inbox',
+      ...(payload.note ? { description: payload.note } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(tags.length > 0 ? { tags } : {}),
+    });
+
+    router.replace('/inbox');
+  }, [router]);
+
   // Auto-sync on data changes with debounce
   useEffect(() => {
     setupGlobalErrorLogging();
@@ -364,6 +415,20 @@ function RootLayoutContent() {
     }
     resetShareIntent();
   }, [hasShareIntent, resetShareIntent, router, shareIntent?.text, shareIntent?.webUrl]);
+
+  useEffect(() => {
+    if (!dataReady) return;
+    if (!incomingUrl) return;
+    if (lastHandledCaptureUrl.current === incomingUrl) return;
+    const payload = parseShortcutCaptureUrl(incomingUrl);
+    if (!payload) return;
+
+    lastHandledCaptureUrl.current = incomingUrl;
+    void captureFromShortcut(payload).catch((error) => {
+      lastHandledCaptureUrl.current = null;
+      void logError(error, { scope: 'shortcuts', extra: { url: incomingUrl } });
+    });
+  }, [captureFromShortcut, dataReady, incomingUrl]);
 
   // Sync on foreground/background transitions
   useEffect(() => {
@@ -464,8 +529,9 @@ function RootLayoutContent() {
         await measureStartupPhase('js.store.fetch_data', async () => {
           await store.fetchData();
         });
-        markStartupPhase('js.store.fetch_data.applied');
         if (cancelled) return;
+        setDataReady(true);
+        markStartupPhase('js.store.fetch_data.applied');
         if (!isFossBuild && !isExpoGo && !__DEV__ && analyticsHeartbeatUrl) {
           try {
             const [distinctId, channel] = await Promise.all([

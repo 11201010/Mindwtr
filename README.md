@@ -326,8 +326,6 @@ You can help in several ways:
 - 🤖 Add to F-Droid
 - ☁️ Native iCloud/CloudKit sync (Apple ecosystem)
 - 🗣️ iOS Reminders Inbox import (Siri capture -> Mindwtr Inbox)
-- ⚡ iOS Shortcuts + URL scheme quick capture
-- 🧩 iOS Home Screen widget
 - 🔗 Obsidian integration (task deep links)
 - ✉️ Email to Inbox
 
