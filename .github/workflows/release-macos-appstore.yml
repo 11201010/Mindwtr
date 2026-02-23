@@ -67,6 +67,9 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Install Intel Rust target
+        run: rustup target add x86_64-apple-darwin
+
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
@@ -331,20 +334,16 @@ jobs:
           NODE
 
       - name: Build signed macOS app bundle (App Store)
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.MAS_SIGNING_IDENTITY }}
           VITE_ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
-          CFLAGS: -march=armv8.5-a+i8mm
-          CXXFLAGS: -march=armv8.5-a+i8mm
-          CMAKE_C_FLAGS: -march=armv8.5-a+i8mm
-          CMAKE_CXX_FLAGS: -march=armv8.5-a+i8mm
           TAURI_LOG_LEVEL: debug
         run: |
           set -euo pipefail
           cd apps/desktop
           cargo tauri build \
-            --target aarch64-apple-darwin \
+            --target universal-apple-darwin \
             --bundles app \
             --config src-tauri/tauri.appstore.conf.json
 
@@ -369,7 +368,7 @@ jobs:
           security default-keychain -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign:,productbuild:,pkgbuild: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          APP_PATH="$(find apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)"
+          APP_PATH="$(find apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)"
           if [ -z "${APP_PATH:-}" ]; then
             echo "::error::Built .app bundle not found"
             exit 1
