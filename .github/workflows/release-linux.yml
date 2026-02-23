@@ -134,10 +134,37 @@ jobs:
                 echo ".DirIcon already present"
               fi
 
+              # Keep AppStream metadata under usr/share/metainfo (not AppDir root),
+              # and ensure filenames match the component id to satisfy appstreamcli.
               if [ -f "$METAINFO_SOURCE" ]; then
                 mkdir -p appdir/usr/share/metainfo
-                cp "$METAINFO_SOURCE" appdir/usr/share/metainfo/Mindwtr.metainfo.xml
-                echo "Injected AppStream metainfo"
+                rm -f appdir/usr/share/metainfo/*.xml
+                cp "$METAINFO_SOURCE" appdir/usr/share/metainfo/tech.dongdongbh.mindwtr.metainfo.xml
+                # appdir-lint in AppImageHub looks for *.appdata.xml specifically.
+                cp "$METAINFO_SOURCE" appdir/usr/share/metainfo/tech.dongdongbh.mindwtr.appdata.xml
+                rm -f appdir/*.metainfo.xml appdir/*.appdata.xml || true
+                echo "Injected AppStream metainfo/appdata in usr/share/metainfo"
+              fi
+
+              # Tauri can emit an empty Categories= entry, which fails AppStream checks.
+              if [ -d appdir/usr/share/applications ]; then
+                for DESKTOP_FILE in appdir/usr/share/applications/*.desktop; do
+                  [ -f "$DESKTOP_FILE" ] || continue
+                  if grep -q '^Categories=$' "$DESKTOP_FILE"; then
+                    sed -i 's/^Categories=$/Categories=Office;Utility;/' "$DESKTOP_FILE"
+                    echo "Patched empty categories in $DESKTOP_FILE"
+                  fi
+                done
+              fi
+
+              # Some Tauri/linuxdeploy builds can leave AppRun.wrapped as 770.
+              # AppImageHub runs the app as an unprivileged user and fails with:
+              # "AppRun.wrapped: Permission denied". Normalize to world-executable.
+              if [ -e appdir/AppRun ]; then
+                chmod 0755 appdir/AppRun
+              fi
+              if [ -e appdir/AppRun.wrapped ]; then
+                chmod 0755 appdir/AppRun.wrapped
               fi
 
               ARCH="$RUNNER_ARCH" "$APPIMAGETOOL" appdir fixed.AppImage
