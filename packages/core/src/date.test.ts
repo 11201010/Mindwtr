@@ -22,6 +22,15 @@ describe('date utils', () => {
         expect(parsed.getMinutes()).toBe(4);
     });
 
+    it('preserves years below 100 instead of coercing to 19xx', () => {
+        const parsed = safeParseDate('0002-01-03');
+        expect(parsed).not.toBeNull();
+        if (!parsed) return;
+        expect(parsed.getFullYear()).toBe(2);
+        expect(parsed.getMonth()).toBe(0);
+        expect(parsed.getDate()).toBe(3);
+    });
+
     it('formats valid dates and falls back on invalid input', () => {
         const formatted = safeFormatDate('2025-01-02', 'yyyy-MM-dd', 'fallback');
         expect(formatted).toBe('2025-01-02');
