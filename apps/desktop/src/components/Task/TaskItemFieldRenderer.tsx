@@ -22,6 +22,7 @@ import remarkGfm from 'remark-gfm';
 import { WeekdaySelector } from './TaskForm/WeekdaySelector';
 import { AttachmentsField } from './TaskForm/AttachmentsField';
 import { ChecklistField } from './TaskForm/ChecklistField';
+import { normalizeDateInputValue } from './task-item-helpers';
 
 export type MonthlyRecurrenceInfo = {
     pattern: 'date' | 'custom';
@@ -244,15 +245,16 @@ export function TaskItemFieldRenderer({
                 const dateValue = parsed ? safeFormatDate(parsed, 'yyyy-MM-dd') : '';
                 const timeValue = hasTime && parsed ? safeFormatDate(parsed, 'HH:mm') : '';
                 const handleDateChange = (value: string) => {
-                    if (!value) {
+                    const normalizedDate = normalizeDateInputValue(value);
+                    if (!normalizedDate) {
                         setEditStartTime('');
                         return;
                     }
                     if (hasTime && timeValue) {
-                        setEditStartTime(`${value}T${timeValue}`);
+                        setEditStartTime(`${normalizedDate}T${timeValue}`);
                         return;
                     }
-                    setEditStartTime(value);
+                    setEditStartTime(normalizedDate);
                 };
                 const handleTimeChange = (value: string) => {
                     if (!value) {
@@ -317,15 +319,16 @@ export function TaskItemFieldRenderer({
                     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
                 };
                 const handleDateChange = (value: string) => {
-                    if (!value) {
+                    const normalizedDate = normalizeDateInputValue(value);
+                    if (!normalizedDate) {
                         setEditReviewAt('');
                         return;
                     }
                     if (hasTime && timeValue) {
-                        setEditReviewAt(`${value}T${timeValue}`);
+                        setEditReviewAt(`${normalizedDate}T${timeValue}`);
                         return;
                     }
-                    setEditReviewAt(value);
+                    setEditReviewAt(normalizedDate);
                 };
                 const handleTimeChange = (value: string) => {
                     if (!value) {

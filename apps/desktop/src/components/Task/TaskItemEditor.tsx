@@ -5,6 +5,7 @@ import { AreaSelector } from '../ui/AreaSelector';
 import { ProjectSelector } from '../ui/ProjectSelector';
 import { SectionSelector } from '../ui/SectionSelector';
 import { TaskInput } from './TaskInput';
+import { normalizeDateInputValue } from './task-item-helpers';
 
 interface TaskItemEditorProps {
     t: (key: string) => string;
@@ -132,15 +133,16 @@ export function TaskItemEditor({
     const titleDirection = resolveAutoTextDirection(editTitle, language);
 
     const handleDueDateChange = (value: string) => {
-        if (!value) {
+        const normalizedDate = normalizeDateInputValue(value);
+        if (!normalizedDate) {
             setEditDueDate('');
             return;
         }
         if (dueHasTime && dueTimeValue) {
-            setEditDueDate(`${value}T${dueTimeValue}`);
+            setEditDueDate(`${normalizedDate}T${dueTimeValue}`);
             return;
         }
-        setEditDueDate(value);
+        setEditDueDate(normalizedDate);
     };
 
     const handleDueTimeChange = (value: string) => {
