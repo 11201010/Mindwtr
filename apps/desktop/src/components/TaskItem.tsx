@@ -655,9 +655,8 @@ export const TaskItem = memo(function TaskItem({
         return translated;
     }, [t]);
     const handleMoveToWaitingWithPrompt = useCallback(() => {
-        void moveTask(task.id, 'waiting');
         setShowWaitingDuePrompt(true);
-    }, [moveTask, task.id]);
+    }, []);
     const hasPendingEdits = useCallback(() => {
         if (editTitle !== task.title) return true;
         if (editDescription !== (task.description || '')) return true;
@@ -934,11 +933,15 @@ export const TaskItem = memo(function TaskItem({
                     defaultValue=""
                     confirmLabel={t('common.save')}
                     cancelLabel={t('common.cancel')}
-                    onCancel={() => setShowWaitingDuePrompt(false)}
+                    onCancel={() => {
+                        setShowWaitingDuePrompt(false);
+                        void moveTask(task.id, 'waiting');
+                    }}
                     onConfirm={(value) => {
                         const input = value.trim();
                         if (!input) {
                             setShowWaitingDuePrompt(false);
+                            void moveTask(task.id, 'waiting');
                             return;
                         }
                         const dueFromQuickAdd = parseQuickAdd(`follow-up /due:${input}`, projects, new Date(), areas).props.dueDate;
@@ -948,8 +951,9 @@ export const TaskItem = memo(function TaskItem({
                             showToast(waitingDuePromptInvalid, 'error');
                             return;
                         }
-                        void updateTask(task.id, { dueDate });
                         setShowWaitingDuePrompt(false);
+                        void moveTask(task.id, 'waiting');
+                        void updateTask(task.id, { dueDate });
                     }}
                 />
             )}
