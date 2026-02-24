@@ -7,6 +7,8 @@ interface PromptModalProps {
     placeholder?: string;
     defaultValue?: string;
     inputType?: 'text' | 'date' | 'datetime-local';
+    secondaryLabel?: string;
+    onSecondary?: () => void;
     confirmLabel: string;
     cancelLabel: string;
     onConfirm: (value: string) => void;
@@ -20,6 +22,8 @@ export function PromptModal({
     placeholder,
     defaultValue,
     inputType = 'text',
+    secondaryLabel,
+    onSecondary,
     confirmLabel,
     cancelLabel,
     onConfirm,
@@ -83,6 +87,15 @@ export function PromptModal({
                         className="w-full bg-card border border-border rounded-lg py-2 px-3 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
                     <div className="flex justify-end gap-2">
+                        {secondaryLabel && onSecondary && (
+                            <button
+                                type="button"
+                                onClick={onSecondary}
+                                className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80"
+                            >
+                                {secondaryLabel}
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={onCancel}

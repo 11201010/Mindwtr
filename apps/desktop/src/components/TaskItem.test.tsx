@@ -111,7 +111,8 @@ describe('TaskItem', () => {
         );
         const waitingButton = getByRole('button', { name: /move to waiting and set due date/i });
         fireEvent.click(waitingButton);
-        expect(getByText('Set follow-up date')).toBeInTheDocument();
+        expect(getByText('Set follow-up / review date')).toBeInTheDocument();
         expect(container.querySelector('input[type="date"]')).toBeTruthy();
+        expect(getByRole('button', { name: /skip/i })).toBeInTheDocument();
     });
 });

@@ -636,17 +636,17 @@ export const TaskItem = memo(function TaskItem({
     }, [setHighlightTask, setSelectedProjectId, task.id]);
     const waitingDuePromptTitle = useMemo(() => {
         const translated = t('task.waitingDuePromptTitle');
-        if (translated === 'task.waitingDuePromptTitle') return 'Set follow-up date';
+        if (translated === 'task.waitingDuePromptTitle') return 'Set follow-up / review date';
         return translated;
     }, [t]);
     const waitingDuePromptDescription = useMemo(() => {
         const translated = t('task.waitingDuePromptDescription');
-        if (translated === 'task.waitingDuePromptDescription') return 'When do you want to follow up on this waiting task?';
+        if (translated === 'task.waitingDuePromptDescription') return 'This sets the task review date. When should this waiting task resurface?';
         return translated;
     }, [t]);
-    const waitingDuePromptInvalid = useMemo(() => {
-        const translated = t('task.waitingDuePromptInvalid');
-        if (translated === 'task.waitingDuePromptInvalid') return 'Could not parse that date. Try formats like "tomorrow", "next Monday", or "2026-03-01".';
+    const skipLabel = useMemo(() => {
+        const translated = t('common.skip');
+        if (translated === 'common.skip') return 'Skip';
         return translated;
     }, [t]);
     const handleMoveToWaitingWithPrompt = useCallback(() => {
@@ -926,29 +926,24 @@ export const TaskItem = memo(function TaskItem({
                     description={waitingDuePromptDescription}
                     inputType="date"
                     defaultValue=""
+                    secondaryLabel={skipLabel}
+                    onSecondary={() => {
+                        setShowWaitingDuePrompt(false);
+                        void moveTask(task.id, 'waiting');
+                    }}
                     confirmLabel={t('common.save')}
                     cancelLabel={t('common.cancel')}
                     onCancel={() => {
                         setShowWaitingDuePrompt(false);
-                        void moveTask(task.id, 'waiting');
                     }}
                     onConfirm={(value) => {
                         const input = value.trim();
                         if (!input) {
-                            setShowWaitingDuePrompt(false);
-                            void moveTask(task.id, 'waiting');
-                            return;
-                        }
-                        const dueFromQuickAdd = parseQuickAdd(`follow-up /due:${input}`, projects, new Date(), areas).props.dueDate;
-                        const dueFromText = parseQuickAdd(`follow-up ${input}`, projects, new Date(), areas).props.dueDate;
-                        const dueDate = dueFromQuickAdd || dueFromText;
-                        if (!dueDate) {
-                            showToast(waitingDuePromptInvalid, 'error');
                             return;
                         }
                         setShowWaitingDuePrompt(false);
                         void moveTask(task.id, 'waiting');
-                        void updateTask(task.id, { dueDate });
+                        void updateTask(task.id, { reviewAt: input });
                     }}
                 />
             )}
