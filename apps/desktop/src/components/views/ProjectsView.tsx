@@ -15,6 +15,7 @@ import { AreaManagerModal } from './projects/AreaManagerModal';
 import { ProjectNotesSection } from './projects/ProjectNotesSection';
 import { ProjectDetailsHeader } from './projects/ProjectDetailsHeader';
 import { ProjectDetailsFields } from './projects/ProjectDetailsFields';
+import { TaskItem } from '../TaskItem';
 import {
     DEFAULT_AREA_COLOR,
     getProjectColor,
@@ -359,9 +360,29 @@ export function ProjectsView() {
         return combined;
     }, [orderedProjectTasks, projectSections.length, sectionTaskGroups.sections, sectionTaskGroups.unsectioned]);
 
+    const projectReferenceTasks = useMemo(() => {
+        if (!selectedProject) return [] as Task[];
+
+        const projectTagSet = new Set((selectedProject.tagIds || []).map((tag) => String(tag).toLowerCase()));
+        const isProjectTagMatch = (task: Task) => {
+            if (projectTagSet.size === 0) return false;
+            const taskTags = task.tags || [];
+            return taskTags.some((tag) => projectTagSet.has(String(tag).toLowerCase()));
+        };
+
+        const references = allTasks.filter((task) => {
+            if (task.deletedAt) return false;
+            if (task.status !== 'reference') return false;
+            if (task.projectId === selectedProject.id) return true;
+            return isProjectTagMatch(task);
+        });
+
+        return sortProjectTasks(references);
+    }, [allTasks, selectedProject, sortProjectTasks]);
+
     useEffect(() => {
         if (!highlightTaskId) return;
-        const exists = orderedProjectTaskList.some((task) => task.id === highlightTaskId);
+        const exists = [...orderedProjectTaskList, ...projectReferenceTasks].some((task) => task.id === highlightTaskId);
         if (!exists) return;
         const el = document.querySelector(`[data-task-id="${highlightTaskId}"]`) as HTMLElement | null;
         if (el) {
@@ -369,7 +390,7 @@ export function ProjectsView() {
         }
         const timer = window.setTimeout(() => setHighlightTask(null), 4000);
         return () => window.clearTimeout(timer);
-    }, [highlightTaskId, orderedProjectTaskList, setHighlightTask]);
+    }, [highlightTaskId, orderedProjectTaskList, projectReferenceTasks, setHighlightTask]);
 
     const { taskIdsByContainer, taskIdToContainer } = useMemo(() => {
         const idsByContainer = new Map<string, string[]>();
@@ -881,6 +902,27 @@ export function ProjectsView() {
                                         </div>
                                         {tasksContent}
                                     </div>
+
+                                    {projectReferenceTasks.length > 0 && (
+                                        <div className="pb-2">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                                                    {t('status.reference')} ({projectReferenceTasks.length})
+                                                </div>
+                                            </div>
+                                            <div className="rounded-xl border border-border/70 bg-background/30 divide-y divide-border/30">
+                                                {projectReferenceTasks.map((task) => (
+                                                    <TaskItem
+                                                        key={`project-reference-${task.id}`}
+                                                        task={task}
+                                                        project={selectedProject}
+                                                        enableDoubleClickEdit
+                                                        showProjectBadgeInActions={false}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="flex-1 flex items-center justify-center text-muted-foreground p-6">
