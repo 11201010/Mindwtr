@@ -1,4 +1,4 @@
-import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, RotateCcw, Copy, MapPin, Hourglass, BookOpen, Star } from 'lucide-react';
+import { Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Paperclip, RotateCcw, Copy, MapPin, Hourglass, BookOpen, PauseCircle, Star } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Area, Attachment, Project, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy } from '@mindwtr/core';
@@ -16,6 +16,7 @@ interface TaskItemDisplayActions {
     onDelete: () => void;
     onDuplicate: () => void;
     onStatusChange: (status: TaskStatus) => void;
+    onMoveToWaitingWithPrompt?: () => void;
     onOpenProject?: (projectId: string) => void;
     openAttachment: (attachment: Attachment) => void;
     onToggleChecklistItem?: (index: number) => void;
@@ -104,6 +105,7 @@ export function TaskItemDisplay({
         onDelete,
         onDuplicate,
         onStatusChange,
+        onMoveToWaitingWithPrompt,
         onOpenProject,
         openAttachment,
         onToggleChecklistItem,
@@ -137,6 +139,10 @@ export function TaskItemDisplay({
                 : hint;
         })()
         : '';
+    const moveToWaitingWithDueLabel = (() => {
+        const label = t('task.moveToWaitingWithDue');
+        return label === 'task.moveToWaitingWithDue' ? 'Move to Waiting and set due date' : label;
+    })();
     const handleProjectClick = (event: MouseEvent<HTMLSpanElement>, projectId: string) => {
         event.stopPropagation();
         onOpenProject?.(projectId);
@@ -642,6 +648,17 @@ export function TaskItemDisplay({
                                     className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted/50"
                                 >
                                     <BookOpen className="w-4 h-4" />
+                                </button>
+                            )}
+                            {task.status === 'next' && onMoveToWaitingWithPrompt && (
+                                <button
+                                    type="button"
+                                    onClick={onMoveToWaitingWithPrompt}
+                                    aria-label={moveToWaitingWithDueLabel}
+                                    title={moveToWaitingWithDueLabel}
+                                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted/50"
+                                >
+                                    <PauseCircle className="w-4 h-4" />
                                 </button>
                             )}
                             {showStatusSelect && (
