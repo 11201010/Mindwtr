@@ -434,7 +434,7 @@ jobs:
               printf '%s\n' '<plist version="1.0">'
               printf '%s\n' '<dict>'
               printf '%s\n' '    <key>method</key>'
-              printf '%s\n' '    <string>app-store</string>'
+              printf '%s\n' '    <string>app-store-connect</string>'
               printf '%s\n' '    <key>destination</key>'
               printf '%s\n' '    <string>export</string>'
               printf '%s\n' '    <key>signingStyle</key>'
@@ -456,6 +456,24 @@ jobs:
               printf '%s\n' '</plist>'
             } > "$EXPORT_OPTIONS_PATH"
           fi
+
+          # Normalize ExportOptions for CI signing so stale IOS_EXPORT_OPTIONS
+          # secrets cannot override app/widget provisioning profile mapping.
+          /usr/libexec/PlistBuddy -c "Set :method app-store-connect" "$EXPORT_OPTIONS_PATH" \
+            || /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy -c "Set :destination export" "$EXPORT_OPTIONS_PATH" \
+            || /usr/libexec/PlistBuddy -c "Add :destination string export" "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy -c "Set :signingStyle manual" "$EXPORT_OPTIONS_PATH" \
+            || /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy -c "Set :teamID $APP_PROFILE_TEAM_ID" "$EXPORT_OPTIONS_PATH" \
+            || /usr/libexec/PlistBuddy -c "Add :teamID string $APP_PROFILE_TEAM_ID" "$EXPORT_OPTIONS_PATH"
+
+          /usr/libexec/PlistBuddy -c "Delete :provisioningProfiles" "$EXPORT_OPTIONS_PATH" || true
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_BUNDLE_ID string $APP_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_WIDGET_BUNDLE_ID string $WIDGET_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
+
+          echo "::notice::ExportOptions.plist normalized for app and widget provisioning profiles."
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH" >> "$GITHUB_ENV"
 
       - name: Apply CI signing settings to Xcode project
