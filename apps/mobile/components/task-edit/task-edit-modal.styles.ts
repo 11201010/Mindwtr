@@ -158,7 +158,7 @@ export const styles = StyleSheet.create({
         borderBottomColor: '#f0f0f0',
     },
     checkboxTouch: {
-        padding: 4,
+        padding: 8,
         minWidth: 44,
         minHeight: 44,
         alignItems: 'center',
