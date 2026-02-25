@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
-import { File as ExpoFile } from 'expo-file-system';
+import { Directory as ExpoDirectory, File as ExpoFile } from 'expo-file-system';
 import { AppData } from '@mindwtr/core';
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './app-log';
@@ -23,9 +23,19 @@ const isReadOnlyError = (error: unknown): boolean => {
     return /isn't writable|not writable|read-only|read only|permission denied|EACCES/i.test(message);
 };
 
+const isPickerCanceledError = (error: unknown): boolean => {
+    const message = String(error);
+    return /cancel/i.test(message);
+};
+
 function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+const normalizeDirectoryUri = (uri: string): string => uri.replace(/\/+$/, '');
+
+const buildSyncFileUri = (directoryUri: string, fileName = SYNC_FILE_NAME): string =>
+    `${normalizeDirectoryUri(directoryUri)}/${fileName}`;
 
 const decodeUriSafe = (value: string): string => {
     try {
@@ -300,14 +310,75 @@ const assertDirectoryWritable = async (
     }
 };
 
-export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
-    if (Platform.OS === 'ios') {
+const assertIosDirectoryWritable = async (
+    directoryUri: string,
+): Promise<void> => {
+    const testFileUri = buildSyncFileUri(directoryUri, `mindwtr-write-test-${Date.now()}.txt`);
+    try {
+        writeWithModernFileApi(testFileUri, 'ok');
+    } catch (error) {
+        if (isReadOnlyError(error)) {
+            throw new Error(READONLY_FOLDER_MESSAGE);
+        }
+        throw error;
+    } finally {
         try {
-            // iOS directory picker can disable third-party providers (e.g. Google Drive).
-            // Use file picker so users can choose a sync JSON file from any enabled provider.
-            return await pickAndParseSyncFile();
+            const file = new ExpoFile(testFileUri);
+            if (file.exists) {
+                file.delete();
+            }
+        } catch {
+            // Ignore cleanup failures for test file.
+        }
+    }
+};
+
+const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
+    try {
+        const directory = await ExpoDirectory.pickDirectoryAsync();
+        const directoryUri = directory?.uri;
+        if (!directoryUri) return null;
+
+        await assertIosDirectoryWritable(directoryUri);
+
+        const primaryFileUri = buildSyncFileUri(directoryUri, SYNC_FILE_NAME);
+        const legacyFileUri = buildSyncFileUri(directoryUri, LEGACY_SYNC_FILE_NAME);
+        let fileUri = primaryFileUri;
+        let fileContent = await readFileText(primaryFileUri);
+        if (fileContent === null) {
+            const legacyContent = await readFileText(legacyFileUri);
+            if (legacyContent !== null) {
+                fileUri = legacyFileUri;
+                fileContent = legacyContent;
+            }
+        }
+
+        if (!fileContent) {
+            return {
+                tasks: [],
+                projects: [],
+                sections: [],
+                areas: [],
+                settings: {},
+                __fileUri: primaryFileUri,
+            };
+        }
+        const data = parseAppData(fileContent);
+        return { ...data, __fileUri: fileUri };
+    } catch (error) {
+        if (isPickerCanceledError(error)) {
+            return null;
+        }
+        throw error;
+    }
+};
+
+export const pickAndParseSyncFolder = async (): Promise<PickResult | null> => {
+    if (Platform.OS === 'ios' && typeof ExpoDirectory.pickDirectoryAsync === 'function') {
+        try {
+            return await pickAndParseIosSyncFolder();
         } catch (error) {
-            void logError(error, { scope: 'sync', extra: { operation: 'import', message: 'Failed to import data from iOS file' } });
+            void logError(error, { scope: 'sync', extra: { operation: 'import', message: 'Failed to import data from iOS folder' } });
             throw error;
         }
     }

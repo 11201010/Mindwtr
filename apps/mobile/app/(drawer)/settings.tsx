@@ -1525,9 +1525,6 @@ export default function SettingsPage() {
             lastSyncError: undefined,
         }).catch(logSettingsError);
     }, [updateSettings]);
-    const isIosFileSync = Platform.OS === 'ios';
-    const syncPathLabel = localize(isIosFileSync ? 'Sync File' : 'Sync Folder', isIosFileSync ? '同步文件' : '同步文件夹');
-    const selectSyncPathLabel = localize(isIosFileSync ? 'Select File' : 'Select Folder', isIosFileSync ? '选择文件' : '选择文件夹');
 
     // Set sync folder (Android) or sync file (iOS)
     const handleSetSyncPath = async () => {
@@ -1544,10 +1541,7 @@ export default function SettingsPage() {
                     resetSyncStatusForBackendSwitch();
                     Alert.alert(
                         localize('Success', '成功'),
-                        localize(
-                            isIosFileSync ? 'Sync file set successfully' : 'Sync folder set successfully',
-                            isIosFileSync ? '同步文件已设置' : '同步文件夹已设置'
-                        )
+                        localize('Sync folder set successfully', '同步文件夹已设置')
                     );
                 }
             }
@@ -1556,17 +1550,10 @@ export default function SettingsPage() {
             const message = String(error);
             if (/read-only|read only|not writable|isn't writable|permission denied|EACCES/i.test(message)) {
                 Alert.alert(
+                    localize('Sync folder is read-only', '同步文件夹不可写'),
                     localize(
-                        isIosFileSync ? 'Sync file is read-only' : 'Sync folder is read-only',
-                        isIosFileSync ? '同步文件不可写' : '同步文件夹不可写'
-                    ),
-                    localize(
-                        isIosFileSync
-                            ? 'The selected file is read-only. Please choose a writable sync file or make it available offline.'
-                            : 'The selected folder is read-only. Please choose a writable folder (e.g. My files) or make it available offline.',
-                        isIosFileSync
-                            ? '所选文件不可写。请选择可写的同步文件，或将其设为离线可用。'
-                            : '所选文件夹不可写。请选择可写文件夹（如“我的文件”），或将其设为离线可用。'
+                        'The selected folder is read-only. Please choose a writable folder (e.g. My files) or make it available offline.',
+                        '所选文件夹不可写。请选择可写文件夹（如“我的文件”），或将其设为离线可用。'
                     )
                 );
                 return;
@@ -1774,10 +1761,7 @@ export default function SettingsPage() {
                 if (!syncPath) {
                     Alert.alert(
                         localize('Notice', '提示'),
-                        localize(
-                            isIosFileSync ? 'Please set a sync file first' : 'Please set a sync folder first',
-                            isIosFileSync ? '请先设置同步文件' : '请先设置同步文件夹'
-                        )
+                        localize('Please set a sync folder first', '请先设置同步文件夹')
                     );
                     return;
                 }
@@ -1802,10 +1786,10 @@ export default function SettingsPage() {
             const message = String(error);
             if (/temporary Inbox location|re-select a folder in Settings -> Data & Sync|Cannot access the selected sync file/i.test(message)) {
                 Alert.alert(
-                    localize(isIosFileSync ? 'Sync file access expired' : 'Sync folder access expired', isIosFileSync ? '同步文件访问已失效' : '同步目录访问已失效'),
+                    localize('Sync folder access expired', '同步目录访问已失效'),
                     localize(
-                        'The selected iOS sync file is in a temporary read-only location. Please go to Settings → Data & Sync → Select File and pick a writable file from iCloud Drive or Google Drive.',
-                        '当前 iOS 同步文件位于临时只读目录。请前往「设置 → 数据与同步 → 选择文件」，从 iCloud Drive 或 Google Drive 重新选择可写文件。'
+                        'The selected iOS sync file is in a temporary read-only location. Please go to Settings → Data & Sync → Select Folder and pick a writable iCloud Drive folder.',
+                        '当前 iOS 同步文件位于临时只读目录。请前往「设置 → 数据与同步 → 选择文件夹」，重新选择可写的 iCloud Drive 文件夹。'
                     )
                 );
                 return;
@@ -4315,12 +4299,8 @@ export default function SettingsPage() {
                                 </Text>
                                 <Text style={[styles.helpText, { color: tc.secondaryText }]}>
                                     {isChineseLanguage
-                                        ? (isIosFileSync
-                                            ? '1. 先点击"导出备份"保存文件到云盘（如 Google Drive）\n2. 点击"选择文件"并选中该备份文件\n3. 之后点击"同步"即可合并数据'
-                                            : '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件夹"授权该文件夹\n3. 之后点击"同步"即可合并数据')
-                                        : (isIosFileSync
-                                            ? translateText('1. First, tap "Export Backup" and save to cloud storage (e.g., Google Drive)\n2. Tap "Select File" and choose that backup file\n3. Then tap "Sync" to merge data', language)
-                                            : translateText('1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select Folder" to grant access to that folder\n3. Then tap "Sync" to merge data', language))}
+                                        ? '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件夹"授权该文件夹\n3. 之后点击"同步"即可合并数据'
+                                        : translateText('1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select Folder" to grant access to that folder\n3. Then tap "Sync" to merge data', language)}
                                 </Text>
                                 <Text style={[styles.helpText, { color: tc.secondaryText, marginTop: 8 }]}>
                                     {isChineseLanguage
@@ -4337,14 +4317,14 @@ export default function SettingsPage() {
                                 <View style={styles.settingRow}>
                                     <View style={styles.settingInfo}>
                                         <Text style={[styles.settingLabel, { color: tc.text }]}>
-                                            {syncPathLabel}
+                                            {localize('Sync Folder', '同步文件夹')}
                                         </Text>
                                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
                                             {syncPath ? syncPath.split('/').pop() : localize('Not set', '未设置')}
                                         </Text>
                                     </View>
                                     <TouchableOpacity onPress={handleSetSyncPath}>
-                                        <Text style={styles.linkText}>{selectSyncPathLabel}</Text>
+                                        <Text style={styles.linkText}>{localize('Select Folder', '选择文件夹')}</Text>
                                     </TouchableOpacity>
                                 </View>
 
@@ -4359,9 +4339,7 @@ export default function SettingsPage() {
                                             {localize('Sync', '同步')}
                                         </Text>
                                         <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                            {isChineseLanguage
-                                                ? (isIosFileSync ? '读取并合并同步文件' : '读取并合并同步文件夹')
-                                                : translateText(isIosFileSync ? 'Read and merge sync file' : 'Read and merge sync folder', language)}
+                                            {isChineseLanguage ? '读取并合并同步文件夹' : translateText('Read and merge sync folder', language)}
                                         </Text>
                                     </View>
                                     {isSyncing && <ActivityIndicator size="small" color="#3B82F6" />}
