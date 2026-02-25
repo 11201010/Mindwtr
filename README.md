@@ -76,12 +76,13 @@ Mindwtr is built for people who want a complete GTD system without lock-in. Here
 |---|---|---|---|---|---|
 | Open source | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Local-first data ownership | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Desktop apps (Windows / macOS / Linux) | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Desktop app | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Mobile app | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Linux desktop app | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Web app | ✅ | ✅ | ✅ | ❌ | ✅ |
 | GTD-native workflow | ✅ | ⚠️ | ⚠️ | ✅ | ✅ |
 | Free plan | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| Subscription model | ❌ | ✅ | ✅ | ⚠️ | ✅ |
-| One-time purchase option | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Paid model | Free | Subscription | Subscription | Freemium | Subscription |
 | Sync without vendor cloud account | ✅ | ❌ | ❌ | ✅ | ❌ |
 
 Legend: `✅` = yes, `❌` = no, `⚠️` = partial/limited support.
