@@ -91,13 +91,13 @@ export default function ProjectsScreen() {
   };
 
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-  const colorDisplayByHex: Record<string, { name: string; swatch: string }> = {
-    '#3b82f6': { name: 'Blue', swatch: '🔵' },
-    '#10b981': { name: 'Green', swatch: '🟢' },
-    '#f59e0b': { name: 'Amber', swatch: '🟠' },
-    '#ef4444': { name: 'Red', swatch: '🔴' },
-    '#8b5cf6': { name: 'Purple', swatch: '🟣' },
-    '#ec4899': { name: 'Pink', swatch: '🩷' },
+  const colorDisplayByHex: Record<string, { nameKey: string; swatch: string }> = {
+    '#3b82f6': { nameKey: 'projects.colorBlue', swatch: '🔵' },
+    '#10b981': { nameKey: 'projects.colorGreen', swatch: '🟢' },
+    '#f59e0b': { nameKey: 'projects.colorAmber', swatch: '🟠' },
+    '#ef4444': { nameKey: 'projects.colorRed', swatch: '🔴' },
+    '#8b5cf6': { nameKey: 'projects.colorPurple', swatch: '🟣' },
+    '#ec4899': { nameKey: 'projects.colorPink', swatch: '🩷' },
   };
 
   const sortedAreas = useMemo(() => [...areas].sort((a, b) => a.order - b.order), [areas]);
@@ -457,8 +457,9 @@ export default function ProjectsScreen() {
                     options: [
                       t('common.cancel'),
                       ...colors.map((color) => {
-                        const colorMeta = colorDisplayByHex[color] ?? { name: color.toUpperCase(), swatch: '◯' };
-                        return `${colorMeta.swatch} ${colorMeta.name}`;
+                        const colorMeta = colorDisplayByHex[color] ?? { nameKey: '', swatch: '◯' };
+                        const colorName = colorMeta.nameKey ? t(colorMeta.nameKey) : color.toUpperCase();
+                        return `${colorMeta.swatch} ${colorName}`;
                       }),
                     ],
                     cancelButtonIndex: 0,
@@ -534,8 +535,9 @@ export default function ProjectsScreen() {
                   options: [
                     t('common.cancel'),
                     ...colors.map((color) => {
-                      const colorMeta = colorDisplayByHex[color] ?? { name: color.toUpperCase(), swatch: '◯' };
-                      return `${area.color === color ? '✓ ' : ''}${colorMeta.swatch} ${colorMeta.name}`;
+                      const colorMeta = colorDisplayByHex[color] ?? { nameKey: '', swatch: '◯' };
+                      const colorName = colorMeta.nameKey ? t(colorMeta.nameKey) : color.toUpperCase();
+                      return `${area.color === color ? '✓ ' : ''}${colorMeta.swatch} ${colorName}`;
                     }),
                   ],
                   cancelButtonIndex: 0,
