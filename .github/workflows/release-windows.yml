@@ -37,7 +37,7 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
-    name: Windows Build (EXE + MSIX)
+    name: Windows Build (EXE)
     timeout-minutes: 90
     env:
       VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY || secrets.VITE_DROPBOX_APP_KEY }}
@@ -516,13 +516,6 @@ jobs:
           Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | ForEach-Object {
             $lower = $_.Name.ToLower()
             Copy-Item $_.FullName "release-artifacts/$lower"
-          }
-          Get-ChildItem "apps/desktop/src-tauri/target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue | ForEach-Object {
-            $lower = $_.Name.ToLower()
-            Copy-Item $_.FullName "release-artifacts/$lower"
-          }
-          Get-ChildItem "mindwtr_*.msix" -ErrorAction SilentlyContinue | ForEach-Object {
-            Copy-Item $_.FullName "release-artifacts/$($_.Name.ToLower())"
           }
           Get-ChildItem release-artifacts
 

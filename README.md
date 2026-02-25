@@ -254,7 +254,7 @@ scoop bucket add mindwtr https://github.com/dongdongbh/homebrew-mindwtr
 scoop install mindwtr
 ```
 
-**Other methods:** `.msi` / `.exe` from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases).
+**Other methods:** `.exe` from [GitHub Releases](https://github.com/dongdongbh/Mindwtr/releases).
 
 ### Desktop (macOS)
 
