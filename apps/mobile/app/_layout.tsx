@@ -597,6 +597,8 @@ function RootLayoutContent() {
           markStartupPhase('js.data_load.retry_scheduled', { attempt: loadAttempts.current, delayMs: 2000 });
           return;
         }
+        // Render the shell in degraded mode after final load failure.
+        setDataReady(true);
         Alert.alert(
           '⚠️ Data Load Error',
           'Failed to load your data. Some tasks may be missing.\n\nError: ' + (e as Error).message,
@@ -644,8 +646,9 @@ function RootLayoutContent() {
   }, []);
 
   const isShellReady = themeReady && languageReady;
+  const isFirstPaintReady = isShellReady && (dataReady || Boolean(storageInitError));
   useEffect(() => {
-    if (!isShellReady) return;
+    if (!isFirstPaintReady) return;
     markStartupPhase('js.shell_ready');
     markStartupPhase('js.app_ready');
     if (typeof SplashScreen?.hideAsync === 'function') {
@@ -663,7 +666,7 @@ function RootLayoutContent() {
       return;
     }
     markStartupPhase('js.splash_hidden.noop');
-  }, [isShellReady]);
+  }, [isFirstPaintReady]);
 
   if (storageInitError) {
     return (
@@ -706,7 +709,8 @@ function RootLayoutContent() {
       >
         <NavigationThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
           <Stack>
-            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+            <Stack.Screen name="index" options={{ headerShown: false, animation: 'none' }} />
+            <Stack.Screen name="(drawer)" options={{ headerShown: false, animation: 'none' }} />
             <Stack.Screen
               name="daily-review"
               options={{
