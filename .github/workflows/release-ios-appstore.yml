@@ -475,6 +475,8 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath "$ARCHIVE_PATH" \
             DEVELOPMENT_TEAM="$EXPECTED_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY[sdk=iphoneos*]=$IOS_SIGNING_IDENTITY" \
             MARKETING_VERSION="$APP_VERSION" \
             CURRENT_PROJECT_VERSION="$APP_BUILD_NUMBER" \
             clean archive >"$ARCHIVE_LOG" 2>&1
