@@ -143,11 +143,16 @@ const addAppDelegateShortcutHandling = (config) =>
       }
 
       const marker = '\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {';
-      if (contents.includes(marker)) {
-        contents = contents.replace(
-          marker,
-          `\n\n  public override func application(\n    _ application: UIApplication,\n    performActionFor shortcutItem: UIApplicationShortcutItem,\n    completionHandler: @escaping (Bool) -> Void\n  ) {\n    completionHandler(handleHomeScreenQuickAction(shortcutItem, application: application))\n  }\n\n  private func handleHomeScreenQuickAction(\n    _ shortcutItem: UIApplicationShortcutItem,\n    application: UIApplication\n  ) -> Bool {\n    guard let destinationUrl = quickActionUrl(shortcutItem) else {\n      return false\n    }\n\n    // Give React Native routing a brief moment to initialize on cold launch.\n    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {\n      _ = RCTLinkingManager.application(application, open: destinationUrl, options: [:])\n      application.open(destinationUrl, options: [:], completionHandler: nil)\n    }\n    return true\n  }\n\n  private func quickActionUrl(_ shortcutItem: UIApplicationShortcutItem) -> URL? {\n    if let userInfo = shortcutItem.userInfo,\n       let rawUrl = userInfo[quickActionUrlUserInfoKey] as? String,\n       let parsedUrl = URL(string: rawUrl) {\n      return parsedUrl\n    }\n    if let mappedUrl = quickActionTypeToUrl[shortcutItem.type] {\n      return URL(string: mappedUrl)\n    }\n    return nil\n  }\n${marker}`
-        );
+      const quickActionHandlers = `  public override func application(\n    _ application: UIApplication,\n    performActionFor shortcutItem: UIApplicationShortcutItem,\n    completionHandler: @escaping (Bool) -> Void\n  ) {\n    completionHandler(handleHomeScreenQuickAction(shortcutItem, application: application))\n  }\n\n  private func handleHomeScreenQuickAction(\n    _ shortcutItem: UIApplicationShortcutItem,\n    application: UIApplication\n  ) -> Bool {\n    guard let destinationUrl = quickActionUrl(shortcutItem) else {\n      return false\n    }\n\n    // Give React Native routing a brief moment to initialize on cold launch.\n    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {\n      _ = RCTLinkingManager.application(application, open: destinationUrl, options: [:])\n      application.open(destinationUrl, options: [:], completionHandler: nil)\n    }\n    return true\n  }\n\n  private func quickActionUrl(_ shortcutItem: UIApplicationShortcutItem) -> URL? {\n    if let userInfo = shortcutItem.userInfo,\n       let rawUrl = userInfo[quickActionUrlUserInfoKey] as? String,\n       let parsedUrl = URL(string: rawUrl) {\n      return parsedUrl\n    }\n    if let mappedUrl = quickActionTypeToUrl[shortcutItem.type] {\n      return URL(string: mappedUrl)\n    }\n    return nil\n  }`;
+      const markerIndex = contents.indexOf(marker);
+      if (markerIndex !== -1) {
+        const beforeMarker = contents.slice(0, markerIndex);
+        const appDelegateCloseIndex = beforeMarker.lastIndexOf('\n}');
+        if (appDelegateCloseIndex !== -1) {
+          contents = `${contents.slice(0, appDelegateCloseIndex)}\n\n${quickActionHandlers}\n${contents.slice(appDelegateCloseIndex)}`;
+        } else {
+          contents = contents.replace(marker, `\n\n${quickActionHandlers}\n${marker}`);
+        }
       }
 
       fs.writeFileSync(appDelegatePath, contents);
