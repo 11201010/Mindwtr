@@ -80,10 +80,20 @@ export const assertNoPendingAttachmentUploads = (data: AppData): void => {
 };
 
 export const sanitizeAppDataForRemote = (data: AppData): AppData => {
+    const hasNonEmptyValue = (value: unknown): boolean => (
+        typeof value === 'string' && value.trim().length > 0
+    );
     const sanitizeAttachments = (attachments?: Attachment[]): Attachment[] | undefined => {
         if (!attachments) return attachments;
         return attachments.map((attachment) => {
             if (attachment.kind !== 'file') return attachment;
+            if (!attachment.deletedAt) {
+                const hasUri = hasNonEmptyValue(attachment.uri);
+                const hasCloudKey = hasNonEmptyValue(attachment.cloudKey);
+                if (!hasUri && !hasCloudKey) {
+                    throw new Error(`Attachment reference missing before remote sync: ${attachment.id}`);
+                }
+            }
             return {
                 ...attachment,
                 uri: '',

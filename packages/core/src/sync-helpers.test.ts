@@ -222,6 +222,20 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
         });
         expect(attachment?.localStatus).toBeUndefined();
     });
+
+    it('throws when a live file attachment has neither uri nor cloudKey', () => {
+        const data = createData([
+            fileAttachment({
+                id: 'missing-reference',
+                uri: '',
+                cloudKey: undefined,
+            }),
+        ]);
+
+        expect(() => sanitizeAppDataForRemote(data)).toThrow(
+            'Attachment reference missing before remote sync: missing-reference'
+        );
+    });
 });
 
 describe('sync-helpers areSyncPayloadsEqual', () => {
