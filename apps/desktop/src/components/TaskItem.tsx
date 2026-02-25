@@ -110,6 +110,8 @@ export const TaskItem = memo(function TaskItem({
     const { t, language } = useLanguage();
     const [isEditing, setIsEditing] = useState(false);
     const [autoFocusTitle, setAutoFocusTitle] = useState(false);
+    const modalEditorRef = useRef<HTMLDivElement | null>(null);
+    const lastFocusedBeforeModalRef = useRef<HTMLElement | null>(null);
     const {
         editAttachments,
         attachmentError,
@@ -692,6 +694,35 @@ export const TaskItem = memo(function TaskItem({
         task,
     ]);
     const isModalEditor = editorPresentation === 'modal';
+    const getModalFocusableElements = useCallback((): HTMLElement[] => {
+        const root = modalEditorRef.current;
+        if (!root) return [];
+        return Array.from(
+            root.querySelectorAll<HTMLElement>(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+            ),
+        ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
+    }, []);
+    useEffect(() => {
+        if (!(isEditing && isModalEditor)) {
+            if (lastFocusedBeforeModalRef.current) {
+                lastFocusedBeforeModalRef.current.focus();
+                lastFocusedBeforeModalRef.current = null;
+            }
+            return;
+        }
+
+        lastFocusedBeforeModalRef.current = document.activeElement as HTMLElement | null;
+        const timer = setTimeout(() => {
+            const focusable = getModalFocusableElements();
+            if (focusable.length > 0) {
+                focusable[0].focus();
+                return;
+            }
+            modalEditorRef.current?.focus();
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [getModalFocusableElements, isEditing, isModalEditor]);
     const handleEditorCancel = useCallback(() => {
         if (hasPendingEdits()) {
             setShowDiscardConfirm(true);
@@ -872,9 +903,33 @@ export const TaskItem = memo(function TaskItem({
                     }}
                 >
                     <div
+                        ref={modalEditorRef}
+                        tabIndex={-1}
                         className="w-[min(1100px,92vw)] max-h-[90vh] rounded-xl border border-border bg-card p-4 shadow-2xl"
                         onMouseDown={(event) => event.stopPropagation()}
                         onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                            if (event.key !== 'Tab') return;
+                            const focusable = getModalFocusableElements();
+                            if (focusable.length === 0) return;
+                            const first = focusable[0];
+                            const last = focusable[focusable.length - 1];
+                            const active = document.activeElement as HTMLElement | null;
+                            if (!active || !focusable.includes(active)) {
+                                event.preventDefault();
+                                first.focus();
+                                return;
+                            }
+                            if (event.shiftKey && active === first) {
+                                event.preventDefault();
+                                last.focus();
+                                return;
+                            }
+                            if (!event.shiftKey && active === last) {
+                                event.preventDefault();
+                                first.focus();
+                            }
+                        }}
                     >
                         {renderEditor()}
                     </div>
