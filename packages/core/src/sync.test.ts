@@ -1296,6 +1296,60 @@ describe('Sync Logic', () => {
             expect(wroteRemote).toBe(false);
         });
 
+        it('persists pending remote write state until remote write succeeds', async () => {
+            const localWrites: AppData[] = [];
+            let remoteWriteData: AppData | null = null;
+
+            const result = await performSyncCycle({
+                readLocal: async () => mockAppData([createMockTask('1', '2024-01-01T00:00:00.000Z')]),
+                readRemote: async () => mockAppData(),
+                writeLocal: async (data) => {
+                    localWrites.push(data);
+                },
+                writeRemote: async (data) => {
+                    remoteWriteData = data;
+                },
+                now: () => '2026-01-01T00:00:00.000Z',
+            });
+
+            expect(localWrites).toHaveLength(2);
+            expect(localWrites[0].settings.pendingRemoteWriteAt).toBe('2026-01-01T00:00:00.000Z');
+            expect(remoteWriteData?.settings.pendingRemoteWriteAt).toBe('2026-01-01T00:00:00.000Z');
+            expect(localWrites[1].settings.pendingRemoteWriteAt).toBeUndefined();
+            expect(result.data.settings.pendingRemoteWriteAt).toBeUndefined();
+        });
+
+        it('retries pending remote write before reading remote data', async () => {
+            const sequence: string[] = [];
+            const localWithPending = mockAppData([createMockTask('1', '2024-01-01T00:00:00.000Z')]);
+            localWithPending.settings.pendingRemoteWriteAt = '2025-12-31T23:59:59.000Z';
+
+            await performSyncCycle({
+                readLocal: async () => {
+                    sequence.push('read-local');
+                    return localWithPending;
+                },
+                readRemote: async () => {
+                    sequence.push('read-remote');
+                    return mockAppData();
+                },
+                writeLocal: async (data) => {
+                    sequence.push(`write-local:${data.settings.pendingRemoteWriteAt ? 'pending' : 'clear'}`);
+                },
+                writeRemote: async (data) => {
+                    sequence.push(`write-remote:${data.settings.pendingRemoteWriteAt ? 'pending' : 'clear'}`);
+                },
+                now: () => '2026-01-01T00:00:00.000Z',
+            });
+
+            const retryWriteIndex = sequence.indexOf('write-remote:pending');
+            const clearMarkerIndex = sequence.indexOf('write-local:clear');
+            const readRemoteIndex = sequence.indexOf('read-remote');
+            expect(retryWriteIndex).toBeGreaterThan(-1);
+            expect(clearMarkerIndex).toBeGreaterThan(retryWriteIndex);
+            expect(readRemoteIndex).toBeGreaterThan(clearMarkerIndex);
+        });
+
         it('reports orchestration steps in order', async () => {
             const steps: string[] = [];
             await performSyncCycle({

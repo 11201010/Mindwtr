@@ -270,6 +270,7 @@ export interface AppData {
         lastSyncAt?: string;
         lastSyncStatus?: 'idle' | 'syncing' | 'success' | 'error' | 'conflict';
         lastSyncError?: string;
+        pendingRemoteWriteAt?: string;
         lastSyncStats?: MergeStats;
         lastSyncHistory?: SyncHistoryEntry[];
         diagnostics?: {

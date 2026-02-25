@@ -1082,6 +1082,27 @@ export function mergeAppData(local: AppData, incoming: AppData): AppData {
     return mergeAppDataWithStats(local, incoming).data;
 }
 
+const withPendingRemoteWriteFlag = (data: AppData, pendingAt: string): AppData => ({
+    ...data,
+    settings: {
+        ...data.settings,
+        pendingRemoteWriteAt: pendingAt,
+    },
+});
+
+const clearPendingRemoteWriteFlag = (data: AppData): AppData => {
+    if (!data.settings.pendingRemoteWriteAt) return data;
+    return {
+        ...data,
+        settings: {
+            ...data.settings,
+            pendingRemoteWriteAt: undefined,
+        },
+    };
+};
+
+const hasPendingRemoteWriteFlag = (data: AppData): boolean => isValidTimestamp(data.settings.pendingRemoteWriteAt);
+
 export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult> {
     const nowIso = io.now ? io.now() : new Date().toISOString();
 
@@ -1093,7 +1114,18 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         throw new Error(`Invalid local sync payload: ${sample}`);
     }
     const localNormalized = normalizeAppData(localDataRaw);
-    const localData = purgeExpiredTombstones(localNormalized, nowIso, io.tombstoneRetentionDays).data;
+    let localData = purgeExpiredTombstones(localNormalized, nowIso, io.tombstoneRetentionDays).data;
+
+    if (hasPendingRemoteWriteFlag(localData)) {
+        io.onStep?.('write-remote');
+        await io.writeRemote(localData);
+        const recoveredLocalData = clearPendingRemoteWriteFlag(localData);
+        if (recoveredLocalData !== localData) {
+            io.onStep?.('write-local');
+            await io.writeLocal(recoveredLocalData);
+        }
+        localData = recoveredLocalData;
+    }
 
     io.onStep?.('read-remote');
     const remoteDataRaw = await io.readRemote();
@@ -1193,12 +1225,18 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         throw new Error(`Sync validation failed: ${sample}`);
     }
 
+    const finalDataWithPendingRemoteWrite = withPendingRemoteWriteFlag(finalData, nowIso);
     io.onStep?.('write-local');
-    await io.writeLocal(finalData);
+    await io.writeLocal(finalDataWithPendingRemoteWrite);
 
     // Write local first so a local persistence failure cannot leave remote ahead.
     io.onStep?.('write-remote');
-    await io.writeRemote(finalData);
+    await io.writeRemote(finalDataWithPendingRemoteWrite);
 
-    return { data: finalData, stats: mergeResult.stats, status: nextSyncStatus };
+    const persistedFinalData = clearPendingRemoteWriteFlag(finalDataWithPendingRemoteWrite);
+    if (persistedFinalData !== finalDataWithPendingRemoteWrite) {
+        await io.writeLocal(persistedFinalData);
+    }
+
+    return { data: persistedFinalData, stats: mergeResult.stats, status: nextSyncStatus };
 }
