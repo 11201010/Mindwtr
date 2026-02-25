@@ -17,7 +17,7 @@ describe('widget-data', () => {
         expect(resolveWidgetLanguage(null, 'es')).toBe('es');
     });
 
-    it('builds payload with focus-list tasks and caps to three', () => {
+    it('builds payload with focus-list tasks and defaults to three items', () => {
         const now = new Date().toISOString();
         const data: AppData = {
             ...baseData,
@@ -35,6 +35,29 @@ describe('widget-data', () => {
         expect(payload.items).toHaveLength(3);
         expect(payload.items.map((item) => item.title)).toEqual(['Focused 1', 'Focused 2', 'Focused 3']);
         expect(payload.inboxCount).toBe(1);
+    });
+
+    it('honors maxItems option for larger widgets', () => {
+        const now = new Date().toISOString();
+        const data: AppData = {
+            ...baseData,
+            tasks: [
+                { id: '1', title: 'Focused 1', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '2', title: 'Focused 2', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '3', title: 'Focused 3', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '4', title: 'Focused 4', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '5', title: 'Focused 5', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+            ],
+        };
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 5 });
+        expect(payload.items).toHaveLength(5);
+        expect(payload.items.map((item) => item.title)).toEqual([
+            'Focused 1',
+            'Focused 2',
+            'Focused 3',
+            'Focused 4',
+            'Focused 5',
+        ]);
     });
 
     it('includes focus-page schedule/next tasks even when none are explicitly focused', () => {

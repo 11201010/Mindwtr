@@ -141,7 +141,7 @@ const resolveWidgetPalette = (
 export function buildWidgetPayload(
     data: AppData,
     language: Language,
-    options?: { systemColorScheme?: WidgetSystemColorScheme }
+    options?: { systemColorScheme?: WidgetSystemColorScheme; maxItems?: number }
 ): TasksWidgetPayload {
     void loadTranslations(language);
     const tr = getTranslationsSync(language);
@@ -196,7 +196,11 @@ export function buildWidgetPayload(
     const focusTasks = [...scheduleTasks, ...nextTasks];
     const listSource = sortTasksBy(focusTasks, resolveWidgetTaskSort(data));
 
-    const items = listSource.slice(0, 3).map((task) => ({
+    const maxItems = Number.isFinite(options?.maxItems)
+        ? Math.max(1, Math.floor(options?.maxItems as number))
+        : 3;
+
+    const items = listSource.slice(0, maxItems).map((task) => ({
         id: task.id,
         title: task.title,
         statusLabel: tr[`status.${task.status}`] || task.status,

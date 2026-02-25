@@ -32,7 +32,7 @@ export function buildTasksWidgetTree(payload: TasksWidgetPayload) {
                     text: `• ${item.title}`,
                     style: {
                         color: palette.text,
-                        fontSize: 11,
+                        fontSize: 12,
                         marginTop: index === 0 ? 7 : 4,
                     },
                     maxLines: 1,

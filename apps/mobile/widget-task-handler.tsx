@@ -11,6 +11,7 @@ import {
     WIDGET_DATA_KEY,
     WIDGET_LANGUAGE_KEY,
 } from './lib/widget-data';
+import { getAdaptiveWidgetTaskLimit } from './lib/widget-layout';
 import { logWarn } from './lib/app-log';
 
 const DEFAULT_DATA: AppData = { tasks: [], projects: [], sections: [], areas: [], settings: {} };
@@ -57,8 +58,10 @@ async function loadWidgetContext() {
 
 const widgetTaskHandler: WidgetTaskHandler = async ({ renderWidget, widgetInfo }) => {
     let { data, language } = await loadWidgetContext();
+    const maxItems = getAdaptiveWidgetTaskLimit(widgetInfo.height);
     const tasksPayload = buildWidgetPayload(data, language, {
         systemColorScheme: getSystemColorScheme(),
+        maxItems,
     });
     try {
         renderWidget(buildTasksWidgetTree(tasksPayload));
