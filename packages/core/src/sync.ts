@@ -727,8 +727,18 @@ const toComparableValue = (value: unknown): unknown => {
 const hasContentDifference = (localItem: unknown, incomingItem: unknown): boolean =>
     JSON.stringify(toComparableValue(localItem)) !== JSON.stringify(toComparableValue(incomingItem));
 
-const toComparableSignature = (value: unknown): string =>
-    JSON.stringify(toComparableValue(value));
+const comparableSignatureCache = new WeakMap<object, string>();
+
+const toComparableSignature = (value: unknown): string => {
+    if (value && typeof value === 'object') {
+        const cached = comparableSignatureCache.get(value);
+        if (cached) return cached;
+        const signature = JSON.stringify(toComparableValue(value));
+        comparableSignatureCache.set(value, signature);
+        return signature;
+    }
+    return JSON.stringify(toComparableValue(value));
+};
 
 const chooseDeterministicWinner = <T>(localItem: T, incomingItem: T): T => {
     const localSignature = toComparableSignature(localItem);
