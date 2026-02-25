@@ -3915,6 +3915,7 @@ pub fn run() {
             // Ensure data file exists on startup
             ensure_data_file(&app.handle()).ok();
             let diagnostics_enabled = diagnostics_enabled();
+            let is_windows_store = is_windows_store_install();
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(target_os = "linux")]
                 if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/icon.png")) {
@@ -3936,7 +3937,7 @@ pub fn run() {
             }
 
             let handle = app.handle();
-            if !(cfg!(target_os = "linux") && is_flatpak()) {
+            if !(cfg!(target_os = "linux") && is_flatpak()) && !is_windows_store {
                 // Build system tray with Quick Add entry.
                 let quick_add_item = MenuItem::with_id(handle, "quick_add", "Quick Add", true, None::<&str>)?;
                 let show_item = MenuItem::with_id(handle, "show", "Show Mindwtr", true, None::<&str>)?;
@@ -3944,45 +3945,61 @@ pub fn run() {
                 let tray_menu = Menu::with_items(handle, &[&quick_add_item, &show_item, &quit_item])?;
 
                 let tray_icon = Image::from_bytes(include_bytes!("../icons/tray.png"))
-                    .unwrap_or_else(|_| handle.default_window_icon().unwrap().clone());
+                    .ok()
+                    .or_else(|| handle.default_window_icon().cloned());
 
-                TrayIconBuilder::with_id("main")
-                    .icon(tray_icon)
-                    .menu(&tray_menu)
-                    .show_menu_on_left_click(false)
-                    .on_menu_event(move |app, event| {
-                        match event.id().as_ref() {
-                            "quick_add" => {
-                                show_main_and_emit(app);
+                if let Some(tray_icon) = tray_icon {
+                    if let Err(error) = TrayIconBuilder::with_id("main")
+                        .icon(tray_icon)
+                        .menu(&tray_menu)
+                        .show_menu_on_left_click(false)
+                        .on_menu_event(move |app, event| {
+                            match event.id().as_ref() {
+                                "quick_add" => {
+                                    show_main_and_emit(app);
+                                }
+                                "show" => {
+                                    show_main(app);
+                                }
+                                "quit" => {
+                                    app.exit(0);
+                                }
+                                _ => {}
                             }
-                            "show" => {
-                                show_main(app);
+                        })
+                        .on_tray_icon_event(|tray, event| {
+                            if let TrayIconEvent::Click { button, button_state, .. } = event {
+                                if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                                    show_main(tray.app_handle());
+                                }
                             }
-                            "quit" => {
-                                app.exit(0);
-                            }
-                            _ => {}
-                        }
-                    })
-                    .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click { button, button_state, .. } = event {
-                            if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                                show_main(tray.app_handle());
-                            }
-                        }
-                    })
-                    .build(handle)?;
+                        })
+                        .build(handle)
+                    {
+                        log::warn!("Failed to initialize tray icon: {error}");
+                    }
+                } else {
+                    log::warn!("No tray icon available; skipping tray initialization.");
+                }
+            } else if is_windows_store {
+                log::info!("Tray disabled for Microsoft Store install.");
             } else {
                 log::info!("Tray disabled inside Flatpak sandbox.");
             }
 
             // Global hotkey for Quick Add.
-            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
-            apply_global_quick_add_shortcut(
-                &handle,
-                &shortcut_state,
-                Some(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT),
-            )?;
+            if !is_windows_store {
+                let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
+                if let Err(error) = apply_global_quick_add_shortcut(
+                    &handle,
+                    &shortcut_state,
+                    Some(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT),
+                ) {
+                    log::warn!("Failed to register global quick add shortcut: {error}");
+                }
+            } else {
+                log::info!("Global quick add shortcut disabled for Microsoft Store install.");
+            }
             
             if cfg!(debug_assertions) || diagnostics_enabled {
                 app.handle().plugin(
