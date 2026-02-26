@@ -1548,6 +1548,16 @@ export default function SettingsPage() {
         } catch (error) {
             logSettingsError(error);
             const message = String(error);
+            if (/Selected JSON file is not a Mindwtr backup/i.test(message)) {
+                Alert.alert(
+                    localize('Invalid sync file', '无效同步文件'),
+                    localize(
+                        'Please choose a Mindwtr backup JSON file in the target folder, then try "Select Folder" again.',
+                        '请选择目标文件夹中的 Mindwtr 备份 JSON 文件，然后重试“选择文件夹”。'
+                    )
+                );
+                return;
+            }
             if (/read-only|read only|not writable|isn't writable|permission denied|EACCES/i.test(message)) {
                 Alert.alert(
                     localize('Sync folder is read-only', '同步文件夹不可写'),
@@ -4305,11 +4315,11 @@ export default function SettingsPage() {
                                 <Text style={[styles.helpText, { color: tc.secondaryText }]}>
                                     {isChineseLanguage
                                         ? (Platform.OS === 'ios'
-                                            ? '1. 先点击"导出备份"保存到目标同步文件夹\n2. 点击"选择文件夹"；若 Google Drive 等在文件夹选择器中灰显，请改为选择该文件夹中的任意 JSON 文件\n3. 之后点击"同步"即可合并数据'
+                                            ? '1. 先点击"导出备份"保存到目标同步文件夹\n2. 点击"选择文件夹"；若 Google Drive 等在文件夹选择器中灰显，请在随后打开的文件选择器中选中该文件夹里的 Mindwtr 备份 JSON（部分提供商无“打开”按钮，点按或长按文件即可）\n3. 之后点击"同步"即可合并数据'
                                             : '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件夹"授权该文件夹\n3. 之后点击"同步"即可合并数据')
                                         : translateText(
                                             Platform.OS === 'ios'
-                                                ? '1. First, tap "Export Backup" and save to your target sync folder\n2. Tap "Select Folder"; if providers like Google Drive are greyed out in the folder picker, choose any JSON file inside that folder instead\n3. Then tap "Sync" to merge data'
+                                                ? '1. First, tap "Export Backup" and save to your target sync folder\n2. Tap "Select Folder"; if providers like Google Drive are greyed out in the folder picker, use the next file picker to choose the Mindwtr backup JSON in that folder (some providers do not show an "Open" button; tap or long-press the file)\n3. Then tap "Sync" to merge data'
                                                 : '1. First, tap "Export Backup" and save to your sync folder (e.g., Google Drive)\n2. Tap "Select Folder" to grant access to that folder\n3. Then tap "Sync" to merge data',
                                             language
                                         )}

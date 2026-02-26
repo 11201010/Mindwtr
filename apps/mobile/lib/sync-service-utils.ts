@@ -2,6 +2,7 @@ import { getFileSyncDir, isSyncFilePath as isCoreSyncFilePath, normalizeSyncBack
 
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
+const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9]{1,16}$/;
 const AI_KEY_PATTERNS = [
   /sk-[A-Za-z0-9]{10,}/g,
   /sk-ant-[A-Za-z0-9]{10,}/g,
@@ -88,8 +89,26 @@ export const normalizeFileSyncPath = (path: string, platformOs: string): string 
 
 export const isSyncFilePath = (path: string) => isCoreSyncFilePath(path, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME);
 
+const stripPathQueryAndFragment = (value: string): string => value.split('?')[0]?.split('#')[0] ?? value;
+
+export const isLikelyFilePath = (path: string): boolean => {
+  if (!path) return false;
+  const stripped = stripPathQueryAndFragment(path).replace(/[\\/]+$/, '');
+  if (!stripped) return false;
+  if (isSyncFilePath(stripped)) return true;
+  const lastSlash = Math.max(stripped.lastIndexOf('/'), stripped.lastIndexOf('\\'));
+  if (lastSlash < 0 || lastSlash >= stripped.length - 1) return false;
+  const leaf = stripped.slice(lastSlash + 1);
+  return FILE_EXTENSION_PATTERN.test(leaf);
+};
+
 export const getFileSyncBaseDir = (syncPath: string) => {
-  return getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME);
+  if (!isLikelyFilePath(syncPath)) {
+    return getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME);
+  }
+  const stripped = stripPathQueryAndFragment(syncPath).replace(/[\\/]+$/, '');
+  const lastSlash = Math.max(stripped.lastIndexOf('/'), stripped.lastIndexOf('\\'));
+  return lastSlash > -1 ? stripped.slice(0, lastSlash) : '';
 };
 
 export const resolveBackend = (value: string | null): SyncBackend => normalizeSyncBackend(value);

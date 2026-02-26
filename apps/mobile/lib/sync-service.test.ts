@@ -3,6 +3,7 @@ import {
   formatSyncErrorMessage,
   getFileSyncBaseDir,
   isLikelyOfflineSyncError,
+  isLikelyFilePath,
   normalizeFileSyncPath,
   isSyncFilePath,
   resolveBackend,
@@ -43,7 +44,15 @@ describe('mobile sync-service test utils', () => {
     expect(isSyncFilePath('/storage/mindwtr-sync.json')).toBe(true);
     expect(isSyncFilePath('/storage/folder')).toBe(false);
     expect(getFileSyncBaseDir('/storage/folder/data.json')).toBe('/storage/folder');
+    expect(getFileSyncBaseDir('file:///var/mobile/Containers/Shared/AppGroup/mindwtr-backup-2026-02-25.json')).toBe('file:///var/mobile/Containers/Shared/AppGroup');
     expect(getFileSyncBaseDir('/storage/folder/')).toBe('/storage/folder');
+  });
+
+  it('detects likely file paths for custom sync filenames', () => {
+    expect(isLikelyFilePath('/storage/folder/data.json')).toBe(true);
+    expect(isLikelyFilePath('file:///var/mobile/Containers/Shared/AppGroup/mindwtr-backup-2026-02-25.json')).toBe(true);
+    expect(isLikelyFilePath('/storage/folder')).toBe(false);
+    expect(isLikelyFilePath('/storage/folder/')).toBe(false);
   });
 
   it('normalizes legacy iOS absolute sync paths to file uri', () => {

@@ -350,6 +350,24 @@ const assertIosDirectoryWritable = async (
     }
 };
 
+const assertIosFileWritable = async (fileUri: string): Promise<void> => {
+    let existingContent: string | null = null;
+    try {
+        existingContent = await readFileText(fileUri);
+    } catch {
+        existingContent = null;
+    }
+
+    try {
+        writeWithModernFileApi(fileUri, existingContent ?? '{}');
+    } catch (error) {
+        if (isReadOnlyError(error)) {
+            throw new Error(READONLY_FOLDER_MESSAGE);
+        }
+        throw error;
+    }
+};
+
 const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
     const pickFolderFromExistingFile = async (): Promise<PickResult | null> => {
         const result = await DocumentPicker.getDocumentAsync({
@@ -364,7 +382,25 @@ const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
             throw new Error('Unable to determine folder from selected file');
         }
 
-        await assertIosDirectoryWritable(directoryUri);
+        let shouldUsePickedFileAsSyncTarget = false;
+        try {
+            await assertIosDirectoryWritable(directoryUri);
+        } catch (error) {
+            if (!isReadOnlyError(error)) throw error;
+            await assertIosFileWritable(pickedFileUri);
+            shouldUsePickedFileAsSyncTarget = true;
+        }
+
+        if (shouldUsePickedFileAsSyncTarget) {
+            const pickedContent = await readFileText(pickedFileUri);
+            if (!pickedContent) return emptyPickResult(pickedFileUri);
+            try {
+                const data = parseAppData(pickedContent);
+                return { ...data, __fileUri: pickedFileUri };
+            } catch {
+                throw new Error('Selected JSON file is not a Mindwtr backup. Please select a Mindwtr backup JSON file in the target folder.');
+            }
+        }
 
         const primaryFileUri = buildSyncFileUri(directoryUri, SYNC_FILE_NAME);
         const legacyFileUri = buildSyncFileUri(directoryUri, LEGACY_SYNC_FILE_NAME);

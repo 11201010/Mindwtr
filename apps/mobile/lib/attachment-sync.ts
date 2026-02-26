@@ -33,6 +33,7 @@ import {
   WEBDAV_USERNAME_KEY,
 } from './sync-constants';
 import { logInfo, logWarn, sanitizeLogMessage } from './app-log';
+import { isLikelyFilePath } from './sync-service-utils';
 
 const ATTACHMENTS_DIR_NAME = 'attachments';
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
@@ -519,9 +520,6 @@ export const cleanupAttachmentTempFiles = async (): Promise<void> => {
   }
 };
 
-const isSyncFilePath = (path: string) =>
-  /(?:^|[\\/])(data\.json|mindwtr-sync\.json)$/i.test(path);
-
 const resolveSafSyncDir = async (syncUri: string): Promise<{ type: 'saf'; dirUri: string; attachmentsDirUri: string } | null> => {
   if (!StorageAccessFramework?.readDirectoryAsync) return null;
   const prefixMatch = syncUri.match(/^(content:\/\/[^/]+)/);
@@ -597,7 +595,7 @@ const resolveFileSyncDir = async (
   }
 
   const normalized = syncPath.replace(/\/+$/, '');
-  const isFilePath = isSyncFilePath(normalized);
+  const isFilePath = isLikelyFilePath(normalized);
   const baseDir = isFilePath ? normalized.replace(/\/[^/]+$/, '') : normalized;
   if (!baseDir) return null;
   const dirUri = baseDir.endsWith('/') ? baseDir : `${baseDir}/`;

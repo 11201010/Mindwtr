@@ -17,7 +17,7 @@ import {
 } from './dropbox-sync';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Network from 'expo-network';
-import { formatSyncErrorMessage, getFileSyncBaseDir, isSyncFilePath, normalizeFileSyncPath, resolveBackend, type SyncBackend } from './sync-service-utils';
+import { formatSyncErrorMessage, getFileSyncBaseDir, isLikelyFilePath, normalizeFileSyncPath, resolveBackend, type SyncBackend } from './sync-service-utils';
 import {
   SYNC_PATH_KEY,
   SYNC_BACKEND_KEY,
@@ -303,7 +303,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
           } catch (error) {
             logSyncWarning('Failed to normalize SAF sync path', error);
           }
-        } else if (!isSyncFilePath(fileSyncPath)) {
+        } else if (!isLikelyFilePath(fileSyncPath)) {
           const trimmed = fileSyncPath.replace(/\/+$/, '');
           fileSyncPath = `${trimmed}/${SYNC_FILE_NAME}`;
         }
