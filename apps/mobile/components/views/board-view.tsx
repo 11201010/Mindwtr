@@ -58,6 +58,17 @@ function DraggableTask({
   const zIndex = useSharedValue(1);
   const isDragging = useSharedValue(false);
 
+  const handleDropFromGesture = useCallback((taskId: string, translationX: number) => {
+    const nextIndex = resolveBoardDropColumnIndex({
+      translationX,
+      currentColumnIndex,
+      columnCount: COLUMNS.length,
+    });
+    if (nextIndex !== currentColumnIndex) {
+      onDrop(taskId, nextIndex);
+    }
+  }, [currentColumnIndex, onDrop]);
+
   // Tap gesture for editing
   const tapGesture = Gesture.Tap()
     .onEnd(() => {
@@ -79,16 +90,7 @@ function DraggableTask({
     })
     .onEnd((event) => {
       isDragging.value = false;
-
-      const newColumnIndex = resolveBoardDropColumnIndex({
-        translationX: event.translationX,
-        currentColumnIndex,
-        columnCount: COLUMNS.length,
-      });
-
-      if (newColumnIndex !== currentColumnIndex) {
-        runOnJS(onDrop)(task.id, newColumnIndex);
-      }
+      runOnJS(handleDropFromGesture)(task.id, event.translationX);
 
       translateX.value = withSpring(0);
       scale.value = withSpring(1);
