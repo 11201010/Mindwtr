@@ -14,6 +14,7 @@ import Animated, {
   runOnJS
 } from 'react-native-reanimated';
 import { TaskEditModal } from '../task-edit-modal';
+import { resolveBoardDropColumnIndex } from './board-view.utils';
 
 const COLUMNS: { id: TaskStatus; label: string; labelKey: string; color: string }[] = [
   { id: 'inbox', label: 'Inbox', labelKey: 'status.inbox', color: '#6B7280' },
@@ -28,6 +29,7 @@ interface DraggableTaskProps {
   isDark: boolean;
   currentColumnIndex: number;
   onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDragStateChange: (dragging: boolean) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -38,13 +40,25 @@ interface DraggableTaskProps {
   timeEstimatesEnabled: boolean;
 }
 
-function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDelete, onDuplicate, deleteLabel, duplicateLabel, projectTitle, projectColor, timeEstimatesEnabled }: DraggableTaskProps) {
+function DraggableTask({
+  task,
+  isDark,
+  currentColumnIndex,
+  onDrop,
+  onDragStateChange,
+  onTap,
+  onDelete,
+  onDuplicate,
+  deleteLabel,
+  duplicateLabel,
+  projectTitle,
+  projectColor,
+  timeEstimatesEnabled,
+}: DraggableTaskProps) {
   const translateX = useSharedValue(0);
   const scale = useSharedValue(1);
   const zIndex = useSharedValue(1);
   const isDragging = useSharedValue(false);
-
-  const STATUS_DRAG_STEP_PX = 96;
 
   // Tap gesture for editing
   const tapGesture = Gesture.Tap()
@@ -54,11 +68,14 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
 
   // Horizontal status drag avoids conflicts with vertical board scrolling.
   const panGesture = Gesture.Pan()
-    .activateAfterLongPress(250)
+    .activateAfterLongPress(180)
+    .activeOffsetX([-12, 12])
+    .failOffsetY([-24, 24])
     .onStart(() => {
       isDragging.value = true;
       scale.value = withSpring(1.05);
       zIndex.value = 1000;
+      runOnJS(onDragStateChange)(true);
     })
     .onUpdate((event) => {
       translateX.value = event.translationX;
@@ -66,8 +83,11 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
     .onEnd((event) => {
       isDragging.value = false;
 
-      const columnsMoved = Math.round(event.translationX / STATUS_DRAG_STEP_PX);
-      const newColumnIndex = Math.max(0, Math.min(COLUMNS.length - 1, currentColumnIndex + columnsMoved));
+      const newColumnIndex = resolveBoardDropColumnIndex({
+        translationX: event.translationX,
+        currentColumnIndex,
+        columnCount: COLUMNS.length,
+      });
 
       if (newColumnIndex !== currentColumnIndex) {
         runOnJS(onDrop)(task.id, newColumnIndex);
@@ -76,6 +96,9 @@ function DraggableTask({ task, isDark, currentColumnIndex, onDrop, onTap, onDele
       translateX.value = withSpring(0);
       scale.value = withSpring(1);
       zIndex.value = 1;
+    })
+    .onFinalize(() => {
+      runOnJS(onDragStateChange)(false);
     });
 
   // Combine gestures - tap works immediately, drag requires hold
@@ -184,6 +207,7 @@ interface ColumnProps {
   tasks: Task[];
   isDark: boolean;
   onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDragStateChange: (dragging: boolean) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -194,7 +218,23 @@ interface ColumnProps {
   timeEstimatesEnabled: boolean;
 }
 
-function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDelete, onDuplicate, noTasksLabel, deleteLabel, duplicateLabel, projectById, timeEstimatesEnabled }: ColumnProps) {
+function Column({
+  columnIndex,
+  label,
+  color,
+  tasks,
+  isDark,
+  onDrop,
+  onDragStateChange,
+  onTap,
+  onDelete,
+  onDuplicate,
+  noTasksLabel,
+  deleteLabel,
+  duplicateLabel,
+  projectById,
+  timeEstimatesEnabled,
+}: ColumnProps) {
   return (
     <View style={[styles.column, { borderTopColor: color, backgroundColor: isDark ? '#1F2937' : '#F3F4F6' }]}>
       <View style={[styles.columnHeader, { borderBottomColor: isDark ? '#374151' : '#E5E7EB' }]}>
@@ -211,6 +251,7 @@ function Column({ columnIndex, label, color, tasks, isDark, onDrop, onTap, onDel
             isDark={isDark}
             currentColumnIndex={columnIndex}
             onDrop={onDrop}
+            onDragStateChange={onDragStateChange}
             onTap={onTap}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -240,6 +281,7 @@ export function BoardView() {
   const { t } = useLanguage();
   const timeEstimatesEnabled = useTaskStore((state) => state.settings?.features?.timeEstimates === true);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const insets = useSafeAreaInsets();
 
   const navBarInset = Platform.OS === 'android' && insets.bottom >= 24 ? insets.bottom : 0;
@@ -274,6 +316,10 @@ export function BoardView() {
     }
   }, [updateTask]);
 
+  const handleDragStateChange = useCallback((dragging: boolean) => {
+    setScrollEnabled(!dragging);
+  }, []);
+
   const handleTap = useCallback((task: Task) => {
     setEditingTask(task);
   }, []);
@@ -296,6 +342,7 @@ export function BoardView() {
         showsVerticalScrollIndicator={false}
         style={styles.boardScroll}
         contentContainerStyle={boardContentStyle}
+        scrollEnabled={scrollEnabled}
       >
         {COLUMNS.map((col, index) => (
           <Column
@@ -306,6 +353,7 @@ export function BoardView() {
             tasks={tasksByStatus[col.id] || []}
             isDark={isDark}
             onDrop={handleDrop}
+            onDragStateChange={handleDragStateChange}
             onTap={handleTap}
             onDelete={handleDelete}
             onDuplicate={handleDuplicate}
