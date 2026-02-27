@@ -29,7 +29,7 @@ interface DraggableTaskProps {
   isDark: boolean;
   currentColumnIndex: number;
   onDrop: (taskId: string, newColumnIndex: number) => void;
-  onDragStart: () => void;
+  onDragStart: (columnIndex: number) => void;
   onDragMove: (absoluteY: number) => void;
   onDragEnd: () => void;
   onTap: (task: Task) => void;
@@ -90,7 +90,7 @@ function DraggableTask({
       isDragging.value = true;
       scale.value = withSpring(1.05);
       zIndex.value = 1000;
-      runOnJS(onDragStart)();
+      runOnJS(onDragStart)(currentColumnIndex);
     })
     .onUpdate((event) => {
       translateY.value = event.translationY;
@@ -216,8 +216,9 @@ interface ColumnProps {
   color: string;
   tasks: Task[];
   isDark: boolean;
+  isDragSourceColumn: boolean;
   onDrop: (taskId: string, newColumnIndex: number) => void;
-  onDragStart: () => void;
+  onDragStart: (columnIndex: number) => void;
   onDragMove: (absoluteY: number) => void;
   onDragEnd: () => void;
   onTap: (task: Task) => void;
@@ -236,6 +237,7 @@ function Column({
   color,
   tasks,
   isDark,
+  isDragSourceColumn,
   onDrop,
   onDragStart,
   onDragMove,
@@ -250,7 +252,11 @@ function Column({
   timeEstimatesEnabled,
 }: ColumnProps) {
   return (
-    <View style={[styles.column, { borderTopColor: color, backgroundColor: isDark ? '#1F2937' : '#F3F4F6' }]}>
+    <View style={[
+      styles.column,
+      isDragSourceColumn ? styles.columnDragSource : null,
+      { borderTopColor: color, backgroundColor: isDark ? '#1F2937' : '#F3F4F6' },
+    ]}>
       <View style={[styles.columnHeader, { borderBottomColor: isDark ? '#374151' : '#E5E7EB' }]}>
         <Text style={[styles.columnTitle, { color: isDark ? '#FFFFFF' : '#111827' }]}>{label}</Text>
         <View style={[styles.badge, { backgroundColor: color }]}>
@@ -297,6 +303,7 @@ export function BoardView() {
   const { t } = useLanguage();
   const timeEstimatesEnabled = useTaskStore((state) => state.settings?.features?.timeEstimates === true);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [dragSourceColumnIndex, setDragSourceColumnIndex] = useState<number | null>(null);
   const insets = useSafeAreaInsets();
   const boardScrollRef = useRef<ScrollView | null>(null);
   const scrollOffsetRef = useRef(0);
@@ -383,7 +390,8 @@ export function BoardView() {
     }, 16);
   }, [stopAutoScroll]);
 
-  const handleDragStart = useCallback(() => {
+  const handleDragStart = useCallback((columnIndex: number) => {
+    setDragSourceColumnIndex(columnIndex);
     stopAutoScroll();
   }, [stopAutoScroll]);
 
@@ -403,6 +411,7 @@ export function BoardView() {
   }, [startAutoScroll, stopAutoScroll]);
 
   const handleDragEnd = useCallback(() => {
+    setDragSourceColumnIndex(null);
     stopAutoScroll();
   }, [stopAutoScroll]);
 
@@ -438,6 +447,7 @@ export function BoardView() {
             color={col.color}
             tasks={tasksByStatus[col.id] || []}
             isDark={isDark}
+            isDragSourceColumn={dragSourceColumnIndex === index}
             onDrop={handleDrop}
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
@@ -477,6 +487,7 @@ const styles = StyleSheet.create({
   boardContent: {
     padding: 16,
     gap: 16,
+    overflow: 'visible',
   },
   column: {
     width: '100%',
@@ -490,6 +501,10 @@ const styles = StyleSheet.create({
     elevation: 2,
     minHeight: 100,
     overflow: 'visible',
+  },
+  columnDragSource: {
+    zIndex: 500,
+    elevation: 500,
   },
   columnHeader: {
     flexDirection: 'row',
