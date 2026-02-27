@@ -1,7 +1,7 @@
 import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { useTaskStore } from '@mindwtr/core';
 import type { Task, TaskStatus } from '@mindwtr/core';
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -29,6 +29,9 @@ interface DraggableTaskProps {
   isDark: boolean;
   currentColumnIndex: number;
   onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDragStart: () => void;
+  onDragMove: (absoluteY: number) => void;
+  onDragEnd: () => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -44,6 +47,9 @@ function DraggableTask({
   isDark,
   currentColumnIndex,
   onDrop,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
   onTap,
   onDelete,
   onDuplicate,
@@ -84,9 +90,11 @@ function DraggableTask({
       isDragging.value = true;
       scale.value = withSpring(1.05);
       zIndex.value = 1000;
+      runOnJS(onDragStart)();
     })
     .onUpdate((event) => {
       translateY.value = event.translationY;
+      runOnJS(onDragMove)(event.absoluteY);
     })
     .onEnd((event) => {
       isDragging.value = false;
@@ -95,6 +103,10 @@ function DraggableTask({
       translateY.value = withSpring(0);
       scale.value = withSpring(1);
       zIndex.value = 1;
+      runOnJS(onDragEnd)();
+    })
+    .onFinalize(() => {
+      runOnJS(onDragEnd)();
     });
 
   // Combine gestures - tap works immediately, drag requires hold
@@ -108,7 +120,9 @@ function DraggableTask({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
+    position: 'relative',
     zIndex: zIndex.value,
+    elevation: isDragging.value ? 100 : 1,
     opacity: isDragging.value ? 0.85 : 1,
   }));
 
@@ -203,6 +217,9 @@ interface ColumnProps {
   tasks: Task[];
   isDark: boolean;
   onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDragStart: () => void;
+  onDragMove: (absoluteY: number) => void;
+  onDragEnd: () => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -220,6 +237,9 @@ function Column({
   tasks,
   isDark,
   onDrop,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
   onTap,
   onDelete,
   onDuplicate,
@@ -245,6 +265,9 @@ function Column({
             isDark={isDark}
             currentColumnIndex={columnIndex}
             onDrop={onDrop}
+            onDragStart={onDragStart}
+            onDragMove={onDragMove}
+            onDragEnd={onDragEnd}
             onTap={onTap}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -275,6 +298,12 @@ export function BoardView() {
   const timeEstimatesEnabled = useTaskStore((state) => state.settings?.features?.timeEstimates === true);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const insets = useSafeAreaInsets();
+  const boardScrollRef = useRef<ScrollView | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const viewportHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const autoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
+  const autoScrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const navBarInset = Platform.OS === 'android' && insets.bottom >= 24 ? insets.bottom : 0;
   const boardContentStyle = useMemo(
@@ -324,12 +353,82 @@ export function BoardView() {
     duplicateTask(task.id, false);
   }, [duplicateTask]);
 
+  const stopAutoScroll = useCallback(() => {
+    autoScrollDirectionRef.current = 0;
+    if (autoScrollIntervalRef.current) {
+      clearInterval(autoScrollIntervalRef.current);
+      autoScrollIntervalRef.current = null;
+    }
+  }, []);
+
+  const startAutoScroll = useCallback((direction: -1 | 1) => {
+    if (autoScrollDirectionRef.current === direction && autoScrollIntervalRef.current) {
+      return;
+    }
+    stopAutoScroll();
+    autoScrollDirectionRef.current = direction;
+    autoScrollIntervalRef.current = setInterval(() => {
+      const maxOffset = Math.max(0, contentHeightRef.current - viewportHeightRef.current);
+      if (maxOffset <= 0) {
+        stopAutoScroll();
+        return;
+      }
+      const nextOffset = Math.max(0, Math.min(maxOffset, scrollOffsetRef.current + (direction * 24)));
+      if (nextOffset === scrollOffsetRef.current) {
+        stopAutoScroll();
+        return;
+      }
+      scrollOffsetRef.current = nextOffset;
+      boardScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
+    }, 16);
+  }, [stopAutoScroll]);
+
+  const handleDragStart = useCallback(() => {
+    stopAutoScroll();
+  }, [stopAutoScroll]);
+
+  const handleDragMove = useCallback((absoluteY: number) => {
+    const viewportHeight = viewportHeightRef.current;
+    if (viewportHeight <= 0) return;
+    const edgeThreshold = 120;
+    if (absoluteY <= edgeThreshold) {
+      startAutoScroll(-1);
+      return;
+    }
+    if (absoluteY >= (viewportHeight - edgeThreshold)) {
+      startAutoScroll(1);
+      return;
+    }
+    stopAutoScroll();
+  }, [startAutoScroll, stopAutoScroll]);
+
+  const handleDragEnd = useCallback(() => {
+    stopAutoScroll();
+  }, [stopAutoScroll]);
+
+  useEffect(() => {
+    return () => {
+      stopAutoScroll();
+    };
+  }, [stopAutoScroll]);
+
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <ScrollView
+        ref={boardScrollRef}
         showsVerticalScrollIndicator={false}
         style={styles.boardScroll}
         contentContainerStyle={boardContentStyle}
+        onLayout={(event) => {
+          viewportHeightRef.current = event.nativeEvent.layout.height;
+        }}
+        onContentSizeChange={(_w, h) => {
+          contentHeightRef.current = h;
+        }}
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
       >
         {COLUMNS.map((col, index) => (
           <Column
@@ -340,6 +439,9 @@ export function BoardView() {
             tasks={tasksByStatus[col.id] || []}
             isDark={isDark}
             onDrop={handleDrop}
+            onDragStart={handleDragStart}
+            onDragMove={handleDragMove}
+            onDragEnd={handleDragEnd}
             onTap={handleTap}
             onDelete={handleDelete}
             onDuplicate={handleDuplicate}
@@ -387,6 +489,7 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
     minHeight: 100,
+    overflow: 'visible',
   },
   columnHeader: {
     flexDirection: 'row',
@@ -414,6 +517,7 @@ const styles = StyleSheet.create({
   columnContent: {
     padding: 10,
     minHeight: 50,
+    overflow: 'visible',
   },
   emptyColumn: {
     alignItems: 'center',
@@ -439,7 +543,7 @@ const styles = StyleSheet.create({
   taskCardContainer: {
     marginBottom: 8,
     borderRadius: 8,
-    overflow: 'hidden',
+    overflow: 'visible',
   },
   deleteAction: {
     backgroundColor: '#EF4444',
