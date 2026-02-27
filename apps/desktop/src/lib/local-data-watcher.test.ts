@@ -31,11 +31,11 @@ const scheduleMock = ((callback: TimerHandler) => {
     const fn = typeof callback === 'function' ? callback : () => undefined;
     scheduledTimers.set(id, fn as () => void);
     return id as unknown as ReturnType<typeof setTimeout>;
-}) as typeof setTimeout;
+}) as unknown as typeof setTimeout;
 
 const cancelScheduleMock = ((id: ReturnType<typeof setTimeout>) => {
     scheduledTimers.delete(id as unknown as number);
-}) as typeof clearTimeout;
+}) as unknown as typeof clearTimeout;
 
 const flushScheduledTimers = async () => {
     let guard = 0;
