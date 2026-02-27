@@ -28,9 +28,9 @@ interface DraggableTaskProps {
   task: Task;
   isDark: boolean;
   currentColumnIndex: number;
-  onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDrop: (taskId: string, translationYDelta: number) => void;
   onDragStart: (columnIndex: number) => void;
-  onDragMove: (absoluteY: number) => void;
+  onDragMove: (absoluteY: number, translationY: number) => void;
   onDragEnd: () => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
@@ -65,14 +65,7 @@ function DraggableTask({
   const isDragging = useSharedValue(false);
 
   const handleDropFromGesture = useCallback((taskId: string, translationYDelta: number) => {
-    const nextIndex = resolveBoardDropColumnIndex({
-      translationX: translationYDelta,
-      currentColumnIndex,
-      columnCount: COLUMNS.length,
-    });
-    if (nextIndex !== currentColumnIndex) {
-      onDrop(taskId, nextIndex);
-    }
+    onDrop(taskId, translationYDelta);
   }, [currentColumnIndex, onDrop]);
 
   // Tap gesture for editing
@@ -94,7 +87,7 @@ function DraggableTask({
     })
     .onUpdate((event) => {
       translateY.value = event.translationY;
-      runOnJS(onDragMove)(event.absoluteY);
+      runOnJS(onDragMove)(event.absoluteY, event.translationY);
     })
     .onEnd((event) => {
       isDragging.value = false;
@@ -217,9 +210,9 @@ interface ColumnProps {
   tasks: Task[];
   isDark: boolean;
   isDragSourceColumn: boolean;
-  onDrop: (taskId: string, newColumnIndex: number) => void;
+  onDrop: (taskId: string, translationYDelta: number) => void;
   onDragStart: (columnIndex: number) => void;
-  onDragMove: (absoluteY: number) => void;
+  onDragMove: (absoluteY: number, translationY: number) => void;
   onDragEnd: () => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
@@ -309,6 +302,8 @@ export function BoardView() {
   const scrollOffsetRef = useRef(0);
   const viewportHeightRef = useRef(0);
   const contentHeightRef = useRef(0);
+  const dragStartScrollOffsetRef = useRef(0);
+  const currentDragTranslationYRef = useRef(0);
   const autoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
   const autoScrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -337,12 +332,23 @@ export function BoardView() {
     return grouped;
   }, [tasks]);
 
-  const handleDrop = useCallback((taskId: string, newColumnIndex: number) => {
+  const handleDrop = useCallback((taskId: string, translationYDelta: number) => {
+    const scrollDelta = scrollOffsetRef.current - dragStartScrollOffsetRef.current;
+    const effectiveTranslationY = translationYDelta + scrollDelta;
+    const currentTask = tasks.find((item) => item.id === taskId);
+    const currentStatus = currentTask?.status;
+    const currentColumnIndex = COLUMNS.findIndex((column) => column.id === currentStatus);
+    if (currentColumnIndex < 0) return;
+    const newColumnIndex = resolveBoardDropColumnIndex({
+      translationX: effectiveTranslationY,
+      currentColumnIndex,
+      columnCount: COLUMNS.length,
+    });
     if (newColumnIndex >= 0 && newColumnIndex < COLUMNS.length) {
       const newStatus = COLUMNS[newColumnIndex].id;
       updateTask(taskId, { status: newStatus });
     }
-  }, [updateTask]);
+  }, [tasks, updateTask]);
 
   const handleTap = useCallback((task: Task) => {
     setEditingTask(task);
@@ -380,7 +386,9 @@ export function BoardView() {
         stopAutoScroll();
         return;
       }
-      const nextOffset = Math.max(0, Math.min(maxOffset, scrollOffsetRef.current + (direction * 24)));
+      const edgeDistanceTop = currentDragTranslationYRef.current;
+      const speed = Math.max(6, Math.min(14, Math.floor(Math.abs(edgeDistanceTop) / 24)));
+      const nextOffset = Math.max(0, Math.min(maxOffset, scrollOffsetRef.current + (direction * speed)));
       if (nextOffset === scrollOffsetRef.current) {
         stopAutoScroll();
         return;
@@ -392,13 +400,16 @@ export function BoardView() {
 
   const handleDragStart = useCallback((columnIndex: number) => {
     setDragSourceColumnIndex(columnIndex);
+    dragStartScrollOffsetRef.current = scrollOffsetRef.current;
+    currentDragTranslationYRef.current = 0;
     stopAutoScroll();
   }, [stopAutoScroll]);
 
-  const handleDragMove = useCallback((absoluteY: number) => {
+  const handleDragMove = useCallback((absoluteY: number, translationY: number) => {
+    currentDragTranslationYRef.current = translationY;
     const viewportHeight = viewportHeightRef.current;
     if (viewportHeight <= 0) return;
-    const edgeThreshold = 120;
+    const edgeThreshold = 72;
     if (absoluteY <= edgeThreshold) {
       startAutoScroll(-1);
       return;
@@ -412,6 +423,7 @@ export function BoardView() {
 
   const handleDragEnd = useCallback(() => {
     setDragSourceColumnIndex(null);
+    currentDragTranslationYRef.current = 0;
     stopAutoScroll();
   }, [stopAutoScroll]);
 
