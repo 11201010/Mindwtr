@@ -23,6 +23,7 @@ import { useListViewOptimizations } from '../../hooks/useListViewOptimizations';
 import { reportError } from '../../lib/report-error';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, projectMatchesAreaFilter, resolveAreaFilter, taskMatchesAreaFilter } from '../../lib/area-filter';
 import { cn } from '../../lib/utils';
+import { sortDoneTasksForListView } from './list/done-sort';
 
 
 interface ListViewProps {
@@ -48,6 +49,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const updateTask = useTaskStore((state) => state.updateTask);
     const updateProject = useTaskStore((state) => state.updateProject);
     const deleteTask = useTaskStore((state) => state.deleteTask);
+    const restoreTask = useTaskStore((state) => state.restoreTask);
     const moveTask = useTaskStore((state) => state.moveTask);
     const batchMoveTasks = useTaskStore((state) => state.batchMoveTasks);
     const batchDeleteTasks = useTaskStore((state) => state.batchDeleteTasks);
@@ -93,6 +95,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const listScrollRef = useRef<HTMLDivElement>(null);
     const prioritiesEnabled = settings?.features?.priorities === true;
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+    const undoNotificationsEnabled = settings?.undoNotificationsEnabled !== false;
     const showQuickDone = statusFilter !== 'done' && statusFilter !== 'archived';
     const readOnly = statusFilter === 'done';
     const activePriorities = useMemo(
@@ -338,6 +341,9 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             if (deferredFilterInputs.statusFilter === 'next' && deferredFilterInputs.sortBy === 'default') {
                 return deferredFilterInputs.sortByProjectOrder(filtered);
             }
+            if (deferredFilterInputs.statusFilter === 'done' && deferredFilterInputs.sortBy === 'default') {
+                return sortDoneTasksForListView(filtered);
+            }
 
             return sortTasksBy(filtered, deferredFilterInputs.sortBy);
         });
@@ -526,14 +532,45 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const toggleDoneSelected = useCallback(() => {
         const task = filteredTasks[selectedIndex];
         if (!task) return;
-        moveTask(task.id, task.status === 'done' ? 'inbox' : 'done');
-    }, [filteredTasks, selectedIndex, moveTask]);
+        const nextStatus = task.status === 'done' ? 'inbox' : 'done';
+        void moveTask(task.id, nextStatus)
+            .then(() => {
+                if (!undoNotificationsEnabled || nextStatus !== 'done') return;
+                showToast(
+                    `${task.title} marked Done`,
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void moveTask(task.id, task.status);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to update task status', error));
+    }, [filteredTasks, selectedIndex, moveTask, showToast, undoNotificationsEnabled]);
 
     const deleteSelected = useCallback(() => {
         const task = filteredTasks[selectedIndex];
         if (!task) return;
-        deleteTask(task.id);
-    }, [filteredTasks, selectedIndex, deleteTask]);
+        void deleteTask(task.id)
+            .then(() => {
+                if (!undoNotificationsEnabled) return;
+                showToast(
+                    'Task deleted',
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void restoreTask(task.id);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to delete task', error));
+    }, [filteredTasks, selectedIndex, deleteTask, restoreTask, showToast, undoNotificationsEnabled]);
 
     useEffect(() => {
         if (isProcessing) {

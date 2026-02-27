@@ -146,6 +146,7 @@ export function SettingsView() {
     const [appVersion, setAppVersion] = useState('0.1.0');
     const [logPath, setLogPath] = useState('');
     const notificationsEnabled = settings?.notificationsEnabled !== false;
+    const undoNotificationsEnabled = settings?.undoNotificationsEnabled !== false;
     const reviewAtNotificationsEnabled = settings?.reviewAtNotificationsEnabled !== false;
     const dailyDigestMorningEnabled = settings?.dailyDigestMorningEnabled === true;
     const dailyDigestEveningEnabled = settings?.dailyDigestEveningEnabled === true;
@@ -489,6 +490,11 @@ export function SettingsView() {
         setGlobalQuickAddShortcut(shortcut);
         showSaved();
     };
+    const handleUndoNotificationsChange = useCallback((enabled: boolean) => {
+        updateSettings({ undoNotificationsEnabled: enabled })
+            .then(showSaved)
+            .catch((error) => reportError('Failed to update undo notifications setting', error));
+    }, [showSaved, updateSettings]);
 
     const openLink = async (url: string): Promise<boolean> => {
         const nextUrl = url.trim();
@@ -925,6 +931,8 @@ export function SettingsView() {
                     onKeybindingStyleChange={handleKeybindingStyleChange}
                     globalQuickAddShortcut={globalQuickAddShortcut}
                     onGlobalQuickAddShortcutChange={handleGlobalQuickAddShortcutChange}
+                    undoNotificationsEnabled={undoNotificationsEnabled}
+                    onUndoNotificationsChange={handleUndoNotificationsChange}
                     onOpenHelp={openHelp}
                     languages={LANGUAGES}
                     showWindowDecorations={isLinux}

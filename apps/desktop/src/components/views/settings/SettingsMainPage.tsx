@@ -31,6 +31,8 @@ type Labels = {
     dateFormatMdy: string;
     keybindings: string;
     keybindingsDesc: string;
+    undoNotifications: string;
+    undoNotificationsDesc: string;
     globalQuickAddShortcut: string;
     globalQuickAddShortcutDesc: string;
     keybindingVim: string;
@@ -65,6 +67,8 @@ type SettingsMainPageProps = {
     onKeybindingStyleChange: (style: 'vim' | 'emacs') => void;
     globalQuickAddShortcut: GlobalQuickAddShortcutSetting;
     onGlobalQuickAddShortcutChange: (shortcut: GlobalQuickAddShortcutSetting) => void;
+    undoNotificationsEnabled: boolean;
+    onUndoNotificationsChange: (enabled: boolean) => void;
     onOpenHelp: () => void;
     languages: LanguageOption[];
     showWindowDecorations?: boolean;
@@ -144,6 +148,8 @@ export function SettingsMainPage({
     onKeybindingStyleChange,
     globalQuickAddShortcut,
     onGlobalQuickAddShortcutChange,
+    undoNotificationsEnabled,
+    onUndoNotificationsChange,
     onOpenHelp,
     languages,
     showWindowDecorations = false,
@@ -283,6 +289,12 @@ export function SettingsMainPage({
                             </option>
                         ))}
                     </select>
+                </SettingsRow>
+                <SettingsRow title={t.undoNotifications} description={t.undoNotificationsDesc}>
+                    <Toggle
+                        enabled={undoNotificationsEnabled}
+                        onChange={() => onUndoNotificationsChange(!undoNotificationsEnabled)}
+                    />
                 </SettingsRow>
             </SettingsCard>
 

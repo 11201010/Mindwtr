@@ -237,6 +237,7 @@ export interface AppData {
             showTray?: boolean;
         };
         notificationsEnabled?: boolean;
+        undoNotificationsEnabled?: boolean;
         reviewAtNotificationsEnabled?: boolean;
         dailyDigestMorningEnabled?: boolean;
         dailyDigestMorningTime?: string; // HH:mm

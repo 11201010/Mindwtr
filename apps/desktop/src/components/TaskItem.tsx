@@ -2,6 +2,7 @@ import { useState, memo, useEffect, useRef, useCallback, useMemo, type ReactNode
 import {
     DEFAULT_PROJECT_COLOR,
     Task,
+    TaskStatus,
     TaskEditorFieldId,
     type Recurrence,
     parseRRuleString,
@@ -189,6 +190,7 @@ export const TaskItem = memo(function TaskItem({
     const [showWaitingDuePrompt, setShowWaitingDuePrompt] = useState(false);
     const prioritiesEnabled = settings?.features?.priorities === true;
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+    const undoNotificationsEnabled = settings?.undoNotificationsEnabled !== false;
     const isCompact = settings?.appearance?.density === 'compact';
     const isHighlighted = highlightTaskId === task.id;
     const recurrenceRule = getRecurrenceRuleValue(task.recurrence);
@@ -658,6 +660,25 @@ export const TaskItem = memo(function TaskItem({
     const handleMoveToWaitingWithPrompt = useCallback(() => {
         setShowWaitingDuePrompt(true);
     }, []);
+    const handleStatusChange = useCallback((nextStatus: TaskStatus) => {
+        const previousStatus = task.status;
+        void moveTask(task.id, nextStatus)
+            .then(() => {
+                if (!undoNotificationsEnabled || nextStatus !== 'done' || previousStatus === 'done') return;
+                showToast(
+                    `${task.title} marked Done`,
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void moveTask(task.id, previousStatus);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to change task status', error));
+    }, [moveTask, showToast, task.id, task.status, task.title, undoNotificationsEnabled]);
     const hasPendingEdits = useCallback(() => {
         if (editTitle !== task.title) return true;
         if (editDescription !== (task.description || '')) return true;
@@ -878,7 +899,7 @@ export const TaskItem = memo(function TaskItem({
                                 onEdit: startEditing,
                                 onDelete: () => setShowDeleteConfirm(true),
                                 onDuplicate: () => duplicateTask(task.id, false),
-                                onStatusChange: (status) => moveTask(task.id, status),
+                                onStatusChange: handleStatusChange,
                                 onMoveToWaitingWithPrompt: handleMoveToWaitingWithPrompt,
                                 onOpenProject: project ? handleOpenProject : undefined,
                                 openAttachment,
@@ -1032,14 +1053,14 @@ export const TaskItem = memo(function TaskItem({
                     onConfirm={() => {
                         setShowDeleteConfirm(false);
                         void deleteTask(task.id);
-                        const restoreLabel = resolveText('trash.restoreToInbox', 'Restore');
                         const deletedMessage = resolveText('task.aria.delete', 'Task deleted');
+                        if (!undoNotificationsEnabled) return;
                         showToast(
                             deletedMessage,
                             'info',
                             5000,
                             {
-                                label: restoreLabel,
+                                label: 'Undo',
                                 onClick: () => {
                                     void restoreTask(task.id);
                                 },
