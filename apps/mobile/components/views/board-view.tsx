@@ -311,6 +311,7 @@ export function BoardView() {
   const [dragScrollCompensation, setDragScrollCompensation] = useState(0);
   const insets = useSafeAreaInsets();
   const boardScrollRef = useRef<ScrollView | null>(null);
+  const draggingTaskIdRef = useRef<string | null>(null);
   const scrollOffsetRef = useRef(0);
   const viewportHeightRef = useRef(0);
   const contentHeightRef = useRef(0);
@@ -346,7 +347,7 @@ export function BoardView() {
   }, [tasks]);
 
   const handleDrop = useCallback((taskId: string, translationYDelta: number) => {
-    const effectiveTranslationY = translationYDelta + dragScrollCompensationRef.current;
+    const effectiveTranslationY = translationYDelta + dragScrollCompensation;
     const currentTask = tasks.find((item) => item.id === taskId);
     const currentStatus = currentTask?.status;
     const currentColumnIndex = COLUMNS.findIndex((column) => column.id === currentStatus);
@@ -360,7 +361,7 @@ export function BoardView() {
       const newStatus = COLUMNS[newColumnIndex].id;
       updateTask(taskId, { status: newStatus });
     }
-  }, [tasks, updateTask]);
+  }, [dragScrollCompensation, tasks, updateTask]);
 
   const handleTap = useCallback((task: Task) => {
     setEditingTask(task);
@@ -406,12 +407,18 @@ export function BoardView() {
         return;
       }
       scrollOffsetRef.current = nextOffset;
+      if (draggingTaskIdRef.current) {
+        const nextCompensation = nextOffset - dragStartScrollOffsetRef.current;
+        dragScrollCompensationRef.current = nextCompensation;
+        setDragScrollCompensation(nextCompensation);
+      }
       boardScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
     }, 16);
   }, [stopAutoScroll]);
 
   const handleDragStart = useCallback((taskId: string, columnIndex: number) => {
     setDraggingTaskId(taskId);
+    draggingTaskIdRef.current = taskId;
     setDragSourceColumnIndex(columnIndex);
     dragStartScrollOffsetRef.current = scrollOffsetRef.current;
     currentDragTranslationYRef.current = 0;
@@ -438,6 +445,7 @@ export function BoardView() {
 
   const handleDragEnd = useCallback(() => {
     setDraggingTaskId(null);
+    draggingTaskIdRef.current = null;
     setDragSourceColumnIndex(null);
     currentDragTranslationYRef.current = 0;
     dragScrollCompensationRef.current = 0;
@@ -467,7 +475,7 @@ export function BoardView() {
         onScroll={(event) => {
           const nextOffset = event.nativeEvent.contentOffset.y;
           scrollOffsetRef.current = nextOffset;
-          if (draggingTaskId) {
+          if (draggingTaskIdRef.current) {
             const nextCompensation = nextOffset - dragStartScrollOffsetRef.current;
             dragScrollCompensationRef.current = nextCompensation;
             setDragScrollCompensation(nextCompensation);
