@@ -29,7 +29,6 @@ interface DraggableTaskProps {
   isDark: boolean;
   currentColumnIndex: number;
   onDrop: (taskId: string, newColumnIndex: number) => void;
-  onDragStateChange: (dragging: boolean) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -45,7 +44,6 @@ function DraggableTask({
   isDark,
   currentColumnIndex,
   onDrop,
-  onDragStateChange,
   onTap,
   onDelete,
   onDuplicate,
@@ -75,7 +73,6 @@ function DraggableTask({
       isDragging.value = true;
       scale.value = withSpring(1.05);
       zIndex.value = 1000;
-      runOnJS(onDragStateChange)(true);
     })
     .onUpdate((event) => {
       translateX.value = event.translationX;
@@ -96,9 +93,6 @@ function DraggableTask({
       translateX.value = withSpring(0);
       scale.value = withSpring(1);
       zIndex.value = 1;
-    })
-    .onFinalize(() => {
-      runOnJS(onDragStateChange)(false);
     });
 
   // Combine gestures - tap works immediately, drag requires hold
@@ -207,7 +201,6 @@ interface ColumnProps {
   tasks: Task[];
   isDark: boolean;
   onDrop: (taskId: string, newColumnIndex: number) => void;
-  onDragStateChange: (dragging: boolean) => void;
   onTap: (task: Task) => void;
   onDelete: (taskId: string) => void;
   onDuplicate: (task: Task) => void;
@@ -225,7 +218,6 @@ function Column({
   tasks,
   isDark,
   onDrop,
-  onDragStateChange,
   onTap,
   onDelete,
   onDuplicate,
@@ -251,7 +243,6 @@ function Column({
             isDark={isDark}
             currentColumnIndex={columnIndex}
             onDrop={onDrop}
-            onDragStateChange={onDragStateChange}
             onTap={onTap}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -281,7 +272,6 @@ export function BoardView() {
   const { t } = useLanguage();
   const timeEstimatesEnabled = useTaskStore((state) => state.settings?.features?.timeEstimates === true);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [scrollEnabled, setScrollEnabled] = useState(true);
   const insets = useSafeAreaInsets();
 
   const navBarInset = Platform.OS === 'android' && insets.bottom >= 24 ? insets.bottom : 0;
@@ -316,10 +306,6 @@ export function BoardView() {
     }
   }, [updateTask]);
 
-  const handleDragStateChange = useCallback((dragging: boolean) => {
-    setScrollEnabled(!dragging);
-  }, []);
-
   const handleTap = useCallback((task: Task) => {
     setEditingTask(task);
   }, []);
@@ -342,7 +328,6 @@ export function BoardView() {
         showsVerticalScrollIndicator={false}
         style={styles.boardScroll}
         contentContainerStyle={boardContentStyle}
-        scrollEnabled={scrollEnabled}
       >
         {COLUMNS.map((col, index) => (
           <Column
@@ -353,7 +338,6 @@ export function BoardView() {
             tasks={tasksByStatus[col.id] || []}
             isDark={isDark}
             onDrop={handleDrop}
-            onDragStateChange={handleDragStateChange}
             onTap={handleTap}
             onDelete={handleDelete}
             onDuplicate={handleDuplicate}
