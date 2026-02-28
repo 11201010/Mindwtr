@@ -1,0 +1,18 @@
+<en-US>
+- Fixed an Android sync failure caused by stale attachment references before remote sync.
+- Improved attachment validation handling to prevent repeated failed attachment retries.
+- Improved delete-vs-edit conflict handling to better preserve genuinely newer changes.
+- Strengthened Android release pipeline validation for more reliable rollouts.
+</en-US>
+<zh-CN>
+- 修复了 Android 在远端同步前因陈旧附件引用导致的同步失败。
+- 改进附件校验处理，避免失败附件反复重试。
+- 优化删除与编辑冲突处理，更好保留真正更新的变更。
+- 加强 Android 发布流水线校验，提升发布稳定性。
+</zh-CN>
+<es-ES>
+- Corregimos un fallo de sincronizacion en Android causado por referencias antiguas de adjuntos antes del sync remoto.
+- Mejoramos la validacion de adjuntos para evitar reintentos fallidos repetidos.
+- Mejoramos la resolucion de conflictos entre borrado y edicion para conservar mejor los cambios realmente mas nuevos.
+- Reforzamos la validacion del pipeline de lanzamiento Android para despliegues mas fiables.
+</es-ES>

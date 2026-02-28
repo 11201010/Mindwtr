@@ -1,0 +1,4 @@
+- Corregimos un fallo de sincronizacion en Android causado por referencias antiguas de adjuntos antes del sync remoto.
+- Mejoramos la validacion de adjuntos para evitar reintentos fallidos repetidos.
+- Mejoramos la resolucion de conflictos entre borrado y edicion para conservar mejor los cambios realmente mas nuevos.
+- Reforzamos la validacion del pipeline de lanzamiento Android para despliegues mas fiables.

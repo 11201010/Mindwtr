@@ -1,4 +1,4 @@
-- Added iOS home widget and app quick actions for faster capture.
-- Added iOS URL-scheme quick capture support and follow-up handling improvements.
-- Improved iOS file sync setup when cloud providers do not expose folder selection.
-- Improved sync reliability and cloud auth hardening across platforms.
+- Fixed a sync edge case where stale attachment references could block sync completion.
+- Improved attachment validation handling to stop repeated failing retries.
+- Refined delete-vs-edit conflict handling to better preserve genuinely newer updates.
+- Included reliability hardening for release and sync pipelines.

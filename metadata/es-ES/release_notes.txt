@@ -1,4 +1,4 @@
-- Añadimos widget en iOS y accesos rapidos de la app para capturar mas rapido.
-- Añadimos soporte de captura rapida por URL scheme en iOS y mejoras en el flujo de seguimiento.
-- Mejoramos la configuracion de sincronizacion en iOS cuando los proveedores cloud no permiten elegir carpeta.
-- Mejoramos la fiabilidad de sincronizacion y reforzamos la autenticacion cloud en multiplataforma.
+- Corregimos un caso limite de sincronizacion donde referencias antiguas de adjuntos podian bloquear el sync.
+- Mejoramos la validacion de adjuntos para detener reintentos fallidos repetidos.
+- Refinamos conflictos entre borrado y edicion para preservar mejor cambios realmente mas nuevos.
+- Incluimos mejoras de fiabilidad en los pipelines de release y sincronizacion.
