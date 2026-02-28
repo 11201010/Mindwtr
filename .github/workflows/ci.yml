@@ -41,18 +41,10 @@ jobs:
         run: cd packages/core && bun run tsc --noEmit
 
       - name: Run unit tests
-        run: cd packages/core && bun test --coverage --coverage-reporter=lcov
+        run: cd packages/core && bun test
 
       - name: Cloud app tests
         run: bun run --filter mindwtr-cloud test
-
-      - name: Upload core coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: coverage-core
-          path: packages/core/coverage/lcov.info
-          if-no-files-found: error
-          retention-days: 28
 
   # Desktop app build and tests (Tauri)
   desktop:
@@ -108,15 +100,7 @@ jobs:
         run: cd apps/desktop && bun run tsc --noEmit
 
       - name: Run tests
-        run: cd apps/desktop && bun test --coverage --coverage-reporter=lcov
-
-      - name: Upload desktop coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: coverage-desktop
-          path: apps/desktop/coverage/lcov.info
-          if-no-files-found: error
-          retention-days: 28
+        run: cd apps/desktop && bun test
 
       - name: Build Vite frontend
         run: cd apps/desktop && bun run build:vite
