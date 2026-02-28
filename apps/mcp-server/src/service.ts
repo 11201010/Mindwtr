@@ -79,6 +79,8 @@ const parseInputStatus = (value: string | undefined): Task['status'] | undefined
   return normalized;
 };
 
+const MAX_TASK_TITLE_LENGTH = 500;
+
 const validateAddTaskInput = (input: AddTaskInput): void => {
   const hasTitle = typeof input.title === 'string' && input.title.trim().length > 0;
   const hasQuickAdd = typeof input.quickAdd === 'string' && input.quickAdd.trim().length > 0;
@@ -87,6 +89,9 @@ const validateAddTaskInput = (input: AddTaskInput): void => {
   }
   if (hasTitle && hasQuickAdd) {
     throw new Error('Provide either title or quickAdd, not both');
+  }
+  if (hasTitle && input.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
+    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
   }
 };
 

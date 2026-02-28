@@ -23,6 +23,8 @@ const writeLog = (entry: LogEntry) => {
   }
 };
 
+const MAX_TASK_TITLE_LENGTH = 500;
+
 const logError = (message: string, error?: unknown) => {
   const context: Record<string, unknown> = {};
   if (error instanceof Error) {
@@ -49,8 +51,16 @@ const createMcpTextResponse = (payload: Record<string, unknown>): McpToolRespons
 
 const createMcpErrorResponse = (error: unknown): McpToolResponse => {
   const message = error instanceof Error ? error.message : String(error);
+  const lowered = message.toLowerCase();
+  const code = lowered.includes('read-only')
+    ? 'read_only'
+    : lowered.includes('not found')
+      ? 'not_found'
+      : (lowered.includes('required') || lowered.includes('invalid') || lowered.includes('must') || lowered.includes('either'))
+        ? 'validation_error'
+        : 'internal_error';
   return {
-    content: [{ type: 'text', text: JSON.stringify({ error: message }, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify({ error: message, code }, null, 2) }],
     isError: true,
   };
 };
@@ -72,7 +82,17 @@ export const parseArgs = (argv: string[]) => {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg || !arg.startsWith('--')) continue;
-    const key = arg.slice(2);
+    const keyValue = arg.slice(2);
+    const equalsIndex = keyValue.indexOf('=');
+    if (equalsIndex > 0) {
+      const key = keyValue.slice(0, equalsIndex);
+      const value = keyValue.slice(equalsIndex + 1);
+      if (key) {
+        flags[key] = value;
+      }
+      continue;
+    }
+    const key = keyValue;
     const next = argv[i + 1];
     if (next && !next.startsWith('--')) {
       flags[key] = next;
@@ -108,7 +128,7 @@ const listTasksSchema = z.object({
 
 // Note: Don't use .refine() as it breaks MCP SDK's JSON schema conversion
 const addTaskSchema = z.object({
-  title: z.string().optional().describe('Task title'),
+  title: z.string().max(MAX_TASK_TITLE_LENGTH).optional().describe('Task title'),
   quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
   status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
@@ -129,6 +149,9 @@ const validateAddTask = (data: z.infer<typeof addTaskSchema>) => {
   if (hasTitle && hasQuickAdd) {
     throw new Error('Provide either title or quickAdd, not both');
   }
+  if (hasTitle && data.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
+    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+  }
 };
 
 const completeTaskSchema = z.object({
@@ -136,7 +159,7 @@ const completeTaskSchema = z.object({
 });
 const updateTaskSchema = z.object({
   id: z.string(),
-  title: z.string().optional(),
+  title: z.string().max(MAX_TASK_TITLE_LENGTH).optional(),
   status: taskStatusSchema.optional(),
   projectId: z.string().nullable().optional(),
   dueDate: isoDateLikeSchema.nullable().optional(),

@@ -38,6 +38,12 @@ describe('mcp server index', () => {
     expect(flags.noWait).toBe(true);
   });
 
+  test('parses --key=value CLI flags', () => {
+    const flags = parseArgs(['--db=/tmp/mindwtr.db', '--write=true']);
+    expect(flags.db).toBe('/tmp/mindwtr.db');
+    expect(flags.write).toBe('true');
+  });
+
   test('registers all mindwtr tools', () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
@@ -60,6 +66,8 @@ describe('mcp server index', () => {
     const deleteResult = await deleteHandler?.({ id: 't1' });
     expect(addResult?.isError).toBe(true);
     expect(addResult?.content[0]?.text).toContain('read-only');
+    const addPayload = JSON.parse(addResult?.content[0]?.text || '{}');
+    expect(addPayload.code).toBe('read_only');
     expect(deleteResult?.isError).toBe(true);
     expect(deleteResult?.content[0]?.text).toContain('read-only');
   });
@@ -72,6 +80,8 @@ describe('mcp server index', () => {
     const result = await addHandler?.({});
     expect(result?.isError).toBe(true);
     expect(result?.content[0]?.text).toContain('Either title or quickAdd is required');
+    const payload = JSON.parse(result?.content[0]?.text || '{}');
+    expect(payload.code).toBe('validation_error');
   });
 
   test('validates add_task rejects providing both title and quickAdd', async () => {
@@ -82,6 +92,17 @@ describe('mcp server index', () => {
     const result = await addHandler?.({ title: 'Task', quickAdd: 'Task /next' });
     expect(result?.isError).toBe(true);
     expect(result?.content[0]?.text).toContain('Provide either title or quickAdd, not both');
+  });
+
+  test('validates add_task title length', async () => {
+    const { server, tools } = createMockServer();
+    registerMindwtrTools(server, createMockService(), false);
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    expect(addHandler).toBeTruthy();
+    const longTitle = 'x'.repeat(501);
+    const result = await addHandler?.({ title: longTitle });
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toContain('Task title too long');
   });
 
   test('wraps service exceptions in MCP error response format', async () => {
