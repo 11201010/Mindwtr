@@ -475,8 +475,8 @@ jobs:
           cd winget-pkgs
           git checkout -b "$BRANCH"
           git add manifests/d/dongdongbh/Mindwtr/"$VERSION"
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
           git commit -m "New version: Mindwtr ${VERSION}"
           git push -u origin "$BRANCH"
           gh pr create \
@@ -489,8 +489,8 @@ jobs:
       - name: Commit and push
         run: |
           cd packages-repo
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
           git add bucket/mindwtr.json
           if git diff --cached --quiet; then
             echo "No package changes to commit."
@@ -930,8 +930,8 @@ jobs:
             echo "No AUR source-package changes to publish."
             exit 0
           fi
-          git config user.name "${AUR_USERNAME:-mindwtr-bot}"
-          git config user.email "${AUR_EMAIL:-actions@github.com}"
+          git config --local user.name "${AUR_USERNAME:-mindwtr-bot}"
+          git config --local user.email "${AUR_EMAIL:-actions@github.com}"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to ${{ steps.version.outputs.tag }}"
           git push origin HEAD
