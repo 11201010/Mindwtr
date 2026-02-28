@@ -123,6 +123,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             const statusChanged = incomingStatus !== oldProject.status;
 
             let newAllTasks = state._allTasks;
+            let newAllSections = state._allSections;
 
             if (statusChanged && incomingStatus === 'archived') {
                 const taskStatus: TaskStatus = 'archived';
@@ -143,6 +144,18 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                         };
                     }
                     return task;
+                });
+                newAllSections = newAllSections.map((section) => {
+                    if (section.projectId === id && !section.deletedAt) {
+                        return {
+                            ...section,
+                            deletedAt: now,
+                            updatedAt: now,
+                            rev: normalizeRevision(section.rev) + 1,
+                            revBy: deviceState.deviceId,
+                        };
+                    }
+                    return section;
                 });
             }
 
@@ -178,10 +191,12 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
 
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter(t => !t.deletedAt && t.status !== 'archived');
+            const newVisibleSections = newAllSections.filter((section) => !section.deletedAt);
 
             snapshot = buildSaveSnapshot(state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,
+                sections: newAllSections,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
@@ -189,6 +204,8 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 _allProjects: newAllProjects,
                 tasks: newVisibleTasks,
                 _allTasks: newAllTasks,
+                sections: newVisibleSections,
+                _allSections: newAllSections,
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };

@@ -422,6 +422,7 @@ export const createSettingsActions = ({
                 }
             }
             let didArchiveTasksForArchivedProjects = false;
+            let didArchiveSectionsForArchivedProjects = false;
             const archivedProjectIds = new Set(
                 allProjects
                     .filter((project) => !project.deletedAt && project.status === 'archived')
@@ -439,6 +440,18 @@ export const createSettingsActions = ({
                         isFocusedToday: false,
                         updatedAt: nowIso,
                         rev: normalizeRevision(task.rev) + 1,
+                        revBy: nextSettings.deviceId,
+                    };
+                });
+                allSections = allSections.map((section) => {
+                    if (section.deletedAt) return section;
+                    if (!archivedProjectIds.has(section.projectId)) return section;
+                    didArchiveSectionsForArchivedProjects = true;
+                    return {
+                        ...section,
+                        deletedAt: nowIso,
+                        updatedAt: nowIso,
+                        rev: normalizeRevision(section.rev) + 1,
                         revBy: nextSettings.deviceId,
                     };
                 });
@@ -488,7 +501,11 @@ export const createSettingsActions = ({
                     _allAreas: allAreas,
                     isLoading: false,
                     lastDataChangeAt:
-                        didAutoArchive || didPromoteScheduled || didArchiveTasksForArchivedProjects || didTombstoneCleanup
+                        didAutoArchive
+                            || didPromoteScheduled
+                            || didArchiveTasksForArchivedProjects
+                            || didArchiveSectionsForArchivedProjects
+                            || didTombstoneCleanup
                             ? Date.now()
                             : get().lastDataChangeAt,
                 });
@@ -498,6 +515,7 @@ export const createSettingsActions = ({
                 didAutoArchive
                 || didPromoteScheduled
                 || didArchiveTasksForArchivedProjects
+                || didArchiveSectionsForArchivedProjects
                 || didTombstoneCleanup
                 || didAreaMigration
                 || didProjectOrderMigration
