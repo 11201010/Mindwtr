@@ -433,18 +433,18 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:04:00.000Z');
         });
 
-        it('uses strict last operation time for delete-vs-live conflicts', () => {
+        it('prefers tombstone for delete-vs-live conflicts within skew window', () => {
             const local = mockAppData([createMockTask('1', '2023-01-02T00:00:00.000Z', '2023-01-02T00:00:00.000Z')]);
             const incoming = mockAppData([createMockTask('1', '2023-01-02T00:03:00.000Z')]);
 
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:03:00.000Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('uses strict last operation time for delete-vs-live conflicts with revisions', () => {
+        it('prefers tombstone within skew window even when revisions are present', () => {
             const localTask = {
                 ...createMockTask('1', '2023-01-02T00:00:00.000Z', '2023-01-02T00:00:00.000Z'),
                 rev: 10,
@@ -461,11 +461,11 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:03:00.000Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('keeps newer live update when delete is only 100ms older', () => {
+        it('prefers tombstone when live update is only 100ms newer', () => {
             const local = mockAppData([
                 createMockTask('1', '2023-01-02T00:00:00.100Z'),
             ]);
@@ -476,8 +476,8 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.100Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
         it('keeps newer delete when live update is 100ms older', () => {
@@ -646,19 +646,19 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('uses deletedAt as delete operation time when deciding delete-vs-live', () => {
+        it('uses deletedAt as delete operation time when deciding delete-vs-live beyond skew window', () => {
             const local = mockAppData([
-                createMockTask('1', '2023-01-02T00:06:00.000Z', '2023-01-02T00:05:00.000Z'),
+                createMockTask('1', '2023-01-02T00:12:00.000Z', '2023-01-02T00:05:00.000Z'),
             ]);
             const incoming = mockAppData([
-                createMockTask('1', '2023-01-02T00:05:30.000Z'),
+                createMockTask('1', '2023-01-02T00:11:00.000Z'),
             ]);
 
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
             expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:05:30.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:11:00.000Z');
         });
 
         it('clamps far-future timestamps during merge conflict evaluation', () => {

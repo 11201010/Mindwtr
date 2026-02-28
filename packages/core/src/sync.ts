@@ -882,17 +882,21 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
             return deletedTimeRaw > maxAllowedMergeTime ? maxAllowedMergeTime : deletedTimeRaw;
         };
         let winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
+        const resolveDeleteVsLiveWinner = (localCandidate: T, incomingCandidate: T): T => {
+            const localOpTime = resolveOperationTime(localCandidate);
+            const incomingOpTime = resolveOperationTime(incomingCandidate);
+            const operationDiff = incomingOpTime - localOpTime;
+            if (Math.abs(operationDiff) <= CLOCK_SKEW_THRESHOLD_MS) {
+                return localCandidate.deletedAt ? localCandidate : incomingCandidate;
+            }
+            if (operationDiff > 0) return incomingCandidate;
+            if (operationDiff < 0) return localCandidate;
+            return localCandidate.deletedAt ? localCandidate : incomingCandidate;
+        };
+
         if (hasRevision) {
             if (localDeleted !== incomingDeleted) {
-                const localOpTime = resolveOperationTime(normalizedLocalItem);
-                const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
-                if (incomingOpTime > localOpTime) {
-                    winner = normalizedIncomingItem;
-                } else if (localOpTime > incomingOpTime) {
-                    winner = normalizedLocalItem;
-                } else {
-                    winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
-                }
+                winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
             } else if (revDiff !== 0) {
                 winner = revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
             } else if (safeIncomingTime !== safeLocalTime) {
@@ -905,15 +909,7 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
                 winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
             }
         } else if (localDeleted !== incomingDeleted) {
-            const localOpTime = resolveOperationTime(normalizedLocalItem);
-            const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
-            if (incomingOpTime > localOpTime) {
-                winner = normalizedIncomingItem;
-            } else if (localOpTime > incomingOpTime) {
-                winner = normalizedLocalItem;
-            } else {
-                winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
-            }
+            winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
         } else if (withinSkew && safeIncomingTime === safeLocalTime) {
             winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
         }
