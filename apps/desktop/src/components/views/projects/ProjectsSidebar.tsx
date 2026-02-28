@@ -174,7 +174,7 @@ export function ProjectsSidebar({
                         value={newProjectTitle}
                         onChange={(e) => onChangeNewProjectTitle(e.target.value)}
                         placeholder={t('projects.projectName')}
-                        className="w-full bg-transparent border-b border-primary/50 p-1 text-sm focus:outline-none disabled:opacity-60"
+                        className="w-full bg-transparent border-b border-primary/50 p-1 text-sm focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                         disabled={isCreatingProject}
                         aria-busy={isCreatingProject}
                     />

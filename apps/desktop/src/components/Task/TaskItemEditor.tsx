@@ -241,7 +241,7 @@ export function TaskItemEditor({
                                         }}
                                         disabled={isAIWorking}
                                         aria-busy={isAIWorking}
-                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                                     >
                                         {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
                                         {t('taskEdit.aiClarify')}
@@ -254,7 +254,7 @@ export function TaskItemEditor({
                                         }}
                                         disabled={isAIWorking}
                                         aria-busy={isAIWorking}
-                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 flex items-center gap-2"
+                                        className="w-full text-left text-xs px-3 py-2 hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                                     >
                                         {isAIWorking && <Loader2 className="w-3 h-3 animate-spin" />}
                                         {t('taskEdit.aiBreakdown')}

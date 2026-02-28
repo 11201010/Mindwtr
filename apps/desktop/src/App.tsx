@@ -596,7 +596,7 @@ function App() {
                                         type="button"
                                         onClick={() => setExternalSyncChange(null)}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('common.reviewLater', 'Review later')}
                                     </button>
@@ -604,7 +604,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('use-external')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.useExternal', 'Use external')}
                                     </button>
@@ -612,7 +612,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('merge')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-secondary text-secondary-foreground hover:bg-secondary/90 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-secondary text-secondary-foreground hover:bg-secondary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.mergeChanges', 'Merge')}
                                     </button>
@@ -620,7 +620,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('keep-local')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.keepLocal', 'Keep local')}
                                     </button>
