@@ -18,6 +18,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Network from 'expo-network';
 import { formatSyncErrorMessage, getFileSyncBaseDir, isLikelyFilePath, normalizeFileSyncPath, resolveBackend, type SyncBackend } from './sync-service-utils';
+import { createSyncOrchestrator } from './sync-orchestrator';
 import {
   SYNC_PATH_KEY,
   SYNC_BACKEND_KEY,
@@ -45,6 +46,7 @@ const CLOUD_PROVIDER_DROPBOX = 'dropbox';
 type CloudProvider = typeof CLOUD_PROVIDER_SELF_HOSTED | typeof CLOUD_PROVIDER_DROPBOX;
 type MobileSyncActivityState = 'idle' | 'syncing';
 type MobileSyncActivityListener = (state: MobileSyncActivityState) => void;
+type MobileSyncResult = { success: boolean; stats?: MergeStats; error?: string };
 const isFossBuild = (() => {
   const extra = Constants.expoConfig?.extra as { isFossBuild?: unknown } | undefined;
   return extra?.isFossBuild === true || extra?.isFossBuild === 'true';
@@ -243,15 +245,8 @@ const deleteAttachmentFile = async (uri?: string): Promise<void> => {
   }
 };
 
-let syncInFlight: Promise<{ success: boolean; stats?: MergeStats; error?: string }> | null = null;
-let syncQueued = false;
-
-export async function performMobileSync(syncPathOverride?: string): Promise<{ success: boolean; stats?: MergeStats; error?: string }> {
-  if (syncInFlight) {
-    syncQueued = true;
-    return syncInFlight;
-  }
-  syncInFlight = (async () => {
+const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, MobileSyncResult>({
+  runCycle: async (syncPathOverride, { requestFollowUp }) => {
     const rawBackend = (await getCachedConfigValue(SYNC_BACKEND_KEY))?.trim() ?? null;
     const backend: SyncBackend = resolveBackend(rawBackend);
 
@@ -297,7 +292,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
     };
     const ensureLocalSnapshotFresh = () => {
       if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
-        syncQueued = true;
+        requestFollowUp(syncPathOverride);
         throw new LocalSyncAbort();
       }
     };
@@ -554,7 +549,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
               } catch (error) {
                 if (error instanceof DropboxConflictError) {
                   // Another device wrote between readRemote and writeRemote; retry next cycle.
-                  syncQueued = true;
+                  requestFollowUp(syncPathOverride);
                   throw new LocalSyncAbort();
                 }
                 throw error;
@@ -815,25 +810,20 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         logSyncWarning('Failed to unsubscribe network listener after sync', error);
       }
     }
-  })();
-
-  try {
-    return await syncInFlight;
-  } finally {
-    syncInFlight = null;
-    if (syncQueued) {
-      syncQueued = false;
-      void performMobileSync(syncPathOverride)
-        .then((queuedResult) => {
-          if (!queuedResult.success) {
-            logSyncWarning('[Mobile] Queued sync failed', queuedResult.error);
-          }
-        })
-        .catch((error) => {
-          logSyncWarning('[Mobile] Queued sync crashed', error);
-        });
-    } else {
-      setMobileSyncActivityState('idle');
+  },
+  onQueuedRunComplete: (queuedResult) => {
+    if (!queuedResult.success) {
+      logSyncWarning('[Mobile] Queued sync failed', queuedResult.error);
     }
-  }
+  },
+  onQueuedRunError: (error) => {
+    logSyncWarning('[Mobile] Queued sync crashed', error);
+  },
+  onDrained: () => {
+    setMobileSyncActivityState('idle');
+  },
+});
+
+export async function performMobileSync(syncPathOverride?: string): Promise<MobileSyncResult> {
+  return mobileSyncOrchestrator.run(syncPathOverride);
 }
