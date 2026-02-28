@@ -144,6 +144,50 @@ describe('cloud server utils', () => {
         expect(__cloudTestUtils.asStatus('in-progress')).toBeNull();
     });
 
+    test('validates settings.attachments.pendingRemoteDeletes structure', () => {
+        const iso = '2024-01-01T00:00:00.000Z';
+        const base = {
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+        };
+        const valid = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{
+                        cloudKey: 'attachments/file-1.png',
+                        title: 'file-1',
+                        attempts: 2,
+                        lastErrorAt: iso,
+                    }],
+                },
+            },
+        });
+        expect(valid.ok).toBe(true);
+
+        const invalidCloudKey = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{ cloudKey: '../escape' }],
+                },
+            },
+        });
+        expect(invalidCloudKey.ok).toBe(false);
+
+        const invalidAttempts = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{ cloudKey: 'attachments/file-2.png', attempts: -1 }],
+                },
+            },
+        });
+        expect(invalidAttempts.ok).toBe(false);
+    });
+
     test('normalizes rate limit routes for task item endpoints', () => {
         expect(__cloudTestUtils.toRateLimitRoute('/v1/tasks/abc')).toBe('/v1/tasks/:id');
         expect(__cloudTestUtils.toRateLimitRoute('/v1/tasks/abc/complete')).toBe('/v1/tasks/:id/:action');

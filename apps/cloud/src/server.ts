@@ -87,6 +87,7 @@ const rateLimitMaxKeysValue = Number(process.env.MINDWTR_CLOUD_RATE_MAX_KEYS || 
 const RATE_LIMIT_MAX_KEYS = Number.isFinite(rateLimitMaxKeysValue) && rateLimitMaxKeysValue > 0
     ? Math.floor(rateLimitMaxKeysValue)
     : 10_000;
+const MAX_PENDING_REMOTE_DELETE_ATTEMPTS = 100;
 const authFailureRateMaxValue = Number(process.env.MINDWTR_CLOUD_AUTH_FAILURE_RATE_MAX || 30);
 const AUTH_FAILURE_RATE_MAX = Number.isFinite(authFailureRateMaxValue) && authFailureRateMaxValue > 0
     ? Math.floor(authFailureRateMaxValue)
@@ -433,6 +434,45 @@ function validateAppData(value: unknown): { ok: true; data: Record<string, unkno
             }
             if (area.deletedAt != null && !isValidIsoTimestamp(area.deletedAt)) {
                 return { ok: false, error: 'Invalid data: area deletedAt must be a valid ISO timestamp when present' };
+            }
+        }
+    }
+
+    const attachments = settings && isRecord(settings) ? (settings as Record<string, unknown>).attachments : undefined;
+    if (attachments !== undefined) {
+        if (!isRecord(attachments)) {
+            return { ok: false, error: 'Invalid data: settings.attachments must be an object when present' };
+        }
+        const pendingRemoteDeletes = (attachments as Record<string, unknown>).pendingRemoteDeletes;
+        if (pendingRemoteDeletes !== undefined) {
+            if (!Array.isArray(pendingRemoteDeletes)) {
+                return { ok: false, error: 'Invalid data: settings.attachments.pendingRemoteDeletes must be an array when present' };
+            }
+            if (pendingRemoteDeletes.length > MAX_ITEMS_PER_COLLECTION) {
+                return { ok: false, error: `Invalid data: pendingRemoteDeletes exceeds limit (${MAX_ITEMS_PER_COLLECTION})` };
+            }
+            for (const item of pendingRemoteDeletes) {
+                if (!isRecord(item)) {
+                    return { ok: false, error: 'Invalid data: each pendingRemoteDeletes entry must be an object' };
+                }
+                const cloudKey = typeof item.cloudKey === 'string' ? item.cloudKey.trim() : '';
+                if (!cloudKey || !normalizeAttachmentRelativePath(cloudKey)) {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.cloudKey must be a valid relative attachment path' };
+                }
+                if (item.title !== undefined && typeof item.title !== 'string') {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.title must be a string when present' };
+                }
+                if (item.attempts !== undefined) {
+                    if (typeof item.attempts !== 'number' || !Number.isFinite(item.attempts) || item.attempts < 0 || !Number.isInteger(item.attempts)) {
+                        return { ok: false, error: 'Invalid data: pendingRemoteDeletes.attempts must be a non-negative integer when present' };
+                    }
+                    if (item.attempts > MAX_PENDING_REMOTE_DELETE_ATTEMPTS) {
+                        return { ok: false, error: `Invalid data: pendingRemoteDeletes.attempts exceeds ${MAX_PENDING_REMOTE_DELETE_ATTEMPTS}` };
+                    }
+                }
+                if (item.lastErrorAt !== undefined && item.lastErrorAt !== null && !isValidIsoTimestamp(item.lastErrorAt)) {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.lastErrorAt must be a valid ISO timestamp when present' };
+                }
             }
         }
     }
