@@ -532,9 +532,9 @@ async function syncAttachments(
     appData: AppData,
     webDavConfig: WebDavConfig,
     baseSyncUrl: string
-): Promise<boolean> {
-    if (!isTauriRuntimeEnv()) return false;
-    if (!webDavConfig.url) return false;
+): Promise<AppData | null> {
+    if (!isTauriRuntimeEnv()) return null;
+    if (!webDavConfig.url) return null;
 
     const fetcher = await getTauriFetch();
     const { BaseDirectory, exists, mkdir, readFile, writeFile, rename, remove } = await import('@tauri-apps/plugin-fs');
@@ -855,12 +855,8 @@ async function syncAttachments(
     if (abortedByRateLimit) {
         logSyncWarning('WebDAV attachment sync aborted due to rate limiting');
     }
-    if (didMutate) {
-        // Apply the full working copy so attachment metadata changes are never dropped.
-        Object.assign(appData, workingData);
-    }
     logSyncInfo('WebDAV attachment sync done', { mutated: didMutate ? 'true' : 'false' });
-    return didMutate;
+    return didMutate ? workingData : null;
 }
 
 async function syncCloudAttachments(
@@ -2057,7 +2053,11 @@ export class SyncService {
                     let preMutated = false;
                     if (backend === 'webdav' && webdavConfig?.url) {
                         const baseUrl = getBaseSyncUrl(webdavConfig.url);
-                        preMutated = await syncAttachments(localData, webdavConfig, baseUrl);
+                        const syncedData = await syncAttachments(localData, webdavConfig, baseUrl);
+                        preMutated = syncedData !== null;
+                        if (syncedData) {
+                            preSyncedLocalData = syncedData;
+                        }
                     } else if (backend === 'file' && fileBaseDir) {
                         preMutated = await syncFileAttachments(localData, fileBaseDir);
                     } else if (backend === 'cloud' && cloudProvider === 'selfhosted' && cloudConfig?.url) {
@@ -2068,8 +2068,8 @@ export class SyncService {
                     }
                     if (preMutated) {
                         ensureLocalSnapshotFresh();
-                        await tauriInvoke('save_data', { data: localData });
-                        preSyncedLocalData = localData;
+                        await tauriInvoke('save_data', { data: preSyncedLocalData ?? localData });
+                        preSyncedLocalData = preSyncedLocalData ?? localData;
                     }
                 } catch (error) {
                     if (error instanceof LocalSyncAbort) {
@@ -2268,9 +2268,9 @@ export class SyncService {
                         const baseUrl = config.url ? getBaseSyncUrl(config.url) : '';
                         if (baseUrl) {
                             const candidateData = cloneAppData(mergedData);
-                            const mutated = await syncAttachments(candidateData, config, baseUrl);
-                            if (mutated) {
-                                mergedData = candidateData;
+                            const syncedData = await syncAttachments(candidateData, config, baseUrl);
+                            if (syncedData) {
+                                mergedData = syncedData;
                                 await tauriInvoke('save_data', { data: mergedData });
                             }
                         }
