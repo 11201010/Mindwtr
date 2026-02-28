@@ -43,6 +43,8 @@ const INVALID_CONFIG_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 const CLOUD_PROVIDER_SELF_HOSTED = 'selfhosted';
 const CLOUD_PROVIDER_DROPBOX = 'dropbox';
 type CloudProvider = typeof CLOUD_PROVIDER_SELF_HOSTED | typeof CLOUD_PROVIDER_DROPBOX;
+type MobileSyncActivityState = 'idle' | 'syncing';
+type MobileSyncActivityListener = (state: MobileSyncActivityState) => void;
 const isFossBuild = (() => {
   const extra = Constants.expoConfig?.extra as { isFossBuild?: unknown } | undefined;
   return extra?.isFossBuild === true || extra?.isFossBuild === 'true';
@@ -106,7 +108,35 @@ const injectExternalCalendars = async (data: AppData): Promise<AppData> =>
 const persistExternalCalendars = async (data: AppData): Promise<void> =>
   persistExternalCalendarsForSync(data, externalCalendarProvider);
 
-const getCachedConfigValue = async (key: string): Promise<string | null> => {
+let mobileSyncActivityState: MobileSyncActivityState = 'idle';
+const mobileSyncActivityListeners = new Set<MobileSyncActivityListener>();
+
+const setMobileSyncActivityState = (next: MobileSyncActivityState) => {
+  if (mobileSyncActivityState === next) return;
+  mobileSyncActivityState = next;
+  mobileSyncActivityListeners.forEach((listener) => {
+    try {
+      listener(next);
+    } catch (error) {
+      logSyncWarning('Failed to notify sync activity listener', error);
+    }
+  });
+};
+
+export const getMobileSyncActivityState = (): MobileSyncActivityState => mobileSyncActivityState;
+
+export const subscribeMobileSyncActivityState = (listener: MobileSyncActivityListener): (() => void) => {
+  mobileSyncActivityListeners.add(listener);
+  listener(mobileSyncActivityState);
+  return () => {
+    mobileSyncActivityListeners.delete(listener);
+  };
+};
+
+const readConfigValue = async (key: string, useCache = true): Promise<string | null> => {
+  if (!useCache) {
+    return sanitizeConfigValue(await AsyncStorage.getItem(key));
+  }
   const now = Date.now();
   const cached = syncConfigCache.get(key);
   if (cached && now - cached.readAt <= SYNC_CONFIG_CACHE_TTL_MS) {
@@ -116,6 +146,42 @@ const getCachedConfigValue = async (key: string): Promise<string | null> => {
   syncConfigCache.set(key, { value, readAt: now });
   return value;
 };
+
+const getCachedConfigValue = async (key: string): Promise<string | null> => {
+  return readConfigValue(key, true);
+};
+
+export async function getMobileSyncConfigurationStatus(): Promise<{ backend: SyncBackend; configured: boolean }> {
+  const rawBackend = (await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null;
+  const backend: SyncBackend = resolveBackend(rawBackend);
+
+  if (backend === 'off') {
+    return { backend, configured: false };
+  }
+  if (backend === 'file') {
+    const syncPath = (await readConfigValue(SYNC_PATH_KEY, false))?.trim();
+    return { backend, configured: Boolean(syncPath) };
+  }
+  if (backend === 'webdav') {
+    const webdavUrl = (await readConfigValue(WEBDAV_URL_KEY, false))?.trim();
+    return { backend, configured: Boolean(webdavUrl) };
+  }
+
+  const cloudProvider = normalizeCloudProvider((await readConfigValue(CLOUD_PROVIDER_KEY, false))?.trim() ?? null);
+  if (cloudProvider === CLOUD_PROVIDER_DROPBOX) {
+    return {
+      backend,
+      configured: DROPBOX_SYNC_ENABLED && getDropboxAppKey().length > 0,
+    };
+  }
+
+  const cloudUrl = (await readConfigValue(CLOUD_URL_KEY, false))?.trim();
+  const cloudToken = (await readConfigValue(CLOUD_TOKEN_KEY, false))?.trim();
+  return {
+    backend,
+    configured: Boolean(cloudUrl && cloudToken),
+  };
+}
 
 const getAttachmentsArray = (attachments: Attachment[] | undefined): Attachment[] => (
   Array.isArray(attachments) ? attachments : []
@@ -196,6 +262,7 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
       return { success: true };
     }
 
+    setMobileSyncActivityState('syncing');
     logSyncInfo('Sync start', { backend });
 
     let step = 'init';
@@ -765,6 +832,8 @@ export async function performMobileSync(syncPathOverride?: string): Promise<{ su
         .catch((error) => {
           logSyncWarning('[Mobile] Queued sync crashed', error);
         });
+    } else {
+      setMobileSyncActivityState('idle');
     }
   }
 }

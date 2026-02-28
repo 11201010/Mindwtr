@@ -2,9 +2,9 @@ import { Link, Tabs } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Search, Inbox, ArrowRightCircle, Folder, Menu, Mic, Plus } from 'lucide-react-native';
-import { Platform, StyleSheet, TouchableOpacity, View, type ViewStyle } from 'react-native';
+import { AppState, Platform, StyleSheet, TouchableOpacity, View, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -12,6 +12,11 @@ import { useLanguage } from '../../../contexts/language-context';
 import { QuickCaptureSheet } from '@/components/quick-capture-sheet';
 import { QuickCaptureProvider } from '../../../contexts/quick-capture-context';
 import { useTaskStore, type Task } from '@mindwtr/core';
+import {
+  getMobileSyncActivityState,
+  getMobileSyncConfigurationStatus,
+  subscribeMobileSyncActivityState,
+} from '../../../lib/sync-service';
 
 function NativeTabBar({
   state,
@@ -149,6 +154,8 @@ export default function TabLayout() {
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const { settings } = useTaskStore();
+  const [syncConfigured, setSyncConfigured] = useState(false);
+  const [syncActivityState, setSyncActivityState] = useState(getMobileSyncActivityState());
   const androidNavInset = Platform.OS === 'android' && insets.bottom >= 20
     ? Math.max(0, insets.bottom - 12)
     : 0;
@@ -192,6 +199,43 @@ export default function TabLayout() {
   const captureColor = tc.tint;
   const defaultCapture = settings.gtd?.defaultCaptureMethod ?? 'text';
   const defaultAutoRecord = defaultCapture === 'audio';
+  const refreshSyncBadgeConfig = useCallback(async () => {
+    try {
+      const status = await getMobileSyncConfigurationStatus();
+      setSyncConfigured(status.configured);
+    } catch {
+      setSyncConfigured(false);
+    }
+  }, []);
+  useEffect(() => {
+    const unsubscribe = subscribeMobileSyncActivityState(setSyncActivityState);
+    void refreshSyncBadgeConfig();
+    return unsubscribe;
+  }, [refreshSyncBadgeConfig]);
+  useEffect(() => {
+    void refreshSyncBadgeConfig();
+  }, [
+    refreshSyncBadgeConfig,
+    settings.lastSyncStatus,
+    settings.pendingRemoteWriteAt,
+    settings.lastSyncAt,
+  ]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshSyncBadgeConfig();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [refreshSyncBadgeConfig]);
+  const syncBadgeColor = useMemo(() => {
+    if (!syncConfigured) return null;
+    if (syncActivityState === 'syncing' || Boolean(settings.pendingRemoteWriteAt)) return '#F59E0B';
+    if (settings.lastSyncStatus === 'success') return '#22C55E';
+    return '#EF4444';
+  }, [settings.lastSyncStatus, settings.pendingRemoteWriteAt, syncActivityState, syncConfigured]);
 
   return (
     <QuickCaptureProvider value={{ openQuickCapture }}>
@@ -322,7 +366,17 @@ export default function TabLayout() {
         options={{
           title: t('tab.menu'),
           tabBarIcon: ({ color, focused }) => (
-            <Menu size={focused ? 26 : 24} color={color} strokeWidth={2} opacity={focused ? 1 : 0.8} />
+            <View style={styles.menuIconWrap}>
+              <Menu size={focused ? 26 : 24} color={color} strokeWidth={2} opacity={focused ? 1 : 0.8} />
+              {syncBadgeColor && (
+                <View
+                  style={[
+                    styles.syncBadgeDot,
+                    { backgroundColor: syncBadgeColor },
+                  ]}
+                />
+              )}
+            </View>
           ),
         }}
       />
@@ -375,5 +429,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 3 },
     elevation: 4,
+  },
+  menuIconWrap: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  syncBadgeDot: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    top: 1,
+    right: 0,
   },
 });
