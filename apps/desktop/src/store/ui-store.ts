@@ -34,6 +34,9 @@ interface UiState {
     setListOptions: (partial: Partial<UiState['listOptions']>) => void;
     editingTaskId: string | null;
     setEditingTaskId: (value: string | null) => void;
+    expandedTaskIds: Record<string, true>;
+    setTaskExpanded: (taskId: string, expanded: boolean) => void;
+    toggleTaskExpanded: (taskId: string) => void;
     boardFilters: {
         selectedProjectIds: string[];
         open: boolean;
@@ -91,6 +94,38 @@ export const useUiStore = createWithEqualityFn<UiState>()((set) => ({
         set((state) => ({ listOptions: { ...state.listOptions, ...partial } })),
     editingTaskId: null,
     setEditingTaskId: (value) => set({ editingTaskId: value }),
+    expandedTaskIds: {},
+    setTaskExpanded: (taskId, expanded) =>
+        set((state) => {
+            const currentExpanded = Boolean(state.expandedTaskIds[taskId]);
+            if (currentExpanded === expanded) return state;
+            if (expanded) {
+                return {
+                    expandedTaskIds: {
+                        ...state.expandedTaskIds,
+                        [taskId]: true,
+                    },
+                };
+            }
+            const nextExpanded = { ...state.expandedTaskIds };
+            delete nextExpanded[taskId];
+            return { expandedTaskIds: nextExpanded };
+        }),
+    toggleTaskExpanded: (taskId) =>
+        set((state) => {
+            const isExpanded = Boolean(state.expandedTaskIds[taskId]);
+            if (isExpanded) {
+                const nextExpanded = { ...state.expandedTaskIds };
+                delete nextExpanded[taskId];
+                return { expandedTaskIds: nextExpanded };
+            }
+            return {
+                expandedTaskIds: {
+                    ...state.expandedTaskIds,
+                    [taskId]: true,
+                },
+            };
+        }),
     boardFilters: {
         selectedProjectIds: [],
         open: false,

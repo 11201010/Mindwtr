@@ -103,7 +103,15 @@ export const TaskItem = memo(function TaskItem({
         lockEditing,
         unlockEditing,
     } = useTaskItemStoreState();
-    const { setProjectView, editingTaskId, setEditingTaskId, showToast } = useTaskItemUiState();
+    const {
+        setProjectView,
+        editingTaskId,
+        setEditingTaskId,
+        isTaskExpanded,
+        setTaskExpanded,
+        toggleTaskExpanded,
+        showToast,
+    } = useTaskItemUiState(task.id);
     const setSelectedProjectId = useCallback(
         (value: string | null) => setProjectView({ selectedProjectId: value }),
         [setProjectView]
@@ -184,7 +192,6 @@ export const TaskItem = memo(function TaskItem({
         task,
         resetAttachmentState,
     });
-    const [isViewOpen, setIsViewOpen] = useState(false);
     const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [showWaitingDuePrompt, setShowWaitingDuePrompt] = useState(false);
@@ -313,11 +320,11 @@ export const TaskItem = memo(function TaskItem({
     const startEditing = useCallback(() => {
         if (effectiveReadOnly || isEditing) return;
         resetEditState();
-        setIsViewOpen(false);
+        setTaskExpanded(task.id, false);
         setAutoFocusTitle(true);
         setIsEditing(true);
         setEditingTaskId(task.id);
-    }, [effectiveReadOnly, isEditing, resetEditState, setEditingTaskId, task.id]);
+    }, [effectiveReadOnly, isEditing, resetEditState, setEditingTaskId, setTaskExpanded, task.id]);
 
     const handleCreateProject = useCallback(async (title: string) => {
         const trimmed = title.trim();
@@ -505,10 +512,10 @@ export const TaskItem = memo(function TaskItem({
     useEffect(() => {
         if (isEditing) return;
         if (editingTaskId === task.id && !effectiveReadOnly) {
-            setIsViewOpen(false);
+            setTaskExpanded(task.id, false);
             setIsEditing(true);
         }
-    }, [editingTaskId, effectiveReadOnly, isEditing, task.id]);
+    }, [editingTaskId, effectiveReadOnly, isEditing, setTaskExpanded, task.id]);
 
     useEffect(() => {
         if (!isEditing) return;
@@ -519,9 +526,9 @@ export const TaskItem = memo(function TaskItem({
 
     useEffect(() => {
         if (isEditing) {
-            setIsViewOpen(false);
+            setTaskExpanded(task.id, false);
         }
-    }, [isEditing]);
+    }, [isEditing, setTaskExpanded, task.id]);
 
     useEffect(() => {
         if (!isEditing) return;
@@ -892,10 +899,10 @@ export const TaskItem = memo(function TaskItem({
                             area={taskArea}
                             projectColor={projectColor}
                             selectionMode={selectionMode}
-                            isViewOpen={isViewOpen}
+                            isViewOpen={isTaskExpanded}
                             actions={{
                                 onToggleSelect,
-                                onToggleView: () => setIsViewOpen((prev) => !prev),
+                                onToggleView: () => toggleTaskExpanded(task.id),
                                 onEdit: startEditing,
                                 onDelete: () => setShowDeleteConfirm(true),
                                 onDuplicate: () => duplicateTask(task.id, false),
