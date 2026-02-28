@@ -42,7 +42,8 @@ describe('TaskStore', () => {
         vi.useFakeTimers();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await flushPendingSave();
         vi.useRealTimers();
         vi.restoreAllMocks();
     });
