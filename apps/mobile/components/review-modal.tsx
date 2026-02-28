@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet, TextInput, ActivityIndicator } from 'react-native';
 import {
     createAIProvider,
     getStaleItems,
@@ -556,7 +556,12 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
 
     const renderExternalCalendarList = (days: ExternalCalendarDaySummary[]) => {
         if (externalCalendarLoading) {
-            return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{labels.loading}</Text>;
+            return (
+                <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color={tc.tint} />
+                    <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{labels.loading}</Text>
+                </View>
+            );
         }
         if (externalCalendarError) {
             return <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>{externalCalendarError}</Text>;
@@ -1255,6 +1260,11 @@ const styles = StyleSheet.create({
     },
     calendarEventMeta: {
         fontSize: 12,
+    },
+    loadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
     },
     calendarToggleText: {
         textDecorationLine: 'underline',
