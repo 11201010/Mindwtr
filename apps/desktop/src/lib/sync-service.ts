@@ -1944,6 +1944,8 @@ export class SyncService {
             SyncService.updateSyncStatus({ queued: true });
             return SyncService.syncInFlight;
         }
+        // Consume any queued follow-up token only when this cycle has actually started.
+        SyncService.syncQueued = false;
         let inFlightSettled = false;
         let resolveInFlight: ((value: { success: boolean; stats?: MergeStats; error?: string }) => void) | null = null;
         const inFlightPromise = new Promise<{ success: boolean; stats?: MergeStats; error?: string }>((resolve) => {
@@ -2394,7 +2396,6 @@ export class SyncService {
         });
 
         if (SyncService.syncQueued) {
-            SyncService.syncQueued = false;
             void SyncService.performSync()
                 .then((queuedResult) => {
                     if (!queuedResult.success) {
