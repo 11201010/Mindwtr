@@ -1,6 +1,11 @@
 import type { AppData, Area, Project, Section, Task, TaskStatus } from './types';
 import type { TaskQueryOptions } from './storage';
 
+export type StoreActionResult = {
+    success: boolean;
+    error?: string;
+};
+
 /**
  * Core application state interface.
  *
@@ -33,29 +38,29 @@ export interface TaskStore {
     /** Load all data from storage */
     fetchData: (options?: { silent?: boolean }) => Promise<void>;
     /** Add a new task */
-    addTask: (title: string, initialProps?: Partial<Task>) => Promise<void>;
+    addTask: (title: string, initialProps?: Partial<Task>) => Promise<StoreActionResult>;
     /** Update an existing task */
-    updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
+    updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
     /** Soft-delete a task */
-    deleteTask: (id: string) => Promise<void>;
+    deleteTask: (id: string) => Promise<StoreActionResult>;
     /** Restore a soft-deleted task */
-    restoreTask: (id: string) => Promise<void>;
+    restoreTask: (id: string) => Promise<StoreActionResult>;
     /** Permanently remove a task from storage */
-    purgeTask: (id: string) => Promise<void>;
+    purgeTask: (id: string) => Promise<StoreActionResult>;
     /** Permanently remove all soft-deleted tasks from storage */
-    purgeDeletedTasks: () => Promise<void>;
+    purgeDeletedTasks: () => Promise<StoreActionResult>;
     /** Duplicate a task (useful for reusable lists/templates) */
-    duplicateTask: (id: string, asNextAction?: boolean) => Promise<void>;
+    duplicateTask: (id: string, asNextAction?: boolean) => Promise<StoreActionResult>;
     /** Reset checklist items to unchecked */
-    resetTaskChecklist: (id: string) => Promise<void>;
+    resetTaskChecklist: (id: string) => Promise<StoreActionResult>;
     /** Move task to a different status */
-    moveTask: (id: string, newStatus: TaskStatus) => Promise<void>;
+    moveTask: (id: string, newStatus: TaskStatus) => Promise<StoreActionResult>;
     /** Batch update multiple tasks */
-    batchUpdateTasks: (updates: Array<{ id: string; updates: Partial<Task> }>) => Promise<void>;
+    batchUpdateTasks: (updates: Array<{ id: string; updates: Partial<Task> }>) => Promise<StoreActionResult>;
     /** Batch move tasks to a status */
-    batchMoveTasks: (ids: string[], newStatus: TaskStatus) => Promise<void>;
+    batchMoveTasks: (ids: string[], newStatus: TaskStatus) => Promise<StoreActionResult>;
     /** Batch soft-delete tasks */
-    batchDeleteTasks: (ids: string[]) => Promise<void>;
+    batchDeleteTasks: (ids: string[]) => Promise<StoreActionResult>;
     /** Query tasks using storage adapter when available */
     queryTasks: (options: TaskQueryOptions) => Promise<Task[]>;
     /** Set or clear global error state */
