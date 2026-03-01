@@ -783,7 +783,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     name: Update AUR (mindwtr)
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
     if: ${{ always() && ((startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.run_update_aur_source && (needs.release.result == 'success' || needs.release.result == 'skipped'))) }}
@@ -881,6 +881,37 @@ jobs:
                   cat /tmp/makepkg-sums.txt
                 } > /aur/PKGBUILD
               fi
+            '
+
+      - name: Validate source package build (clean container)
+        shell: bash
+        working-directory: aur-mindwtr
+        run: |
+          HOST_UID="$(id -u)"
+          HOST_GID="$(id -g)"
+          docker run --rm \
+            -e HOST_UID="$HOST_UID" \
+            -e HOST_GID="$HOST_GID" \
+            -v "$PWD:/aur" \
+            -w /aur \
+            archlinux:latest \
+            bash -lc '
+              set -euo pipefail
+              pacman -Sy --noconfirm --needed base-devel git
+              mapfile -t pkgdeps < <(bash -lc "
+                source PKGBUILD
+                printf \"%s\\n\" \"\${depends[@]}\" \"\${makedepends[@]}\" \
+                  | sed -E \"s/[<>=].*$//\" \
+                  | awk \"NF\" \
+                  | sort -u
+              ")
+              if [ "${#pkgdeps[@]}" -gt 0 ]; then
+                pacman -S --noconfirm --needed "${pkgdeps[@]}"
+              fi
+              getent group "$HOST_GID" >/dev/null 2>&1 || groupadd -g "$HOST_GID" builder
+              id -u builder >/dev/null 2>&1 || useradd -m -u "$HOST_UID" -g "$HOST_GID" builder
+              chown -R builder:builder /aur
+              su builder -c "makepkg --cleanbuild --clean --nodeps --noconfirm --nocheck"
             '
 
       - name: Bump pkgrel for checksum-only changes
