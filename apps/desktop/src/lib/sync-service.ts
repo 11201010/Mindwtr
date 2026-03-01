@@ -33,6 +33,7 @@ import {
     persistExternalCalendars as persistExternalCalendarsForSync,
     withRetry,
     isRetryableWebdavReadError,
+    isWebdavInvalidJsonError,
     CLOCK_SKEW_THRESHOLD_MS,
     appendSyncHistory,
     cloneAppData,
@@ -1998,6 +1999,7 @@ export class SyncService {
             const fileBaseDir = backend === 'file' ? getFileSyncDir(syncPath, SYNC_FILE_NAME, LEGACY_SYNC_FILE_NAME) : '';
             let preSyncedLocalData: AppData | null = null;
             let remoteDataForCompare: AppData | null = null;
+            let webdavRemoteCorrupted = false;
             const ensureLocalSnapshotFresh = () => {
                 if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
                     SyncService.syncQueued = true;
@@ -2050,34 +2052,46 @@ export class SyncService {
                 },
                 readRemote: async () => {
                     if (backend === 'webdav') {
-                        if (isTauriRuntimeEnv()) {
+                        try {
+                            if (isTauriRuntimeEnv()) {
+                                if (!webdavConfig?.url) {
+                                    throw new Error('WebDAV URL not configured');
+                                }
+                                syncUrl = webdavConfig.url;
+                                const data = await withRetry(
+                                    () => tauriInvoke<AppData>('webdav_get_json'),
+                                    WEBDAV_READ_RETRY_OPTIONS,
+                                );
+                                webdavRemoteCorrupted = false;
+                                remoteDataForCompare = data ?? null;
+                                return data;
+                            }
                             if (!webdavConfig?.url) {
                                 throw new Error('WebDAV URL not configured');
                             }
-                            syncUrl = webdavConfig.url;
+                            const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
+                            syncUrl = normalizedUrl;
+                            const fetcher = await getTauriFetch();
                             const data = await withRetry(
-                                () => tauriInvoke<AppData>('webdav_get_json'),
+                                () => webdavGetJson<AppData>(normalizedUrl, {
+                                    username: webdavConfig.username,
+                                    password: webdavConfig.password || '',
+                                    fetcher,
+                                }),
                                 WEBDAV_READ_RETRY_OPTIONS,
                             );
+                            webdavRemoteCorrupted = false;
                             remoteDataForCompare = data ?? null;
                             return data;
+                        } catch (error) {
+                            if (isWebdavInvalidJsonError(error)) {
+                                webdavRemoteCorrupted = true;
+                                remoteDataForCompare = null;
+                                logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
+                                return null;
+                            }
+                            throw error;
                         }
-                        if (!webdavConfig?.url) {
-                            throw new Error('WebDAV URL not configured');
-                        }
-                        const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
-                        syncUrl = normalizedUrl;
-                        const fetcher = await getTauriFetch();
-                        const data = await withRetry(
-                            () => webdavGetJson<AppData>(normalizedUrl, {
-                                username: webdavConfig.username,
-                                password: webdavConfig.password || '',
-                                fetcher,
-                            }),
-                            WEBDAV_READ_RETRY_OPTIONS,
-                        );
-                        remoteDataForCompare = data ?? null;
-                        return data;
                     }
                     if (backend === 'cloud') {
                         if (cloudProvider === 'selfhosted') {
@@ -2130,15 +2144,23 @@ export class SyncService {
                     }
                     if (backend === 'webdav') {
                         if (isTauriRuntimeEnv()) {
+                            if (webdavRemoteCorrupted) {
+                                logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+                            }
                             await tauriInvoke('webdav_put_json', { data: sanitized });
                             remoteDataForCompare = sanitized;
+                            webdavRemoteCorrupted = false;
                             return;
                         }
                         const { url, username, password } = await SyncService.getWebDavConfig();
                         const normalizedUrl = normalizeWebdavUrl(url);
                         const fetcher = await getTauriFetch();
+                        if (webdavRemoteCorrupted) {
+                            logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+                        }
                         await webdavPutJson(normalizedUrl, sanitized, { username, password: password || '', fetcher });
                         remoteDataForCompare = sanitized;
+                        webdavRemoteCorrupted = false;
                         return;
                     }
                     if (backend === 'cloud') {

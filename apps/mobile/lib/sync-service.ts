@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { AppData, Attachment, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, isRetryableWebdavReadError, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, areSyncPayloadsEqual, assertNoPendingAttachmentUploads, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, mergeAppData, cloneAppData, LocalSyncAbort, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from '@mindwtr/core';
+import { AppData, Attachment, MergeStats, useTaskStore, webdavGetJson, webdavPutJson, cloudGetJson, cloudPutJson, flushPendingSave, performSyncCycle, findOrphanedAttachments, removeOrphanedAttachmentsFromData, webdavDeleteFile, cloudDeleteFile, CLOCK_SKEW_THRESHOLD_MS, appendSyncHistory, withRetry, isRetryableWebdavReadError, isWebdavInvalidJsonError, normalizeWebdavUrl, normalizeCloudUrl, sanitizeAppDataForRemote, areSyncPayloadsEqual, assertNoPendingAttachmentUploads, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, mergeAppData, cloneAppData, LocalSyncAbort, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFile, resolveSyncFileUri, writeSyncFile } from './storage-file';
@@ -335,6 +335,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
       let fileSyncPath: string | null = null;
       let preSyncedLocalData: AppData | null = null;
       let remoteDataForCompare: AppData | null = null;
+      let webdavRemoteCorrupted = false;
       step = 'flush';
       await flushPendingSave();
       localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
@@ -455,18 +456,29 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
         readRemote: async () => {
           await ensureNetworkStillAvailable();
           if (backend === 'webdav' && webdavConfig?.url) {
-            const data = await withRetry(
-              () =>
-                webdavGetJson<AppData>(webdavConfig.url, {
-                  username: webdavConfig.username,
-                  password: webdavConfig.password,
-                  timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
-                  fetcher: fetchWithAbort,
-                }),
-              WEBDAV_READ_RETRY_OPTIONS
-            );
-            remoteDataForCompare = data ?? null;
-            return data;
+            try {
+              const data = await withRetry(
+                () =>
+                  webdavGetJson<AppData>(webdavConfig.url, {
+                    username: webdavConfig.username,
+                    password: webdavConfig.password,
+                    timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+                    fetcher: fetchWithAbort,
+                  }),
+                WEBDAV_READ_RETRY_OPTIONS
+              );
+              webdavRemoteCorrupted = false;
+              remoteDataForCompare = data ?? null;
+              return data;
+            } catch (error) {
+              if (isWebdavInvalidJsonError(error)) {
+                webdavRemoteCorrupted = true;
+                remoteDataForCompare = null;
+                logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
+                return null;
+              }
+              throw error;
+            }
           }
           if (backend === 'cloud' && cloudConfig?.url) {
             const data = await cloudGetJson<AppData>(cloudConfig.url, {
@@ -517,6 +529,9 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
           }
           if (backend === 'webdav') {
             if (!webdavConfig?.url) throw new Error('WebDAV URL not configured');
+            if (webdavRemoteCorrupted) {
+              logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+            }
             await withRetry(
               () =>
                 webdavPutJson(webdavConfig.url, sanitized, {
@@ -528,6 +543,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
               WEBDAV_RETRY_OPTIONS
             );
             remoteDataForCompare = sanitized;
+            webdavRemoteCorrupted = false;
             return;
           }
           if (backend === 'cloud') {
