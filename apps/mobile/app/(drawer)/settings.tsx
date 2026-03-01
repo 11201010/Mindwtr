@@ -70,7 +70,12 @@ import {
 } from '../../lib/external-calendar';
 import { loadAIKey, saveAIKey } from '../../lib/ai-config';
 import { clearLog, ensureLogFilePath, logInfo } from '../../lib/app-log';
-import { performMobileSync } from '../../lib/sync-service';
+import {
+    getMobileSyncActivityState,
+    getMobileSyncConfigurationStatus,
+    performMobileSync,
+    subscribeMobileSyncActivityState,
+} from '../../lib/sync-service';
 import { requestNotificationPermission, startMobileNotifications } from '../../lib/notification-service';
 import { authorizeDropbox, getDropboxRedirectUri } from '../../lib/dropbox-oauth';
 import {
@@ -196,6 +201,8 @@ export default function SettingsPage() {
     const dropboxAppKey = typeof extraConfig?.dropboxAppKey === 'string' ? extraConfig.dropboxAppKey.trim() : '';
     const dropboxConfigured = !isFossBuild && isDropboxClientConfigured(dropboxAppKey);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncConfigured, setSyncConfigured] = useState(false);
+    const [syncActivityState, setSyncActivityState] = useState(getMobileSyncActivityState());
     const currentScreen = useMemo<SettingsScreen>(() => {
         const rawScreen = Array.isArray(settingsScreen) ? settingsScreen[0] : settingsScreen;
         if (!rawScreen) return 'main';
@@ -565,6 +572,50 @@ export default function SettingsPage() {
             }
         }).catch(logSettingsError);
     }, [isFossBuild]);
+
+    const refreshSyncBadgeConfig = useCallback(async () => {
+        try {
+            const status = await getMobileSyncConfigurationStatus();
+            setSyncConfigured(status.configured);
+        } catch {
+            setSyncConfigured(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = subscribeMobileSyncActivityState(setSyncActivityState);
+        void refreshSyncBadgeConfig();
+        return unsubscribe;
+    }, [refreshSyncBadgeConfig]);
+
+    useEffect(() => {
+        void refreshSyncBadgeConfig();
+    }, [
+        refreshSyncBadgeConfig,
+        syncBackend,
+        syncPath,
+        settings.lastSyncStatus,
+        settings.pendingRemoteWriteAt,
+        settings.lastSyncAt,
+    ]);
+
+    const syncBadgeColor = useMemo(() => {
+        if (!syncConfigured) return undefined;
+        if (syncActivityState === 'syncing' || Boolean(settings.pendingRemoteWriteAt)) return '#F59E0B';
+        if (settings.lastSyncStatus === 'success') return '#22C55E';
+        return '#EF4444';
+    }, [settings.lastSyncStatus, settings.pendingRemoteWriteAt, syncActivityState, syncConfigured]);
+
+    const syncBadgeAccessibilityLabel = useMemo(() => {
+        if (!syncConfigured) return undefined;
+        if (syncActivityState === 'syncing' || Boolean(settings.pendingRemoteWriteAt)) {
+            return localize('Sync in progress', '同步进行中');
+        }
+        if (settings.lastSyncStatus === 'success') {
+            return localize('Sync healthy', '同步正常');
+        }
+        return localize('Sync needs attention', '同步需要关注');
+    }, [localize, settings.lastSyncStatus, settings.pendingRemoteWriteAt, syncActivityState, syncConfigured]);
 
     useEffect(() => {
         void loadSystemCalendarState();
@@ -1936,15 +1987,27 @@ export default function SettingsPage() {
     );
 
     // Menu Item
-    const MenuItem = ({ title, onPress, showIndicator }: { title: string; onPress: () => void; showIndicator?: boolean }) => (
+    const MenuItem = ({
+        title,
+        onPress,
+        showIndicator,
+        indicatorColor,
+        indicatorAccessibilityLabel,
+    }: {
+        title: string;
+        onPress: () => void;
+        showIndicator?: boolean;
+        indicatorColor?: string;
+        indicatorAccessibilityLabel?: string;
+    }) => (
         <TouchableOpacity style={[styles.menuItem, { borderBottomColor: tc.border }]} onPress={onPress}>
             <Text style={[styles.menuLabel, { color: tc.text }]}>{title}</Text>
             <View style={styles.menuRight}>
                 {showIndicator && (
                     <View
-                        accessibilityLabel={localize('Update available', '有可用更新')}
+                        accessibilityLabel={indicatorAccessibilityLabel ?? localize('Update available', '有可用更新')}
                         accessibilityRole="text"
-                        style={styles.updateDot}
+                        style={[styles.updateDot, indicatorColor ? { backgroundColor: indicatorColor } : null]}
                     />
                 )}
                 <Text style={[styles.chevron, { color: tc.secondaryText }]}>›</Text>
@@ -5026,7 +5089,13 @@ export default function SettingsPage() {
                     <MenuItem title={t('settings.general')} onPress={() => pushSettingsScreen('general')} />
                     <MenuItem title={t('settings.gtd')} onPress={() => pushSettingsScreen('gtd')} />
                     <MenuItem title={t('settings.notifications')} onPress={() => pushSettingsScreen('notifications')} />
-                    <MenuItem title={t('settings.dataSync')} onPress={() => pushSettingsScreen('sync')} />
+                    <MenuItem
+                        title={t('settings.dataSync')}
+                        onPress={() => pushSettingsScreen('sync')}
+                        showIndicator={Boolean(syncBadgeColor)}
+                        indicatorColor={syncBadgeColor}
+                        indicatorAccessibilityLabel={syncBadgeAccessibilityLabel}
+                    />
                     <MenuItem title={t('settings.advanced')} onPress={() => pushSettingsScreen('advanced')} />
                     <MenuItem title={t('settings.about')} onPress={() => pushSettingsScreen('about')} showIndicator={!isFossBuild && hasUpdateBadge} />
                 </View>
