@@ -46,6 +46,20 @@ describe('quick-add', () => {
         expect(result.props.dueDate).toBe(new Date(2025, 0, 2, now.getHours(), now.getMinutes(), 0, 0).toISOString());
     });
 
+    it('parses relative due dates with numbers without treating numbers as time tokens', () => {
+        const now = new Date('2026-03-01T10:30:00Z');
+        const result = parseQuickAdd('Task /due:in 3 days', undefined, now);
+        expect(result.invalidDateCommands).toBeUndefined();
+        expect(result.props.dueDate).toBe(new Date(2026, 2, 4, now.getHours(), now.getMinutes(), 0, 0).toISOString());
+    });
+
+    it('parses ISO due dates without corrupting the date token', () => {
+        const now = new Date('2026-03-01T10:30:00Z');
+        const result = parseQuickAdd('Task /due:2026-03-15', undefined, now);
+        expect(result.invalidDateCommands).toBeUndefined();
+        expect(result.props.dueDate).toBe(new Date(2026, 2, 15, now.getHours(), now.getMinutes(), 0, 0).toISOString());
+    });
+
     it('matches project by title when provided', () => {
         const now = new Date('2025-01-01T10:00:00Z');
         const projects = [

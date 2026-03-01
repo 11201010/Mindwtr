@@ -54,7 +54,9 @@ Mindwtr supports natural language quick-add. Type directly in the task input:
 | `+Multi Word`      | `+New Project Name`        | Assigns to "New Project Name" |
 | `!Area`            | `Plan roadmap !Work`       | Assigns to area       |
 | `/area:<name>`     | `/area:Personal`           | Assigns to area (no spaces) |
+| `/start:date`      | `Task /start:monday`       | Sets start date       |
 | `/due:date`        | `Report /due:friday`       | Sets due date         |
+| `/review:date`     | `Task /review:next week`   | Sets review date      |
 | `/note:text`       | `Task /note:remember X`    | Adds description      |
 | `/status`          | `/next`, `/waiting`, `/someday`, `/done`, `/archived`, `/inbox` | Sets status |
 
@@ -62,6 +64,9 @@ Mindwtr supports natural language quick-add. Type directly in the task input:
 - `/due:today`, `/due:tomorrow`
 - `/due:friday`, `/due:next week`
 - `/due:in 3 days`, `/due:2025-01-15`
+- `/start:tomorrow`, `/review:next week`
+
+Absolute dates use fixed ISO format `YYYY-MM-DD` (for example, `/due:2026-03-15`), regardless of your UI locale/date display format.
 
 **Escaping**
 - Use a backslash to keep symbols as plain text: `\\@`, `\\#`, `\\+`, `\\/`

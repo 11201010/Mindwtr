@@ -67,11 +67,16 @@ function restoreEscapes(input: string): string {
 }
 
 function parseTime(text: string): { hour: number; minute: number; rest: string } | null {
-    const match = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
+    // Treat a value as "time" only when it is explicitly a clock token.
+    // This avoids breaking date expressions such as "in 3 days" or "2026-03-15".
+    const match = text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b|\b(\d{1,2})\s*(am|pm)\b/);
     if (!match) return null;
-    let hour = Number(match[1]);
-    const minute = match[2] ? Number(match[2]) : 0;
-    const ampm = match[3]?.toLowerCase();
+    const hourToken = match[1] ?? match[4];
+    const minuteToken = match[2];
+    const ampmToken = match[3] ?? match[5];
+    let hour = Number(hourToken);
+    const minute = minuteToken ? Number(minuteToken) : 0;
+    const ampm = ampmToken?.toLowerCase();
     if (ampm === 'pm' && hour < 12) hour += 12;
     if (ampm === 'am' && hour === 12) hour = 0;
     if (hour > 23 || minute > 59) return null;
