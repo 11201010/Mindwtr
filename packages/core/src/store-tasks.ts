@@ -1,10 +1,11 @@
 import type { AppData, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
-import type { TaskStore } from './store-types';
+import type { StoreActionResult, TaskStore } from './store-types';
 import {
     applyTaskUpdates,
     buildSaveSnapshot,
     ensureDeviceId,
+    getTaskOrder,
     getNextProjectOrder,
     getReferenceTaskFieldClears,
     isTaskVisible,
@@ -48,6 +49,9 @@ type TaskActionContext = {
     debouncedSave: (data: AppData, onError?: (msg: string) => void) => void;
 };
 
+const actionOk = (): StoreActionResult => ({ success: true });
+const actionFail = (error: string): StoreActionResult => ({ success: false, error });
+
 export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskActionContext): TaskActions => ({
     /**
      * Add a new task to the store and persist to storage.
@@ -58,11 +62,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const trimmedTitle = typeof title === 'string' ? title.trim() : '';
         if (!trimmedTitle) {
-            set({ error: 'Task title is required' });
-            return;
+            const message = 'Task title is required';
+            set({ error: message });
+            return actionFail(message);
         }
         const resolvedStatus = (initialProps?.status ?? 'inbox') as TaskStatus;
-        const hasOrderNum = Object.prototype.hasOwnProperty.call(initialProps ?? {}, 'orderNum');
+        const hasTaskOrder = Object.prototype.hasOwnProperty.call(initialProps ?? {}, 'order')
+            || Object.prototype.hasOwnProperty.call(initialProps ?? {}, 'orderNum');
         const resolvedProjectId = initialProps?.projectId;
         const resolvedSectionId = resolvedProjectId ? initialProps?.sectionId : undefined;
         const resolvedAreaId = resolvedProjectId ? undefined : initialProps?.areaId;
@@ -75,9 +81,10 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
             const deviceId = deviceState.deviceId;
-            const resolvedOrderNum = !hasOrderNum && resolvedProjectId
+            const explicitOrder = getTaskOrder(initialProps ?? {});
+            const resolvedOrder = !hasTaskOrder && resolvedProjectId
                 ? getNextProjectOrder(resolvedProjectId, state._allTasks, state.lastDataChangeAt)
-                : initialProps?.orderNum;
+                : explicitOrder;
             const newTask: Task = {
                 id: uuidv4(),
                 title: trimmedTitle,
@@ -95,7 +102,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 areaId: resolvedAreaId,
                 projectId: resolvedProjectId,
                 sectionId: resolvedSectionId,
-                orderNum: resolvedOrderNum,
+                order: resolvedOrder,
+                orderNum: resolvedOrder,
             };
 
             const newAllTasks = [...state._allTasks, newTask];
@@ -115,6 +123,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return actionOk();
     },
 
     /**
@@ -140,6 +149,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
             };
 
             let adjustedUpdates = updates;
+            const hasOrder = Object.prototype.hasOwnProperty.call(updates, 'order');
+            const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
+            if (hasOrder || hasOrderNum) {
+                const normalizedOrder = getTaskOrder(updates);
+                adjustedUpdates = {
+                    ...adjustedUpdates,
+                    order: normalizedOrder,
+                    orderNum: normalizedOrder,
+                };
+            }
             if (Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
                 const rawProjectId = updates.projectId;
                 const normalizedProjectId =
@@ -150,12 +169,14 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 const projectChanged = (oldTask.projectId ?? undefined) !== nextProjectId;
                 if (projectChanged) {
                     const shouldClearSection = !Object.prototype.hasOwnProperty.call(updates, 'sectionId');
-                    const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
+                    const hasTaskOrderOverride = hasOrder || hasOrderNum;
                     if (nextProjectId) {
-                        if (!hasOrderNum) {
+                        if (!hasTaskOrderOverride) {
+                            const nextOrder = getNextProjectOrder(nextProjectId, state._allTasks, state.lastDataChangeAt);
                             adjustedUpdates = {
                                 ...adjustedUpdates,
-                                orderNum: getNextProjectOrder(nextProjectId, state._allTasks, state.lastDataChangeAt),
+                                order: nextOrder,
+                                orderNum: nextOrder,
                             };
                         }
                         if (!Object.prototype.hasOwnProperty.call(updates, 'areaId')) {
@@ -174,6 +195,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                         adjustedUpdates = {
                             ...adjustedUpdates,
                             projectId: undefined,
+                            order: undefined,
                             orderNum: undefined,
                             sectionId: undefined,
                         };
@@ -219,12 +241,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
             const message = 'Task not found';
             console.warn(`[mindwtr] updateTask skipped: ${id} was not found`);
             set({ error: message });
-            return;
+            return actionFail(message);
         }
 
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return actionOk();
     },
 
     /**
@@ -235,9 +258,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
+        let missingTask = false;
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
-            if (!oldTask) return state;
+            if (!oldTask) {
+                missingTask = true;
+                return state;
+            }
             const deviceState = ensureDeviceId(state.settings);
             const updatedTask = {
                 ...oldTask,
@@ -266,6 +293,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return missingTask ? actionFail('Task not found') : actionOk();
     },
 
     /**
@@ -275,9 +303,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
+        let missingTask = false;
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
-            if (!oldTask) return state;
+            if (!oldTask) {
+                missingTask = true;
+                return state;
+            }
             const deviceState = ensureDeviceId(state.settings);
             const updatedTask = {
                 ...oldTask,
@@ -305,6 +337,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return missingTask ? actionFail('Task not found') : actionOk();
     },
 
     /**
@@ -314,9 +347,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
+        let missingTask = false;
         set((state) => {
             const oldTask = state._allTasks.find((task) => task.id === id);
-            if (!oldTask) return state;
+            if (!oldTask) {
+                missingTask = true;
+                return state;
+            }
             const deviceState = ensureDeviceId(state.settings);
             const updatedTask = {
                 ...oldTask,
@@ -345,6 +382,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return missingTask ? actionFail('Task not found') : actionOk();
     },
 
     /**
@@ -383,6 +421,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return actionOk();
     },
 
     /**
@@ -392,9 +431,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
+        let missingTask = false;
         set((state) => {
             const sourceTask = state._allTasks.find((task) => task.id === id && !task.deletedAt);
-            if (!sourceTask) return state;
+            if (!sourceTask) {
+                missingTask = true;
+                return state;
+            }
             const deviceState = ensureDeviceId(state.settings);
 
             const duplicatedChecklist = (sourceTask.checklist || []).map((item) => ({
@@ -409,6 +452,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 updatedAt: now,
                 deletedAt: undefined,
             }));
+            const duplicatedOrder = sourceTask.projectId
+                ? getNextProjectOrder(sourceTask.projectId, state._allTasks, state.lastDataChangeAt)
+                : undefined;
 
             const newTask: Task = {
                 ...sourceTask,
@@ -429,9 +475,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 updatedAt: now,
                 rev: 1,
                 revBy: deviceState.deviceId,
-                orderNum: sourceTask.projectId
-                    ? getNextProjectOrder(sourceTask.projectId, state._allTasks, state.lastDataChangeAt)
-                    : undefined,
+                order: duplicatedOrder,
+                orderNum: duplicatedOrder,
             };
 
             const newAllTasks = [...state._allTasks, newTask];
@@ -450,6 +495,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return missingTask ? actionFail('Task not found') : actionOk();
     },
 
     /**
@@ -459,9 +505,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let snapshot: AppData | null = null;
+        let missingTask = false;
         set((state) => {
             const sourceTask = state._allTasks.find((task) => task.id === id && !task.deletedAt);
-            if (!sourceTask || !sourceTask.checklist || sourceTask.checklist.length === 0) return state;
+            if (!sourceTask || !sourceTask.checklist || sourceTask.checklist.length === 0) {
+                missingTask = true;
+                return state;
+            }
             const deviceState = ensureDeviceId(state.settings);
 
             const resetChecklist = sourceTask.checklist.map((item) => ({
@@ -498,6 +548,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return missingTask ? actionFail('Task not found') : actionOk();
     },
 
     /**
@@ -507,14 +558,14 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
      */
     moveTask: async (id: string, newStatus: TaskStatus) => {
         // Delegate to updateTask to ensure recurrence/metadata logic is applied
-        await get().updateTask(id, { status: newStatus });
+        return get().updateTask(id, { status: newStatus });
     },
 
     /**
      * Batch update tasks in a single save cycle.
      */
     batchUpdateTasks: async (updatesList: Array<{ id: string; updates: Partial<Task> }>) => {
-        if (updatesList.length === 0) return;
+        if (updatesList.length === 0) return actionOk();
         const changeAt = Date.now();
         const now = new Date().toISOString();
         const updatesById = new Map(updatesList.map((u) => [u.id, u.updates]));
@@ -566,14 +617,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return actionOk();
     },
 
     batchMoveTasks: async (ids: string[], newStatus: TaskStatus) => {
-        await get().batchUpdateTasks(ids.map((id) => ({ id, updates: { status: newStatus } })));
+        return get().batchUpdateTasks(ids.map((id) => ({ id, updates: { status: newStatus } })));
     },
 
     batchDeleteTasks: async (ids: string[]) => {
-        if (ids.length === 0) return;
+        if (ids.length === 0) return actionOk();
         const changeAt = Date.now();
         const now = new Date().toISOString();
         const idSet = new Set(ids);
@@ -607,6 +659,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }
+        return actionOk();
     },
 
     queryTasks: async (options: TaskQueryOptions) => {

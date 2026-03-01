@@ -104,7 +104,7 @@ export function SettingsNotificationsPage({
                     onClick={() => handleUpdate({ reviewAtNotificationsEnabled: !reviewAtNotificationsEnabled })}
                     disabled={!notificationsEnabled}
                     className={cn(
-                        "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50",
+                        "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                         reviewAtNotificationsEnabled ? "bg-primary border-primary" : "bg-muted/50 border-border"
                     )}
                 >
@@ -134,7 +134,7 @@ export function SettingsNotificationsPage({
                         onClick={() => handleUpdate({ weeklyReviewEnabled: !weeklyReviewEnabled })}
                         disabled={!notificationsEnabled}
                         className={cn(
-                            "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50",
+                            "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                             weeklyReviewEnabled ? "bg-primary border-primary" : "bg-muted/50 border-border"
                         )}
                     >
@@ -153,7 +153,7 @@ export function SettingsNotificationsPage({
                         value={weeklyReviewDay}
                         disabled={!notificationsEnabled || !weeklyReviewEnabled}
                         onChange={(e) => handleUpdate({ weeklyReviewDay: Number(e.target.value) })}
-                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {weekdayOptions.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -170,7 +170,7 @@ export function SettingsNotificationsPage({
                         value={weeklyReviewTime}
                         disabled={!notificationsEnabled || !weeklyReviewEnabled}
                         onChange={(e) => handleUpdate({ weeklyReviewTime: e.target.value })}
-                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                        className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                 </div>
             </div>
@@ -191,7 +191,7 @@ export function SettingsNotificationsPage({
                             value={dailyDigestMorningTime}
                             disabled={!notificationsEnabled || !dailyDigestMorningEnabled}
                             onChange={(e) => handleUpdate({ dailyDigestMorningTime: e.target.value })}
-                            className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                            className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <button
                             type="button"
@@ -200,7 +200,7 @@ export function SettingsNotificationsPage({
                             onClick={() => handleUpdate({ dailyDigestMorningEnabled: !dailyDigestMorningEnabled })}
                             disabled={!notificationsEnabled}
                             className={cn(
-                                "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50",
+                                "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                                 dailyDigestMorningEnabled ? "bg-primary border-primary" : "bg-muted/50 border-border"
                             )}
                         >
@@ -222,7 +222,7 @@ export function SettingsNotificationsPage({
                             value={dailyDigestEveningTime}
                             disabled={!notificationsEnabled || !dailyDigestEveningEnabled}
                             onChange={(e) => handleUpdate({ dailyDigestEveningTime: e.target.value })}
-                            className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50"
+                            className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <button
                             type="button"
@@ -231,7 +231,7 @@ export function SettingsNotificationsPage({
                             onClick={() => handleUpdate({ dailyDigestEveningEnabled: !dailyDigestEveningEnabled })}
                             disabled={!notificationsEnabled}
                             className={cn(
-                                "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50",
+                                "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                                 dailyDigestEveningEnabled ? "bg-primary border-primary" : "bg-muted/50 border-border"
                             )}
                         >

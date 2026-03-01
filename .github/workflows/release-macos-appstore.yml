@@ -434,6 +434,7 @@ jobs:
           name: mindwtr-macos-appstore-pkg
           path: ${{ env.PKG_PATH }}
           if-no-files-found: error
+          retention-days: 28
 
       - name: Prepare Fastlane metadata
         if: ${{ inputs.upload }}

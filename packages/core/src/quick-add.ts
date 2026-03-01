@@ -6,6 +6,7 @@ export interface QuickAddResult {
     title: string;
     props: Partial<Task>;
     projectTitle?: string;
+    invalidDateCommands?: string[];
 }
 
 const STATUS_TOKENS: Record<string, TaskStatus> = {
@@ -78,7 +79,9 @@ function parseTime(text: string): { hour: number; minute: number; rest: string }
     return { hour, minute, rest };
 }
 
-function parseNaturalDate(raw: string, now: Date): Date | null {
+type DateDefaultTimeMode = 'now' | 'startOfDay';
+
+function parseNaturalDate(raw: string, now: Date, defaultTimeMode: DateDefaultTimeMode = 'now'): Date | null {
     let text = raw.trim().toLowerCase();
     const time = parseTime(text);
     if (time) text = time.rest;
@@ -120,7 +123,9 @@ function parseNaturalDate(raw: string, now: Date): Date | null {
     if (time) {
         base = set(base, { hours: time.hour, minutes: time.minute, seconds: 0, milliseconds: 0 });
     } else if (!raw.includes('T')) {
-        base = set(base, { hours: now.getHours(), minutes: now.getMinutes(), seconds: 0, milliseconds: 0 });
+        const fallbackHour = defaultTimeMode === 'startOfDay' ? 0 : now.getHours();
+        const fallbackMinute = defaultTimeMode === 'startOfDay' ? 0 : now.getMinutes();
+        base = set(base, { hours: fallbackHour, minutes: fallbackMinute, seconds: 0, milliseconds: 0 });
     }
 
     return base;
@@ -130,15 +135,26 @@ function stripToken(source: string, token: string): string {
     return source.replace(token, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-function parseDateCommand(command: string, working: string, now: Date): { value?: string; working: string } {
+function parseDateCommand(
+    command: 'start' | 'due' | 'review',
+    working: string,
+    now: Date,
+): { value?: string; working: string; invalidCommand?: string } {
     const match = working.match(new RegExp(`\\/${command}:([^/]+?)(?=\\s\\/|$)`, 'i'));
     if (!match) return { working };
 
     const dateText = match[1].trim();
-    const parsed = parseNaturalDate(dateText, now);
+    const defaultTimeMode: DateDefaultTimeMode = command === 'due' ? 'now' : 'startOfDay';
+    const parsed = parseNaturalDate(dateText, now, defaultTimeMode);
+    if (!parsed) {
+        return {
+            working,
+            invalidCommand: `/${command}:${dateText}`,
+        };
+    }
     const nextWorking = stripToken(working, match[0]);
     return {
-        value: parsed ? parsed.toISOString() : undefined,
+        value: parsed.toISOString(),
         working: nextWorking,
     };
 }
@@ -202,16 +218,21 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
     }
 
     // Date commands: /start:..., /due:..., /review:...
+    const invalidDateCommands: string[] = [];
+
     const startResult = parseDateCommand('start', working, now);
     let startTime = startResult.value;
+    if (startResult.invalidCommand) invalidDateCommands.push(startResult.invalidCommand);
     working = startResult.working;
 
     const dueResult = parseDateCommand('due', working, now);
     let dueDate = dueResult.value;
+    if (dueResult.invalidCommand) invalidDateCommands.push(dueResult.invalidCommand);
     working = dueResult.working;
 
     const reviewResult = parseDateCommand('review', working, now);
     let reviewAt = reviewResult.value;
+    if (reviewResult.invalidCommand) invalidDateCommands.push(reviewResult.invalidCommand);
     working = reviewResult.working;
 
     // Status tokens like /next, /waiting, etc.
@@ -268,5 +289,5 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
     if (projectId) props.projectId = projectId;
     if (areaId) props.areaId = areaId;
 
-    return { title, props, projectTitle };
+    return { title, props, projectTitle, invalidDateCommands: invalidDateCommands.length > 0 ? invalidDateCommands : undefined };
 }

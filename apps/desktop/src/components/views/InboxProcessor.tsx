@@ -13,8 +13,8 @@ type InboxProcessorProps = {
     areas: Area[];
     settings?: AppData['settings'];
     addProject: (title: string, color: string) => Promise<Project | null>;
-    updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
-    deleteTask: (id: string) => Promise<void>;
+    updateTask: (id: string, updates: Partial<Task>) => Promise<unknown>;
+    deleteTask: (id: string) => Promise<unknown>;
     allContexts: string[];
     isProcessing: boolean;
     setIsProcessing: (value: boolean) => void;

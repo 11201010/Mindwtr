@@ -23,6 +23,7 @@ import { useListViewOptimizations } from '../../hooks/useListViewOptimizations';
 import { reportError } from '../../lib/report-error';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, projectMatchesAreaFilter, resolveAreaFilter, taskMatchesAreaFilter } from '../../lib/area-filter';
 import { cn } from '../../lib/utils';
+import { sortDoneTasksForListView } from './list/done-sort';
 
 
 interface ListViewProps {
@@ -48,6 +49,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const updateTask = useTaskStore((state) => state.updateTask);
     const updateProject = useTaskStore((state) => state.updateProject);
     const deleteTask = useTaskStore((state) => state.deleteTask);
+    const restoreTask = useTaskStore((state) => state.restoreTask);
     const moveTask = useTaskStore((state) => state.moveTask);
     const batchMoveTasks = useTaskStore((state) => state.batchMoveTasks);
     const batchDeleteTasks = useTaskStore((state) => state.batchDeleteTasks);
@@ -93,6 +95,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const listScrollRef = useRef<HTMLDivElement>(null);
     const prioritiesEnabled = settings?.features?.priorities === true;
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+    const undoNotificationsEnabled = settings?.undoNotificationsEnabled !== false;
     const showQuickDone = statusFilter !== 'done' && statusFilter !== 'archived';
     const readOnly = statusFilter === 'done';
     const activePriorities = useMemo(
@@ -166,8 +169,16 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             const aProjectOrder = a.projectId ? (projectOrderMap.get(a.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
             const bProjectOrder = b.projectId ? (projectOrderMap.get(b.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
             if (aProjectOrder !== bProjectOrder) return aProjectOrder - bProjectOrder;
-            const aOrder = Number.isFinite(a.orderNum) ? (a.orderNum as number) : Number.POSITIVE_INFINITY;
-            const bOrder = Number.isFinite(b.orderNum) ? (b.orderNum as number) : Number.POSITIVE_INFINITY;
+            const aOrder = Number.isFinite(a.order)
+                ? (a.order as number)
+                : Number.isFinite(a.orderNum)
+                    ? (a.orderNum as number)
+                    : Number.POSITIVE_INFINITY;
+            const bOrder = Number.isFinite(b.order)
+                ? (b.order as number)
+                : Number.isFinite(b.orderNum)
+                    ? (b.orderNum as number)
+                    : Number.POSITIVE_INFINITY;
             if (aOrder !== bOrder) return aOrder - bOrder;
             const aCreated = safeParseDate(a.createdAt)?.getTime() ?? 0;
             const bCreated = safeParseDate(b.createdAt)?.getTime() ?? 0;
@@ -337,6 +348,9 @@ export function ListView({ title, statusFilter }: ListViewProps) {
 
             if (deferredFilterInputs.statusFilter === 'next' && deferredFilterInputs.sortBy === 'default') {
                 return deferredFilterInputs.sortByProjectOrder(filtered);
+            }
+            if (deferredFilterInputs.statusFilter === 'done' && deferredFilterInputs.sortBy === 'default') {
+                return sortDoneTasksForListView(filtered);
             }
 
             return sortTasksBy(filtered, deferredFilterInputs.sortBy);
@@ -526,14 +540,45 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     const toggleDoneSelected = useCallback(() => {
         const task = filteredTasks[selectedIndex];
         if (!task) return;
-        moveTask(task.id, task.status === 'done' ? 'inbox' : 'done');
-    }, [filteredTasks, selectedIndex, moveTask]);
+        const nextStatus = task.status === 'done' ? 'inbox' : 'done';
+        void moveTask(task.id, nextStatus)
+            .then(() => {
+                if (!undoNotificationsEnabled || nextStatus !== 'done') return;
+                showToast(
+                    `${task.title} marked Done`,
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void moveTask(task.id, task.status);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to update task status', error));
+    }, [filteredTasks, selectedIndex, moveTask, showToast, undoNotificationsEnabled]);
 
     const deleteSelected = useCallback(() => {
         const task = filteredTasks[selectedIndex];
         if (!task) return;
-        deleteTask(task.id);
-    }, [filteredTasks, selectedIndex, deleteTask]);
+        void deleteTask(task.id)
+            .then(() => {
+                if (!undoNotificationsEnabled) return;
+                showToast(
+                    'Task deleted',
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void restoreTask(task.id);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to delete task', error));
+    }, [filteredTasks, selectedIndex, deleteTask, restoreTask, showToast, undoNotificationsEnabled]);
 
     useEffect(() => {
         if (isProcessing) {
@@ -632,7 +677,11 @@ export function ListView({ title, statusFilter }: ListViewProps) {
         e.preventDefault();
         if (!newTaskTitle.trim()) return;
         try {
-            const { title: parsedTitle, props, projectTitle } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
+            const { title: parsedTitle, props, projectTitle, invalidDateCommands } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
+            if (invalidDateCommands && invalidDateCommands.length > 0) {
+                showToast(`Invalid date command: ${invalidDateCommands.join(', ')}`, 'error');
+                return;
+            }
             const finalTitle = parsedTitle || newTaskTitle;
             const initialProps: Partial<Task> = { ...props };
             if (!initialProps.projectId && projectTitle) {

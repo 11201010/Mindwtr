@@ -58,6 +58,7 @@ export type SyncHistoryEntry = {
 
 // Log clock skew warnings if merges show >5 minutes drift.
 export const CLOCK_SKEW_THRESHOLD_MS = 5 * 60 * 1000;
+const DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS = 0;
 const DEFAULT_TOMBSTONE_RETENTION_DAYS = 90;
 const MIN_TOMBSTONE_RETENTION_DAYS = 1;
 const MAX_TOMBSTONE_RETENTION_DAYS = 3650;
@@ -227,11 +228,15 @@ const validateMergedSyncData = (data: AppData): string[] => {
             if (!isNonEmptyString(area.name)) {
                 errors.push(`areas[${index}].name must be a non-empty string`);
             }
-            if (area.createdAt !== undefined && !isValidTimestamp(area.createdAt)) {
-                errors.push(`areas[${index}].createdAt must be a valid ISO timestamp when present`);
+            if (!isNonEmptyString(area.createdAt)) {
+                errors.push(`areas[${index}].createdAt must be a non-empty string`);
+            } else if (!isValidTimestamp(area.createdAt)) {
+                errors.push(`areas[${index}].createdAt must be a valid ISO timestamp`);
             }
-            if (area.updatedAt !== undefined && !isValidTimestamp(area.updatedAt)) {
-                errors.push(`areas[${index}].updatedAt must be a valid ISO timestamp when present`);
+            if (!isNonEmptyString(area.updatedAt)) {
+                errors.push(`areas[${index}].updatedAt must be a non-empty string`);
+            } else if (!isValidTimestamp(area.updatedAt)) {
+                errors.push(`areas[${index}].updatedAt must be a valid ISO timestamp`);
             }
             if (isValidTimestamp(area.createdAt) && isValidTimestamp(area.updatedAt)) {
                 const createdMs = Date.parse(area.createdAt);
@@ -387,6 +392,13 @@ const SETTINGS_SYNC_GROUP_KEYS: SettingsSyncGroup[] = ['appearance', 'language',
 const SETTINGS_SYNC_UPDATED_AT_KEYS: Array<SettingsSyncGroup | 'preferences'> = ['preferences', ...SETTINGS_SYNC_GROUP_KEYS];
 
 const cloneSettingValue = <T>(value: T): T => {
+    if (typeof globalThis.structuredClone === 'function') {
+        try {
+            return globalThis.structuredClone(value);
+        } catch {
+            // Fallback to manual deep clone for environments/values unsupported by structuredClone.
+        }
+    }
     if (Array.isArray(value)) {
         return value.map((item) => cloneSettingValue(item)) as unknown as T;
     }
@@ -871,17 +883,21 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
             return deletedTimeRaw > maxAllowedMergeTime ? maxAllowedMergeTime : deletedTimeRaw;
         };
         let winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
+        const resolveDeleteVsLiveWinner = (localCandidate: T, incomingCandidate: T): T => {
+            const localOpTime = resolveOperationTime(localCandidate);
+            const incomingOpTime = resolveOperationTime(incomingCandidate);
+            const operationDiff = incomingOpTime - localOpTime;
+            if (Math.abs(operationDiff) <= DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS) {
+                return localCandidate.deletedAt ? localCandidate : incomingCandidate;
+            }
+            if (operationDiff > 0) return incomingCandidate;
+            if (operationDiff < 0) return localCandidate;
+            return localCandidate.deletedAt ? localCandidate : incomingCandidate;
+        };
+
         if (hasRevision) {
             if (localDeleted !== incomingDeleted) {
-                const localOpTime = resolveOperationTime(normalizedLocalItem);
-                const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
-                if (incomingOpTime > localOpTime) {
-                    winner = normalizedIncomingItem;
-                } else if (localOpTime > incomingOpTime) {
-                    winner = normalizedLocalItem;
-                } else {
-                    winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
-                }
+                winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
             } else if (revDiff !== 0) {
                 winner = revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
             } else if (safeIncomingTime !== safeLocalTime) {
@@ -894,15 +910,7 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
                 winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
             }
         } else if (localDeleted !== incomingDeleted) {
-            const localOpTime = resolveOperationTime(normalizedLocalItem);
-            const incomingOpTime = resolveOperationTime(normalizedIncomingItem);
-            if (incomingOpTime > localOpTime) {
-                winner = normalizedIncomingItem;
-            } else if (localOpTime > incomingOpTime) {
-                winner = normalizedLocalItem;
-            } else {
-                winner = localDeleted ? normalizedLocalItem : normalizedIncomingItem;
-            }
+            winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
         } else if (withinSkew && safeIncomingTime === safeLocalTime) {
             winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
         }

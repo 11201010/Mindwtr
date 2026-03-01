@@ -5,6 +5,7 @@ import {
     GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT,
     GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
     GLOBAL_QUICK_ADD_SHORTCUT_LEGACY,
+    getDefaultGlobalQuickAddShortcut,
     getGlobalQuickAddShortcutOptions,
     matchesGlobalQuickAddShortcut,
     normalizeGlobalQuickAddShortcut,
@@ -16,6 +17,9 @@ describe('global quick add shortcut', () => {
         expect(normalizeGlobalQuickAddShortcut('bad-value')).toBe(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT);
         expect(normalizeGlobalQuickAddShortcut(GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N)).toBe(
             GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N
+        );
+        expect(normalizeGlobalQuickAddShortcut(undefined, { isWindows: true })).toBe(
+            GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
         );
     });
 
@@ -56,10 +60,19 @@ describe('global quick add shortcut', () => {
         ).toBe(false);
     });
 
-    it('shows platform-specific labels for options', () => {
-        const macLabels = getGlobalQuickAddShortcutOptions(true).map((option) => option.label);
-        const nonMacLabels = getGlobalQuickAddShortcutOptions(false).map((option) => option.label);
+    it('uses platform-aware defaults and labels for options', () => {
+        const macLabels = getGlobalQuickAddShortcutOptions({ isMac: true }).map((option) => option.label);
+        const nonMacLabels = getGlobalQuickAddShortcutOptions({ isMac: false }).map((option) => option.label);
+        const windowsLabels = getGlobalQuickAddShortcutOptions({ isWindows: true }).map((option) => option.label);
+
         expect(macLabels).toContain('Ctrl+Option+M (recommended)');
         expect(nonMacLabels).toContain('Ctrl+Alt+M (recommended)');
+        expect(windowsLabels).toContain('Ctrl+Shift+A (recommended)');
+        expect(windowsLabels).toContain('Disabled (default)');
+    });
+
+    it('resolves platform defaults', () => {
+        expect(getDefaultGlobalQuickAddShortcut()).toBe(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT);
+        expect(getDefaultGlobalQuickAddShortcut({ isWindows: true })).toBe(GLOBAL_QUICK_ADD_SHORTCUT_DISABLED);
     });
 });

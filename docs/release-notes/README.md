@@ -45,6 +45,7 @@ Versioned notes for desktop/mobile/core/cloud releases live in this folder.
 - [v0.6.20](./0.6.20.md)
 - [v0.6.21](./0.6.21.md)
 - [v0.6.22](./0.6.22.md)
+- [v0.7.0](./0.7.0.md)
 
 ## Store-Specific Notes
 

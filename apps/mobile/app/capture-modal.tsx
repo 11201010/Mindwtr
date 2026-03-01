@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { createAIProvider, PRESET_CONTEXTS, PRESET_TAGS, parseQuickAdd, type Task, type TimeEstimate, type AIProviderId, useTaskStore } from '@mindwtr/core';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -136,7 +136,11 @@ export default function CaptureScreen() {
 
   const handleSave = () => {
     if (!value.trim()) return;
-    const { title, props } = parseQuickAdd(value, projects, new Date(), areas);
+    const { title, props, invalidDateCommands } = parseQuickAdd(value, projects, new Date(), areas);
+    if (invalidDateCommands && invalidDateCommands.length > 0) {
+      Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+      return;
+    }
     const finalTitle = title || value;
     if (!finalTitle.trim()) return;
     const initialProps: Partial<Task> = { status: 'inbox', ...props };

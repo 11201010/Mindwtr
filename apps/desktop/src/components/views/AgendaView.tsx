@@ -194,8 +194,16 @@ export function AgendaView() {
             const aProjectOrder = a.projectId ? (projectOrderMap.get(a.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
             const bProjectOrder = b.projectId ? (projectOrderMap.get(b.projectId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
             if (aProjectOrder !== bProjectOrder) return aProjectOrder - bProjectOrder;
-            const aOrder = Number.isFinite(a.orderNum) ? (a.orderNum as number) : Number.POSITIVE_INFINITY;
-            const bOrder = Number.isFinite(b.orderNum) ? (b.orderNum as number) : Number.POSITIVE_INFINITY;
+            const aOrder = Number.isFinite(a.order)
+                ? (a.order as number)
+                : Number.isFinite(a.orderNum)
+                    ? (a.orderNum as number)
+                    : Number.POSITIVE_INFINITY;
+            const bOrder = Number.isFinite(b.order)
+                ? (b.order as number)
+                : Number.isFinite(b.orderNum)
+                    ? (b.orderNum as number)
+                    : Number.POSITIVE_INFINITY;
             if (aOrder !== bOrder) return aOrder - bOrder;
             const aCreated = safeParseDate(a.createdAt)?.getTime() ?? 0;
             const bCreated = safeParseDate(b.createdAt)?.getTime() ?? 0;
@@ -241,12 +249,17 @@ export function AgendaView() {
         }
         const sequentialFirstTasks = new Set<string>();
         tasksByProject.forEach((tasksForProject: Task[]) => {
-            const hasOrder = tasksForProject.some((task) => Number.isFinite(task.orderNum));
+            const hasOrder = tasksForProject.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
             let firstTaskId: string | null = null;
             let bestKey = Number.POSITIVE_INFINITY;
             tasksForProject.forEach((task) => {
+                const taskOrder = Number.isFinite(task.order)
+                    ? (task.order as number)
+                    : Number.isFinite(task.orderNum)
+                        ? (task.orderNum as number)
+                        : Number.POSITIVE_INFINITY;
                 const key = hasOrder
-                    ? (Number.isFinite(task.orderNum) ? (task.orderNum as number) : Number.POSITIVE_INFINITY)
+                    ? taskOrder
                     : new Date(task.createdAt).getTime();
                 if (!firstTaskId || key < bestKey) {
                     firstTaskId = task.id;

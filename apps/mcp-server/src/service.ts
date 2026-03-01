@@ -79,6 +79,22 @@ const parseInputStatus = (value: string | undefined): Task['status'] | undefined
   return normalized;
 };
 
+const MAX_TASK_TITLE_LENGTH = 500;
+
+const validateAddTaskInput = (input: AddTaskInput): void => {
+  const hasTitle = typeof input.title === 'string' && input.title.trim().length > 0;
+  const hasQuickAdd = typeof input.quickAdd === 'string' && input.quickAdd.trim().length > 0;
+  if (!hasTitle && !hasQuickAdd) {
+    throw new Error('Either title or quickAdd is required');
+  }
+  if (hasTitle && hasQuickAdd) {
+    throw new Error('Provide either title or quickAdd, not both');
+  }
+  if (hasTitle && input.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
+    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+  }
+};
+
 const buildTaskUpdates = (input: UpdateTaskInput): Partial<Task> => {
   const updates: Partial<Task> = {};
   if (input.title !== undefined) updates.title = input.title;
@@ -114,8 +130,9 @@ export const createService = (options: DbOptions, deps: ServiceDeps = defaultSer
     listTasks: async (input) => withDb((db) => deps.listTasks(db, input)),
     listProjects: async () => withDb((db) => deps.listProjects(db)),
     getTask: async (input) => withDb((db) => deps.getTask(db, input)),
-    addTask: async (input) =>
-      deps.runCoreService(options, async (core) => {
+    addTask: async (input) => {
+      validateAddTaskInput(input);
+      return await deps.runCoreService(options, async (core) => {
         if (input.quickAdd) {
           const projects = await withDb((db) => deps.listProjects(db));
           const quick = deps.parseQuickAdd(input.quickAdd, projects as CoreProject[]);
@@ -150,7 +167,8 @@ export const createService = (options: DbOptions, deps: ServiceDeps = defaultSer
             timeEstimate: input.timeEstimate,
           }),
         });
-      }),
+      });
+    },
     updateTask: async (input) =>
       deps.runCoreService(options, async (core) => {
         return core.updateTask({

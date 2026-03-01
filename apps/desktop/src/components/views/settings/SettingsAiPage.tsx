@@ -446,7 +446,7 @@ export function SettingsAiPage({
                                         <button
                                             type="button"
                                             onClick={onDownloadWhisperModel}
-                                            className="px-2 py-1 text-xs rounded border border-border hover:bg-muted disabled:opacity-60"
+                                            className="px-2 py-1 text-xs rounded border border-border hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
                                             disabled={speechDownloadState === 'downloading'}
                                         >
                                             {speechDownloadState === 'downloading'

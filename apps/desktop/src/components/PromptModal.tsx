@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 interface PromptModalProps {
     isOpen: boolean;
@@ -30,17 +30,19 @@ export function PromptModal({
     onCancel,
 }: PromptModalProps) {
     const [value, setValue] = useState(defaultValue ?? '');
-    const inputRef = useRef<HTMLInputElement>(null);
+    const [hasInteracted, setHasInteracted] = useState(false);
     const titleId = useId();
     const descriptionId = useId();
+    const validationId = useId();
 
     useEffect(() => {
         if (isOpen) {
             setValue(defaultValue ?? '');
-            setTimeout(() => inputRef.current?.focus(), 50);
+            setHasInteracted(false);
         }
     }, [isOpen, defaultValue]);
     const canConfirm = value.trim().length > 0;
+    const showValidation = hasInteracted && !canConfirm;
 
     if (!isOpen) return null;
 
@@ -67,10 +69,16 @@ export function PromptModal({
                 </div>
                 <div className="p-4 space-y-3">
                     <input
-                        ref={inputRef}
+                        autoFocus
                         type={inputType}
                         value={value}
-                        onChange={(e) => setValue(e.target.value)}
+                        onChange={(e) => {
+                            setValue(e.target.value);
+                            if (!hasInteracted) {
+                                setHasInteracted(true);
+                            }
+                        }}
+                        onBlur={() => setHasInteracted(true)}
                         onKeyDown={(e) => {
                             if (e.key === 'Escape') {
                                 e.preventDefault();
@@ -80,12 +88,21 @@ export function PromptModal({
                                 e.preventDefault();
                                 if (canConfirm) {
                                     onConfirm(value);
+                                } else {
+                                    setHasInteracted(true);
                                 }
                             }
                         }}
                         placeholder={placeholder}
+                        aria-invalid={showValidation}
+                        aria-describedby={showValidation ? validationId : undefined}
                         className="w-full bg-card border border-border rounded-lg py-2 px-3 shadow-sm focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
+                    {showValidation && (
+                        <p id={validationId} className="text-xs text-red-500">
+                            Please enter a value.
+                        </p>
+                    )}
                     <div className="flex justify-end gap-2">
                         {secondaryLabel && onSecondary && (
                             <button
@@ -108,6 +125,8 @@ export function PromptModal({
                             onClick={() => {
                                 if (canConfirm) {
                                     onConfirm(value);
+                                } else {
+                                    setHasInteracted(true);
                                 }
                             }}
                             disabled={!canConfirm}

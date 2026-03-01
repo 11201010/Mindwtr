@@ -1,0 +1,4 @@
+- Fixed an Android sync failure caused by stale attachment references before remote sync.
+- Improved attachment validation handling to prevent repeated failed attachment retries.
+- Improved delete-vs-edit conflict handling to better preserve genuinely newer changes.
+- Strengthened Android release pipeline validation for more reliable rollouts.

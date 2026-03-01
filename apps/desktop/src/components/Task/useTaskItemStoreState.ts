@@ -25,12 +25,15 @@ export const useTaskItemStoreState = () =>
         shallow
     );
 
-export const useTaskItemUiState = () =>
+export const useTaskItemUiState = (taskId: string) =>
     useUiStore(
         (state) => ({
             setProjectView: state.setProjectView,
             editingTaskId: state.editingTaskId,
             setEditingTaskId: state.setEditingTaskId,
+            isTaskExpanded: Boolean(state.expandedTaskIds[taskId]),
+            setTaskExpanded: state.setTaskExpanded,
+            toggleTaskExpanded: state.toggleTaskExpanded,
             showToast: state.showToast,
         }),
         shallow

@@ -351,12 +351,14 @@ export function QuickCaptureSheet({
     let finalTitle = trimmed || fallbackTitle;
     let projectTitle: string | undefined;
     let parsedProps: Partial<Task> = {};
+    let invalidDateCommands: string[] | undefined;
 
     if (trimmed) {
       const parsed = parseQuickAdd(trimmed, projects, new Date(), areas);
       finalTitle = parsed.title || trimmed;
       parsedProps = parsed.props;
       projectTitle = parsed.projectTitle;
+      invalidDateCommands = parsed.invalidDateCommands;
     }
 
     const initialPropsMerged: Partial<Task> = { status: 'inbox', ...initialProps, ...parsedProps, ...extraProps };
@@ -364,7 +366,7 @@ export function QuickCaptureSheet({
 
     if (!initialPropsMerged.projectId && projectTitle) {
       const created = await addProject(projectTitle, DEFAULT_PROJECT_COLOR);
-      if (!created) return { title: finalTitle, props: initialPropsMerged };
+      if (!created) return { title: finalTitle, props: initialPropsMerged, invalidDateCommands };
       initialPropsMerged.projectId = created.id;
     }
 
@@ -376,7 +378,7 @@ export function QuickCaptureSheet({
     if (dueDate) initialPropsMerged.dueDate = dueDate.toISOString();
     if (startTime) initialPropsMerged.startTime = startTime.toISOString();
 
-    return { title: finalTitle, props: initialPropsMerged };
+    return { title: finalTitle, props: initialPropsMerged, invalidDateCommands };
   }, [addProject, contextTags, dueDate, initialProps, prioritiesEnabled, priority, projectId, projects, startTime, value]);
 
   const applySpeechResult = useCallback(async (taskId: string, result: SpeechToTextResult) => {
@@ -503,7 +505,11 @@ export function QuickCaptureSheet({
 
   const handleSave = async () => {
     if (!value.trim()) return;
-    const { title, props } = await buildTaskProps(value.trim());
+    const { title, props, invalidDateCommands } = await buildTaskProps(value.trim());
+    if (invalidDateCommands && invalidDateCommands.length > 0) {
+      Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+      return;
+    }
     if (!title.trim()) return;
 
     await addTask(title, props);
@@ -726,10 +732,14 @@ export function QuickCaptureSheet({
         const taskId = generateUUID();
         const attachments = [...(initialProps?.attachments ?? [])];
         if (attachment) attachments.push(attachment);
-        const { title, props } = await buildTaskProps(displayTitle, {
+        const { title, props, invalidDateCommands } = await buildTaskProps(displayTitle, {
           id: taskId,
           attachments,
         });
+        if (invalidDateCommands && invalidDateCommands.length > 0) {
+          Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+          return;
+        }
         if (!title.trim()) return;
 
         await addTask(title, props);
@@ -914,10 +924,14 @@ export function QuickCaptureSheet({
       const taskId = generateUUID();
       const attachments = [...(initialProps?.attachments ?? [])];
       if (attachment) attachments.push(attachment);
-      const { title, props } = await buildTaskProps(displayTitle, {
+      const { title, props, invalidDateCommands } = await buildTaskProps(displayTitle, {
         id: taskId,
         attachments,
       });
+      if (invalidDateCommands && invalidDateCommands.length > 0) {
+        Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+        return;
+      }
       if (!title.trim()) return;
 
       await addTask(title, props);

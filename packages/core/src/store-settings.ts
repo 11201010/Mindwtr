@@ -42,6 +42,21 @@ function shouldPromoteScheduledTask(task: AppData['tasks'][number], nowMs: numbe
     return false;
 }
 
+const normalizeAreaForLoad = (area: Area, fallbackOrder: number, nowIso: string): Area => {
+    const createdAt = typeof area?.createdAt === 'string' && area.createdAt.trim().length > 0
+        ? area.createdAt
+        : (typeof area?.updatedAt === 'string' && area.updatedAt.trim().length > 0 ? area.updatedAt : nowIso);
+    const updatedAt = typeof area?.updatedAt === 'string' && area.updatedAt.trim().length > 0
+        ? area.updatedAt
+        : createdAt;
+    return {
+        ...area,
+        order: Number.isFinite(area?.order) ? area.order : fallbackOrder,
+        createdAt,
+        updatedAt,
+    };
+};
+
 type SettingsActionContext = {
     set: (partial: Partial<TaskStore> | ((state: TaskStore) => Partial<TaskStore> | TaskStore)) => void;
     get: () => TaskStore;
@@ -51,7 +66,7 @@ type SettingsActionContext = {
     getStorage: () => StorageAdapter;
 };
 
-type SettingsActions = Pick<TaskStore, 'fetchData' | 'updateSettings' | 'getDerivedState' | 'setHighlightTask'>;
+type SettingsActions = Pick<TaskStore, 'fetchData' | 'updateSettings' | 'persistSnapshot' | 'getDerivedState' | 'setHighlightTask'>;
 
 export const createSettingsActions = ({
     set,
@@ -101,9 +116,17 @@ export const createSettingsActions = ({
             const rawProjects = Array.isArray(data.projects) ? data.projects : [];
             const rawSettings = data.settings && typeof data.settings === 'object' ? data.settings : {};
             const rawSections = Array.isArray((data as AppData).sections) ? (data as AppData).sections : [];
-            const rawAreas = Array.isArray((data as AppData).areas) ? (data as AppData).areas : [];
             // Store ALL data including tombstones for persistence
             const nowIso = new Date().toISOString();
+            let didNormalizeAreaTimestamps = false;
+            const sourceAreas = Array.isArray((data as AppData).areas) ? (data as AppData).areas : [];
+            const rawAreas = sourceAreas.map((area, index) => {
+                const normalized = normalizeAreaForLoad(area, index, nowIso);
+                if (normalized.createdAt !== area.createdAt || normalized.updatedAt !== area.updatedAt || normalized.order !== area.order) {
+                    didNormalizeAreaTimestamps = true;
+                }
+                return normalized;
+            });
             const settings = stripSensitiveSettings(rawSettings as AppData['settings']);
             const isFreshInstall =
                 rawTasks.length === 0 &&
@@ -215,7 +238,7 @@ export const createSettingsActions = ({
                 };
             });
             let didProjectOrderMigration = false;
-            let didAreaMigration = false;
+            let didAreaMigration = didNormalizeAreaTimestamps;
             let didRunAreaDedupePass = false;
             let allProjects = rawProjects;
             let allSections = rawSections;
@@ -399,6 +422,7 @@ export const createSettingsActions = ({
                 }
             }
             let didArchiveTasksForArchivedProjects = false;
+            let didArchiveSectionsForArchivedProjects = false;
             const archivedProjectIds = new Set(
                 allProjects
                     .filter((project) => !project.deletedAt && project.status === 'archived')
@@ -416,6 +440,18 @@ export const createSettingsActions = ({
                         isFocusedToday: false,
                         updatedAt: nowIso,
                         rev: normalizeRevision(task.rev) + 1,
+                        revBy: nextSettings.deviceId,
+                    };
+                });
+                allSections = allSections.map((section) => {
+                    if (section.deletedAt) return section;
+                    if (!archivedProjectIds.has(section.projectId)) return section;
+                    didArchiveSectionsForArchivedProjects = true;
+                    return {
+                        ...section,
+                        deletedAt: nowIso,
+                        updatedAt: nowIso,
+                        rev: normalizeRevision(section.rev) + 1,
                         revBy: nextSettings.deviceId,
                     };
                 });
@@ -465,7 +501,11 @@ export const createSettingsActions = ({
                     _allAreas: allAreas,
                     isLoading: false,
                     lastDataChangeAt:
-                        didAutoArchive || didPromoteScheduled || didArchiveTasksForArchivedProjects || didTombstoneCleanup
+                        didAutoArchive
+                            || didPromoteScheduled
+                            || didArchiveTasksForArchivedProjects
+                            || didArchiveSectionsForArchivedProjects
+                            || didTombstoneCleanup
                             ? Date.now()
                             : get().lastDataChangeAt,
                 });
@@ -475,6 +515,7 @@ export const createSettingsActions = ({
                 didAutoArchive
                 || didPromoteScheduled
                 || didArchiveTasksForArchivedProjects
+                || didArchiveSectionsForArchivedProjects
                 || didTombstoneCleanup
                 || didAreaMigration
                 || didProjectOrderMigration
@@ -585,6 +626,17 @@ export const createSettingsActions = ({
             return { settings: newSettings };
         });
 
+        if (snapshot) {
+            debouncedSave(snapshot, (msg) => set({ error: msg }));
+        }
+    },
+
+    persistSnapshot: async () => {
+        let snapshot: AppData | null = null;
+        set((state) => {
+            snapshot = buildSaveSnapshot(state);
+            return {};
+        });
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
         }

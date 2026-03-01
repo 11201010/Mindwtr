@@ -585,7 +585,7 @@ export function SettingsGtdPage({
                                                         moveFieldInGroup(fieldId, -1, group.fields);
                                                     }}
                                                     disabled={index === 0}
-                                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40"
+                                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                                 >
                                                     ↑
                                                 </button>
@@ -596,7 +596,7 @@ export function SettingsGtdPage({
                                                         moveFieldInGroup(fieldId, 1, group.fields);
                                                     }}
                                                     disabled={index === groupOrder.length - 1}
-                                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40"
+                                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                                 >
                                                     ↓
                                                 </button>

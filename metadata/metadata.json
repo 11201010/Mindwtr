@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 新增桌面端“等待/跟进”日期选择器，并统一使用回顾日期流程。\n• 改进任务编辑器可访问性（焦点陷阱、Escape 关闭、按平台显示快捷键）。\n• 提升同步可靠性：补偿远端写入重试与附件校验保护。\n• 强化云端鉴权处理，并修复 Microsoft Store 启动稳定性问题。",
+        "ReleaseNotes": "• 修复了陈旧附件引用可能阻塞同步完成的边界问题。\n• 改进附件校验处理，避免失败任务反复重试。\n• 优化删除与编辑冲突处理，更好保留真正较新的更新。\n• 强化发布与同步工作流的稳定性。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Added desktop waiting follow-up date picker and review-date flow.\n• Improved task editor accessibility (focus trap, Escape close, platform-specific shortcut hints).\n• Improved sync reliability with pending remote write retry and attachment validation safeguards.\n• Hardened cloud auth handling and fixed Windows Store startup reliability.",
+        "ReleaseNotes": "• Fixed a sync edge case where stale attachment references could block sync completion.\n• Improved attachment validation handling to stop repeated failing retries.\n• Refined delete-vs-edit conflict handling to better preserve genuinely newer updates.\n• Added reliability hardening across release and sync workflows.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Añadimos selector de fecha para seguimiento en desktop usando fecha de revision.\n• Mejoramos accesibilidad del editor de tareas (focus trap, cierre con Escape y atajos por plataforma).\n• Mejoramos fiabilidad de sincronizacion con reintento de escritura pendiente y validacion de adjuntos.\n• Reforzamos autenticacion cloud y corregimos fiabilidad de inicio en Microsoft Store.",
+        "ReleaseNotes": "• Corregimos un caso limite de sincronizacion donde referencias antiguas de adjuntos podian bloquear el sync.\n• Mejoramos la validacion de adjuntos para detener reintentos fallidos repetidos.\n• Refinamos conflictos entre borrado y edicion para preservar mejor cambios realmente mas nuevos.\n• Anadimos mejoras de fiabilidad en workflows de release y sincronizacion.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

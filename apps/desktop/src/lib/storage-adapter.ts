@@ -1,6 +1,7 @@
 import { AppData, StorageAdapter, TaskQueryOptions } from '@mindwtr/core';
 import { invoke } from '@tauri-apps/api/core';
 import { reportError } from './report-error';
+import { markLocalWrite } from './local-data-watcher';
 
 const invokeWithError = async <T>(
     action: string,
@@ -20,6 +21,7 @@ export const tauriStorage: StorageAdapter = {
         return invokeWithError<AppData>('load data', 'get_data');
     },
     saveData: async (data: AppData): Promise<void> => {
+        markLocalWrite();
         await invokeWithError<void>('save data', 'save_data', { data });
     },
     queryTasks: async (options: TaskQueryOptions) => {

@@ -24,4 +24,32 @@ describe('webdav http helpers', () => {
         );
         expect(fetcher).not.toHaveBeenCalled();
     });
+
+    it('treats empty successful body as missing remote data', async () => {
+        const fetcher = vi.fn(
+            async () =>
+                ({
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    text: async () => '   ',
+                }) as Response,
+        );
+
+        await expect(webdavGetJson<{ foo: string }>('https://example.com/data.json', { fetcher })).resolves.toBeNull();
+    });
+
+    it('parses JSON body with a UTF-8 BOM prefix', async () => {
+        const fetcher = vi.fn(
+            async () =>
+                ({
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    text: async () => '\uFEFF{"ok":true}',
+                }) as Response,
+        );
+
+        await expect(webdavGetJson<{ ok: boolean }>('https://example.com/data.json', { fetcher })).resolves.toEqual({ ok: true });
+    });
 });

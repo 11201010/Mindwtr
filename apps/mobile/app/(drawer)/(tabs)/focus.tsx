@@ -69,12 +69,17 @@ export default function FocusScreen() {
 
     const firstIds = new Set<string>();
     tasksByProject.forEach((projectTasks) => {
-      const hasOrder = projectTasks.some((task) => Number.isFinite(task.orderNum));
+      const hasOrder = projectTasks.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
       let firstId: string | null = null;
       let bestKey = Number.POSITIVE_INFINITY;
       projectTasks.forEach((task) => {
+        const taskOrder = Number.isFinite(task.order)
+          ? (task.order as number)
+          : Number.isFinite(task.orderNum)
+            ? (task.orderNum as number)
+            : Number.POSITIVE_INFINITY;
         const key = hasOrder
-          ? (Number.isFinite(task.orderNum) ? (task.orderNum as number) : Number.POSITIVE_INFINITY)
+          ? taskOrder
           : (safeParseDate(task.createdAt)?.getTime() ?? Number.POSITIVE_INFINITY);
         if (!firstId || key < bestKey) {
           firstId = task.id;

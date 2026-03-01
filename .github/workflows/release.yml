@@ -129,7 +129,7 @@ jobs:
     needs: [linux, macos, windows, android, android-foss]
     runs-on: ubuntu-latest
     name: Create Release
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
 
@@ -144,7 +144,12 @@ jobs:
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
           GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
-        run: scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${INPUT_TAG:-}" ] && ! echo "${INPUT_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format" >&2
+            exit 1
+          fi
+          scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -166,6 +171,50 @@ jobs:
           fi
           echo "Release asset count: ${count}"
 
+          # Ensure all artifacts are non-empty and compute checksums.
+          while IFS= read -r -d '' file; do
+            if [ ! -s "$file" ]; then
+              echo "Artifact has zero size: $file" >&2
+              exit 1
+            fi
+          done < <(find ./release-assets -maxdepth 1 -type f -print0)
+
+          has_match() {
+            local pattern="$1"
+            find ./release-assets -maxdepth 1 -type f -name "$pattern" -print -quit | grep -q .
+          }
+
+          missing=0
+          if ! has_match "*.apk"; then
+            echo "Missing Android artifact (*.apk)." >&2
+            missing=1
+          fi
+          if ! has_match "*-foss.apk"; then
+            echo "Missing Android FOSS artifact (*-foss.apk)." >&2
+            missing=1
+          fi
+          if ! has_match "*.dmg"; then
+            echo "Missing macOS artifact (*.dmg)." >&2
+            missing=1
+          fi
+          if ! has_match "*.exe"; then
+            echo "Missing Windows artifact (*.exe)." >&2
+            missing=1
+          fi
+          if ! has_match "*.AppImage" && ! has_match "*.deb" && ! has_match "*.rpm" && ! has_match "*.snap"; then
+            echo "Missing Linux artifact (*.AppImage, *.deb, *.rpm, or *.snap)." >&2
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          (
+            cd ./release-assets
+            sha256sum * > SHA256SUMS
+          )
+          echo "Generated checksum manifest at release-assets/SHA256SUMS"
+
       - name: Resolve release notes
         id: release_notes
         run: |
@@ -182,25 +231,10 @@ jobs:
             echo "body_path=$ALT_NOTES_PATH" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "No release notes file found; falling back to generated changelog."
-          echo "body_path=CHANGELOG.md" >> "$GITHUB_OUTPUT"
-
-      - name: Generate Changelog
-        id: changelog
-        if: ${{ steps.release_notes.outputs.body_path == 'CHANGELOG.md' }}
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          CURRENT_TAG="${{ steps.release_version.outputs.tag }}"
-          echo "## What's Changed in $CURRENT_TAG" > CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          if [ -n "$PREV_TAG" ]; then
-            git log --pretty=format:"- %s" $PREV_TAG..HEAD >> CHANGELOG.md
-          else
-            git log --pretty=format:"- %s" >> CHANGELOG.md
-          fi
-          echo "" >> CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG" >> CHANGELOG.md
+          echo "Missing release notes file. Expected one of:" >&2
+          echo "  - $NOTES_PATH" >&2
+          echo "  - $ALT_NOTES_PATH" >&2
+          exit 1
 
       - name: Create Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
@@ -238,7 +272,12 @@ jobs:
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
           GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
-        run: source/scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${INPUT_TAG:-}" ] && ! echo "${INPUT_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format" >&2
+            exit 1
+          fi
+          source/scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Download release assets and compute hashes
         id: hashes
@@ -436,8 +475,8 @@ jobs:
           cd winget-pkgs
           git checkout -b "$BRANCH"
           git add manifests/d/dongdongbh/Mindwtr/"$VERSION"
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
           git commit -m "New version: Mindwtr ${VERSION}"
           git push -u origin "$BRANCH"
           gh pr create \
@@ -450,8 +489,8 @@ jobs:
       - name: Commit and push
         run: |
           cd packages-repo
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git config --local user.email "actions@github.com"
           git add bucket/mindwtr.json
           if git diff --cached --quiet; then
             echo "No package changes to commit."
@@ -477,7 +516,12 @@ jobs:
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
           GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
-        run: scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${INPUT_TAG:-}" ] && ! echo "${INPUT_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format" >&2
+            exit 1
+          fi
+          scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Wait for macOS release assets to be live
         run: |
@@ -504,8 +548,8 @@ jobs:
 
       - name: Configure git identity
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Submit Homebrew cask bump PR
         env:
@@ -700,7 +744,12 @@ jobs:
         env:
           INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
-        run: scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${INPUT_TAG:-}" ] && ! echo "${INPUT_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format" >&2
+            exit 1
+          fi
+          scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Update PKGBUILD version
         run: |
@@ -775,7 +824,12 @@ jobs:
         env:
           INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
-        run: source/scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${INPUT_TAG:-}" ] && ! echo "${INPUT_TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid tag format" >&2
+            exit 1
+          fi
+          source/scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Update PKGBUILD version
         id: pkgbuild_version
@@ -876,8 +930,8 @@ jobs:
             echo "No AUR source-package changes to publish."
             exit 0
           fi
-          git config user.name "${AUR_USERNAME:-mindwtr-bot}"
-          git config user.email "${AUR_EMAIL:-actions@github.com}"
+          git config --local user.name "${AUR_USERNAME:-mindwtr-bot}"
+          git config --local user.email "${AUR_EMAIL:-actions@github.com}"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to ${{ steps.version.outputs.tag }}"
           git push origin HEAD

@@ -77,14 +77,16 @@ const buildSequentialFirstTaskIds = (
 
     const firstIds = new Set<string>();
     tasksByProject.forEach((projectTasks) => {
-        const hasOrder = projectTasks.some((task) => Number.isFinite(task.orderNum));
+        const hasOrder = projectTasks.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
         let firstId: string | null = null;
         let bestKey = Number.POSITIVE_INFINITY;
 
         projectTasks.forEach((task) => {
-            const orderKey = Number.isFinite(task.orderNum)
-                ? (task.orderNum as number)
-                : Number.POSITIVE_INFINITY;
+            const orderKey = Number.isFinite(task.order)
+                ? (task.order as number)
+                : Number.isFinite(task.orderNum)
+                    ? (task.orderNum as number)
+                    : Number.POSITIVE_INFINITY;
             const createdKey = safeParseDate(task.createdAt)?.getTime() ?? Number.POSITIVE_INFINITY;
             const key = hasOrder ? orderKey : createdKey;
             if (!firstId || key < bestKey) {

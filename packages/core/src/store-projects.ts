@@ -1,6 +1,6 @@
 import type { AppData, Area, Project, Section, Task, TaskStatus } from './types';
 import type { TaskStore } from './store-types';
-import { buildSaveSnapshot, ensureDeviceId, normalizeRevision, normalizeTagId } from './store-helpers';
+import { buildSaveSnapshot, ensureDeviceId, getTaskOrder, normalizeRevision, normalizeTagId } from './store-helpers';
 import { generateUUID as uuidv4 } from './uuid';
 import { clearDerivedCache } from './store-settings';
 
@@ -123,6 +123,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             const statusChanged = incomingStatus !== oldProject.status;
 
             let newAllTasks = state._allTasks;
+            let newAllSections = state._allSections;
 
             if (statusChanged && incomingStatus === 'archived') {
                 const taskStatus: TaskStatus = 'archived';
@@ -143,6 +144,18 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                         };
                     }
                     return task;
+                });
+                newAllSections = newAllSections.map((section) => {
+                    if (section.projectId === id && !section.deletedAt) {
+                        return {
+                            ...section,
+                            deletedAt: now,
+                            updatedAt: now,
+                            rev: normalizeRevision(section.rev) + 1,
+                            revBy: deviceState.deviceId,
+                        };
+                    }
+                    return section;
                 });
             }
 
@@ -178,10 +191,12 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
 
             const newVisibleProjects = newAllProjects.filter(p => !p.deletedAt);
             const newVisibleTasks = newAllTasks.filter(t => !t.deletedAt && t.status !== 'archived');
+            const newVisibleSections = newAllSections.filter((section) => !section.deletedAt);
 
             snapshot = buildSaveSnapshot(state, {
                 tasks: newAllTasks,
                 projects: newAllProjects,
+                sections: newAllSections,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
@@ -189,6 +204,8 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 _allProjects: newAllProjects,
                 tasks: newVisibleTasks,
                 _allTasks: newAllTasks,
+                sections: newVisibleSections,
+                _allSections: newAllSections,
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
@@ -976,8 +993,8 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             const remaining = projectTasks
                 .filter((task) => !orderedSet.has(task.id))
                 .sort((a, b) => {
-                    const aOrder = Number.isFinite(a.orderNum) ? (a.orderNum as number) : Number.POSITIVE_INFINITY;
-                    const bOrder = Number.isFinite(b.orderNum) ? (b.orderNum as number) : Number.POSITIVE_INFINITY;
+                    const aOrder = getTaskOrder(a) ?? Number.POSITIVE_INFINITY;
+                    const bOrder = getTaskOrder(b) ?? Number.POSITIVE_INFINITY;
                     if (aOrder !== bOrder) return aOrder - bOrder;
                     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
                 });
@@ -994,6 +1011,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 if (!Number.isFinite(nextOrder)) return task;
                 return {
                     ...task,
+                    order: nextOrder as number,
                     orderNum: nextOrder as number,
                     updatedAt: now,
                     rev: normalizeRevision(task.rev) + 1,

@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-android-foss
+  group: release-android-foss-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -95,11 +95,13 @@ jobs:
             fi
           done
 
-          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
-          if [[ -z "${APK_PATH}" ]]; then
-            echo "No arm64 FOSS APK produced for signing" >&2
+          mapfile -t apk_matches < <(find apps/mobile/build -maxdepth 1 -type f -name 'mindwtr-*-arm64-v8a-foss.apk' | sort)
+          if [[ "${#apk_matches[@]}" -ne 1 ]]; then
+            echo "Expected exactly one arm64 FOSS APK for signing, found ${#apk_matches[@]}" >&2
+            printf '%s\n' "${apk_matches[@]}" >&2
             exit 1
           fi
+          APK_PATH="${apk_matches[0]}"
 
           APKSIGNER_BIN="$(command -v apksigner || true)"
           ZIPALIGN_BIN="$(command -v zipalign || true)"
@@ -152,11 +154,13 @@ jobs:
 
       - name: Verify FOSS permission cleanup
         run: |
-          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
-          if [[ -z "${APK_PATH}" ]]; then
-            echo "No arm64 FOSS APK produced" >&2
+          mapfile -t apk_matches < <(find apps/mobile/build -maxdepth 1 -type f -name 'mindwtr-*-arm64-v8a-foss.apk' | sort)
+          if [[ "${#apk_matches[@]}" -ne 1 ]]; then
+            echo "Expected exactly one arm64 FOSS APK for permission verification, found ${#apk_matches[@]}" >&2
+            printf '%s\n' "${apk_matches[@]}" >&2
             exit 1
           fi
+          APK_PATH="${apk_matches[0]}"
           AAPT_BIN="$(command -v aapt || true)"
           if [[ -z "${AAPT_BIN}" ]]; then
             AAPT_BIN="$(ls "${ANDROID_HOME}"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)"
@@ -186,11 +190,13 @@ jobs:
       - name: Collect Android FOSS artifacts
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          APK_PATH="$(ls apps/mobile/build/mindwtr-*-arm64-v8a-foss.apk | head -1)"
-          if [[ -z "${APK_PATH}" ]]; then
-            echo "No arm64 FOSS APK found for collection" >&2
+          mapfile -t apk_matches < <(find apps/mobile/build -maxdepth 1 -type f -name 'mindwtr-*-arm64-v8a-foss.apk' | sort)
+          if [[ "${#apk_matches[@]}" -ne 1 ]]; then
+            echo "Expected exactly one arm64 FOSS APK for collection, found ${#apk_matches[@]}" >&2
+            printf '%s\n' "${apk_matches[@]}" >&2
             exit 1
           fi
+          APK_PATH="${apk_matches[0]}"
           mkdir -p release-artifacts
           cp "${APK_PATH}" "release-artifacts/mindwtr-${VERSION}-foss.apk"
           ls -la release-artifacts
@@ -201,3 +207,4 @@ jobs:
           name: release-android-foss
           path: release-artifacts/*
           if-no-files-found: error
+          retention-days: 28

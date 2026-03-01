@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withRetry } from './retry-utils';
+import { isRetryableWebdavReadError, withRetry } from './retry-utils';
 
 describe('withRetry', () => {
     it('returns on first success', async () => {
@@ -71,5 +71,11 @@ describe('withRetry', () => {
 
         expect(delays).toHaveLength(1);
         expect(delays[0]).toBe(15);
+    });
+
+    it('treats transient webdav read decode/parse failures as retryable', () => {
+        expect(isRetryableWebdavReadError(new Error('Invalid WebDAV response: error decoding response body'))).toBe(true);
+        expect(isRetryableWebdavReadError(new Error('WebDAV GET failed: invalid JSON (Unexpected end of input)'))).toBe(true);
+        expect(isRetryableWebdavReadError(new Error('validation error'))).toBe(false);
     });
 });

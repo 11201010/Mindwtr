@@ -471,7 +471,11 @@ function TaskListComponent({
       ? 'next'
       : (statusFilter !== 'all' ? statusFilter : 'inbox');
 
-    const { title: parsedTitle, props, projectTitle } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
+    const { title: parsedTitle, props, projectTitle, invalidDateCommands } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
+    if (invalidDateCommands && invalidDateCommands.length > 0) {
+      Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+      return;
+    }
     const finalTitle = parsedTitle || newTaskTitle;
     if (!finalTitle.trim()) return;
 

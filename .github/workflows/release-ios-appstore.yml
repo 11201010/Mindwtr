@@ -392,6 +392,17 @@ jobs:
             npx expo prebuild --platform ios --non-interactive --no-install
           fi
 
+      - name: Cache CocoaPods dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            apps/mobile/ios/Pods
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods/repos
+          key: ${{ runner.os }}-cocoapods-${{ hashFiles('apps/mobile/ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cocoapods-
+
       - name: Install CocoaPods dependencies
         run: |
           set -euo pipefail
@@ -473,7 +484,6 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_BUNDLE_ID string $APP_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_WIDGET_BUNDLE_ID string $WIDGET_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
 
-          echo "::notice::ExportOptions.plist normalized for app and widget provisioning profiles."
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH" >> "$GITHUB_ENV"
 
       - name: Apply CI signing settings to Xcode project
@@ -645,7 +655,6 @@ jobs:
             exit "$ARCHIVE_STATUS"
           fi
 
-          echo "::notice::xcodebuild archive completed. Full log at $ARCHIVE_LOG"
           ARCHIVE_INFO_PLIST="$ARCHIVE_PATH/Products/Applications/Mindwtr.app/Info.plist"
           if [ ! -f "$ARCHIVE_INFO_PLIST" ]; then
             echo "::error::Archived app Info.plist not found: $ARCHIVE_INFO_PLIST"
@@ -687,7 +696,6 @@ jobs:
             exit "$EXPORT_STATUS"
           fi
 
-          echo "::notice::xcodebuild export completed. Full log at $EXPORT_LOG"
           IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' | head -n 1)"
           if [ -z "${IPA_PATH:-}" ]; then
             echo "::error::IPA was not generated."
@@ -743,7 +751,6 @@ jobs:
             exit 1
           fi
 
-          echo "::notice::IPA signing entitlements verified for app and widget extension."
 
       - name: Upload iOS xcodebuild logs
         if: always()
@@ -752,6 +759,7 @@ jobs:
           name: mindwtr-ios-xcodebuild-logs
           path: ${{ runner.temp }}/ios-xcodebuild-*.log
           if-no-files-found: warn
+          retention-days: 28
 
       - name: Prepare Fastlane metadata
         if: ${{ inputs.upload }}
@@ -1023,6 +1031,7 @@ jobs:
           name: mindwtr-ios-appstore-ipa
           path: ${{ env.IPA_PATH }}
           if-no-files-found: error
+          retention-days: 28
 
       - name: Cleanup signing files
         if: always()

@@ -132,13 +132,22 @@ async function main() {
             ...restProps
         } = props as any;
 
+        const deviceId = data.settings.deviceId || generateUUID();
+        if (!data.settings.deviceId) {
+            data.settings.deviceId = deviceId;
+        }
+
         const task: Task = {
             id: generateUUID(),
             title: finalTitle,
             ...restProps,
+            taskMode: 'task',
             status,
             tags,
             contexts,
+            pushCount: 0,
+            rev: 1,
+            revBy: deviceId,
             createdAt: now,
             updatedAt: now,
         } as Task;

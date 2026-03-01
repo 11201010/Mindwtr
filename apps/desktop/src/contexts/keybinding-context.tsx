@@ -35,6 +35,11 @@ interface KeybindingContextType {
     openHelp: () => void;
 }
 
+type GlobalQuickAddShortcutApplyResult = {
+    shortcut?: string | null;
+    warning?: string | null;
+};
+
 const KeybindingContext = createContext<KeybindingContextType | undefined>(undefined);
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -92,6 +97,11 @@ function triggerQuickAdd() {
     window.dispatchEvent(new Event('mindwtr:quick-add'));
 }
 
+function triggerTaskEditCancel(taskId: string) {
+    const CancelEvent = typeof window.CustomEvent === 'function' ? window.CustomEvent : CustomEvent;
+    window.dispatchEvent(new CancelEvent('mindwtr:cancel-task-edit', { detail: { taskId } }));
+}
+
 export function KeybindingProvider({
     children,
     currentView,
@@ -102,6 +112,7 @@ export function KeybindingProvider({
     onNavigate: (view: string) => void;
 }) {
     const isTest = import.meta.env.MODE === 'test' || import.meta.env.VITEST || process.env.NODE_ENV === 'test';
+    const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent);
     const { settings, updateSettings } = useTaskStore(
         (state) => ({
             settings: state.settings,
@@ -111,6 +122,7 @@ export function KeybindingProvider({
     );
     const { t } = useLanguage();
     const toggleFocusMode = useUiStore((state) => state.toggleFocusMode);
+    const showToast = useUiStore((state) => state.showToast);
     const listOptions = useUiStore((state) => state.listOptions);
     const setListOptions = useUiStore((state) => state.setListOptions);
     const editingTaskId = useUiStore((state) => state.editingTaskId);
@@ -123,8 +135,10 @@ export function KeybindingProvider({
     const [style, setStyleState] = useState<KeybindingStyle>(initialStyle);
     const [isHelpOpen, setIsHelpOpen] = useState(false);
     const quickAddShortcut = useMemo(
-        () => normalizeGlobalQuickAddShortcut(settings.globalQuickAddShortcut),
-        [settings.globalQuickAddShortcut]
+        () => normalizeGlobalQuickAddShortcut(settings.globalQuickAddShortcut, {
+            isWindows,
+        }),
+        [isWindows, settings.globalQuickAddShortcut]
     );
 
     const isSidebarCollapsed = settings.sidebarCollapsed ?? false;
@@ -381,7 +395,18 @@ export function KeybindingProvider({
                 setIsHelpOpen(false);
                 return;
             }
-            if (editingTaskIdRef.current) return;
+            if (editingTaskIdRef.current) {
+                if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'Escape') {
+                    e.preventDefault();
+                    triggerTaskEditCancel(editingTaskIdRef.current);
+                }
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'Comma') {
+                e.preventDefault();
+                onNavigate('settings');
+                return;
+            }
             if (!e.metaKey && !e.ctrlKey && !e.altKey && !isEditableTarget(e.target)) {
                 if (e.key === 'ArrowDown') {
                     if (moveSidebarFocus(e.target, 'next')) {
@@ -479,7 +504,20 @@ export function KeybindingProvider({
         if (isTest || !isTauriRuntime()) return;
         let cancelled = false;
         import('@tauri-apps/api/core')
-            .then(({ invoke }) => invoke('set_global_quick_add_shortcut', { shortcut: quickAddShortcut }))
+            .then(({ invoke }) =>
+                invoke<GlobalQuickAddShortcutApplyResult>('set_global_quick_add_shortcut', { shortcut: quickAddShortcut })
+            )
+            .then((result) => {
+                if (cancelled) return;
+                const appliedShortcut = normalizeGlobalQuickAddShortcut(result?.shortcut, { isWindows });
+                if (result?.warning) {
+                    showToast(result.warning, 'info', 6000);
+                }
+                if (appliedShortcut !== quickAddShortcut) {
+                    updateSettings({ globalQuickAddShortcut: appliedShortcut })
+                        .catch((error) => reportError('Failed to persist quick add shortcut fallback', error));
+                }
+            })
             .catch((error) => {
                 if (cancelled) return;
                 reportError('Failed to apply global quick add shortcut', error);
@@ -487,7 +525,7 @@ export function KeybindingProvider({
         return () => {
             cancelled = true;
         };
-    }, [isTest, quickAddShortcut]);
+    }, [isTest, isWindows, quickAddShortcut, showToast, updateSettings]);
 
     const contextValue = useMemo<KeybindingContextType>(() => ({
         style,

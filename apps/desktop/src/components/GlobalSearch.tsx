@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, FileText, CheckCircle, Save, SlidersHorizontal, X } from 'lucide-react';
-import { shallow, useTaskStore, Task, Project, generateUUID, SavedSearch, getStorageAdapter, TaskStatus } from '@mindwtr/core';
+import { shallow, useTaskStore, Task, Project, generateUUID, SavedSearch, getStorageAdapter, TaskStatus, safeParseDate } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
 import { PromptModal } from './PromptModal';
@@ -10,6 +10,31 @@ import { computeGlobalSearchResults, type DuePreset, type GlobalSearchScope } fr
 
 interface GlobalSearchProps {
     onNavigate: (view: string, itemId?: string) => void;
+}
+
+function isDeferredForPrimaryFocus(task: Task, now: Date = new Date()): boolean {
+    const start = safeParseDate(task.startTime);
+    if (!start) return false;
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return start > endOfToday;
+}
+
+export function resolveGlobalSearchTaskView(task: Task, now: Date = new Date()): string {
+    const statusViewMap: Record<TaskStatus, string> = {
+        inbox: 'inbox',
+        next: 'next',
+        waiting: 'waiting',
+        someday: 'someday',
+        reference: 'reference',
+        done: 'done',
+        archived: 'archived',
+    };
+    const primaryView = statusViewMap[task.status] || 'next';
+    const hidesDeferredTasks = primaryView === 'inbox' || primaryView === 'next';
+    if (hidesDeferredTasks && isDeferredForPrimaryFocus(task, now)) {
+        return 'review';
+    }
+    return primaryView;
 }
 
 export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
@@ -249,16 +274,7 @@ export function GlobalSearch({ onNavigate }: GlobalSearchProps) {
                 onNavigate('projects', task.id);
                 return;
             }
-            const statusViewMap: Record<string, string> = {
-                'inbox': 'inbox',
-                'next': 'next',
-                'in-progress': 'next',
-                'waiting': 'waiting',
-                'someday': 'someday',
-                'done': 'done',
-                'archived': 'archived',
-            };
-            const targetView = statusViewMap[task.status] || 'next';
+            const targetView = resolveGlobalSearchTaskView(task);
             onNavigate(targetView, task.id);
         }
     };

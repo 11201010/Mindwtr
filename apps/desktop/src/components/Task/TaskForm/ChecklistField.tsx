@@ -43,8 +43,11 @@ export function ChecklistField({
         setChecklistDraft(checklist || []);
         checklistDraftRef.current = checklist || [];
         checklistDirtyRef.current = false;
-        checklistInputRefs.current = [];
     }, [taskId, checklist]);
+
+    useEffect(() => {
+        checklistInputRefs.current = [];
+    }, [taskId]);
 
     useEffect(() => {
         if (checklistDirtyRef.current) return;
@@ -74,7 +77,10 @@ export function ChecklistField({
     }, [taskId, updateTask]);
 
     const focusChecklistIndex = useCallback((index: number) => {
-        window.requestAnimationFrame(() => {
+        const scheduleFocus = typeof window.requestAnimationFrame === 'function'
+            ? window.requestAnimationFrame.bind(window)
+            : (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0);
+        scheduleFocus(() => {
             checklistInputRefs.current[index]?.focus();
         });
     }, []);

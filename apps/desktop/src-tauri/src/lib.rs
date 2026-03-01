@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::env;
+#[cfg(target_os = "macos")]
+use std::ffi::{CStr, CString};
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -15,7 +17,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "macos")]
-use std::process::Stdio;
+use std::os::raw::c_char;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -296,6 +298,14 @@ struct MacOsCalendarReadResult {
     events: Vec<ExternalCalendarEventRecord>,
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn mindwtr_macos_calendar_permission_status_json() -> *mut c_char;
+    fn mindwtr_macos_calendar_request_permission_json() -> *mut c_char;
+    fn mindwtr_macos_calendar_events_json(range_start: *const c_char, range_end: *const c_char) -> *mut c_char;
+    fn mindwtr_macos_calendar_free_string(value: *mut c_char);
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct LinuxDistroInfo {
     id: Option<String>,
@@ -357,6 +367,24 @@ struct AudioCaptureResult {
     size: usize,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GlobalQuickAddShortcutApplyResult {
+    shortcut: String,
+    warning: Option<String>,
+}
+
+fn default_global_quick_add_shortcut() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT
+    }
+}
+
 #[tauri::command]
 fn consume_quick_add_pending(state: tauri::State<'_, QuickAddPending>) -> bool {
     state.0.swap(false, Ordering::SeqCst)
@@ -365,7 +393,7 @@ fn consume_quick_add_pending(state: tauri::State<'_, QuickAddPending>) -> bool {
 fn normalize_global_quick_add_shortcut(shortcut: Option<&str>) -> Result<Option<String>, String> {
     let trimmed = shortcut.map(str::trim).unwrap_or("");
     if trimmed.is_empty() {
-        return Ok(Some(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT.to_string()));
+        return Ok(Some(default_global_quick_add_shortcut().to_string()));
     }
 
     if trimmed.eq_ignore_ascii_case(GLOBAL_QUICK_ADD_SHORTCUT_DISABLED) {
@@ -420,8 +448,28 @@ fn set_global_quick_add_shortcut(
     app: tauri::AppHandle,
     state: tauri::State<'_, GlobalQuickAddShortcutState>,
     shortcut: Option<String>,
-) -> Result<String, String> {
-    apply_global_quick_add_shortcut(&app, &state, shortcut.as_deref())
+) -> Result<GlobalQuickAddShortcutApplyResult, String> {
+    match apply_global_quick_add_shortcut(&app, &state, shortcut.as_deref()) {
+        Ok(applied) => Ok(GlobalQuickAddShortcutApplyResult {
+            shortcut: applied,
+            warning: None,
+        }),
+        Err(error) => {
+            log::warn!("Failed to apply global quick add shortcut; falling back to disabled: {error}");
+            let disabled = apply_global_quick_add_shortcut(
+                &app,
+                &state,
+                Some(GLOBAL_QUICK_ADD_SHORTCUT_DISABLED),
+            )?;
+            Ok(GlobalQuickAddShortcutApplyResult {
+                shortcut: disabled,
+                warning: Some(
+                    "Global quick add shortcut is unavailable (likely already used by another app), so it was disabled."
+                        .to_string(),
+                ),
+            })
+        }
+    }
 }
 
 #[tauri::command]
@@ -429,10 +477,33 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+#[cfg(target_os = "windows")]
+fn has_windows_package_identity() -> bool {
+    use windows_sys::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+
+    let mut package_name_len: u32 = 0;
+    // Per Win32 docs, packaged apps return ERROR_INSUFFICIENT_BUFFER on a size probe.
+    let status = unsafe { GetCurrentPackageFullName(&mut package_name_len, std::ptr::null_mut()) };
+    if status == APPMODEL_ERROR_NO_PACKAGE {
+        return false;
+    }
+    status == ERROR_INSUFFICIENT_BUFFER || (status == 0 && package_name_len > 0)
+}
+
+#[cfg(target_os = "windows")]
+fn is_windowsapps_mindwtr_path(path: &str) -> bool {
+    (path.contains("\\windowsapps\\") || path.contains("/windowsapps/")) && path.contains("mindwtr")
+}
+
 #[tauri::command]
 fn is_windows_store_install() -> bool {
     #[cfg(target_os = "windows")]
     {
+        if has_windows_package_identity() {
+            return true;
+        }
+
         if std::env::var_os("APPX_PACKAGE_FAMILY_NAME").is_some()
             || std::env::var_os("APPX_PACKAGE_FULL_NAME").is_some()
             || std::env::var_os("MSIX_PACKAGE_ROOT").is_some()
@@ -442,21 +513,13 @@ fn is_windows_store_install() -> bool {
             return true;
         }
 
-        let is_windows_store_path = |path: &str| {
-            if !(path.contains("\\windowsapps\\") || path.contains("/windowsapps/")) {
-                return false;
-            }
-            path.contains("mindwtr")
-                && (path.contains("dongdongbh") || path.contains("tech.dongdongbh"))
-        };
-
         if let Some(path) = current_exe_path_lowercase() {
-            if is_windows_store_path(&path) {
+            if is_windowsapps_mindwtr_path(&path) {
                 return true;
             }
         }
         if let Some(path) = current_exe_canonical_path_lowercase() {
-            if is_windows_store_path(&path) {
+            if is_windowsapps_mindwtr_path(&path) {
                 return true;
             }
         }
@@ -582,29 +645,6 @@ fn get_install_source() -> String {
     {
         if is_windows_store_install() {
             return "microsoft-store".to_string();
-        }
-        if env::var_os("MSIX_PACKAGE_ROOT").is_some()
-            || env::var_os("PACKAGE_FAMILY_NAME").is_some()
-            || env::var_os("PACKAGE_FULL_NAME").is_some()
-        {
-            return "microsoft-store".to_string();
-        }
-        let is_windows_store_path = |path: &str| {
-            if !(path.contains("\\windowsapps\\") || path.contains("/windowsapps/")) {
-                return false;
-            }
-            path.contains("mindwtr")
-                && (path.contains("dongdongbh") || path.contains("tech.dongdongbh"))
-        };
-        if let Some(path) = current_exe_path_lowercase() {
-            if is_windows_store_path(&path) {
-                return "microsoft-store".to_string();
-            }
-        }
-        if let Some(path) = current_exe_canonical_path_lowercase() {
-            if is_windows_store_path(&path) {
-                return "microsoft-store".to_string();
-            }
         }
         if env::var_os("WINGET_PACKAGE_IDENTIFIER").is_some() {
             return "winget".to_string();
@@ -2647,6 +2687,16 @@ async fn get_data(app: tauri::AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn read_data_json(app: tauri::AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_path = get_data_path(&app);
+        read_json_with_retries(&data_path, 2).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn save_data(app: tauri::AppHandle, data: Value) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_data_file(&app)?;
@@ -3194,9 +3244,15 @@ fn webdav_get_json(app: tauri::AppHandle) -> Result<Value, String> {
         return Err(format!("WebDAV error: {}", response.status()));
     }
 
-    response
-        .json::<Value>()
-        .map_err(|e| format!("Invalid WebDAV response: {e}"))
+    let body = response
+        .text()
+        .map_err(|e| format!("Invalid WebDAV response: error reading response body: {e}"))?;
+    let normalized_body = body.trim_start_matches('\u{feff}').trim();
+    if normalized_body.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str::<Value>(normalized_body)
+        .map_err(|e| format!("Invalid WebDAV response: error decoding response body: {e}"))
 }
 
 #[tauri::command]
@@ -3343,211 +3399,26 @@ async fn disconnect_dropbox(app: tauri::AppHandle, client_id: String) -> Result<
 }
 
 #[cfg(target_os = "macos")]
-const EVENTKIT_SWIFT_SCRIPT: &str = r#"
-import Foundation
-import EventKit
-
-typealias JsonObject = [String: Any]
-
-func statusString(_ status: EKAuthorizationStatus) -> String {
-    switch status {
-    case .notDetermined:
-        return "undetermined"
-    case .restricted, .denied:
-        return "denied"
-    case .authorized:
-        return "granted"
-    @unknown default:
-        return "denied"
+fn parse_macos_eventkit_json(raw: *mut c_char) -> Result<Value, String> {
+    if raw.is_null() {
+        return Err("EventKit bridge returned null output".to_string());
     }
-}
-
-func printJson(_ object: Any) {
-    guard JSONSerialization.isValidJSONObject(object),
-          let data = try? JSONSerialization.data(withJSONObject: object, options: []),
-          let text = String(data: data, encoding: .utf8) else {
-        print("{\"error\":\"invalid-json\"}")
-        return
-    }
-    print(text)
-}
-
-func parseIsoDate(_ raw: String) -> Date? {
-    let formatterWithFraction = ISO8601DateFormatter()
-    formatterWithFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = formatterWithFraction.date(from: raw) {
-        return date
-    }
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime]
-    return formatter.date(from: raw)
-}
-
-let env = ProcessInfo.processInfo.environment
-let mode = env["MINDWTR_EVENTKIT_MODE"] ?? "permission_status"
-let store = EKEventStore()
-
-if mode == "permission_status" {
-    let status = statusString(EKEventStore.authorizationStatus(for: .event))
-    printJson(["status": status])
-    exit(0)
-}
-
-if mode == "request_permission" {
-    let semaphore = DispatchSemaphore(value: 0)
-    var requestError: String?
-    store.requestAccess(to: .event) { _, error in
-        if let error = error {
-            requestError = error.localizedDescription
-        }
-        semaphore.signal()
-    }
-    _ = semaphore.wait(timeout: .now() + .seconds(20))
-    let status = statusString(EKEventStore.authorizationStatus(for: .event))
-    var payload: JsonObject = ["status": status]
-    if let requestError {
-        payload["error"] = requestError
-    }
-    printJson(payload)
-    exit(0)
-}
-
-if mode == "read_events" {
-    let permission = statusString(EKEventStore.authorizationStatus(for: .event))
-    if permission != "granted" {
-        printJson([
-            "permission": permission,
-            "calendars": [],
-            "events": []
-        ])
-        exit(0)
-    }
-
-    guard
-        let rangeStartRaw = env["MINDWTR_EVENTKIT_RANGE_START"],
-        let rangeEndRaw = env["MINDWTR_EVENTKIT_RANGE_END"],
-        let rangeStart = parseIsoDate(rangeStartRaw),
-        let rangeEnd = parseIsoDate(rangeEndRaw)
-    else {
-        printJson(["error": "invalid-range"])
-        exit(0)
-    }
-
-    let calendars = store.calendars(for: .event)
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let selectedCalendars = calendars.filter { !$0.calendarIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    let calendarPayload: [JsonObject] = selectedCalendars.map { calendar in
-        let identifier = calendar.calendarIdentifier
-        let encoded = identifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? identifier
-        return [
-            "id": "system:\(identifier)",
-            "name": calendar.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Calendar" : calendar.title,
-            "url": "system://\(encoded)",
-            "enabled": true
-        ]
-    }
-
-    let predicate = store.predicateForEvents(withStart: rangeStart, end: rangeEnd, calendars: selectedCalendars)
-    let events = store.events(matching: predicate)
-    var eventPayload: [JsonObject] = []
-    eventPayload.reserveCapacity(events.count)
-
-    for event in events {
-        guard let startDate = event.startDate else { continue }
-        let endCandidate = event.endDate ?? startDate.addingTimeInterval(event.isAllDay ? 24 * 60 * 60 : 60 * 60)
-        let endDate = endCandidate > startDate ? endCandidate : startDate.addingTimeInterval(event.isAllDay ? 24 * 60 * 60 : 60 * 60)
-        let calendarIdentifier = event.calendar.calendarIdentifier
-        if calendarIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
-        let sourceId = "system:\(calendarIdentifier)"
-        let eventId = event.eventIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? event.eventIdentifier!
-            : UUID().uuidString
-        let startIso = iso.string(from: startDate)
-        var payload: JsonObject = [
-            "id": "\(sourceId):\(eventId):\(startIso)",
-            "sourceId": sourceId,
-            "title": event.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? event.title! : "Event",
-            "start": startIso,
-            "end": iso.string(from: endDate),
-            "allDay": event.isAllDay
-        ]
-        if let notes = event.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-            payload["description"] = notes
-        }
-        if let location = event.location?.trimmingCharacters(in: .whitespacesAndNewlines), !location.isEmpty {
-            payload["location"] = location
-        }
-        eventPayload.append(payload)
-    }
-
-    eventPayload.sort {
-        let aStart = ($0["start"] as? String) ?? ""
-        let bStart = ($1["start"] as? String) ?? ""
-        if aStart == bStart {
-            return (($0["title"] as? String) ?? "") < (($1["title"] as? String) ?? "")
-        }
-        return aStart < bStart
-    }
-
-    printJson([
-        "permission": permission,
-        "calendars": calendarPayload,
-        "events": eventPayload
-    ])
-    exit(0)
-}
-
-printJson(["status": "unsupported"])
-"#;
-
-#[cfg(target_os = "macos")]
-fn run_eventkit_swift(mode: &str, range_start: Option<&str>, range_end: Option<&str>) -> Result<Value, String> {
-    let mut child = Command::new("/usr/bin/xcrun")
-        .arg("swift")
-        .arg("-")
-        .env("MINDWTR_EVENTKIT_MODE", mode)
-        .env("MINDWTR_EVENTKIT_RANGE_START", range_start.unwrap_or_default())
-        .env("MINDWTR_EVENTKIT_RANGE_END", range_end.unwrap_or_default())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("Failed to run EventKit helper: {error}"))?;
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(EVENTKIT_SWIFT_SCRIPT.as_bytes())
-            .map_err(|error| format!("Failed to feed EventKit helper script: {error}"))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Failed to read EventKit helper output: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let message = if stderr.is_empty() {
-            format!("EventKit helper exited with status {}", output.status)
-        } else {
-            stderr
-        };
-        return Err(message);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
-        return Err("EventKit helper returned empty output".to_string());
-    }
-    serde_json::from_str::<Value>(&stdout)
-        .map_err(|error| format!("Failed to parse EventKit helper output: {error}"))
+    let parsed = unsafe {
+        let text = CStr::from_ptr(raw).to_string_lossy().into_owned();
+        mindwtr_macos_calendar_free_string(raw);
+        serde_json::from_str::<Value>(&text)
+            .map_err(|error| format!("Failed to parse EventKit bridge output: {error}"))?
+    };
+    Ok(parsed)
 }
 
 #[tauri::command]
 fn get_macos_calendar_permission_status() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let value = run_eventkit_swift("permission_status", None, None)?;
+        let value = parse_macos_eventkit_json(unsafe {
+            mindwtr_macos_calendar_permission_status_json()
+        })?;
         let status = value
             .get("status")
             .and_then(|item| item.as_str())
@@ -3564,7 +3435,9 @@ fn get_macos_calendar_permission_status() -> Result<String, String> {
 fn request_macos_calendar_permission() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let value = run_eventkit_swift("request_permission", None, None)?;
+        let value = parse_macos_eventkit_json(unsafe {
+            mindwtr_macos_calendar_request_permission_json()
+        })?;
         let status = value
             .get("status")
             .and_then(|item| item.as_str())
@@ -3581,7 +3454,13 @@ fn request_macos_calendar_permission() -> Result<String, String> {
 fn get_macos_calendar_events(range_start: String, range_end: String) -> Result<MacOsCalendarReadResult, String> {
     #[cfg(target_os = "macos")]
     {
-        let value = run_eventkit_swift("read_events", Some(&range_start), Some(&range_end))?;
+        let start = CString::new(range_start.as_str())
+            .map_err(|error| format!("Invalid calendar range start: {error}"))?;
+        let end = CString::new(range_end.as_str())
+            .map_err(|error| format!("Invalid calendar range end: {error}"))?;
+        let value = parse_macos_eventkit_json(unsafe {
+            mindwtr_macos_calendar_events_json(start.as_ptr(), end.as_ptr())
+        })?;
         let parsed = serde_json::from_value::<MacOsCalendarReadResult>(value)
             .map_err(|error| format!("Failed to decode EventKit payload: {error}"))?;
         return Ok(parsed);
@@ -4020,17 +3899,13 @@ pub fn run() {
             }
 
             // Global hotkey for Quick Add.
-            if !is_windows_store {
-                let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
-                if let Err(error) = apply_global_quick_add_shortcut(
-                    &handle,
-                    &shortcut_state,
-                    Some(GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT),
-                ) {
-                    log::warn!("Failed to register global quick add shortcut: {error}");
-                }
-            } else {
-                log::info!("Global quick add shortcut disabled for Microsoft Store install.");
+            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
+            if let Err(error) = apply_global_quick_add_shortcut(
+                &handle,
+                &shortcut_state,
+                Some(default_global_quick_add_shortcut()),
+            ) {
+                log::warn!("Failed to register global quick add shortcut: {error}");
             }
             
             if cfg!(debug_assertions) || diagnostics_enabled {
@@ -4045,6 +3920,7 @@ pub fn run() {
         .manage(AudioRecorderState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_data,
+            read_data_json,
             save_data,
             create_data_snapshot,
             list_data_snapshots,

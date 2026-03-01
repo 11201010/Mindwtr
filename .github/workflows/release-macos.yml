@@ -195,3 +195,4 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: release-artifacts/*
           if-no-files-found: warn
+          retention-days: 28

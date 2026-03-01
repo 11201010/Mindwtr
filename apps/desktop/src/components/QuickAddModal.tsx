@@ -557,7 +557,10 @@ export function QuickAddModal() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!value.trim()) return;
-        const { title, props, projectTitle } = parseQuickAdd(value, projects, new Date(), areas);
+        const { title, props, projectTitle, invalidDateCommands } = parseQuickAdd(value, projects, new Date(), areas);
+        if (invalidDateCommands && invalidDateCommands.length > 0) {
+            return;
+        }
         const finalTitle = title || value;
         if (!finalTitle.trim()) return;
         const baseProps: Partial<Task> = { ...initialProps, ...props };
@@ -690,6 +693,11 @@ export function QuickAddModal() {
                             </div>
                         )}
                         <p className="text-xs text-muted-foreground">{t('quickAdd.help')}</p>
+                        {parsedInput.invalidDateCommands && parsedInput.invalidDateCommands.length > 0 ? (
+                            <p className="text-xs text-destructive">
+                                Invalid date command: {parsedInput.invalidDateCommands.join(', ')}
+                            </p>
+                        ) : null}
                         {scheduledLabel && (
                             <p className="text-xs text-muted-foreground">
                                 {t('calendar.scheduleAction')}: {scheduledLabel}

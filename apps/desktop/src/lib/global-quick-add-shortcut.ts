@@ -16,6 +16,11 @@ type ShortcutOption = {
     label: string;
 };
 
+type GlobalQuickAddShortcutPlatform = {
+    isMac?: boolean;
+    isWindows?: boolean;
+};
+
 const ALLOWED_SHORTCUTS = new Set<GlobalQuickAddShortcutSetting>([
     GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
     GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT,
@@ -24,19 +29,49 @@ const ALLOWED_SHORTCUTS = new Set<GlobalQuickAddShortcutSetting>([
     GLOBAL_QUICK_ADD_SHORTCUT_LEGACY,
 ]);
 
-export function normalizeGlobalQuickAddShortcut(value?: string | null): GlobalQuickAddShortcutSetting {
-    if (!value) return GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT;
-    if (ALLOWED_SHORTCUTS.has(value as GlobalQuickAddShortcutSetting)) {
-        return value as GlobalQuickAddShortcutSetting;
+export function getDefaultGlobalQuickAddShortcut(
+    platform: GlobalQuickAddShortcutPlatform = {}
+): GlobalQuickAddShortcutSetting {
+    if (platform.isWindows) {
+        return GLOBAL_QUICK_ADD_SHORTCUT_DISABLED;
     }
     return GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT;
 }
 
-export function getGlobalQuickAddShortcutOptions(isMac: boolean): ShortcutOption[] {
+export function normalizeGlobalQuickAddShortcut(
+    value?: string | null,
+    platform: GlobalQuickAddShortcutPlatform = {}
+): GlobalQuickAddShortcutSetting {
+    const defaultShortcut = getDefaultGlobalQuickAddShortcut(platform);
+    if (!value) return defaultShortcut;
+    if (ALLOWED_SHORTCUTS.has(value as GlobalQuickAddShortcutSetting)) {
+        return value as GlobalQuickAddShortcutSetting;
+    }
+    return defaultShortcut;
+}
+
+export function getGlobalQuickAddShortcutOptions(platform: GlobalQuickAddShortcutPlatform = {}): ShortcutOption[] {
+    const isMac = platform.isMac === true;
+    const isWindows = platform.isWindows === true;
+    const defaultShortcut = getDefaultGlobalQuickAddShortcut(platform);
+    const legacyLabel = isMac ? 'Cmd+Shift+A' : 'Ctrl+Shift+A';
+    const legacySuffix = isWindows
+        ? ' (recommended)'
+        : defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_LEGACY
+            ? ' (recommended)'
+            : ' (legacy)';
+    const disabledLabel = isWindows
+        ? 'Disabled (default)'
+        : defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
+            ? 'Disabled (recommended)'
+            : 'Disabled';
+
     return [
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT,
-            label: isMac ? 'Ctrl+Option+M (recommended)' : 'Ctrl+Alt+M (recommended)',
+            label:
+                (isMac ? 'Ctrl+Option+M' : 'Ctrl+Alt+M')
+                + (defaultShortcut === GLOBAL_QUICK_ADD_SHORTCUT_DEFAULT ? ' (recommended)' : ''),
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_ALTERNATE_N,
@@ -48,11 +83,11 @@ export function getGlobalQuickAddShortcutOptions(isMac: boolean): ShortcutOption
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_LEGACY,
-            label: isMac ? 'Cmd+Shift+A (legacy)' : 'Ctrl+Shift+A (legacy)',
+            label: legacyLabel + legacySuffix,
         },
         {
             value: GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
-            label: 'Disabled',
+            label: disabledLabel,
         },
     ];
 }

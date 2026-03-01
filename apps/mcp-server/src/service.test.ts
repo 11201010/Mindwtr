@@ -138,4 +138,55 @@ describe('mcp service', () => {
     expect(receivedUpdateInput.updates.projectId).toBeUndefined();
     expect(closedDbCount).toBe(1);
   });
+
+  test('rejects addTask input when both title and quickAdd are provided', async () => {
+    const fakeDb = {} as any;
+    const deps = {
+      openMindwtrDb: async () => ({ db: fakeDb }),
+      closeDb: () => undefined,
+      listTasks: () => [],
+      listProjects: () => [],
+      getTask: () => ({ id: 't1', title: 'Task', status: 'inbox', createdAt: '2026-01-01', updatedAt: '2026-01-01' }),
+      parseQuickAdd: () => ({ title: '', props: {} }),
+      runCoreService: async (_options: any, fn: any) =>
+        fn({
+          addTask: async () => ({ id: 't1' }),
+          updateTask: async () => ({ id: 't1' }),
+          completeTask: async () => ({ id: 't1' }),
+          deleteTask: async () => ({ id: 't1' }),
+          restoreTask: async () => ({ id: 't1' }),
+        }),
+    };
+    const service = createService({ readonly: false }, deps as any);
+
+    await expect(service.addTask({ title: 'Task', quickAdd: 'Task /next' } as any)).rejects.toThrow(
+      'Provide either title or quickAdd, not both'
+    );
+  });
+
+  test('rejects addTask title when length exceeds max bound', async () => {
+    const fakeDb = {} as any;
+    const deps = {
+      openMindwtrDb: async () => ({ db: fakeDb }),
+      closeDb: () => undefined,
+      listTasks: () => [],
+      listProjects: () => [],
+      getTask: () => ({ id: 't1', title: 'Task', status: 'inbox', createdAt: '2026-01-01', updatedAt: '2026-01-01' }),
+      parseQuickAdd: () => ({ title: '', props: {} }),
+      runCoreService: async (_options: any, fn: any) =>
+        fn({
+          addTask: async () => ({ id: 't1' }),
+          updateTask: async () => ({ id: 't1' }),
+          completeTask: async () => ({ id: 't1' }),
+          deleteTask: async () => ({ id: 't1' }),
+          restoreTask: async () => ({ id: 't1' }),
+        }),
+    };
+    const service = createService({ readonly: false }, deps as any);
+    const longTitle = 'x'.repeat(501);
+
+    await expect(service.addTask({ title: longTitle } as any)).rejects.toThrow(
+      'Task title too long (max 500 characters)'
+    );
+  });
 });

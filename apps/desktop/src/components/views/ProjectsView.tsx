@@ -295,11 +295,19 @@ export function ProjectsView() {
 
     const sortProjectTasks = useCallback((items: Task[]) => {
         const sorted = [...items];
-        const hasOrder = sorted.some((task) => Number.isFinite(task.orderNum));
+        const hasOrder = sorted.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
         sorted.sort((a, b) => {
             if (hasOrder) {
-                const aOrder = Number.isFinite(a.orderNum) ? (a.orderNum as number) : Number.POSITIVE_INFINITY;
-                const bOrder = Number.isFinite(b.orderNum) ? (b.orderNum as number) : Number.POSITIVE_INFINITY;
+                const aOrder = Number.isFinite(a.order)
+                    ? (a.order as number)
+                    : Number.isFinite(a.orderNum)
+                        ? (a.orderNum as number)
+                        : Number.POSITIVE_INFINITY;
+                const bOrder = Number.isFinite(b.order)
+                    ? (b.order as number)
+                    : Number.isFinite(b.orderNum)
+                        ? (b.orderNum as number)
+                        : Number.POSITIVE_INFINITY;
                 if (aOrder !== bOrder) return aOrder - bOrder;
             }
             return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
@@ -724,7 +732,11 @@ export function ProjectsView() {
     const handleAddTaskForProject = useCallback(
         async (value: string, sectionId?: string | null) => {
             if (!selectedProject) return;
-            const { title: parsedTitle, props, projectTitle } = parseQuickAdd(value, projects, new Date(), areas);
+            const { title: parsedTitle, props, projectTitle, invalidDateCommands } = parseQuickAdd(value, projects, new Date(), areas);
+            if (invalidDateCommands && invalidDateCommands.length > 0) {
+                showToast(`Invalid date command: ${invalidDateCommands.join(', ')}`, 'error');
+                return;
+            }
             const finalTitle = (parsedTitle || value).trim();
             if (!finalTitle) return;
             const initialProps: Partial<Task> = { projectId: selectedProject.id, status: 'next', ...props };

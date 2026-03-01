@@ -23,6 +23,8 @@ const writeLog = (entry: LogEntry) => {
   }
 };
 
+const MAX_TASK_TITLE_LENGTH = 500;
+
 const logError = (message: string, error?: unknown) => {
   const context: Record<string, unknown> = {};
   if (error instanceof Error) {
@@ -49,8 +51,16 @@ const createMcpTextResponse = (payload: Record<string, unknown>): McpToolRespons
 
 const createMcpErrorResponse = (error: unknown): McpToolResponse => {
   const message = error instanceof Error ? error.message : String(error);
+  const lowered = message.toLowerCase();
+  const code = lowered.includes('read-only')
+    ? 'read_only'
+    : lowered.includes('not found')
+      ? 'not_found'
+      : (lowered.includes('required') || lowered.includes('invalid') || lowered.includes('must') || lowered.includes('either'))
+        ? 'validation_error'
+        : 'internal_error';
   return {
-    content: [{ type: 'text', text: JSON.stringify({ error: message }, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify({ error: message, code }, null, 2) }],
     isError: true,
   };
 };
@@ -72,7 +82,17 @@ export const parseArgs = (argv: string[]) => {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg || !arg.startsWith('--')) continue;
-    const key = arg.slice(2);
+    const keyValue = arg.slice(2);
+    const equalsIndex = keyValue.indexOf('=');
+    if (equalsIndex > 0) {
+      const key = keyValue.slice(0, equalsIndex);
+      const value = keyValue.slice(equalsIndex + 1);
+      if (key) {
+        flags[key] = value;
+      }
+      continue;
+    }
+    const key = keyValue;
     const next = argv[i + 1];
     if (next && !next.startsWith('--')) {
       flags[key] = next;
@@ -108,7 +128,7 @@ const listTasksSchema = z.object({
 
 // Note: Don't use .refine() as it breaks MCP SDK's JSON schema conversion
 const addTaskSchema = z.object({
-  title: z.string().optional().describe('Task title'),
+  title: z.string().max(MAX_TASK_TITLE_LENGTH).optional().describe('Task title'),
   quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
   status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
@@ -121,8 +141,16 @@ const addTaskSchema = z.object({
   timeEstimate: z.string().optional().describe('Time estimate (e.g. "30m", "2h")'),
 });
 const validateAddTask = (data: z.infer<typeof addTaskSchema>) => {
-  if (!data.title && !data.quickAdd) {
+  const hasTitle = typeof data.title === 'string' && data.title.trim().length > 0;
+  const hasQuickAdd = typeof data.quickAdd === 'string' && data.quickAdd.trim().length > 0;
+  if (!hasTitle && !hasQuickAdd) {
     throw new Error('Either title or quickAdd is required');
+  }
+  if (hasTitle && hasQuickAdd) {
+    throw new Error('Provide either title or quickAdd, not both');
+  }
+  if (hasTitle && data.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
+    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
   }
 };
 
@@ -131,7 +159,7 @@ const completeTaskSchema = z.object({
 });
 const updateTaskSchema = z.object({
   id: z.string(),
-  title: z.string().optional(),
+  title: z.string().max(MAX_TASK_TITLE_LENGTH).optional(),
   status: taskStatusSchema.optional(),
   projectId: z.string().nullable().optional(),
   dueDate: isoDateLikeSchema.nullable().optional(),
@@ -162,12 +190,12 @@ const listProjectsSchema = z.object({});
 
 export const registerMindwtrTools = (server: McpServer, service: MindwtrService, readonly: boolean) => {
   server.registerTool(
-    'mindwtr.list_tasks',
+    'mindwtr_list_tasks',
     {
       description: 'List tasks from the local Mindwtr SQLite database. Supports filtering by status, project, date range, and search. Supports sorting by various fields.',
       inputSchema: listTasksSchema,
     },
-    withMcpErrorHandling('mindwtr.list_tasks', async (input) => {
+    withMcpErrorHandling('mindwtr_list_tasks', async (input) => {
       const tasks = await service.listTasks({
         ...input,
       });
@@ -176,24 +204,24 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
   );
 
   server.registerTool(
-    'mindwtr.list_projects',
+    'mindwtr_list_projects',
     {
       description: 'List projects from the local Mindwtr SQLite database.',
       inputSchema: listProjectsSchema,
     },
-    withMcpErrorHandling('mindwtr.list_projects', async () => {
+    withMcpErrorHandling('mindwtr_list_projects', async () => {
       const projects = await service.listProjects();
       return createMcpTextResponse({ projects });
     }),
   );
 
   server.registerTool(
-    'mindwtr.add_task',
+    'mindwtr_add_task',
     {
       description: 'Add a task to the local Mindwtr SQLite database.',
       inputSchema: addTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.add_task', async (input) => {
+    withMcpErrorHandling('mindwtr_add_task', async (input) => {
       if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
       validateAddTask(input);
       const task = await service.addTask({
@@ -204,12 +232,12 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
   );
 
   server.registerTool(
-    'mindwtr.update_task',
+    'mindwtr_update_task',
     {
       description: 'Update a task in the local Mindwtr SQLite database.',
       inputSchema: updateTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.update_task', async (input) => {
+    withMcpErrorHandling('mindwtr_update_task', async (input) => {
       if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
       const task = await service.updateTask({
         ...input,
@@ -219,12 +247,12 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
   );
 
   server.registerTool(
-    'mindwtr.complete_task',
+    'mindwtr_complete_task',
     {
       description: 'Mark a task as done in the local Mindwtr SQLite database.',
       inputSchema: completeTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.complete_task', async (input) => {
+    withMcpErrorHandling('mindwtr_complete_task', async (input) => {
       if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
       const task = await service.completeTask(input.id);
       return createMcpTextResponse({ task });
@@ -232,12 +260,12 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
   );
 
   server.registerTool(
-    'mindwtr.delete_task',
+    'mindwtr_delete_task',
     {
       description: 'Soft-delete a task in the local Mindwtr SQLite database.',
       inputSchema: deleteTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.delete_task', async (input) => {
+    withMcpErrorHandling('mindwtr_delete_task', async (input) => {
       if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
       const task = await service.deleteTask(input.id);
       return createMcpTextResponse({ task });
@@ -245,24 +273,24 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
   );
 
   server.registerTool(
-    'mindwtr.get_task',
+    'mindwtr_get_task',
     {
       description: 'Get a single task by ID from the local Mindwtr SQLite database.',
       inputSchema: getTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.get_task', async (input) => {
+    withMcpErrorHandling('mindwtr_get_task', async (input) => {
       const task = await service.getTask({ id: input.id, includeDeleted: input.includeDeleted });
       return createMcpTextResponse({ task });
     }),
   );
 
   server.registerTool(
-    'mindwtr.restore_task',
+    'mindwtr_restore_task',
     {
       description: 'Restore a soft-deleted task in the local Mindwtr SQLite database.',
       inputSchema: restoreTaskSchema,
     },
-    withMcpErrorHandling('mindwtr.restore_task', async (input) => {
+    withMcpErrorHandling('mindwtr_restore_task', async (input) => {
       if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
       const task = await service.restoreTask(input.id);
       return createMcpTextResponse({ task });

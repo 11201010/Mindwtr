@@ -415,12 +415,12 @@ function RootLayoutContent() {
           : '';
     if (sharedText.trim()) {
       router.replace({
-        pathname: '/capture',
+        pathname: '/capture-modal',
         params: { text: encodeURIComponent(sharedText.trim()) },
       });
     } else {
       void logError(new Error('Share intent payload missing text'), { scope: 'share-intent' });
-      router.replace('/capture');
+      router.replace('/capture-modal');
     }
     resetShareIntent();
   }, [hasShareIntent, resetShareIntent, router, shareIntent?.text, shareIntent?.webUrl]);
@@ -703,7 +703,7 @@ function RootLayoutContent() {
               params.set('initialProps', encodeURIComponent(JSON.stringify(options.initialProps)));
             }
             const query = params.toString();
-            router.push(query ? `/capture?${query}` : '/capture');
+            router.push(query ? `/capture-modal?${query}` : '/capture-modal');
           },
         }}
       >
@@ -726,7 +726,7 @@ function RootLayoutContent() {
               }}
             />
             <Stack.Screen
-              name="capture"
+              name="capture-modal"
               options={{
                 headerShown: false,
                 presentation: 'modal',

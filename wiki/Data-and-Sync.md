@@ -147,7 +147,7 @@ Sync directly to a WebDAV server:
 
 - Nextcloud
 - ownCloud
-- Box.com
+- Fastmail
 - Any WebDAV-compatible server
 
 ### 3. Mindwtr Cloud (Self-Hosted)

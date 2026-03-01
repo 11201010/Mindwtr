@@ -646,19 +646,19 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('uses deletedAt as delete operation time when deciding delete-vs-live', () => {
+        it('uses deletedAt as delete operation time when deciding delete-vs-live beyond skew window', () => {
             const local = mockAppData([
-                createMockTask('1', '2023-01-02T00:06:00.000Z', '2023-01-02T00:05:00.000Z'),
+                createMockTask('1', '2023-01-02T00:12:00.000Z', '2023-01-02T00:05:00.000Z'),
             ]);
             const incoming = mockAppData([
-                createMockTask('1', '2023-01-02T00:05:30.000Z'),
+                createMockTask('1', '2023-01-02T00:11:00.000Z'),
             ]);
 
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
             expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:05:30.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:11:00.000Z');
         });
 
         it('clamps far-future timestamps during merge conflict evaluation', () => {

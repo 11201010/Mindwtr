@@ -223,7 +223,7 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
         expect(attachment?.localStatus).toBeUndefined();
     });
 
-    it('throws when a live file attachment has neither uri nor cloudKey', () => {
+    it('tombstones live file attachments that have neither uri nor cloudKey', () => {
         const data = createData([
             fileAttachment({
                 id: 'missing-reference',
@@ -232,9 +232,12 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
             }),
         ]);
 
-        expect(() => sanitizeAppDataForRemote(data)).toThrow(
-            'Attachment reference missing before remote sync: missing-reference'
-        );
+        const sanitized = sanitizeAppDataForRemote(data);
+        const attachment = sanitized.tasks[0]?.attachments?.[0];
+        expect(attachment).toBeDefined();
+        expect(attachment?.deletedAt).toBeDefined();
+        expect(attachment?.uri).toBe('');
+        expect(attachment?.cloudKey).toBeUndefined();
     });
 });
 

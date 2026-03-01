@@ -32,6 +32,7 @@ import {
     injectExternalCalendars as injectExternalCalendarsForSync,
     persistExternalCalendars as persistExternalCalendarsForSync,
     withRetry,
+    isRetryableWebdavReadError,
     CLOCK_SKEW_THRESHOLD_MS,
     appendSyncHistory,
     cloneAppData,
@@ -72,6 +73,13 @@ import {
     writeAttachmentFileSafely,
     writeFileSafelyAbsolute,
 } from './sync-service-utils';
+import {
+    clearAttachmentValidationFailure,
+    clearAttachmentValidationFailures,
+    getAttachmentValidationFailureAttempts,
+    handleAttachmentValidationFailure,
+    markAttachmentUnrecoverable,
+} from './sync-attachment-validation';
 import type { SyncBackend } from './sync-service-utils';
 import {
     deleteDropboxFile,
@@ -107,6 +115,12 @@ const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
 const DEFAULT_DROPBOX_APP_KEY = String(import.meta.env.VITE_DROPBOX_APP_KEY || '').trim();
 const WEBDAV_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
+const WEBDAV_READ_RETRY_OPTIONS = {
+    maxAttempts: 5,
+    baseDelayMs: 2000,
+    maxDelayMs: 30_000,
+    shouldRetry: isRetryableWebdavReadError,
+};
 const CLOUD_ATTACHMENT_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 60_000 };
 const WEBDAV_ATTACHMENT_MIN_INTERVAL_MS = 400;
 const WEBDAV_ATTACHMENT_COOLDOWN_MS = 60_000;
@@ -173,32 +187,6 @@ const setWebdavDownloadBackoff = (attachmentId: string, error: unknown): void =>
 
 const pruneWebdavDownloadBackoff = (): void => {
     webdavDownloadBackoff.prune();
-};
-
-const markAttachmentUnrecoverable = (attachment: Attachment): boolean => {
-    const now = new Date().toISOString();
-    let mutated = false;
-    if (attachment.cloudKey !== undefined) {
-        attachment.cloudKey = undefined;
-        mutated = true;
-    }
-    if (attachment.fileHash !== undefined) {
-        attachment.fileHash = undefined;
-        mutated = true;
-    }
-    if (attachment.localStatus !== 'missing') {
-        attachment.localStatus = 'missing';
-        mutated = true;
-    }
-    if (!attachment.deletedAt) {
-        attachment.deletedAt = now;
-        mutated = true;
-    }
-    if (attachment.updatedAt !== now) {
-        attachment.updatedAt = now;
-        mutated = true;
-    }
-    return mutated;
 };
 
 const externalCalendarProvider = {
@@ -503,9 +491,9 @@ async function syncAttachments(
     appData: AppData,
     webDavConfig: WebDavConfig,
     baseSyncUrl: string
-): Promise<boolean> {
-    if (!isTauriRuntimeEnv()) return false;
-    if (!webDavConfig.url) return false;
+): Promise<AppData | null> {
+    if (!isTauriRuntimeEnv()) return null;
+    if (!webDavConfig.url) return null;
 
     const fetcher = await getTauriFetch();
     const { BaseDirectory, exists, mkdir, readFile, writeFile, rename, remove } = await import('@tauri-apps/plugin-fs');
@@ -659,9 +647,24 @@ async function syncAttachments(
                 const fileData = await readLocalFile(localPath);
                 const validation = await validateAttachmentForUpload(attachment, fileData.length);
                 if (!validation.valid) {
-                    logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
+                    const failure = handleAttachmentValidationFailure(attachment, validation.error);
+                    reportProgress(
+                        attachment.id,
+                        'upload',
+                        0,
+                        attachment.size ?? fileData.length,
+                        'failed',
+                        failure.message
+                    );
+                    if (failure.reachedLimit) {
+                        didMutate = didMutate || failure.mutated;
+                        logSyncWarning(`${failure.message}; marking attachment unrecoverable`);
+                    } else {
+                        logSyncWarning(failure.message);
+                    }
                     continue;
                 }
+                clearAttachmentValidationFailure(attachment.id);
                 reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
                 logSyncInfo('WebDAV attachment upload start', {
                     id: attachment.id,
@@ -811,12 +814,8 @@ async function syncAttachments(
     if (abortedByRateLimit) {
         logSyncWarning('WebDAV attachment sync aborted due to rate limiting');
     }
-    if (didMutate) {
-        // Apply the full working copy so attachment metadata changes are never dropped.
-        Object.assign(appData, workingData);
-    }
     logSyncInfo('WebDAV attachment sync done', { mutated: didMutate ? 'true' : 'false' });
-    return didMutate;
+    return didMutate ? workingData : null;
 }
 
 async function syncCloudAttachments(
@@ -870,9 +869,23 @@ async function syncCloudAttachments(
             const fileData = await readLocalFile(localPath);
             const validation = await validateAttachmentForUpload(attachment, fileData.length);
             if (!validation.valid) {
-                logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
-                return false;
+                const failure = handleAttachmentValidationFailure(attachment, validation.error);
+                reportProgress(
+                    attachment.id,
+                    'upload',
+                    0,
+                    attachment.size ?? fileData.length,
+                    'failed',
+                    failure.message
+                );
+                if (failure.reachedLimit) {
+                    logSyncWarning(`${failure.message}; marking attachment unrecoverable`);
+                } else {
+                    logSyncWarning(failure.message);
+                }
+                return failure.mutated;
             }
+            clearAttachmentValidationFailure(attachment.id);
             reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
             await withRetry(
                 () => cloudPutFile(
@@ -1019,9 +1032,23 @@ async function syncDropboxAttachments(
             const fileData = await readLocalFile(localPath);
             const validation = await validateAttachmentForUpload(attachment, fileData.length);
             if (!validation.valid) {
-                logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
-                return false;
+                const failure = handleAttachmentValidationFailure(attachment, validation.error);
+                reportProgress(
+                    attachment.id,
+                    'upload',
+                    0,
+                    attachment.size ?? fileData.length,
+                    'failed',
+                    failure.message
+                );
+                if (failure.reachedLimit) {
+                    logSyncWarning(`${failure.message}; marking attachment unrecoverable`);
+                } else {
+                    logSyncWarning(failure.message);
+                }
+                return failure.mutated;
             }
+            clearAttachmentValidationFailure(attachment.id);
             reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
             await withRetry(
                 () => withDropboxAccess((token) =>
@@ -1164,9 +1191,15 @@ async function syncFileAttachments(
             const fileData = await readLocalFile(localPath);
             const validation = await validateAttachmentForUpload(attachment, fileData.length, FILE_BACKEND_VALIDATION_CONFIG);
             if (!validation.valid) {
-                logSyncWarning(`Attachment validation failed (${validation.error}) for ${attachment.title}`);
-                return false;
+                const failure = handleAttachmentValidationFailure(attachment, validation.error);
+                if (failure.reachedLimit) {
+                    logSyncWarning(`${failure.message}; marking attachment unrecoverable`);
+                } else {
+                    logSyncWarning(failure.message);
+                }
+                return failure.mutated;
             }
+            clearAttachmentValidationFailure(attachment.id);
             const targetPath = await join(baseSyncDir, cloudKey);
             await writeFileSafelyAbsolute(targetPath, fileData, {
                 writeFile,
@@ -1291,6 +1324,7 @@ export class SyncService {
         SyncService.pendingExternalSyncChange = null;
         SyncService.externalSyncChangeListeners.clear();
         webdavDownloadBackoff.clear();
+        clearAttachmentValidationFailures();
     }
 
     private static updateSyncStatus(partial: Partial<typeof SyncService.syncStatus>) {
@@ -1869,6 +1903,8 @@ export class SyncService {
             SyncService.updateSyncStatus({ queued: true });
             return SyncService.syncInFlight;
         }
+        // Consume any queued follow-up token only when this cycle has actually started.
+        SyncService.syncQueued = false;
         let inFlightSettled = false;
         let resolveInFlight: ((value: { success: boolean; stats?: MergeStats; error?: string }) => void) | null = null;
         const inFlightPromise = new Promise<{ success: boolean; stats?: MergeStats; error?: string }>((resolve) => {
@@ -1978,7 +2014,11 @@ export class SyncService {
                     let preMutated = false;
                     if (backend === 'webdav' && webdavConfig?.url) {
                         const baseUrl = getBaseSyncUrl(webdavConfig.url);
-                        preMutated = await syncAttachments(localData, webdavConfig, baseUrl);
+                        const syncedData = await syncAttachments(localData, webdavConfig, baseUrl);
+                        preMutated = syncedData !== null;
+                        if (syncedData) {
+                            preSyncedLocalData = syncedData;
+                        }
                     } else if (backend === 'file' && fileBaseDir) {
                         preMutated = await syncFileAttachments(localData, fileBaseDir);
                     } else if (backend === 'cloud' && cloudProvider === 'selfhosted' && cloudConfig?.url) {
@@ -1989,8 +2029,7 @@ export class SyncService {
                     }
                     if (preMutated) {
                         ensureLocalSnapshotFresh();
-                        await tauriInvoke('save_data', { data: localData });
-                        preSyncedLocalData = localData;
+                        preSyncedLocalData = preSyncedLocalData ?? localData;
                     }
                 } catch (error) {
                     if (error instanceof LocalSyncAbort) {
@@ -2016,7 +2055,10 @@ export class SyncService {
                                 throw new Error('WebDAV URL not configured');
                             }
                             syncUrl = webdavConfig.url;
-                            const data = await tauriInvoke<AppData>('webdav_get_json');
+                            const data = await withRetry(
+                                () => tauriInvoke<AppData>('webdav_get_json'),
+                                WEBDAV_READ_RETRY_OPTIONS,
+                            );
                             remoteDataForCompare = data ?? null;
                             return data;
                         }
@@ -2026,11 +2068,14 @@ export class SyncService {
                         const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
                         syncUrl = normalizedUrl;
                         const fetcher = await getTauriFetch();
-                        const data = await webdavGetJson<AppData>(normalizedUrl, {
-                            username: webdavConfig.username,
-                            password: webdavConfig.password || '',
-                            fetcher,
-                        });
+                        const data = await withRetry(
+                            () => webdavGetJson<AppData>(normalizedUrl, {
+                                username: webdavConfig.username,
+                                password: webdavConfig.password || '',
+                                fetcher,
+                            }),
+                            WEBDAV_READ_RETRY_OPTIONS,
+                        );
                         remoteDataForCompare = data ?? null;
                         return data;
                     }
@@ -2183,9 +2228,9 @@ export class SyncService {
                         const baseUrl = config.url ? getBaseSyncUrl(config.url) : '';
                         if (baseUrl) {
                             const candidateData = cloneAppData(mergedData);
-                            const mutated = await syncAttachments(candidateData, config, baseUrl);
-                            if (mutated) {
-                                mergedData = candidateData;
+                            const syncedData = await syncAttachments(candidateData, config, baseUrl);
+                            if (syncedData) {
+                                mergedData = syncedData;
                                 await tauriInvoke('save_data', { data: mergedData });
                             }
                         }
@@ -2310,7 +2355,6 @@ export class SyncService {
         });
 
         if (SyncService.syncQueued) {
-            SyncService.syncQueued = false;
             void SyncService.performSync()
                 .then((queuedResult) => {
                     if (!queuedResult.success) {
@@ -2341,5 +2385,14 @@ export const __syncServiceTestUtils = {
     },
     clearWebdavDownloadBackoff() {
         webdavDownloadBackoff.clear();
+    },
+    clearAttachmentValidationFailures() {
+        clearAttachmentValidationFailures();
+    },
+    simulateAttachmentValidationFailure(attachment: Attachment, error?: string) {
+        return handleAttachmentValidationFailure(attachment, error);
+    },
+    getAttachmentValidationFailureAttempts(attachmentId: string) {
+        return getAttachmentValidationFailureAttempts(attachmentId);
     },
 };

@@ -261,3 +261,4 @@ jobs:
           name: release-linux
           path: release-artifacts/*
           if-no-files-found: warn
+          retention-days: 28

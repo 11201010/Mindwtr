@@ -43,6 +43,9 @@ jobs:
       - name: Run unit tests
         run: cd packages/core && bun test
 
+      - name: Cloud app tests
+        run: bun run --filter mindwtr-cloud test
+
   # Desktop app build and tests (Tauri)
   desktop:
     runs-on: ubuntu-latest
@@ -168,6 +171,12 @@ jobs:
 
       - name: Performance audit
         run: bun run scripts/audit-performance.ts --fail-under 60
+
+      - name: Check for lint errors (core)
+        run: cd packages/core && bun run tsc --noEmit
+
+      - name: Check for lint errors (desktop)
+        run: cd apps/desktop && bun run lint
 
       - name: Check for lint errors (mobile)
         run: cd apps/mobile && bun run lint

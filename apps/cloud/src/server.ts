@@ -87,6 +87,7 @@ const rateLimitMaxKeysValue = Number(process.env.MINDWTR_CLOUD_RATE_MAX_KEYS || 
 const RATE_LIMIT_MAX_KEYS = Number.isFinite(rateLimitMaxKeysValue) && rateLimitMaxKeysValue > 0
     ? Math.floor(rateLimitMaxKeysValue)
     : 10_000;
+const MAX_PENDING_REMOTE_DELETE_ATTEMPTS = 100;
 const authFailureRateMaxValue = Number(process.env.MINDWTR_CLOUD_AUTH_FAILURE_RATE_MAX || 30);
 const AUTH_FAILURE_RATE_MAX = Number.isFinite(authFailureRateMaxValue) && authFailureRateMaxValue > 0
     ? Math.floor(authFailureRateMaxValue)
@@ -425,14 +426,53 @@ function validateAppData(value: unknown): { ok: true; data: Record<string, unkno
             if (!isRecord(area) || typeof area.id !== 'string' || typeof area.name !== 'string') {
                 return { ok: false, error: 'Invalid data: each area must be an object with string id and name' };
             }
-            if (area.createdAt != null && !isValidIsoTimestamp(area.createdAt)) {
-                return { ok: false, error: 'Invalid data: area createdAt must be a valid ISO timestamp when present' };
+            if (!isValidIsoTimestamp(area.createdAt)) {
+                return { ok: false, error: 'Invalid data: area createdAt must be a valid ISO timestamp' };
             }
-            if (area.updatedAt != null && !isValidIsoTimestamp(area.updatedAt)) {
-                return { ok: false, error: 'Invalid data: area updatedAt must be a valid ISO timestamp when present' };
+            if (!isValidIsoTimestamp(area.updatedAt)) {
+                return { ok: false, error: 'Invalid data: area updatedAt must be a valid ISO timestamp' };
             }
             if (area.deletedAt != null && !isValidIsoTimestamp(area.deletedAt)) {
                 return { ok: false, error: 'Invalid data: area deletedAt must be a valid ISO timestamp when present' };
+            }
+        }
+    }
+
+    const attachments = settings && isRecord(settings) ? (settings as Record<string, unknown>).attachments : undefined;
+    if (attachments !== undefined) {
+        if (!isRecord(attachments)) {
+            return { ok: false, error: 'Invalid data: settings.attachments must be an object when present' };
+        }
+        const pendingRemoteDeletes = (attachments as Record<string, unknown>).pendingRemoteDeletes;
+        if (pendingRemoteDeletes !== undefined) {
+            if (!Array.isArray(pendingRemoteDeletes)) {
+                return { ok: false, error: 'Invalid data: settings.attachments.pendingRemoteDeletes must be an array when present' };
+            }
+            if (pendingRemoteDeletes.length > MAX_ITEMS_PER_COLLECTION) {
+                return { ok: false, error: `Invalid data: pendingRemoteDeletes exceeds limit (${MAX_ITEMS_PER_COLLECTION})` };
+            }
+            for (const item of pendingRemoteDeletes) {
+                if (!isRecord(item)) {
+                    return { ok: false, error: 'Invalid data: each pendingRemoteDeletes entry must be an object' };
+                }
+                const cloudKey = typeof item.cloudKey === 'string' ? item.cloudKey.trim() : '';
+                if (!cloudKey || !normalizeAttachmentRelativePath(cloudKey)) {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.cloudKey must be a valid relative attachment path' };
+                }
+                if (item.title !== undefined && typeof item.title !== 'string') {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.title must be a string when present' };
+                }
+                if (item.attempts !== undefined) {
+                    if (typeof item.attempts !== 'number' || !Number.isFinite(item.attempts) || item.attempts < 0 || !Number.isInteger(item.attempts)) {
+                        return { ok: false, error: 'Invalid data: pendingRemoteDeletes.attempts must be a non-negative integer when present' };
+                    }
+                    if (item.attempts > MAX_PENDING_REMOTE_DELETE_ATTEMPTS) {
+                        return { ok: false, error: `Invalid data: pendingRemoteDeletes.attempts exceeds ${MAX_PENDING_REMOTE_DELETE_ATTEMPTS}` };
+                    }
+                }
+                if (item.lastErrorAt !== undefined && item.lastErrorAt !== null && !isValidIsoTimestamp(item.lastErrorAt)) {
+                    return { ok: false, error: 'Invalid data: pendingRemoteDeletes.lastErrorAt must be a valid ISO timestamp when present' };
+                }
             }
         }
     }
@@ -446,11 +486,28 @@ function loadAppData(filePath: string): AppData {
     const raw = readData(filePath);
     if (!raw || typeof raw !== 'object') return { ...DEFAULT_DATA };
     const record = raw as Record<string, unknown>;
+    const nowIso = new Date().toISOString();
+    const normalizedAreas = Array.isArray(record.areas)
+        ? (record.areas as unknown[]).map((area) => {
+            if (!isRecord(area)) return area;
+            const createdAt = typeof area.createdAt === 'string' && area.createdAt.trim().length > 0
+                ? area.createdAt
+                : (typeof area.updatedAt === 'string' && area.updatedAt.trim().length > 0 ? area.updatedAt : nowIso);
+            const updatedAt = typeof area.updatedAt === 'string' && area.updatedAt.trim().length > 0
+                ? area.updatedAt
+                : createdAt;
+            return {
+                ...area,
+                createdAt,
+                updatedAt,
+            };
+        })
+        : [];
     return {
         tasks: Array.isArray(record.tasks) ? (record.tasks as Task[]) : [],
         projects: Array.isArray(record.projects) ? (record.projects as any) : [],
         sections: Array.isArray(record.sections) ? (record.sections as any) : [],
-        areas: Array.isArray(record.areas) ? (record.areas as any) : [],
+        areas: normalizedAreas as any,
         settings: typeof record.settings === 'object' && record.settings ? (record.settings as any) : {},
     };
 }
@@ -912,7 +969,11 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                         const existingData = loadAppData(filePath);
                         const incomingData = validated.data as AppData;
                         const mergedData = mergeAppData(existingData, incomingData);
-                        writeData(filePath, mergedData);
+                        const validatedMerged = validateAppData(mergedData);
+                        if (!validatedMerged.ok) {
+                            return errorResponse(`Invalid merged data: ${validatedMerged.error}`, 500);
+                        }
+                        writeData(filePath, validatedMerged.data);
                         return jsonResponse({ ok: true });
                     });
                 }

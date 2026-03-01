@@ -91,7 +91,17 @@ export const sanitizeAppDataForRemote = (data: AppData): AppData => {
                 const hasUri = hasNonEmptyValue(attachment.uri);
                 const hasCloudKey = hasNonEmptyValue(attachment.cloudKey);
                 if (!hasUri && !hasCloudKey) {
-                    throw new Error(`Attachment reference missing before remote sync: ${attachment.id}`);
+                    const nowIso = new Date().toISOString();
+                    const fallbackUpdatedAt = hasNonEmptyValue(attachment.updatedAt)
+                        ? attachment.updatedAt
+                        : nowIso;
+                    return {
+                        ...attachment,
+                        deletedAt: fallbackUpdatedAt,
+                        updatedAt: fallbackUpdatedAt,
+                        uri: '',
+                        localStatus: undefined,
+                    };
                 }
             }
             return {

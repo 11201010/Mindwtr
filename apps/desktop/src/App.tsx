@@ -22,6 +22,7 @@ import { CloseBehaviorModal } from './components/CloseBehaviorModal';
 import { startDesktopNotifications, stopDesktopNotifications } from './lib/notification-service';
 import { SyncService } from './lib/sync-service';
 import type { ExternalSyncChange, ExternalSyncChangeResolution } from './lib/sync-service';
+import * as LocalDataWatcher from './lib/local-data-watcher';
 import { isFlatpakRuntime, isTauriRuntime } from './lib/runtime';
 import { logError } from './lib/app-log';
 import { THEME_STORAGE_KEY, applyThemeMode, mapSyncedThemeToDesktop, resolveNativeTheme } from './lib/theme';
@@ -199,6 +200,12 @@ function App() {
         if (isTauriRuntime()) {
             startDesktopNotifications().catch((error) => reportError('Notifications failed', error));
             SyncService.startFileWatcher().catch((error) => reportError('File watcher failed', error));
+
+            // Watch local data.json for external changes (e.g. from the CLI)
+            import('@tauri-apps/api/core')
+                .then((mod) => mod.invoke<string>('get_data_path_cmd'))
+                .then((dataPath) => LocalDataWatcher.start(dataPath))
+                .catch((error) => reportError('Local data watcher failed', error));
         }
 
         isActiveRef.current = true;
@@ -313,6 +320,7 @@ function App() {
                 clearTimeout(initialSyncTimerRef.current);
             }
             stopDesktopNotifications();
+            LocalDataWatcher.stop();
             SyncService.stopFileWatcher().catch((error) => reportError('File watcher failed', error));
             unsubscribeExternalSync();
         };
@@ -409,6 +417,8 @@ function App() {
 
     useEffect(() => {
         if (import.meta.env.MODE === 'test' || import.meta.env.VITEST || process.env.NODE_ENV === 'test') return;
+        // Settings is frequently opened from menu actions; preload it eagerly to avoid first-open delay.
+        void import('./components/views/SettingsView');
         const idleCallback =
             (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback
             ?? ((cb: () => void) => window.setTimeout(cb, 200));
@@ -416,7 +426,6 @@ function App() {
             (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback
             ?? ((id: number) => window.clearTimeout(id));
         const id = idleCallback(() => {
-            void import('./components/views/SettingsView');
             void import('./components/views/BoardView');
             void import('./components/views/ProjectsView');
             void import('./components/views/ReviewView');
@@ -469,6 +478,10 @@ function App() {
 
     const handleViewChange = useCallback((view: string) => {
         setCurrentView(view);
+        if (view === 'settings') {
+            setActiveView(view);
+            return;
+        }
         startTransition(() => {
             setActiveView(view);
         });
@@ -583,7 +596,7 @@ function App() {
                                         type="button"
                                         onClick={() => setExternalSyncChange(null)}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('common.reviewLater', 'Review later')}
                                     </button>
@@ -591,7 +604,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('use-external')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.useExternal', 'Use external')}
                                     </button>
@@ -599,7 +612,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('merge')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-secondary text-secondary-foreground hover:bg-secondary/90 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-secondary text-secondary-foreground hover:bg-secondary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.mergeChanges', 'Merge')}
                                     </button>
@@ -607,7 +620,7 @@ function App() {
                                         type="button"
                                         onClick={() => resolveExternalSync('keep-local')}
                                         disabled={resolvingExternalSync}
-                                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                                        className="px-3 py-1.5 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {translateOrFallback('settings.keepLocal', 'Keep local')}
                                     </button>

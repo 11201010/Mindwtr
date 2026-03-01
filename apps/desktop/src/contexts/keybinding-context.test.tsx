@@ -95,4 +95,40 @@ describe('KeybindingProvider (vim)', () => {
         expect(quickAddListener).toHaveBeenCalledTimes(1);
         window.removeEventListener('mindwtr:quick-add', quickAddListener);
     });
+
+    it('opens settings with Cmd+,', () => {
+        const onNavigate = vi.fn();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="inbox" onNavigate={onNavigate}>
+                    <DummyList />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        fireEvent.keyDown(window, { key: ',', code: 'Comma', metaKey: true });
+
+        expect(onNavigate).toHaveBeenCalledWith('settings');
+    });
+
+    it('dispatches global edit cancel on Escape while editing', () => {
+        const cancelListener = vi.fn();
+        window.addEventListener('mindwtr:cancel-task-edit', cancelListener);
+        useUiStore.setState({ editingTaskId: 'task-123' });
+
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="inbox" onNavigate={vi.fn()}>
+                    <DummyList />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+
+        expect(cancelListener).toHaveBeenCalledTimes(1);
+        const event = cancelListener.mock.calls[0]?.[0] as CustomEvent<{ taskId: string }>;
+        expect(event.detail.taskId).toBe('task-123');
+        window.removeEventListener('mindwtr:cancel-task-edit', cancelListener);
+    });
 });

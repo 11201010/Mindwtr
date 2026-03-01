@@ -46,12 +46,19 @@ export function useListViewOptimizations(
 
                 const firstTaskIds: string[] = [];
                 tasksByProject.forEach((tasksForProject: Task[]) => {
-                    const hasOrder = tasksForProject.some((task) => Number.isFinite(task.orderNum));
+                    const hasOrder = tasksForProject.some((task) =>
+                        Number.isFinite(task.order) || Number.isFinite(task.orderNum)
+                    );
                     let firstTaskId: string | null = null;
                     let bestKey = Number.POSITIVE_INFINITY;
                     tasksForProject.forEach((task) => {
+                        const taskOrder = Number.isFinite(task.order)
+                            ? (task.order as number)
+                            : Number.isFinite(task.orderNum)
+                                ? (task.orderNum as number)
+                                : Number.POSITIVE_INFINITY;
                         const key = hasOrder
-                            ? (Number.isFinite(task.orderNum) ? (task.orderNum as number) : Number.POSITIVE_INFINITY)
+                            ? taskOrder
                             : new Date(task.createdAt).getTime();
                         if (!firstTaskId || key < bestKey) {
                             firstTaskId = task.id;

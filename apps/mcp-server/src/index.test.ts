@@ -38,21 +38,27 @@ describe('mcp server index', () => {
     expect(flags.noWait).toBe(true);
   });
 
+  test('parses --key=value CLI flags', () => {
+    const flags = parseArgs(['--db=/tmp/mindwtr.db', '--write=true']);
+    expect(flags.db).toBe('/tmp/mindwtr.db');
+    expect(flags.write).toBe('true');
+  });
+
   test('registers all mindwtr tools', () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
     expect(tools.size).toBe(8);
-    expect(tools.has('mindwtr.list_tasks')).toBe(true);
-    expect(tools.has('mindwtr.add_task')).toBe(true);
-    expect(tools.has('mindwtr.restore_task')).toBe(true);
+    expect(tools.has('mindwtr_list_tasks')).toBe(true);
+    expect(tools.has('mindwtr_add_task')).toBe(true);
+    expect(tools.has('mindwtr_restore_task')).toBe(true);
   });
 
   test('blocks write tools when readonly', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), true);
 
-    const addHandler = tools.get('mindwtr.add_task')?.handler;
-    const deleteHandler = tools.get('mindwtr.delete_task')?.handler;
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    const deleteHandler = tools.get('mindwtr_delete_task')?.handler;
     expect(addHandler).toBeTruthy();
     expect(deleteHandler).toBeTruthy();
 
@@ -60,6 +66,8 @@ describe('mcp server index', () => {
     const deleteResult = await deleteHandler?.({ id: 't1' });
     expect(addResult?.isError).toBe(true);
     expect(addResult?.content[0]?.text).toContain('read-only');
+    const addPayload = JSON.parse(addResult?.content[0]?.text || '{}');
+    expect(addPayload.code).toBe('read_only');
     expect(deleteResult?.isError).toBe(true);
     expect(deleteResult?.content[0]?.text).toContain('read-only');
   });
@@ -67,11 +75,34 @@ describe('mcp server index', () => {
   test('validates add_task requires title or quickAdd', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
-    const addHandler = tools.get('mindwtr.add_task')?.handler;
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
     expect(addHandler).toBeTruthy();
     const result = await addHandler?.({});
     expect(result?.isError).toBe(true);
     expect(result?.content[0]?.text).toContain('Either title or quickAdd is required');
+    const payload = JSON.parse(result?.content[0]?.text || '{}');
+    expect(payload.code).toBe('validation_error');
+  });
+
+  test('validates add_task rejects providing both title and quickAdd', async () => {
+    const { server, tools } = createMockServer();
+    registerMindwtrTools(server, createMockService(), false);
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    expect(addHandler).toBeTruthy();
+    const result = await addHandler?.({ title: 'Task', quickAdd: 'Task /next' });
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toContain('Provide either title or quickAdd, not both');
+  });
+
+  test('validates add_task title length', async () => {
+    const { server, tools } = createMockServer();
+    registerMindwtrTools(server, createMockService(), false);
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    expect(addHandler).toBeTruthy();
+    const longTitle = 'x'.repeat(501);
+    const result = await addHandler?.({ title: longTitle });
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toContain('Task title too long');
   });
 
   test('wraps service exceptions in MCP error response format', async () => {
@@ -83,7 +114,7 @@ describe('mcp server index', () => {
       },
     };
     registerMindwtrTools(server, failingService, false);
-    const listHandler = tools.get('mindwtr.list_tasks')?.handler;
+    const listHandler = tools.get('mindwtr_list_tasks')?.handler;
     expect(listHandler).toBeTruthy();
     const result = await listHandler?.({});
     expect(result?.isError).toBe(true);

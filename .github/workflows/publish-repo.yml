@@ -92,8 +92,8 @@ jobs:
           shopt -s nullglob
           debs=( *.deb )
           rpms=( *.rpm )
-          if [ ${#debs[@]} -gt 0 ]; then mv "${debs[@]}" build_repo/deb/; fi
-          if [ ${#rpms[@]} -gt 0 ]; then mv "${rpms[@]}" build_repo/rpm/; fi
+          if (( ${#debs[@]} > 0 )); then mv -- "${debs[@]}" build_repo/deb/; fi
+          if (( ${#rpms[@]} > 0 )); then mv -- "${rpms[@]}" build_repo/rpm/; fi
           gpg --armor --export > build_repo/mindwtr.gpg.key
 
       - name: Build DEB Repo

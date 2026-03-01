@@ -100,7 +100,7 @@ describe('cloud server utils', () => {
         expect(invalidTimestamp.ok).toBe(false);
     });
 
-    test('accepts null optional timestamps in tasks, projects, sections, and areas', () => {
+    test('accepts null optional deletedAt timestamps while requiring area createdAt/updatedAt', () => {
      const iso = '2024-01-01T00:00:00.000Z';
      const result = __cloudTestUtils.validateAppData({
          tasks: [{
@@ -130,8 +130,8 @@ describe('cloud server utils', () => {
          areas: [{
              id: 'a1',
              name: 'Area',
-             createdAt: null,
-             updatedAt: null,
+             createdAt: iso,
+             updatedAt: iso,
              deletedAt: null,
          }],
      });
@@ -142,6 +142,50 @@ describe('cloud server utils', () => {
         expect(__cloudTestUtils.asStatus('reference')).toBe('reference');
         expect(__cloudTestUtils.asStatus('todo')).toBeNull();
         expect(__cloudTestUtils.asStatus('in-progress')).toBeNull();
+    });
+
+    test('validates settings.attachments.pendingRemoteDeletes structure', () => {
+        const iso = '2024-01-01T00:00:00.000Z';
+        const base = {
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+        };
+        const valid = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{
+                        cloudKey: 'attachments/file-1.png',
+                        title: 'file-1',
+                        attempts: 2,
+                        lastErrorAt: iso,
+                    }],
+                },
+            },
+        });
+        expect(valid.ok).toBe(true);
+
+        const invalidCloudKey = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{ cloudKey: '../escape' }],
+                },
+            },
+        });
+        expect(invalidCloudKey.ok).toBe(false);
+
+        const invalidAttempts = __cloudTestUtils.validateAppData({
+            ...base,
+            settings: {
+                attachments: {
+                    pendingRemoteDeletes: [{ cloudKey: 'attachments/file-2.png', attempts: -1 }],
+                },
+            },
+        });
+        expect(invalidAttempts.ok).toBe(false);
     });
 
     test('normalizes rate limit routes for task item endpoints', () => {
@@ -524,6 +568,47 @@ describe('cloud server api', () => {
         const taskIds = new Set((body.tasks as Array<{ id: string }>).map((task) => task.id));
         expect(taskIds.has(taskA.id)).toBe(true);
         expect(taskIds.has(taskB.id)).toBe(true);
+    });
+
+    test('rejects /v1/data merge when existing on-disk state is invalid', async () => {
+        const key = __cloudTestUtils.tokenToKey(integrationToken);
+        const filePath = join(dataDir, `${key}.json`);
+        writeFileSync(filePath, JSON.stringify({
+            tasks: [],
+            projects: [{ id: 'broken-project', title: 'Broken project', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' }],
+            sections: [],
+            areas: [],
+            settings: {},
+        }));
+
+        const response = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                tasks: [{
+                    id: 'valid-task',
+                    title: 'Valid task',
+                    status: 'inbox',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                }],
+                projects: [],
+                sections: [],
+                areas: [],
+                settings: {},
+            }),
+        });
+
+        expect(response.status).toBe(500);
+        const body = await response.json();
+        expect(String(body.error || '')).toContain('Invalid merged data');
+
+        const persisted = JSON.parse(readFileSync(filePath, 'utf8'));
+        expect((persisted.tasks as Array<{ id: string }>).some((task) => task.id === 'valid-task')).toBe(false);
+        expect((persisted.projects as Array<{ id: string }>).some((project) => project.id === 'broken-project')).toBe(true);
     });
 
     test('keeps newer live update over older delete during /v1/data merge', async () => {

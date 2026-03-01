@@ -242,6 +242,12 @@ export const sanitizeAppDataForStorage = (data: AppData): AppData => ({
     settings: stripSensitiveSettings(cloneSettings(data.settings)),
 });
 
+export const getTaskOrder = (task: Pick<Task, 'order' | 'orderNum'>): number | undefined => {
+    if (Number.isFinite(task.order)) return task.order as number;
+    if (Number.isFinite(task.orderNum)) return task.orderNum as number;
+    return undefined;
+};
+
 export const getNextProjectOrder = (
     projectId: string | undefined,
     tasks: Task[],
@@ -251,7 +257,7 @@ export const getNextProjectOrder = (
     let maxOrder = -1;
     for (const task of tasks) {
         if (task.deletedAt || task.projectId !== projectId) continue;
-        const order = Number.isFinite(task.orderNum) ? (task.orderNum as number) : -1;
+        const order = getTaskOrder(task) ?? -1;
         if (order > maxOrder) {
             maxOrder = order;
         }

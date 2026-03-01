@@ -10,6 +10,7 @@ Mindwtr is a cross-platform GTD application with:
 
 - **Desktop app** — Tauri v2 (Rust + React)
 - **Mobile app** — React Native + Expo
+- **MCP server** — local Model Context Protocol bridge for AI tooling
 - **Cloud Sync** — Node.js (Bun) sync server
 - **Shared core** — TypeScript business logic package
 
@@ -50,6 +51,7 @@ flowchart LR
     Sync --> WebDAV["WebDAV"]
     Sync --> File["File Sync"]
     Sync --> Cloud["Self-hosted Cloud"]
+    MCP["MCP Server<br/>mindwtr-mcp-server"] --> Core
 ```
 
 ---
@@ -63,6 +65,7 @@ Mindwtr/
 ├── apps/
 │   ├── cloud/           # Sync server (Bun)
 │   ├── desktop/         # Tauri app
+│   ├── mcp-server/      # Local MCP server
 │   └── mobile/          # Expo app
 ├── packages/
 │   └── core/            # Shared business logic

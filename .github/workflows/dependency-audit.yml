@@ -33,7 +33,12 @@ jobs:
         run: bun install
 
       - name: Audit Bun dependencies
-        run: bun audit
+        run: |
+          set -euo pipefail
+          if ! bun audit; then
+            echo "bun audit reported vulnerabilities or failed." >&2
+            exit 1
+          fi
 
   cargo-audit:
     runs-on: ubuntu-latest
@@ -49,4 +54,9 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit Rust dependencies
-        run: cargo audit --file apps/desktop/src-tauri/Cargo.lock
+        run: |
+          set -euo pipefail
+          if ! cargo audit --deny warnings --file apps/desktop/src-tauri/Cargo.lock; then
+            echo "cargo audit reported vulnerabilities or warnings, or failed." >&2
+            exit 1
+          fi

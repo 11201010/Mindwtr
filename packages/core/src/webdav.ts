@@ -75,6 +75,7 @@ function buildHeaders(options: WebDavOptions): Record<string, string> {
 const WEBDAV_HTTPS_ERROR = 'WebDAV requires HTTPS for public URLs (HTTP allowed for localhost/private IPs).';
 const WEBDAV_INSECURE_OPTIONS = { allowAndroidEmulatorInDev: true, allowPrivateIpRanges: true };
 const WEBDAV_TIMEOUT_ERROR = 'WebDAV request timed out';
+const UTF8_BOM = '\uFEFF';
 
 export async function webdavGetJson<T>(
     url: string,
@@ -102,8 +103,10 @@ export async function webdavGetJson<T>(
     }
 
     const text = await res.text();
+    const normalizedBody = text.startsWith(UTF8_BOM) ? text.slice(1).trim() : text.trim();
+    if (!normalizedBody) return null;
     try {
-        return JSON.parse(text) as T;
+        return JSON.parse(normalizedBody) as T;
     } catch (error) {
         throw new Error(`WebDAV GET failed: invalid JSON (${(error as Error).message})`);
     }

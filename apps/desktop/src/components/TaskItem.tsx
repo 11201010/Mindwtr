@@ -2,6 +2,7 @@ import { useState, memo, useEffect, useRef, useCallback, useMemo, type ReactNode
 import {
     DEFAULT_PROJECT_COLOR,
     Task,
+    TaskStatus,
     TaskEditorFieldId,
     type Recurrence,
     parseRRuleString,
@@ -102,7 +103,15 @@ export const TaskItem = memo(function TaskItem({
         lockEditing,
         unlockEditing,
     } = useTaskItemStoreState();
-    const { setProjectView, editingTaskId, setEditingTaskId, showToast } = useTaskItemUiState();
+    const {
+        setProjectView,
+        editingTaskId,
+        setEditingTaskId,
+        isTaskExpanded,
+        setTaskExpanded,
+        toggleTaskExpanded,
+        showToast,
+    } = useTaskItemUiState(task.id);
     const setSelectedProjectId = useCallback(
         (value: string | null) => setProjectView({ selectedProjectId: value }),
         [setProjectView]
@@ -183,12 +192,12 @@ export const TaskItem = memo(function TaskItem({
         task,
         resetAttachmentState,
     });
-    const [isViewOpen, setIsViewOpen] = useState(false);
     const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [showWaitingDuePrompt, setShowWaitingDuePrompt] = useState(false);
     const prioritiesEnabled = settings?.features?.priorities === true;
     const timeEstimatesEnabled = settings?.features?.timeEstimates === true;
+    const undoNotificationsEnabled = settings?.undoNotificationsEnabled !== false;
     const isCompact = settings?.appearance?.density === 'compact';
     const isHighlighted = highlightTaskId === task.id;
     const recurrenceRule = getRecurrenceRuleValue(task.recurrence);
@@ -311,11 +320,11 @@ export const TaskItem = memo(function TaskItem({
     const startEditing = useCallback(() => {
         if (effectiveReadOnly || isEditing) return;
         resetEditState();
-        setIsViewOpen(false);
+        setTaskExpanded(task.id, false);
         setAutoFocusTitle(true);
         setIsEditing(true);
         setEditingTaskId(task.id);
-    }, [effectiveReadOnly, isEditing, resetEditState, setEditingTaskId, task.id]);
+    }, [effectiveReadOnly, isEditing, resetEditState, setEditingTaskId, setTaskExpanded, task.id]);
 
     const handleCreateProject = useCallback(async (title: string) => {
         const trimmed = title.trim();
@@ -503,10 +512,10 @@ export const TaskItem = memo(function TaskItem({
     useEffect(() => {
         if (isEditing) return;
         if (editingTaskId === task.id && !effectiveReadOnly) {
-            setIsViewOpen(false);
+            setTaskExpanded(task.id, false);
             setIsEditing(true);
         }
-    }, [editingTaskId, effectiveReadOnly, isEditing, task.id]);
+    }, [editingTaskId, effectiveReadOnly, isEditing, setTaskExpanded, task.id]);
 
     useEffect(() => {
         if (!isEditing) return;
@@ -517,9 +526,9 @@ export const TaskItem = memo(function TaskItem({
 
     useEffect(() => {
         if (isEditing) {
-            setIsViewOpen(false);
+            setTaskExpanded(task.id, false);
         }
-    }, [isEditing]);
+    }, [isEditing, setTaskExpanded, task.id]);
 
     useEffect(() => {
         if (!isEditing) return;
@@ -540,7 +549,11 @@ export const TaskItem = memo(function TaskItem({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const { title: parsedTitle, props: parsedProps, projectTitle } = parseQuickAdd(editTitle, projects, new Date(), areas);
+        const { title: parsedTitle, props: parsedProps, projectTitle, invalidDateCommands } = parseQuickAdd(editTitle, projects, new Date(), areas);
+        if (invalidDateCommands && invalidDateCommands.length > 0) {
+            showToast(`Invalid date command: ${invalidDateCommands.join(', ')}`, 'error');
+            return;
+        }
         const cleanedTitle = parsedTitle.trim() ? parsedTitle : task.title;
         if (!cleanedTitle.trim()) return;
 
@@ -654,6 +667,25 @@ export const TaskItem = memo(function TaskItem({
     const handleMoveToWaitingWithPrompt = useCallback(() => {
         setShowWaitingDuePrompt(true);
     }, []);
+    const handleStatusChange = useCallback((nextStatus: TaskStatus) => {
+        const previousStatus = task.status;
+        void moveTask(task.id, nextStatus)
+            .then(() => {
+                if (!undoNotificationsEnabled || nextStatus !== 'done' || previousStatus === 'done') return;
+                showToast(
+                    `${task.title} marked Done`,
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            void moveTask(task.id, previousStatus);
+                        },
+                    }
+                );
+            })
+            .catch((error) => reportError('Failed to change task status', error));
+    }, [moveTask, showToast, task.id, task.status, task.title, undoNotificationsEnabled]);
     const hasPendingEdits = useCallback(() => {
         if (editTitle !== task.title) return true;
         if (editDescription !== (task.description || '')) return true;
@@ -730,6 +762,16 @@ export const TaskItem = memo(function TaskItem({
         }
         handleDiscardChanges();
     }, [handleDiscardChanges, hasPendingEdits]);
+    useEffect(() => {
+        if (!isEditing) return;
+        const handleGlobalCancel = (event: Event) => {
+            const detail = (event as CustomEvent<{ taskId?: string }>).detail;
+            if (detail?.taskId && detail.taskId !== task.id) return;
+            handleEditorCancel();
+        };
+        window.addEventListener('mindwtr:cancel-task-edit', handleGlobalCancel);
+        return () => window.removeEventListener('mindwtr:cancel-task-edit', handleGlobalCancel);
+    }, [handleEditorCancel, isEditing, task.id]);
     const renderEditor = () => (
         <TaskItemEditor
             t={t}
@@ -857,14 +899,14 @@ export const TaskItem = memo(function TaskItem({
                             area={taskArea}
                             projectColor={projectColor}
                             selectionMode={selectionMode}
-                            isViewOpen={isViewOpen}
+                            isViewOpen={isTaskExpanded}
                             actions={{
                                 onToggleSelect,
-                                onToggleView: () => setIsViewOpen((prev) => !prev),
+                                onToggleView: () => toggleTaskExpanded(task.id),
                                 onEdit: startEditing,
                                 onDelete: () => setShowDeleteConfirm(true),
                                 onDuplicate: () => duplicateTask(task.id, false),
-                                onStatusChange: (status) => moveTask(task.id, status),
+                                onStatusChange: handleStatusChange,
                                 onMoveToWaitingWithPrompt: handleMoveToWaitingWithPrompt,
                                 onOpenProject: project ? handleOpenProject : undefined,
                                 openAttachment,
@@ -1018,14 +1060,14 @@ export const TaskItem = memo(function TaskItem({
                     onConfirm={() => {
                         setShowDeleteConfirm(false);
                         void deleteTask(task.id);
-                        const restoreLabel = resolveText('trash.restoreToInbox', 'Restore');
                         const deletedMessage = resolveText('task.aria.delete', 'Task deleted');
+                        if (!undoNotificationsEnabled) return;
                         showToast(
                             deletedMessage,
                             'info',
                             5000,
                             {
-                                label: restoreLabel,
+                                label: 'Undo',
                                 onClick: () => {
                                     void restoreTask(task.id);
                                 },

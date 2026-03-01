@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import { TaskItem } from '../components/TaskItem';
 import { Task, configureDateFormatting, safeFormatDate } from '@mindwtr/core';
 import { LanguageProvider } from '../contexts/language-context';
+import { useUiStore } from '../store/ui-store';
 
 const mockTask: Task = {
     id: '1',
@@ -15,6 +16,13 @@ const mockTask: Task = {
 };
 
 describe('TaskItem', () => {
+    beforeEach(() => {
+        useUiStore.setState({
+            editingTaskId: null,
+            expandedTaskIds: {},
+        });
+    });
+
     it('renders task title', () => {
         const { getByText } = render(
             <LanguageProvider>
@@ -114,5 +122,35 @@ describe('TaskItem', () => {
         expect(getByText('Set follow-up / review date')).toBeInTheDocument();
         expect(container.querySelector('input[type="date"]')).toBeTruthy();
         expect(getByRole('button', { name: /skip/i })).toBeInTheDocument();
+    });
+
+    it('keeps details expanded after remount for the same task id', () => {
+        const checklistTask: Task = {
+            ...mockTask,
+            id: 'checklist-task',
+            checklist: [{ id: 'item-1', title: 'Checklist item', isCompleted: false }],
+        };
+        const firstRender = render(
+            <LanguageProvider>
+                <TaskItem task={checklistTask} />
+            </LanguageProvider>
+        );
+
+        fireEvent.click(firstRender.getByRole('button', { name: /toggle task details/i }));
+        expect(firstRender.getByText('Checklist item')).toBeInTheDocument();
+        firstRender.unmount();
+
+        const updatedTask: Task = {
+            ...checklistTask,
+            checklist: [{ id: 'item-1', title: 'Checklist item', isCompleted: true }],
+            updatedAt: new Date(Date.now() + 1_000).toISOString(),
+        };
+        const secondRender = render(
+            <LanguageProvider>
+                <TaskItem task={updatedTask} />
+            </LanguageProvider>
+        );
+
+        expect(secondRender.getByText('Checklist item')).toBeInTheDocument();
     });
 });

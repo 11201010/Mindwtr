@@ -54,7 +54,6 @@ import { TaskEditAreaPicker } from './task-edit/TaskEditAreaPicker';
 import { TaskEditSectionPicker } from './task-edit/TaskEditSectionPicker';
 import {
     MAX_SUGGESTED_TAGS,
-    MAX_VISIBLE_SUGGESTIONS,
     WEEKDAY_ORDER,
     WEEKDAY_BUTTONS,
     MONTHLY_WEEKDAY_LABELS,
@@ -74,15 +73,14 @@ import {
     isValidLinkUri,
     logTaskError,
     logTaskWarn,
-    QUICK_TOKEN_LIMIT,
     STATUS_OPTIONS,
 } from './task-edit/task-edit-modal.utils';
 import {
     applyMarkdownChecklistToTask,
-    getActiveTokenQuery,
     parseTokenList,
     replaceTrailingToken,
 } from './task-edit/task-edit-token-utils';
+import { useTaskTokenSuggestions } from './task-edit/use-task-token-suggestions';
 
 
 interface TaskEditModalProps {
@@ -158,6 +156,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
     const [showProjectPicker, setShowProjectPicker] = useState(false);
     const [showSectionPicker, setShowSectionPicker] = useState(false);
     const [linkInput, setLinkInput] = useState('');
+    const [linkInputTouched, setLinkInputTouched] = useState(false);
     const [customWeekdays, setCustomWeekdays] = useState<RecurrenceWeekday[]>([]);
     const [isAIWorking, setIsAIWorking] = useState(false);
     const [aiModal, setAiModal] = useState<{ title: string; message?: string; actions: AIResponseAction[] } | null>(null);
@@ -215,66 +214,25 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         setEditedTask,
     });
 
-    const contextSuggestionPool = useMemo(() => {
-        const taskContexts = tasks.flatMap((item) => item.contexts || []);
-        return Array.from(new Set([...(editedTask.contexts ?? []), ...taskContexts]))
-            .filter((item): item is string => Boolean(item?.startsWith('@')));
-    }, [editedTask.contexts, tasks]);
-    const tagSuggestionPool = useMemo(() => {
-        const taskTags = tasks.flatMap((item) => item.tags || []);
-        return Array.from(new Set([...(editedTask.tags ?? []), ...taskTags]))
-            .filter((item): item is string => Boolean(item?.startsWith('#')));
-    }, [editedTask.tags, tasks]);
-
-    const contextTokenQuery = useMemo(
-        () => getActiveTokenQuery(contextInputDraft, '@'),
-        [contextInputDraft]
-    );
-    const tagTokenQuery = useMemo(
-        () => getActiveTokenQuery(tagInputDraft, '#'),
-        [tagInputDraft]
-    );
-    const contextTokenSuggestions = useMemo(() => {
-        if (!contextTokenQuery) return [];
-        const selected = new Set(parseTokenList(contextInputDraft, '@'));
-        return contextSuggestionPool
-            .filter((token) => token.slice(1).toLowerCase().includes(contextTokenQuery))
-            .filter((token) => !selected.has(token))
-            .slice(0, MAX_VISIBLE_SUGGESTIONS);
-    }, [contextInputDraft, contextSuggestionPool, contextTokenQuery]);
-    const tagTokenSuggestions = useMemo(() => {
-        if (!tagTokenQuery) return [];
-        const selected = new Set(parseTokenList(tagInputDraft, '#'));
-        return tagSuggestionPool
-            .filter((token) => token.slice(1).toLowerCase().includes(tagTokenQuery))
-            .filter((token) => !selected.has(token))
-            .slice(0, MAX_VISIBLE_SUGGESTIONS);
-    }, [tagInputDraft, tagSuggestionPool, tagTokenQuery]);
-    const frequentContextSuggestions = useMemo(
-        () => suggestedTags.slice(0, QUICK_TOKEN_LIMIT),
-        [suggestedTags]
-    );
-    const frequentTagSuggestions = useMemo(() => {
-        const counts = new Map<string, number>();
-        tasks.forEach((item) => {
-            item.tags?.forEach((tag) => {
-                if (!tag?.startsWith('#')) return;
-                counts.set(tag, (counts.get(tag) || 0) + 1);
-            });
-        });
-        const sorted = Array.from(counts.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([tag]) => tag);
-        return Array.from(new Set([...sorted, ...PRESET_TAGS])).slice(0, QUICK_TOKEN_LIMIT);
-    }, [tasks]);
-    const selectedContextTokens = useMemo(
-        () => new Set(parseTokenList(contextInputDraft, '@')),
-        [contextInputDraft]
-    );
-    const selectedTagTokens = useMemo(
-        () => new Set(parseTokenList(tagInputDraft, '#')),
-        [tagInputDraft]
-    );
+    const {
+        contextSuggestionPool,
+        tagSuggestionPool,
+        contextTokenQuery,
+        tagTokenQuery,
+        contextTokenSuggestions,
+        tagTokenSuggestions,
+        frequentContextSuggestions,
+        frequentTagSuggestions,
+        selectedContextTokens,
+        selectedTagTokens,
+    } = useTaskTokenSuggestions({
+        tasks,
+        editedContexts: editedTask.contexts,
+        editedTags: editedTask.tags,
+        contextInputDraft,
+        tagInputDraft,
+        suggestedContexts: suggestedTags,
+    });
 
     const resolveInitialTab = (target?: TaskEditTab, currentTask?: Task | null): TaskEditTab => {
         if (target) return target;
@@ -457,7 +415,11 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
             descriptionDebounceRef.current = null;
         }
         const rawTitle = String(titleDraftRef.current ?? '');
-        const { title: parsedTitle, props: parsedProps, projectTitle } = parseQuickAdd(rawTitle, projects, new Date(), areas);
+        const { title: parsedTitle, props: parsedProps, projectTitle, invalidDateCommands } = parseQuickAdd(rawTitle, projects, new Date(), areas);
+        if (invalidDateCommands && invalidDateCommands.length > 0) {
+            Alert.alert(t('common.notice'), `Invalid date command: ${invalidDateCommands.join(', ')}`);
+            return;
+        }
         const existingProjectId = editedTask.projectId ?? task?.projectId;
         const hasProjectCommand = Boolean(parsedProps.projectId || projectTitle);
         let resolvedProjectId = parsedProps.projectId;
@@ -730,6 +692,10 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
     };
 
     const confirmAddLink = () => {
+        if (!linkInput.trim()) {
+            setLinkInputTouched(true);
+            return;
+        }
         const normalized = normalizeLinkAttachmentInput(linkInput);
         if (!normalized.uri || !isValidLinkUri(normalized.uri)) {
             Alert.alert(t('attachments.title'), t('attachments.invalidLink'));
@@ -746,6 +712,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         };
         setEditedTask((prev) => ({ ...prev, attachments: [...(prev.attachments || []), attachment] }));
         setLinkInput('');
+        setLinkInputTouched(false);
         setLinkModalVisible(false);
     };
 
@@ -1907,6 +1874,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                             placeholder={t('taskEdit.contextsPlaceholder')}
                             autoCapitalize="none"
                             placeholderTextColor={tc.secondaryText}
+                            accessibilityLabel={t('taskEdit.contextsLabel')}
+                            accessibilityHint={t('taskEdit.contextsPlaceholder')}
                         />
                         {contextTokenSuggestions.length > 0 && (
                             <View style={[styles.tokenSuggestionsMenu, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
@@ -1964,6 +1933,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                             placeholder={t('taskEdit.tagsPlaceholder')}
                             autoCapitalize="none"
                             placeholderTextColor={tc.secondaryText}
+                            accessibilityLabel={t('taskEdit.tagsLabel')}
+                            accessibilityHint={t('taskEdit.tagsPlaceholder')}
                         />
                         {tagTokenSuggestions.length > 0 && (
                             <View style={[styles.tokenSuggestionsMenu, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
@@ -2131,6 +2102,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                     }}
                                     keyboardType="number-pad"
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                    accessibilityLabel={t('recurrence.repeatEvery')}
+                                    accessibilityHint={t('recurrence.dayUnit')}
                                 />
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.dayUnit')}</Text>
                             </View>
@@ -2330,6 +2303,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                 placeholder={t('taskEdit.descriptionPlaceholder')}
                                 multiline
                                 placeholderTextColor={tc.secondaryText}
+                                accessibilityLabel={t('taskEdit.descriptionLabel')}
+                                accessibilityHint={t('taskEdit.descriptionPlaceholder')}
                             />
                         )}
                     </View>
@@ -2353,7 +2328,10 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                     <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addPhoto')}</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    onPress={() => setLinkModalVisible(true)}
+                                    onPress={() => {
+                                        setLinkInputTouched(false);
+                                        setLinkModalVisible(true);
+                                    }}
                                     style={[styles.smallButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                                 >
                                     <Text style={[styles.smallButtonText, { color: tc.tint }]}>{t('attachments.addLink')}</Text>
@@ -2447,6 +2425,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                         }}
                                         placeholder={t('taskEdit.itemNamePlaceholder')}
                                         placeholderTextColor={tc.secondaryText}
+                                        accessibilityLabel={`${t('taskEdit.checklist')} ${index + 1}`}
+                                        accessibilityHint={t('taskEdit.itemNamePlaceholder')}
                                     />
                                     <TouchableOpacity
                                         onPress={() => {
@@ -2624,28 +2604,44 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                     visible={linkModalVisible}
                     transparent
                     animationType="fade"
-                    onRequestClose={() => setLinkModalVisible(false)}
+                    onRequestClose={() => {
+                        setLinkModalVisible(false);
+                        setLinkInputTouched(false);
+                    }}
                 >
                     <View style={styles.overlay}>
                         <View style={[styles.modalCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
                             <Text style={[styles.modalTitle, { color: tc.text }]}>{t('attachments.addLink')}</Text>
                             <TextInput
                                 value={linkInput}
-                                onChangeText={setLinkInput}
+                                onChangeText={(text) => {
+                                    setLinkInput(text);
+                                    setLinkInputTouched(true);
+                                }}
+                                onBlur={() => setLinkInputTouched(true)}
                                 placeholder={t('attachments.linkPlaceholder')}
                                 placeholderTextColor={tc.secondaryText}
                                 style={[styles.modalInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                 autoCapitalize="none"
                                 autoCorrect={false}
+                                returnKeyType="done"
+                                accessibilityLabel={t('attachments.addLink')}
+                                accessibilityHint={t('attachments.linkInputHint')}
                             />
                             <Text style={[styles.modalLabel, { color: tc.secondaryText, marginTop: 8 }]}>
                                 {t('attachments.linkInputHint')}
                             </Text>
+                            {linkInputTouched && !linkInput.trim() && (
+                                <Text style={[styles.validationText, { color: tc.danger }]}>
+                                    Link is required.
+                                </Text>
+                            )}
                             <View style={styles.modalButtons}>
                                 <TouchableOpacity
                                     onPress={() => {
                                         setLinkModalVisible(false);
                                         setLinkInput('');
+                                        setLinkInputTouched(false);
                                     }}
                                     style={styles.modalButton}
                                 >
@@ -2653,7 +2649,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     onPress={confirmAddLink}
-                                    disabled={!linkInput.trim()}
                                     style={[styles.modalButton, !linkInput.trim() && styles.modalButtonDisabled]}
                                 >
                                     <Text style={[styles.modalButtonText, { color: tc.tint }]}>{t('common.save')}</Text>
@@ -2754,6 +2749,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                     }}
                                     keyboardType="number-pad"
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                    accessibilityLabel={t('recurrence.repeatEvery')}
+                                    accessibilityHint={t('recurrence.monthUnit')}
                                 />
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.monthUnit')}</Text>
                             </View>
@@ -2840,6 +2837,8 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                                             }}
                                             keyboardType="number-pad"
                                             style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
+                                            accessibilityLabel={t('recurrence.onDayOfMonth').replace('{day}', '')}
+                                            accessibilityHint={t('recurrence.monthlyOnDay')}
                                         />
                                     </View>
                                 )}

@@ -76,6 +76,11 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
     const revBy = typeof rawRevBy === 'string' && rawRevBy.trim().length > 0
         ? rawRevBy.trim()
         : undefined;
+    const normalizedOrder = Number.isFinite(task.order)
+        ? (task.order as number)
+        : Number.isFinite((task as Task & { orderNum?: unknown }).orderNum)
+            ? ((task as Task & { orderNum?: number }).orderNum as number)
+            : undefined;
     const next: Task = {
         ...rest,
         createdAt: createdAtIso,
@@ -83,6 +88,8 @@ export function normalizeTaskForLoad(task: Task, nowIso: string = new Date().toI
         status: normalizedStatus,
         projectId,
         areaId: resolvedAreaId,
+        order: normalizedOrder,
+        orderNum: normalizedOrder,
         rev,
         ...(revBy ? { revBy } : {}),
         ...(textDirection ? { textDirection } : {}),
