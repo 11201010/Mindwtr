@@ -19,7 +19,7 @@ const STATUS_OPTIONS: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'do
 
 export function ReviewView() {
     const perf = usePerformanceMonitor('ReviewView');
-    const { tasks, projects, areas, settings, batchMoveTasks, batchDeleteTasks, batchUpdateTasks } = useTaskStore(
+    const { tasks, projects, areas, settings, batchMoveTasks, batchDeleteTasks, batchUpdateTasks, highlightTaskId } = useTaskStore(
         (state) => ({
             tasks: state.tasks,
             projects: state.projects,
@@ -28,6 +28,7 @@ export function ReviewView() {
             batchMoveTasks: state.batchMoveTasks,
             batchDeleteTasks: state.batchDeleteTasks,
             batchUpdateTasks: state.batchUpdateTasks,
+            highlightTaskId: state.highlightTaskId,
         }),
         shallow
     );
@@ -192,6 +193,7 @@ export function ReviewView() {
                     projectMap={projectMap}
                     selectionMode={selectionMode}
                     multiSelectedIds={multiSelectedIds}
+                    highlightTaskId={highlightTaskId}
                     onToggleSelect={toggleMultiSelect}
                     t={t}
                 />
