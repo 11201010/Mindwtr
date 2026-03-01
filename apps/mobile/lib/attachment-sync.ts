@@ -119,6 +119,17 @@ const markAttachmentUnrecoverable = (attachment: Attachment): boolean => {
   return mutated;
 };
 
+const readAttachmentBytesForUpload = async (
+  uri: string
+): Promise<{ data: Uint8Array; readFailed: false } | { data: null; readFailed: true; error: unknown }> => {
+  try {
+    const data = await readFileAsBytes(uri);
+    return { data, readFailed: false };
+  } catch (error) {
+    return { data: null, readFailed: true, error };
+  }
+};
+
 const reportProgress = (
   attachmentId: string,
   operation: 'upload' | 'download',
@@ -871,6 +882,7 @@ export const syncWebdavAttachments = async (
     }
 
     if (!attachment.cloudKey && hasLocalPath && existsLocally && !isHttp) {
+      let localReadFailed = false;
       if (uploadCount >= WEBDAV_ATTACHMENT_MAX_UPLOADS_PER_SYNC) {
         if (!uploadLimitLogged) {
           logAttachmentInfo('WebDAV attachment upload limit reached', {
@@ -885,7 +897,12 @@ export const syncWebdavAttachments = async (
         let size = await getAttachmentByteSize(attachment, uri);
         let fileData: Uint8Array | null = null;
         if (!Number.isFinite(size ?? NaN)) {
-          fileData = await readFileAsBytes(uri);
+          const readResult = await readAttachmentBytesForUpload(uri);
+          if (readResult.readFailed) {
+            localReadFailed = true;
+            throw readResult.error;
+          }
+          fileData = readResult.data;
           size = fileData.byteLength;
         }
         const validation = await validateAttachmentForUpload(attachment, size);
@@ -937,7 +954,15 @@ export const syncWebdavAttachments = async (
             id: attachment.id,
             uri,
           });
-          const uploadData = fileData ?? await readFileAsBytes(uri);
+          let uploadData = fileData;
+          if (!uploadData) {
+            const readResult = await readAttachmentBytesForUpload(uri);
+            if (readResult.readFailed) {
+              localReadFailed = true;
+              throw readResult.error;
+            }
+            uploadData = readResult.data;
+          }
           logAttachmentInfo('WebDAV attachment read done', {
             id: attachment.id,
             bytes: String(uploadData.byteLength),
@@ -986,6 +1011,12 @@ export const syncWebdavAttachments = async (
         if (handleRateLimit(error)) {
           abortedByRateLimit = true;
           break;
+        }
+        if (localReadFailed) {
+          if (markAttachmentUnrecoverable(attachment)) {
+            didMutate = true;
+          }
+          logAttachmentWarn(`Attachment local file is unreadable; marking unrecoverable (${attachment.title})`, error);
         }
         reportProgress(
           attachment.id,
@@ -1125,11 +1156,17 @@ export const syncCloudAttachments = async (
     }
 
     if (!attachment.cloudKey && hasLocalPath && existsLocally && !isHttp) {
+      let localReadFailed = false;
       try {
         let fileSize = await getAttachmentByteSize(attachment, uri);
         let fileData: Uint8Array | null = null;
         if (!Number.isFinite(fileSize ?? NaN)) {
-          fileData = await readFileAsBytes(uri);
+          const readResult = await readAttachmentBytesForUpload(uri);
+          if (readResult.readFailed) {
+            localReadFailed = true;
+            throw readResult.error;
+          }
+          fileData = readResult.data;
           fileSize = fileData.byteLength;
         }
 
@@ -1151,7 +1188,15 @@ export const syncCloudAttachments = async (
           totalBytes
         );
         if (!uploadedWithFileSystem) {
-          const uploadBytes = fileData ?? await readFileAsBytes(uri);
+          let uploadBytes = fileData;
+          if (!uploadBytes) {
+            const readResult = await readAttachmentBytesForUpload(uri);
+            if (readResult.readFailed) {
+              localReadFailed = true;
+              throw readResult.error;
+            }
+            uploadBytes = readResult.data;
+          }
           const buffer = toArrayBuffer(uploadBytes);
           await cloudPutFile(
             uploadUrl,
@@ -1168,6 +1213,12 @@ export const syncCloudAttachments = async (
         didMutate = true;
         reportProgress(attachment.id, 'upload', totalBytes, totalBytes, 'completed');
       } catch (error) {
+        if (localReadFailed) {
+          if (markAttachmentUnrecoverable(attachment)) {
+            didMutate = true;
+          }
+          logAttachmentWarn(`Attachment local file is unreadable; marking unrecoverable (${attachment.title})`, error);
+        }
         reportProgress(
           attachment.id,
           'upload',
@@ -1235,11 +1286,17 @@ export const syncDropboxAttachments = async (
         continue;
       }
       uploadCount += 1;
+      let localReadFailed = false;
       try {
         let fileSize = await getAttachmentByteSize(attachment, uri);
         let fileData: Uint8Array | null = null;
         if (!Number.isFinite(fileSize ?? NaN)) {
-          fileData = await readFileAsBytes(uri);
+          const readResult = await readAttachmentBytesForUpload(uri);
+          if (readResult.readFailed) {
+            localReadFailed = true;
+            throw readResult.error;
+          }
+          fileData = readResult.data;
           fileSize = fileData.byteLength;
         }
 
@@ -1252,7 +1309,15 @@ export const syncDropboxAttachments = async (
         reportProgress(attachment.id, 'upload', 0, totalBytes, 'active');
 
         const cloudKey = buildCloudKey(attachment);
-        const uploadBytes = fileData ?? await readFileAsBytes(uri);
+        let uploadBytes = fileData;
+        if (!uploadBytes) {
+          const readResult = await readAttachmentBytesForUpload(uri);
+          if (readResult.readFailed) {
+            localReadFailed = true;
+            throw readResult.error;
+          }
+          uploadBytes = readResult.data;
+        }
         await runDropboxAuthorized(
           dropboxClientId,
           (accessToken) =>
@@ -1274,6 +1339,12 @@ export const syncDropboxAttachments = async (
         didMutate = true;
         reportProgress(attachment.id, 'upload', totalBytes, totalBytes, 'completed');
       } catch (error) {
+        if (localReadFailed) {
+          if (markAttachmentUnrecoverable(attachment)) {
+            didMutate = true;
+          }
+          logAttachmentWarn(`Attachment local file is unreadable; marking unrecoverable (${attachment.title})`, error);
+        }
         reportProgress(
           attachment.id,
           'upload',
