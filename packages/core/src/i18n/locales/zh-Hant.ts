@@ -759,7 +759,7 @@ export const zhHant: Record<string, string> = {
         'settings.featurePrioritiesDesc': '爲任務顯示優先級標記。',
         'settings.featureTimeEstimates': '時間估算',
         'settings.featureTimeEstimatesDesc': '爲時間管理添加時長估計。',
-        'settings.featurePomodoro': '番茄鍾',
+        'settings.featurePomodoro': '番茄鐘',
         'settings.featurePomodoroDesc': '在聚焦視圖中啓用可選的番茄鐘面板。',
         'settings.resetToDefault': '恢復默認',
         'settings.taskEditorLayout': '任務編輯佈局',
