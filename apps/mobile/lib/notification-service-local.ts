@@ -73,6 +73,7 @@ const LOCAL_DIGEST_EVENING_KEY = 'digest:evening';
 const LOCAL_WEEKLY_REVIEW_KEY = 'digest:weekly-review';
 const LOCAL_TASK_KEY_PREFIX = 'task:';
 const LOCAL_PROJECT_KEY_PREFIX = 'project:';
+const MAX_DUPLICATE_ALARM_RETRIES = 59;
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -169,8 +170,13 @@ async function saveAlarmMap(): Promise<void> {
 
 function toAlarmFireDate(api: AlarmNotificationsApi, date: Date): string {
   const next = new Date(date);
-  next.setSeconds(0, 0);
+  next.setMilliseconds(0);
   return api.parseDate(next);
+}
+
+function isDuplicateAlarmError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes('duplicate alarm set at date');
 }
 
 function nextDailyTime(hour: number, minute: number): Date {
@@ -305,13 +311,15 @@ async function scheduleAlarmForKey(api: AlarmNotificationsApi, key: string, conf
 
   await cancelAlarmByKey(api, key);
 
-  const details: Record<string, unknown> = {
+  const baseFireAt = new Date(config.fireAt);
+  baseFireAt.setMilliseconds(0);
+
+  const detailsBase: Record<string, unknown> = {
     title: config.title,
     message: config.message,
     channel: LOCAL_ALARM_CHANNEL,
     small_icon: LOCAL_SMALL_ICON,
     color: LOCAL_NOTIFICATION_COLOR,
-    fire_date: toAlarmFireDate(api, config.fireAt),
     schedule_type: config.repeatInterval ? 'repeat' : 'once',
     repeat_interval: config.repeatInterval ?? 'hourly',
     interval_value: 1,
@@ -322,14 +330,38 @@ async function scheduleAlarmForKey(api: AlarmNotificationsApi, key: string, conf
     },
   };
 
-  const result = await api.scheduleAlarm(details);
-  const id = Number(result?.id);
-  if (!Number.isFinite(id)) {
-    logNotificationError(`Scheduled alarm returned invalid id for ${key}`);
+  let scheduledId: number | null = null;
+  let lastError: unknown = null;
+
+  for (let retry = 0; retry <= MAX_DUPLICATE_ALARM_RETRIES; retry += 1) {
+    const fireAt = new Date(baseFireAt.getTime() + retry * 1000);
+    try {
+      const result = await api.scheduleAlarm({
+        ...detailsBase,
+        fire_date: toAlarmFireDate(api, fireAt),
+      });
+      const id = Number(result?.id);
+      if (!Number.isFinite(id)) {
+        logNotificationError(`Scheduled alarm returned invalid id for ${key}`);
+        return;
+      }
+      scheduledId = Math.floor(id);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (isDuplicateAlarmError(error) && retry < MAX_DUPLICATE_ALARM_RETRIES) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (scheduledId === null) {
+    logNotificationError(`Failed to schedule alarm for ${key} after duplicate retries`, lastError);
     return;
   }
 
-  alarmMap.set(key, { id: Math.floor(id) });
+  alarmMap.set(key, { id: scheduledId });
   configByKey.set(key, signature);
 }
 
