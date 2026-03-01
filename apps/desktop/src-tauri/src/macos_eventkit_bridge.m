@@ -70,28 +70,38 @@ char *mindwtr_macos_calendar_request_permission_json(void) {
         EKEventStore *store = [[EKEventStore alloc] init];
         __block NSError *requestError = nil;
         dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-        if (@available(macOS 14.0, *)) {
-            [store requestFullAccessToEventsWithCompletion:^(BOOL granted, NSError *_Nullable error) {
-                requestError = error;
-                dispatch_semaphore_signal(semaphore);
-            }];
-        } else {
+        void (^requestBlock)(void) = ^{
+            if (@available(macOS 14.0, *)) {
+                [store requestFullAccessToEventsWithCompletion:^(BOOL granted, NSError *_Nullable error) {
+                    requestError = error;
+                    dispatch_semaphore_signal(semaphore);
+                }];
+            } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [store requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted, NSError *_Nullable error) {
-                requestError = error;
-                dispatch_semaphore_signal(semaphore);
-            }];
+                [store requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted, NSError *_Nullable error) {
+                    requestError = error;
+                    dispatch_semaphore_signal(semaphore);
+                }];
 #pragma clang diagnostic pop
+            }
+        };
+
+        // EventKit permission prompts are more reliable when requested from the main queue.
+        if ([NSThread isMainThread]) {
+            requestBlock();
+        } else {
+            dispatch_sync(dispatch_get_main_queue(), requestBlock);
         }
 
-        dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)));
+        long waitResult = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)));
 
         NSMutableDictionary *payload = [NSMutableDictionary dictionary];
         NSString *status = mindwtr_permission_status_string([EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent]);
         payload[@"status"] = status ?: @"denied";
-        if (requestError) {
+        if (waitResult != 0) {
+            payload[@"error"] = @"permission-request-timeout";
+        } else if (requestError) {
             payload[@"error"] = [requestError localizedDescription] ?: @"permission-request-failed";
         }
         return mindwtr_copy_json(payload);

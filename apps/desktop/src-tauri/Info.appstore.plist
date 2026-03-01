@@ -8,5 +8,7 @@
     <string>public.app-category.productivity</string>
     <key>NSCalendarsUsageDescription</key>
     <string>Mindwtr uses your calendars to show upcoming events during planning and review.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Mindwtr uses your calendars to show upcoming events during planning and review.</string>
 </dict>
 </plist>

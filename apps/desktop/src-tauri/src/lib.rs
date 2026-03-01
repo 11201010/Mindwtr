@@ -3432,12 +3432,16 @@ fn get_macos_calendar_permission_status() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn request_macos_calendar_permission() -> Result<String, String> {
+async fn request_macos_calendar_permission() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let value = parse_macos_eventkit_json(unsafe {
-            mindwtr_macos_calendar_request_permission_json()
-        })?;
+        let value = tauri::async_runtime::spawn_blocking(|| {
+            parse_macos_eventkit_json(unsafe {
+                mindwtr_macos_calendar_request_permission_json()
+            })
+        })
+        .await
+        .map_err(|error| format!("EventKit permission request task failed: {error}"))??;
         let status = value
             .get("status")
             .and_then(|item| item.as_str())
