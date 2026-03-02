@@ -48,6 +48,7 @@ const DB_FILE_NAME: &str = "mindwtr.db";
 const SNAPSHOT_DIR_NAME: &str = "snapshots";
 const SNAPSHOT_RETENTION_MAX_COUNT: usize = 5;
 const SNAPSHOT_RETENTION_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
+const SNAPSHOT_RETENTION_RECENT_COUNT: usize = 2;
 const KEYRING_WEB_DAV_PASSWORD: &str = "webdav_password";
 const KEYRING_CLOUD_TOKEN: &str = "cloud_token";
 const KEYRING_DROPBOX_TOKENS: &str = "dropbox_tokens";
@@ -2780,22 +2781,97 @@ fn list_snapshot_entries(snapshot_dir: &Path) -> Vec<(String, PathBuf, SystemTim
 
 fn prune_data_snapshots(snapshot_dir: &Path) {
     let now = SystemTime::now();
-    let max_age = Duration::from_secs(SNAPSHOT_RETENTION_MAX_AGE_SECS);
+    let max_age_secs = SNAPSHOT_RETENTION_MAX_AGE_SECS;
     let entries = list_snapshot_entries(snapshot_dir);
-    let mut retained = 0usize;
-    for (_, path, modified) in entries {
-        let is_older_than_limit = now
+
+    let mut fresh: Vec<(String, PathBuf, u64)> = Vec::new();
+    for (name, path, modified) in entries {
+        let age_secs = now
             .duration_since(modified)
-            .map(|age| age > max_age)
-            .unwrap_or(false);
-        if is_older_than_limit {
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs();
+        if age_secs > max_age_secs {
             let _ = fs::remove_file(&path);
             continue;
         }
-        retained += 1;
-        if retained > SNAPSHOT_RETENTION_MAX_COUNT {
+        fresh.push((name, path, age_secs));
+    }
+
+    if fresh.len() <= SNAPSHOT_RETENTION_MAX_COUNT {
+        return;
+    }
+
+    // Strategy: keep the latest few snapshots, then spread remaining slots across
+    // the retention window so snapshots represent different points in time.
+    let recent_keep = SNAPSHOT_RETENTION_RECENT_COUNT
+        .min(SNAPSHOT_RETENTION_MAX_COUNT)
+        .min(fresh.len());
+    let mut keep = vec![false; fresh.len()];
+    let mut kept_count = 0usize;
+    for flag in keep.iter_mut().take(recent_keep) {
+        *flag = true;
+        kept_count += 1;
+    }
+
+    let extra_slots = SNAPSHOT_RETENTION_MAX_COUNT.saturating_sub(recent_keep);
+    if extra_slots > 0 {
+        for slot in 1..=extra_slots {
+            let target_age = (slot as u64 * max_age_secs) / (extra_slots as u64);
+            let mut best_index: Option<usize> = None;
+            let mut best_distance = u64::MAX;
+            for (index, (_, _, age_secs)) in fresh.iter().enumerate() {
+                if keep[index] {
+                    continue;
+                }
+                let distance = age_secs.abs_diff(target_age);
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_index = Some(index);
+                }
+            }
+            if let Some(index) = best_index {
+                keep[index] = true;
+                kept_count += 1;
+            }
+        }
+    }
+
+    // If selection is still short (sparse history), fill from the oldest entries.
+    if kept_count < SNAPSHOT_RETENTION_MAX_COUNT {
+        for index in (0..fresh.len()).rev() {
+            if keep[index] {
+                continue;
+            }
+            keep[index] = true;
+            kept_count += 1;
+            if kept_count >= SNAPSHOT_RETENTION_MAX_COUNT {
+                break;
+            }
+        }
+    }
+
+    for (index, (_, path, _)) in fresh.into_iter().enumerate() {
+        if !keep[index] {
             let _ = fs::remove_file(&path);
         }
+    }
+}
+
+fn files_are_identical(left: &Path, right: &Path) -> bool {
+    let left_meta = match fs::metadata(left) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    let right_meta = match fs::metadata(right) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    if left_meta.len() != right_meta.len() {
+        return false;
+    }
+    match (fs::read(left), fs::read(right)) {
+        (Ok(left_bytes), Ok(right_bytes)) => left_bytes == right_bytes,
+        _ => false,
     }
 }
 
@@ -2808,6 +2884,12 @@ fn create_data_snapshot(app: tauri::AppHandle) -> Result<String, String> {
     }
     let snapshot_dir = get_snapshot_dir(&app)?;
     fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
+    if let Some((latest_name, latest_path, _)) = list_snapshot_entries(&snapshot_dir).first() {
+        if files_are_identical(&data_path, latest_path) {
+            prune_data_snapshots(&snapshot_dir);
+            return Ok(latest_name.clone());
+        }
+    }
     let now = OffsetDateTime::now_utc();
     let file_name = format_snapshot_file_name(now);
     let snapshot_path = snapshot_dir.join(&file_name);
