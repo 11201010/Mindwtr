@@ -299,7 +299,7 @@ export const zhHans: Record<string, string> = {
         'board.done': '已完成',
         'board.noTasks': '没有任务',
         'board.hint': '长按拖动 • 左滑删除',
-        'board.dragTask': 'Drag task',
+        'board.dragTask': '拖动任务',
         'board.delete': '删除',
         'calendar.title': '日历',
         'calendar.addTask': '添加新任务...',
