@@ -1048,4 +1048,6 @@ export const zhHant: Record<string, string> = {
         'settings.linuxUpdateHint': '在 Linux 上，Mindwtr 無法自動安裝更新。下載後，透過套件管理器（例如 yay -S mindwtr 或 paru -S mindwtr）或下載的套件進行安裝。',
         'settings.saved': '設定已儲存',
         'settings.selectSyncFolderTitle': '選擇同步資料夾',
+        'settings.undoNotifications': '撤銷通知',
+        'settings.undoNotificationsDesc': '在將任務標記為已完成或删除後顯示可撤銷提示。'
 };
