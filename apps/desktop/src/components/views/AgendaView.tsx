@@ -288,12 +288,20 @@ export function AgendaView() {
             }
             return true;
         });
+        const starting = filteredActiveTasks.filter((task) => {
+            if (task.isFocusedToday) return false;
+            if (task.status === 'next') return false;
+            if (task.dueDate) return false;
+            const startDate = safeParseDate(task.startTime);
+            return Boolean(startDate && startDate <= endOfToday);
+        });
 
         const reviewDue = reviewDueCandidates.filter(t => !t.isFocusedToday);
 
         return {
             overdue: sortWith(overdue, (task) => safeParseDueDate(task.dueDate)?.getTime() ?? Number.POSITIVE_INFINITY),
             dueToday: sortWith(dueToday, (task) => safeParseDueDate(task.dueDate)?.getTime() ?? Number.POSITIVE_INFINITY),
+            starting: sortWith(starting, (task) => safeParseDate(task.startTime)?.getTime() ?? Number.POSITIVE_INFINITY),
             nextActions: sortByProjectOrder(nextActions),
             reviewDue: sortWith(reviewDue, (task) => safeParseDate(task.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY),
         };
@@ -301,7 +309,7 @@ export function AgendaView() {
     const focusedCount = focusedTasks.length;
     const { top3Tasks, remainingCount } = useMemo(() => {
         const byId = new Map<string, Task>();
-        [...sections.overdue, ...sections.dueToday, ...sections.nextActions, ...sections.reviewDue].forEach((task) => {
+        [...sections.overdue, ...sections.dueToday, ...sections.starting, ...sections.nextActions, ...sections.reviewDue].forEach((task) => {
             byId.set(task.id, task);
         });
         const candidates = Array.from(byId.values());
@@ -675,6 +683,13 @@ export function AgendaView() {
                             icon={Calendar}
                             tasks={sections.dueToday}
                             color="text-yellow-600"
+                        />
+
+                        <Section
+                            title={t('agenda.starting')}
+                            icon={Clock}
+                            tasks={sections.starting}
+                            color="text-teal-600"
                         />
 
                         <Section

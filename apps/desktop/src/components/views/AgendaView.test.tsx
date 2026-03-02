@@ -51,4 +51,35 @@ describe('AgendaView', () => {
 
         expect(getByText('Checklist item')).toBeInTheDocument();
     });
+
+    it('shows non-next tasks with start time today in Starting / Available', () => {
+        const now = new Date();
+        const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0, 0).toISOString();
+        const startTodayTask: Task = {
+            id: 'start-today-task',
+            title: 'Start today inbox task',
+            status: 'inbox',
+            startTime: startToday,
+            tags: [],
+            contexts: [],
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        };
+
+        useTaskStore.setState({
+            tasks: [startTodayTask],
+            _allTasks: [startTodayTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: {},
+            highlightTaskId: null,
+        });
+
+        const { getByRole, getByText } = renderAgenda();
+
+        expect(getByRole('heading', { name: /starting \/ available/i })).toBeInTheDocument();
+        expect(getByText('Start today inbox task')).toBeInTheDocument();
+    });
 });
