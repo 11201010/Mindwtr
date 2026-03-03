@@ -313,10 +313,15 @@ export const purgeExpiredTombstones = (
     data: AppData,
     nowIso: string,
     retentionDays?: number
-): { data: AppData; removedTaskTombstones: number; removedAttachmentTombstones: number } => {
+): {
+    data: AppData;
+    removedTaskTombstones: number;
+    removedAttachmentTombstones: number;
+    removedPendingRemoteDeletes: number;
+} => {
     const nowMs = Date.parse(nowIso);
     if (!Number.isFinite(nowMs)) {
-        return { data, removedTaskTombstones: 0, removedAttachmentTombstones: 0 };
+        return { data, removedTaskTombstones: 0, removedAttachmentTombstones: 0, removedPendingRemoteDeletes: 0 };
     }
     const keepDays = resolveTombstoneRetentionDays(retentionDays);
     const cutoffMs = nowMs - keepDays * 24 * 60 * 60 * 1000;
@@ -344,15 +349,40 @@ export const purgeExpiredTombstones = (
         removedAttachmentTombstones += pruned.removed;
         return pruned.removed > 0 ? { ...project, attachments: pruned.next } : project;
     });
+    const previousPendingRemoteDeletes = data.settings.attachments?.pendingRemoteDeletes;
+    let removedPendingRemoteDeletes = 0;
+    const nextPendingRemoteDeletes = previousPendingRemoteDeletes?.filter((entry) => {
+        const lastErrorMs = parseTimestampOrInfinity(entry.lastErrorAt);
+        const expired = Number.isFinite(lastErrorMs) && lastErrorMs <= cutoffMs;
+        if (expired) {
+            removedPendingRemoteDeletes += 1;
+            return false;
+        }
+        return true;
+    });
+    const hasPendingChanged = removedPendingRemoteDeletes > 0;
+    const nextSettings = hasPendingChanged
+        ? {
+            ...data.settings,
+            attachments: {
+                ...data.settings.attachments,
+                pendingRemoteDeletes: nextPendingRemoteDeletes && nextPendingRemoteDeletes.length > 0
+                    ? nextPendingRemoteDeletes
+                    : undefined,
+            },
+        }
+        : data.settings;
 
     return {
         data: {
             ...data,
             tasks: nextTasks,
             projects: nextProjects,
+            settings: nextSettings,
         },
         removedTaskTombstones,
         removedAttachmentTombstones,
+        removedPendingRemoteDeletes,
     };
 };
 
@@ -1220,12 +1250,13 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         },
     };
     const pruned = purgeExpiredTombstones(nextMergedData, nowIso, io.tombstoneRetentionDays);
-    if (pruned.removedTaskTombstones > 0 || pruned.removedAttachmentTombstones > 0) {
+    if (pruned.removedTaskTombstones > 0 || pruned.removedAttachmentTombstones > 0 || pruned.removedPendingRemoteDeletes > 0) {
         logWarn('Purged expired sync tombstones', {
             scope: 'sync',
             context: {
                 removedTaskTombstones: pruned.removedTaskTombstones,
                 removedAttachmentTombstones: pruned.removedAttachmentTombstones,
+                removedPendingRemoteDeletes: pruned.removedPendingRemoteDeletes,
             },
         });
     }

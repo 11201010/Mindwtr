@@ -1251,8 +1251,26 @@ describe('Sync Logic', () => {
                 }],
             } as Task;
 
+            const base = mockAppData([oldPurgedTask, oldDeletedTask, taskWithDeletedAttachment]);
+            base.settings = {
+                attachments: {
+                    pendingRemoteDeletes: [
+                        {
+                            cloudKey: 'attachments/stale.bin',
+                            attempts: 5,
+                            lastErrorAt: '2025-01-01T00:00:00.000Z',
+                        },
+                        {
+                            cloudKey: 'attachments/recent.bin',
+                            attempts: 1,
+                            lastErrorAt: '2025-12-20T00:00:00.000Z',
+                        },
+                    ],
+                },
+            };
+
             await performSyncCycle({
-                readLocal: async () => mockAppData([oldPurgedTask, oldDeletedTask, taskWithDeletedAttachment]),
+                readLocal: async () => base,
                 readRemote: async () => null,
                 writeLocal: async (data) => {
                     saved = data;
@@ -1267,6 +1285,9 @@ describe('Sync Logic', () => {
             const keptTask = saved!.tasks.find((task) => task.id === 'with-deleted-attachment');
             expect(keptTask).toBeTruthy();
             expect(keptTask!.attachments).toBeUndefined();
+            expect(saved!.settings.attachments?.pendingRemoteDeletes?.map((entry) => entry.cloudKey)).toEqual([
+                'attachments/recent.bin',
+            ]);
         });
 
         it('drops expired remote tombstones before merge so live tasks are preserved', async () => {
