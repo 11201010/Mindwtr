@@ -1049,7 +1049,12 @@ export function QuickCaptureSheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <Pressable style={styles.backdrop} onPress={handleClose} />
+      <Pressable
+        style={styles.backdrop}
+        onPress={handleClose}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.close')}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
@@ -1263,7 +1268,12 @@ export function QuickCaptureSheet({
         onRequestClose={() => setShowContextPicker(false)}
       >
         <View style={styles.overlay}>
-          <Pressable style={styles.overlayBackdrop} onPress={() => setShowContextPicker(false)} />
+          <Pressable
+            style={styles.overlayBackdrop}
+            onPress={() => setShowContextPicker(false)}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.close')}
+          />
           <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
             <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('taskEdit.contextsLabel')}</Text>
             <TextInput
@@ -1282,6 +1292,8 @@ export function QuickCaptureSheet({
               <Pressable
                 onPress={addContextFromQuery}
                 style={styles.pickerRow}
+                accessibilityRole="button"
+                accessibilityLabel={`${t('common.add')}: ${parseContextQueryTokens(contextQuery).join(', ')}`}
               >
                 <Text style={[styles.pickerRowText, { color: tc.tint }]}>
                   + {parseContextQueryTokens(contextQuery).join(', ')}
@@ -1297,6 +1309,8 @@ export function QuickCaptureSheet({
                       setContextTags((prev) => prev.filter((item) => item.toLowerCase() !== token.toLowerCase()));
                     }}
                     style={[styles.selectedContextChip, { backgroundColor: tc.filterBg, borderColor: tc.border }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('common.delete')}: ${token}`}
                   >
                     <Text style={[styles.selectedContextChipText, { color: tc.text }]}>{token}</Text>
                   </Pressable>
@@ -1310,6 +1324,8 @@ export function QuickCaptureSheet({
                   setShowContextPicker(false);
                 }}
                 style={styles.pickerRow}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.clear')}
               >
                 <Text style={[styles.pickerRowText, { color: tc.text }]}>{t('common.clear')}</Text>
               </Pressable>
@@ -1332,6 +1348,12 @@ export function QuickCaptureSheet({
                       ? { backgroundColor: tc.filterBg, borderRadius: 8 }
                       : null,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    contextTags.some((item) => item.toLowerCase() === token.toLowerCase())
+                      ? `${t('common.delete')}: ${token}`
+                      : `${t('common.add')}: ${token}`
+                  }
                 >
                   <Text style={[styles.pickerRowText, { color: tc.text }]}>
                     {contextTags.some((item) => item.toLowerCase() === token.toLowerCase()) ? `✓ ${token}` : token}
@@ -1350,7 +1372,12 @@ export function QuickCaptureSheet({
         onRequestClose={() => setShowProjectPicker(false)}
       >
         <View style={styles.overlay}>
-          <Pressable style={styles.overlayBackdrop} onPress={() => setShowProjectPicker(false)} />
+          <Pressable
+            style={styles.overlayBackdrop}
+            onPress={() => setShowProjectPicker(false)}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.close')}
+          />
           <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>            
             <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('taskEdit.projectLabel')}</Text>
             <TextInput
@@ -1371,6 +1398,8 @@ export function QuickCaptureSheet({
                   void submitProjectQuery();
                 }}
                 style={styles.pickerRow}
+                accessibilityRole="button"
+                accessibilityLabel={`${t('projects.create')}: ${projectQuery.trim()}`}
               >
                 <Text style={[styles.pickerRowText, { color: tc.tint }]}>+ {t('projects.create')} &quot;{projectQuery.trim()}&quot;</Text>
               </Pressable>
@@ -1382,6 +1411,8 @@ export function QuickCaptureSheet({
                   setShowProjectPicker(false);
                 }}
                 style={styles.pickerRow}
+                accessibilityRole="button"
+                accessibilityLabel={t('taskEdit.noProjectOption')}
               >
                 <Text style={[styles.pickerRowText, { color: tc.text }]}>{t('taskEdit.noProjectOption')}</Text>
               </Pressable>
@@ -1393,6 +1424,8 @@ export function QuickCaptureSheet({
                     setShowProjectPicker(false);
                   }}
                   style={styles.pickerRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={project.title}
                 >
                   <Text style={[styles.pickerRowText, { color: tc.text }]}>{project.title}</Text>
                 </Pressable>
@@ -1410,7 +1443,12 @@ export function QuickCaptureSheet({
           onRequestClose={() => setShowPriorityPicker(false)}
         >
           <View style={styles.overlay}>
-            <Pressable style={styles.overlayBackdrop} onPress={() => setShowPriorityPicker(false)} />
+            <Pressable
+              style={styles.overlayBackdrop}
+              onPress={() => setShowPriorityPicker(false)}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.close')}
+            />
             <View style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>            
               <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('taskEdit.priorityLabel')}</Text>
               <Pressable
@@ -1419,6 +1457,8 @@ export function QuickCaptureSheet({
                   setShowPriorityPicker(false);
                 }}
                 style={styles.pickerRow}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.clear')}
               >
                 <Text style={[styles.pickerRowText, { color: tc.text }]}>{t('common.clear')}</Text>
               </Pressable>
@@ -1430,6 +1470,8 @@ export function QuickCaptureSheet({
                     setShowPriorityPicker(false);
                   }}
                   style={styles.pickerRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={t(`priority.${option}`)}
                 >
                   <Text style={[styles.pickerRowText, { color: tc.text }]}>{t(`priority.${option}`)}</Text>
                 </Pressable>
