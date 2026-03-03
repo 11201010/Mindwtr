@@ -578,6 +578,46 @@ describe('Sync Logic', () => {
             expect(result.stats.tasks.conflictIds).toHaveLength(0);
         });
 
+        it('does not count conflict when only revBy differs', () => {
+            const localTask = {
+                ...createMockTask('1', '2023-01-02T00:05:00.000Z'),
+                rev: 7,
+                revBy: 'device-a',
+            } satisfies Task;
+            const incomingTask = {
+                ...createMockTask('1', '2023-01-02T00:05:00.000Z'),
+                rev: 7,
+                revBy: 'device-z',
+            } satisfies Task;
+
+            const result = mergeAppDataWithStats(mockAppData([localTask]), mockAppData([incomingTask]));
+
+            expect(result.data.tasks).toHaveLength(1);
+            expect(result.stats.tasks.conflicts).toBe(0);
+            expect(result.stats.tasks.conflictIds).toHaveLength(0);
+        });
+
+        it('counts conflict when revBy differs and content differs', () => {
+            const localTask = {
+                ...createMockTask('1', '2023-01-02T00:05:00.000Z'),
+                title: 'omega',
+                rev: 7,
+                revBy: 'device-a',
+            } satisfies Task;
+            const incomingTask = {
+                ...createMockTask('1', '2023-01-02T00:05:00.000Z'),
+                title: 'alpha',
+                rev: 7,
+                revBy: 'device-z',
+            } satisfies Task;
+
+            const result = mergeAppDataWithStats(mockAppData([localTask]), mockAppData([incomingTask]));
+
+            expect(result.data.tasks).toHaveLength(1);
+            expect(result.stats.tasks.conflicts).toBe(1);
+            expect(result.stats.tasks.conflictIds).toContain('1');
+        });
+
         it('resolves equal revision/timestamp conflicts consistently across sync direction', () => {
             const localTask = {
                 ...createMockTask('1', '2023-01-02T00:05:00.000Z'),

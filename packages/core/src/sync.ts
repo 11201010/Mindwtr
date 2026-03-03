@@ -844,12 +844,12 @@ function mergeEntitiesWithStats<T extends { id: string; updatedAt: string; delet
         const revDiff = localRev - incomingRev;
         const revByDiff = localRevBy !== incomingRevBy;
         const shouldCheckContentDiff = hasRevision
-            ? revDiff === 0 && !revByDiff && localDeleted === incomingDeleted
+            ? revDiff === 0 && localDeleted === incomingDeleted
             : localDeleted === incomingDeleted;
         const contentDiff = shouldCheckContentDiff ? hasContentDifference(normalizedLocalItem, normalizedIncomingItem) : false;
 
         const differs = hasRevision
-            ? revDiff !== 0 || revByDiff || localDeleted !== incomingDeleted || contentDiff
+            ? revDiff !== 0 || localDeleted !== incomingDeleted || contentDiff
             : localDeleted !== incomingDeleted || contentDiff;
 
         if (differs) {
