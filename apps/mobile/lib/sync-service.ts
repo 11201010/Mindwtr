@@ -416,6 +416,134 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
         }
         logSyncWarning('Attachment pre-sync warning', error);
       }
+
+      const readRemoteDataByBackend = async (): Promise<AppData | null> => {
+        await ensureNetworkStillAvailable();
+        if (backend === 'webdav' && webdavConfig?.url) {
+          try {
+            const data = await withRetry(
+              () =>
+                webdavGetJson<AppData>(webdavConfig.url, {
+                  username: webdavConfig.username,
+                  password: webdavConfig.password,
+                  timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+                  fetcher: fetchWithAbort,
+                }),
+              WEBDAV_READ_RETRY_OPTIONS
+            );
+            webdavRemoteCorrupted = false;
+            remoteDataForCompare = data ?? null;
+            return data;
+          } catch (error) {
+            if (isWebdavInvalidJsonError(error)) {
+              webdavRemoteCorrupted = true;
+              remoteDataForCompare = null;
+              logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
+              return null;
+            }
+            throw error;
+          }
+        }
+        if (backend === 'cloud' && cloudConfig?.url) {
+          const data = await cloudGetJson<AppData>(cloudConfig.url, {
+            token: cloudConfig.token,
+            timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+            fetcher: fetchWithAbort,
+          });
+          remoteDataForCompare = data ?? null;
+          return data;
+        }
+        if (backend === 'cloud' && cloudProvider === CLOUD_PROVIDER_DROPBOX) {
+          const { data, rev } = await runDropboxOperation((accessToken) =>
+            downloadDropboxAppData(accessToken, fetchWithAbort)
+          );
+          dropboxLastRev = rev;
+          if (rev) {
+            await AsyncStorage.setItem(DROPBOX_LAST_REV_KEY, rev);
+            syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: rev, readAt: Date.now() });
+          } else {
+            await AsyncStorage.removeItem(DROPBOX_LAST_REV_KEY);
+            syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: null, readAt: Date.now() });
+          }
+          remoteDataForCompare = data ?? null;
+          return data;
+        }
+        if (!fileSyncPath) {
+          throw new Error('No sync folder configured');
+        }
+        const data = await readSyncFile(fileSyncPath);
+        remoteDataForCompare = data ?? null;
+        return data;
+      };
+
+      const writeRemoteDataByBackend = async (data: AppData): Promise<void> => {
+        await ensureNetworkStillAvailable();
+        assertNoPendingAttachmentUploads(data);
+        const sanitized = sanitizeAppDataForRemote(data);
+        const remoteSanitized = remoteDataForCompare
+          ? sanitizeAppDataForRemote(remoteDataForCompare)
+          : null;
+        if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
+          return;
+        }
+        if (backend === 'webdav') {
+          if (!webdavConfig?.url) throw new Error('WebDAV URL not configured');
+          if (webdavRemoteCorrupted) {
+            logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+          }
+          await withRetry(
+            () =>
+              webdavPutJson(webdavConfig.url, sanitized, {
+                username: webdavConfig.username,
+                password: webdavConfig.password,
+                timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+                fetcher: fetchWithAbort,
+              }),
+            WEBDAV_RETRY_OPTIONS
+          );
+          remoteDataForCompare = sanitized;
+          webdavRemoteCorrupted = false;
+          return;
+        }
+        if (backend === 'cloud') {
+          if (cloudProvider === CLOUD_PROVIDER_DROPBOX) {
+            try {
+              const result = await runDropboxOperation((accessToken) =>
+                uploadDropboxAppData(accessToken, sanitized, dropboxLastRev, fetchWithAbort)
+              );
+              dropboxLastRev = result.rev;
+              if (result.rev) {
+                await AsyncStorage.setItem(DROPBOX_LAST_REV_KEY, result.rev);
+                syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: result.rev, readAt: Date.now() });
+              } else {
+                await AsyncStorage.removeItem(DROPBOX_LAST_REV_KEY);
+                syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: null, readAt: Date.now() });
+              }
+              remoteDataForCompare = sanitized;
+              return;
+            } catch (error) {
+              if (error instanceof DropboxConflictError) {
+                // Another device wrote between readRemote and writeRemote; retry next cycle.
+                requestFollowUp(syncPathOverride);
+                throw new LocalSyncAbort();
+              }
+              throw error;
+            }
+          }
+          if (!cloudConfig?.url) throw new Error('Self-hosted URL not configured');
+          await cloudPutJson(cloudConfig.url, sanitized, {
+            token: cloudConfig.token,
+            timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
+            fetcher: fetchWithAbort,
+          });
+          remoteDataForCompare = sanitized;
+          return;
+        }
+        if (!fileSyncPath) throw new Error('No sync folder configured');
+        await writeSyncFile(fileSyncPath, sanitized);
+        remoteDataForCompare = sanitized;
+      };
+
       const syncResult = await performSyncCycle({
         readLocal: async () => {
           const inMemorySnapshot = getInMemoryAppDataSnapshot();
@@ -426,64 +554,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
           localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
           return data;
         },
-        readRemote: async () => {
-          await ensureNetworkStillAvailable();
-          if (backend === 'webdav' && webdavConfig?.url) {
-            try {
-              const data = await withRetry(
-                () =>
-                  webdavGetJson<AppData>(webdavConfig.url, {
-                    username: webdavConfig.username,
-                    password: webdavConfig.password,
-                    timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
-                    fetcher: fetchWithAbort,
-                  }),
-                WEBDAV_READ_RETRY_OPTIONS
-              );
-              webdavRemoteCorrupted = false;
-              remoteDataForCompare = data ?? null;
-              return data;
-            } catch (error) {
-              if (isWebdavInvalidJsonError(error)) {
-                webdavRemoteCorrupted = true;
-                remoteDataForCompare = null;
-                logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
-                return null;
-              }
-              throw error;
-            }
-          }
-          if (backend === 'cloud' && cloudConfig?.url) {
-            const data = await cloudGetJson<AppData>(cloudConfig.url, {
-              token: cloudConfig.token,
-              timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
-              fetcher: fetchWithAbort,
-            });
-            remoteDataForCompare = data ?? null;
-            return data;
-          }
-          if (backend === 'cloud' && cloudProvider === CLOUD_PROVIDER_DROPBOX) {
-            const { data, rev } = await runDropboxOperation((accessToken) =>
-              downloadDropboxAppData(accessToken, fetchWithAbort)
-            );
-            dropboxLastRev = rev;
-            if (rev) {
-              await AsyncStorage.setItem(DROPBOX_LAST_REV_KEY, rev);
-              syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: rev, readAt: Date.now() });
-            } else {
-              await AsyncStorage.removeItem(DROPBOX_LAST_REV_KEY);
-              syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: null, readAt: Date.now() });
-            }
-            remoteDataForCompare = data ?? null;
-            return data;
-          }
-          if (!fileSyncPath) {
-            throw new Error('No sync folder configured');
-          }
-          const data = await readSyncFile(fileSyncPath);
-          remoteDataForCompare = data ?? null;
-          return data;
-        },
+        readRemote: readRemoteDataByBackend,
         writeLocal: async (data) => {
           ensureLocalSnapshotFresh();
           await mobileStorage.saveData(data);
@@ -491,71 +562,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
         },
         writeRemote: async (data) => {
           ensureLocalSnapshotFresh();
-          await ensureNetworkStillAvailable();
-          assertNoPendingAttachmentUploads(data);
-          const sanitized = sanitizeAppDataForRemote(data);
-          const remoteSanitized = remoteDataForCompare
-            ? sanitizeAppDataForRemote(remoteDataForCompare)
-            : null;
-          if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
-            return;
-          }
-          if (backend === 'webdav') {
-            if (!webdavConfig?.url) throw new Error('WebDAV URL not configured');
-            if (webdavRemoteCorrupted) {
-              logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
-            }
-            await withRetry(
-              () =>
-                webdavPutJson(webdavConfig.url, sanitized, {
-                  username: webdavConfig.username,
-                  password: webdavConfig.password,
-                  timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
-                  fetcher: fetchWithAbort,
-                }),
-              WEBDAV_RETRY_OPTIONS
-            );
-            remoteDataForCompare = sanitized;
-            webdavRemoteCorrupted = false;
-            return;
-          }
-          if (backend === 'cloud') {
-            if (cloudProvider === CLOUD_PROVIDER_DROPBOX) {
-              try {
-                const result = await runDropboxOperation((accessToken) =>
-                  uploadDropboxAppData(accessToken, sanitized, dropboxLastRev, fetchWithAbort)
-                );
-                dropboxLastRev = result.rev;
-                if (result.rev) {
-                  await AsyncStorage.setItem(DROPBOX_LAST_REV_KEY, result.rev);
-                  syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: result.rev, readAt: Date.now() });
-                } else {
-                  await AsyncStorage.removeItem(DROPBOX_LAST_REV_KEY);
-                  syncConfigCache.set(DROPBOX_LAST_REV_KEY, { value: null, readAt: Date.now() });
-                }
-                remoteDataForCompare = sanitized;
-                return;
-              } catch (error) {
-                if (error instanceof DropboxConflictError) {
-                  // Another device wrote between readRemote and writeRemote; retry next cycle.
-                  requestFollowUp(syncPathOverride);
-                  throw new LocalSyncAbort();
-                }
-                throw error;
-              }
-            }
-            if (!cloudConfig?.url) throw new Error('Self-hosted URL not configured');
-            await cloudPutJson(cloudConfig.url, sanitized, {
-              token: cloudConfig.token,
-              timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
-              fetcher: fetchWithAbort,
-            });
-            remoteDataForCompare = sanitized;
-            return;
-          }
-          if (!fileSyncPath) throw new Error('No sync folder configured');
-          await writeSyncFile(fileSyncPath, sanitized);
-          remoteDataForCompare = sanitized;
+          await writeRemoteDataByBackend(data);
         },
         onStep: (next) => {
           step = next;

@@ -2064,6 +2064,146 @@ export class SyncService {
                     logSyncWarning('Attachment pre-sync warning', error);
                 }
             }
+
+            const readRemoteDataByBackend = async (): Promise<AppData | null> => {
+                ensureNetworkStillAvailable();
+                if (backend === 'webdav') {
+                    try {
+                        if (isTauriRuntimeEnv()) {
+                            if (!webdavConfig?.url) {
+                                throw new Error('WebDAV URL not configured');
+                            }
+                            syncUrl = webdavConfig.url;
+                            const data = await withRetry(
+                                () => tauriInvoke<AppData>('webdav_get_json'),
+                                WEBDAV_READ_RETRY_OPTIONS,
+                            );
+                            webdavRemoteCorrupted = false;
+                            remoteDataForCompare = data ?? null;
+                            return data;
+                        }
+                        if (!webdavConfig?.url) {
+                            throw new Error('WebDAV URL not configured');
+                        }
+                        const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
+                        syncUrl = normalizedUrl;
+                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                        const data = await withRetry(
+                            () => webdavGetJson<AppData>(normalizedUrl, {
+                                username: webdavConfig.username,
+                                password: webdavConfig.password || '',
+                                fetcher,
+                            }),
+                            WEBDAV_READ_RETRY_OPTIONS,
+                        );
+                        webdavRemoteCorrupted = false;
+                        remoteDataForCompare = data ?? null;
+                        return data;
+                    } catch (error) {
+                        if (isWebdavInvalidJsonError(error)) {
+                            webdavRemoteCorrupted = true;
+                            remoteDataForCompare = null;
+                            logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
+                            return null;
+                        }
+                        throw error;
+                    }
+                }
+                if (backend === 'cloud') {
+                    if (cloudProvider === 'selfhosted') {
+                        if (!cloudConfig?.url) {
+                            throw new Error('Self-hosted URL not configured');
+                        }
+                        const normalizedUrl = normalizeCloudUrl(cloudConfig.url);
+                        syncUrl = normalizedUrl;
+                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                        const data = await cloudGetJson<AppData>(normalizedUrl, { token: cloudConfig.token, fetcher });
+                        remoteDataForCompare = data ?? null;
+                        return data;
+                    }
+                    if (!dropboxAppKey) {
+                        throw new Error('Dropbox app key is not configured');
+                    }
+                    syncUrl = 'dropbox:///Apps/Mindwtr/data.json';
+                    const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                    const remote = await runDropboxWithRetry((token) =>
+                        downloadDropboxAppData(token, fetcher)
+                    );
+                    dropboxDataRev = remote.rev;
+                    remoteDataForCompare = remote.data ?? null;
+                    return remote.data;
+                }
+                if (!isTauriRuntimeEnv()) {
+                    throw new Error('File sync is not available in the web app.');
+                }
+                const data = await tauriInvoke<AppData>('read_sync_file');
+                remoteDataForCompare = data ?? null;
+                return data;
+            };
+
+            const writeRemoteDataByBackend = async (data: AppData): Promise<void> => {
+                ensureNetworkStillAvailable();
+                assertNoPendingAttachmentUploads(data);
+                const sanitized = sanitizeAppDataForRemote(data);
+                const remoteSanitized = remoteDataForCompare
+                    ? sanitizeAppDataForRemote(remoteDataForCompare)
+                    : null;
+                if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
+                    return;
+                }
+                if (backend === 'webdav') {
+                    if (isTauriRuntimeEnv()) {
+                        if (webdavRemoteCorrupted) {
+                            logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+                        }
+                        await tauriInvoke('webdav_put_json', { data: sanitized });
+                        remoteDataForCompare = sanitized;
+                        webdavRemoteCorrupted = false;
+                        return;
+                    }
+                    const { url, username, password } = await SyncService.getWebDavConfig();
+                    const normalizedUrl = normalizeWebdavUrl(url);
+                    const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                    if (webdavRemoteCorrupted) {
+                        logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
+                    }
+                    await webdavPutJson(normalizedUrl, sanitized, { username, password: password || '', fetcher });
+                    remoteDataForCompare = sanitized;
+                    webdavRemoteCorrupted = false;
+                    return;
+                }
+                if (backend === 'cloud') {
+                    if (cloudProvider === 'selfhosted') {
+                        const { url, token } = await SyncService.getCloudConfig();
+                        const normalizedUrl = normalizeCloudUrl(url);
+                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                        await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
+                        remoteDataForCompare = sanitized;
+                        return;
+                    }
+                    if (!dropboxAppKey) {
+                        throw new Error('Dropbox app key is not configured');
+                    }
+                    const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
+                    try {
+                        const uploaded = await runDropboxWithRetry((token) =>
+                            uploadDropboxAppData(token, sanitized, dropboxDataRev, fetcher)
+                        );
+                        dropboxDataRev = uploaded.rev;
+                        remoteDataForCompare = sanitized;
+                        return;
+                    } catch (error) {
+                        if (error instanceof DropboxConflictError) {
+                            throw new Error('Dropbox changed during sync. Please run Sync again.');
+                        }
+                        throw error;
+                    }
+                }
+                await SyncService.markSyncWrite(sanitized);
+                await tauriInvoke('write_sync_file', { data: sanitized });
+                remoteDataForCompare = sanitized;
+            };
+
             const syncResult = await performSyncCycle({
                 readLocal: async () => {
                     const inMemorySnapshot = getInMemoryAppDataSnapshot();
@@ -2074,81 +2214,7 @@ export class SyncService {
                     localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
                     return data;
                 },
-                readRemote: async () => {
-                    ensureNetworkStillAvailable();
-                    if (backend === 'webdav') {
-                        try {
-                            if (isTauriRuntimeEnv()) {
-                                if (!webdavConfig?.url) {
-                                    throw new Error('WebDAV URL not configured');
-                                }
-                                syncUrl = webdavConfig.url;
-                                const data = await withRetry(
-                                    () => tauriInvoke<AppData>('webdav_get_json'),
-                                    WEBDAV_READ_RETRY_OPTIONS,
-                                );
-                                webdavRemoteCorrupted = false;
-                                remoteDataForCompare = data ?? null;
-                                return data;
-                            }
-                            if (!webdavConfig?.url) {
-                                throw new Error('WebDAV URL not configured');
-                            }
-                            const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
-                            syncUrl = normalizedUrl;
-                            const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                            const data = await withRetry(
-                                () => webdavGetJson<AppData>(normalizedUrl, {
-                                    username: webdavConfig.username,
-                                    password: webdavConfig.password || '',
-                                    fetcher,
-                                }),
-                                WEBDAV_READ_RETRY_OPTIONS,
-                            );
-                            webdavRemoteCorrupted = false;
-                            remoteDataForCompare = data ?? null;
-                            return data;
-                        } catch (error) {
-                            if (isWebdavInvalidJsonError(error)) {
-                                webdavRemoteCorrupted = true;
-                                remoteDataForCompare = null;
-                                logSyncWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
-                                return null;
-                            }
-                            throw error;
-                        }
-                    }
-                    if (backend === 'cloud') {
-                        if (cloudProvider === 'selfhosted') {
-                            if (!cloudConfig?.url) {
-                                throw new Error('Self-hosted URL not configured');
-                            }
-                            const normalizedUrl = normalizeCloudUrl(cloudConfig.url);
-                            syncUrl = normalizedUrl;
-                            const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                            const data = await cloudGetJson<AppData>(normalizedUrl, { token: cloudConfig.token, fetcher });
-                            remoteDataForCompare = data ?? null;
-                            return data;
-                        }
-                        if (!dropboxAppKey) {
-                            throw new Error('Dropbox app key is not configured');
-                        }
-                        syncUrl = 'dropbox:///Apps/Mindwtr/data.json';
-                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                        const remote = await runDropboxWithRetry((token) =>
-                            downloadDropboxAppData(token, fetcher)
-                        );
-                        dropboxDataRev = remote.rev;
-                        remoteDataForCompare = remote.data ?? null;
-                        return remote.data;
-                    }
-                    if (!isTauriRuntimeEnv()) {
-                        throw new Error('File sync is not available in the web app.');
-                    }
-                    const data = await tauriInvoke<AppData>('read_sync_file');
-                    remoteDataForCompare = data ?? null;
-                    return data;
-                },
+                readRemote: readRemoteDataByBackend,
                 writeLocal: async (data) => {
                     ensureLocalSnapshotFresh();
                     if (isTauriRuntimeEnv()) {
@@ -2159,66 +2225,7 @@ export class SyncService {
                 },
                 writeRemote: async (data) => {
                     ensureLocalSnapshotFresh();
-                    ensureNetworkStillAvailable();
-                    assertNoPendingAttachmentUploads(data);
-                    const sanitized = sanitizeAppDataForRemote(data);
-                    const remoteSanitized = remoteDataForCompare
-                        ? sanitizeAppDataForRemote(remoteDataForCompare)
-                        : null;
-                    if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
-                        return;
-                    }
-                    if (backend === 'webdav') {
-                        if (isTauriRuntimeEnv()) {
-                            if (webdavRemoteCorrupted) {
-                                logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
-                            }
-                            await tauriInvoke('webdav_put_json', { data: sanitized });
-                            remoteDataForCompare = sanitized;
-                            webdavRemoteCorrupted = false;
-                            return;
-                        }
-                        const { url, username, password } = await SyncService.getWebDavConfig();
-                        const normalizedUrl = normalizeWebdavUrl(url);
-                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                        if (webdavRemoteCorrupted) {
-                            logSyncInfo('Repairing corrupted WebDAV data.json with current merged data');
-                        }
-                        await webdavPutJson(normalizedUrl, sanitized, { username, password: password || '', fetcher });
-                        remoteDataForCompare = sanitized;
-                        webdavRemoteCorrupted = false;
-                        return;
-                    }
-                    if (backend === 'cloud') {
-                        if (cloudProvider === 'selfhosted') {
-                            const { url, token } = await SyncService.getCloudConfig();
-                            const normalizedUrl = normalizeCloudUrl(url);
-                            const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                            await cloudPutJson(normalizedUrl, sanitized, { token, fetcher });
-                            remoteDataForCompare = sanitized;
-                            return;
-                        }
-                        if (!dropboxAppKey) {
-                            throw new Error('Dropbox app key is not configured');
-                        }
-                        const fetcher = createFetchWithAbort((await getTauriFetch()) ?? fetch);
-                        try {
-                            const uploaded = await runDropboxWithRetry((token) =>
-                                uploadDropboxAppData(token, sanitized, dropboxDataRev, fetcher)
-                            );
-                            dropboxDataRev = uploaded.rev;
-                            remoteDataForCompare = sanitized;
-                            return;
-                        } catch (error) {
-                            if (error instanceof DropboxConflictError) {
-                                throw new Error('Dropbox changed during sync. Please run Sync again.');
-                            }
-                            throw error;
-                        }
-                    }
-                    await SyncService.markSyncWrite(sanitized);
-                    await tauriInvoke('write_sync_file', { data: sanitized });
-                    remoteDataForCompare = sanitized;
+                    await writeRemoteDataByBackend(data);
                 },
                 onStep: (next) => {
                     setStep(next);
