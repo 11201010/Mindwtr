@@ -9,7 +9,7 @@ type AreaManagerModalProps = {
     areaSensors: ReturnType<typeof import('@dnd-kit/core').useSensors>;
     onDragEnd: (event: DragEndEvent) => void;
     onDeleteArea: (areaId: string) => void;
-    onUpdateArea: (areaId: string, updates: Partial<Area>) => void;
+    onUpdateArea: (areaId: string, updates: Partial<Area>) => Promise<void> | void;
     newAreaColor: string;
     onChangeNewAreaColor: ChangeEventHandler<HTMLInputElement>;
     newAreaName: string;

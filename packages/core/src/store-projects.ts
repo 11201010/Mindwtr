@@ -743,6 +743,7 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                         return {
                             ...project,
                             areaId: existing.id,
+                            color: mergedArea.color,
                             updatedAt: now,
                             rev: normalizeRevision(project.rev) + 1,
                             revBy: deviceState.deviceId,
@@ -768,6 +769,22 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
             const now = new Date().toISOString();
             const nextOrder = Number.isFinite(updates.order) ? (updates.order as number) : area.order;
             const nextName = updates.name ? updates.name.trim() : area.name;
+            const hasColorUpdate = Object.prototype.hasOwnProperty.call(updates, 'color');
+            let projectsChanged = false;
+            const newAllProjects = hasColorUpdate
+                ? state._allProjects.map((project) => {
+                    if (project.areaId !== id) return project;
+                    if (project.color === updates.color) return project;
+                    projectsChanged = true;
+                    return {
+                        ...project,
+                        color: updates.color,
+                        updatedAt: now,
+                        rev: normalizeRevision(project.rev) + 1,
+                        revBy: deviceState.deviceId,
+                    };
+                })
+                : state._allProjects;
             const newAllAreas = allAreas
                 .map(a => (a.id === id
                     ? {
@@ -783,11 +800,18 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 .sort((a, b) => a.order - b.order);
             snapshot = buildSaveSnapshot(state, {
                 areas: newAllAreas,
+                ...(projectsChanged ? { projects: newAllProjects } : {}),
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
             return {
                 areas: newAllAreas.filter((item) => !item.deletedAt),
                 _allAreas: newAllAreas,
+                ...(projectsChanged
+                    ? {
+                        projects: newAllProjects.filter((item) => !item.deletedAt),
+                        _allProjects: newAllProjects,
+                    }
+                    : {}),
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };

@@ -98,6 +98,12 @@ export function ContextsView() {
     };
 
     const selectedIdsArray = useMemo(() => Array.from(multiSelectedIds), [multiSelectedIds]);
+    const bulkAreaOptions = useMemo(
+        () => [...areas]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((area) => ({ id: area.id, name: area.name })),
+        [areas]
+    );
 
     const handleBatchMove = async (newStatus: TaskStatus) => {
         if (selectedIdsArray.length === 0) return;
@@ -142,6 +148,19 @@ export function ContextsView() {
         setContextPromptIds(selectedIdsArray);
         setContextPromptMode('remove');
         setContextPromptOpen(true);
+    };
+
+    const handleBatchAssignArea = async (areaId: string | null) => {
+        if (selectedIdsArray.length === 0) return;
+        try {
+            await batchUpdateTasks(selectedIdsArray.map((id) => ({
+                id,
+                updates: { areaId: areaId ?? undefined },
+            })));
+            exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch assign area in contexts view', error);
+        }
     };
 
     useEffect(() => {
@@ -284,6 +303,8 @@ export function ContextsView() {
                         <ListBulkActions
                             selectionCount={selectedIdsArray.length}
                             onMoveToStatus={handleBatchMove}
+                            onAssignArea={handleBatchAssignArea}
+                            areaOptions={bulkAreaOptions}
                             onAddTag={handleBatchAddTag}
                             onAddContext={handleBatchAddContext}
                             onRemoveContext={handleBatchRemoveContext}

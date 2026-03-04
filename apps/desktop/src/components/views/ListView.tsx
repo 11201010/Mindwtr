@@ -633,6 +633,12 @@ export function ListView({ title, statusFilter }: ListViewProps) {
     }, [selectionMode]);
 
     const selectedIdsArray = useMemo(() => Array.from(multiSelectedIds), [multiSelectedIds]);
+    const bulkAreaOptions = useMemo(
+        () => [...areas]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((area) => ({ id: area.id, name: area.name })),
+        [areas]
+    );
 
     const handleBatchMove = useCallback(async (newStatus: TaskStatus) => {
         if (selectedIdsArray.length === 0) return;
@@ -660,6 +666,20 @@ export function ListView({ title, statusFilter }: ListViewProps) {
             setIsBatchDeleting(false);
         }
     }, [batchDeleteTasks, selectedIdsArray, exitSelectionMode, showToast, t]);
+
+    const handleBatchAssignArea = useCallback(async (areaId: string | null) => {
+        if (selectedIdsArray.length === 0) return;
+        try {
+            await batchUpdateTasks(selectedIdsArray.map((id) => ({
+                id,
+                updates: { areaId: areaId ?? undefined },
+            })));
+            exitSelectionMode();
+        } catch (error) {
+            reportError('Failed to batch assign area', error);
+            showToast(t('bulk.moveFailed') || 'Failed to update selected tasks', 'error');
+        }
+    }, [batchUpdateTasks, selectedIdsArray, exitSelectionMode, showToast, t]);
 
     const handleBatchAddTag = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
@@ -873,6 +893,8 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                         <ListBulkActions
                             selectionCount={selectedIdsArray.length}
                             onMoveToStatus={handleBatchMove}
+                            onAssignArea={handleBatchAssignArea}
+                            areaOptions={bulkAreaOptions}
                             onAddTag={handleBatchAddTag}
                             onAddContext={handleBatchAddContext}
                             onRemoveContext={handleBatchRemoveContext}

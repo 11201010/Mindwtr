@@ -553,6 +553,22 @@ describe('TaskStore', () => {
         expect(updatedTask.areaId).toBeUndefined();
     });
 
+    it('propagates area color updates to linked projects', async () => {
+        const { addArea, addProject, updateArea } = useTaskStore.getState();
+        const area = await addArea('Work', { color: '#3b82f6' });
+        expect(area).not.toBeNull();
+        if (!area) return;
+
+        const project = await addProject('Area Project', '#3b82f6', { areaId: area.id });
+        expect(project).not.toBeNull();
+        if (!project) return;
+
+        await updateArea(area.id, { color: '#ef4444' });
+
+        const updatedProject = useTaskStore.getState()._allProjects.find((item) => item.id === project.id);
+        expect(updatedProject?.color).toBe('#ef4444');
+    });
+
     it('returns null when restoring a deleted area fails', async () => {
         const { addArea, deleteArea } = useTaskStore.getState();
         const area = await addArea('Work');
