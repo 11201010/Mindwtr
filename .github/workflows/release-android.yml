@@ -181,6 +181,71 @@ jobs:
           releaseName: ${{ steps.version.outputs.version }}
           whatsNewDirectory: apps/mobile/build/play-release-notes
 
+      - name: Publish same versionCode to internal track (no re-upload)
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch'
+        env:
+          ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          PACKAGE="tech.dongdongbh.mindwtr"
+          VERSION=${{ steps.version.outputs.version }}
+          VERSION_CODE=$(jq -r '.expo.android.versionCode' apps/mobile/app.json)
+          if [ -z "$VERSION_CODE" ] || [ "$VERSION_CODE" = "null" ]; then
+            echo "Missing expo.android.versionCode in apps/mobile/app.json" >&2
+            exit 1
+          fi
+
+          EDIT_FILE=$(mktemp)
+          EDIT_CODE=$(curl -sS -o "$EDIT_FILE" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits" \
+            -d '{}')
+          if [ "$EDIT_CODE" != "200" ]; then
+            echo "Failed to create Google Play edit (HTTP $EDIT_CODE): $(cat "$EDIT_FILE")" >&2
+            exit 1
+          fi
+          EDIT_ID=$(jq -r '.id' "$EDIT_FILE")
+          if [ -z "$EDIT_ID" ] || [ "$EDIT_ID" = "null" ]; then
+            echo "Failed to parse edit id: $(cat "$EDIT_FILE")" >&2
+            exit 1
+          fi
+
+          PAYLOAD_FILE=$(mktemp)
+          cat > "$PAYLOAD_FILE" <<EOF
+          {
+            "track": "internal",
+            "releases": [
+              {
+                "name": "${VERSION} (internal)",
+                "status": "completed",
+                "versionCodes": ["${VERSION_CODE}"]
+              }
+            ]
+          }
+          EOF
+
+          TRACK_FILE=$(mktemp)
+          TRACK_CODE=$(curl -sS -o "$TRACK_FILE" -w "%{http_code}" -X PUT \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID/tracks/internal" \
+            -d @"$PAYLOAD_FILE")
+          if [ "$TRACK_CODE" != "200" ]; then
+            echo "Failed to update internal track (HTTP $TRACK_CODE): $(cat "$TRACK_FILE")" >&2
+            exit 1
+          fi
+
+          COMMIT_FILE=$(mktemp)
+          COMMIT_CODE=$(curl -sS -o "$COMMIT_FILE" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE/edits/$EDIT_ID:commit")
+          if [ "$COMMIT_CODE" != "200" ]; then
+            echo "Failed to commit internal-track edit (HTTP $COMMIT_CODE): $(cat "$COMMIT_FILE")" >&2
+            exit 1
+          fi
+          echo "Published versionCode $VERSION_CODE to internal track without uploading a second AAB."
+
       - name: Collect Android release artifacts
         run: |
           VERSION=${{ steps.version.outputs.version }}
