@@ -3,7 +3,7 @@ import type { KeyboardEventHandler, RefObject } from 'react';
 import type { Area, Project } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
 
-type TriggerType = 'project' | 'context' | 'area';
+type TriggerType = 'project' | 'context' | 'tag' | 'area';
 
 interface TriggerState {
     type: TriggerType;
@@ -16,6 +16,7 @@ type Option =
     | { kind: 'create'; label: string; value: string }
     | { kind: 'project'; label: string; value: string }
     | { kind: 'context'; label: string; value: string }
+    | { kind: 'tag'; label: string; value: string }
     | { kind: 'area'; label: string; value: string };
 
 interface TaskInputProps {
@@ -40,11 +41,13 @@ function getTrigger(text: string, caret: number): TriggerState | null {
     const lastSpace = Math.max(before.lastIndexOf(' '), before.lastIndexOf('\n'), before.lastIndexOf('\t'));
     const start = lastSpace + 1;
     const token = before.slice(start);
-    if (!token.startsWith('+') && !token.startsWith('@') && !token.startsWith('!')) return null;
+    if (!token.startsWith('+') && !token.startsWith('@') && !token.startsWith('#') && !token.startsWith('!')) return null;
     const type: TriggerType = token.startsWith('+')
         ? 'project'
         : token.startsWith('@')
             ? 'context'
+            : token.startsWith('#')
+                ? 'tag'
             : 'area';
     return {
         type,
@@ -108,14 +111,21 @@ export function TaskInput({
                 value: area.name,
             }));
         }
-        const matches = contexts.filter((context) => {
-            const raw = context.startsWith('@') || context.startsWith('#') ? context.slice(1) : context;
+        const expectedPrefix = trigger.type === 'tag' ? '#' : '@';
+        const normalizedTokens = contexts
+            .map((token) => {
+                if (token.startsWith('@') || token.startsWith('#')) return token;
+                return `${expectedPrefix}${token}`;
+            })
+            .filter((token) => token.startsWith(expectedPrefix));
+        const matches = normalizedTokens.filter((token) => {
+            const raw = token.slice(1);
             return raw.toLowerCase().includes(query);
         });
-        return matches.map((context) => ({
-            kind: 'context' as const,
-            label: context,
-            value: context,
+        return matches.map((token) => ({
+            kind: (trigger.type === 'tag' ? 'tag' : 'context') as 'tag' | 'context',
+            label: token,
+            value: token,
         }));
     }, [trigger, projects, contexts, areas]);
 
@@ -143,6 +153,8 @@ export function TaskInput({
             tokenValue = `+${tokenValue}`;
         } else if (trigger.type === 'area') {
             tokenValue = `!${tokenValue}`;
+        } else if (trigger.type === 'tag') {
+            tokenValue = tokenValue.startsWith('#') ? tokenValue : `#${tokenValue}`;
         } else {
             tokenValue = tokenValue.startsWith('@') ? tokenValue : `@${tokenValue}`;
         }

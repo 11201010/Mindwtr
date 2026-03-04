@@ -64,7 +64,11 @@ export function ProjectsView() {
         settings,
         getDerivedState,
     } = useProjectsViewStore();
-    const { allContexts } = getDerivedState();
+    const { allContexts, allTags } = getDerivedState();
+    const allTokens = useMemo(
+        () => Array.from(new Set([...allContexts, ...allTags])).sort(),
+        [allContexts, allTags],
+    );
     const { t } = useLanguage();
     const selectedProjectId = useUiStore((state) => state.projectView.selectedProjectId);
     const setProjectView = useUiStore((state) => state.setProjectView);
@@ -914,7 +918,7 @@ export function ProjectsView() {
                                             setProjectTaskTitle('');
                                         }}
                                         projects={projects}
-                                        contexts={allContexts}
+                                        contexts={allTokens}
                                         onCreateProject={async (title) => {
                                             const created = await addProject(title, DEFAULT_AREA_COLOR);
                                             return created?.id ?? null;

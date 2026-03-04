@@ -1049,7 +1049,7 @@ export function ListView({ title, statusFilter }: ListViewProps) {
                     value={newTaskTitle}
                     projects={projects}
                     areas={areas}
-                    contexts={allContexts}
+                    contexts={allTokens}
                     t={t}
                     dense={isCompact}
                     onCreateProject={async (title) => {

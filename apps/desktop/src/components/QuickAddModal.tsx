@@ -3,7 +3,6 @@ import {
     shallow,
     useTaskStore,
     parseQuickAdd,
-    PRESET_CONTEXTS,
     safeFormatDate,
     safeParseDate,
     generateUUID,
@@ -30,6 +29,7 @@ const AUDIO_CAPTURE_DIR = 'mindwtr/audio-captures';
 const TARGET_SAMPLE_RATE = 16_000;
 
 export function QuickAddModal() {
+    const getDerivedState = useTaskStore((state) => state.getDerivedState);
     const { addTask, addProject, projects, areas, settings } = useTaskStore(
         (state) => ({
             addTask: state.addTask,
@@ -39,6 +39,11 @@ export function QuickAddModal() {
             settings: state.settings,
         }),
         shallow
+    );
+    const { allContexts, allTags } = getDerivedState();
+    const suggestionTokens = useMemo(
+        () => Array.from(new Set([...allContexts, ...allTags])).sort(),
+        [allContexts, allTags]
     );
     const { t } = useLanguage();
     const [isOpen, setIsOpen] = useState(false);
@@ -661,7 +666,7 @@ export function QuickAddModal() {
                             value={value}
                             autoFocus={captureMode === 'text'}
                             projects={projects}
-                            contexts={PRESET_CONTEXTS}
+                            contexts={suggestionTokens}
                             areas={areas}
                             onCreateProject={async (title) => {
                                 const created = await addProject(title, DEFAULT_PROJECT_COLOR);
