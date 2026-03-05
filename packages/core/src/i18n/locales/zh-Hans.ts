@@ -562,6 +562,7 @@ export const zhHans: Record<string, string> = {
         'process.btn': '处理收集箱',
         'settings.title': '设置',
         'settings.subtitle': '自定义您的 Mindwtr 体验',
+        'settings.searchPlaceholder': '搜索设置…',
         'settings.appearance': '外观',
         'settings.general': '通用',
         'settings.system': '系统',
