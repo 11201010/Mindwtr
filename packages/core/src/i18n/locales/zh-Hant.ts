@@ -1038,7 +1038,7 @@ export const zhHant: Record<string, string> = {
         'settings.github': 'GitHub',
         'settings.documentation': '文件',
         'settings.sponsorProject': '贊助項目',
-        'settings.license': '執照',
+        'settings.license': '授權條款',
         'settings.checkForUpdates': '檢查更新',
         'settings.checkStoreUpdates': '檢查微軟商店',
         'settings.checking': '檢查…',
