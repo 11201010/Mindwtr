@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { useLanguage } from '../contexts/language-context';
 
 interface PromptModalProps {
     isOpen: boolean;
@@ -29,6 +30,7 @@ export function PromptModal({
     onConfirm,
     onCancel,
 }: PromptModalProps) {
+    const { t } = useLanguage();
     const [value, setValue] = useState(defaultValue ?? '');
     const [hasInteracted, setHasInteracted] = useState(false);
     const titleId = useId();
@@ -100,7 +102,7 @@ export function PromptModal({
                     />
                     {showValidation && (
                         <p id={validationId} className="text-xs text-red-500">
-                            Please enter a value.
+                            {t('common.validationRequired')}
                         </p>
                     )}
                     <div className="flex justify-end gap-2">

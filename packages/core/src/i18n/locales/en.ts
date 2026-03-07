@@ -865,6 +865,7 @@ export const en: Record<string, string> = {
         'common.all': 'All',
         'common.search': 'Search...',
         'common.noMatches': 'No matches',
+        'common.validationRequired': 'Please enter a value.',
         'common.none': 'None',
         'common.notSet': 'Not set',
         'common.back': 'Back',

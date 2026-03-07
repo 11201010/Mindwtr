@@ -815,6 +815,7 @@ export const zhHans: Record<string, string> = {
         'common.all': '全部',
         'common.search': '搜索...',
         'common.noMatches': '无匹配项',
+        'common.validationRequired': '请输入内容。',
         'common.none': '无',
         'common.notSet': '未设置',
         'common.back': '返回',
