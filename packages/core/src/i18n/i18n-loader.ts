@@ -1,8 +1,9 @@
 import type { Language } from './i18n-types';
 import { en } from './locales/en';
 
+const englishTranslations = en;
 const translationsCache = new Map<Language, Record<string, string>>([
-    ['en', en],
+    ['en', englishTranslations],
 ]);
 const loadPromises = new Map<Language, Promise<void>>();
 
@@ -32,13 +33,8 @@ const loadWithFallback = async <T>(
 const ensureEnglishLoaded = async (): Promise<Record<string, string>> => {
     const cached = translationsCache.get('en');
     if (cached) return cached;
-    const mod = await loadWithFallback(
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        () => require('./locales/en') as typeof import('./locales/en'),
-        () => import('./locales/en')
-    );
-    translationsCache.set('en', mod.en);
-    return mod.en;
+    translationsCache.set('en', englishTranslations);
+    return englishTranslations;
 };
 
 const loadOverrides = async (lang: Language): Promise<Record<string, string> | undefined> => {

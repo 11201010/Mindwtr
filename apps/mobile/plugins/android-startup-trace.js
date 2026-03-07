@@ -31,11 +31,20 @@ inline fun <T> startupSection(phase: String, block: () -> T): T {
 `;
 
 const patchMainApplication = (source) => {
-  if (source.includes('startupMark("native.main_application.on_create:start")')) {
-    return source;
+  let next = source;
+
+  if (!next.includes('@Suppress("DEPRECATION")\nclass MainApplication')) {
+    next = next.replace(
+      /\nclass MainApplication : Application\(\), ReactApplication \{/,
+      '\n@Suppress("DEPRECATION")\nclass MainApplication : Application(), ReactApplication {'
+    );
   }
 
-  const next = source.replace(
+  if (next.includes('startupMark("native.main_application.on_create:start")')) {
+    return next;
+  }
+
+  next = next.replace(
     /override fun onCreate\(\) \{[\s\S]*?\n  \}\n\n  override fun onConfigurationChanged/,
     `override fun onCreate() {
     startupMark("native.main_application.on_create:start")

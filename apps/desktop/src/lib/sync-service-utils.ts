@@ -9,6 +9,11 @@ import {
 
 export const ATTACHMENTS_DIR_NAME = 'attachments';
 
+const importNodeCrypto = async (): Promise<typeof import('node:crypto')> => {
+    const specifier = 'node:crypto';
+    return import(/* @vite-ignore */ specifier) as Promise<typeof import('node:crypto')>;
+};
+
 export const toStableJson = (value: unknown): string => {
     const normalize = (input: any): any => {
         if (Array.isArray(input)) {
@@ -39,7 +44,7 @@ export const hashString = async (value: string): Promise<string> => {
 
     if (typeof process !== 'undefined' && process?.versions?.node) {
         try {
-            const crypto = await import('node:crypto');
+            const crypto = await importNodeCrypto();
             return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
         } catch {
             // Fall through to legacy fallback if node:crypto is unavailable.

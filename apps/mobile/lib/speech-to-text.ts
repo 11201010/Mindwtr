@@ -95,28 +95,14 @@ const getRNFSModule = (): RNFSModule | null => {
 const getWhisperModule = () => {
   if (whisperModuleCache) return whisperModuleCache;
   try {
-    // Use require to avoid async bundle loading in dev client.
+    // whisper.rn ships a broken root export map in 0.5.x, so load the built CJS entry directly.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('whisper.rn/src/index') as WhisperModule;
+    const mod = require('whisper.rn/lib/commonjs/index.js') as WhisperModule;
     whisperModuleCache = mod;
     return mod;
   } catch (error) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('whisper.rn') as WhisperModule;
-      whisperModuleCache = mod;
-      return mod;
-    } catch (fallbackError) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const mod = require('whisper.rn/index') as WhisperModule;
-        whisperModuleCache = mod;
-        return mod;
-      } catch (finalError) {
-        const message = finalError instanceof Error ? finalError.message : String(finalError);
-        throw new Error(`Whisper module unavailable: ${message}`);
-      }
-    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Whisper module unavailable: ${message}`);
   }
 };
 

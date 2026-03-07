@@ -550,17 +550,7 @@ fn current_exe_canonical_path_lowercase() -> Option<String> {
         .and_then(|path| path.to_str().map(|value| value.to_lowercase()))
 }
 
-#[cfg(target_os = "windows")]
-fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
-    Command::new(cmd)
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-#[cfg(not(target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn command_succeeds(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd)
         .args(args)
