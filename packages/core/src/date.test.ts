@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { safeFormatDate, safeParseDate, isDueForReview, normalizeDateFormatSetting, resolveDateLocaleTag } from './date';
+import {
+    configureDateFormatting,
+    isDueForReview,
+    normalizeDateFormatSetting,
+    normalizeTimeFormatSetting,
+    resolveDateLocaleTag,
+    safeFormatDate,
+    safeParseDate,
+} from './date';
 
 describe('date utils', () => {
     it('parses date-only strings as local dates', () => {
@@ -45,6 +53,12 @@ describe('date utils', () => {
         expect(normalizeDateFormatSetting('unknown')).toBe('system');
     });
 
+    it('normalizes time format settings safely', () => {
+        expect(normalizeTimeFormatSetting('12h')).toBe('12h');
+        expect(normalizeTimeFormatSetting('24-hour')).toBe('24h');
+        expect(normalizeTimeFormatSetting('unknown')).toBe('system');
+    });
+
     it('resolves locale tags from language + format preferences', () => {
         expect(resolveDateLocaleTag({ language: 'en', dateFormat: 'dmy', systemLocale: 'en-US' })).toBe('en-GB');
         expect(resolveDateLocaleTag({ language: 'en', dateFormat: 'mdy', systemLocale: 'en-GB' })).toBe('en-US');
@@ -52,6 +66,17 @@ describe('date utils', () => {
         expect(resolveDateLocaleTag({ language: 'de', dateFormat: 'system', systemLocale: 'de-DE' })).toBe('de-DE');
         expect(resolveDateLocaleTag({ language: 'pl', dateFormat: 'system' })).toBe('pl-PL');
         expect(resolveDateLocaleTag({ language: 'nl', dateFormat: 'system' })).toBe('nl-NL');
+    });
+
+    it('applies explicit time-format overrides to localized time tokens', () => {
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: '24h', systemLocale: 'en-US' });
+        expect(safeFormatDate('2025-01-02T15:04:00', 'p')).toBe('15:04');
+
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: '12h', systemLocale: 'en-US' });
+        expect(safeFormatDate('2025-01-02T15:04:00', 'p')).toBe('03:04 PM');
+
+        configureDateFormatting({ language: 'en', dateFormat: 'ymd', timeFormat: '24h', systemLocale: 'en-US' });
+        expect(safeFormatDate('2025-01-02T15:04:00', 'Pp')).toBe('2025-01-02 15:04');
     });
 
     it('detects when a review date is due', () => {

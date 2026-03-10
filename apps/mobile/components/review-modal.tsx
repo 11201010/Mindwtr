@@ -584,7 +584,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                         </Text>
                         {visibleEvents.map((event) => {
                             const start = safeParseDate(event.start);
-                            const timeLabel = event.allDay || !start ? labels.allDay : safeFormatDate(start, 'HH:mm');
+                            const timeLabel = event.allDay || !start ? labels.allDay : safeFormatDate(start, 'p');
                             return (
                                 <View key={`${event.sourceId}-${event.id}-${event.start}`} style={styles.calendarEventRow}>
                                     <Text style={[styles.calendarEventMeta, { color: tc.secondaryText }]}>

@@ -366,7 +366,7 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                     const end = safeParseDate(event.end);
                     const timeLabel = event.allDay || !start || !end
                         ? t('calendar.allDay')
-                        : `${safeFormatDate(start, 'HH:mm')} - ${safeFormatDate(end, 'HH:mm')}`;
+                        : `${safeFormatDate(start, 'p')} - ${safeFormatDate(end, 'p')}`;
                     return (
                         <div key={event.id} className="text-xs text-muted-foreground">
                             <span className="font-medium text-foreground mr-2">{event.title}</span>

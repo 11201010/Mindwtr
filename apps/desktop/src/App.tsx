@@ -41,6 +41,7 @@ function App() {
     const settingsTheme = useTaskStore((state) => state.settings?.theme);
     const settingsLanguage = useTaskStore((state) => state.settings?.language);
     const settingsDateFormat = useTaskStore((state) => state.settings?.dateFormat);
+    const settingsTimeFormat = useTaskStore((state) => state.settings?.timeFormat);
     const updateSettings = useTaskStore((state) => state.updateSettings);
     const showToast = useUiStore((state) => state.showToast);
     const isFlatpak = isFlatpakRuntime();
@@ -128,9 +129,10 @@ function App() {
         configureDateFormatting({
             language: settingsLanguage || language,
             dateFormat: settingsDateFormat,
+            timeFormat: settingsTimeFormat,
             systemLocale,
         });
-    }, [language, settingsDateFormat, settingsLanguage]);
+    }, [language, settingsDateFormat, settingsLanguage, settingsTimeFormat]);
 
     const translateOrFallback = useCallback((key: string, fallback: string) => {
         const value = t(key);

@@ -841,6 +841,7 @@ describe('Sync Logic', () => {
                     language: 'en',
                     weekStart: 'monday',
                     dateFormat: 'yyyy-MM-dd',
+                    timeFormat: '24h',
                     syncPreferences: { language: true },
                     syncPreferencesUpdatedAt: {
                         preferences: '2024-01-01T00:00:00.000Z',
@@ -853,6 +854,7 @@ describe('Sync Logic', () => {
                 settings: {
                     language: 'es',
                     weekStart: 'monday',
+                    timeFormat: '12h',
                     syncPreferences: { language: true },
                     syncPreferencesUpdatedAt: {
                         preferences: '2024-01-02T00:00:00.000Z',
@@ -866,6 +868,7 @@ describe('Sync Logic', () => {
             expect(merged.settings.language).toBe('es');
             expect(merged.settings.weekStart).toBe('monday');
             expect(merged.settings.dateFormat).toBe('yyyy-MM-dd');
+            expect(merged.settings.timeFormat).toBe('12h');
         });
 
         it('merges language settings even when sync preferences are empty', () => {

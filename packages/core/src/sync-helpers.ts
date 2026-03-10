@@ -133,6 +133,7 @@ export const sanitizeAppDataForRemote = (data: AppData): AppData => {
             next.language = settings.language;
             next.weekStart = settings.weekStart;
             next.dateFormat = settings.dateFormat;
+            next.timeFormat = settings.timeFormat;
         }
 
         if (prefs.externalCalendars === true) {

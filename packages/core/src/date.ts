@@ -3,6 +3,7 @@ import { ar, de, enGB, enUS, es, fr, hi, it, ja, ko, nl, pl, ptBR, ru, tr, zhCN,
 import type { Language } from './i18n/i18n-types';
 
 export type DateFormatSetting = 'system' | 'dmy' | 'mdy' | 'ymd';
+export type TimeFormatSetting = 'system' | '12h' | '24h';
 
 const DEFAULT_LOCALE = enUS;
 const DMY_EN_REGIONS = new Set(['GB', 'IE', 'AU', 'NZ', 'ZA']);
@@ -45,6 +46,7 @@ const LOCALE_TAG_BY_LANGUAGE: Record<Language, string> = {
 
 let activeLocale: Locale = DEFAULT_LOCALE;
 let activeDateFormatSetting: DateFormatSetting = 'system';
+let activeTimeFormatSetting: TimeFormatSetting = 'system';
 
 const normalizeLocaleTag = (value?: string | null): string => String(value || '').trim().replace(/_/g, '-');
 
@@ -86,9 +88,28 @@ const resolveLocaleFromSystem = (systemLocale?: string | null, fallback: Languag
 };
 
 const normalizeLocalizedFormatTokens = (formatStr: string): string => {
-    if (activeDateFormatSetting !== 'ymd') return formatStr;
-    if (!/[Pp]/.test(formatStr)) return formatStr;
-    return formatStr.replace(/P{1,4}/g, 'yyyy-MM-dd').replace(/p{1,4}/g, 'HH:mm');
+    let result = formatStr;
+    const resolvedDateToken = activeDateFormatSetting === 'ymd' ? 'yyyy-MM-dd' : null;
+    const resolvedTimeToken = activeTimeFormatSetting === '24h'
+        ? 'HH:mm'
+        : activeTimeFormatSetting === '12h'
+            ? 'hh:mm a'
+            : null;
+
+    if (resolvedDateToken || resolvedTimeToken) {
+        result = result.replace(/P{1,4}\s*p{1,4}/g, () => {
+            const dateToken = resolvedDateToken ?? 'P';
+            const timeToken = resolvedTimeToken ?? 'p';
+            return `${dateToken} ${timeToken}`;
+        });
+    }
+    if (resolvedDateToken) {
+        result = result.replace(/P{1,4}/g, resolvedDateToken);
+    }
+    if (resolvedTimeToken) {
+        result = result.replace(/p{1,4}/g, resolvedTimeToken);
+    }
+    return result;
 };
 
 export function normalizeDateFormatSetting(value?: string | null): DateFormatSetting {
@@ -96,6 +117,13 @@ export function normalizeDateFormatSetting(value?: string | null): DateFormatSet
     if (normalized === 'dmy') return 'dmy';
     if (normalized === 'mdy') return 'mdy';
     if (normalized === 'ymd' || normalized === 'yyyy-mm-dd' || normalized === 'iso') return 'ymd';
+    return 'system';
+}
+
+export function normalizeTimeFormatSetting(value?: string | null): TimeFormatSetting {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === '12h' || normalized === '12' || normalized === '12-hour') return '12h';
+    if (normalized === '24h' || normalized === '24' || normalized === '24-hour') return '24h';
     return 'system';
 }
 
@@ -122,12 +150,15 @@ export function resolveDateLocaleTag(params: {
 export function configureDateFormatting(params: {
     language?: string | null;
     dateFormat?: string | null;
+    timeFormat?: string | null;
     systemLocale?: string | null;
 } = {}): void {
     const language = normalizeLanguage(params.language);
     const dateFormat = normalizeDateFormatSetting(params.dateFormat);
+    const timeFormat = normalizeTimeFormatSetting(params.timeFormat);
     const systemLocale = normalizeLocaleTag(params.systemLocale);
     activeDateFormatSetting = dateFormat;
+    activeTimeFormatSetting = timeFormat;
 
     if (dateFormat === 'mdy') {
         activeLocale = enUS;

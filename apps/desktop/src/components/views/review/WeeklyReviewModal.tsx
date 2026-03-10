@@ -395,7 +395,7 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                         <div className="mt-1.5 space-y-1">
                             {visibleEvents.map((event) => {
                                 const start = safeParseDate(event.start);
-                                const timeLabel = event.allDay || !start ? t('calendar.allDay') : safeFormatDate(start, 'HH:mm');
+                                const timeLabel = event.allDay || !start ? t('calendar.allDay') : safeFormatDate(start, 'p');
                                 return (
                                     <div key={`${event.sourceId}-${event.id}-${event.start}`} className="text-sm flex gap-2">
                                         <span className="text-muted-foreground w-12 shrink-0">{timeLabel}</span>

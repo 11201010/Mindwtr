@@ -185,6 +185,7 @@ function RootLayoutContent() {
   const [dataReady, setDataReady] = useState(false);
   const settingsLanguage = useTaskStore((state) => state.settings?.language);
   const settingsDateFormat = useTaskStore((state) => state.settings?.dateFormat);
+  const settingsTimeFormat = useTaskStore((state) => state.settings?.timeFormat);
   const appState = useRef(AppState.currentState);
   const lastAutoSyncAt = useRef(0);
   const syncDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -401,9 +402,10 @@ function RootLayoutContent() {
     configureDateFormatting({
       language: settingsLanguage || language,
       dateFormat: settingsDateFormat,
+      timeFormat: settingsTimeFormat,
       systemLocale: getDeviceLocale(),
     });
-  }, [language, settingsDateFormat, settingsLanguage]);
+  }, [language, settingsDateFormat, settingsLanguage, settingsTimeFormat]);
 
   useEffect(() => {
     if (!hasShareIntent) return;

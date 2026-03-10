@@ -39,6 +39,7 @@ import {
     generateUUID,
     getDefaultAIConfig,
     normalizeDateFormatSetting,
+    normalizeTimeFormatSetting,
     normalizeCloudUrl,
     normalizeWebdavUrl,
     getDefaultCopilotModel,
@@ -239,6 +240,7 @@ export default function SettingsPage() {
     const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
     const [weekStartPickerOpen, setWeekStartPickerOpen] = useState(false);
     const [dateFormatPickerOpen, setDateFormatPickerOpen] = useState(false);
+    const [timeFormatPickerOpen, setTimeFormatPickerOpen] = useState(false);
     const [syncOptionsOpen, setSyncOptionsOpen] = useState(false);
     const [syncHistoryExpanded, setSyncHistoryExpanded] = useState(false);
     const [externalCalendars, setExternalCalendars] = useState<ExternalCalendarSubscription[]>([]);
@@ -274,6 +276,7 @@ export default function SettingsPage() {
     const weeklyReviewDay = Number.isFinite(settings.weeklyReviewDay) ? settings.weeklyReviewDay as number : 0;
     const weekStart = settings.weekStart === 'monday' ? 'monday' : 'sunday';
     const dateFormat = normalizeDateFormatSetting(settings.dateFormat);
+    const timeFormat = normalizeTimeFormatSetting(settings.timeFormat);
     const loggingEnabled = settings.diagnostics?.loggingEnabled === true;
     const lastSyncStats = settings.lastSyncStats ?? null;
     const syncConflictCount = (lastSyncStats?.tasks.conflicts || 0) + (lastSyncStats?.projects.conflicts || 0);
@@ -699,12 +702,19 @@ export default function SettingsPage() {
         { value: 'monday', label: t('settings.weekStartMonday') },
     ];
     const currentWeekStartLabel = weekStartOptions.find((opt) => opt.value === weekStart)?.label ?? t('settings.weekStartSunday');
-    const dateFormatOptions: { value: 'system' | 'dmy' | 'mdy'; label: string }[] = [
+    const dateFormatOptions: { value: 'system' | 'dmy' | 'mdy' | 'ymd'; label: string }[] = [
         { value: 'system', label: t('settings.dateFormatSystem') },
         { value: 'dmy', label: t('settings.dateFormatDmy') },
         { value: 'mdy', label: t('settings.dateFormatMdy') },
+        { value: 'ymd', label: t('settings.dateFormatYmd') },
     ];
     const currentDateFormatLabel = dateFormatOptions.find((opt) => opt.value === dateFormat)?.label ?? t('settings.dateFormatSystem');
+    const timeFormatOptions: { value: 'system' | '12h' | '24h'; label: string }[] = [
+        { value: 'system', label: t('settings.timeFormatSystem') },
+        { value: '12h', label: t('settings.timeFormat12h') },
+        { value: '24h', label: t('settings.timeFormat24h') },
+    ];
+    const currentTimeFormatLabel = timeFormatOptions.find((opt) => opt.value === timeFormat)?.label ?? t('settings.timeFormatSystem');
     const openLink = (url: string) => Linking.openURL(url);
     const updateAISettings = useCallback((next: Partial<NonNullable<typeof settings.ai>>) => {
         updateSettings({ ai: { ...(settings.ai ?? {}), ...next } }).catch(logSettingsError);
@@ -2601,6 +2611,56 @@ export default function SettingsPage() {
                                                 onPress={() => {
                                                     updateSettings({ dateFormat: option.value }).catch(logSettingsError);
                                                     setDateFormatPickerOpen(false);
+                                                }}
+                                            >
+                                                <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>
+                                                    {option.label}
+                                                </Text>
+                                                {selected && <Text style={{ color: tc.tint, fontSize: 18 }}>✓</Text>}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </ScrollView>
+                            </View>
+                        </Pressable>
+                    </Modal>
+
+                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
+                        <TouchableOpacity style={styles.settingRow} onPress={() => setTimeFormatPickerOpen(true)}>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.timeFormat')}</Text>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {currentTimeFormatLabel}
+                                </Text>
+                            </View>
+                            <Text style={{ color: tc.secondaryText, fontSize: 18 }}>▾</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <Modal
+                        transparent
+                        visible={timeFormatPickerOpen}
+                        animationType="fade"
+                        onRequestClose={() => setTimeFormatPickerOpen(false)}
+                    >
+                        <Pressable style={styles.pickerOverlay} onPress={() => setTimeFormatPickerOpen(false)}>
+                            <View
+                                style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                                onStartShouldSetResponder={() => true}
+                            >
+                                <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('settings.timeFormat')}</Text>
+                                <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent}>
+                                    {timeFormatOptions.map((option) => {
+                                        const selected = timeFormat === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.value}
+                                                style={[
+                                                    styles.pickerOption,
+                                                    { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
+                                                ]}
+                                                onPress={() => {
+                                                    updateSettings({ timeFormat: option.value }).catch(logSettingsError);
+                                                    setTimeFormatPickerOpen(false);
                                                 }}
                                             >
                                                 <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>

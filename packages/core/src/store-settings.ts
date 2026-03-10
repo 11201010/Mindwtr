@@ -561,7 +561,7 @@ export const createSettingsActions = ({
                 markSyncUpdated('appearance');
             }
 
-            if ('language' in updates || 'weekStart' in updates || 'dateFormat' in updates) {
+            if ('language' in updates || 'weekStart' in updates || 'dateFormat' in updates || 'timeFormat' in updates) {
                 markSyncUpdated('language');
             }
 

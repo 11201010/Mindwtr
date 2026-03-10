@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { addMonths, endOfMonth, endOfWeek, format, getMonth, getYear, isSameDay, isSameMonth, isToday, setMonth, setYear, startOfMonth, startOfWeek, subMonths, eachDayOfInterval } from 'date-fns';
-import { shallow, safeParseDate, safeParseDueDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore, type Task, isTaskInActiveProject } from '@mindwtr/core';
+import { shallow, safeFormatDate, safeParseDate, safeParseDueDate, type ExternalCalendarEvent, type ExternalCalendarSubscription, useTaskStore, type Task, isTaskInActiveProject } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
 import { reportError } from '../../lib/report-error';
@@ -636,7 +636,7 @@ export function CalendarView() {
                                     const timeLabel = event.allDay
                                         ? t('calendar.allDay')
                                         : start && end
-                                            ? `${format(start, 'HH:mm')}-${format(end, 'HH:mm')}`
+                                            ? `${safeFormatDate(start, 'p')}-${safeFormatDate(end, 'p')}`
                                             : '';
                                     const sourceLabel = calendarNameById.get(event.sourceId);
                                     return (
@@ -689,7 +689,7 @@ export function CalendarView() {
                                     if (!start) return null;
                                     const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
                                     const end = new Date(start.getTime() + durMs);
-                                    const label = `${format(start, 'HH:mm')}-${format(end, 'HH:mm')}`;
+                                    const label = `${safeFormatDate(start, 'p')}-${safeFormatDate(end, 'p')}`;
                                     return (
                                         <div key={task.id} className="flex items-center justify-between gap-3">
                                             <button

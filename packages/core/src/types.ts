@@ -227,6 +227,7 @@ export interface AppData {
         language?: 'en' | 'zh' | 'zh-Hant' | 'es' | 'hi' | 'ar' | 'de' | 'ru' | 'ja' | 'fr' | 'pt' | 'pl' | 'ko' | 'it' | 'tr' | 'nl' | 'system';
         weekStart?: 'monday' | 'sunday';
         dateFormat?: string;
+        timeFormat?: string;
         syncPreferences?: SettingsSyncPreferences;
         syncPreferencesUpdatedAt?: SettingsSyncUpdatedAt;
         externalCalendars?: ExternalCalendarSubscription[];

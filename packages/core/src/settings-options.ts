@@ -5,6 +5,7 @@ import type { AppData } from './types';
 type ThemeValue = NonNullable<AppData['settings']['theme']>;
 type LanguageValue = NonNullable<AppData['settings']['language']>;
 type WeekStartValue = NonNullable<AppData['settings']['weekStart']>;
+type TimeFormatValue = NonNullable<AppData['settings']['timeFormat']>;
 type KeybindingStyleValue = NonNullable<AppData['settings']['keybindingStyle']>;
 type DensityValue = NonNullable<NonNullable<AppData['settings']['appearance']>['density']>;
 type SpeechToTextSettings = NonNullable<NonNullable<AppData['settings']['ai']>['speechToText']>;
@@ -27,6 +28,12 @@ const THEME_VALUE_FLAGS: Record<ThemeValue, true> = {
 const WEEK_START_VALUE_FLAGS: Record<WeekStartValue, true> = {
     monday: true,
     sunday: true,
+};
+
+const TIME_FORMAT_VALUE_FLAGS: Record<TimeFormatValue, true> = {
+    system: true,
+    '12h': true,
+    '24h': true,
 };
 
 const KEYBINDING_STYLE_VALUE_FLAGS: Record<KeybindingStyleValue, true> = {
@@ -76,6 +83,9 @@ export const SETTINGS_LANGUAGE_VALUE_SET = new Set<LanguageValue>(SETTINGS_LANGU
 
 export const SETTINGS_WEEK_START_VALUES = Object.keys(WEEK_START_VALUE_FLAGS) as WeekStartValue[];
 export const SETTINGS_WEEK_START_VALUE_SET = new Set<WeekStartValue>(SETTINGS_WEEK_START_VALUES);
+
+export const SETTINGS_TIME_FORMAT_VALUES = Object.keys(TIME_FORMAT_VALUE_FLAGS) as TimeFormatValue[];
+export const SETTINGS_TIME_FORMAT_VALUE_SET = new Set<TimeFormatValue>(SETTINGS_TIME_FORMAT_VALUES);
 
 export const SETTINGS_KEYBINDING_STYLE_VALUES = Object.keys(KEYBINDING_STYLE_VALUE_FLAGS) as KeybindingStyleValue[];
 export const SETTINGS_KEYBINDING_STYLE_VALUE_SET = new Set<KeybindingStyleValue>(SETTINGS_KEYBINDING_STYLE_VALUES);

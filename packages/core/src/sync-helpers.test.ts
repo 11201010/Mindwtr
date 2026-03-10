@@ -133,6 +133,7 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
                 language: 'zh',
                 weekStart: 'monday',
                 dateFormat: 'yyyy-MM-dd',
+                timeFormat: '24h',
                 externalCalendars: [{ id: 'cal-1', name: 'Work', url: 'https://example.com/work.ics', enabled: true }],
                 ai: {
                     enabled: true,
@@ -159,6 +160,7 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
         expect(sanitized.settings.language).toBeUndefined();
         expect(sanitized.settings.weekStart).toBeUndefined();
         expect(sanitized.settings.dateFormat).toBeUndefined();
+        expect(sanitized.settings.timeFormat).toBeUndefined();
 
         expect(sanitized.settings.ai?.apiKey).toBeUndefined();
         expect(sanitized.settings.ai?.speechToText?.offlineModelPath).toBeUndefined();

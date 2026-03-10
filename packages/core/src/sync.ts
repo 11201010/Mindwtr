@@ -9,6 +9,7 @@ import {
     SETTINGS_KEYBINDING_STYLE_VALUE_SET,
     SETTINGS_LANGUAGE_VALUE_SET,
     SETTINGS_THEME_VALUE_SET,
+    SETTINGS_TIME_FORMAT_VALUE_SET,
     SETTINGS_WEEK_START_VALUE_SET,
     STT_FIELD_STRATEGY_VALUE_SET,
     STT_MODE_VALUE_SET,
@@ -582,6 +583,9 @@ const sanitizeMergedSettingsForSync = (
     if (next.weekStart !== undefined && !SETTINGS_WEEK_START_VALUE_SET.has(next.weekStart)) {
         next.weekStart = localSettings.weekStart;
     }
+    if (next.timeFormat !== undefined && !SETTINGS_TIME_FORMAT_VALUE_SET.has(next.timeFormat)) {
+        next.timeFormat = localSettings.timeFormat;
+    }
     if (next.keybindingStyle !== undefined && !SETTINGS_KEYBINDING_STYLE_VALUE_SET.has(next.keybindingStyle)) {
         next.keybindingStyle = localSettings.keybindingStyle;
     }
@@ -690,12 +694,23 @@ const mergeSettingsForSync = (localSettings: AppData['settings'], incomingSettin
 
     mergeGroup(
         'language',
-        { language: localSettings.language, weekStart: localSettings.weekStart, dateFormat: localSettings.dateFormat },
-        { language: incomingSettings.language, weekStart: incomingSettings.weekStart, dateFormat: incomingSettings.dateFormat },
+        {
+            language: localSettings.language,
+            weekStart: localSettings.weekStart,
+            dateFormat: localSettings.dateFormat,
+            timeFormat: localSettings.timeFormat,
+        },
+        {
+            language: incomingSettings.language,
+            weekStart: incomingSettings.weekStart,
+            dateFormat: incomingSettings.dateFormat,
+            timeFormat: incomingSettings.timeFormat,
+        },
         (value) => {
             merged.language = value.language;
             merged.weekStart = value.weekStart;
             merged.dateFormat = value.dateFormat;
+            merged.timeFormat = value.timeFormat;
         },
         (localValue, incomingValue, incomingWins) => mergeRecordFields(localValue, incomingValue, incomingWins)
     );

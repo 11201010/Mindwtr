@@ -7,7 +7,8 @@ import {
 type ThemeMode = 'system' | 'light' | 'dark' | 'eink' | 'nord' | 'sepia';
 type DensityMode = 'comfortable' | 'compact';
 type WeekStart = 'sunday' | 'monday';
-type DateFormatSetting = 'system' | 'dmy' | 'mdy';
+type DateFormatSetting = 'system' | 'dmy' | 'mdy' | 'ymd';
+type TimeFormatSetting = 'system' | '12h' | '24h';
 
 type Labels = {
     lookAndFeel: string;
@@ -33,6 +34,11 @@ type Labels = {
     dateFormatSystem: string;
     dateFormatDmy: string;
     dateFormatMdy: string;
+    dateFormatYmd: string;
+    timeFormat: string;
+    timeFormatSystem: string;
+    timeFormat12h: string;
+    timeFormat24h: string;
     keybindings: string;
     keybindingsDesc: string;
     undoNotifications: string;
@@ -67,6 +73,8 @@ type SettingsMainPageProps = {
     onWeekStartChange: (weekStart: WeekStart) => void;
     dateFormat: DateFormatSetting;
     onDateFormatChange: (format: DateFormatSetting) => void;
+    timeFormat: TimeFormatSetting;
+    onTimeFormatChange: (format: TimeFormatSetting) => void;
     keybindingStyle: 'vim' | 'emacs';
     onKeybindingStyleChange: (style: 'vim' | 'emacs') => void;
     globalQuickAddShortcut: GlobalQuickAddShortcutSetting;
@@ -148,6 +156,8 @@ export function SettingsMainPage({
     onWeekStartChange,
     dateFormat,
     onDateFormatChange,
+    timeFormat,
+    onTimeFormatChange,
     keybindingStyle,
     onKeybindingStyleChange,
     globalQuickAddShortcut,
@@ -247,6 +257,8 @@ export function SettingsMainPage({
                             ? t.dateFormatDmy
                             : dateFormat === 'mdy'
                                 ? t.dateFormatMdy
+                                : dateFormat === 'ymd'
+                                    ? t.dateFormatYmd
                                 : t.dateFormatSystem
                     }
                 >
@@ -258,6 +270,27 @@ export function SettingsMainPage({
                         <option value="system">{t.dateFormatSystem}</option>
                         <option value="dmy">{t.dateFormatDmy}</option>
                         <option value="mdy">{t.dateFormatMdy}</option>
+                        <option value="ymd">{t.dateFormatYmd}</option>
+                    </select>
+                </SettingsRow>
+                <SettingsRow
+                    title={t.timeFormat}
+                    description={
+                        timeFormat === '12h'
+                            ? t.timeFormat12h
+                            : timeFormat === '24h'
+                                ? t.timeFormat24h
+                                : t.timeFormatSystem
+                    }
+                >
+                    <select
+                        value={timeFormat}
+                        onChange={(e) => onTimeFormatChange(e.target.value as TimeFormatSetting)}
+                        className={selectCls}
+                    >
+                        <option value="system">{t.timeFormatSystem}</option>
+                        <option value="12h">{t.timeFormat12h}</option>
+                        <option value="24h">{t.timeFormat24h}</option>
                     </select>
                 </SettingsRow>
             </SettingsCard>

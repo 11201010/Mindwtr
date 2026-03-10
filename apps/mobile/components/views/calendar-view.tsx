@@ -1,6 +1,7 @@
 import { Alert, View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  safeFormatDate,
   safeParseDate,
   safeParseDueDate,
   normalizeDateFormatSetting,
@@ -370,12 +371,15 @@ export function CalendarView() {
     setCurrentYear(next.getFullYear());
   };
 
-  const formatHourLabel = (hour: number) => `${String(hour).padStart(2, '0')}:00`;
+  const formatHourLabel = (hour: number) => {
+    const sample = new Date(2025, 0, 1, hour, 0, 0, 0);
+    return safeFormatDate(sample, 'p');
+  };
 
   const formatTimeRange = (start: Date, durationMinutes: number) => {
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-    const startLabel = start.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-    const endLabel = end.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+    const startLabel = safeFormatDate(start, 'p');
+    const endLabel = safeFormatDate(end, 'p');
     return `${startLabel}-${endLabel}`;
   };
 
@@ -954,7 +958,7 @@ export function CalendarView() {
                           const start = safeParseDate(event.start);
                           const end = safeParseDate(event.end);
                           if (!start || !end) return '';
-                          return `${start.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}-${end.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`;
+                          return `${safeFormatDate(start, 'p')}-${safeFormatDate(end, 'p')}`;
                         })()}
                       </Text>
                     </View>
@@ -999,8 +1003,8 @@ export function CalendarView() {
                         if (!start) return '';
                         const durMs = timeEstimateToMinutes(task.timeEstimate) * 60 * 1000;
                         const end = new Date(start.getTime() + durMs);
-                        const startLabel = start.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-                        const endLabel = end.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                        const startLabel = safeFormatDate(start, 'p');
+                        const endLabel = safeFormatDate(end, 'p');
                         return `${startLabel}-${endLabel}`;
                       })()}
                     </Text>

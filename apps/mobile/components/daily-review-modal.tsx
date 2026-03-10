@@ -244,7 +244,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                     const end = safeParseDate(event.end);
                     const timeLabel = event.allDay || !start || !end
                         ? t('calendar.allDay')
-                        : `${safeFormatDate(start, 'HH:mm')} - ${safeFormatDate(end, 'HH:mm')}`;
+                        : `${safeFormatDate(start, 'p')} - ${safeFormatDate(end, 'p')}`;
                     return (
                         <View key={`${event.sourceId}-${event.id}-${event.start}`} style={styles.eventRow}>
                             <Text style={[styles.eventTitle, { color: tc.text }]} numberOfLines={1}>

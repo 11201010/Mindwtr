@@ -11,7 +11,9 @@ import {
 } from 'lucide-react';
 import {
     type DateFormatSetting,
+    type TimeFormatSetting,
     normalizeDateFormatSetting,
+    normalizeTimeFormatSetting,
     resolveDateLocaleTag,
     DEFAULT_ANTHROPIC_THINKING_BUDGET,
     flushPendingSave,
@@ -54,7 +56,7 @@ type ThemeMode = DesktopThemeMode;
 type DensityMode = 'comfortable' | 'compact';
 type SettingsPage = 'main' | 'gtd' | 'notifications' | 'sync' | 'calendar' | 'ai' | 'about';
 type LinuxDistroInfo = { id?: string; id_like?: string[] };
-type DateFormatUiSetting = Exclude<DateFormatSetting, 'ymd'>;
+type DateFormatUiSetting = DateFormatSetting;
 
 const SettingsMainPage = lazy(() => import('./settings/SettingsMainPage').then((m) => ({ default: m.SettingsMainPage })));
 const SettingsGtdPage = lazy(() => import('./settings/SettingsGtdPage').then((m) => ({ default: m.SettingsGtdPage })));
@@ -141,7 +143,7 @@ export function SettingsView() {
     const trayVisible = settings?.window?.showTray !== false;
     const densityMode = (settings?.appearance?.density === 'compact' ? 'compact' : 'comfortable') as DensityMode;
     const dateFormat = normalizeDateFormatSetting(settings?.dateFormat);
-    const dateFormatForUi: DateFormatUiSetting = dateFormat === 'ymd' ? 'system' : dateFormat;
+    const timeFormat = normalizeTimeFormatSetting(settings?.timeFormat);
     const [saved, setSaved] = useState(false);
     const [appVersion, setAppVersion] = useState('0.1.0');
     const [logPath, setLogPath] = useState('');
@@ -439,6 +441,12 @@ export function SettingsView() {
         updateSettings({ dateFormat: value })
             .then(showSaved)
             .catch((error) => reportError('Failed to update date format', error));
+    };
+
+    const saveTimeFormatPreference = (value: TimeFormatSetting) => {
+        updateSettings({ timeFormat: value })
+            .then(showSaved)
+            .catch((error) => reportError('Failed to update time format', error));
     };
 
     const handleWindowDecorationsChange = useCallback((enabled: boolean) => {
@@ -924,8 +932,10 @@ export function SettingsView() {
                     onLanguageChange={saveLanguagePreference}
                     weekStart={weekStart}
                     onWeekStartChange={saveWeekStartPreference}
-                    dateFormat={dateFormatForUi}
+                    dateFormat={dateFormat}
                     onDateFormatChange={saveDateFormatPreference}
+                    timeFormat={timeFormat}
+                    onTimeFormatChange={saveTimeFormatPreference}
                     keybindingStyle={keybindingStyle}
                     onKeybindingStyleChange={handleKeybindingStyleChange}
                     globalQuickAddShortcut={globalQuickAddShortcut}
