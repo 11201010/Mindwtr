@@ -49,22 +49,22 @@ export function ProjectNotesSection({
     }, [project.id, project.supportNotes]);
 
     return (
-        <div className="mb-4 rounded-xl border border-border/70 overflow-hidden bg-card/55">
+        <section className="py-5 border-b border-border/50">
             <button
                 type="button"
                 onClick={onToggleNotes}
-                className="w-full flex items-center gap-2 px-3 py-2 bg-muted/25 hover:bg-muted/40 transition-colors text-sm font-medium"
+                className="w-full flex items-center gap-2 py-1 text-sm font-medium hover:text-foreground transition-colors"
             >
                 {notesExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                 {t('project.notes')}
             </button>
             {notesExpanded && (
-                <div className="p-3.5 space-y-3">
+                <div className="pt-4 space-y-3">
                     <div className="flex items-center justify-between">
                         <button
                             type="button"
                             onClick={onTogglePreview}
-                            className="h-7 text-xs px-2.5 rounded-md border border-border bg-muted/40 hover:bg-muted/70 transition-colors text-muted-foreground"
+                            className="h-7 text-xs px-2.5 rounded-md border border-border bg-background hover:bg-muted/40 transition-colors text-muted-foreground"
                         >
                             {showNotesPreview ? t('markdown.edit') : t('markdown.preview')}
                         </button>
@@ -72,7 +72,7 @@ export function ProjectNotesSection({
                             <button
                                 type="button"
                                 onClick={onAddFile}
-                                className="h-7 text-xs px-2.5 rounded-md border border-border bg-muted/40 hover:bg-muted/70 transition-colors flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
+                                className="h-7 text-xs px-2.5 rounded-md border border-border bg-background hover:bg-muted/40 transition-colors flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
                                 disabled={attachmentsBusy}
                                 aria-busy={attachmentsBusy}
                             >
@@ -82,7 +82,7 @@ export function ProjectNotesSection({
                             <button
                                 type="button"
                                 onClick={onAddLink}
-                                className="h-7 text-xs px-2.5 rounded-md border border-border bg-muted/40 hover:bg-muted/70 transition-colors flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
+                                className="h-7 text-xs px-2.5 rounded-md border border-border bg-background hover:bg-muted/40 transition-colors flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
                                 disabled={attachmentsBusy}
                                 aria-busy={attachmentsBusy}
                             >
@@ -93,13 +93,13 @@ export function ProjectNotesSection({
                     </div>
 
                     {showNotesPreview ? (
-                        <div className="text-xs bg-muted/20 border border-border rounded-md px-2.5 py-2.5">
+                        <div className="text-xs border border-border rounded-md px-2.5 py-2.5">
                             <Markdown markdown={draftNotes} />
                         </div>
                     ) : (
                         <textarea
                             ref={textareaRef}
-                            className="w-full min-h-[120px] p-3 text-sm bg-background/40 border border-border rounded-md resize-y focus:outline-none focus:bg-accent/5"
+                            className="w-full min-h-[120px] p-3 text-sm bg-background border border-border rounded-md resize-y focus:outline-none focus:bg-accent/5"
                             placeholder={t('projects.notesPlaceholder')}
                             value={draftNotes}
                             onChange={(event) => setDraftNotes(event.target.value)}
@@ -123,7 +123,7 @@ export function ProjectNotesSection({
                                     const displayTitle = getAttachmentDisplayTitle(attachment);
                                     const fullTitle = attachment.kind === 'link' ? attachment.uri : attachment.title;
                                     return (
-                                        <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+                                        <div key={attachment.id} className="flex items-center justify-between gap-2 text-xs rounded-md border border-border/60 px-2 py-1.5">
                                             <div className="min-w-0 flex-1">
                                                 <button
                                                     type="button"
@@ -150,6 +150,6 @@ export function ProjectNotesSection({
                     </div>
                 </div>
             )}
-        </div>
+        </section>
     );
 }

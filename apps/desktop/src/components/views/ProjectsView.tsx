@@ -491,7 +491,7 @@ export function ProjectsView() {
             return (
                 <SectionDropZone
                     id={NO_SECTION_CONTAINER}
-                    className="min-h-[120px] rounded-xl border border-dashed border-border/80 bg-muted/20 p-4"
+                    className="min-h-[120px] rounded-lg border border-dashed border-border/70 p-4"
                 >
                     {orderedProjectTasks.length > 0 ? (
                         renderTasks(orderedProjectTasks)
@@ -514,9 +514,9 @@ export function ProjectsView() {
                         <SectionDropZone
                             key={group.section.id}
                             id={getSectionContainerId(group.section.id)}
-                            className="rounded-xl border border-border/70 bg-background/40"
+                            className="rounded-lg border border-border/60"
                         >
-                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
                                 <button
                                     type="button"
                                     onClick={() => handleToggleSection(group.section)}
@@ -534,7 +534,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleOpenSectionTaskPrompt(group.section.id)}
-                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/40 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('projects.addTask')}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
@@ -543,7 +543,7 @@ export function ProjectsView() {
                                         type="button"
                                         onClick={() => handleToggleSectionNotes(group.section.id)}
                                         className={cn(
-                                            'h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center',
+                                            'h-7 w-7 rounded-md hover:bg-muted/40 text-muted-foreground hover:text-foreground flex items-center justify-center',
                                             (hasNotes || notesOpen) && 'text-primary'
                                         )}
                                         aria-label={t('projects.sectionNotes')}
@@ -553,7 +553,7 @@ export function ProjectsView() {
                                     <button
                                         type="button"
                                         onClick={() => handleRenameSection(group.section)}
-                                        className="h-7 w-7 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground flex items-center justify-center"
+                                        className="h-7 w-7 rounded-md hover:bg-muted/40 text-muted-foreground hover:text-foreground flex items-center justify-center"
                                         aria-label={t('common.edit')}
                                     >
                                         <Pencil className="h-3.5 w-3.5" />
@@ -569,9 +569,9 @@ export function ProjectsView() {
                                 </div>
                             </div>
                             {notesOpen && (
-                                <div className="px-3 py-2 border-b border-border/60 bg-muted/10">
+                                <div className="px-3 py-2 border-b border-border/50">
                                     <textarea
-                                        className="w-full min-h-[90px] p-2 text-xs bg-background/40 border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
+                                        className="w-full min-h-[90px] p-2 text-xs bg-background border border-border rounded resize-y focus:outline-none focus:bg-accent/5"
                                         placeholder={t('projects.sectionNotesPlaceholder')}
                                         defaultValue={group.section.description || ''}
                                         onBlur={(event) => {
@@ -597,9 +597,9 @@ export function ProjectsView() {
                 })}
                 <SectionDropZone
                     id={NO_SECTION_CONTAINER}
-                    className="rounded-xl border border-dashed border-border/80 bg-muted/20"
+                    className="rounded-lg border border-dashed border-border/70"
                 >
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/20">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
                         <div className="flex items-center gap-2 text-sm font-semibold">
                             <span>{t('projects.noSection')}</span>
                             <span className="text-xs text-muted-foreground">
@@ -783,7 +783,7 @@ export function ProjectsView() {
     return (
         <ErrorBoundary>
             <div className="h-full px-4 py-3">
-                <div className="flex h-full gap-6 w-full max-w-[calc(18rem+1100px+1.5rem)] mx-auto">
+                <div className="flex h-full gap-6 w-full max-w-[calc(16rem+1100px+1.5rem)] mx-auto">
                     <ProjectsSidebar
                         t={t}
                         areaFilterLabel={areaFilterLabel ?? undefined}
@@ -819,8 +819,8 @@ export function ProjectsView() {
 
                     {/* Project Details & Tasks */}
                     <div className="flex-1 min-w-0 h-full flex">
-                        <div className="flex flex-col h-full min-h-0 w-full max-w-[1100px] rounded-2xl border border-border/70 bg-card/40">
-                            <div className="px-4 py-3 sm:px-5 border-b border-border/60">
+                        <div className="flex flex-col h-full min-h-0 w-full max-w-[1100px]">
+                            <div className="mb-4">
                                 <input
                                     type="text"
                                     data-view-filter-input
@@ -831,9 +831,9 @@ export function ProjectsView() {
                                 />
                             </div>
                             {selectedProject ? (
-                                <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+                                <div className="flex-1 min-h-0 overflow-y-auto pr-2">
                                     {(isCreatingProject || isProjectDeleting || isAreaCreating) && (
-                                        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                        <div className="mb-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                                             {t('common.loading') || 'Loading...'}
                                         </div>
                                     )}
@@ -925,7 +925,7 @@ export function ProjectsView() {
                                         }}
                                     />
 
-                                    <div className="pb-2">
+                                    <section className="py-5 border-t border-border/50">
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="text-xs uppercase tracking-wider text-muted-foreground">
                                                 {t('projects.sectionsLabel')}
@@ -934,23 +934,23 @@ export function ProjectsView() {
                                                 type="button"
                                                 onClick={handleAddSection}
                                                 aria-label={t('projects.addSection')}
-                                                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md border border-border bg-muted/40 hover:bg-muted transition-colors"
+                                                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-md border border-border bg-background hover:bg-muted/40 transition-colors"
                                             >
                                                 <Plus className="h-3.5 w-3.5" />
                                                 {t('projects.addSection')}
                                             </button>
                                         </div>
                                         {tasksContent}
-                                    </div>
+                                    </section>
 
                                     {projectReferenceTasks.length > 0 && (
-                                        <div className="pb-2">
+                                        <section className="py-5 border-t border-border/50">
                                             <div className="flex items-center justify-between mb-3">
                                                 <div className="text-xs uppercase tracking-wider text-muted-foreground">
                                                     {t('status.reference')} ({projectReferenceTasks.length})
                                                 </div>
                                             </div>
-                                            <div className="rounded-xl border border-border/70 bg-background/30 divide-y divide-border/30">
+                                            <div className="divide-y divide-border/30 border-t border-border/40">
                                                 {projectReferenceTasks.map((task) => (
                                                     <TaskItem
                                                         key={`project-reference-${task.id}`}
@@ -961,12 +961,12 @@ export function ProjectsView() {
                                                     />
                                                 ))}
                                             </div>
-                                        </div>
+                                        </section>
                                     )}
                                 </div>
                             ) : (
                                 <div className="flex-1 flex items-center justify-center text-muted-foreground p-6">
-                                    <div className="text-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-10 py-12">
+                                    <div className="text-center border border-dashed border-border/70 px-10 py-12">
                                         <Folder className="w-12 h-12 mx-auto mb-4 opacity-25" />
                                         <p>{t('projects.selectProject')}</p>
                                     </div>

@@ -43,7 +43,7 @@ export function ProjectDetailsHeader({
         : 0;
 
     return (
-        <header className="mb-4 rounded-xl border border-border/70 bg-background/40 p-4 sm:p-5">
+        <header className="pb-5 border-b border-border/50">
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                     <span
@@ -87,7 +87,7 @@ export function ProjectDetailsHeader({
                         {project.tagIds && project.tagIds.length > 0 && (
                             <div className="flex flex-wrap gap-1">
                                 {project.tagIds.map((tag) => (
-                                    <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full border border-border bg-muted/30 text-muted-foreground">
+                                    <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full border border-border/60 bg-muted/20 text-muted-foreground">
                                         {tag}
                                     </span>
                                 ))}
@@ -99,7 +99,7 @@ export function ProjectDetailsHeader({
                     <button
                         type="button"
                         onClick={onDuplicate}
-                        className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium bg-muted/60 hover:bg-muted text-muted-foreground transition-colors whitespace-nowrap"
+                        className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium border border-border bg-background hover:bg-muted/40 text-muted-foreground transition-colors whitespace-nowrap"
                     >
                         <Copy className="w-4 h-4" />
                         {t('projects.duplicate')}
@@ -108,7 +108,7 @@ export function ProjectDetailsHeader({
                         <button
                             type="button"
                             onClick={onReactivate}
-                            className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
+                            className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap"
                         >
                             <RotateCcw className="w-4 h-4" />
                             {t('projects.reactivate')}
@@ -117,7 +117,7 @@ export function ProjectDetailsHeader({
                         <button
                             type="button"
                             onClick={onArchive}
-                            className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium bg-muted/60 hover:bg-muted text-muted-foreground transition-colors whitespace-nowrap"
+                            className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-xs font-medium border border-border bg-background hover:bg-muted/40 text-muted-foreground transition-colors whitespace-nowrap"
                         >
                             <ArchiveIcon className="w-4 h-4" />
                             {t('projects.archive')}
