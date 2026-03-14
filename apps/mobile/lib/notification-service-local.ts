@@ -86,6 +86,7 @@ let rescheduleTimer: ReturnType<typeof setTimeout> | null = null;
 let rescheduleQueue: Promise<void> = Promise.resolve();
 let alarmMap = new Map<string, LocalAlarmMapEntry>();
 let loadedAlarmMap = false;
+let alarmMapLoadPromise: Promise<void> | null = null;
 const configByKey = new Map<string, string>();
 
 const logNotificationError = (message: string, error?: unknown) => {
@@ -104,6 +105,8 @@ function getProjectKey(projectId: string): string {
 function resetRuntimeState(): void {
   configByKey.clear();
   rescheduleQueue = Promise.resolve();
+  notificationOpenHandler = null;
+  alarmMapLoadPromise = null;
 }
 
 function clearRescheduleTimer(): void {
@@ -139,26 +142,37 @@ function serializeAlarmMap(map: Map<string, LocalAlarmMapEntry>): LocalAlarmMap 
 
 async function loadAlarmMapIfNeeded(): Promise<void> {
   if (loadedAlarmMap) return;
-  loadedAlarmMap = true;
-  try {
-    const raw = await AsyncStorage.getItem(LOCAL_ALARM_MAP_KEY);
-    if (!raw) {
-      alarmMap = new Map<string, LocalAlarmMapEntry>();
-      return;
-    }
-    const parsed = JSON.parse(raw) as LocalAlarmMap;
-    const nextMap = new Map<string, LocalAlarmMapEntry>();
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!value || typeof value !== 'object') continue;
-      const id = Number((value as LocalAlarmMapEntry).id);
-      if (!Number.isFinite(id)) continue;
-      nextMap.set(key, { id: Math.floor(id) });
-    }
-    alarmMap = nextMap;
-  } catch (error) {
-    alarmMap = new Map<string, LocalAlarmMapEntry>();
-    logNotificationError('Failed to load alarm map', error);
+  if (alarmMapLoadPromise) {
+    await alarmMapLoadPromise;
+    return;
   }
+  alarmMapLoadPromise = (async () => {
+    try {
+      const raw = await AsyncStorage.getItem(LOCAL_ALARM_MAP_KEY);
+      if (!raw) {
+        alarmMap = new Map<string, LocalAlarmMapEntry>();
+        loadedAlarmMap = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as LocalAlarmMap;
+      const nextMap = new Map<string, LocalAlarmMapEntry>();
+      for (const [key, value] of Object.entries(parsed)) {
+        if (!value || typeof value !== 'object') continue;
+        const id = Number((value as LocalAlarmMapEntry).id);
+        if (!Number.isFinite(id)) continue;
+        nextMap.set(key, { id: Math.floor(id) });
+      }
+      alarmMap = nextMap;
+      loadedAlarmMap = true;
+    } catch (error) {
+      alarmMap = new Map<string, LocalAlarmMapEntry>();
+      loadedAlarmMap = false;
+      logNotificationError('Failed to load alarm map', error);
+    }
+  })().finally(() => {
+    alarmMapLoadPromise = null;
+  });
+  await alarmMapLoadPromise;
 }
 
 async function saveAlarmMap(): Promise<void> {
@@ -609,6 +623,7 @@ export async function stopLocalMobileNotifications(): Promise<void> {
 
   dismissSubscription?.remove();
   dismissSubscription = null;
+  notificationOpenHandler = null;
 
   const api = await loadAlarmApi();
   if (api) {
@@ -635,3 +650,24 @@ export async function stopLocalMobileNotifications(): Promise<void> {
   resetRuntimeState();
   started = false;
 }
+
+export const __localNotificationTestUtils = {
+  loadAlarmMapIfNeeded,
+  getAlarmMapSnapshot: () => new Map(alarmMap),
+  getNotificationOpenHandler: () => notificationOpenHandler,
+  isAlarmMapLoaded: () => loadedAlarmMap,
+  resetForTests: () => {
+    clearRescheduleTimer();
+    storeSubscription?.();
+    storeSubscription = null;
+    openSubscription?.remove();
+    openSubscription = null;
+    dismissSubscription?.remove();
+    dismissSubscription = null;
+    started = false;
+    alarmApi = null;
+    alarmMap = new Map<string, LocalAlarmMapEntry>();
+    loadedAlarmMap = false;
+    resetRuntimeState();
+  },
+};
