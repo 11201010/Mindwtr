@@ -85,5 +85,8 @@ aur/src/
 AGENTS.md
 .codex/
 
+# CI artifacts
+scripts/ci/__pycache__/
+
 # Wiki (maintained in separate repo)
 Mindwtr.wiki/

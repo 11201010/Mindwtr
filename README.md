@@ -103,6 +103,7 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - GTD workflow end-to-end: Capture, Clarify, Organize, Reflect, Engage.
 - Focus view combines time-based agenda with next actions.
 - Local-first data model with flexible sync options.
+- Obsidian vault import with note deep links on desktop.
 - Optional AI copilot (BYOK + local/self-hosted compatible models).
 - Cross-platform apps for desktop and mobile, plus PWA.
 - Built-in automation with CLI, REST API, and MCP server.
@@ -150,6 +151,7 @@ Mindwtr is built to be **simple by default and powerful when you need it**. We f
 - 🔄 **Sync Options** - See the [Data & Sync wiki](https://github.com/dongdongbh/Mindwtr/wiki/Data-and-Sync) for supported backends and setup
 - ☁️ **Dropbox OAuth Sync (Optional)** - Native Dropbox App Folder sync in supported non-FOSS builds
 - 📤 **Export/Backup** - Export data to JSON
+- 🔗 **Obsidian Integration** - Desktop vault task import with deep links back to source notes
 - 🗓️ **External Calendars (System + ICS)** - Mobile reads system calendars; desktop supports ICS subscriptions
 
 ### Automation
@@ -338,7 +340,6 @@ You can help in several ways:
 - 🤖 Add to F-Droid
 - ☁️ Native iCloud/CloudKit sync (Apple ecosystem)
 - 🗣️ iOS Reminders Inbox import (Siri capture -> Mindwtr Inbox)
-- 🔗 Obsidian integration (task deep links)
 - ✉️ Email to Inbox
 
 ## Documentation
