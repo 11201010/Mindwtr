@@ -102,6 +102,12 @@ interface TaskEditModalProps {
 
 type TaskEditTab = 'task' | 'view';
 
+function resolveInitialTaskEditTab(target?: TaskEditTab, currentTask?: Task | null): TaskEditTab {
+    if (target) return target;
+    if (currentTask?.taskMode === 'list') return 'view';
+    return 'view';
+}
+
 function areTaskFieldValuesEqual(left: unknown, right: unknown): boolean {
     if ((left === '' && right == null) || (right === '' && left == null)) {
         return true;
@@ -157,7 +163,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
     const [showDatePicker, setShowDatePicker] = useState<'start' | 'start-time' | 'due' | 'due-time' | 'review' | null>(null);
     const [pendingStartDate, setPendingStartDate] = useState<Date | null>(null);
     const [pendingDueDate, setPendingDueDate] = useState<Date | null>(null);
-    const [editTab, setEditTab] = useState<TaskEditTab>('task');
+    const [editTab, setEditTab] = useState<TaskEditTab>(() => resolveInitialTaskEditTab(defaultTab, task));
     const [showDescriptionPreview, setShowDescriptionPreview] = useState(false);
     const [showAreaPicker, setShowAreaPicker] = useState(false);
     const [titleDraft, setTitleDraft] = useState('');
@@ -268,12 +274,6 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
         suggestedContexts: suggestedTags,
     });
 
-    const resolveInitialTab = (target?: TaskEditTab, currentTask?: Task | null): TaskEditTab => {
-        if (target) return target;
-        if (currentTask?.taskMode === 'list') return 'view';
-        return 'view';
-    };
-
     useEffect(() => {
         if (liveTask) {
             const recurrenceRule = getRecurrenceRuleValue(liveTask.recurrence);
@@ -308,7 +308,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
                 setTagInputDraft((normalizedTask.tags ?? []).join(', '));
                 setIsContextInputFocused(false);
                 setIsTagInputFocused(false);
-                setEditTab(resolveInitialTab(defaultTab, normalizedTask));
+                setEditTab(resolveInitialTaskEditTab(defaultTab, normalizedTask));
                 resetCopilotState();
             }
         } else if (visible) {
@@ -328,7 +328,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
             setTagInputDraft('');
             setIsContextInputFocused(false);
             setIsTagInputFocused(false);
-            setEditTab(resolveInitialTab(defaultTab, null));
+            setEditTab(resolveInitialTaskEditTab(defaultTab, null));
             setCustomWeekdays([]);
         }
     }, [liveTask, defaultTab, visible, resetCopilotState]);
@@ -1548,7 +1548,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
     useEffect(() => {
         if (!visible || !containerWidth) return;
         scrollToTab(editTab, false);
-    }, [containerWidth, scrollToTab, task?.id, visible]);
+    }, [containerWidth, editTab, scrollToTab, task?.id, visible]);
 
     useEffect(() => {
         if (!visible || !containerWidth) return;
@@ -1556,7 +1556,7 @@ function TaskEditModalInner({ visible, task, onClose, onSave, onFocusMode, defau
             scrollToTab(editTab, false);
         }, 90);
         return () => clearTimeout(alignmentTimer);
-    }, [containerWidth, scrollToTab, task?.id, visible]);
+    }, [containerWidth, editTab, scrollToTab, task?.id, visible]);
 
     useEffect(() => {
         if (!visible) return;

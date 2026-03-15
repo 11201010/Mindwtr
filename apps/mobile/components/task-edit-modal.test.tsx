@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { TaskEditModal } from './task-edit-modal';
+import { syncTaskEditPagerPosition } from './task-edit/task-edit-modal.utils';
 
 vi.mock('@mindwtr/core', async () => {
   const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
@@ -91,9 +92,18 @@ vi.mock('expo-linking', () => ({
   openURL: vi.fn(),
 }));
 
+vi.mock('./task-edit/task-edit-modal.utils', async () => {
+  const actual = await vi.importActual<typeof import('./task-edit/task-edit-modal.utils')>('./task-edit/task-edit-modal.utils');
+  return {
+    ...actual,
+    syncTaskEditPagerPosition: vi.fn(),
+  };
+});
+
 describe('TaskEditModal', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(syncTaskEditPagerPosition).mockClear();
   });
 
   it('renders without crashing', () => {
@@ -251,5 +261,52 @@ describe('TaskEditModal', () => {
 
     expect(onSave).toHaveBeenCalledWith('t1', expect.objectContaining({ title: 'Changed task' }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncs the pager to the requested default tab on first open', () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn();
+    let tree: renderer.ReactTestRenderer;
+
+    act(() => {
+      tree = renderer.create(
+        <TaskEditModal
+          visible={false}
+          task={null}
+          onClose={onClose}
+          onSave={onSave}
+          defaultTab="view"
+        />
+      );
+    });
+
+    vi.mocked(syncTaskEditPagerPosition).mockClear();
+
+    act(() => {
+      tree!.update(
+        <TaskEditModal
+          visible
+          task={{
+            id: 't1',
+            title: 'Test task',
+            status: 'inbox',
+            tags: [],
+            contexts: [],
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-01-01T00:00:00.000Z',
+          }}
+          onClose={onClose}
+          onSave={onSave}
+          defaultTab="view"
+        />
+      );
+    });
+
+    expect(vi.mocked(syncTaskEditPagerPosition)).toHaveBeenCalled();
+    expect(
+      vi.mocked(syncTaskEditPagerPosition).mock.calls.some(
+        ([args]) => args?.mode === 'view'
+      )
+    ).toBe(true);
   });
 });
