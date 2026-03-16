@@ -32,7 +32,7 @@ import {
   startMobileNotifications,
   stopMobileNotifications,
 } from '../lib/notification-service';
-import { performMobileSync } from '../lib/sync-service';
+import { abortMobileSync, performMobileSync } from '../lib/sync-service';
 import { coerceSupportedBackend, isLikelyOfflineSyncError, resolveBackend, type SyncBackend } from '../lib/sync-service-utils';
 import { SYNC_BACKEND_KEY } from '../lib/sync-constants';
 import { isCloudKitAvailable, subscribeToCloudKitChanges } from '../lib/cloudkit-sync';
@@ -503,6 +503,7 @@ function RootLayoutContent() {
           clearTimeout(syncDebounceTimer.current);
           syncDebounceTimer.current = null;
         }
+        abortMobileSync();
         requestSync(0);
       }
       if (wasInactiveOrBackground && nextAppState === 'active') {

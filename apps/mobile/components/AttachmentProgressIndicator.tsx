@@ -24,12 +24,23 @@ export function AttachmentProgressIndicator({ attachmentId }: AttachmentProgress
 
   return (
     <View style={styles.container}>
-      <View style={[styles.track, { backgroundColor: tc.border }]}>
+      <View
+        accessible
+        accessibilityLabel="Attachment transfer progress"
+        accessibilityRole="progressbar"
+        accessibilityValue={{
+          min: 0,
+          max: 100,
+          now: percentage ?? undefined,
+          text: percentage !== null ? `${percentage}% complete` : 'Transfer in progress',
+        }}
+        style={[styles.track, { backgroundColor: tc.border }]}
+      >
         {percentage !== null ? (
           <View style={[styles.fill, { width: `${percentage}%`, backgroundColor: tc.tint }]} />
         ) : null}
       </View>
-      <Text style={[styles.label, { color: tc.secondaryText }]}>
+      <Text accessibilityLiveRegion="polite" style={[styles.label, { color: tc.secondaryText }]}>
         {percentage !== null ? `${percentage}%` : '...'}
       </Text>
     </View>

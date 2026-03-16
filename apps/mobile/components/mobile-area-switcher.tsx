@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -20,8 +21,15 @@ export function MobileAreaSwitcher() {
   const { t } = useLanguage();
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
-  const { areaById, resolvedAreaFilter, setAreaFilter, sortedAreas } = useMobileAreaFilter();
+  const {
+    areaById,
+    didResetDeletedAreaFilter,
+    resolvedAreaFilter,
+    setAreaFilter,
+    sortedAreas,
+  } = useMobileAreaFilter();
   const [visible, setVisible] = useState(false);
+  const staleFilterAlertShown = useRef(false);
 
   const currentLabel = useMemo(() => {
     if (resolvedAreaFilter === AREA_FILTER_ALL) return t('projects.allAreas');
@@ -40,6 +48,19 @@ export function MobileAreaSwitcher() {
     setAreaFilter(value);
     setVisible(false);
   };
+
+  useEffect(() => {
+    if (!didResetDeletedAreaFilter) {
+      staleFilterAlertShown.current = false;
+      return;
+    }
+    if (staleFilterAlertShown.current) return;
+    staleFilterAlertShown.current = true;
+    Alert.alert(
+      t('projects.areaFilter'),
+      'The selected area was removed, so the filter was reset to All Areas.',
+    );
+  }, [didResetDeletedAreaFilter, t]);
 
   return (
     <>
@@ -134,9 +155,9 @@ export function MobileAreaSwitcher() {
 const styles = StyleSheet.create({
   trigger: {
     maxWidth: 136,
-    minHeight: 28,
-    paddingHorizontal: 2,
-    paddingVertical: 2,
+    minHeight: 48,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,

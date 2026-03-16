@@ -62,7 +62,7 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     }, [today]);
 
     useEffect(() => {
-        let cancelled = false;
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const loadEvents = async () => {
             setExternalLoading(true);
             setExternalError(null);
@@ -72,20 +72,23 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
                 const end = new Date(start);
                 end.setDate(end.getDate() + 2);
                 end.setMilliseconds(-1);
-                const { events } = await fetchExternalCalendarEvents(start, end);
-                if (cancelled) return;
+                const { events } = await fetchExternalCalendarEvents(start, end, {
+                    signal: controller?.signal,
+                    timeoutMs: 15_000,
+                });
+                if (controller?.signal.aborted) return;
                 setExternalEvents(events);
             } catch (error) {
-                if (cancelled) return;
+                if (controller?.signal.aborted) return;
                 setExternalError(error instanceof Error ? error.message : String(error));
                 setExternalEvents([]);
             } finally {
-                if (!cancelled) setExternalLoading(false);
+                if (!controller?.signal.aborted) setExternalLoading(false);
             }
         };
         loadEvents();
         return () => {
-            cancelled = true;
+            controller?.abort(new Error('Daily review calendar fetch cancelled'));
         };
     }, [today]);
 

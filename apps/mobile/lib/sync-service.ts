@@ -110,6 +110,8 @@ const persistExternalCalendars = async (data: AppData): Promise<void> =>
 let mobileSyncActivityState: MobileSyncActivityState = 'idle';
 const mobileSyncActivityListeners = new Set<MobileSyncActivityListener>();
 const webdavSyncRateLimitController = createWebdavSyncRateLimitController();
+let activeMobileSyncAbortController: AbortController | null = null;
+let activeMobileSyncAbortReason: 'lifecycle' | null = null;
 
 const setMobileSyncActivityState = (next: MobileSyncActivityState) => {
   if (mobileSyncActivityState === next) return;
@@ -278,6 +280,8 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
     let networkSubscription: { remove?: () => void } | null = null;
     let preSyncedLocalData: AppData | null = null;
     const requestAbortController = new AbortController();
+    activeMobileSyncAbortController = requestAbortController;
+    activeMobileSyncAbortReason = null;
     const fetchWithAbort = createAbortableFetch(fetch, { baseSignal: requestAbortController.signal });
     const ensureLocalSnapshotFresh = () => {
       if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
@@ -822,6 +826,11 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
       }
       return { success: true, stats: syncResult.stats };
     } catch (error) {
+      if (requestAbortController.signal.aborted && activeMobileSyncAbortReason === 'lifecycle') {
+        logSyncInfo('Sync aborted by app lifecycle transition', { backend, step });
+        requestFollowUp(syncPathOverride);
+        return { success: true };
+      }
       if (error instanceof LocalSyncAbort) {
         if (preSyncedLocalData && !wroteLocal) {
           const inMemorySnapshot = getInMemoryAppDataSnapshot();
@@ -880,6 +889,10 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
 
       return { success: false, error: `${safeMessage}${logHint}` };
     } finally {
+      if (activeMobileSyncAbortController === requestAbortController) {
+        activeMobileSyncAbortController = null;
+        activeMobileSyncAbortReason = null;
+      }
       try {
         networkSubscription?.remove?.();
       } catch (error) {
@@ -904,6 +917,13 @@ export async function performMobileSync(syncPathOverride?: string): Promise<Mobi
   return mobileSyncOrchestrator.run(syncPathOverride);
 }
 
+export function abortMobileSync(): boolean {
+  if (!activeMobileSyncAbortController) return false;
+  activeMobileSyncAbortReason = 'lifecycle';
+  activeMobileSyncAbortController.abort();
+  return true;
+}
+
 export const __mobileSyncTestUtils = {
   reset() {
     mobileSyncOrchestrator.reset();
@@ -911,6 +931,8 @@ export const __mobileSyncTestUtils = {
     mobileSyncActivityListeners.clear();
     mobileSyncActivityState = 'idle';
     webdavSyncRateLimitController.reset();
+    activeMobileSyncAbortController = null;
+    activeMobileSyncAbortReason = null;
   },
   getWebdavSyncBlockedUntil() {
     return webdavSyncRateLimitController.getBlockedUntil();
