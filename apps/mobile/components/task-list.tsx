@@ -1003,7 +1003,7 @@ function TaskListComponent({
           maxToRenderPerBatch={12}
           windowSize={5}
           updateCellsBatchingPeriod={50}
-          removeClippedSubviews={listItems.length >= 50}
+          removeClippedSubviews={listItems.length >= 25}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
