@@ -26,7 +26,12 @@ import {
   sendDailyHeartbeat,
 } from '@mindwtr/core';
 import { mobileStorage } from '../lib/storage-adapter';
-import { setNotificationOpenHandler, startMobileNotifications, stopMobileNotifications } from '../lib/notification-service';
+import {
+  getNotificationPermissionStatus,
+  setNotificationOpenHandler,
+  startMobileNotifications,
+  stopMobileNotifications,
+} from '../lib/notification-service';
 import { performMobileSync } from '../lib/sync-service';
 import { isLikelyOfflineSyncError, resolveBackend, type SyncBackend } from '../lib/sync-service-utils';
 import { SYNC_BACKEND_KEY } from '../lib/sync-constants';
@@ -467,6 +472,18 @@ function RootLayoutContent() {
           if (!isActive.current) return;
           updateMobileWidgetFromStore().catch(logAppError);
         }, 800);
+        if (Platform.OS === 'android' && useTaskStore.getState().settings.notificationsEnabled !== false) {
+          getNotificationPermissionStatus()
+            .then((permission) => {
+              if (!isActive.current) return;
+              if (!permission.granted) {
+                stopMobileNotifications().catch(logAppError);
+                return;
+              }
+              startMobileNotifications().catch(logAppError);
+            })
+            .catch(logAppError);
+        }
       }
       if (previousState === 'active' && nextInactiveOrBackground) {
         // Going to background - flush saves and sync

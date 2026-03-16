@@ -115,6 +115,20 @@ function clearRescheduleTimer(): void {
   rescheduleTimer = null;
 }
 
+async function getAndroidNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
+  if (Number(Platform.Version) < 33) {
+    return { granted: true, canAskAgain: true };
+  }
+
+  try {
+    const granted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+    return { granted, canAskAgain: !granted };
+  } catch (error) {
+    logNotificationError('Failed to read Android notification permission', error);
+    return { granted: false, canAskAgain: false };
+  }
+}
+
 async function loadAlarmApi(): Promise<AlarmNotificationsApi | null> {
   if (alarmApi) return alarmApi;
   try {
@@ -130,6 +144,32 @@ async function loadAlarmApi(): Promise<AlarmNotificationsApi | null> {
     logNotificationError('Failed to load react-native-alarm-notification', error);
     return null;
   }
+}
+
+async function clearScheduledAlarms(api: AlarmNotificationsApi | null): Promise<void> {
+  await loadAlarmMapIfNeeded();
+
+  if (api) {
+    for (const entry of alarmMap.values()) {
+      try {
+        api.deleteAlarm(entry.id);
+        api.deleteRepeatingAlarm(entry.id);
+        api.removeFiredNotification(entry.id);
+      } catch (error) {
+        logNotificationError('Failed to cancel local alarm', error);
+      }
+    }
+
+    try {
+      api.removeAllFiredNotifications();
+    } catch {
+      // no-op
+    }
+  }
+
+  alarmMap.clear();
+  await saveAlarmMap();
+  loadedAlarmMap = false;
 }
 
 function serializeAlarmMap(map: Map<string, LocalAlarmMapEntry>): LocalAlarmMap {
@@ -511,15 +551,12 @@ export function setLocalNotificationOpenHandler(handler: NotificationOpenHandler
 
 export async function requestLocalNotificationPermission(): Promise<NotificationPermissionResult> {
   if (Platform.OS === 'android') {
-    if (Number(Platform.Version) < 33) {
-      return { granted: true, canAskAgain: true };
+    const currentStatus = await getAndroidNotificationPermissionStatus();
+    if (currentStatus.granted) {
+      return currentStatus;
     }
 
     try {
-      const hasPermission = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-      if (hasPermission) {
-        return { granted: true, canAskAgain: true };
-      }
       const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
       if (result === PermissionsAndroid.RESULTS.GRANTED) {
         return { granted: true, canAskAgain: true };
@@ -595,6 +632,7 @@ export async function startLocalMobileNotifications(): Promise<void> {
 
   const permission = await requestLocalNotificationPermission();
   if (!permission.granted) {
+    await clearScheduledAlarms(api);
     started = false;
     return;
   }
@@ -626,29 +664,16 @@ export async function stopLocalMobileNotifications(): Promise<void> {
   notificationOpenHandler = null;
 
   const api = await loadAlarmApi();
-  if (api) {
-    for (const entry of alarmMap.values()) {
-      try {
-        api.deleteAlarm(entry.id);
-        api.deleteRepeatingAlarm(entry.id);
-        api.removeFiredNotification(entry.id);
-      } catch (error) {
-        logNotificationError('Failed to cancel local alarm', error);
-      }
-    }
-    try {
-      api.removeAllFiredNotifications();
-    } catch {
-      // no-op
-    }
-  }
-
-  alarmMap.clear();
-  await saveAlarmMap();
-
-  loadedAlarmMap = false;
+  await clearScheduledAlarms(api);
   resetRuntimeState();
   started = false;
+}
+
+export async function getLocalNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
+  if (Platform.OS === 'android') {
+    return getAndroidNotificationPermissionStatus();
+  }
+  return requestLocalNotificationPermission();
 }
 
 export const __localNotificationTestUtils = {

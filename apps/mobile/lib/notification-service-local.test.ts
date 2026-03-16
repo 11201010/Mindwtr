@@ -4,10 +4,24 @@ const {
   mockAsyncStorageGetItem,
   mockAsyncStorageSetItem,
   mockStoreSubscribe,
+  mockAlarmDeleteAlarm,
+  mockAlarmDeleteRepeatingAlarm,
+  mockAlarmRemoveAllFiredNotifications,
+  mockAlarmRemoveFiredNotification,
+  mockAlarmScheduleAlarm,
+  mockPermissionsAndroidCheck,
+  mockPermissionsAndroidRequest,
 } = vi.hoisted(() => ({
   mockAsyncStorageGetItem: vi.fn(),
   mockAsyncStorageSetItem: vi.fn(),
   mockStoreSubscribe: vi.fn(() => () => undefined),
+  mockAlarmDeleteAlarm: vi.fn(),
+  mockAlarmDeleteRepeatingAlarm: vi.fn(),
+  mockAlarmRemoveAllFiredNotifications: vi.fn(),
+  mockAlarmRemoveFiredNotification: vi.fn(),
+  mockAlarmScheduleAlarm: vi.fn(async () => ({ id: 99 })),
+  mockPermissionsAndroidCheck: vi.fn(async () => true),
+  mockPermissionsAndroidRequest: vi.fn(async () => 'granted'),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -27,12 +41,23 @@ vi.mock('react-native', () => ({
   PermissionsAndroid: {
     PERMISSIONS: { POST_NOTIFICATIONS: 'POST_NOTIFICATIONS' },
     RESULTS: { GRANTED: 'granted', NEVER_ASK_AGAIN: 'never_ask_again' },
-    check: vi.fn(async () => true),
-    request: vi.fn(async () => 'granted'),
+    check: mockPermissionsAndroidCheck,
+    request: mockPermissionsAndroidRequest,
   },
   Platform: {
     OS: 'android',
     Version: 34,
+  },
+}));
+
+vi.mock('react-native-alarm-notification', () => ({
+  default: {
+    parseDate: (date: Date) => date.toISOString(),
+    scheduleAlarm: mockAlarmScheduleAlarm,
+    deleteAlarm: mockAlarmDeleteAlarm,
+    deleteRepeatingAlarm: mockAlarmDeleteRepeatingAlarm,
+    removeFiredNotification: mockAlarmRemoveFiredNotification,
+    removeAllFiredNotifications: mockAlarmRemoveAllFiredNotifications,
   },
 }));
 
@@ -72,6 +97,7 @@ vi.mock('./app-log', () => ({
 import {
   __localNotificationTestUtils,
   setLocalNotificationOpenHandler,
+  startLocalMobileNotifications,
   stopLocalMobileNotifications,
 } from './notification-service-local';
 
@@ -80,6 +106,16 @@ describe('notification-service-local', () => {
     mockAsyncStorageGetItem.mockReset();
     mockAsyncStorageSetItem.mockReset();
     mockStoreSubscribe.mockClear();
+    mockAlarmDeleteAlarm.mockReset();
+    mockAlarmDeleteRepeatingAlarm.mockReset();
+    mockAlarmRemoveAllFiredNotifications.mockReset();
+    mockAlarmRemoveFiredNotification.mockReset();
+    mockAlarmScheduleAlarm.mockReset();
+    mockAlarmScheduleAlarm.mockResolvedValue({ id: 99 });
+    mockPermissionsAndroidCheck.mockReset();
+    mockPermissionsAndroidRequest.mockReset();
+    mockPermissionsAndroidCheck.mockResolvedValue(true);
+    mockPermissionsAndroidRequest.mockResolvedValue('granted');
     __localNotificationTestUtils.resetForTests();
   });
 
@@ -110,5 +146,20 @@ describe('notification-service-local', () => {
     await stopLocalMobileNotifications();
 
     expect(__localNotificationTestUtils.getNotificationOpenHandler()).toBeNull();
+  });
+
+  it('clears persisted alarms when Android notification permission is denied on startup', async () => {
+    mockAsyncStorageGetItem.mockResolvedValue(JSON.stringify({ 'task:1': { id: 42 } }));
+    mockPermissionsAndroidCheck.mockResolvedValue(false);
+    mockPermissionsAndroidRequest.mockResolvedValue('never_ask_again');
+
+    await startLocalMobileNotifications();
+
+    expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(42);
+    expect(mockAlarmDeleteRepeatingAlarm).toHaveBeenCalledWith(42);
+    expect(mockAlarmRemoveFiredNotification).toHaveBeenCalledWith(42);
+    expect(mockAlarmRemoveAllFiredNotifications).toHaveBeenCalledTimes(1);
+    expect(__localNotificationTestUtils.getAlarmMapSnapshot().size).toBe(0);
+    expect(mockAsyncStorageSetItem).toHaveBeenCalledWith('mindwtr:local:alarms:v1', '{}');
   });
 });
