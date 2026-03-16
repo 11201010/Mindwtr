@@ -1,4 +1,6 @@
-import { getFileSyncDir, isSyncFilePath as isCoreSyncFilePath, isWebdavRateLimitedError, normalizeSyncBackend, type SyncBackend } from '@mindwtr/core';
+import { getFileSyncDir, isSyncFilePath as isCoreSyncFilePath, isWebdavRateLimitedError, normalizeSyncBackend, type SyncBackend as CoreSyncBackend } from '@mindwtr/core';
+
+export type SyncBackend = CoreSyncBackend | 'cloudkit';
 
 const SYNC_FILE_NAME = 'data.json';
 const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
@@ -115,6 +117,10 @@ export const getFileSyncBaseDir = (syncPath: string) => {
   return lastSlash > -1 ? stripped.slice(0, lastSlash) : '';
 };
 
-export const resolveBackend = (value: string | null): SyncBackend => normalizeSyncBackend(value);
+export const isRemoteSyncBackend = (backend: SyncBackend): boolean =>
+  backend === 'webdav' || backend === 'cloud' || backend === 'cloudkit';
 
-export type { SyncBackend };
+export const resolveBackend = (value: string | null): SyncBackend => {
+  if (value === 'cloudkit') return 'cloudkit';
+  return normalizeSyncBackend(value);
+};

@@ -219,7 +219,7 @@ export default function SettingsPage() {
         router.push({ pathname: '/settings', params: { settingsScreen: nextScreen } });
     }, [router]);
     const [syncPath, setSyncPath] = useState<string | null>(null);
-    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud' | 'off'>('off');
+    const [syncBackend, setSyncBackend] = useState<'file' | 'webdav' | 'cloud' | 'cloudkit' | 'off'>('off');
     const [isTestingConnection, setIsTestingConnection] = useState(false);
     const [webdavUrl, setWebdavUrl] = useState('');
     const [webdavUsername, setWebdavUsername] = useState('');
@@ -559,7 +559,7 @@ export default function SettingsPage() {
             const storedCloudProvider = entryMap.get(CLOUD_PROVIDER_KEY);
 
             if (path) setSyncPath(path);
-            const resolvedBackend = backend === 'webdav' || backend === 'cloud' || backend === 'off' || backend === 'file'
+            const resolvedBackend = backend === 'webdav' || backend === 'cloud' || backend === 'off' || backend === 'file' || backend === 'cloudkit'
                 ? backend
                 : 'off';
             setSyncBackend(resolvedBackend);
@@ -1694,6 +1694,8 @@ export default function SettingsPage() {
                     [WEBDAV_USERNAME_KEY, webdavUsername.trim()],
                     [WEBDAV_PASSWORD_KEY, webdavPassword],
                 ]);
+            } else if (syncBackend === 'cloudkit') {
+                await AsyncStorage.setItem(SYNC_BACKEND_KEY, 'cloudkit');
             } else if (syncBackend === 'cloud') {
                 if (cloudProvider === 'dropbox') {
                     if (isFossBuild) {
@@ -4263,11 +4265,13 @@ export default function SettingsPage() {
                                 <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
                                     {syncBackend === 'off'
                                         ? t('settings.syncBackendOff')
-                                        : syncBackend === 'webdav'
-                                            ? t('settings.syncBackendWebdav')
-                                            : syncBackend === 'cloud'
-                                                ? t('settings.syncBackendCloud')
-                                                : t('settings.syncBackendFile')}
+                                        : syncBackend === 'cloudkit'
+                                            ? 'iCloud (CloudKit)'
+                                            : syncBackend === 'webdav'
+                                                ? t('settings.syncBackendWebdav')
+                                                : syncBackend === 'cloud'
+                                                    ? t('settings.syncBackendCloud')
+                                                    : t('settings.syncBackendFile')}
                                 </Text>
                             </View>
                             <View style={[styles.backendToggle, { marginTop: 8, width: '100%' }]}>
@@ -4286,6 +4290,23 @@ export default function SettingsPage() {
                                         {t('settings.syncBackendOff')}
                                     </Text>
                                 </TouchableOpacity>
+                                {Platform.OS === 'ios' && (
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.backendOption,
+                                            { borderColor: tc.border, backgroundColor: syncBackend === 'cloudkit' ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => {
+                                            AsyncStorage.setItem(SYNC_BACKEND_KEY, 'cloudkit').catch(logSettingsError);
+                                            setSyncBackend('cloudkit');
+                                            resetSyncStatusForBackendSwitch();
+                                        }}
+                                    >
+                                        <Text style={[styles.backendOptionText, { color: syncBackend === 'cloudkit' ? tc.tint : tc.secondaryText }]}>
+                                            iCloud
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
                                 <TouchableOpacity
                                     style={[
                                         styles.backendOption,
@@ -4307,6 +4328,7 @@ export default function SettingsPage() {
                                         { borderColor: tc.border, backgroundColor: syncBackend === 'webdav' ? tc.filterBg : 'transparent' },
                                     ]}
                                     onPress={() => {
+                                        AsyncStorage.setItem(SYNC_BACKEND_KEY, 'webdav').catch(logSettingsError);
                                         setSyncBackend('webdav');
                                         resetSyncStatusForBackendSwitch();
                                     }}
@@ -4341,6 +4363,21 @@ export default function SettingsPage() {
                             </Text>
                             <Text style={[styles.helpText, { color: tc.secondaryText }]}>
                                 {t('settings.syncOffDesc')}
+                            </Text>
+                        </View>
+                    )}
+
+                    {syncBackend === 'cloudkit' && (
+                        <View style={[styles.helpBox, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+                            <Text style={[styles.helpTitle, { color: tc.text }]}>
+                                iCloud Sync
+                            </Text>
+                            <Text style={[styles.helpText, { color: tc.secondaryText }]}>
+                                Syncs your tasks, projects, and areas across Apple devices using CloudKit.
+                                No setup required — just sign in to iCloud on your devices.
+                            </Text>
+                            <Text style={[styles.helpText, { color: tc.secondaryText, marginTop: 8 }]}>
+                                Changes sync automatically via periodic polling and push notifications when available.
                             </Text>
                         </View>
                     )}
