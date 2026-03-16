@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, Pressable, StyleSheet, TextInput } from 'react-native';
-import { useTaskStore, PRESET_CONTEXTS, sortTasksBy, matchesHierarchicalToken, type Task, type TaskSortBy, type TaskStatus } from '@mindwtr/core';
+import { useTaskStore, getUsedTaskTokens, sortTasksBy, matchesHierarchicalToken, type Task, type TaskSortBy, type TaskStatus } from '@mindwtr/core';
 import { useState } from 'react';
 import { useTheme } from '../../contexts/theme-context';
 import { useLanguage } from '../../contexts/language-context';
@@ -32,9 +32,10 @@ export function ContextsView() {
     && task.status !== 'archived'
     && taskMatchesAreaFilter(task, resolvedAreaFilter, projectById, areaById)
   ));
-  const allContexts = Array.from(
-    new Set([...PRESET_CONTEXTS, ...contextSourceTasks.flatMap((t) => [...(t.contexts || []), ...(t.tags || [])])])
-  ).sort();
+  const allContexts = getUsedTaskTokens(
+    contextSourceTasks,
+    (task) => [...(task.contexts || []), ...(task.tags || [])]
+  );
 
   // Filter contexts by search query
   const filteredContexts = searchQuery

@@ -5,7 +5,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { DEFAULT_PROJECT_COLOR, parseQuickAdd, safeFormatDate, safeParseDate, type Attachment, type Task, type TaskPriority, generateUUID, PRESET_CONTEXTS, useTaskStore } from '@mindwtr/core';
+import { DEFAULT_PROJECT_COLOR, parseQuickAdd, safeFormatDate, safeParseDate, type Attachment, type Task, type TaskPriority, generateUUID, getUsedTaskTokens, useTaskStore } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useMobileAreaFilter } from '@/hooks/use-mobile-area-filter';
@@ -113,11 +113,10 @@ export function QuickCaptureSheet({
   }, [projectQuery, projects, selectedAreaId]);
 
   const contextOptions = useMemo(() => {
-    const taskContexts = tasks.flatMap((task) => task.contexts || []);
     const initialContexts = initialProps?.contexts ?? [];
     return Array.from(
       new Set(
-        [...PRESET_CONTEXTS, ...taskContexts, ...initialContexts]
+        [...getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@' }), ...initialContexts]
           .map((item) => normalizeContextToken(String(item || '')))
           .filter(Boolean)
       )

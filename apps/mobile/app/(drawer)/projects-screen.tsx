@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Modal, Alert, Pressable, ScrollView, SectionList, Dimensions, Platform, Keyboard, ActionSheetIOS, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Area, Attachment, DEFAULT_PROJECT_COLOR, generateUUID, getAttachmentDisplayTitle, normalizeLinkAttachmentInput, Project, PRESET_TAGS, Task, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
+import { Area, Attachment, DEFAULT_PROJECT_COLOR, generateUUID, getAttachmentDisplayTitle, getUsedTaskTokens, normalizeLinkAttachmentInput, Project, Task, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
 import { Trash2 } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -114,9 +114,11 @@ export default function ProjectsScreen() {
   }, [projects]);
 
   const projectTagOptions = useMemo<string[]>(() => {
-    const taskTags = tasks.flatMap((item) => item.tags || []);
     const projectTags = projects.flatMap((item) => item.tagIds || []);
-    return Array.from(new Set([...PRESET_TAGS, ...taskTags, ...projectTags])).filter(Boolean);
+    return Array.from(new Set([
+      ...getUsedTaskTokens(tasks, (item) => item.tags, { prefix: '#' }),
+      ...projectTags,
+    ])).filter(Boolean);
   }, [tasks, projects]);
 
   const tagFilterOptions = useMemo<{ list: string[]; hasNoTags: boolean }>(() => {

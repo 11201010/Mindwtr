@@ -9,8 +9,7 @@ import {
   sortTasksBy,
   parseQuickAdd,
   safeParseDate,
-  PRESET_CONTEXTS,
-  PRESET_TAGS,
+  getUsedTaskTokens,
   createAIProvider,
   type AIProviderId,
   type TaskSortBy,
@@ -336,12 +335,10 @@ function TaskListComponent({
   }, [itemLayouts]);
 
   const contextOptions = useMemo(() => {
-    const taskContexts = tasks.flatMap((task) => task.contexts || []);
-    return Array.from(new Set([...PRESET_CONTEXTS, ...taskContexts])).filter(Boolean);
+    return getUsedTaskTokens(tasks, (task) => task.contexts, { prefix: '@' });
   }, [tasks]);
   const tagOptions = useMemo(() => {
-    const taskTags = tasks.flatMap((task) => task.tags || []);
-    return Array.from(new Set([...PRESET_TAGS, ...taskTags])).filter(Boolean);
+    return getUsedTaskTokens(tasks, (task) => task.tags, { prefix: '#' });
   }, [tasks]);
 
   type TriggerType = 'project' | 'context';
