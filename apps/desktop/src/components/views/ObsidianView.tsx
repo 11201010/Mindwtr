@@ -13,6 +13,9 @@ const navigateToSettings = () => {
     window.dispatchEvent(new CustomEvent('mindwtr:navigate', { detail: { view: 'settings' } }));
 };
 
+const pageShellClassName = 'h-full px-4 py-3';
+const pageContentClassName = 'mx-auto w-full max-w-[84rem] min-w-0 2xl:max-w-[88rem]';
+
 export function ObsidianView() {
     const { t } = useLanguage();
     const showToast = useUiStore((state) => state.showToast);
@@ -94,8 +97,10 @@ export function ObsidianView() {
 
     if (!isInitialized || isLoadingConfig) {
         return (
-            <div className="rounded-2xl border border-border bg-card p-8 text-sm text-muted-foreground">
-                {resolveText('common.loading', 'Loading...')}
+            <div className={pageShellClassName}>
+                <div className={cn(pageContentClassName, 'rounded-2xl border border-border bg-card p-8 text-sm text-muted-foreground')}>
+                    {resolveText('common.loading', 'Loading...')}
+                </div>
             </div>
         );
     }
@@ -105,9 +110,10 @@ export function ObsidianView() {
     const hasCompletedScan = hasScannedThisSession || Boolean(config.lastScannedAt);
 
     return (
-        <div className="space-y-6">
-            <section className="rounded-3xl border border-border bg-card/95 p-8 shadow-sm">
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className={pageShellClassName}>
+            <div className={cn(pageContentClassName, 'space-y-6')}>
+                <section className="rounded-3xl border border-border bg-card/95 p-8 shadow-sm">
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-3">
                         <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-3 py-1 text-xs font-medium text-muted-foreground">
                             <BookOpen className="h-3.5 w-3.5" />
@@ -171,117 +177,118 @@ export function ObsidianView() {
                                 : resolveText('obsidian.rescan', 'Rescan vault')}
                         </button>
                     </div>
-                </div>
-            </section>
-
-            {!hasVault && (
-                <section className="rounded-2xl border border-dashed border-border bg-card p-8">
-                    <h2 className="text-lg font-semibold">{resolveText('obsidian.setupTitle', 'Set up an Obsidian vault')}</h2>
-                    <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                        {resolveText(
-                            'obsidian.setupBody',
-                            'Choose your vault folder in Settings -> Integrations -> Obsidian Vault, then enable the integration and rescan.'
-                        )}
-                    </p>
-                    <button
-                        type="button"
-                        onClick={navigateToSettings}
-                        className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                    >
-                        <Settings className="h-4 w-4" />
-                        {resolveText('obsidian.openSettings', 'Open settings')}
-                    </button>
+                    </div>
                 </section>
-            )}
 
-            {hasVault && !config.enabled && (
-                <section className="rounded-2xl border border-border bg-card p-8">
-                    <h2 className="text-lg font-semibold">{resolveText('obsidian.disabledTitle', 'Enable the integration')}</h2>
-                    <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                        {resolveText(
-                            'obsidian.disabledBody',
-                            'A vault is configured, but the integration is turned off. Enable it in Settings before scanning.'
-                        )}
-                    </p>
-                </section>
-            )}
-
-            {canScan && tasks.length === 0 && hasCompletedScan && !isScanning && (
-                <section className="rounded-2xl border border-border bg-card p-8">
-                    <h2 className="text-lg font-semibold">{resolveText('obsidian.emptyTitle', 'No tasks found')}</h2>
-                    <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                        {resolveText(
-                            'obsidian.emptyBody',
-                            'Mindwtr scanned the configured folders but did not find any Markdown checklist items yet.'
-                        )}
-                    </p>
-                </section>
-            )}
-
-            {tasks.length > 0 && (
-                <section className="space-y-3">
-                    {tasks.map((task) => (
-                        <article
-                            key={task.id}
-                            className="rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/30"
+                {!hasVault && (
+                    <section className="rounded-2xl border border-dashed border-border bg-card p-8">
+                        <h2 className="text-lg font-semibold">{resolveText('obsidian.setupTitle', 'Set up an Obsidian vault')}</h2>
+                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                            {resolveText(
+                                'obsidian.setupBody',
+                                'Choose your vault folder in Settings -> Integrations -> Obsidian Vault, then enable the integration and rescan.'
+                            )}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={navigateToSettings}
+                            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                         >
-                            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                                <div className="min-w-0 space-y-3">
-                                    <div className="flex items-start gap-3">
-                                        {task.completed ? (
-                                            <CheckSquare2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
-                                        ) : (
-                                            <Square className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-                                        )}
-                                        <div className="min-w-0">
-                                            <p className={cn(
-                                                'text-sm leading-6 text-foreground',
-                                                task.completed && 'text-muted-foreground line-through'
-                                            )}>
-                                                {task.text}
-                                            </p>
-                                            <p className="mt-2 text-xs text-muted-foreground">
-                                                {task.source.relativeFilePath}:{task.source.lineNumber}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    {(task.tags.length > 0 || task.wikiLinks.length > 0) && (
-                                        <div className="flex flex-wrap gap-2 pl-8">
-                                            {task.tags.map((tag) => (
-                                                <span
-                                                    key={`${task.id}-tag-${tag}`}
-                                                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
-                                                >
-                                                    <Tags className="h-3 w-3" />#{tag}
-                                                </span>
-                                            ))}
-                                            {task.wikiLinks.map((link) => (
-                                                <span
-                                                    key={`${task.id}-link-${link}`}
-                                                    className="rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs text-muted-foreground"
-                                                >
-                                                    [[{link}]]
-                                                </span>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
+                            <Settings className="h-4 w-4" />
+                            {resolveText('obsidian.openSettings', 'Open settings')}
+                        </button>
+                    </section>
+                )}
 
-                                <div className="flex items-center justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={() => handleOpenTask(task.source)}
-                                        className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                        {resolveText('obsidian.openTask', 'Open in Obsidian')}
-                                    </button>
+                {hasVault && !config.enabled && (
+                    <section className="rounded-2xl border border-border bg-card p-8">
+                        <h2 className="text-lg font-semibold">{resolveText('obsidian.disabledTitle', 'Enable the integration')}</h2>
+                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                            {resolveText(
+                                'obsidian.disabledBody',
+                                'A vault is configured, but the integration is turned off. Enable it in Settings before scanning.'
+                            )}
+                        </p>
+                    </section>
+                )}
+
+                {canScan && tasks.length === 0 && hasCompletedScan && !isScanning && (
+                    <section className="rounded-2xl border border-border bg-card p-8">
+                        <h2 className="text-lg font-semibold">{resolveText('obsidian.emptyTitle', 'No tasks found')}</h2>
+                        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                            {resolveText(
+                                'obsidian.emptyBody',
+                                'Mindwtr scanned the configured folders but did not find any Markdown checklist items yet.'
+                            )}
+                        </p>
+                    </section>
+                )}
+
+                {tasks.length > 0 && (
+                    <section className="space-y-3">
+                        {tasks.map((task) => (
+                            <article
+                                key={task.id}
+                                className="rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/30"
+                            >
+                                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                    <div className="min-w-0 space-y-3">
+                                        <div className="flex items-start gap-3">
+                                            {task.completed ? (
+                                                <CheckSquare2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                                            ) : (
+                                                <Square className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                                            )}
+                                            <div className="min-w-0">
+                                                <p className={cn(
+                                                    'text-sm leading-6 text-foreground',
+                                                    task.completed && 'text-muted-foreground line-through'
+                                                )}>
+                                                    {task.text}
+                                                </p>
+                                                <p className="mt-2 text-xs text-muted-foreground">
+                                                    {task.source.relativeFilePath}:{task.source.lineNumber}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        {(task.tags.length > 0 || task.wikiLinks.length > 0) && (
+                                            <div className="flex flex-wrap gap-2 pl-8">
+                                                {task.tags.map((tag) => (
+                                                    <span
+                                                        key={`${task.id}-tag-${tag}`}
+                                                        className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+                                                    >
+                                                        <Tags className="h-3 w-3" />#{tag}
+                                                    </span>
+                                                ))}
+                                                {task.wikiLinks.map((link) => (
+                                                    <span
+                                                        key={`${task.id}-link-${link}`}
+                                                        className="rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                                                    >
+                                                        [[{link}]]
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenTask(task.source)}
+                                            className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                                        >
+                                            <ExternalLink className="h-4 w-4" />
+                                            {resolveText('obsidian.openTask', 'Open in Obsidian')}
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        </article>
-                    ))}
-                </section>
-            )}
+                            </article>
+                        ))}
+                    </section>
+                )}
+            </div>
         </div>
     );
 }
