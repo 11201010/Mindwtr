@@ -181,159 +181,161 @@ export function ContextsView() {
 
     return (
         <>
-            <div className="mx-auto flex h-full w-full max-w-[92rem] min-w-0 gap-5 xl:gap-6">
-            {/* Sidebar List of Contexts */}
-            <div className="min-w-[13.5rem] w-[clamp(13.5rem,16vw,15.5rem)] flex-shrink-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-bold tracking-tight">{t('contexts.title')}</h2>
-                    <Filter className="w-5 h-5 text-muted-foreground" />
-                </div>
-
-                <div className="space-y-1 overflow-y-auto flex-1">
-                    <div
-                        onClick={() => setSelectedContext(null)}
-                        className={cn(
-                            "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                            selectedContext === null ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
-                        )}
-                    >
-                        <Tag className="w-4 h-4" />
-                        <span className="flex-1">{t('contexts.all')}</span>
-                        <span className="text-xs text-muted-foreground">
-                            {scopedTasks.filter((t) => hasContext(t)).length}
-                        </span>
-                    </div>
-
-                    <div
-                        onClick={() => setSelectedContext(NO_CONTEXT_TOKEN)}
-                        className={cn(
-                            "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                            selectedContext === NO_CONTEXT_TOKEN ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
-                        )}
-                    >
-                        <Tag className="w-4 h-4" />
-                        <span className="flex-1">{t('contexts.none')}</span>
-                        <span className="text-xs text-muted-foreground">
-                            {scopedTasks.filter((t) => !hasContext(t)).length}
-                        </span>
-                    </div>
-
-                    {allContexts.map(context => (
-                        <div
-                            key={context}
-                            onClick={() => setSelectedContext(context)}
-                            className={cn(
-                                "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
-                                selectedContext === context ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
-                            )}
-                        >
-                            <span className="text-muted-foreground">@</span>
-                            <span className="flex-1 truncate">{context.replace(/^@/, '')}</span>
-                            <span className="text-xs text-muted-foreground">
-                                {scopedTasks.filter(t => matchesSelected(t, context)).length}
-                            </span>
+            <div className="h-full px-4 py-3">
+                <div className="mx-auto flex h-full w-full max-w-[84rem] min-w-0 gap-5 xl:gap-6 2xl:max-w-[88rem]">
+                    {/* Sidebar List of Contexts */}
+                    <div className="min-w-[13.5rem] w-[clamp(13.5rem,16vw,15.5rem)] flex-shrink-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-xl font-bold tracking-tight">{t('contexts.title')}</h2>
+                            <Filter className="w-5 h-5 text-muted-foreground" />
                         </div>
-                    ))}
 
-                    {allContexts.length === 0 && (
-                        <div className="text-sm text-muted-foreground text-center py-8">
-                            {t('contexts.noContexts')}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Context Tasks */}
-            <div className="min-w-0 flex-1 flex flex-col h-full overflow-hidden">
-                <header className="flex items-center gap-3 mb-6">
-                    <div className="p-2 bg-primary/10 rounded-lg">
-                        <Tag className="w-6 h-6 text-primary" />
-                    </div>
-                    <div>
-                        <h2 className="text-2xl font-bold">
-                            {selectedContext === NO_CONTEXT_TOKEN ? t('contexts.none') : (selectedContext ?? t('contexts.all'))}
-                        </h2>
-                        <p className="text-muted-foreground text-sm">
-                            {filteredTasks.length} {t('common.tasks')}
-                        </p>
-                    </div>
-                    <div className="ml-auto">
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => {
-                                    if (selectionMode) exitSelectionMode();
-                                    else setSelectionMode(true);
-                                }}
+                        <div className="space-y-1 overflow-y-auto flex-1">
+                            <div
+                                onClick={() => setSelectedContext(null)}
                                 className={cn(
-                                    "text-xs px-3 py-1 rounded-md border transition-colors",
-                                    selectionMode
-                                        ? "bg-primary/10 text-primary border-primary"
-                                        : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                    "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
+                                    selectedContext === null ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                                 )}
                             >
-                                {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
-                            </button>
-                            <select
-                                value={statusFilter}
-                                onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')}
-                                className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                <Tag className="w-4 h-4" />
+                                <span className="flex-1">{t('contexts.all')}</span>
+                                <span className="text-xs text-muted-foreground">
+                                    {scopedTasks.filter((t) => hasContext(t)).length}
+                                </span>
+                            </div>
+
+                            <div
+                                onClick={() => setSelectedContext(NO_CONTEXT_TOKEN)}
+                                className={cn(
+                                    "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
+                                    selectedContext === NO_CONTEXT_TOKEN ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                                )}
                             >
-                                {statusOptions.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                        {option.label}
-                                    </option>
-                                ))}
-                            </select>
+                                <Tag className="w-4 h-4" />
+                                <span className="flex-1">{t('contexts.none')}</span>
+                                <span className="text-xs text-muted-foreground">
+                                    {scopedTasks.filter((t) => !hasContext(t)).length}
+                                </span>
+                            </div>
+
+                            {allContexts.map(context => (
+                                <div
+                                    key={context}
+                                    onClick={() => setSelectedContext(context)}
+                                    className={cn(
+                                        "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors text-sm",
+                                        selectedContext === context ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                                    )}
+                                >
+                                    <span className="text-muted-foreground">@</span>
+                                    <span className="flex-1 truncate">{context.replace(/^@/, '')}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                        {scopedTasks.filter(t => matchesSelected(t, context)).length}
+                                    </span>
+                                </div>
+                            ))}
+
+                            {allContexts.length === 0 && (
+                                <div className="text-sm text-muted-foreground text-center py-8">
+                                    {t('contexts.noContexts')}
+                                </div>
+                            )}
                         </div>
                     </div>
-                </header>
-                <div className="mb-4">
-                    <input
-                        type="text"
-                        data-view-filter-input
-                        placeholder={t('common.search')}
-                        value={searchQuery}
-                        onChange={(event) => setSearchQuery(event.target.value)}
-                        className="w-full text-sm px-3 py-2 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                </div>
 
-                {selectionMode && selectedIdsArray.length > 0 && (
-                    <div className="mb-4">
-                        <ListBulkActions
-                            selectionCount={selectedIdsArray.length}
-                            onMoveToStatus={handleBatchMove}
-                            onAssignArea={handleBatchAssignArea}
-                            areaOptions={bulkAreaOptions}
-                            onAddTag={handleBatchAddTag}
-                            onAddContext={handleBatchAddContext}
-                            onRemoveContext={handleBatchRemoveContext}
-                            onDelete={handleBatchDelete}
-                            isDeleting={isBatchDeleting}
-                            t={t}
-                        />
-                    </div>
-                )}
-
-                <div className="flex-1 overflow-y-auto divide-y divide-border/30 pr-2">
-                    {filteredTasks.length > 0 ? (
-                        filteredTasks.map(task => (
-                            <TaskItem
-                                key={task.id}
-                                task={task}
-                                selectionMode={selectionMode}
-                                isMultiSelected={multiSelectedIds.has(task.id)}
-                                onToggleSelect={() => toggleMultiSelect(task.id)}
-                                showProjectBadgeInActions={false}
+                    {/* Context Tasks */}
+                    <div className="min-w-0 flex-1 flex flex-col h-full overflow-hidden">
+                        <header className="flex items-center gap-3 mb-6">
+                            <div className="p-2 bg-primary/10 rounded-lg">
+                                <Tag className="w-6 h-6 text-primary" />
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold">
+                                    {selectedContext === NO_CONTEXT_TOKEN ? t('contexts.none') : (selectedContext ?? t('contexts.all'))}
+                                </h2>
+                                <p className="text-muted-foreground text-sm">
+                                    {filteredTasks.length} {t('common.tasks')}
+                                </p>
+                            </div>
+                            <div className="ml-auto">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            if (selectionMode) exitSelectionMode();
+                                            else setSelectionMode(true);
+                                        }}
+                                        className={cn(
+                                            "text-xs px-3 py-1 rounded-md border transition-colors",
+                                            selectionMode
+                                                ? "bg-primary/10 text-primary border-primary"
+                                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                        )}
+                                    >
+                                        {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
+                                    </button>
+                                    <select
+                                        value={statusFilter}
+                                        onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')}
+                                        className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
+                                    >
+                                        {statusOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                        </header>
+                        <div className="mb-4">
+                            <input
+                                type="text"
+                                data-view-filter-input
+                                placeholder={t('common.search')}
+                                value={searchQuery}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                                className="w-full text-sm px-3 py-2 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
                             />
-                        ))
-                    ) : (
-                        <div className="text-center text-muted-foreground py-12">
-                            {normalizedSearchQuery ? t('filters.noMatch') : t('contexts.noTasks')}
                         </div>
-                    )}
+
+                        {selectionMode && selectedIdsArray.length > 0 && (
+                            <div className="mb-4">
+                                <ListBulkActions
+                                    selectionCount={selectedIdsArray.length}
+                                    onMoveToStatus={handleBatchMove}
+                                    onAssignArea={handleBatchAssignArea}
+                                    areaOptions={bulkAreaOptions}
+                                    onAddTag={handleBatchAddTag}
+                                    onAddContext={handleBatchAddContext}
+                                    onRemoveContext={handleBatchRemoveContext}
+                                    onDelete={handleBatchDelete}
+                                    isDeleting={isBatchDeleting}
+                                    t={t}
+                                />
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto divide-y divide-border/30 pr-2">
+                            {filteredTasks.length > 0 ? (
+                                filteredTasks.map(task => (
+                                    <TaskItem
+                                        key={task.id}
+                                        task={task}
+                                        selectionMode={selectionMode}
+                                        isMultiSelected={multiSelectedIds.has(task.id)}
+                                        onToggleSelect={() => toggleMultiSelect(task.id)}
+                                        showProjectBadgeInActions={false}
+                                    />
+                                ))
+                            ) : (
+                                <div className="text-center text-muted-foreground py-12">
+                                    {normalizedSearchQuery ? t('filters.noMatch') : t('contexts.noTasks')}
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
-            </div>
             </div>
             <PromptModal
                 isOpen={tagPromptOpen}
