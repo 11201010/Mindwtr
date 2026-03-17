@@ -41,6 +41,7 @@ Thumbs.db
 # Testing
 coverage/
 .vitest/
+test-results/
 
 # Mobile (Expo)
 apps/mobile/.expo/
