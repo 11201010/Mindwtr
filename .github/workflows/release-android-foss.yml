@@ -54,13 +54,13 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-
-      - name: Prepare FOSS dependency manifest
-        run: bash apps/mobile/scripts/fdroid_prep.sh
+        run: bash scripts/ci/setup-android-sdk.sh
 
       - name: Install core dependencies
         run: npm ci --workspaces=false --legacy-peer-deps --no-audit --no-fund --prefix packages/core
+
+      - name: Prepare FOSS dependency manifest
+        run: bash apps/mobile/scripts/fdroid_prep.sh
 
       - name: Install mobile dependencies
         run: npm ci --workspaces=false --legacy-peer-deps --no-audit --no-fund --prefix apps/mobile
