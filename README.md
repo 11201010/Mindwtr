@@ -357,31 +357,21 @@ You can help in several ways:
 
 Thanks to these monthly sponsors for supporting Mindwtr.
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <a href="https://github.com/ronmolenda">
-        <img src="https://github.com/ronmolenda.png?size=96" width="72" height="72" alt="@ronmolenda"><br />
-        <sub><b>@ronmolenda</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/jarrydstan">
-        <img src="https://github.com/jarrydstan.png?size=96" width="72" height="72" alt="@jarrydstan"><br />
-        <sub><b>@jarrydstan</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/laripernu">
-        <img src="https://github.com/laripernu.png?size=96" width="72" height="72" alt="@laripernu"><br />
-        <sub><b>@laripernu</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/karl1990">
-        <img src="https://github.com/karl1990.png?size=96" width="72" height="72" alt="@karl1990"><br />
-        <sub><b>@karl1990</b></sub>
-      </a>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <a href="https://github.com/jarrydstan" title="@jarrydstan">
+    <img src="https://github.com/jarrydstan.png?size=96" width="56" height="56" alt="@jarrydstan" style="border-radius: 50%; margin: 0 6px;" />
+  </a>
+  <a href="https://github.com/ronmolenda" title="@ronmolenda">
+    <img src="https://github.com/ronmolenda.png?size=96" width="56" height="56" alt="@ronmolenda" style="border-radius: 50%; margin: 0 6px;" />
+  </a>
+  <a href="https://github.com/laripernu" title="@laripernu">
+    <img src="https://github.com/laripernu.png?size=96" width="56" height="56" alt="@laripernu" style="border-radius: 50%; margin: 0 6px;" />
+  </a>
+  <a href="https://github.com/karl1990" title="@karl1990">
+    <img src="https://github.com/karl1990.png?size=96" width="56" height="56" alt="@karl1990" style="border-radius: 50%; margin: 0 6px;" />
+  </a>
+</p>
+
+<p align="center">
+  <sub><a href="https://github.com/jarrydstan">@jarrydstan</a> · <a href="https://github.com/ronmolenda">@ronmolenda</a> · <a href="https://github.com/laripernu">@laripernu</a> · <a href="https://github.com/karl1990">@karl1990</a></sub>
+</p>
