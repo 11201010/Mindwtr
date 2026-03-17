@@ -181,9 +181,9 @@ export function ContextsView() {
 
     return (
         <>
-            <div className="mx-auto flex h-full w-full max-w-6xl gap-6">
+            <div className="mx-auto flex h-full w-full max-w-[92rem] min-w-0 gap-5 xl:gap-6">
             {/* Sidebar List of Contexts */}
-            <div className="w-64 flex-shrink-0 flex flex-col gap-4 border-r border-border pr-6">
+            <div className="min-w-[13.5rem] w-[clamp(13.5rem,16vw,15.5rem)] flex-shrink-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6">
                 <div className="flex items-center justify-between">
                     <h2 className="text-xl font-bold tracking-tight">{t('contexts.title')}</h2>
                     <Filter className="w-5 h-5 text-muted-foreground" />
@@ -244,7 +244,7 @@ export function ContextsView() {
             </div>
 
             {/* Context Tasks */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="min-w-0 flex-1 flex flex-col h-full overflow-hidden">
                 <header className="flex items-center gap-3 mb-6">
                     <div className="p-2 bg-primary/10 rounded-lg">
                         <Tag className="w-6 h-6 text-primary" />

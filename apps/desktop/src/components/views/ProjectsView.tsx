@@ -783,8 +783,8 @@ export function ProjectsView() {
     return (
         <ErrorBoundary>
             <div className="h-full px-4 py-3">
-                <div className="mx-auto flex h-full w-full max-w-6xl min-w-0 gap-6">
-                    <div className="min-w-[18rem] w-[clamp(19rem,26vw,28rem)] flex-none min-h-0">
+                <div className="mx-auto flex h-full w-full max-w-[92rem] min-w-0 gap-5 xl:gap-6">
+                    <div className="min-w-[14.75rem] w-[clamp(15rem,19vw,19.5rem)] flex-none min-h-0">
                         <ProjectsSidebar
                             t={t}
                             areaFilterLabel={areaFilterLabel ?? undefined}

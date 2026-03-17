@@ -169,7 +169,7 @@ export function ProjectsSidebar({
     }, [noAreaId, reorderProjects, updateProject]);
 
     return (
-        <div className="w-full h-full min-h-0 flex flex-col gap-4 border-r border-border pr-6">
+        <div className="w-full h-full min-h-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                     <h2 className="text-xl font-bold tracking-tight">{t('projects.title')}</h2>
