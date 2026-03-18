@@ -224,7 +224,7 @@ sudo dnf install mindwtr
 
 **Flatpak（Flathub）：**
 <a href="https://flathub.org/apps/tech.dongdongbh.mindwtr">
-  <img src="https://flathub.org/api/badge?locale=zh-Hans" alt="在 Flathub 获取">
+  <img src="https://img.shields.io/badge/Flathub-Install-000000?logo=flathub&logoColor=white" alt="在 Flathub 获取">
 </a>
 ```bash
 flatpak install flathub tech.dongdongbh.mindwtr
