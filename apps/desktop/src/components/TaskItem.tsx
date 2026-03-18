@@ -413,6 +413,7 @@ export const TaskItem = memo(function TaskItem({
     } = useTaskItemFieldLayout({
         settings,
         task,
+        editStatus,
         editProjectId,
         editSectionId,
         editAreaId,

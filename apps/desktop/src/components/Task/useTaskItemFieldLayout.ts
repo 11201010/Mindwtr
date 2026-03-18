@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import type { AppData, Task, TaskEditorFieldId, TaskPriority, RecurrenceRule, TimeEstimate } from '@mindwtr/core';
+import type { AppData, Task, TaskEditorFieldId, TaskPriority, TaskStatus, RecurrenceRule, TimeEstimate } from '@mindwtr/core';
 import { DEFAULT_TASK_EDITOR_HIDDEN, DEFAULT_TASK_EDITOR_ORDER } from './task-item-helpers';
 
 type UseTaskItemFieldLayoutParams = {
     settings: AppData['settings'] | undefined;
     task: Task;
+    editStatus: TaskStatus;
     editProjectId: string;
     editSectionId: string;
     editAreaId: string;
@@ -25,6 +26,7 @@ type UseTaskItemFieldLayoutParams = {
 export function useTaskItemFieldLayout({
     settings,
     task,
+    editStatus,
     editProjectId,
     editSectionId,
     editAreaId,
@@ -63,7 +65,7 @@ export function useTaskItemFieldLayout({
         if (settings?.features?.timeEstimates === false) next.add('timeEstimate');
         return next;
     }, [savedHidden, settings?.features?.priorities, settings?.features?.timeEstimates, taskEditorOrder]);
-    const isReference = task.status === 'reference';
+    const isReference = editStatus === 'reference';
     const referenceHiddenFields = useMemo(() => new Set<TaskEditorFieldId>([
         'startTime',
         'dueDate',
@@ -77,7 +79,7 @@ export function useTaskItemFieldLayout({
     const hasValue = useCallback((fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
             case 'status':
-                return task.status !== 'inbox';
+                return editStatus !== 'inbox';
             case 'project':
                 return Boolean(editProjectId || task.projectId);
             case 'section':
@@ -121,6 +123,7 @@ export function useTaskItemFieldLayout({
         editRecurrence,
         editReviewAt,
         editSectionId,
+        editStatus,
         editStartTime,
         editTags,
         editTimeEstimate,
@@ -129,7 +132,6 @@ export function useTaskItemFieldLayout({
         task.checklist,
         task.projectId,
         task.sectionId,
-        task.status,
         timeEstimatesEnabled,
         visibleEditAttachmentsLength,
     ]);
@@ -153,25 +155,21 @@ export function useTaskItemFieldLayout({
         },
         [taskEditorOrder]
     );
-    const filterVisibleFields = useCallback(
-        (fields: TaskEditorFieldId[]) => fields.filter((fieldId) => !hiddenSet.has(fieldId) || hasValue(fieldId)),
-        [hiddenSet, hasValue]
-    );
     const alwaysFields = useMemo(
         () => orderFields(['status']).filter(isFieldVisible),
         [orderFields, isFieldVisible]
     );
     const schedulingFields = useMemo(
-        () => filterVisibleFields(orderFields(['startTime', 'recurrence', 'reviewAt'])),
-        [filterVisibleFields, orderFields]
+        () => orderFields(['startTime', 'recurrence', 'reviewAt']).filter(isFieldVisible),
+        [isFieldVisible, orderFields]
     );
     const organizationFields = useMemo(
-        () => filterVisibleFields(orderFields(['contexts', 'tags', 'priority', 'timeEstimate'])),
-        [filterVisibleFields, orderFields]
+        () => orderFields(['contexts', 'tags', 'priority', 'timeEstimate']).filter(isFieldVisible),
+        [isFieldVisible, orderFields]
     );
     const detailsFields = useMemo(
-        () => filterVisibleFields(orderFields(['description', 'attachments', 'checklist'])),
-        [filterVisibleFields, orderFields]
+        () => orderFields(['description', 'attachments', 'checklist']).filter(isFieldVisible),
+        [isFieldVisible, orderFields]
     );
     const sectionCounts = useMemo(
         () => ({
