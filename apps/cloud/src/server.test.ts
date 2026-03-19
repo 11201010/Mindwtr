@@ -236,6 +236,25 @@ describe('cloud server utils', () => {
         expect(invalid.error).toContain('deletedAt');
     });
 
+    test('rejects reserved task patch props', () => {
+        expect(__cloudTestUtils.validateTaskPatchProps({
+            title: 'Renamed',
+            status: 'next',
+            order: 1,
+        }).ok).toBe(true);
+
+        const invalid = __cloudTestUtils.validateTaskPatchProps({
+            id: 'override',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            arbitrary: 'value',
+        });
+        expect(invalid.ok).toBe(false);
+        if (invalid.ok) throw new Error('Expected invalid task patch props');
+        expect(invalid.error).toContain('id');
+        expect(invalid.error).toContain('createdAt');
+        expect(invalid.error).toContain('arbitrary');
+    });
+
     test('validates settings.attachments.pendingRemoteDeletes structure', () => {
         const iso = '2024-01-01T00:00:00.000Z';
         const base = {
@@ -452,6 +471,9 @@ describe('cloud server api', () => {
             body: JSON.stringify({ title: 'Updated Cloud Task' }),
         });
         expect(patchResponse.status).toBe(200);
+        const patchJson = await patchResponse.json();
+        expect(patchJson.task.rev).toBe(1);
+        expect(patchJson.task.revBy).toBe('cloud');
 
         const getResponse = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
             headers: authHeaders,
@@ -471,8 +493,10 @@ describe('cloud server api', () => {
         });
         expect(listDeleted.status).toBe(200);
         const deletedJson = await listDeleted.json();
-        const deletedTask = (deletedJson.tasks as Array<{ id: string; deletedAt?: string }>).find((task) => task.id === taskId);
+        const deletedTask = (deletedJson.tasks as { id: string; deletedAt?: string; rev?: number; revBy?: string }[]).find((task) => task.id === taskId);
         expect(deletedTask?.deletedAt).toBeTruthy();
+        expect(deletedTask?.rev).toBe(2);
+        expect(deletedTask?.revBy).toBe('cloud');
 
         const getDeleted = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
             headers: authHeaders,
@@ -500,6 +524,37 @@ describe('cloud server api', () => {
             headers: authHeaders,
         });
         expect(archiveDeleted.status).toBe(404);
+    });
+
+    test('rejects reserved fields on task patch', async () => {
+        const createResponse = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ title: 'Cloud Task' }),
+        });
+        expect(createResponse.status).toBe(201);
+        const createdJson = await createResponse.json();
+        const taskId = createdJson.task.id as string;
+
+        const patchResponse = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'PATCH',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                id: 'override',
+                rev: 99,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                arbitrary: 'value',
+            }),
+        });
+        expect(patchResponse.status).toBe(400);
+        const payload = await patchResponse.json();
+        expect(payload.error).toContain('Unsupported task updates');
     });
 
     test('rejects reserved fields on task creation', async () => {

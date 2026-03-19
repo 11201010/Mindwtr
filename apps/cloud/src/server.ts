@@ -38,6 +38,7 @@ const writeLog = (entry: LogEntry) => {
         process.stdout.write(line);
     }
 };
+const normalizeRevision = (value?: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
 const logInfo = (message: string, context?: Record<string, unknown>) => {
     writeLog({ ts: new Date().toISOString(), level: 'info', scope: 'cloud', message, context });
@@ -119,6 +120,13 @@ const CLOUD_TASK_CREATION_ALLOWED_PROP_KEYS = new Set<keyof Task>([
     'timeEstimate',
     'reviewAt',
 ]);
+const CLOUD_TASK_PATCH_ALLOWED_PROP_KEYS = new Set<keyof Task>([
+    'title',
+    'order',
+    'orderNum',
+    ...CLOUD_TASK_CREATION_ALLOWED_PROP_KEYS,
+]);
+const CLOUD_API_REV_BY = 'cloud';
 // Accept URL-safe and common base64 token alphabets to avoid breaking existing deployments.
 const BEARER_TOKEN_PATTERN = /^[A-Za-z0-9._~+/=-]{20,512}$/;
 
@@ -699,6 +707,18 @@ function validateTaskCreationProps(value: unknown): { ok: true; props: Partial<T
     return { ok: true, props: value as Partial<Task> };
 }
 
+function validateTaskPatchProps(value: unknown): { ok: true; props: Partial<Task> } | { ok: false; error: string } {
+    if (!isRecord(value)) return { ok: false, error: 'Invalid task updates' };
+    const invalidKeys = Object.keys(value).filter((key) => !CLOUD_TASK_PATCH_ALLOWED_PROP_KEYS.has(key as keyof Task));
+    if (invalidKeys.length > 0) {
+        return {
+            ok: false,
+            error: `Unsupported task updates: ${invalidKeys.slice(0, 10).join(', ')}`,
+        };
+    }
+    return { ok: true, props: value as Partial<Task> };
+}
+
 function pickTaskList(
     data: AppData,
     opts: { includeDeleted: boolean; includeCompleted: boolean; status?: TaskStatus | null; query?: string }
@@ -947,6 +967,7 @@ export const __cloudTestUtils = {
     validateAppData,
     asStatus,
     validateTaskCreationProps,
+    validateTaskPatchProps,
     pickTaskList,
     readJsonBody,
     writeData,
@@ -1274,8 +1295,17 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                             return errorResponse(String(err?.message || 'Payload too large'), Number(err?.status) || 413);
                         }
                         if (!body || typeof body !== 'object') return errorResponse('Invalid JSON body');
-                        if (typeof (body as any).title === 'string' && (body as any).title.length > MAX_TASK_TITLE_LENGTH) {
+                        const validatedPatch = validateTaskPatchProps(body);
+                        if (!validatedPatch.ok) {
+                            return errorResponse(validatedPatch.error, 400);
+                        }
+                        const updates = validatedPatch.props;
+                        if (typeof (updates as any).title === 'string' && (updates as any).title.length > MAX_TASK_TITLE_LENGTH) {
                             return errorResponse(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`, 400);
+                        }
+                        const rawStatus = (updates as any).status;
+                        if (rawStatus !== undefined && asStatus(rawStatus) === null) {
+                            return errorResponse('Invalid task status', 400);
                         }
 
                         return await withWriteLock(key, async () => {
@@ -1286,8 +1316,11 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
 
                             const nowIso = new Date().toISOString();
                             const existing = data.tasks[idx];
-                            const updates = body as Partial<Task>;
-                            const { updatedTask, nextRecurringTask } = applyTaskUpdates(existing, updates, nowIso);
+                            const { updatedTask, nextRecurringTask } = applyTaskUpdates(existing, {
+                                ...updates,
+                                rev: normalizeRevision(existing.rev) + 1,
+                                revBy: CLOUD_API_REV_BY,
+                            }, nowIso);
 
                             data.tasks[idx] = updatedTask;
                             if (nextRecurringTask) data.tasks.push(nextRecurringTask);
@@ -1306,7 +1339,13 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
 
                             const nowIso = new Date().toISOString();
                             const existing = data.tasks[idx];
-                            data.tasks[idx] = { ...existing, deletedAt: nowIso, updatedAt: nowIso };
+                            data.tasks[idx] = {
+                                ...existing,
+                                deletedAt: nowIso,
+                                updatedAt: nowIso,
+                                rev: normalizeRevision(existing.rev) + 1,
+                                revBy: CLOUD_API_REV_BY,
+                            };
                             throwIfRequestAborted(requestAbortController.signal);
                             writeData(filePath, data);
                             return jsonResponse({ ok: true });
