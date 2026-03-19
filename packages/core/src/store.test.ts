@@ -58,6 +58,25 @@ describe('TaskStore', () => {
         expect(tasks[0].status).toBe('inbox');
     });
 
+    it('should ignore reserved task fields when adding a task', async () => {
+        const { addTask } = useTaskStore.getState();
+        await addTask('Safe Task', {
+            id: 'custom-id',
+            rev: 99,
+            revBy: 'other-device',
+            createdAt: '2000-01-01T00:00:00.000Z',
+            updatedAt: '2000-01-01T00:00:00.000Z',
+        });
+
+        const task = useTaskStore.getState().tasks[0];
+        expect(task.id).not.toBe('custom-id');
+        expect(task.rev).toBe(1);
+        expect(task.revBy).toBeTruthy();
+        expect(task.revBy).not.toBe('other-device');
+        expect(task.createdAt).not.toBe('2000-01-01T00:00:00.000Z');
+        expect(task.updatedAt).not.toBe('2000-01-01T00:00:00.000Z');
+    });
+
     it('should update a task', () => {
         const { addTask, updateTask } = useTaskStore.getState();
         addTask('Task to Update');
@@ -878,6 +897,47 @@ describe('TaskStore', () => {
             const updated = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
             expect(updated.projectId).toBe(projectB.id);
             expect(updated.sectionId).toBeUndefined();
+        });
+
+        it('should normalize project changes in batch updates', async () => {
+            const { addProject, addSection, addTask, batchUpdateTasks } = useTaskStore.getState();
+            const projectA = await addProject('Project A', '#111111');
+            const projectB = await addProject('Project B', '#222222');
+            expect(projectA).not.toBeNull();
+            expect(projectB).not.toBeNull();
+            if (!projectA || !projectB) return;
+
+            const sectionA = await addSection(projectA.id, 'Section A');
+            if (!sectionA) return;
+
+            await addTask('Batch movable', {
+                projectId: projectA.id,
+                sectionId: sectionA.id,
+                status: 'next',
+            });
+            await addTask('Area scoped', {
+                areaId: 'area-1',
+                status: 'next',
+            });
+
+            const movableTask = useTaskStore.getState()._allTasks.find((item) => item.title === 'Batch movable')!;
+            const areaTask = useTaskStore.getState()._allTasks.find((item) => item.title === 'Area scoped')!;
+
+            await batchUpdateTasks([
+                { id: movableTask.id, updates: { projectId: projectB.id } },
+                { id: areaTask.id, updates: { projectId: projectB.id } },
+            ]);
+
+            const updatedMovable = useTaskStore.getState()._allTasks.find((item) => item.id === movableTask.id)!;
+            const updatedAreaTask = useTaskStore.getState()._allTasks.find((item) => item.id === areaTask.id)!;
+            expect(updatedMovable.projectId).toBe(projectB.id);
+            expect(updatedMovable.sectionId).toBeUndefined();
+            expect(updatedMovable.order).toBe(0);
+            expect(updatedMovable.orderNum).toBe(0);
+            expect(updatedAreaTask.projectId).toBe(projectB.id);
+            expect(updatedAreaTask.areaId).toBeUndefined();
+            expect(updatedAreaTask.order).toBe(1);
+            expect(updatedAreaTask.orderNum).toBe(1);
         });
 
         it('should clear sectionId when deleting a project', async () => {

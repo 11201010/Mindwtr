@@ -52,6 +52,82 @@ type TaskActionContext = {
 const actionOk = (): StoreActionResult => ({ success: true });
 const actionFail = (error: string): StoreActionResult => ({ success: false, error });
 
+const normalizeTaskUpdateForStore = ({
+    task,
+    updates,
+    allTasks,
+    lastDataChangeAt,
+}: {
+    task: Task;
+    updates: Partial<Task>;
+    allTasks: Task[];
+    lastDataChangeAt: number;
+}): Partial<Task> => {
+    let adjustedUpdates = updates;
+    const hasOrder = Object.prototype.hasOwnProperty.call(updates, 'order');
+    const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
+    if (hasOrder || hasOrderNum) {
+        const normalizedOrder = getTaskOrder(updates);
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            order: normalizedOrder,
+            orderNum: normalizedOrder,
+        };
+    }
+    if (!Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
+        return adjustedUpdates;
+    }
+
+    const rawProjectId = updates.projectId;
+    const normalizedProjectId =
+        typeof rawProjectId === 'string' && rawProjectId.trim().length > 0
+            ? rawProjectId
+            : undefined;
+    const nextProjectId = normalizedProjectId ?? undefined;
+    const projectChanged = (task.projectId ?? undefined) !== nextProjectId;
+    if (projectChanged) {
+        const shouldClearSection = !Object.prototype.hasOwnProperty.call(updates, 'sectionId');
+        const hasTaskOrderOverride = hasOrder || hasOrderNum;
+        if (nextProjectId) {
+            if (!hasTaskOrderOverride) {
+                const nextOrder = reserveNextProjectOrder(nextProjectId, allTasks, lastDataChangeAt);
+                adjustedUpdates = {
+                    ...adjustedUpdates,
+                    order: nextOrder,
+                    orderNum: nextOrder,
+                };
+            }
+            if (!Object.prototype.hasOwnProperty.call(updates, 'areaId')) {
+                adjustedUpdates = {
+                    ...adjustedUpdates,
+                    areaId: undefined,
+                };
+            }
+            if (shouldClearSection) {
+                adjustedUpdates = {
+                    ...adjustedUpdates,
+                    sectionId: undefined,
+                };
+            }
+        } else {
+            adjustedUpdates = {
+                ...adjustedUpdates,
+                projectId: undefined,
+                order: undefined,
+                orderNum: undefined,
+                sectionId: undefined,
+            };
+        }
+    } else if (normalizedProjectId !== updates.projectId) {
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            projectId: normalizedProjectId,
+        };
+    }
+
+    return adjustedUpdates;
+};
+
 export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskActionContext): TaskActions => ({
     /**
      * Add a new task to the store and persist to storage.
@@ -86,18 +162,18 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 ? reserveNextProjectOrder(resolvedProjectId, state._allTasks, state.lastDataChangeAt)
                 : explicitOrder;
             const newTask: Task = {
+                ...initialProps,
                 id: uuidv4(),
                 title: trimmedTitle,
                 status: resolvedStatus,
-                taskMode: 'task',
-                tags: [],
-                contexts: [],
-                pushCount: 0,
+                taskMode: initialProps?.taskMode ?? 'task',
+                tags: initialProps?.tags ?? [],
+                contexts: initialProps?.contexts ?? [],
+                pushCount: initialProps?.pushCount ?? 0,
                 rev: 1,
                 revBy: deviceId,
                 createdAt: now,
                 updatedAt: now,
-                ...initialProps,
                 ...referenceClears,
                 areaId: resolvedAreaId,
                 projectId: resolvedProjectId,
@@ -147,66 +223,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 rev: normalizeRevision(oldTask.rev) + 1,
                 revBy: deviceState.deviceId,
             };
-
-            let adjustedUpdates = updates;
-            const hasOrder = Object.prototype.hasOwnProperty.call(updates, 'order');
-            const hasOrderNum = Object.prototype.hasOwnProperty.call(updates, 'orderNum');
-            if (hasOrder || hasOrderNum) {
-                const normalizedOrder = getTaskOrder(updates);
-                adjustedUpdates = {
-                    ...adjustedUpdates,
-                    order: normalizedOrder,
-                    orderNum: normalizedOrder,
-                };
-            }
-            if (Object.prototype.hasOwnProperty.call(updates, 'projectId')) {
-                const rawProjectId = updates.projectId;
-                const normalizedProjectId =
-                    typeof rawProjectId === 'string' && rawProjectId.trim().length > 0
-                        ? rawProjectId
-                        : undefined;
-                const nextProjectId = normalizedProjectId ?? undefined;
-                const projectChanged = (oldTask.projectId ?? undefined) !== nextProjectId;
-                if (projectChanged) {
-                    const shouldClearSection = !Object.prototype.hasOwnProperty.call(updates, 'sectionId');
-                    const hasTaskOrderOverride = hasOrder || hasOrderNum;
-                    if (nextProjectId) {
-                        if (!hasTaskOrderOverride) {
-                            const nextOrder = reserveNextProjectOrder(nextProjectId, state._allTasks, state.lastDataChangeAt);
-                            adjustedUpdates = {
-                                ...adjustedUpdates,
-                                order: nextOrder,
-                                orderNum: nextOrder,
-                            };
-                        }
-                        if (!Object.prototype.hasOwnProperty.call(updates, 'areaId')) {
-                            adjustedUpdates = {
-                                ...adjustedUpdates,
-                                areaId: undefined,
-                            };
-                        }
-                        if (shouldClearSection) {
-                            adjustedUpdates = {
-                                ...adjustedUpdates,
-                                sectionId: undefined,
-                            };
-                        }
-                    } else {
-                        adjustedUpdates = {
-                            ...adjustedUpdates,
-                            projectId: undefined,
-                            order: undefined,
-                            orderNum: undefined,
-                            sectionId: undefined,
-                        };
-                    }
-                } else if (normalizedProjectId !== updates.projectId) {
-                    adjustedUpdates = {
-                        ...adjustedUpdates,
-                        projectId: normalizedProjectId,
-                    };
-                }
-            }
+            const adjustedUpdates = normalizeTaskUpdateForStore({
+                task: oldTask,
+                updates,
+                allTasks: state._allTasks,
+                lastDataChangeAt: state.lastDataChangeAt,
+            });
 
             const { updatedTask, nextRecurringTask } = applyTaskUpdates(
                 oldTask,
@@ -575,13 +597,21 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
             const deviceState = ensureDeviceId(state.settings);
             let newVisibleTasks = state.tasks;
             let nextRecurringTasks: Task[] = [];
-            const newAllTasksBase = state._allTasks.map((task) => {
+            const newAllTasksBase = [...state._allTasks];
+            for (let index = 0; index < state._allTasks.length; index += 1) {
+                const task = newAllTasksBase[index];
                 const updates = updatesById.get(task.id);
-                if (!updates) return task;
+                if (!updates) continue;
+                const adjustedUpdates = normalizeTaskUpdateForStore({
+                    task,
+                    updates,
+                    allTasks: newAllTasksBase,
+                    lastDataChangeAt: state.lastDataChangeAt,
+                });
                 const { updatedTask, nextRecurringTask } = applyTaskUpdates(
                     task,
                     {
-                        ...updates,
+                        ...adjustedUpdates,
                         rev: normalizeRevision(task.rev) + 1,
                         revBy: deviceState.deviceId,
                     },
@@ -589,8 +619,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 );
                 if (nextRecurringTask) nextRecurringTasks = [...nextRecurringTasks, nextRecurringTask];
                 newVisibleTasks = updateVisibleTasks(newVisibleTasks, task, updatedTask);
-                return updatedTask;
-            });
+                newAllTasksBase[index] = updatedTask;
+            }
 
             const newAllTasks = nextRecurringTasks.length > 0
                 ? [...newAllTasksBase, ...nextRecurringTasks]
