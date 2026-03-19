@@ -1,23 +1,12 @@
 import { router } from 'expo-router';
-import { store } from 'expo-router/build/global-state/router-store';
-
-const normalizePathname = (value?: string | null): string => {
-    if (!value) return '';
-    const normalized = value.replace(/\/+$/, '');
-    return normalized || '/';
-};
 
 const navigateToTaskMetaScreen = (
     pathname: '/projects-screen' | '/contexts',
     params: { projectId?: string; token?: string }
 ) => {
-    const href = { pathname, params };
-    const currentPathname = normalizePathname(store.getRouteInfo().pathname);
-    if (currentPathname === pathname) {
-        router.replace(href);
-        return;
-    }
-    router.push(href);
+    // Use public NAVIGATE semantics so repeated same-screen taps update params
+    // without building an unbounded back stack.
+    router.navigate({ pathname, params });
 };
 
 export function openProjectScreen(projectId: string) {
