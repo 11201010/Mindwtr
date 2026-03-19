@@ -5,6 +5,7 @@ import { shallow, useTaskStore, TaskPriority, TimeEstimate, DEFAULT_AREA_COLOR, 
 import type { Task, TaskStatus } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
+import { ConfirmModal } from '../ConfirmModal';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { ListEmptyState } from './list/ListEmptyState';
 import { ListQuickAdd } from './list/ListQuickAdd';
@@ -150,6 +151,8 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
 
     const [isProcessing, setIsProcessing] = useState(false);
     const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+    const [pendingDeleteTask, setPendingDeleteTask] = useState<Task | null>(null);
+    const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[]>([]);
     const {
         allContexts,
         allTags,
@@ -603,26 +606,27 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             .catch((error) => reportError('Failed to update task status', error));
     }, [filteredTasks, selectedIndex, moveTask, showToast, undoNotificationsEnabled]);
 
+    const runSingleDelete = useCallback(async (task: Task) => {
+        await deleteTask(task.id);
+        if (!undoNotificationsEnabled) return;
+        showToast(
+            'Task deleted',
+            'info',
+            5000,
+            {
+                label: 'Undo',
+                onClick: () => {
+                    void restoreTask(task.id);
+                },
+            }
+        );
+    }, [deleteTask, restoreTask, showToast, undoNotificationsEnabled]);
+
     const deleteSelected = useCallback(() => {
         const task = filteredTasks[selectedIndex];
         if (!task) return;
-        void deleteTask(task.id)
-            .then(() => {
-                if (!undoNotificationsEnabled) return;
-                showToast(
-                    'Task deleted',
-                    'info',
-                    5000,
-                    {
-                        label: 'Undo',
-                        onClick: () => {
-                            void restoreTask(task.id);
-                        },
-                    }
-                );
-            })
-            .catch((error) => reportError('Failed to delete task', error));
-    }, [filteredTasks, selectedIndex, deleteTask, restoreTask, showToast, undoNotificationsEnabled]);
+        setPendingDeleteTask(task);
+    }, [filteredTasks, selectedIndex]);
 
     useEffect(() => {
         if (isProcessing) {
@@ -696,19 +700,40 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
 
     const handleBatchDelete = useCallback(async () => {
         if (selectedIdsArray.length === 0) return;
-        const confirmMessage = t('list.confirmBatchDelete') || 'Delete selected tasks?';
-        if (!window.confirm(confirmMessage)) return;
+        setPendingBatchDeleteIds(selectedIdsArray);
+    }, [selectedIdsArray]);
+
+    const confirmBatchDelete = useCallback(async (taskIds: string[]) => {
         setIsBatchDeleting(true);
         try {
-            await batchDeleteTasks(selectedIdsArray);
+            await batchDeleteTasks(taskIds);
             exitSelectionMode();
+            if (undoNotificationsEnabled) {
+                const deletedMessage = taskIds.length === 1
+                    ? 'Task deleted'
+                    : `${taskIds.length} tasks deleted`;
+                showToast(
+                    deletedMessage,
+                    'info',
+                    5000,
+                    {
+                        label: 'Undo',
+                        onClick: () => {
+                            taskIds.forEach((taskId) => {
+                                void restoreTask(taskId);
+                            });
+                        },
+                    }
+                );
+            }
         } catch (error) {
             reportError('Failed to batch delete tasks', error);
             showToast(t('bulk.deleteFailed') || 'Failed to delete selected tasks', 'error');
         } finally {
             setIsBatchDeleting(false);
+            setPendingBatchDeleteIds([]);
         }
-    }, [batchDeleteTasks, selectedIdsArray, exitSelectionMode, showToast, t]);
+    }, [batchDeleteTasks, exitSelectionMode, restoreTask, showToast, t, undoNotificationsEnabled]);
 
     const handleBatchAssignArea = useCallback(async (areaId: string | null) => {
         if (selectedIdsArray.length === 0) return;
@@ -1298,6 +1323,32 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 }));
                 setContextPromptOpen(false);
                 exitSelectionMode();
+            }}
+        />
+        <ConfirmModal
+            isOpen={pendingDeleteTask !== null}
+            title={t('common.delete') || 'Delete'}
+            description={t('task.deleteConfirmBody') || 'Move this task to Trash?'}
+            confirmLabel={t('common.delete') || 'Delete'}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setPendingDeleteTask(null)}
+            onConfirm={() => {
+                const task = pendingDeleteTask;
+                setPendingDeleteTask(null);
+                if (!task) return;
+                void runSingleDelete(task).catch((error) => reportError('Failed to delete task', error));
+            }}
+        />
+        <ConfirmModal
+            isOpen={pendingBatchDeleteIds.length > 0}
+            title={t('common.delete') || 'Delete'}
+            description={t('list.confirmBatchDelete') || 'Delete selected tasks?'}
+            confirmLabel={t('common.delete') || 'Delete'}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => setPendingBatchDeleteIds([])}
+            onConfirm={() => {
+                const taskIds = [...pendingBatchDeleteIds];
+                void confirmBatchDelete(taskIds);
             }}
         />
         </ErrorBoundary>
