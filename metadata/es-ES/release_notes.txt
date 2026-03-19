@@ -1,4 +1,4 @@
-- Anadimos soporte de sync por iCloud en plataformas Apple.
-- Anadimos un selector global de areas y filtros de estimacion de tiempo en movil.
-- Anadimos cambios de foco en la revision diaria y mejoramos el sync sin conexion o en segundo plano.
-- Reforzamos el merge del sync y la cancelacion del calendario para un sync entre dispositivos mas fiable.
+- Anadimos navegacion de tareas relacionadas para abrir enlaces en la vista movil correcta.
+- Reducimos el trabajo de selectores en la lista y en los gestos para un desplazamiento y acciones mas fluidos.
+- Corregimos la navegacion de metadatos de tareas y restauramos la estabilidad del tema en la lista.
+- Reforzamos la fiabilidad del sync con validacion de mutaciones, escrituras pendientes mas seguras y mejor filtrado de autoescrituras.

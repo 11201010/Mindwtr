@@ -11,6 +11,8 @@ Release automation and version metadata are centered in:
 - `scripts/bump-version.sh`
 - `scripts/update-versions.js`
 - `docs/release-notes/`
+- `metadata/`
+- `metadata/metadata.json`
 - `.github/workflows/`
 
 ---
@@ -80,6 +82,9 @@ Guidelines:
 - include the important fixes/features first
 - list notable commits when helpful
 - keep Google Play snippets in `docs/release-notes/google-play/` aligned when needed
+- update `metadata/*/release_notes.txt` for App Store release notes
+- add the new Android changelog file under `metadata/*/changelogs/<versionCode>.txt`
+- keep Microsoft Store release notes in `metadata/metadata.json` aligned with the same release
 
 ---
 

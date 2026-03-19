@@ -1,0 +1,18 @@
+<en-US>
+- Added related-task navigation so linked tasks open in the correct mobile view.
+- Reduced task-list and swipe-row selector churn for smoother scrolling and actions.
+- Fixed task meta navigation and restored task list theme stability.
+- Hardened sync reliability with validated task mutations and safer pending writes.
+</en-US>
+<zh-CN>
+- 新增关联任务导航，链接任务会在正确的移动端视图中打开。
+- 减少任务列表与滑动操作的 selector 开销，滚动和操作更流畅。
+- 修复任务元数据导航问题，并恢复任务列表主题状态稳定性。
+- 强化同步可靠性，加入任务变更校验与更安全的待写入保留。
+</zh-CN>
+<es-ES>
+- Anadimos navegacion de tareas relacionadas para abrir enlaces en la vista movil correcta.
+- Reducimos el trabajo de selectores en la lista y en los gestos para un desplazamiento y acciones mas fluidos.
+- Corregimos la navegacion de metadatos de tareas y restauramos la estabilidad del tema en la lista.
+- Reforzamos la fiabilidad del sync con validacion de mutaciones y escrituras pendientes mas seguras.
+</es-ES>

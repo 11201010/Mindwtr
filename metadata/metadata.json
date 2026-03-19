@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 新增桌面端 Obsidian Vault 任务浏览，并补强扫描安全性与启用流程。\n• 调整 Projects、Contexts 与 Obsidian 页面在宽屏下的布局比例，并改进同步状态无障碍提示。\n• 强化核心与桌面端同步，包含更安全的附件合并、单调时钟文件监听抑制与更丰富的冲突诊断。\n• 强化自托管云同步可靠性，加入请求大小限制、超时与更严格的数据校验。",
+        "ReleaseNotes": "• 桌面端列表删除新增确认与撤销，并在恢复失败时提供更清晰的提示。\n• 稳定 Integrations 设置界面，并阻止在仅参考项目上编辑清单项。\n• 强化同步可靠性，加入任务变更校验、更安全的待写入保留与更好的自写过滤。\n• 改进桌面端删除提示与无效日期命令错误的本地化。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Added desktop Obsidian vault browsing with safer scanning and a cleaner enablement flow.\n• Rebalanced Projects, Contexts, and Obsidian page widths on wide screens and improved sync status accessibility.\n• Hardened core and desktop sync with safer attachment merges, monotonic file-watch handling, and richer conflict diagnostics.\n• Improved self-hosted cloud sync reliability with request size limits, timeouts, and stronger data validation.",
+        "ReleaseNotes": "• Added desktop confirmation and undo for list deletions, with clearer restore failure feedback.\n• Stabilized Integrations settings and blocked checklist edits on reference-only items.\n• Hardened sync reliability with task mutation validation, safer pending writes, and better self-write filtering.\n• Improved desktop localization for delete toasts and invalid date command errors.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Anadimos navegacion del vault de Obsidian en escritorio con un escaneo mas seguro y una activacion mas clara.\n• Reequilibramos el ancho de Proyectos, Contextos y Obsidian en pantallas grandes y mejoramos la accesibilidad del estado de sync.\n• Reforzamos el sync de core y escritorio con merges de adjuntos mas seguros, manejo monotono de file-watch y mejores diagnosticos de conflicto.\n• Mejoramos la fiabilidad del sync en la nube autoalojada con limites de peticion, timeouts y validacion de datos mas fuerte.",
+        "ReleaseNotes": "• Anadimos confirmacion y deshacer para eliminar listas en escritorio, con mensajes mas claros cuando falla la restauracion.\n• Estabilizamos la pantalla de Integrations y bloqueamos la edicion de checklists en elementos solo de referencia.\n• Reforzamos la fiabilidad del sync con validacion de mutaciones, escrituras pendientes mas seguras y mejor filtrado de autoescrituras.\n• Mejoramos la localizacion de los avisos de borrado y de los errores de comandos de fecha no valida en escritorio.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

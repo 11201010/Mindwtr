@@ -61,6 +61,18 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="0.7.5" date="2026-03-18">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v0.7.5</url>
+      <description translate="no">
+        <p>Mindwtr 0.7.5 improves desktop deletion flows, settings stability, sync resilience, and Linux packaging polish.</p>
+        <ul>
+          <li>Added confirmation and undo for list deletions, with clearer feedback when restores fail.</li>
+          <li>Stabilized the Integrations settings screen and blocked checklist edits on reference-only items.</li>
+          <li>Improved sync resilience with safer pending writes, task mutation validation, and better self-write filtering.</li>
+          <li>Expanded Linux packaging metadata with AppStream polish and automated Flathub follow-up updates.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.4" date="2026-03-16">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v0.7.4</url>
       <description translate="no">

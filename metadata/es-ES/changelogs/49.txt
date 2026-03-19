@@ -1,0 +1,4 @@
+- Anadimos navegacion de tareas relacionadas en movil.
+- Mejoramos el rendimiento de la lista y de las filas deslizables.
+- Corregimos la navegacion de metadatos de tareas y restauramos la estabilidad del tema en la lista.
+- Reforzamos la fiabilidad del sync con validacion de mutaciones y escrituras pendientes mas seguras.

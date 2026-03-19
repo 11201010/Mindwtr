@@ -1,4 +1,4 @@
-- Added iCloud sync support on Apple platforms.
-- Added a global area switcher and time estimate filters on mobile.
-- Added focus toggles in daily review and improved offline/background sync handling.
-- Hardened sync merge handling and calendar cancellation for more reliable cross-device sync.
+- Added related-task navigation so linked tasks open in the correct mobile view.
+- Reduced task list and swipe-row selector churn for smoother scrolling and actions.
+- Fixed task meta navigation and restored task list theme stability.
+- Hardened sync reliability with validated task mutations, safer pending writes, and better self-write filtering.

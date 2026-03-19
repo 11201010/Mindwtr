@@ -1,0 +1,4 @@
+- Added related-task navigation on mobile.
+- Improved task list and swipe-row performance.
+- Fixed task meta navigation and restored task list theme stability.
+- Hardened sync reliability with validated task mutations and safer pending writes.
