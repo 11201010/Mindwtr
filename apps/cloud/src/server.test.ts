@@ -559,6 +559,40 @@ describe('cloud server api', () => {
         expect(payload.error).toContain('Unsupported task updates');
     });
 
+    test('bumps revision when completing and archiving a task', async () => {
+        const createResponse = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ title: 'Revision Task' }),
+        });
+        expect(createResponse.status).toBe(201);
+        const createdJson = await createResponse.json();
+        const taskId = createdJson.task.id as string;
+
+        const completeResponse = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
+            method: 'POST',
+            headers: authHeaders,
+        });
+        expect(completeResponse.status).toBe(200);
+        const completeJson = await completeResponse.json();
+        expect(completeJson.task.status).toBe('done');
+        expect(completeJson.task.rev).toBe(1);
+        expect(completeJson.task.revBy).toBe('cloud');
+
+        const archiveResponse = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/archive`, {
+            method: 'POST',
+            headers: authHeaders,
+        });
+        expect(archiveResponse.status).toBe(200);
+        const archiveJson = await archiveResponse.json();
+        expect(archiveJson.task.status).toBe('archived');
+        expect(archiveJson.task.rev).toBe(2);
+        expect(archiveJson.task.revBy).toBe('cloud');
+    });
+
     test('rejects reserved fields on task creation', async () => {
         const createResponse = await fetch(`${baseUrl}/v1/tasks`, {
             method: 'POST',

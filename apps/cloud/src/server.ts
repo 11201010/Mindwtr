@@ -1282,7 +1282,11 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
 
                         const nowIso = new Date().toISOString();
                         const existing = data.tasks[idx];
-                        const { updatedTask, nextRecurringTask } = applyTaskUpdates(existing, { status }, nowIso);
+                        const { updatedTask, nextRecurringTask } = applyTaskUpdates(existing, {
+                            status,
+                            rev: normalizeRevision(existing.rev) + 1,
+                            revBy: CLOUD_API_REV_BY,
+                        }, nowIso);
                         data.tasks[idx] = updatedTask;
                         if (nextRecurringTask) data.tasks.push(nextRecurringTask);
                         throwIfRequestAborted(requestAbortController.signal);
