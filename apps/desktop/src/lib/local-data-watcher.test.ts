@@ -142,6 +142,7 @@ describe('local-data-watcher', () => {
         await flushScheduledTimers();
 
         expect(saveCalls).toHaveLength(0);
+        expect(__localDataWatcherTestUtils.getPendingSelfWritePayloadLengthForTests()).toBe(0);
     });
 
     it('re-reads external writes that happen during ignore window', async () => {

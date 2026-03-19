@@ -81,7 +81,7 @@ let localDataWatcherDependencies: LocalDataWatcherDependencies = { ...defaultDep
 let unwatchFn: (() => void) | null = null;
 let ignoreUntil = 0;
 let lastKnownHash = '';
-let lastKnownPayload = '';
+let pendingSelfWritePayload = '';
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let ignoreDrainTimer: ReturnType<typeof setTimeout> | null = null;
 let hasPendingChangeDuringIgnore = false;
@@ -167,13 +167,11 @@ async function mergeExternalData(externalData: AppData): Promise<void> {
 
         if (mergedHash === localHash) {
             lastKnownHash = mergedHash;
-            lastKnownPayload = mergedPayload;
             return;
         }
 
         await localDataWatcherDependencies.persistMergedData(normalizedMerged);
         lastKnownHash = mergedHash;
-        lastKnownPayload = mergedPayload;
         localDataWatcherDependencies.logInfo('[local-data-watcher] Merged external data.json changes');
     } catch (error) {
         localDataWatcherDependencies.logWarn('[local-data-watcher] Failed to merge external data: ' + String(error));
@@ -192,13 +190,18 @@ async function handleExternalChange(): Promise<void> {
         const normalized = localDataWatcherDependencies.normalize(rawData);
         const payload = toStableJson(normalized);
 
-        if (payload === lastKnownPayload) return;
+        if (payload === pendingSelfWritePayload) {
+            lastKnownHash = await localDataWatcherDependencies.hashPayload(payload);
+            pendingSelfWritePayload = '';
+            return;
+        }
+
+        pendingSelfWritePayload = '';
 
         const hash = await localDataWatcherDependencies.hashPayload(payload);
 
         if (hash === lastKnownHash) return;
         lastKnownHash = hash;
-        lastKnownPayload = payload;
 
         if (debounceTimer) {
             localDataWatcherDependencies.cancelSchedule(debounceTimer);
@@ -219,10 +222,12 @@ export function markLocalWrite(data?: AppData): void {
     if (data) {
         try {
             const normalized = localDataWatcherDependencies.normalize(data);
-            lastKnownPayload = toStableJson(normalized);
+            pendingSelfWritePayload = toStableJson(normalized);
         } catch {
-            // Best effort only.
+            pendingSelfWritePayload = '';
         }
+    } else {
+        pendingSelfWritePayload = '';
     }
     ignoreUntil = localDataWatcherDependencies.now() + IGNORE_WINDOW_MS;
     scheduleIgnoreDrain();
@@ -283,7 +288,10 @@ export const __localDataWatcherTestUtils = {
         localDataWatcherDependencies = { ...defaultDependencies };
         ignoreUntil = 0;
         lastKnownHash = '';
-        lastKnownPayload = '';
+        pendingSelfWritePayload = '';
         mergeInFlight = null;
+    },
+    getPendingSelfWritePayloadLengthForTests() {
+        return pendingSelfWritePayload.length;
     },
 };
