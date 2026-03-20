@@ -21,6 +21,9 @@ type ProjectActions = Pick<
     | 'reorderProjects'
     | 'reorderProjectTasks'
     | 'deleteTag'
+    | 'renameTag'
+    | 'deleteContext'
+    | 'renameContext'
 >;
 
 type ProjectActionContext = {
@@ -1108,6 +1111,163 @@ export const createProjectActions = ({ set, get, debouncedSave }: ProjectActionC
                 projects: newVisibleProjects,
                 _allTasks: newAllTasks,
                 _allProjects: newAllProjects,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
+        });
+        if (snapshot) {
+            debouncedSave(snapshot, (msg) => set({ error: msg }));
+        }
+    },
+
+    renameTag: async (oldTagId: string, newTagId: string) => {
+        const normalizedOld = normalizeTagId(oldTagId);
+        const normalizedNew = normalizeTagId(newTagId);
+        if (!normalizedOld || !normalizedNew || normalizedOld === normalizedNew) return;
+        const changeAt = Date.now();
+        const now = new Date().toISOString();
+        let snapshot: AppData | null = null;
+        set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
+            const newAllTasks = state._allTasks.map((task) => {
+                if (!task.tags || task.tags.length === 0) return task;
+                const idx = task.tags.findIndex((tag) => normalizeTagId(tag) === normalizedOld);
+                if (idx === -1) return task;
+                const newTags = [...task.tags];
+                newTags[idx] = normalizedNew;
+                // Deduplicate in case the new tag already exists on this task
+                const unique = [...new Set(newTags.map(normalizeTagId))].map((norm) =>
+                    newTags.find((t) => normalizeTagId(t) === norm)!
+                );
+                return {
+                    ...task,
+                    tags: unique,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
+            });
+
+            const newAllProjects = state._allProjects.map((project) => {
+                if (!project.tagIds || project.tagIds.length === 0) return project;
+                const idx = project.tagIds.findIndex((tag) => normalizeTagId(tag) === normalizedOld);
+                if (idx === -1) return project;
+                const newTagIds = [...project.tagIds];
+                newTagIds[idx] = normalizedNew;
+                const unique = [...new Set(newTagIds.map(normalizeTagId))].map((norm) =>
+                    newTagIds.find((t) => normalizeTagId(t) === norm)!
+                );
+                return {
+                    ...project,
+                    tagIds: unique,
+                    updatedAt: now,
+                    rev: normalizeRevision(project.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
+            });
+
+            const newVisibleTasks = newAllTasks.filter((t) => !t.deletedAt && t.status !== 'archived');
+            const newVisibleProjects = newAllProjects.filter((p) => !p.deletedAt);
+
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                projects: newAllProjects,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                projects: newVisibleProjects,
+                _allTasks: newAllTasks,
+                _allProjects: newAllProjects,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
+        });
+        if (snapshot) {
+            debouncedSave(snapshot, (msg) => set({ error: msg }));
+        }
+    },
+
+    deleteContext: async (context: string) => {
+        const normalized = context.trim().toLowerCase();
+        if (!normalized) return;
+        const changeAt = Date.now();
+        const now = new Date().toISOString();
+        let snapshot: AppData | null = null;
+        set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
+            const newAllTasks = state._allTasks.map((task) => {
+                if (!task.contexts || task.contexts.length === 0) return task;
+                const filtered = task.contexts.filter((ctx) => ctx.trim().toLowerCase() !== normalized);
+                if (filtered.length === task.contexts.length) return task;
+                return {
+                    ...task,
+                    contexts: filtered,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
+            });
+
+            const newVisibleTasks = newAllTasks.filter((t) => !t.deletedAt && t.status !== 'archived');
+
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
+                lastDataChangeAt: changeAt,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            };
+        });
+        if (snapshot) {
+            debouncedSave(snapshot, (msg) => set({ error: msg }));
+        }
+    },
+
+    renameContext: async (oldContext: string, newContext: string) => {
+        const normalizedOld = oldContext.trim().toLowerCase();
+        const normalizedNew = newContext.trim();
+        if (!normalizedOld || !normalizedNew || normalizedOld === normalizedNew.toLowerCase()) return;
+        const changeAt = Date.now();
+        const now = new Date().toISOString();
+        let snapshot: AppData | null = null;
+        set((state) => {
+            const deviceState = ensureDeviceId(state.settings);
+            const newAllTasks = state._allTasks.map((task) => {
+                if (!task.contexts || task.contexts.length === 0) return task;
+                const idx = task.contexts.findIndex((ctx) => ctx.trim().toLowerCase() === normalizedOld);
+                if (idx === -1) return task;
+                const newContexts = [...task.contexts];
+                newContexts[idx] = normalizedNew;
+                // Deduplicate
+                const seen = new Set<string>();
+                const unique = newContexts.filter((ctx) => {
+                    const key = ctx.trim().toLowerCase();
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+                return {
+                    ...task,
+                    contexts: unique,
+                    updatedAt: now,
+                    rev: normalizeRevision(task.rev) + 1,
+                    revBy: deviceState.deviceId,
+                };
+            });
+
+            const newVisibleTasks = newAllTasks.filter((t) => !t.deletedAt && t.status !== 'archived');
+
+            snapshot = buildSaveSnapshot(state, {
+                tasks: newAllTasks,
+                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+            });
+            return {
+                tasks: newVisibleTasks,
+                _allTasks: newAllTasks,
                 lastDataChangeAt: changeAt,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };

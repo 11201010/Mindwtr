@@ -107,6 +107,14 @@ export interface TaskStore {
     // Tag Actions
     /** Delete a tag from tasks and projects */
     deleteTag: (tagId: string) => Promise<void>;
+    /** Rename a tag across all tasks and projects */
+    renameTag: (oldTagId: string, newTagId: string) => Promise<void>;
+
+    // Context Actions
+    /** Delete a context from all tasks */
+    deleteContext: (context: string) => Promise<void>;
+    /** Rename a context across all tasks */
+    renameContext: (oldContext: string, newContext: string) => Promise<void>;
 
     // Settings Actions
     /** Update application settings */

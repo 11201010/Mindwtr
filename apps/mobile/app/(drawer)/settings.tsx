@@ -118,6 +118,7 @@ type SettingsScreen =
     | 'gtd-archive'
     | 'gtd-time-estimates'
     | 'gtd-task-editor'
+    | 'manage'
     | 'sync'
     | 'about';
 
@@ -132,6 +133,7 @@ const SETTINGS_SCREEN_SET: Record<SettingsScreen, true> = {
     'gtd-archive': true,
     'gtd-time-estimates': true,
     'gtd-task-editor': true,
+    manage: true,
     sync: true,
     about: true,
 };
@@ -3360,6 +3362,172 @@ export default function SettingsPage() {
         );
     }
 
+    // ============ MANAGE (Areas / Contexts / Tags) ============
+    if (currentScreen === 'manage') {
+        const areas = useTaskStore.getState().areas;
+        const sortedAreas = [...areas].sort((a, b) => a.order - b.order);
+        const { allContexts, allTags } = useTaskStore.getState().getDerivedState();
+        const deleteArea = useTaskStore.getState().deleteArea;
+        const updateArea = useTaskStore.getState().updateArea;
+        const deleteTag = useTaskStore.getState().deleteTag;
+        const renameTag = useTaskStore.getState().renameTag;
+        const deleteContext = useTaskStore.getState().deleteContext;
+        const renameContext = useTaskStore.getState().renameContext;
+
+        const localize2 = (en: string, zh: string) => (language === 'zh' || language === 'zh-Hant' ? zh : en);
+
+        const confirmDelete = (label: string, onConfirm: () => void) => {
+            Alert.alert(
+                localize2('Delete', '删除'),
+                localize2(`Delete "${label}"?`, `删除"${label}"？`),
+                [
+                    { text: localize2('Cancel', '取消'), style: 'cancel' },
+                    { text: localize2('Delete', '删除'), style: 'destructive', onPress: onConfirm },
+                ],
+            );
+        };
+
+        const promptRename = (currentValue: string, onRename: (newValue: string) => void) => {
+            Alert.prompt(
+                localize2('Rename', '重命名'),
+                undefined,
+                [
+                    { text: localize2('Cancel', '取消'), style: 'cancel' },
+                    {
+                        text: localize2('Save', '保存'),
+                        onPress: (newValue) => {
+                            const trimmed = (newValue ?? '').trim();
+                            if (trimmed && trimmed !== currentValue) {
+                                onRename(trimmed);
+                            }
+                        },
+                    },
+                ],
+                'plain-text',
+                currentValue,
+            );
+        };
+
+        const ManageRow = ({ label, onRename, onDelete }: { label: string; onRename?: () => void; onDelete: () => void }) => (
+            <View style={[styles.settingRow, { borderBottomWidth: 1, borderBottomColor: tc.border }]}>
+                <Text style={[styles.settingLabel, { color: tc.text, flex: 1 }]} numberOfLines={1}>{label}</Text>
+                {onRename && (
+                    <TouchableOpacity onPress={onRename} style={{ padding: 8 }}>
+                        <Ionicons name="pencil-outline" size={18} color={tc.secondaryText} />
+                    </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={onDelete} style={{ padding: 8 }}>
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                </TouchableOpacity>
+            </View>
+        );
+
+        const AreaRow = ({ area }: { area: typeof sortedAreas[number] }) => (
+            <View style={[styles.settingRow, { borderBottomWidth: 1, borderBottomColor: tc.border }]}>
+                <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: area.color || '#94a3b8', marginRight: 12 }} />
+                <Text style={[styles.settingLabel, { color: tc.text, flex: 1 }]} numberOfLines={1}>{area.name}</Text>
+                <TouchableOpacity
+                    onPress={() => promptRename(area.name, (name) => void updateArea(area.id, { name }))}
+                    style={{ padding: 8 }}
+                >
+                    <Ionicons name="pencil-outline" size={18} color={tc.secondaryText} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    onPress={() => confirmDelete(area.name, () => void deleteArea(area.id))}
+                    style={{ padding: 8 }}
+                >
+                    <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                </TouchableOpacity>
+            </View>
+        );
+
+        const CollapsibleSection = ({ title, count, children }: { title: string; count: number; children: React.ReactNode }) => {
+            const [open, setOpen] = useState(false);
+            return (
+                <View style={{ marginBottom: 16 }}>
+                    <TouchableOpacity
+                        onPress={() => setOpen((prev) => !prev)}
+                        style={[styles.settingCard, {
+                            backgroundColor: tc.cardBg,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            padding: 16,
+                        }]}
+                    >
+                        <Ionicons name={open ? 'chevron-down' : 'chevron-forward'} size={16} color={tc.secondaryText} />
+                        <Text style={[styles.settingLabel, { color: tc.text, flex: 1, marginLeft: 8 }]}>{title}</Text>
+                        <Text style={{ fontSize: 13, color: tc.secondaryText }}>{count}</Text>
+                    </TouchableOpacity>
+                    {open && (
+                        <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 1 }]}>
+                            {children}
+                        </View>
+                    )}
+                </View>
+            );
+        };
+
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
+                <SettingsTopBar />
+                <SubHeader title={t('settings.manage')} />
+                <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
+                    {/* Areas */}
+                    <CollapsibleSection title={t('areas.manage')} count={sortedAreas.length}>
+                        {sortedAreas.length === 0 && (
+                            <View style={styles.settingRow}>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('projects.noArea')}
+                                </Text>
+                            </View>
+                        )}
+                        {sortedAreas.map((area) => (
+                            <AreaRow key={area.id} area={area} />
+                        ))}
+                    </CollapsibleSection>
+
+                    {/* Contexts */}
+                    <CollapsibleSection title={t('contexts.title')} count={allContexts.length}>
+                        {allContexts.length === 0 && (
+                            <View style={styles.settingRow}>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {localize2('No contexts', '无情境')}
+                                </Text>
+                            </View>
+                        )}
+                        {allContexts.map((ctx) => (
+                            <ManageRow
+                                key={ctx}
+                                label={ctx}
+                                onRename={() => promptRename(ctx, (newVal) => void renameContext(ctx, newVal))}
+                                onDelete={() => confirmDelete(ctx, () => void deleteContext(ctx))}
+                            />
+                        ))}
+                    </CollapsibleSection>
+
+                    {/* Tags */}
+                    <CollapsibleSection title={localize2('Tags', '标签')} count={allTags.length}>
+                        {allTags.length === 0 && (
+                            <View style={styles.settingRow}>
+                                <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                    {t('projects.noTags')}
+                                </Text>
+                            </View>
+                        )}
+                        {allTags.map((tag) => (
+                            <ManageRow
+                                key={tag}
+                                label={tag}
+                                onRename={() => promptRename(tag, (newVal) => void renameTag(tag, newVal))}
+                                onDelete={() => confirmDelete(tag, () => void deleteTag(tag))}
+                            />
+                        ))}
+                    </CollapsibleSection>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
+
     // ============ GTD MENU ============
     if (currentScreen === 'gtd') {
         const featurePomodoroLabelRaw = t('settings.featurePomodoro');
@@ -5170,6 +5338,7 @@ export default function SettingsPage() {
                 <View style={[styles.menuCard, { backgroundColor: tc.cardBg, marginTop: 16 }]}>
                     <MenuItem title={t('settings.general')} onPress={() => pushSettingsScreen('general')} />
                     <MenuItem title={t('settings.gtd')} onPress={() => pushSettingsScreen('gtd')} />
+                    <MenuItem title={t('settings.manage')} onPress={() => pushSettingsScreen('manage')} />
                     <MenuItem title={t('settings.notifications')} onPress={() => pushSettingsScreen('notifications')} />
                     <MenuItem
                         title={t('settings.dataSync')}

@@ -4,6 +4,7 @@ import {
     Bell,
     Database,
     Info,
+    Layers,
     Link2,
     ListChecks,
     Monitor,
@@ -57,7 +58,7 @@ import { type GlobalQuickAddShortcutSetting } from '../../lib/global-quick-add-s
 
 type ThemeMode = DesktopThemeMode;
 type DensityMode = 'comfortable' | 'compact';
-type SettingsPage = 'main' | 'gtd' | 'notifications' | 'sync' | 'integrations' | 'ai' | 'about';
+type SettingsPage = 'main' | 'gtd' | 'manage' | 'notifications' | 'sync' | 'integrations' | 'ai' | 'about';
 type LinuxDistroInfo = { id?: string; id_like?: string[] };
 type DateFormatUiSetting = DateFormatSetting;
 
@@ -68,6 +69,10 @@ const SettingsMainPage = lazy(wrapSettingsOpenImport(
 const SettingsGtdPage = lazy(wrapSettingsOpenImport(
     'page-chunk:gtd',
     () => import('./settings/SettingsGtdPage').then((m) => ({ default: m.SettingsGtdPage }))
+));
+const SettingsManagePage = lazy(wrapSettingsOpenImport(
+    'page-chunk:manage',
+    () => import('./settings/SettingsManagePage').then((m) => ({ default: m.SettingsManagePage }))
 ));
 const SettingsAiPage = lazy(wrapSettingsOpenImport(
     'page-chunk:ai',
@@ -854,6 +859,8 @@ export function SettingsView() {
         switch (page) {
             case 'gtd':
                 return t.gtd;
+            case 'manage':
+                return t.manage;
             case 'notifications':
                 return t.notifications;
             case 'ai':
@@ -885,6 +892,7 @@ export function SettingsView() {
     }>>(() => [
         { id: 'main', icon: Monitor, label: t.general, keywords: [t.appearance, t.density, t.language, t.weekStart, t.dateFormat, t.keybindings, t.windowDecorations, t.closeBehavior, t.showTray, 'theme', 'dark mode', 'light mode'] },
         { id: 'gtd', icon: ListChecks, label: t.gtd, keywords: ['auto-archive', 'priorities', 'time estimates', 'pomodoro', 'capture', 'inbox processing', '2-minute rule', 'task editor'] },
+        { id: 'manage', icon: Layers, label: t.manage, keywords: ['areas', 'contexts', 'tags', 'rename', 'delete', 'reorder'] },
         { id: 'notifications', icon: Bell, label: t.notifications, keywords: ['review reminders', 'weekly review', 'daily digest', 'morning', 'evening'] },
         { id: 'sync', icon: Database, label: t.sync, keywords: ['file sync', 'WebDAV', 'cloud', 'sync now', 'attachments', 'diagnostics', 'logging'] },
         { id: 'integrations', icon: Link2, label: t.integrations, keywords: ['obsidian', 'vault', 'calendar', 'ICS', 'apple calendar', 'integration'] },
@@ -1039,6 +1047,15 @@ export function SettingsView() {
                     updateSettings={updateSettings}
                     showSaved={showSaved}
                     autoArchiveDays={autoArchiveDays}
+                />
+            );
+        }
+
+        if (page === 'manage') {
+            return (
+                <SettingsManagePage
+                    t={t}
+                    translate={translate}
                 />
             );
         }
