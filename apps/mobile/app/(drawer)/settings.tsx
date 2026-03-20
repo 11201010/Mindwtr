@@ -3395,7 +3395,7 @@ export default function SettingsPage() {
                     { text: localize2('Cancel', '取消'), style: 'cancel' },
                     {
                         text: localize2('Save', '保存'),
-                        onPress: (newValue) => {
+                        onPress: (newValue: string | undefined) => {
                             const trimmed = (newValue ?? '').trim();
                             if (trimmed && trimmed !== currentValue) {
                                 onRename(trimmed);
