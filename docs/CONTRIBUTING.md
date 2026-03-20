@@ -222,7 +222,9 @@ Commit style:
 
 ## Documentation contributions
 
-Documentation updates are welcome in `docs/`, `README.md`, and `README_zh.md`.
+Documentation updates are welcome in `wiki/`, `docs/`, `README.md`, and `README_zh.md`.
+
+Most user-facing documentation should go in `wiki/`. That directory is the source for the GitHub wiki and is synced to the live wiki page by GitHub Actions. Use `docs/` for repository-local documentation such as contribution guides, architecture summaries, ADRs, and release notes.
 
 When changing docs:
 
@@ -230,12 +232,13 @@ When changing docs:
 - Prefer concrete examples over vague guidance
 - Validate links
 - Update both English and Chinese docs when the content is mirrored
+- Prefer updating `wiki/` when the content is part of the public user/developer wiki
 
 Useful references:
 
-- [Developer Guide](https://github.com/dongdongbh/Mindwtr/wiki/Developer-Guide)
-- [Architecture](https://github.com/dongdongbh/Mindwtr/wiki/Architecture)
-- [Wiki index](https://github.com/dongdongbh/Mindwtr/wiki)
+- [Developer Guide](../wiki/Developer-Guide.md)
+- [Architecture](../wiki/Architecture.md)
+- [Wiki index](../wiki/Home.md)
 
 ## Translation contributions
 
