@@ -131,6 +131,33 @@ describe('TaskStore', () => {
         expect(tasks).toHaveLength(0);
     });
 
+    it('tracks filter changes as local data mutations', async () => {
+        vi.setSystemTime(new Date('2026-03-21T12:00:00.000Z'));
+
+        await useTaskStore.getState().updateSettings({
+            filters: { areaId: 'area-2' },
+        });
+
+        const state = useTaskStore.getState();
+        expect(state.settings.filters?.areaId).toBe('area-2');
+        expect(state.lastDataChangeAt).toBe(new Date('2026-03-21T12:00:00.000Z').getTime());
+    });
+
+    it('does not treat sync bookkeeping updates as local data mutations', async () => {
+        useTaskStore.setState({ lastDataChangeAt: 123 });
+
+        await useTaskStore.getState().updateSettings({
+            lastSyncAt: '2026-03-21T12:00:00.000Z',
+            lastSyncStatus: 'success',
+            lastSyncError: undefined,
+        });
+
+        const state = useTaskStore.getState();
+        expect(state.settings.lastSyncAt).toBe('2026-03-21T12:00:00.000Z');
+        expect(state.settings.lastSyncStatus).toBe('success');
+        expect(state.lastDataChangeAt).toBe(123);
+    });
+
     it('keeps derived context and tag lists scoped to used tokens', () => {
         const { addTask } = useTaskStore.getState();
         addTask('Token Task', {

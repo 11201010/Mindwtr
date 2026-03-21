@@ -25,11 +25,32 @@ const TOMBSTONE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TASK_EDITOR_DEFAULTS_VERSION = 4;
 const TASK_EDITOR_ALWAYS_VISIBLE: TaskEditorFieldId[] = ['status', 'project', 'description', 'checklist', 'contexts'];
 const STORAGE_TIMEOUT_MS = 15_000;
+const NON_MUTATING_SETTINGS_KEYS = new Set<keyof AppData['settings']>([
+    'lastSyncAt',
+    'lastSyncStatus',
+    'lastSyncError',
+    'pendingRemoteWriteAt',
+    'lastSyncStats',
+    'lastSyncHistory',
+]);
 
 let derivedCache: DerivedCache | null = null;
 
 export const clearDerivedCache = () => {
     derivedCache = null;
+};
+
+const settingsValueChanged = (left: unknown, right: unknown): boolean => JSON.stringify(left ?? null) !== JSON.stringify(right ?? null);
+
+const shouldTrackSettingsChange = (
+    previous: AppData['settings'],
+    next: AppData['settings'],
+    updates: Partial<AppData['settings']>
+): boolean => {
+    const trackedKeys = Object.keys(updates)
+        .filter((key) => !NON_MUTATING_SETTINGS_KEYS.has(key as keyof AppData['settings'])) as Array<keyof AppData['settings']>;
+    if (trackedKeys.length === 0) return false;
+    return trackedKeys.some((key) => settingsValueChanged(previous[key], next[key]));
 };
 
 function shouldPromoteScheduledTask(task: AppData['tasks'][number], nowMs: number): boolean {
@@ -664,6 +685,7 @@ export const createSettingsActions = ({
             }
 
             const newSettings = syncUpdated ? { ...nextSettings, syncPreferencesUpdatedAt: nextSyncUpdatedAt } : nextSettings;
+            const shouldTrackChange = shouldTrackSettingsChange(state.settings, newSettings, updates);
             if (archiveDaysUpdate) {
                 const configuredArchiveDays = newSettings.gtd?.autoArchiveDays;
                 const archiveDays = Number.isFinite(configuredArchiveDays)
@@ -709,7 +731,10 @@ export const createSettingsActions = ({
             }
 
             snapshot = buildSaveSnapshot(state, { settings: newSettings });
-            return { settings: newSettings };
+            return {
+                settings: newSettings,
+                lastDataChangeAt: shouldTrackChange ? Date.now() : state.lastDataChangeAt,
+            };
         });
 
         if (snapshot) {
