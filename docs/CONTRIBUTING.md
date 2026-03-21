@@ -236,9 +236,9 @@ When changing docs:
 
 Useful references:
 
-- [Developer Guide](../wiki/Developer-Guide.md)
-- [Architecture](../wiki/Architecture.md)
-- [Wiki index](../wiki/Home.md)
+- [Developer Guide](https://github.com/dongdongbh/Mindwtr/wiki/Developer-Guide)
+- [Architecture](https://github.com/dongdongbh/Mindwtr/wiki/Architecture)
+- [Wiki index](https://github.com/dongdongbh/Mindwtr/wiki)
 
 ## Translation contributions
 
