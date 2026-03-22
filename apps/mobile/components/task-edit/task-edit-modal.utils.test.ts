@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { getTaskEditTabOffset, syncTaskEditPagerPosition } from './task-edit-modal.utils';
+import {
+    getTaskEditTabOffset,
+    getTaskEditorSectionAssignments,
+    getTaskEditorSectionOpenDefaults,
+    syncTaskEditPagerPosition,
+} from './task-edit-modal.utils';
 
 describe('task-edit-modal pager sync', () => {
     it('returns the right offset for the selected tab', () => {
@@ -52,5 +57,33 @@ describe('task-edit-modal pager sync', () => {
 
         expect(setValue).not.toHaveBeenCalled();
         expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it('merges saved task editor section overrides with defaults', () => {
+        expect(getTaskEditorSectionAssignments({
+            sections: {
+                dueDate: 'scheduling',
+                tags: 'details',
+            },
+        })).toMatchObject({
+            dueDate: 'scheduling',
+            tags: 'details',
+            section: 'basic',
+            contexts: 'organization',
+        });
+    });
+
+    it('uses saved section-open defaults when present', () => {
+        expect(getTaskEditorSectionOpenDefaults({
+            sectionOpen: {
+                scheduling: true,
+                details: false,
+            },
+        })).toEqual({
+            basic: true,
+            scheduling: true,
+            organization: false,
+            details: false,
+        });
     });
 });
