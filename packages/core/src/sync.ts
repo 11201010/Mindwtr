@@ -1018,16 +1018,20 @@ const parseMergeTimestamp = (value: unknown, maxAllowedMs?: number): number => {
 };
 
 const containsAttachmentTraversalSegment = (value: string): boolean => {
-    const candidates = [value];
-    try {
-        const decoded = decodeURIComponent(value);
-        if (decoded !== value) {
-            candidates.push(decoded);
+    const candidates = new Set<string>([value]);
+    let current = value;
+    for (let depth = 0; depth < 8; depth += 1) {
+        try {
+            const decoded = decodeURIComponent(current);
+            if (decoded === current) break;
+            candidates.add(decoded);
+            current = decoded;
+        } catch {
+            // Ignore malformed URI escapes and fall back to the candidates gathered so far.
+            break;
         }
-    } catch {
-        // Ignore malformed URI escapes and fall back to the raw string check.
     }
-    return candidates.some((candidate) => /(^|[\\/])\.\.([\\/]|$)/.test(candidate));
+    return Array.from(candidates).some((candidate) => /(^|[\\/])\.\.([\\/]|$)/.test(candidate));
 };
 
 const sanitizeMergedAttachmentUri = (value: unknown): string | undefined => {
