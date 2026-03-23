@@ -89,6 +89,26 @@ describe('TaskStore', () => {
         expect(updatedTask.status).toBe('next');
     });
 
+    it('rejects adding a task with a missing projectId', async () => {
+        const result = await useTaskStore.getState().addTask('Broken Task', {
+            projectId: 'missing-project',
+        });
+
+        expect(result).toEqual({ success: false, error: 'Project not found' });
+        expect(useTaskStore.getState().tasks).toHaveLength(0);
+    });
+
+    it('rejects updating a task to a missing projectId', async () => {
+        const { addTask, updateTask } = useTaskStore.getState();
+        await addTask('Task to Reassign');
+        const taskId = useTaskStore.getState().tasks[0].id;
+
+        const result = await updateTask(taskId, { projectId: 'missing-project' });
+
+        expect(result).toEqual({ success: false, error: 'Project not found' });
+        expect(useTaskStore.getState()._allTasks.find((task) => task.id === taskId)?.projectId).toBeUndefined();
+    });
+
     it('should clear action fields when a task becomes reference', () => {
         const { addTask, updateTask } = useTaskStore.getState();
         addTask('Reference Task', {
