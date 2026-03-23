@@ -81,6 +81,39 @@ trap cleanup EXIT
 
 git -C "${repo_root}" worktree add --force --detach "${worktree_dir}" "${upstream_commit}" >/dev/null
 
+python3 - "${worktree_dir}/apps/desktop/package-lock.json" <<'PY'
+import json
+import pathlib
+import sys
+
+lock_path = pathlib.Path(sys.argv[1])
+lock = json.loads(lock_path.read_text())
+missing = []
+
+for package_path, meta in lock.get("packages", {}).items():
+    if not isinstance(meta, dict):
+        continue
+    if not package_path.startswith("node_modules/") or meta.get("link") or "version" not in meta:
+        continue
+    resolved = meta.get("resolved")
+    integrity = meta.get("integrity")
+    if not resolved and not integrity:
+        missing.append((package_path, "resolved and integrity"))
+    elif resolved and not integrity:
+        missing.append((package_path, "integrity"))
+    elif integrity and not resolved:
+        missing.append((package_path, "resolved"))
+
+if missing:
+    details = "\n".join(
+        f"  - {package_path} is missing {field}" for package_path, field in missing
+    )
+    raise SystemExit(
+        "Desktop package-lock.json has incomplete npm metadata required for Flathub node source generation:\n"
+        + details
+    )
+PY
+
 python3 "${tools_dir}/cargo/flatpak-cargo-generator.py" \
   "${worktree_dir}/apps/desktop/src-tauri/Cargo.lock" \
   -o "${cargo_sources_path}"
