@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    buildTaskEditorPresetConfig,
     getTaskEditTabOffset,
     getTaskEditorSectionAssignments,
     getTaskEditorSectionOpenDefaults,
+    resolveTaskEditorPresetId,
     syncTaskEditPagerPosition,
 } from './task-edit-modal.utils';
 
@@ -85,5 +87,36 @@ describe('task-edit-modal pager sync', () => {
             organization: false,
             details: false,
         });
+    });
+
+    it('builds the full preset with expanded optional sections', () => {
+        expect(buildTaskEditorPresetConfig('full')).toMatchObject({
+            hidden: [],
+            sectionOpen: {
+                scheduling: true,
+                organization: true,
+            },
+        });
+    });
+
+    it('detects the standard preset while respecting feature-hidden fields', () => {
+        const preset = buildTaskEditorPresetConfig('standard', ['priority']);
+        expect(resolveTaskEditorPresetId({
+            order: preset.order,
+            hidden: preset.hidden,
+            sections: preset.sections,
+            sectionOpen: preset.sectionOpen,
+            featureHiddenFields: ['priority'],
+        })).toBe('standard');
+    });
+
+    it('returns custom when the saved layout no longer matches a preset', () => {
+        const preset = buildTaskEditorPresetConfig('simple');
+        expect(resolveTaskEditorPresetId({
+            order: [...preset.order].reverse(),
+            hidden: preset.hidden,
+            sections: preset.sections,
+            sectionOpen: preset.sectionOpen,
+        })).toBe('custom');
     });
 });
