@@ -152,7 +152,7 @@ const listTasksSchema = z.object({
 // Note: Don't use .refine() as it breaks MCP SDK's JSON schema conversion
 const addTaskSchema = z.object({
   title: z.string().max(MAX_TASK_TITLE_LENGTH).optional().describe('Task title'),
-  quickAdd: z.string().max(MAX_TASK_QUICK_ADD_LENGTH).optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
+  quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
   status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
   dueDate: isoDateLikeSchema.optional().describe('Due date in ISO format'),
