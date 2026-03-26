@@ -24,6 +24,7 @@ const writeLog = (entry: LogEntry) => {
 };
 
 const MAX_TASK_TITLE_LENGTH = 500;
+const MAX_TASK_QUICK_ADD_LENGTH = 2000;
 
 const logError = (message: string, error?: unknown) => {
   const context: Record<string, unknown> = {};
@@ -151,7 +152,7 @@ const listTasksSchema = z.object({
 // Note: Don't use .refine() as it breaks MCP SDK's JSON schema conversion
 const addTaskSchema = z.object({
   title: z.string().max(MAX_TASK_TITLE_LENGTH).optional().describe('Task title'),
-  quickAdd: z.string().optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
+  quickAdd: z.string().max(MAX_TASK_QUICK_ADD_LENGTH).optional().describe('Quick-add string with natural language parsing (e.g. "Buy milk @errands #shopping /due:tomorrow +ProjectName")'),
   status: taskStatusSchema.optional().describe('Task status: inbox, next, waiting, someday, reference, done, archived'),
   projectId: z.string().optional().describe('Project ID to assign the task to'),
   dueDate: isoDateLikeSchema.optional().describe('Due date in ISO format'),
@@ -173,6 +174,9 @@ const validateAddTask = (data: z.infer<typeof addTaskSchema>) => {
   }
   if (hasTitle && data.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
     throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+  }
+  if (hasQuickAdd && data.quickAdd!.trim().length > MAX_TASK_QUICK_ADD_LENGTH) {
+    throw new Error(`Quick-add input too long (max ${MAX_TASK_QUICK_ADD_LENGTH} characters)`);
   }
 };
 

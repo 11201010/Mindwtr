@@ -144,6 +144,17 @@ describe('mcp server index', () => {
     expect(result?.content[0]?.text).toContain('Task title too long');
   });
 
+  test('validates add_task quickAdd length', async () => {
+    const { server, tools } = createMockServer();
+    registerMindwtrTools(server, createMockService(), false);
+    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    expect(addHandler).toBeTruthy();
+    const longQuickAdd = `Task ${'x'.repeat(1997)}`;
+    const result = await addHandler?.({ quickAdd: longQuickAdd });
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toContain('Quick-add input too long');
+  });
+
   test('wraps service exceptions in MCP error response format', async () => {
     const { server, tools } = createMockServer();
     const failingService = {
