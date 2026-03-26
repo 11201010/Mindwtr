@@ -1007,14 +1007,40 @@ const chooseDeterministicWinner = <T>(localItem: T, incomingItem: T): T => {
     return incomingSignature > localSignature ? incomingItem : localItem;
 };
 
-const parseMergeTimestamp = (value: unknown, maxAllowedMs?: number): number => {
-    if (typeof value !== 'string') return -1;
-    const parsed = new Date(value).getTime();
-    if (!Number.isFinite(parsed)) return -1;
-    if (maxAllowedMs !== undefined && parsed > maxAllowedMs) {
-        return maxAllowedMs;
+type MergeTimestampInfo = {
+    raw: number;
+    safe: number;
+    wasClamped: boolean;
+};
+
+const parseMergeTimestamp = (value: unknown, maxAllowedMs?: number): MergeTimestampInfo => {
+    if (typeof value !== 'string') {
+        return { raw: -1, safe: -1, wasClamped: false };
     }
-    return parsed;
+    const parsed = new Date(value).getTime();
+    if (!Number.isFinite(parsed)) {
+        return { raw: -1, safe: -1, wasClamped: false };
+    }
+    if (maxAllowedMs !== undefined && parsed > maxAllowedMs) {
+        return { raw: parsed, safe: maxAllowedMs, wasClamped: true };
+    }
+    return { raw: parsed, safe: parsed, wasClamped: false };
+};
+
+const getMergeTimestampComparison = (
+    localTime: MergeTimestampInfo,
+    incomingTime: MergeTimestampInfo,
+): number => {
+    const safeDiff = incomingTime.safe - localTime.safe;
+    if (safeDiff !== 0) return safeDiff;
+    if (
+        localTime.wasClamped
+        && incomingTime.wasClamped
+        && incomingTime.raw !== localTime.raw
+    ) {
+        return incomingTime.raw - localTime.raw;
+    }
+    return 0;
 };
 
 const containsAttachmentTraversalSegment = (value: string): boolean => {
@@ -1110,8 +1136,11 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
 
         const normalizedLocalItem = normalizeTimestamps(localItem);
         const normalizedIncomingItem = normalizeTimestamps(incomingItem);
-        const safeLocalTime = parseMergeTimestamp(normalizedLocalItem.updatedAt, maxAllowedMergeTime);
-        const safeIncomingTime = parseMergeTimestamp(normalizedIncomingItem.updatedAt, maxAllowedMergeTime);
+        const localUpdatedTime = parseMergeTimestamp(normalizedLocalItem.updatedAt, maxAllowedMergeTime);
+        const incomingUpdatedTime = parseMergeTimestamp(normalizedIncomingItem.updatedAt, maxAllowedMergeTime);
+        const safeLocalTime = localUpdatedTime.safe;
+        const safeIncomingTime = incomingUpdatedTime.safe;
+        const comparableUpdatedTimeDiff = getMergeTimestampComparison(localUpdatedTime, incomingUpdatedTime);
         const localRev = typeof normalizedLocalItem.rev === 'number' && Number.isFinite(normalizedLocalItem.rev)
             ? normalizedLocalItem.rev
             : 0;
@@ -1151,14 +1180,14 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
             }
         }
 
-        const timeDiff = safeIncomingTime - safeLocalTime;
-        const absoluteSkew = Math.abs(timeDiff);
+        const safeTimeDiff = safeIncomingTime - safeLocalTime;
+        const absoluteSkew = Math.abs(safeTimeDiff);
         if (absoluteSkew > stats.maxClockSkewMs) {
             stats.maxClockSkewMs = absoluteSkew;
         }
-        const withinSkew = Math.abs(timeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
+        const withinSkew = Math.abs(safeTimeDiff) <= CLOCK_SKEW_THRESHOLD_MS;
         const resolveOperationTime = (item: T): number => {
-            const updatedTime = parseMergeTimestamp(item.updatedAt, maxAllowedMergeTime);
+            const updatedTime = parseMergeTimestamp(item.updatedAt, maxAllowedMergeTime).safe;
             if (!item.deletedAt) return updatedTime;
 
             const deletedTimeRaw = new Date(item.deletedAt).getTime();
@@ -1176,7 +1205,7 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
 
             return deletedTimeRaw > maxAllowedMergeTime ? maxAllowedMergeTime : deletedTimeRaw;
         };
-        let winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
+        let winner = comparableUpdatedTimeDiff > 0 ? normalizedIncomingItem : normalizedLocalItem;
         const resolveDeleteVsLiveWinner = (localCandidate: T, incomingCandidate: T): T => {
             const localOpTime = resolveOperationTime(localCandidate);
             const incomingOpTime = resolveOperationTime(incomingCandidate);
@@ -1186,8 +1215,8 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
                     if (revDiff !== 0) {
                         return revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
                     }
-                    if (safeIncomingTime !== safeLocalTime) {
-                        return safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
+                    if (comparableUpdatedTimeDiff !== 0) {
+                        return comparableUpdatedTimeDiff > 0 ? normalizedIncomingItem : normalizedLocalItem;
                     }
                     if (revByDiff && localRevBy && incomingRevBy) {
                         return incomingRevBy > localRevBy ? normalizedIncomingItem : normalizedLocalItem;
@@ -1206,9 +1235,9 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
                 winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
             } else if (revDiff !== 0) {
                 winner = revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
-            } else if (safeIncomingTime !== safeLocalTime) {
+            } else if (comparableUpdatedTimeDiff !== 0) {
                 // When revisions tie, prefer fresher timestamps before revBy tie-break.
-                winner = safeIncomingTime > safeLocalTime ? normalizedIncomingItem : normalizedLocalItem;
+                winner = comparableUpdatedTimeDiff > 0 ? normalizedIncomingItem : normalizedLocalItem;
             } else if (revByDiff && localRevBy && incomingRevBy) {
                 winner = incomingRevBy > localRevBy ? normalizedIncomingItem : normalizedLocalItem;
             } else {
@@ -1217,7 +1246,7 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
             }
         } else if (localDeleted !== incomingDeleted) {
             winner = resolveDeleteVsLiveWinner(normalizedLocalItem, normalizedIncomingItem);
-        } else if (withinSkew && safeIncomingTime === safeLocalTime) {
+        } else if (withinSkew && comparableUpdatedTimeDiff === 0) {
             winner = chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
         }
         if (winner === normalizedIncomingItem) stats.resolvedUsingIncoming += 1;

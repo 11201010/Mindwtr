@@ -676,6 +676,27 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
+        it('resolves equal revision delete-vs-live conflicts consistently across sync direction', () => {
+            const deletedTask = {
+                ...createMockTask('1', '2023-01-02T00:00:00.000Z', '2023-01-02T00:00:00.000Z'),
+                title: 'zz deleted',
+                rev: 7,
+                revBy: 'device-a',
+            } satisfies Task;
+            const liveTask = {
+                ...createMockTask('1', '2023-01-02T00:00:00.000Z'),
+                title: 'aa live',
+                rev: 7,
+                revBy: 'device-a',
+            } satisfies Task;
+
+            const forward = mergeAppData(mockAppData([deletedTask]), mockAppData([liveTask]));
+            const reverse = mergeAppData(mockAppData([liveTask]), mockAppData([deletedTask]));
+
+            expect(forward.tasks).toHaveLength(1);
+            expect(forward.tasks[0]).toEqual(reverse.tasks[0]);
+        });
+
         it('prefers newer timestamp when revisions tie but revBy differs', () => {
             const localTask = {
                 ...createMockTask('1', '2023-01-02T00:05:00.000Z'),
@@ -925,6 +946,28 @@ describe('Sync Logic', () => {
 
                 const result = mergeAppDataWithStats(local, incoming);
                 expect(result.stats.tasks.maxClockSkewMs).toBeLessThanOrEqual(CLOCK_SKEW_THRESHOLD_MS);
+            } finally {
+                nowSpy.mockRestore();
+            }
+        });
+
+        it('preserves relative ordering when both timestamps are clamped in the future', () => {
+            const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:00:00.000Z').getTime());
+            try {
+                const localTask = {
+                    ...createMockTask('1', '2099-01-01T00:00:00.000Z'),
+                    title: 'zz older future',
+                } satisfies Task;
+                const incomingTask = {
+                    ...createMockTask('1', '2099-01-02T00:00:00.000Z'),
+                    title: 'aa newer future',
+                } satisfies Task;
+
+                const merged = mergeAppData(mockAppData([localTask]), mockAppData([incomingTask]));
+
+                expect(merged.tasks).toHaveLength(1);
+                expect(merged.tasks[0].title).toBe('aa newer future');
+                expect(merged.tasks[0].updatedAt).toBe('2099-01-02T00:00:00.000Z');
             } finally {
                 nowSpy.mockRestore();
             }
