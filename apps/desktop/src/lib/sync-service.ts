@@ -2482,13 +2482,19 @@ export class SyncService {
             }
             logSyncWarning('Sync failed', error);
             const now = new Date().toISOString();
-            const logPath = await logSyncError(error, {
-                backend,
-                step,
-                url: syncUrl,
-            });
-            const logHint = logPath ? ` (log: ${logPath})` : '';
             const safeMessage = sanitizeLogMessage(String(error));
+            let logHint = '';
+            try {
+                const logPath = await logSyncError(error, {
+                    backend,
+                    step,
+                    url: syncUrl,
+                });
+                logHint = logPath ? ` (log: ${logPath})` : '';
+            } catch (logError) {
+                logSyncWarning('Failed to write sync error log', logError);
+            }
+            const finalErrorMessage = `${safeMessage}${logHint}`;
             const nextHistory = appendSyncHistory(useTaskStore.getState().settings, {
                 at: now,
                 status: 'error',
@@ -2499,35 +2505,39 @@ export class SyncService {
                 maxClockSkewMs: 0,
                 timestampAdjustments: 0,
                 details: step,
-                error: `${safeMessage}${logHint}`,
+                error: finalErrorMessage,
             });
-            useTaskStore.getState().setError(`${safeMessage}${logHint}`);
+            useTaskStore.getState().setError(finalErrorMessage);
             try {
                 await useTaskStore.getState().fetchData({ silent: true });
                 await useTaskStore.getState().updateSettings({
                     lastSyncAt: now,
                     lastSyncStatus: 'error',
-                    lastSyncError: `${safeMessage}${logHint}`,
+                    lastSyncError: finalErrorMessage,
                     lastSyncHistory: nextHistory,
                 });
             } catch (e) {
                 logSyncWarning('Failed to persist sync error', e);
             }
-            return { success: false, error: `${safeMessage}${logHint}` };
+            return { success: false, error: finalErrorMessage };
         });
 
-        const result = await resultPromise;
-        requestAbortController.abort();
+        let result: { success: boolean; stats?: MergeStats; error?: string };
         try {
-            const releaseNetworkListener = removeNetworkListener as (() => void) | null;
-            if (typeof releaseNetworkListener === 'function') {
-                releaseNetworkListener();
+            result = await resultPromise;
+        } finally {
+            requestAbortController.abort();
+            try {
+                const releaseNetworkListener = removeNetworkListener as (() => void) | null;
+                if (typeof releaseNetworkListener === 'function') {
+                    releaseNetworkListener();
+                }
+                removeNetworkListener = null;
+            } catch (error) {
+                logSyncWarning('Failed to unsubscribe network listener after sync', error);
             }
-            removeNetworkListener = null;
-        } catch (error) {
-            logSyncWarning('Failed to unsubscribe network listener after sync', error);
+            SyncService.syncInFlight = null;
         }
-        SyncService.syncInFlight = null;
         SyncService.updateSyncStatus({
             inFlight: false,
             step: null,
