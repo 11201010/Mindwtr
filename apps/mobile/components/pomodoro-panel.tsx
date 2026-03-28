@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   type Task,
   createPomodoroState,
@@ -8,15 +9,21 @@ import {
   POMODORO_PRESETS,
   type PomodoroDurations,
   resetPomodoroState,
-  tickPomodoroState,
   useTaskStore,
 } from '@mindwtr/core';
 
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { sendMobileImmediateNotification } from '../lib/notification-service';
-
-type PomodoroEvent = 'focus-finished' | 'break-finished' | null;
+import { logWarn } from '../lib/app-log';
+import {
+  POMODORO_SESSION_STORAGE_KEY,
+  pausePomodoroSession,
+  resolvePomodoroSession,
+  serializePomodoroSession,
+  startPomodoroSession,
+  type PomodoroEvent,
+} from '../lib/pomodoro-session';
 
 export function PomodoroPanel({
   tasks,
@@ -31,8 +38,37 @@ export function PomodoroPanel({
   const [durations, setDurations] = useState<PomodoroDurations>(DEFAULT_POMODORO_DURATIONS);
   const [timerState, setTimerState] = useState(() => createPomodoroState(DEFAULT_POMODORO_DURATIONS));
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
+  const [phaseEndsAt, setPhaseEndsAt] = useState<string | undefined>(undefined);
   const [lastEvent, setLastEvent] = useState<PomodoroEvent>(null);
   const previousEventRef = useRef<PomodoroEvent>(null);
+  const hasHydratedRef = useRef(false);
+  const persistedRemainingSeconds = timerState.isRunning && phaseEndsAt
+    ? createPomodoroState(durations, timerState.phase, timerState.completedFocusSessions).remainingSeconds
+    : timerState.remainingSeconds;
+
+  const applyResolvedSession = (
+    session: ReturnType<typeof resolvePomodoroSession>,
+    options?: { emitEvent?: boolean },
+  ) => {
+    setDurations((prev) => (
+      prev.focusMinutes === session.durations.focusMinutes && prev.breakMinutes === session.durations.breakMinutes
+        ? prev
+        : session.durations
+    ));
+    setTimerState((prev) => (
+      prev.phase === session.timerState.phase
+        && prev.remainingSeconds === session.timerState.remainingSeconds
+        && prev.isRunning === session.timerState.isRunning
+        && prev.completedFocusSessions === session.timerState.completedFocusSessions
+        ? prev
+        : session.timerState
+    ));
+    setSelectedTaskId((prev) => (prev === session.selectedTaskId ? prev : session.selectedTaskId));
+    setPhaseEndsAt((prev) => (prev === session.phaseEndsAt ? prev : session.phaseEndsAt));
+    if (options?.emitEvent !== false) {
+      setLastEvent(session.lastEvent);
+    }
+  };
 
   useEffect(() => {
     if (tasks.length === 0) {
@@ -44,18 +80,75 @@ export function PomodoroPanel({
   }, [selectedTaskId, tasks]);
 
   useEffect(() => {
-    if (!timerState.isRunning) return;
-    const interval = setInterval(() => {
-      setTimerState((prev) => {
-        const next = tickPomodoroState(prev, durations);
-        if (next.switchedPhase) {
-          setLastEvent(next.completedFocusSession ? 'focus-finished' : 'break-finished');
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(POMODORO_SESSION_STORAGE_KEY);
+        if (!raw || cancelled) return;
+        const parsed = JSON.parse(raw) as ReturnType<typeof serializePomodoroSession>;
+        if (cancelled) return;
+        applyResolvedSession(resolvePomodoroSession(parsed), { emitEvent: false });
+      } catch (error) {
+        void logWarn('Failed to restore pomodoro session', {
+          scope: 'pomodoro',
+          extra: { error: error instanceof Error ? error.message : String(error) },
+        });
+      } finally {
+        if (!cancelled) {
+          hasHydratedRef.current = true;
         }
-        return next.state;
+      }
+    };
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    const payload = serializePomodoroSession({
+      durations,
+      timerState: {
+        phase: timerState.phase,
+        isRunning: timerState.isRunning,
+        completedFocusSessions: timerState.completedFocusSessions,
+        remainingSeconds: persistedRemainingSeconds,
+      },
+      selectedTaskId,
+      phaseEndsAt,
+      lastEvent: null,
+    });
+    void AsyncStorage.setItem(POMODORO_SESSION_STORAGE_KEY, JSON.stringify(payload)).catch((error) => {
+      void logWarn('Failed to persist pomodoro session', {
+        scope: 'pomodoro',
+        extra: { error: error instanceof Error ? error.message : String(error) },
       });
+    });
+  }, [
+    durations,
+    phaseEndsAt,
+    selectedTaskId,
+    timerState.completedFocusSessions,
+    timerState.isRunning,
+    timerState.phase,
+    persistedRemainingSeconds,
+  ]);
+
+  useEffect(() => {
+    if (!timerState.isRunning || !phaseEndsAt) return;
+    const interval = setInterval(() => {
+      applyResolvedSession(resolvePomodoroSession({
+        durations,
+        timerState,
+        selectedTaskId,
+        phaseEndsAt,
+      }));
     }, 1000);
     return () => clearInterval(interval);
-  }, [durations, timerState.isRunning]);
+  }, [durations, phaseEndsAt, selectedTaskId, timerState]);
 
   const selectedTask = useMemo(
     () => (selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) : undefined),
@@ -88,23 +181,70 @@ export function PomodoroPanel({
 
   const handleApplyPreset = (focusMinutes: number, breakMinutes: number) => {
     const nextDurations = { focusMinutes, breakMinutes };
-    setDurations(nextDurations);
-    setTimerState((prev) => resetPomodoroState(prev, nextDurations, prev.phase));
-    setLastEvent(null);
+    const session = resolvePomodoroSession({
+      durations,
+      timerState,
+      selectedTaskId,
+      phaseEndsAt,
+    });
+    applyResolvedSession({
+      ...session,
+      durations: nextDurations,
+      timerState: resetPomodoroState(session.timerState, nextDurations, session.timerState.phase),
+      phaseEndsAt: undefined,
+      lastEvent: null,
+    });
   };
 
   const handleToggleRun = () => {
-    setTimerState((prev) => ({ ...prev, isRunning: !prev.isRunning }));
+    const session = resolvePomodoroSession({
+      durations,
+      timerState,
+      selectedTaskId,
+      phaseEndsAt,
+    });
+    if (session.lastEvent) {
+      applyResolvedSession(session);
+      return;
+    }
+    const next = session.timerState.isRunning
+      ? pausePomodoroSession(session)
+      : startPomodoroSession(session);
+    applyResolvedSession(next);
   };
 
   const handleReset = () => {
-    setTimerState((prev) => resetPomodoroState(prev, durations, prev.phase));
-    setLastEvent(null);
+    const session = resolvePomodoroSession({
+      durations,
+      timerState,
+      selectedTaskId,
+      phaseEndsAt,
+    });
+    applyResolvedSession({
+      ...session,
+      timerState: resetPomodoroState(session.timerState, session.durations, session.timerState.phase),
+      phaseEndsAt: undefined,
+      lastEvent: null,
+    });
   };
 
   const handleSwitchPhase = () => {
-    setTimerState((prev) => resetPomodoroState(prev, durations, prev.phase === 'focus' ? 'break' : 'focus'));
-    setLastEvent(null);
+    const session = resolvePomodoroSession({
+      durations,
+      timerState,
+      selectedTaskId,
+      phaseEndsAt,
+    });
+    applyResolvedSession({
+      ...session,
+      timerState: resetPomodoroState(
+        session.timerState,
+        session.durations,
+        session.timerState.phase === 'focus' ? 'break' : 'focus',
+      ),
+      phaseEndsAt: undefined,
+      lastEvent: null,
+    });
   };
 
   const handleMarkDone = () => {
