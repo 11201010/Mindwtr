@@ -15,6 +15,23 @@ describe('quick-add', () => {
         expect(result.props.dueDate).toBe(expectedLocal);
     });
 
+    it('parses URL notes into the description field', () => {
+        const now = new Date('2026-03-30T10:00:00Z');
+        const result = parseQuickAdd('Check website /note:https://example.com', undefined, now);
+
+        expect(result.title).toBe('Check website');
+        expect(result.props.description).toBe('https://example.com');
+    });
+
+    it('keeps parsing later commands after a URL note', () => {
+        const now = new Date('2026-03-30T10:00:00Z');
+        const result = parseQuickAdd('Check website /note:https://example.com /next', undefined, now);
+
+        expect(result.title).toBe('Check website');
+        expect(result.props.description).toBe('https://example.com');
+        expect(result.props.status).toBe('next');
+    });
+
     it('parses /start and /review with the same natural date parser as /due', () => {
         const now = new Date('2025-01-01T10:00:00Z');
         const result = parseQuickAdd(

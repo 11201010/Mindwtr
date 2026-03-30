@@ -42,6 +42,7 @@ const DOW_MAP: Partial<Record<string, DayOfWeek>> = {
 
 const ESCAPE_SENTINEL = '__MW_ESC__';
 const QUICK_ADD_ESCAPE_CHARS = new Set(['@', '#', '+', '/', '!']);
+const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:note:|start:|due:|review:|project:|area:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|done\b|archived\b)|$)`;
 
 function protectEscapes(input: string): string {
     let result = '';
@@ -145,7 +146,7 @@ function parseDateCommand(
     working: string,
     now: Date,
 ): { value?: string; working: string; invalidCommand?: string } {
-    const match = working.match(new RegExp(`\\/${command}:([^/]+?)(?=\\s\\/|$)`, 'i'));
+    const match = working.match(new RegExp(`\\/${command}:([\\s\\S]+?)${QUICK_ADD_COMMAND_BOUNDARY}`, 'i'));
     if (!match) return { working };
 
     const dateText = match[1].trim();
@@ -216,7 +217,7 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
 
     // Note: /note:...
     let description: string | undefined;
-    const noteMatch = working.match(/\/note:([^/]+?)(?=\s\/|$)/i);
+    const noteMatch = working.match(new RegExp(`\\/note:([\\s\\S]+?)${QUICK_ADD_COMMAND_BOUNDARY}`, 'i'));
     if (noteMatch) {
         description = restoreEscapes(noteMatch[1].trim());
         working = stripToken(working, noteMatch[0]);
