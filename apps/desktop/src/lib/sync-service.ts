@@ -307,9 +307,16 @@ const getSyncConfigDeps = () => ({
     tauriInvoke,
 });
 
+type SyncRunResult = {
+    success: boolean;
+    stats?: MergeStats;
+    error?: string;
+    skipped?: 'requeued';
+};
+
 export class SyncService {
     private static didMigrate = false;
-    private static syncInFlight: Promise<{ success: boolean; stats?: MergeStats; error?: string }> | null = null;
+    private static syncInFlight: Promise<SyncRunResult> | null = null;
     private static syncQueued = false;
     private static syncStatus: {
         inFlight: boolean;
@@ -852,7 +859,7 @@ export class SyncService {
      * 3. Write merged data back to both Local & Remote
      * 4. Refresh Core Store
      */
-    static async performSync(): Promise<{ success: boolean; stats?: MergeStats; error?: string }> {
+    static async performSync(): Promise<SyncRunResult> {
         if (SyncService.syncInFlight) {
             SyncService.syncQueued = true;
             SyncService.updateSyncStatus({ queued: true });
@@ -861,11 +868,11 @@ export class SyncService {
         // Consume any queued follow-up token only when this cycle has actually started.
         SyncService.syncQueued = false;
         let inFlightSettled = false;
-        let resolveInFlight: ((value: { success: boolean; stats?: MergeStats; error?: string }) => void) | null = null;
-        const inFlightPromise = new Promise<{ success: boolean; stats?: MergeStats; error?: string }>((resolve) => {
+        let resolveInFlight: ((value: SyncRunResult) => void) | null = null;
+        const inFlightPromise = new Promise<SyncRunResult>((resolve) => {
             resolveInFlight = resolve;
         });
-        const settleInFlight = (value: { success: boolean; stats?: MergeStats; error?: string }) => {
+        const settleInFlight = (value: SyncRunResult) => {
             if (inFlightSettled) return;
             inFlightSettled = true;
             resolveInFlight?.(value);
@@ -909,7 +916,7 @@ export class SyncService {
             SyncService.updateSyncStatus({ step: next });
         };
 
-        const runSync = async (): Promise<{ success: boolean; stats?: MergeStats; error?: string }> => {
+        const runSync = async (): Promise<SyncRunResult> => {
             const createFetchWithAbort = (baseFetch: typeof fetch): typeof fetch =>
                 createAbortableFetch(baseFetch, { baseSignal: requestAbortController.signal });
             const ensureNetworkStillAvailable = () => {
@@ -1360,7 +1367,7 @@ export class SyncService {
         const resultPromise = runSync().catch(async (error) => {
             if (error instanceof LocalSyncAbort) {
                 await persistPreSyncedLocalDataIfNeeded();
-                return { success: true };
+                return { success: true, skipped: 'requeued' as const };
             }
             logSyncWarning('Sync failed', error);
             const now = new Date().toISOString();
@@ -1404,7 +1411,7 @@ export class SyncService {
             return { success: false, error: finalErrorMessage };
         });
 
-        let result: { success: boolean; stats?: MergeStats; error?: string };
+        let result: SyncRunResult;
         try {
             result = await resultPromise;
         } finally {
@@ -1420,12 +1427,19 @@ export class SyncService {
             }
             SyncService.syncInFlight = null;
         }
+        const skippedRequeue = result.skipped === 'requeued';
         SyncService.updateSyncStatus({
             inFlight: false,
             step: null,
             queued: SyncService.syncQueued,
-            lastResult: result.success ? 'success' : 'error',
-            lastResultAt: new Date().toISOString(),
+            lastResult: skippedRequeue
+                ? SyncService.syncStatus.lastResult
+                : result.success
+                    ? 'success'
+                    : 'error',
+            lastResultAt: skippedRequeue
+                ? SyncService.syncStatus.lastResultAt
+                : new Date().toISOString(),
         });
 
         if (SyncService.syncQueued) {

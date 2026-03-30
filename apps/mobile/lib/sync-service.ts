@@ -44,7 +44,7 @@ const IOS_TEMP_INBOX_PATH_PATTERN = /\/tmp\/[^/]*-Inbox\//i;
 const INVALID_CONFIG_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 type MobileSyncActivityState = 'idle' | 'syncing';
 type MobileSyncActivityListener = (state: MobileSyncActivityState) => void;
-type MobileSyncSkipReason = 'offline';
+type MobileSyncSkipReason = 'offline' | 'requeued';
 type MobileSyncResult = { success: boolean; stats?: MergeStats; error?: string; skipped?: MobileSyncSkipReason };
 const isFossBuild = (() => {
   const extra = Constants.expoConfig?.extra as { isFossBuild?: unknown } | undefined;
@@ -224,6 +224,11 @@ const getAttachmentsArray = (attachments: Attachment[] | undefined): Attachment[
 const buildOfflineSkipResult = (): MobileSyncResult => ({
   success: true,
   skipped: 'offline',
+});
+
+const buildRequeuedSkipResult = (): MobileSyncResult => ({
+  success: true,
+  skipped: 'requeued',
 });
 
 const shouldSkipSyncForOfflineState = async (backend: SyncBackend): Promise<boolean> => {
@@ -868,7 +873,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
           await mobileStorage.saveData(reconciledData);
           wroteLocal = true;
         }
-        return { success: true };
+        return buildRequeuedSkipResult();
       }
       if (isRemoteSyncBackend(backend) && (networkWentOffline || isLikelyOfflineSyncError(error))) {
         if (preSyncedLocalData && !wroteLocal) {

@@ -305,6 +305,25 @@ describe('mobile sync-service runtime', () => {
     expect(logMocks.logSyncError).not.toHaveBeenCalled();
   });
 
+  it('returns a queued retry result when fresher local edits abort the merge', async () => {
+    coreMocks.performSyncCycle.mockImplementation(async (io: any) => {
+      const local = await io.readLocal();
+      storeStateRef.current = {
+        ...storeStateRef.current,
+        lastDataChangeAt: 2,
+      };
+      await io.writeLocal(local);
+      return { status: 'success', stats: emptyStats, data: local };
+    });
+
+    const syncServiceModule = await syncServiceModulePromise;
+    const result = await syncServiceModule.performMobileSync();
+
+    expect(result).toEqual({ success: true, skipped: 'requeued' });
+    expect(storeStateRef.current.updateSettings).not.toHaveBeenCalled();
+    expect(logMocks.logSyncError).not.toHaveBeenCalled();
+  });
+
   it('clears stale sync stats when a sync error occurs after prior conflicts', async () => {
     storeStateRef.current = {
       ...storeStateRef.current,

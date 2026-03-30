@@ -207,7 +207,7 @@ describe('desktop sync-service runtime', () => {
 
         const result = await syncServiceModule.SyncService.performSync();
 
-        expect(result).toEqual({ success: true });
+        expect(result).toEqual({ success: true, skipped: 'requeued' });
         expect(markLocalWriteMock).toHaveBeenCalledTimes(1);
         expect(invokeMock).toHaveBeenCalledWith('save_data', {
             data: expect.objectContaining({
@@ -252,7 +252,7 @@ describe('desktop sync-service runtime', () => {
 
         const result = await syncServiceModule.SyncService.performSync();
 
-        expect(result).toEqual({ success: true });
+        expect(result).toEqual({ success: true, skipped: 'requeued' });
         expect(performSyncCycleMock).not.toHaveBeenCalled();
         expect(invokeMock).toHaveBeenCalledWith('save_data', {
             data: expect.objectContaining({

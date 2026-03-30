@@ -410,7 +410,9 @@ export const useSyncSettings = ({ isTauri, showSaved, selectSyncFolderTitle }: U
             }
 
             const result = await SyncService.performSync();
-            if (result.success) {
+            if (result.skipped === 'requeued') {
+                showToast('Local changes arrived during sync. Retry queued.', 'info');
+            } else if (result.success) {
                 showToast('Sync completed', 'success');
                 if (isTauri) {
                     setSnapshots(await SyncService.listDataSnapshots());

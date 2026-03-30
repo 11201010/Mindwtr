@@ -518,6 +518,13 @@ export function SyncSettingsScreen() {
                 Alert.alert(localize('Offline', '离线'), localize('No internet connection. Sync skipped.', '当前无网络连接，已跳过同步。'));
                 return;
             }
+            if (result.skipped === 'requeued') {
+                Alert.alert(
+                    localize('Sync queued', '已重新排队'),
+                    localize('Local changes arrived during sync. A retry was queued automatically.', '同步期间检测到本地更改，已自动重新排队重试。')
+                );
+                return;
+            }
             if (result.success) {
                 const conflictCount = (result.stats?.tasks.conflicts || 0) + (result.stats?.projects.conflicts || 0);
                 Alert.alert(
