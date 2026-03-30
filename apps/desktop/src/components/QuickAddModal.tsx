@@ -331,7 +331,6 @@ export function QuickAddModal() {
         if (!isRecording) return;
         setRecordingBusy(true);
         setIsRecording(false);
-        await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
         try {
             type NativeResult = {
                 path: string;
@@ -357,14 +356,19 @@ export function QuickAddModal() {
                 fileName = parts[parts.length - 1] || 'mindwtr-audio.wav';
                 audioByteSize = result.size;
             } else {
+                const currentAudioContext = audioContextRef.current;
+                if (currentAudioContext?.state === 'running') {
+                    // Suspending the graph gives ScriptProcessorNode one stable stop point before teardown.
+                    await currentAudioContext.suspend();
+                }
                 audioProcessorRef.current?.disconnect();
                 audioSourceRef.current?.disconnect();
                 audioProcessorRef.current = null;
                 audioSourceRef.current = null;
                 audioStreamRef.current?.getTracks().forEach((track) => track.stop());
                 audioStreamRef.current = null;
-                if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-                    await audioContextRef.current.close();
+                if (currentAudioContext && currentAudioContext.state !== 'closed') {
+                    await currentAudioContext.close();
                 }
                 audioContextRef.current = null;
 
