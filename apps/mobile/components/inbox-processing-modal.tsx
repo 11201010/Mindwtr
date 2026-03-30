@@ -74,6 +74,10 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const currentTask = useMemo(() => processingQueue[currentIndex] || null, [processingQueue, currentIndex]);
   const totalCount = inboxTasks.length;
   const processedCount = totalCount - processingQueue.length + currentIndex;
+  const formatProgressLabel = useCallback((current: number, total: number) => {
+    if (total <= 0) return 'Task 0 of 0';
+    return `Task ${Math.max(0, current)} of ${total}`;
+  }, []);
   const resolvedTitleDirection = useMemo(() => {
     if (!currentTask) return 'ltr';
     const text = (processingTitle || currentTask.title || '').trim();
@@ -572,7 +576,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
             </TouchableOpacity>
             <View style={styles.progressContainer}>
               <Text style={[styles.progressText, { color: tc.secondaryText }]}>
-                {processedCount}/{totalCount}
+                {formatProgressLabel(processedCount, totalCount)}
               </Text>
               <View style={[styles.progressBar, { backgroundColor: tc.border }]}>
                 <View
@@ -796,7 +800,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
             </TouchableOpacity>
             <View style={styles.progressContainer}>
               <Text style={[styles.progressText, { color: tc.secondaryText }]}>
-                {processedCount + 1}/{totalCount}
+                {formatProgressLabel(processedCount + 1, totalCount)}
               </Text>
               <View style={[styles.progressBar, { backgroundColor: tc.border }]}>
                 <View
