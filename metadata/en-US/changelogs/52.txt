@@ -1,4 +1,4 @@
 - Kept mobile auto-sync active after layout updates and clarified inbox processing progress.
-- Added swipe accessibility feedback and clearer Pomodoro hydration and session state on mobile.
+- Added swipe accessibility feedback plus clearer Pomodoro hydration and session state.
 - Allowed URL note values in quick add and fixed drawer header wiring with Expo Router.
 - Improved shared sync reliability with clock skew warnings, safer retry cleanup, and stronger delete-biased conflict handling.

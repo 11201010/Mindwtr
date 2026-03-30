@@ -22,6 +22,7 @@ notes:
   - Use `FOSS_BUILD=1 ARCHS=arm64-v8a bash apps/mobile/scripts/android_build.sh --prep-only` for prep-only mode, then run Gradle manually in apps/mobile/android.
   - Android manifest fixes remove unused CAMERA, SYSTEM_ALERT_WINDOW, and legacy storage permissions.
   - RECORD_AUDIO is intentionally kept for voice notes.
+  - POST_NOTIFICATIONS is intentionally kept for local reminders and scheduled task alerts.
   - FOSS mode disables Gradle dependenciesInfo inclusion in APK/AAB.
   - FOSS mode pins `react_native_dev_server_ip` to `localhost` in the React Native Gradle plugin for reproducible APKs.
   - `UNSIGNED_APK=1` avoids debug-key signing; resulting APK is unsigned and should be signed by the distributor/release pipeline.

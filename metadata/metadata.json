@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 桌面端现在能更可靠地跟随系统浅色/深色主题切换，尤其是在 Linux 环境下。\n• 编辑任务时会暂停基于失焦的自动同步，减少状态修改过程中意外丢失编辑的问题。\n• 强化同步安全性，改进离线监听清理、未来时间戳合并顺序和 SQLite 关联写入顺序。\n• 收紧自托管云端与 Docker 默认配置，并补充云端 REST API 文档说明。",
+        "ReleaseNotes": "• 桌面端项目规划界面现已将详情与备注整合，并默认折叠元数据，减少视觉干扰。\n• 新增键盘快捷键帮助，改进任务描述自动增高与项目任务拖拽命中表现。\n• 音频采集现在会更清楚显示处理中状态，并在展开前默认隐藏任务备注。\n• 共享同步现已加入时钟偏差警告，并让重试清理与偏向删除的冲突处理更安全。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Desktop now follows system light and dark theme changes more reliably, especially on Linux.\n• Task editing now pauses blur-triggered auto-sync so status changes do not interrupt in-progress edits.\n• Sync safety is improved with better offline-listener cleanup, future-timestamp merge ordering, and SQLite related-record write ordering.\n• Self-hosted cloud and Docker defaults are tighter, with clearer documentation for the cloud REST API.",
+        "ReleaseNotes": "• Desktop projects now keep details and notes together, with metadata collapsed by default for a cleaner planning view.\n• Added keyboard shortcut help, autosizing for task descriptions, and better project task drag targeting.\n• Audio capture now shows processing state more clearly and keeps task notes hidden until expanded.\n• Shared sync handling is safer with clock-skew warnings, clearer retry cleanup, and stronger delete-biased conflict resolution.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• El escritorio ahora sigue mejor los cambios del tema claro y oscuro del sistema, especialmente en Linux.\n• Al editar tareas se pausa el auto-sync disparado por perdida de foco para que los cambios de estado no interrumpan la edicion.\n• Mejoramos la seguridad del sync con mejor limpieza de listeners offline, orden de merge para marcas futuras y orden de guardado entre registros relacionados en SQLite.\n• Endurecimos los valores por defecto de cloud autoalojado y Docker, con documentacion mas clara para la REST API cloud.",
+        "ReleaseNotes": "• Los proyectos de escritorio ahora mantienen juntos detalles y notas, con los metadatos plegados por defecto para una vista mas limpia.\n• Agregamos ayuda visible de atajos de teclado, autoajuste para descripciones de tareas y mejor arrastre de tareas dentro de proyectos.\n• La captura de audio ahora muestra mejor el estado de procesamiento y oculta las notas de tarea hasta expandirlas.\n• El sync compartido es mas seguro con alertas de desfase horario, limpieza de reintentos mas clara y resolucion de conflictos ambigüos a favor del borrado.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

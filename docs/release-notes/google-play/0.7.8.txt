@@ -1,0 +1,18 @@
+<en-US>
+- Kept mobile auto-sync active after layout updates and clarified inbox processing progress.
+- Added swipe accessibility feedback plus clearer Pomodoro hydration and session state.
+- Allowed URL note values in quick add and fixed drawer header wiring with Expo Router.
+- Improved shared sync reliability with clock skew warnings, safer retry cleanup, and stronger delete-biased conflict handling.
+</en-US>
+<zh-CN>
+- 在布局更新后继续保持移动端自动同步，并让收件箱处理进度更清晰。
+- 为滑动操作加入无障碍反馈，并更清楚显示番茄钟会话与初始化状态。
+- quick add 现已支持 URL 备注值，并修复 Expo Router 抽屉页头联动。
+- 提升共享同步可靠性，加入时钟偏差警告，并让重试清理与偏向删除的冲突处理更安全。
+</zh-CN>
+<es-ES>
+- Mantuvimos el auto-sync movil tras cambios de layout y aclaramos el progreso de Inbox.
+- Agregamos feedback de accesibilidad para gestos y un estado mas claro del Pomodoro.
+- Permitimos URLs como nota en quick add y corregimos el encabezado del drawer con Expo Router.
+- Mejoramos la fiabilidad del sync con alertas de desfase horario, limpieza de reintentos y conflictos ambiguos resueltos a favor del borrado.
+</es-ES>
