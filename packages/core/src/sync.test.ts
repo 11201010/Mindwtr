@@ -739,7 +739,7 @@ describe('Sync Logic', () => {
             expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('keeps newer live update when delete is only 100ms older', () => {
+        it('prefers delete when live update falls inside the ambiguity window', () => {
             const local = mockAppData([
                 createMockTask('1', '2023-01-02T00:00:00.100Z'),
             ]);
@@ -750,11 +750,11 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.100Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
-        it('keeps the live item when delete is only 100ms newer', () => {
+        it('prefers delete when delete time is only 100ms newer', () => {
             const local = mockAppData([
                 createMockTask('1', '2023-01-02T00:00:00.100Z', '2023-01-02T00:00:00.100Z'),
             ]);
@@ -765,8 +765,8 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.100Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.100Z');
         });
 
         it('resolves equal revision delete-vs-live conflicts consistently across sync direction', () => {
@@ -788,6 +788,25 @@ describe('Sync Logic', () => {
 
             expect(forward.tasks).toHaveLength(1);
             expect(forward.tasks[0]).toEqual(reverse.tasks[0]);
+            expect(forward.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
+        });
+
+        it('prefers delete over revBy tie-breaks inside the ambiguity window', () => {
+            const deletedTask = {
+                ...createMockTask('1', '2023-01-02T00:00:00.000Z', '2023-01-02T00:00:00.000Z'),
+                rev: 7,
+                revBy: 'device-a',
+            } satisfies Task;
+            const liveTask = {
+                ...createMockTask('1', '2023-01-02T00:00:00.000Z'),
+                rev: 7,
+                revBy: 'device-z',
+            } satisfies Task;
+
+            const merged = mergeAppData(mockAppData([deletedTask]), mockAppData([liveTask]));
+
+            expect(merged.tasks).toHaveLength(1);
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
         it('prefers newer timestamp when revisions tie but revBy differs', () => {
@@ -988,7 +1007,7 @@ describe('Sync Logic', () => {
             expect(forward.tasks[0]).toEqual(reverse.tasks[0]);
         });
 
-        it('prefers the live item when delete-vs-live operation times are equal', () => {
+        it('prefers delete when delete-vs-live operation times are equal', () => {
             const local = mockAppData([
                 createMockTask('1', '2023-01-02T00:00:00.000Z', '2023-01-02T00:05:00.000Z'),
             ]);
@@ -999,8 +1018,8 @@ describe('Sync Logic', () => {
             const merged = mergeAppData(local, incoming);
 
             expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:05:00.000Z');
+            expect(merged.tasks[0].deletedAt).toBe('2023-01-02T00:05:00.000Z');
+            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
         });
 
         it('still prefers delete when it is more than the ambiguity window newer than live', () => {

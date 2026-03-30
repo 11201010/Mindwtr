@@ -324,28 +324,24 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
             return deletedTimeRaw > maxAllowedMergeTime ? maxAllowedMergeTime : deletedTimeRaw;
         };
         let winner = comparableUpdatedTimeDiff > 0 ? normalizedIncomingItem : normalizedLocalItem;
+        const preferDeletedCandidate = (left: T, right: T): T => {
+            if (left.deletedAt && !right.deletedAt) return left;
+            if (right.deletedAt && !left.deletedAt) return right;
+            return chooseDeterministicWinner(left, right);
+        };
         const resolveDeleteVsLiveWinner = (localCandidate: T, incomingCandidate: T): T => {
             const localOpTime = resolveOperationTime(localCandidate);
             const incomingOpTime = resolveOperationTime(incomingCandidate);
             const operationDiff = incomingOpTime - localOpTime;
             if (Math.abs(operationDiff) <= DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS) {
-                if (hasRevision) {
-                    if (revDiff !== 0) {
-                        return revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
-                    }
-                    if (comparableUpdatedTimeDiff !== 0) {
-                        return comparableUpdatedTimeDiff > 0 ? normalizedIncomingItem : normalizedLocalItem;
-                    }
-                    if (revByDiff && localRevBy && incomingRevBy) {
-                        return incomingRevBy > localRevBy ? normalizedIncomingItem : normalizedLocalItem;
-                    }
-                    return chooseDeterministicWinner(normalizedLocalItem, normalizedIncomingItem);
+                if (hasRevision && revDiff !== 0) {
+                    return revDiff > 0 ? normalizedLocalItem : normalizedIncomingItem;
                 }
-                return localCandidate.deletedAt ? incomingCandidate : localCandidate;
+                return preferDeletedCandidate(localCandidate, incomingCandidate);
             }
             if (operationDiff > 0) return incomingCandidate;
             if (operationDiff < 0) return localCandidate;
-            return localCandidate.deletedAt ? incomingCandidate : localCandidate;
+            return preferDeletedCandidate(localCandidate, incomingCandidate);
         };
 
         if (hasRevision) {
