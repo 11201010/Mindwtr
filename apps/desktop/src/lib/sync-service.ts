@@ -1070,7 +1070,9 @@ export class SyncService {
             const readRemoteDataByBackend = async (): Promise<AppData | null> => {
                 ensureNetworkStillAvailable();
                 if (backend === 'cloudkit') {
-                    return await readRemoteCloudKit();
+                    const data = await readRemoteCloudKit();
+                    remoteDataForCompare = data ?? null;
+                    return data;
                 }
                 if (backend === 'webdav') {
                     try {
@@ -1150,7 +1152,14 @@ export class SyncService {
                 ensureNetworkStillAvailable();
                 if (backend === 'cloudkit') {
                     const sanitized = sanitizeAppDataForRemote(data);
+                    const remoteSanitized = remoteDataForCompare
+                        ? sanitizeAppDataForRemote(remoteDataForCompare)
+                        : null;
+                    if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
+                        return;
+                    }
                     await writeRemoteCloudKit(sanitized as AppData);
+                    remoteDataForCompare = sanitized;
                     return;
                 }
                 assertNoPendingAttachmentUploads(data);

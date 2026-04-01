@@ -369,4 +369,54 @@ describe('desktop sync-service runtime', () => {
         expect(readRemoteCloudKitMock).toHaveBeenCalledTimes(1);
         expect(invokeMock).not.toHaveBeenCalledWith('get_sync_backend', undefined);
     });
+
+    it('skips CloudKit writes when the sanitized remote payload is unchanged', async () => {
+        const syncServiceModule = await syncServiceModulePromise;
+        const syncedData: AppData = {
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {
+                syncPreferences: { appearance: true },
+                theme: 'dark',
+            },
+        };
+
+        storeStateRef.current = {
+            ...storeStateRef.current,
+            _allTasks: [],
+            _allProjects: [],
+            _allSections: [],
+            _allAreas: [],
+            settings: structuredClone(syncedData.settings),
+        };
+        readRemoteCloudKitMock.mockResolvedValue(structuredClone(syncedData));
+
+        invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'get_sync_backend') return 'off';
+            if (command === 'create_data_snapshot') return undefined;
+            if (command === 'get_data') return structuredClone(syncedData);
+            if (command === 'save_data') return undefined;
+            throw new Error(`Unexpected command: ${command} ${JSON.stringify(args)}`);
+        });
+        performSyncCycleMock.mockImplementation(async (io: {
+            readLocal: () => Promise<AppData>;
+            readRemote: () => Promise<AppData | null>;
+            writeLocal: (data: AppData) => Promise<void>;
+            writeRemote: (data: AppData) => Promise<void>;
+        }) => {
+            const local = await io.readLocal();
+            const remote = await io.readRemote();
+            expect(remote).toEqual(syncedData);
+            await io.writeRemote(remote ?? syncedData);
+            await io.writeLocal(local);
+            return { status: 'success', stats: emptyStats, data: local };
+        });
+
+        const result = await syncServiceModule.SyncService.performSync({ backendOverride: 'cloudkit' });
+
+        expect(result).toEqual({ success: true, stats: emptyStats });
+        expect(writeRemoteCloudKitMock).not.toHaveBeenCalled();
+    });
 });
