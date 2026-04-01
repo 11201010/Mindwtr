@@ -8,13 +8,6 @@ import { useUiStore } from '../store/ui-store';
 import { useObsidianStore } from '../store/obsidian-store';
 import { Layout } from './Layout';
 
-vi.mock('../lib/sync-service', () => ({
-    SyncService: {
-        getSyncStatus: () => ({ inFlight: false }),
-        subscribeSyncStatus: () => () => {},
-    },
-}));
-
 const initialTaskState = useTaskStore.getState();
 const initialUiState = useUiStore.getState();
 const initialObsidianState = useObsidianStore.getState();

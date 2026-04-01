@@ -132,6 +132,21 @@ type SyncServiceDependencies = {
     isTauriRuntime: () => boolean;
     invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
     getTauriFetch: () => Promise<typeof fetch | undefined>;
+    getStoreState: typeof useTaskStore.getState;
+    flushPendingSave: typeof flushPendingSave;
+    performSyncCycle: typeof performSyncCycle;
+    getInMemoryAppDataSnapshot: typeof getInMemoryAppDataSnapshot;
+    markLocalWrite: typeof markLocalWrite;
+    reportError: typeof reportError;
+    logInfo: typeof logInfo;
+    logWarn: typeof logWarn;
+    logSyncError: typeof logSyncError;
+    sanitizeLogMessage: typeof sanitizeLogMessage;
+    getExternalCalendars: typeof ExternalCalendarService.getCalendars;
+    setExternalCalendars: typeof ExternalCalendarService.setCalendars;
+    ensureCloudKitReady: typeof ensureCloudKitReady;
+    readRemoteCloudKit: typeof readRemoteCloudKit;
+    writeRemoteCloudKit: typeof writeRemoteCloudKit;
 };
 
 const defaultInvoke = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
@@ -154,6 +169,21 @@ const defaultSyncServiceDependencies: SyncServiceDependencies = {
     isTauriRuntime,
     invoke: defaultInvoke,
     getTauriFetch: defaultGetTauriFetch,
+    getStoreState: useTaskStore.getState,
+    flushPendingSave,
+    performSyncCycle,
+    getInMemoryAppDataSnapshot,
+    markLocalWrite,
+    reportError,
+    logInfo,
+    logWarn,
+    logSyncError,
+    sanitizeLogMessage,
+    getExternalCalendars: () => ExternalCalendarService.getCalendars(),
+    setExternalCalendars: (calendars) => ExternalCalendarService.setCalendars(calendars),
+    ensureCloudKitReady,
+    readRemoteCloudKit,
+    writeRemoteCloudKit,
 };
 
 let syncServiceDependencies: SyncServiceDependencies = {
@@ -161,16 +191,17 @@ let syncServiceDependencies: SyncServiceDependencies = {
 };
 
 const isTauriRuntimeEnv = () => syncServiceDependencies.isTauriRuntime();
+const getStoreState = () => syncServiceDependencies.getStoreState();
 
 const logSyncWarning = (message: string, error?: unknown) => {
     const extra = error
-        ? { error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)) }
+        ? { error: syncServiceDependencies.sanitizeLogMessage(error instanceof Error ? error.message : String(error)) }
         : undefined;
-    void logWarn(message, { scope: 'sync', extra });
+    void syncServiceDependencies.logWarn(message, { scope: 'sync', extra });
 };
 
 const logSyncInfo = (message: string, extra?: Record<string, string>) => {
-    void logInfo(message, { scope: 'sync', extra });
+    void syncServiceDependencies.logInfo(message, { scope: 'sync', extra });
 };
 
 const buildConflictDiagnosticsLogExtra = (stats: MergeStats): Record<string, string> => {
@@ -199,9 +230,9 @@ const buildConflictDiagnosticsLogExtra = (stats: MergeStats): Record<string, str
 };
 
 const externalCalendarProvider = {
-    load: () => ExternalCalendarService.getCalendars(),
+    load: () => syncServiceDependencies.getExternalCalendars(),
     save: (calendars: AppData['settings']['externalCalendars'] | undefined) =>
-        ExternalCalendarService.setCalendars(calendars ?? []),
+        syncServiceDependencies.setExternalCalendars(calendars ?? []),
     onWarn: (message: string, error?: unknown) => logSyncWarning(message, error),
 };
 
@@ -225,7 +256,7 @@ const readLocalDataForSync = async (): Promise<AppData> => {
         return normalizeAppData(persisted);
     }
 
-    const state = useTaskStore.getState();
+    const state = getStoreState();
     return normalizeAppData({
         tasks: [...state._allTasks],
         projects: [...state._allProjects],
@@ -242,7 +273,7 @@ async function tauriInvoke<T>(command: string, args?: Record<string, unknown>): 
 }
 
 async function persistLocalDataForSync(data: AppData): Promise<void> {
-    markLocalWrite(data);
+    syncServiceDependencies.markLocalWrite(data);
     await tauriInvoke('save_data', { data });
 }
 
@@ -302,7 +333,7 @@ const getAttachmentCleanupDeps = (): AttachmentCleanupDeps => ({
 const getSyncConfigDeps = () => ({
     isTauriRuntimeEnv,
     maybeMigrateLegacyLocalStorageToConfig: () => SyncService.maybeMigrateLegacyLocalStorageToConfig(),
-    reportError,
+    reportError: syncServiceDependencies.reportError,
     startFileWatcher: () => SyncService.startFileWatcher(),
     tauriInvoke,
 });
@@ -461,7 +492,7 @@ export class SyncService {
                 sessionStorage.removeItem(CLOUD_TOKEN_KEY);
             }
         } catch (error) {
-            reportError('Failed to migrate legacy sync config', error);
+            syncServiceDependencies.reportError('Failed to migrate legacy sync config', error);
         }
     }
 
@@ -541,7 +572,7 @@ export class SyncService {
         try {
             return await tauriInvoke<boolean>('is_dropbox_connected', { clientId: normalized });
         } catch (error) {
-            reportError('Failed to check Dropbox connection status', error);
+            syncServiceDependencies.reportError('Failed to check Dropbox connection status', error);
             return false;
         }
     }
@@ -628,7 +659,7 @@ export class SyncService {
     }
 
     private static hasPendingLocalChangesForExternalSync(): boolean {
-        const state = useTaskStore.getState();
+        const state = getStoreState();
         if (!state.settings?.lastSyncAt) return false;
         if (state.lastDataChangeAt <= 0) return false;
         return state.lastDataChangeAt > SyncService.lastSuccessfulSyncLocalChangeAt;
@@ -650,7 +681,7 @@ export class SyncService {
             }
 
             if (resolution === 'keep-local') {
-                await flushPendingSave();
+                await syncServiceDependencies.flushPendingSave();
                 const localData = await injectExternalCalendars(await readLocalDataForSync());
                 const sanitized = sanitizeAppDataForRemote(localData);
                 await SyncService.markSyncWrite(sanitized);
@@ -658,12 +689,12 @@ export class SyncService {
                 return await SyncService.performSync();
             }
 
-            await flushPendingSave();
+            await syncServiceDependencies.flushPendingSave();
             const externalData = normalizeAppData(await tauriInvoke<AppData>('read_sync_file'));
             await persistLocalDataForSync(externalData);
-            await useTaskStore.getState().fetchData({ silent: true });
+            await getStoreState().fetchData({ silent: true });
             const now = new Date().toISOString();
-            const nextHistory = appendSyncHistory(useTaskStore.getState().settings, {
+            const nextHistory = appendSyncHistory(getStoreState().settings, {
                 at: now,
                 status: 'success',
                 backend: 'file',
@@ -674,13 +705,13 @@ export class SyncService {
                 timestampAdjustments: 0,
                 details: 'external_override',
             });
-            await useTaskStore.getState().updateSettings({
+            await getStoreState().updateSettings({
                 lastSyncAt: now,
                 lastSyncStatus: 'success',
                 lastSyncError: undefined,
                 lastSyncHistory: nextHistory,
             });
-            SyncService.lastSuccessfulSyncLocalChangeAt = useTaskStore.getState().lastDataChangeAt;
+            SyncService.lastSuccessfulSyncLocalChangeAt = getStoreState().lastDataChangeAt;
             if (pendingChange?.incomingHash) {
                 SyncService.lastObservedHash = pendingChange.incomingHash;
             }
@@ -716,7 +747,7 @@ export class SyncService {
                     clearTimeout(SyncService.externalSyncTimer);
                     SyncService.externalSyncTimer = null;
                 }
-                const localState = useTaskStore.getState();
+                const localState = getStoreState();
                 const syncPath = SyncService.fileWatcherPath ?? await SyncService.getSyncPath();
                 const pending = SyncService.pendingExternalSyncChange;
                 if (!pending || pending.incomingHash !== hash) {
@@ -751,7 +782,7 @@ export class SyncService {
                             }
                         }
                     })
-                    .catch((error) => reportError('Sync failed', error));
+                    .catch((error) => syncServiceDependencies.reportError('Sync failed', error));
             }, 750);
         } catch (error) {
             logSyncWarning('Failed to process external sync change', error);
@@ -831,7 +862,7 @@ export class SyncService {
         const data = await tauriInvoke<AppData>('get_data');
         const cleaned = await cleanupOrphanedAttachments(data, backend, getAttachmentCleanupDeps());
         await persistLocalDataForSync(cleaned);
-        await useTaskStore.getState().fetchData({ silent: true });
+        await getStoreState().fetchData({ silent: true });
     }
 
     static async listDataSnapshots(): Promise<string[]> {
@@ -839,7 +870,7 @@ export class SyncService {
         try {
             return await tauriInvoke<string[]>('list_data_snapshots');
         } catch (error) {
-            reportError('Failed to list snapshots', error);
+            syncServiceDependencies.reportError('Failed to list snapshots', error);
             return [];
         }
     }
@@ -849,7 +880,7 @@ export class SyncService {
         try {
             return await tauriInvoke<string>('create_data_snapshot');
         } catch (error) {
-            reportError('Failed to create snapshot', error);
+            syncServiceDependencies.reportError('Failed to create snapshot', error);
             return null;
         }
     }
@@ -858,7 +889,7 @@ export class SyncService {
         if (!isTauriRuntimeEnv()) return { success: false, error: 'Desktop runtime is required.' };
         try {
             await tauriInvoke<boolean>('restore_data_snapshot', { snapshotFileName });
-            await useTaskStore.getState().fetchData({ silent: true });
+            await getStoreState().fetchData({ silent: true });
             return { success: true };
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -911,7 +942,7 @@ export class SyncService {
         };
         const persistPreSyncedLocalDataIfNeeded = async (): Promise<void> => {
             if (!preSyncedLocalData || wroteLocal) return;
-            const inMemorySnapshot = getInMemoryAppDataSnapshot();
+            const inMemorySnapshot = syncServiceDependencies.getInMemoryAppDataSnapshot();
             const reconciledData = mergeAppData(preSyncedLocalData, inMemorySnapshot);
             await persistLocalDataWithTracking(reconciledData);
         };
@@ -946,8 +977,8 @@ export class SyncService {
             // 1. Flush pending writes so disk reflects the latest state
             setStep('flush');
             await yieldToRenderer();
-            await flushPendingSave();
-            localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
+            await syncServiceDependencies.flushPendingSave();
+            localSnapshotChangeAt = getStoreState().lastDataChangeAt;
 
             // 2. Read/merge/write via shared core orchestration.
             backend = options.backendOverride ?? await SyncService.getSyncBackend();
@@ -1016,7 +1047,7 @@ export class SyncService {
             let remoteDataForCompare: AppData | null = null;
             let webdavRemoteCorrupted = false;
             const ensureLocalSnapshotFresh = () => {
-                if (useTaskStore.getState().lastDataChangeAt > localSnapshotChangeAt) {
+                if (getStoreState().lastDataChangeAt > localSnapshotChangeAt) {
                     SyncService.syncQueued = true;
                     SyncService.updateSyncStatus({ queued: true });
                     throw new LocalSyncAbort();
@@ -1064,13 +1095,13 @@ export class SyncService {
             if (backend === 'cloudkit') {
                 setStep('cloudkit_setup');
                 await yieldToRenderer();
-                await ensureCloudKitReady();
+                await syncServiceDependencies.ensureCloudKitReady();
             }
 
             const readRemoteDataByBackend = async (): Promise<AppData | null> => {
                 ensureNetworkStillAvailable();
                 if (backend === 'cloudkit') {
-                    const data = await readRemoteCloudKit();
+                    const data = await syncServiceDependencies.readRemoteCloudKit();
                     remoteDataForCompare = data ?? null;
                     return data;
                 }
@@ -1158,7 +1189,7 @@ export class SyncService {
                     if (remoteSanitized && areSyncPayloadsEqual(remoteSanitized, sanitized)) {
                         return;
                     }
-                    await writeRemoteCloudKit(sanitized as AppData);
+                    await syncServiceDependencies.writeRemoteCloudKit(sanitized as AppData);
                     remoteDataForCompare = sanitized;
                     return;
                 }
@@ -1223,14 +1254,14 @@ export class SyncService {
                 remoteDataForCompare = sanitized;
             };
 
-            const syncResult = await performSyncCycle({
+            const syncResult = await syncServiceDependencies.performSyncCycle({
                 readLocal: async () => {
-                    const inMemorySnapshot = getInMemoryAppDataSnapshot();
+                    const inMemorySnapshot = syncServiceDependencies.getInMemoryAppDataSnapshot();
                     const baseData = preSyncedLocalData
                         ? mergeAppData(preSyncedLocalData, inMemorySnapshot)
                         : mergeAppData(await readLocalDataForSync(), inMemorySnapshot);
                     const data = await injectExternalCalendars(baseData);
-                    localSnapshotChangeAt = useTaskStore.getState().lastDataChangeAt;
+                    localSnapshotChangeAt = getStoreState().lastDataChangeAt;
                     return data;
                 },
                 readRemote: readRemoteDataByBackend,
@@ -1275,7 +1306,7 @@ export class SyncService {
                     ...(stats.sections.conflictIds || []),
                     ...(stats.areas.conflictIds || []),
                 ].slice(0, 6);
-                void logInfo(
+                void syncServiceDependencies.logInfo(
                     `Sync merge summary: ${conflictCount} conflicts, max skew ${Math.round(maxClockSkewMs)}ms, ${timestampAdjustments} timestamp fixes.`,
                     {
                         scope: 'sync',
@@ -1367,12 +1398,12 @@ export class SyncService {
             setStep('refresh');
             await yieldToRenderer();
             ensureLocalSnapshotFresh();
-            await useTaskStore.getState().fetchData({ silent: true });
+            await getStoreState().fetchData({ silent: true });
 
             const syncStatus = syncResult.status;
             const now = new Date().toISOString();
             try {
-                await useTaskStore.getState().updateSettings({
+                await getStoreState().updateSettings({
                     lastSyncAt: now,
                     lastSyncStatus: syncStatus,
                     lastSyncError: undefined,
@@ -1380,10 +1411,10 @@ export class SyncService {
             } catch (error) {
                 logSyncWarning('Failed to persist sync status', error);
             }
-            SyncService.lastSuccessfulSyncLocalChangeAt = useTaskStore.getState().lastDataChangeAt;
+            SyncService.lastSuccessfulSyncLocalChangeAt = getStoreState().lastDataChangeAt;
             SyncService.setPendingExternalSyncChange(null);
 
-            useTaskStore.getState().setError(null);
+            getStoreState().setError(null);
             return { success: true, stats };
         };
 
@@ -1397,7 +1428,7 @@ export class SyncService {
             const safeMessage = formatSyncErrorMessage(error, backend);
             let logHint = '';
             try {
-                const logPath = await logSyncError(error, {
+                const logPath = await syncServiceDependencies.logSyncError(error, {
                     backend,
                     step,
                     url: syncUrl,
@@ -1407,7 +1438,7 @@ export class SyncService {
                 logSyncWarning('Failed to write sync error log', logError);
             }
             const finalErrorMessage = `${safeMessage}${logHint}`;
-            const nextHistory = appendSyncHistory(useTaskStore.getState().settings, {
+            const nextHistory = appendSyncHistory(getStoreState().settings, {
                 at: now,
                 status: 'error',
                 backend,
@@ -1419,10 +1450,10 @@ export class SyncService {
                 details: step,
                 error: finalErrorMessage,
             });
-            useTaskStore.getState().setError(finalErrorMessage);
+            getStoreState().setError(finalErrorMessage);
             try {
-                await useTaskStore.getState().fetchData({ silent: true });
-                await useTaskStore.getState().updateSettings({
+                await getStoreState().fetchData({ silent: true });
+                await getStoreState().updateSettings({
                     lastSyncAt: now,
                     lastSyncStatus: 'error',
                     lastSyncError: finalErrorMessage,

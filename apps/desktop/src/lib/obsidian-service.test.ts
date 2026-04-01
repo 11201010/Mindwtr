@@ -1,28 +1,64 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ObsidianSourceRef } from '@mindwtr/core';
 
-const isTauriRuntimeMock = vi.hoisted(() => vi.fn(() => false));
 const invokeMock = vi.hoisted(() => vi.fn());
 const listenMock = vi.hoisted(() => vi.fn());
 const logWarnMock = vi.hoisted(() => vi.fn());
 
-vi.mock('./runtime', () => ({
-    isTauriRuntime: isTauriRuntimeMock,
-}));
+vi.mock('@tauri-apps/api/core', async () => {
+    return {
+        SERIALIZE_TO_IPC_FN: '__TAURI_TO_IPC_KEY__',
+        Channel: class {},
+        PluginListener: class {
+            async unregister() {
+                return undefined;
+            }
+        },
+        Resource: class {},
+        addPluginListener: async () => ({
+            unregister: async () => undefined,
+        }),
+        checkPermissions: async () => undefined,
+        convertFileSrc: (filePath: string) => filePath,
+        invoke: invokeMock,
+        isTauri: () => true,
+        requestPermissions: async () => undefined,
+        transformCallback: () => 1,
+    };
+});
 
-vi.mock('@tauri-apps/api/core', () => ({
-    invoke: invokeMock,
-}));
+vi.mock('@tauri-apps/api/event', async () => {
+    return {
+        listen: listenMock,
+        emit: async () => undefined,
+        emitTo: async () => undefined,
+        once: async () => () => undefined,
+        TauriEvent: {},
+    };
+});
 
-vi.mock('@tauri-apps/api/event', () => ({
-    listen: listenMock,
-}));
-
-vi.mock('./app-log', () => ({
-    logWarn: logWarnMock,
-}));
+vi.mock('./app-log', async () => {
+    return {
+        isDiagnosticsEnabled: () => false,
+        sanitizeLogMessage: (value: string) => value,
+        getLogPath: async () => null,
+        clearLog: async () => undefined,
+        logInfo: async () => null,
+        logWarn: logWarnMock,
+        logError: async () => null,
+        logSyncError: async () => null,
+    };
+});
 
 import { ObsidianService, formatScanFoldersInput, parseScanFoldersInput } from './obsidian-service';
+
+const setTauriRuntime = (enabled: boolean) => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        configurable: true,
+        writable: true,
+        value: enabled ? {} : undefined,
+    });
+};
 
 const sourceRef: ObsidianSourceRef = {
     vaultName: 'My Vault',
@@ -35,8 +71,7 @@ const sourceRef: ObsidianSourceRef = {
 
 afterEach(() => {
     localStorage.clear();
-    isTauriRuntimeMock.mockReset();
-    isTauriRuntimeMock.mockReturnValue(false);
+    setTauriRuntime(false);
     invokeMock.mockReset();
     listenMock.mockReset();
     logWarnMock.mockReset();
@@ -76,7 +111,7 @@ describe('obsidian-service helpers', () => {
     });
 
     it('checks the vault marker through the desktop backend in Tauri', async () => {
-        isTauriRuntimeMock.mockReturnValue(true);
+        setTauriRuntime(true);
         invokeMock.mockResolvedValueOnce(true);
 
         await expect(ObsidianService.hasVaultMarker('/Vault')).resolves.toBe(true);
@@ -87,7 +122,7 @@ describe('obsidian-service helpers', () => {
     });
 
     it('treats vault marker lookup failures as unknown instead of surfacing a UI error', async () => {
-        isTauriRuntimeMock.mockReturnValue(true);
+        setTauriRuntime(true);
         invokeMock.mockRejectedValue(new Error('forbidden'));
 
         await expect(ObsidianService.hasVaultMarker('/Vault')).resolves.toBeNull();
@@ -98,7 +133,7 @@ describe('obsidian-service helpers', () => {
     });
 
     it('starts and stops the native Obsidian watcher in Tauri', async () => {
-        isTauriRuntimeMock.mockReturnValue(true);
+        setTauriRuntime(true);
         const unlistenChanged = vi.fn();
         const unlistenError = vi.fn();
         listenMock
@@ -131,7 +166,7 @@ describe('obsidian-service helpers', () => {
     });
 
     it('invokes the desktop write commands for inline and tasknotes flows', async () => {
-        isTauriRuntimeMock.mockReturnValue(true);
+        setTauriRuntime(true);
         invokeMock.mockResolvedValue(undefined);
 
         await ObsidianService.toggleTask({

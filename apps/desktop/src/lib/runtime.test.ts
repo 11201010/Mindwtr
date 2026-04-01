@@ -1,14 +1,19 @@
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getDesktopTimerHost } from './runtime';
 
 describe('getDesktopTimerHost', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it('binds browser timer functions to window', () => {
+    it('binds browser timer functions to window', async () => {
+        const runtimeModule = await import(pathToFileURL(resolve(process.cwd(), 'src/lib/runtime.ts')).href);
+        const { getDesktopTimerHost } = runtimeModule;
         const callback = vi.fn();
-        const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(function (
+        const originalSetTimeout = window.setTimeout;
+        const originalClearTimeout = window.clearTimeout;
+        const setTimeoutSpy = vi.fn(function (
             this: Window,
             handler: TimerHandler
         ): ReturnType<typeof setTimeout> {
@@ -18,19 +23,43 @@ describe('getDesktopTimerHost', () => {
             }
             return 1 as unknown as ReturnType<typeof setTimeout>;
         });
-        const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation(function (
+        const clearTimeoutSpy = vi.fn(function (
             this: Window,
             _id?: string | number | ReturnType<typeof setTimeout>
         ): void {
             expect(this).toBe(window);
         });
 
-        const timers = getDesktopTimerHost();
-        const handle = timers.setTimeout(callback, 10);
-        timers.clearTimeout(handle);
+        Object.defineProperty(window, 'setTimeout', {
+            configurable: true,
+            writable: true,
+            value: setTimeoutSpy,
+        });
+        Object.defineProperty(window, 'clearTimeout', {
+            configurable: true,
+            writable: true,
+            value: clearTimeoutSpy,
+        });
 
-        expect(callback).toHaveBeenCalledOnce();
-        expect(setTimeoutSpy).toHaveBeenCalledOnce();
-        expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+        try {
+            const timers = getDesktopTimerHost();
+            const handle = timers.setTimeout(callback, 10);
+            timers.clearTimeout(handle);
+
+            expect(callback).toHaveBeenCalledOnce();
+            expect(setTimeoutSpy).toHaveBeenCalledOnce();
+            expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+        } finally {
+            Object.defineProperty(window, 'setTimeout', {
+                configurable: true,
+                writable: true,
+                value: originalSetTimeout,
+            });
+            Object.defineProperty(window, 'clearTimeout', {
+                configurable: true,
+                writable: true,
+                value: originalClearTimeout,
+            });
+        }
     });
 });

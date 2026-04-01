@@ -4,10 +4,6 @@ import { getFileSyncDir, hashString, normalizeSyncBackend } from './sync-service
 
 const markLocalWriteMock = vi.hoisted(() => vi.fn());
 
-vi.mock('./local-data-watcher', () => ({
-    markLocalWrite: markLocalWriteMock,
-}));
-
 import { SyncService, __syncServiceTestUtils } from './sync-service';
 
 const waitForAssertion = async (assertion: () => void, maxAttempts = 200): Promise<void> => {
@@ -139,6 +135,7 @@ describe('SyncService testability hooks', () => {
         __syncServiceTestUtils.setDependenciesForTests({
             isTauriRuntime: () => true,
             invoke: invoke as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
+            markLocalWrite: markLocalWriteMock as unknown as (data?: AppData) => void,
         });
 
         await __syncServiceTestUtils.persistLocalDataForTests(data);

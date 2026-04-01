@@ -1,6 +1,8 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTaskStore } from '@mindwtr/core';
+import { LanguageProvider } from '../../contexts/language-context';
+import { KeybindingProvider } from '../../contexts/keybinding-context';
 
 const calendarHookTracker = {
     mounts: 0,
@@ -8,28 +10,13 @@ const calendarHookTracker = {
 };
 let calendarHookUseEffect: typeof import('react').useEffect | null = null;
 
-vi.mock('../../contexts/language-context', () => ({
-    useLanguage: () => ({
-        language: 'en',
-        setLanguage: vi.fn(),
-        t: (key: string) => key,
-    }),
-}));
-
-vi.mock('../../contexts/keybinding-context', () => ({
-    useKeybindings: () => ({
-        style: 'vim',
-        setStyle: vi.fn(),
-        quickAddShortcut: 'disabled',
-        setQuickAddShortcut: vi.fn(),
-        openHelp: vi.fn(),
-    }),
-}));
-
 vi.mock('../../hooks/usePerformanceMonitor', () => ({
     usePerformanceMonitor: () => ({
         enabled: false,
         metrics: {},
+        measure: <T,>(_label: string, fn: () => T) => fn(),
+        trackUseMemo: () => undefined,
+        trackUseEffect: () => undefined,
     }),
 }));
 
@@ -309,7 +296,13 @@ describe('SettingsView', () => {
     });
 
     it('keeps integrations state mounted across parent rerenders', async () => {
-        const { getByRole, getByText } = render(<SettingsView />);
+        const { getByRole, getByText } = render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="settings" onNavigate={() => undefined}>
+                    <SettingsView />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
 
         await act(async () => {
             fireEvent.click(getByRole('button', { name: 'integrations' }));

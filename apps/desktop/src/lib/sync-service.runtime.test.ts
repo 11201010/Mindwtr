@@ -56,7 +56,6 @@ const getInMemoryAppDataSnapshotMock = vi.hoisted(() => vi.fn());
 const useTaskStoreGetStateMock = vi.hoisted(() => vi.fn());
 const logInfoMock = vi.hoisted(() => vi.fn());
 const logWarnMock = vi.hoisted(() => vi.fn());
-const logErrorMock = vi.hoisted(() => vi.fn());
 const logSyncErrorMock = vi.hoisted(() => vi.fn());
 const ensureCloudKitReadyMock = vi.hoisted(() => vi.fn());
 const readRemoteCloudKitMock = vi.hoisted(() => vi.fn());
@@ -69,6 +68,7 @@ const fsMocks = vi.hoisted(() => ({
     mkdir: vi.fn(),
     readFile: vi.fn(),
     writeFile: vi.fn(),
+    writeTextFile: vi.fn(),
     rename: vi.fn(),
     remove: vi.fn(),
     readDir: vi.fn(),
@@ -91,55 +91,9 @@ const storeStateRef = vi.hoisted(() => ({
     } as MockStoreState,
 }));
 
-vi.mock('./runtime', () => ({
-    isTauriRuntime: () => true,
-}));
-
-vi.mock('./local-data-watcher', () => ({
-    markLocalWrite: markLocalWriteMock,
-}));
-
-vi.mock('./external-calendar-service', () => ({
-    ExternalCalendarService: {
-        getCalendars: externalCalendarGetMock,
-        setCalendars: externalCalendarSetMock,
-    },
-}));
-
-vi.mock('./app-log', () => ({
-    logInfo: logInfoMock,
-    logWarn: logWarnMock,
-    logError: logErrorMock,
-    logSyncError: logSyncErrorMock,
-    sanitizeLogMessage: (value: string) => value,
-}));
-
-vi.mock('./report-error', () => ({
-    reportError: vi.fn(),
-}));
-
-vi.mock('./cloudkit-sync', () => ({
-    ensureCloudKitReady: ensureCloudKitReadyMock,
-    readRemoteCloudKit: readRemoteCloudKitMock,
-    writeRemoteCloudKit: writeRemoteCloudKitMock,
-}));
-
 vi.mock('@tauri-apps/plugin-fs', () => fsMocks);
 
 vi.mock('@tauri-apps/api/path', () => pathMocks);
-
-vi.mock('@mindwtr/core', async () => {
-    const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
-    return {
-        ...actual,
-        flushPendingSave: flushPendingSaveMock,
-        performSyncCycle: performSyncCycleMock,
-        getInMemoryAppDataSnapshot: getInMemoryAppDataSnapshotMock,
-        useTaskStore: {
-            getState: useTaskStoreGetStateMock,
-        },
-    };
-});
 
 const syncServiceModulePromise = import('./sync-service');
 
@@ -185,6 +139,7 @@ describe('desktop sync-service runtime', () => {
         fsMocks.mkdir.mockResolvedValue(undefined);
         fsMocks.readFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
         fsMocks.writeFile.mockResolvedValue(undefined);
+        fsMocks.writeTextFile.mockResolvedValue(undefined);
         fsMocks.rename.mockResolvedValue(undefined);
         fsMocks.remove.mockResolvedValue(undefined);
         fsMocks.readDir.mockResolvedValue([]);
@@ -218,9 +173,24 @@ describe('desktop sync-service runtime', () => {
         syncServiceModule.__syncServiceTestUtils.setDependenciesForTests({
             isTauriRuntime: () => true,
             invoke: invokeMock as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
+            getStoreState: useTaskStoreGetStateMock as typeof useTaskStoreGetStateMock,
+            flushPendingSave: flushPendingSaveMock as typeof flushPendingSaveMock,
+            performSyncCycle: performSyncCycleMock as typeof performSyncCycleMock,
+            getInMemoryAppDataSnapshot: getInMemoryAppDataSnapshotMock as typeof getInMemoryAppDataSnapshotMock,
+            markLocalWrite: markLocalWriteMock as typeof markLocalWriteMock,
+            reportError: vi.fn(),
+            logInfo: logInfoMock as typeof logInfoMock,
+            logWarn: logWarnMock as typeof logWarnMock,
+            logSyncError: logSyncErrorMock as typeof logSyncErrorMock,
+            sanitizeLogMessage: (value: string) => value,
+            getExternalCalendars: externalCalendarGetMock as typeof externalCalendarGetMock,
+            setExternalCalendars: externalCalendarSetMock as typeof externalCalendarSetMock,
+            ensureCloudKitReady: ensureCloudKitReadyMock as typeof ensureCloudKitReadyMock,
+            readRemoteCloudKit: readRemoteCloudKitMock as typeof readRemoteCloudKitMock,
+            writeRemoteCloudKit: writeRemoteCloudKitMock as typeof writeRemoteCloudKitMock,
         });
         await syncServiceModule.SyncService.resetForTests();
-    });
+    }, 30_000);
 
     it('persists pre-synced attachment metadata when local changes abort the sync', async () => {
         const syncServiceModule = await syncServiceModulePromise;

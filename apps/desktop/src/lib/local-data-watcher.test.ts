@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPendingSave, setStorageAdapter, useTaskStore } from '@mindwtr/core';
 import type { AppData, StorageAdapter } from '@mindwtr/core';
+import { __localDataWatcherTestUtils, markLocalWrite } from './local-data-watcher';
 
 function getTauriMocks() {
     const globalObject = globalThis as typeof globalThis & {
@@ -14,11 +15,27 @@ function getTauriMocks() {
     };
 }
 
-vi.mock('@tauri-apps/api/core', () => ({
-    invoke: getTauriMocks().invokeMock,
-}));
-
-import { __localDataWatcherTestUtils, markLocalWrite } from './local-data-watcher';
+vi.mock('@tauri-apps/api/core', async () => {
+    return {
+        SERIALIZE_TO_IPC_FN: '__TAURI_TO_IPC_KEY__',
+        Channel: class {},
+        PluginListener: class {
+            async unregister() {
+                return undefined;
+            }
+        },
+        Resource: class {},
+        addPluginListener: async () => ({
+            unregister: async () => undefined,
+        }),
+        checkPermissions: async () => undefined,
+        convertFileSrc: (filePath: string) => filePath,
+        invoke: getTauriMocks().invokeMock,
+        isTauri: () => true,
+        requestPermissions: async () => undefined,
+        transformCallback: () => 1,
+    };
+});
 
 let nowMs = 0;
 let externalData: AppData;

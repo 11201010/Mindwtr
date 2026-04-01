@@ -14,57 +14,6 @@ vi.mock('../../lib/report-error', () => ({
   reportError: reportErrorMock,
 }));
 
-const deferredMockState = vi.hoisted(() => ({
-  lagData: false,
-  lagFeedback: false,
-  previousData: undefined as unknown,
-  previousFeedback: undefined as unknown,
-}));
-
-vi.mock('react', async () => {
-  const actual = await vi.importActual<typeof import('react')>('react');
-
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === 'object' && value !== null;
-
-  const isDataInput = (value: unknown): value is Record<string, unknown> =>
-    isRecord(value) && 'baseTasks' in value;
-
-  const isFeedbackInput = (value: unknown): value is Record<string, unknown> =>
-    isRecord(value) && 'normalizedSearchQuery' in value && !('baseTasks' in value);
-
-  return {
-    ...actual,
-    useDeferredValue: <T,>(value: T) => {
-      if (isDataInput(value)) {
-        if (deferredMockState.previousData === undefined) {
-          deferredMockState.previousData = value;
-          return value;
-        }
-        if (deferredMockState.lagData) {
-          return deferredMockState.previousData as T;
-        }
-        deferredMockState.previousData = value;
-        return value;
-      }
-
-      if (isFeedbackInput(value)) {
-        if (deferredMockState.previousFeedback === undefined) {
-          deferredMockState.previousFeedback = value;
-          return value;
-        }
-        if (deferredMockState.lagFeedback) {
-          return deferredMockState.previousFeedback as T;
-        }
-        deferredMockState.previousFeedback = value;
-        return value;
-      }
-
-      return value;
-    },
-  };
-});
-
 const initialTaskState = useTaskStore.getState();
 const initialUiState = useUiStore.getState();
 const now = new Date().toISOString();
@@ -101,10 +50,6 @@ const renderListView = (statusFilter: 'next' | 'done' | 'archived' = 'next', tit
 describe('ListView', () => {
   beforeEach(() => {
     reportErrorMock.mockReset();
-    deferredMockState.lagData = false;
-    deferredMockState.lagFeedback = false;
-    deferredMockState.previousData = undefined;
-    deferredMockState.previousFeedback = undefined;
 
     useTaskStore.setState(initialTaskState, true);
     useUiStore.setState(initialUiState, true);
@@ -151,7 +96,7 @@ describe('ListView', () => {
     expect(html).toContain('data-view-filter-input');
   });
 
-  it('does not show filtering feedback for deferred background task refreshes', async () => {
+  it('does not show filtering feedback after a background task refresh settles', async () => {
     useTaskStore.setState({
       tasks: [makeTask('1')],
       lastDataChangeAt: 1,
@@ -159,8 +104,6 @@ describe('ListView', () => {
 
     const { queryByText } = renderListView();
     expect(queryByText('Filtering...')).not.toBeInTheDocument();
-
-    deferredMockState.lagData = true;
 
     act(() => {
       useTaskStore.setState({
@@ -174,23 +117,24 @@ describe('ListView', () => {
     });
   });
 
-  it('shows filtering feedback while user filter changes are deferred', async () => {
+  it('applies token filters from the UI store', async () => {
     useTaskStore.setState({
-      tasks: [makeTask('1', { contexts: ['@work'] })],
+      tasks: [
+        makeTask('1', { title: 'Work task', contexts: ['@work'] }),
+        makeTask('2', { title: 'Home task', contexts: ['@home'] }),
+      ],
       lastDataChangeAt: 1,
     });
 
     const { queryByText } = renderListView();
-    expect(queryByText('Filtering...')).not.toBeInTheDocument();
-
-    deferredMockState.lagFeedback = true;
 
     act(() => {
       useUiStore.getState().setListFilters({ tokens: ['@work'] });
     });
 
     await waitFor(() => {
-      expect(queryByText('Filtering...')).toBeInTheDocument();
+      expect(queryByText('Work task')).toBeInTheDocument();
+      expect(queryByText('Home task')).not.toBeInTheDocument();
     });
   });
 

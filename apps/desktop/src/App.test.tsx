@@ -11,11 +11,6 @@ const renderWithProviders = (ui: React.ReactElement) => {
     );
 };
 
-// Mock Layout
-vi.mock('./components/Layout', () => ({
-    Layout: () => <div data-testid="layout">Inbox</div>,
-}));
-
 // Mock electronAPI
 // Mock electronAPI
 Object.defineProperty(window, 'electronAPI', {
@@ -28,12 +23,12 @@ Object.defineProperty(window, 'electronAPI', {
 
 describe('App', () => {
     it('renders Inbox by default', () => {
-        const { getByText } = renderWithProviders(<App />);
-        expect(getByText('Inbox')).toBeInTheDocument();
+        const { getByRole } = renderWithProviders(<App />);
+        expect(getByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
     });
 
     it('renders Sidebar navigation', () => {
-        const { getByTestId } = renderWithProviders(<App />);
-        expect(getByTestId('layout')).toBeInTheDocument();
+        const { getByRole } = renderWithProviders(<App />);
+        expect(getByRole('button', { name: 'Projects' })).toBeInTheDocument();
     });
 });
