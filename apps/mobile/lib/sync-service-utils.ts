@@ -5,6 +5,7 @@ import {
   isSyncFilePath as isCoreSyncFilePath,
   normalizeSyncBackend,
   sanitizeSyncErrorMessage,
+  type MergeStats,
   type SyncBackend as CoreSyncBackend,
 } from '@mindwtr/core';
 
@@ -77,3 +78,48 @@ export const resolveBackend = (value: string | null): SyncBackend => {
 
 export const coerceSupportedBackend = (backend: SyncBackend, allowCloudKit: boolean): SyncBackend =>
   backend === 'cloudkit' && !allowCloudKit ? 'off' : backend;
+
+const collectConflictIds = (stats?: MergeStats | null): string[] => {
+  if (!stats) return [];
+  return [
+    ...(stats.tasks.conflictIds || []),
+    ...(stats.projects.conflictIds || []),
+    ...(stats.sections.conflictIds || []),
+    ...(stats.areas.conflictIds || []),
+  ].sort();
+};
+
+export const getSyncConflictCount = (stats?: MergeStats | null): number => (
+  (stats?.tasks.conflicts || 0)
+  + (stats?.projects.conflicts || 0)
+  + (stats?.sections.conflicts || 0)
+  + (stats?.areas.conflicts || 0)
+);
+
+export const getSyncTimestampAdjustments = (stats?: MergeStats | null): number => (
+  (stats?.tasks.timestampAdjustments || 0)
+  + (stats?.projects.timestampAdjustments || 0)
+  + (stats?.sections.timestampAdjustments || 0)
+  + (stats?.areas.timestampAdjustments || 0)
+);
+
+export const getSyncMaxClockSkewMs = (stats?: MergeStats | null): number => Math.max(
+  stats?.tasks.maxClockSkewMs || 0,
+  stats?.projects.maxClockSkewMs || 0,
+  stats?.sections.maxClockSkewMs || 0,
+  stats?.areas.maxClockSkewMs || 0,
+);
+
+export const hasSameUserFacingSyncConflictSummary = (
+  currentStats?: MergeStats | null,
+  previousStats?: MergeStats | null,
+): boolean => {
+  const currentConflictCount = getSyncConflictCount(currentStats);
+  if (currentConflictCount === 0) return false;
+  if (currentConflictCount !== getSyncConflictCount(previousStats)) return false;
+  if (getSyncMaxClockSkewMs(currentStats) !== getSyncMaxClockSkewMs(previousStats)) return false;
+  if (getSyncTimestampAdjustments(currentStats) !== getSyncTimestampAdjustments(previousStats)) return false;
+  const currentConflictIds = collectConflictIds(currentStats);
+  const previousConflictIds = collectConflictIds(previousStats);
+  return JSON.stringify(currentConflictIds) === JSON.stringify(previousConflictIds);
+};

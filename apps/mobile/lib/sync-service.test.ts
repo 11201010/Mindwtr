@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getSyncConflictCount,
+  getSyncMaxClockSkewMs,
+  getSyncTimestampAdjustments,
+  hasSameUserFacingSyncConflictSummary,
   formatSyncErrorMessage,
   getFileSyncBaseDir,
     isLikelyOfflineSyncError,
@@ -9,8 +13,16 @@ import {
     coerceSupportedBackend,
     resolveBackend,
 } from './sync-service-utils';
+import type { MergeStats } from '@mindwtr/core';
 
 describe('mobile sync-service test utils', () => {
+  const emptyStats: MergeStats = {
+    tasks: { localTotal: 0, incomingTotal: 0, mergedTotal: 0, localOnly: 0, incomingOnly: 0, conflicts: 0, resolvedUsingLocal: 0, resolvedUsingIncoming: 0, deletionsWon: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, timestampAdjustmentIds: [], conflictReasonCounts: {}, conflictSamples: [] },
+    projects: { localTotal: 0, incomingTotal: 0, mergedTotal: 0, localOnly: 0, incomingOnly: 0, conflicts: 0, resolvedUsingLocal: 0, resolvedUsingIncoming: 0, deletionsWon: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, timestampAdjustmentIds: [], conflictReasonCounts: {}, conflictSamples: [] },
+    sections: { localTotal: 0, incomingTotal: 0, mergedTotal: 0, localOnly: 0, incomingOnly: 0, conflicts: 0, resolvedUsingLocal: 0, resolvedUsingIncoming: 0, deletionsWon: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, timestampAdjustmentIds: [], conflictReasonCounts: {}, conflictSamples: [] },
+    areas: { localTotal: 0, incomingTotal: 0, mergedTotal: 0, localOnly: 0, incomingOnly: 0, conflicts: 0, resolvedUsingLocal: 0, resolvedUsingIncoming: 0, deletionsWon: 0, conflictIds: [], maxClockSkewMs: 0, timestampAdjustments: 0, timestampAdjustmentIds: [], conflictReasonCounts: {}, conflictSamples: [] },
+  };
+
   it('normalizes backend values', () => {
     expect(resolveBackend('file')).toBe('file');
     expect(resolveBackend('webdav')).toBe('webdav');
@@ -87,5 +99,45 @@ describe('mobile sync-service test utils', () => {
     expect(isLikelyOfflineSyncError('request failed: ECONNRESET')).toBe(true);
     expect(isLikelyOfflineSyncError('AxiosError: connect ETIMEDOUT')).toBe(true);
     expect(isLikelyOfflineSyncError('WebDAV unauthorized (401). Check folder URL')).toBe(false);
+  });
+
+  it('summarizes merge stats across all synced entity types', () => {
+    const stats: MergeStats = {
+      ...emptyStats,
+      tasks: { ...emptyStats.tasks, conflicts: 1, maxClockSkewMs: 1000, timestampAdjustments: 2, conflictIds: ['task-1'] },
+      areas: { ...emptyStats.areas, conflicts: 2, maxClockSkewMs: 4000, timestampAdjustments: 3, conflictIds: ['area-1', 'area-2'] },
+    };
+
+    expect(getSyncConflictCount(stats)).toBe(3);
+    expect(getSyncMaxClockSkewMs(stats)).toBe(4000);
+    expect(getSyncTimestampAdjustments(stats)).toBe(5);
+  });
+
+  it('treats repeated merge summaries with the same conflicts as duplicates', () => {
+    const previous: MergeStats = {
+      ...emptyStats,
+      tasks: { ...emptyStats.tasks, conflicts: 1, conflictIds: ['task-1'] },
+      sections: { ...emptyStats.sections, conflicts: 1, conflictIds: ['section-1'] },
+    };
+    const current: MergeStats = {
+      ...emptyStats,
+      tasks: { ...emptyStats.tasks, conflicts: 1, conflictIds: ['task-1'] },
+      sections: { ...emptyStats.sections, conflicts: 1, conflictIds: ['section-1'] },
+    };
+
+    expect(hasSameUserFacingSyncConflictSummary(current, previous)).toBe(true);
+  });
+
+  it('does not treat changed conflict ids as duplicate merge summaries', () => {
+    const previous: MergeStats = {
+      ...emptyStats,
+      tasks: { ...emptyStats.tasks, conflicts: 1, conflictIds: ['task-1'] },
+    };
+    const current: MergeStats = {
+      ...emptyStats,
+      tasks: { ...emptyStats.tasks, conflicts: 1, conflictIds: ['task-2'] },
+    };
+
+    expect(hasSameUserFacingSyncConflictSummary(current, previous)).toBe(false);
   });
 });

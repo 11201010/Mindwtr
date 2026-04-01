@@ -47,7 +47,14 @@ import {
     logSettingsWarn,
 } from '@/lib/settings-utils';
 import { performMobileSync } from '@/lib/sync-service';
-import { coerceSupportedBackend, isLikelyOfflineSyncError } from '@/lib/sync-service-utils';
+import {
+    coerceSupportedBackend,
+    getSyncConflictCount,
+    getSyncMaxClockSkewMs,
+    getSyncTimestampAdjustments,
+    hasSameUserFacingSyncConflictSummary,
+    isLikelyOfflineSyncError,
+} from '@/lib/sync-service-utils';
 import { testDropboxAccess } from '@/lib/dropbox-sync';
 import {
     CLOUD_PROVIDER_KEY,
@@ -689,6 +696,8 @@ export function SyncSettingsScreen() {
     const handleSync = async () => {
         setIsSyncing(true);
         try {
+            const previousLastSyncStatus = settings.lastSyncStatus;
+            const previousLastSyncStats = settings.lastSyncStats ?? null;
             if (syncBackend === 'off') return;
             if (syncBackend === 'webdav') {
                 if (!webdavUrl.trim()) {
@@ -764,20 +773,13 @@ export function SyncSettingsScreen() {
                 return;
             }
             if (result.success) {
-                const conflictCount = (result.stats?.tasks.conflicts || 0)
-                    + (result.stats?.projects.conflicts || 0)
-                    + (result.stats?.sections.conflicts || 0)
-                    + (result.stats?.areas.conflicts || 0);
-                const maxResultClockSkewMs = Math.max(
-                    result.stats?.tasks.maxClockSkewMs || 0,
-                    result.stats?.projects.maxClockSkewMs || 0,
-                    result.stats?.sections.maxClockSkewMs || 0,
-                    result.stats?.areas.maxClockSkewMs || 0,
+                const conflictCount = getSyncConflictCount(result.stats);
+                const maxResultClockSkewMs = getSyncMaxClockSkewMs(result.stats);
+                const resultTimestampAdjustments = getSyncTimestampAdjustments(result.stats);
+                const shouldSuppressDuplicateConflictNotice = (
+                    (previousLastSyncStatus === 'success' || previousLastSyncStatus === 'conflict')
+                    && hasSameUserFacingSyncConflictSummary(result.stats, previousLastSyncStats)
                 );
-                const resultTimestampAdjustments = (result.stats?.tasks.timestampAdjustments || 0)
-                    + (result.stats?.projects.timestampAdjustments || 0)
-                    + (result.stats?.sections.timestampAdjustments || 0)
-                    + (result.stats?.areas.timestampAdjustments || 0);
                 const warningDetails = [
                     maxResultClockSkewMs > CLOCK_SKEW_THRESHOLD_MS
                         ? localize(
@@ -795,7 +797,7 @@ export function SyncSettingsScreen() {
                 Alert.alert(
                     localize('Success', '成功'),
                     [
-                        conflictCount > 0
+                        conflictCount > 0 && !shouldSuppressDuplicateConflictNotice
                             ? localize(`Sync completed with ${conflictCount} conflicts (resolved automatically).`, `同步完成，发现 ${conflictCount} 个冲突（已自动处理）。`)
                             : localize('Sync completed!', '同步完成！'),
                         ...warningDetails,
