@@ -290,6 +290,7 @@ function RootLayoutContent() {
     lastAutoSyncAt.current = now;
     syncPending.current = false;
 
+    const appStateAtSyncStart = appState.current;
     syncInFlight.current = (async () => {
       await flushPendingSave().catch(logAppError);
       const result = await performMobileSync().catch((error) => ({ success: false, error: String(error) }));
@@ -322,7 +323,7 @@ function RootLayoutContent() {
       }
     })().finally(() => {
       syncInFlight.current = null;
-      if (appState.current !== 'active' && backgroundSyncPending.current) {
+      if (appStateAtSyncStart !== 'active' && backgroundSyncPending.current) {
         backgroundSyncPending.current = false;
         syncPending.current = true;
         return;
