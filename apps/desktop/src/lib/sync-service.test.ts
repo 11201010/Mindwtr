@@ -217,6 +217,28 @@ describe('SyncService testability hooks', () => {
             Authorization: 'Basic YWxpY2U6c3RvcmVkLXNlY3JldA==',
         });
     });
+
+    it('keeps file watcher ignores active until sync completion after writing the sync file', async () => {
+        const getMonotonicNowSpy = vi.spyOn(SyncService as any, 'getMonotonicNow');
+        getMonotonicNowSpy.mockReturnValue(9_000);
+
+        await (SyncService as any).markSyncWrite({
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: {},
+        } satisfies AppData);
+
+        expect((SyncService as any).fileWriteIgnoreActive).toBe(true);
+        expect((SyncService as any).ignoreFileEventsUntil).toBe(Number.POSITIVE_INFINITY);
+
+        (SyncService as any).finalizeSyncWriteIgnoreWindow();
+
+        expect((SyncService as any).fileWriteIgnoreActive).toBe(false);
+        expect((SyncService as any).ignoreFileEventsUntil).toBe(11_000);
+        getMonotonicNowSpy.mockRestore();
+    });
 });
 
 describe('SyncService orchestration', () => {

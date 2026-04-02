@@ -374,6 +374,7 @@ export class SyncService {
     private static lastObservedHash: string | null = null;
     private static lastSuccessfulSyncLocalChangeAt = 0;
     private static ignoreFileEventsUntil = 0;
+    private static fileWriteIgnoreActive = false;
     private static externalSyncTimer: ReturnType<typeof setTimeout> | null = null;
     private static pendingExternalSyncChange: ExternalSyncChange | null = null;
     private static externalSyncChangeListeners = new Set<(change: ExternalSyncChange | null) => void>();
@@ -434,6 +435,7 @@ export class SyncService {
         SyncService.lastObservedHash = null;
         SyncService.lastSuccessfulSyncLocalChangeAt = 0;
         SyncService.ignoreFileEventsUntil = 0;
+        SyncService.fileWriteIgnoreActive = false;
         SyncService.externalSyncTimer = null;
         SyncService.pendingExternalSyncChange = null;
         SyncService.externalSyncChangeListeners.clear();
@@ -655,6 +657,13 @@ export class SyncService {
     private static async markSyncWrite(data: AppData) {
         const hash = await hashString(toStableJson(data));
         SyncService.lastWrittenHash = hash;
+        SyncService.fileWriteIgnoreActive = true;
+        SyncService.ignoreFileEventsUntil = Number.POSITIVE_INFINITY;
+    }
+
+    private static finalizeSyncWriteIgnoreWindow() {
+        if (!SyncService.fileWriteIgnoreActive) return;
+        SyncService.fileWriteIgnoreActive = false;
         SyncService.ignoreFileEventsUntil = SyncService.getMonotonicNow() + 2000;
     }
 
@@ -1479,6 +1488,7 @@ export class SyncService {
             } catch (error) {
                 logSyncWarning('Failed to unsubscribe network listener after sync', error);
             }
+            SyncService.finalizeSyncWriteIgnoreWindow();
             SyncService.syncInFlight = null;
         }
         const skippedRequeue = result.skipped === 'requeued';
