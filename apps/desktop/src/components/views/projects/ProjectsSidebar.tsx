@@ -12,6 +12,17 @@ import {
     ProjectAreaDropZone,
 } from './project-area-dnd';
 
+const PROJECT_SELECTION_IGNORE_SELECTOR = '[data-project-selection-ignore="true"]';
+
+const getProjectSelectionTarget = (target: EventTarget | null) => {
+    if (target instanceof Element) return target;
+    if (target instanceof Node) return target.parentElement;
+    return null;
+};
+
+const isEditableElement = (element: Element | null) =>
+    element?.matches('input, textarea, select, [contenteditable="true"]') === true;
+
 type TagOptionList = {
     list: string[];
     hasNoTags: boolean;
@@ -97,8 +108,60 @@ export function ProjectsSidebar({
     const focusedCount = useMemo(() => projects.filter((project) => project.isFocused).length, [projects]);
     const [contextMenu, setContextMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement | null>(null);
+    const pendingProjectSelectionRef = useRef<{ projectId: string; timeoutId: number } | null>(null);
 
     const closeContextMenu = useCallback(() => setContextMenu(null), []);
+    const clearPendingProjectSelection = useCallback(() => {
+        if (!pendingProjectSelectionRef.current) return;
+        window.clearTimeout(pendingProjectSelectionRef.current.timeoutId);
+        pendingProjectSelectionRef.current = null;
+    }, []);
+
+    const deferProjectSelection = useCallback((projectId: string) => {
+        clearPendingProjectSelection();
+        const timeoutId = window.setTimeout(() => {
+            pendingProjectSelectionRef.current = null;
+            onSelectProject(projectId);
+        }, 0);
+        pendingProjectSelectionRef.current = { projectId, timeoutId };
+    }, [clearPendingProjectSelection, onSelectProject]);
+
+    const shouldIgnoreProjectSelection = useCallback((target: EventTarget | null) => {
+        const element = getProjectSelectionTarget(target);
+        return element?.closest(PROJECT_SELECTION_IGNORE_SELECTOR) !== null;
+    }, []);
+
+    const handleProjectMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>, projectId: string) => {
+        if (event.button !== 0) return;
+        if (shouldIgnoreProjectSelection(event.target)) return;
+        const activeElement = document.activeElement instanceof Element ? document.activeElement : null;
+        const clickedRow = event.currentTarget;
+        if (
+            activeElement
+            && activeElement !== document.body
+            && activeElement !== clickedRow
+            && !clickedRow.contains(activeElement)
+            && isEditableElement(activeElement)
+        ) {
+            deferProjectSelection(projectId);
+            (activeElement as HTMLElement).blur();
+            return;
+        }
+        onSelectProject(projectId);
+    }, [deferProjectSelection, onSelectProject, shouldIgnoreProjectSelection]);
+
+    const handleProjectClick = useCallback((event: React.MouseEvent<HTMLDivElement>, projectId: string) => {
+        if (shouldIgnoreProjectSelection(event.target)) return;
+        if (pendingProjectSelectionRef.current?.projectId === projectId) return;
+        onSelectProject(projectId);
+    }, [onSelectProject, shouldIgnoreProjectSelection]);
+
+    const handleProjectKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>, projectId: string) => {
+        if (shouldIgnoreProjectSelection(event.target)) return;
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onSelectProject(projectId);
+    }, [onSelectProject, shouldIgnoreProjectSelection]);
 
     useEffect(() => {
         if (!contextMenu) return;
@@ -122,6 +185,10 @@ export function ProjectsSidebar({
             window.removeEventListener('keydown', handleKey);
         };
     }, [contextMenu, closeContextMenu]);
+
+    useEffect(() => () => {
+        clearPendingProjectSelection();
+    }, [clearPendingProjectSelection]);
 
     const buildProjectDndState = useCallback((groups: GroupedProjects) => {
         const projectIdsByArea = new Map<string, string[]>();
@@ -307,6 +374,12 @@ export function ProjectsSidebar({
                                                                 : "hover:bg-muted/40 text-foreground",
                                                         isDragging && "opacity-70",
                                                     )}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    aria-pressed={selectedProjectId === project.id}
+                                                    onMouseDown={(event) => handleProjectMouseDown(event, project.id)}
+                                                    onClick={(event) => handleProjectClick(event, project.id)}
+                                                    onKeyDown={(event) => handleProjectKeyDown(event, project.id)}
                                                     onContextMenu={(event) => {
                                                         event.preventDefault();
                                                         setContextMenu({
@@ -316,14 +389,12 @@ export function ProjectsSidebar({
                                                                 });
                                                             }}
                                                         >
-                                                    <div
-                                                        className="flex items-center gap-2 px-2 py-2"
-                                                        onClick={() => onSelectProject(project.id)}
-                                                    >
+                                                    <div className="flex items-center gap-2 px-2 py-2">
                                                                 <span className="opacity-40 group-hover:opacity-100 transition-opacity">
                                                                     {handle}
                                                                 </span>
                                                                 <button
+                                                                    data-project-selection-ignore="true"
                                                                     onClick={(event) => {
                                                                         event.stopPropagation();
                                                                         toggleProjectFocus(project.id);
@@ -419,26 +490,29 @@ export function ProjectsSidebar({
                                                             <SortableProjectRow key={project.id} projectId={project.id}>
                                                                 {({ handle, isDragging }) => (
                                                                     <div
-                                                                        className={cn(
-                                                                            "group rounded-lg cursor-pointer transition-colors text-sm",
-                                                                            selectedProjectId === project.id
-                                                                                ? "bg-primary/10 text-primary"
-                                                                                : "hover:bg-muted/40 text-foreground",
-                                                                            isDragging && "opacity-70",
-                                                                        )}
-                                                                        onContextMenu={(event) => {
-                                                                            event.preventDefault();
-                                                                            setContextMenu({
-                                                                                projectId: project.id,
-                                                                                x: event.clientX,
+                                                                    className={cn(
+                                                                        "group rounded-lg cursor-pointer transition-colors text-sm",
+                                                                        selectedProjectId === project.id
+                                                                            ? "bg-primary/10 text-primary"
+                                                                            : "hover:bg-muted/40 text-foreground",
+                                                                        isDragging && "opacity-70",
+                                                                    )}
+                                                                    role="button"
+                                                                    tabIndex={0}
+                                                                    aria-pressed={selectedProjectId === project.id}
+                                                                    onMouseDown={(event) => handleProjectMouseDown(event, project.id)}
+                                                                    onClick={(event) => handleProjectClick(event, project.id)}
+                                                                    onKeyDown={(event) => handleProjectKeyDown(event, project.id)}
+                                                                    onContextMenu={(event) => {
+                                                                        event.preventDefault();
+                                                                        setContextMenu({
+                                                                            projectId: project.id,
+                                                                            x: event.clientX,
                                                                                 y: event.clientY,
                                                                             });
                                                                         }}
                                                                     >
-                                                                        <div
-                                                                            className="flex items-center gap-2 px-2 py-2"
-                                                                            onClick={() => onSelectProject(project.id)}
-                                                                        >
+                                                                        <div className="flex items-center gap-2 px-2 py-2">
                                                                             <span className="opacity-40 group-hover:opacity-100 transition-opacity">
                                                                                 {handle}
                                                                             </span>
