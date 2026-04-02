@@ -8,6 +8,7 @@ import {
 } from '@mindwtr/core';
 
 import { closeDb, openMindwtrDb, type DbOptions } from './db.js';
+import { ValidationError } from './errors.js';
 import {
   getTask,
   getProject,
@@ -89,7 +90,7 @@ const parseInputStatus = (value: string | undefined): Task['status'] | undefined
   if (value === undefined) return undefined;
   const normalized = normalizeTaskStatus(value);
   if (!TASK_STATUS_SET.has(normalized)) {
-    throw new Error(`Invalid task status: ${value}`);
+    throw new ValidationError(`Invalid task status: ${value}`);
   }
   return normalized;
 };
@@ -102,7 +103,7 @@ const PROJECT_STATUS_SET = new Set<CoreProject['status']>(['active', 'someday', 
 const parseProjectStatus = (value: string | undefined): CoreProject['status'] | undefined => {
   if (value === undefined) return undefined;
   if (!PROJECT_STATUS_SET.has(value as CoreProject['status'])) {
-    throw new Error(`Invalid project status: ${value}`);
+    throw new ValidationError(`Invalid project status: ${value}`);
   }
   return value as CoreProject['status'];
 };
@@ -111,16 +112,16 @@ const validateAddTaskInput = (input: AddTaskInput): void => {
   const hasTitle = typeof input.title === 'string' && input.title.trim().length > 0;
   const hasQuickAdd = typeof input.quickAdd === 'string' && input.quickAdd.trim().length > 0;
   if (!hasTitle && !hasQuickAdd) {
-    throw new Error('Either title or quickAdd is required');
+    throw new ValidationError('Either title or quickAdd is required');
   }
   if (hasTitle && hasQuickAdd) {
-    throw new Error('Provide either title or quickAdd, not both');
+    throw new ValidationError('Provide either title or quickAdd, not both');
   }
   if (hasTitle && input.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
-    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+    throw new ValidationError(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
   }
   if (hasQuickAdd && input.quickAdd!.trim().length > MAX_TASK_QUICK_ADD_LENGTH) {
-    throw new Error(`Quick-add input too long (max ${MAX_TASK_QUICK_ADD_LENGTH} characters)`);
+    throw new ValidationError(`Quick-add input too long (max ${MAX_TASK_QUICK_ADD_LENGTH} characters)`);
   }
 };
 
@@ -180,10 +181,10 @@ export type UpdateAreaInput = {
 const validateProjectTitle = (title: string): string => {
   const trimmed = title.trim();
   if (!trimmed) {
-    throw new Error('Project title is required');
+    throw new ValidationError('Project title is required');
   }
   if (trimmed.length > MAX_TASK_TITLE_LENGTH) {
-    throw new Error(`Project title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+    throw new ValidationError(`Project title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
   }
   return trimmed;
 };
@@ -191,10 +192,10 @@ const validateProjectTitle = (title: string): string => {
 const validateAreaName = (name: string): string => {
   const trimmed = name.trim();
   if (!trimmed) {
-    throw new Error('Area name is required');
+    throw new ValidationError('Area name is required');
   }
   if (trimmed.length > MAX_AREA_NAME_LENGTH) {
-    throw new Error(`Area name too long (max ${MAX_AREA_NAME_LENGTH} characters)`);
+    throw new ValidationError(`Area name too long (max ${MAX_AREA_NAME_LENGTH} characters)`);
   }
   return trimmed;
 };

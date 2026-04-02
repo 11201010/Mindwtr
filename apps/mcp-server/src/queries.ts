@@ -1,6 +1,7 @@
 import { DEFAULT_PROJECT_COLOR, parseQuickAdd as parseQuickAddCore, type Project as CoreProject } from '@mindwtr/core';
 import type { DbClient } from './db.js';
 import { parseJson } from './db.js';
+import { NotFoundError, ValidationError } from './errors.js';
 
 export type TaskStatus = 'inbox' | 'next' | 'waiting' | 'someday' | 'reference' | 'done' | 'archived';
 export type Task = {
@@ -81,11 +82,11 @@ const normalizeTaskStatus = (value: string): TaskStatus => {
 const parseTaskStatusInput = (value: unknown): TaskStatus | undefined => {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') {
-    throw new Error(`Invalid task status: ${String(value)}`);
+    throw new ValidationError(`Invalid task status: ${String(value)}`);
   }
   const normalized = STATUS_TOKENS[value.toLowerCase()];
   if (!normalized) {
-    throw new Error(`Invalid task status: ${value}`);
+    throw new ValidationError(`Invalid task status: ${value}`);
   }
   return normalized;
 };
@@ -310,7 +311,7 @@ export function getTask(db: DbClient, input: GetTaskInput): TaskRow {
   const sql = `SELECT ${selectColumns.join(', ')} FROM tasks WHERE ${where.join(' AND ')}`;
   const row = db.prepare(sql).get(input.id);
   if (!row) {
-    throw new Error(`Task not found: ${input.id}`);
+    throw new NotFoundError(`Task not found: ${input.id}`);
   }
   return mapTaskRow(row);
 }
@@ -396,7 +397,7 @@ export function getProject(db: DbClient, input: GetProjectInput): Project {
   }
   const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM projects WHERE ${where.join(' AND ')}`).get(input.id);
   if (!row) {
-    throw new Error(`Project not found: ${input.id}`);
+    throw new NotFoundError(`Project not found: ${input.id}`);
   }
   return mapProjectRow(row);
 }
@@ -479,7 +480,7 @@ export function addTask(db: DbClient, input: AddTaskInput): TaskRow {
     }
 
     if (!title) {
-      throw new Error('Task title is required.');
+      throw new ValidationError('Task title is required.');
     }
 
     const status = parseTaskStatusInput(input.status) ?? parseTaskStatusInput(props.status) ?? 'inbox';
@@ -589,13 +590,13 @@ export function completeTask(db: DbClient, input: CompleteTaskInput): TaskRow {
     `);
     const info = update.run(now, now, input.id);
     if (!info.changes || info.changes === 0) {
-      throw new Error(`Task not found: ${input.id}`);
+      throw new NotFoundError(`Task not found: ${input.id}`);
     }
 
     const { selectColumns } = getTaskColumns(db);
     const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
     if (!row) {
-      throw new Error(`Task not found after update: ${input.id}`);
+      throw new NotFoundError(`Task not found after update: ${input.id}`);
     }
     return mapTaskRow(row);
   });
@@ -622,7 +623,7 @@ export function updateTask(db: DbClient, input: UpdateTaskInput): TaskRow {
     const { selectColumns } = getTaskColumns(db);
     const existing = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ? AND deletedAt IS NULL`).get(input.id);
     if (!existing) {
-      throw new Error(`Task not found: ${input.id}`);
+      throw new NotFoundError(`Task not found: ${input.id}`);
     }
     const current = mapTaskRow(existing);
     const now = new Date().toISOString();
@@ -681,7 +682,7 @@ export function updateTask(db: DbClient, input: UpdateTaskInput): TaskRow {
 
     const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
     if (!row) {
-      throw new Error(`Task not found after update: ${input.id}`);
+      throw new NotFoundError(`Task not found after update: ${input.id}`);
     }
     return mapTaskRow(row);
   });
@@ -699,12 +700,12 @@ export function deleteTask(db: DbClient, input: DeleteTaskInput): TaskRow {
     `);
     const info = update.run(now, now, input.id);
     if (!info.changes || info.changes === 0) {
-      throw new Error(`Task not found or already deleted: ${input.id}`);
+      throw new NotFoundError(`Task not found or already deleted: ${input.id}`);
     }
     const { selectColumns } = getTaskColumns(db);
     const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
     if (!row) {
-      throw new Error(`Task not found after delete: ${input.id}`);
+      throw new NotFoundError(`Task not found after delete: ${input.id}`);
     }
     return mapTaskRow(row);
   });
@@ -722,12 +723,12 @@ export function restoreTask(db: DbClient, input: RestoreTaskInput): TaskRow {
     `);
     const info = update.run(now, input.id);
     if (!info.changes || info.changes === 0) {
-      throw new Error(`Task not found or not deleted: ${input.id}`);
+      throw new NotFoundError(`Task not found or not deleted: ${input.id}`);
     }
     const { selectColumns } = getTaskColumns(db);
     const row = db.prepare(`SELECT ${selectColumns.join(', ')} FROM tasks WHERE id = ?`).get(input.id);
     if (!row) {
-      throw new Error(`Task not found after restore: ${input.id}`);
+      throw new NotFoundError(`Task not found after restore: ${input.id}`);
     }
     return mapTaskRow(row);
   });

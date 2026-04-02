@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod';
 
+import { getMindwtrToolErrorCode, ReadOnlyError, ValidationError } from './errors.js';
 import { createService, type MindwtrService } from './service.js';
 
 type LogLevel = 'info' | 'error';
@@ -52,14 +53,7 @@ const createMcpTextResponse = (payload: Record<string, unknown>): McpToolRespons
 
 const createMcpErrorResponse = (error: unknown): McpToolResponse => {
   const message = error instanceof Error ? error.message : String(error);
-  const lowered = message.toLowerCase();
-  const code = lowered.includes('read-only')
-    ? 'read_only'
-    : lowered.includes('not found')
-      ? 'not_found'
-      : (lowered.includes('required') || lowered.includes('invalid') || lowered.includes('must') || lowered.includes('either'))
-        ? 'validation_error'
-        : 'internal_error';
+  const code = getMindwtrToolErrorCode(error);
   return {
     content: [{ type: 'text', text: JSON.stringify({ error: message, code }, null, 2) }],
     isError: true,
@@ -167,16 +161,16 @@ const validateAddTask = (data: z.infer<typeof addTaskSchema>) => {
   const hasTitle = typeof data.title === 'string' && data.title.trim().length > 0;
   const hasQuickAdd = typeof data.quickAdd === 'string' && data.quickAdd.trim().length > 0;
   if (!hasTitle && !hasQuickAdd) {
-    throw new Error('Either title or quickAdd is required');
+    throw new ValidationError('Either title or quickAdd is required');
   }
   if (hasTitle && hasQuickAdd) {
-    throw new Error('Provide either title or quickAdd, not both');
+    throw new ValidationError('Provide either title or quickAdd, not both');
   }
   if (hasTitle && data.title!.trim().length > MAX_TASK_TITLE_LENGTH) {
-    throw new Error(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
+    throw new ValidationError(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`);
   }
   if (hasQuickAdd && data.quickAdd!.trim().length > MAX_TASK_QUICK_ADD_LENGTH) {
-    throw new Error(`Quick-add input too long (max ${MAX_TASK_QUICK_ADD_LENGTH} characters)`);
+    throw new ValidationError(`Quick-add input too long (max ${MAX_TASK_QUICK_ADD_LENGTH} characters)`);
   }
 };
 
@@ -315,7 +309,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: addTaskSchema,
     },
     withMcpErrorHandling('mindwtr_add_task', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       validateAddTask(input);
       const task = await service.addTask({
         ...input,
@@ -331,7 +325,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: updateTaskSchema,
     },
     withMcpErrorHandling('mindwtr_update_task', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const task = await service.updateTask({
         ...input,
       });
@@ -346,7 +340,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: completeTaskSchema,
     },
     withMcpErrorHandling('mindwtr_complete_task', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const task = await service.completeTask(input.id);
       return createMcpTextResponse({ task });
     }),
@@ -359,7 +353,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: deleteTaskSchema,
     },
     withMcpErrorHandling('mindwtr_delete_task', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const task = await service.deleteTask(input.id);
       return createMcpTextResponse({ task });
     }),
@@ -384,7 +378,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: restoreTaskSchema,
     },
     withMcpErrorHandling('mindwtr_restore_task', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const task = await service.restoreTask(input.id);
       return createMcpTextResponse({ task });
     }),
@@ -397,7 +391,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: addProjectSchema,
     },
     withMcpErrorHandling('mindwtr_add_project', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const project = await service.addProject(input);
       return createMcpTextResponse({ project });
     }),
@@ -410,7 +404,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: updateProjectSchema,
     },
     withMcpErrorHandling('mindwtr_update_project', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const project = await service.updateProject(input);
       return createMcpTextResponse({ project });
     }),
@@ -423,7 +417,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: deleteProjectSchema,
     },
     withMcpErrorHandling('mindwtr_delete_project', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const project = await service.deleteProject(input.id);
       return createMcpTextResponse({ project });
     }),
@@ -436,7 +430,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: addAreaSchema,
     },
     withMcpErrorHandling('mindwtr_add_area', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const area = await service.addArea(input);
       return createMcpTextResponse({ area });
     }),
@@ -449,7 +443,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: updateAreaSchema,
     },
     withMcpErrorHandling('mindwtr_update_area', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const area = await service.updateArea(input);
       return createMcpTextResponse({ area });
     }),
@@ -462,7 +456,7 @@ export const registerMindwtrTools = (server: McpServer, service: MindwtrService,
       inputSchema: deleteAreaSchema,
     },
     withMcpErrorHandling('mindwtr_delete_area', async (input) => {
-      if (readonly) throw new Error('Database opened read-only. Start the server with --write to enable edits.');
+      if (readonly) throw new ReadOnlyError();
       const area = await service.deleteArea(input.id);
       return createMcpTextResponse({ area });
     }),

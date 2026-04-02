@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import { NotFoundError } from './errors.js';
 import { parseArgs, parseBooleanFlag, registerMindwtrTools, resolveServerModeFlags } from './index.js';
 
 type RegisteredTool = {
@@ -188,5 +189,24 @@ describe('mcp server index', () => {
     const result = await listHandler?.({});
     expect(result?.isError).toBe(true);
     expect(result?.content?.[0]?.text).toContain('boom');
+  });
+
+  test('maps typed not-found errors without relying on message matching', async () => {
+    const { server, tools } = createMockServer();
+    const failingService = {
+      ...createMockService(),
+      getTask: async () => {
+        throw new NotFoundError('Invalid request but found resource issue: t1');
+      },
+    };
+    registerMindwtrTools(server, failingService, false);
+    const getTaskHandler = tools.get('mindwtr_get_task')?.handler;
+    expect(getTaskHandler).toBeTruthy();
+
+    const result = await getTaskHandler?.({ id: 't1' });
+    const payload = JSON.parse(result?.content?.[0]?.text || '{}');
+
+    expect(result?.isError).toBe(true);
+    expect(payload.code).toBe('not_found');
   });
 });
