@@ -1,0 +1,3 @@
+- Added backup restore and Todoist import tools.
+- Android widget now shows hidden focus counts and larger task text.
+- Mobile sync snapshots app state, avoids duplicate conflict alerts, and safely cancels checklist flushes on delete.

@@ -1,4 +1,4 @@
-- Mantuvimos el auto-sync movil activo tras cambios de layout y aclaramos el progreso del procesamiento de Inbox.
-- Agregamos feedback de accesibilidad para gestos y un estado mas claro de hidratacion y sesion del Pomodoro.
-- Permitimos URLs como valor de nota en quick add y corregimos la integracion del encabezado del drawer con Expo Router.
-- Mejoramos la fiabilidad compartida del sync con alertas de desfase horario, limpieza de reintentos mas segura y conflictos ambiguos resueltos a favor del borrado.
+- Agregamos restauracion de copias e importacion de Todoist para mover datos dentro y fuera de Mindwtr con mas facilidad.
+- Mejoramos el arranque de iCloud sync al activar CloudKit solo en el primer sync y manejar con mas seguridad los tipos de registro ausentes.
+- El sync movil ahora captura el estado de la app, evita alertas de conflicto repetidas y cancela el guardado pendiente de checklist al borrar.
+- Ahora se pueden restaurar proyectos y areas, y la edicion del color del area vuelve a ser fiable.

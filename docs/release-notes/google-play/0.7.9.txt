@@ -1,0 +1,15 @@
+<en-US>
+- Added backup restore and Todoist import tools.
+- Android widget now shows hidden focus counts and larger task text.
+- Mobile sync snapshots app state, avoids duplicate conflict alerts, and safely cancels checklist flushes on delete.
+</en-US>
+<zh-CN>
+- 新增备份恢复与 Todoist 导入。
+- Android 小组件现在会显示被隐藏的专注项数量，并使用更大的任务文字。
+- 移动端同步现在会快照应用状态、避免重复冲突提醒，并在删除时安全取消待处理的清单刷新。
+</zh-CN>
+<es-ES>
+- Agregamos restauracion de copias e importacion de Todoist.
+- El widget de Android ahora muestra el recuento oculto de Focus y texto de tarea mas grande.
+- El sync movil ahora captura el estado de la app, evita alertas de conflicto duplicadas y cancela con seguridad el guardado pendiente de checklist al borrar.
+</es-ES>

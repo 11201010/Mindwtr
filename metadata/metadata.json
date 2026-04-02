@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 桌面端项目规划界面现已将详情与备注整合，并默认折叠元数据，减少视觉干扰。\n• 新增键盘快捷键帮助，改进任务描述自动增高与项目任务拖拽命中表现。\n• 音频采集现在会更清楚显示处理中状态，并在展开前默认隐藏任务备注。\n• 共享同步现已加入时钟偏差警告，并让重试清理与偏向删除的冲突处理更安全。",
+        "ReleaseNotes": "• 新增备份恢复与 Todoist 导入，让数据进出 Mindwtr 更轻松。\n• 桌面端 Obsidian 集成现已支持 TaskNotes，并加入实时更新与回写能力。\n• 改进桌面端在 self-hosted 与 CloudKit 场景下的同步可靠性，并更清楚显示过滤器与同步开关状态。\n• 现在支持恢复项目和领域，同时进一步打磨专注视图、删除撤销文案与无障碍后备标签。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Desktop projects now keep details and notes together, with metadata collapsed by default for a cleaner planning view.\n• Added keyboard shortcut help, autosizing for task descriptions, and better project task drag targeting.\n• Audio capture now shows processing state more clearly and keeps task notes hidden until expanded.\n• Shared sync handling is safer with clock-skew warnings, clearer retry cleanup, and stronger delete-biased conflict resolution.",
+        "ReleaseNotes": "• Added backup restore and Todoist import so moving data in and out of Mindwtr is simpler.\n• Desktop Obsidian integration now supports TaskNotes plus live updates and write-back.\n• Improved desktop sync reliability for self-hosted and CloudKit setups, with clearer filter and sync-toggle state.\n• Restoring projects and areas is now supported, while focus views, delete undo copy, and accessibility fallbacks are more polished.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Los proyectos de escritorio ahora mantienen juntos detalles y notas, con los metadatos plegados por defecto para una vista mas limpia.\n• Agregamos ayuda visible de atajos de teclado, autoajuste para descripciones de tareas y mejor arrastre de tareas dentro de proyectos.\n• La captura de audio ahora muestra mejor el estado de procesamiento y oculta las notas de tarea hasta expandirlas.\n• El sync compartido es mas seguro con alertas de desfase horario, limpieza de reintentos mas clara y resolucion de conflictos ambigüos a favor del borrado.",
+        "ReleaseNotes": "• Agregamos restauracion de copias e importacion de Todoist para mover datos dentro y fuera de Mindwtr con mas facilidad.\n• La integracion de Obsidian en escritorio ahora admite TaskNotes, actualizacion en vivo y escritura de vuelta.\n• Mejoramos la fiabilidad del sync en escritorio para entornos self-hosted y CloudKit, con un estado mas claro de filtros y sync.\n• Ahora se pueden restaurar proyectos y areas, y pulimos las vistas Focus, el deshacer borrado y las etiquetas de accesibilidad.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

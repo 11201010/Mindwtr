@@ -1,4 +1,4 @@
-- Kept mobile auto-sync active after layout updates and clarified inbox processing progress.
-- Added swipe accessibility feedback and clearer Pomodoro hydration and session state on mobile.
-- Allowed URL note values in quick add and fixed drawer header wiring with Expo Router.
-- Improved shared sync reliability with clock skew warnings, safer retry cleanup, and stronger delete-biased conflict handling.
+- Added backup restore and Todoist import so it is easier to move your data in and out of Mindwtr.
+- Improved iCloud sync startup by staging CloudKit until first sync and handling missing record types more safely.
+- Mobile sync now snapshots app state, avoids repeated conflict alerts, and cancels pending checklist flushes on delete.
+- Restoring projects and areas is now supported, and area color editing is reliable again.

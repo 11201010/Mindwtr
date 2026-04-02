@@ -1,0 +1,3 @@
+- Agregamos restauracion de copias e importacion de Todoist.
+- El widget de Android ahora muestra el recuento oculto de Focus y texto de tarea mas grande.
+- El sync movil ahora captura el estado de la app, evita alertas de conflicto duplicadas y cancela con seguridad el guardado pendiente de checklist al borrar.
