@@ -5,12 +5,14 @@ import { Directory as ExpoDirectory, File as ExpoFile } from 'expo-file-system';
 import { AppData } from '@mindwtr/core';
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './app-log';
+import { createSyncPathBookmark } from './sync-path-bookmarks';
 
 // StorageAccessFramework is part of the legacy FileSystem module
 const StorageAccessFramework = (FileSystem as any).StorageAccessFramework;
 
 interface PickResult extends AppData {
     __fileUri?: string;
+    __fileBookmark?: string;
     /** True when the selected sync folder is inside iCloud Drive. */
     __icloud?: boolean;
 }
@@ -44,13 +46,14 @@ const normalizeDirectoryUri = (uri: string): string => uri.replace(/\/+$/, '');
 const buildSyncFileUri = (directoryUri: string, fileName = SYNC_FILE_NAME): string =>
     `${normalizeDirectoryUri(directoryUri)}/${fileName}`;
 
-const emptyPickResult = (fileUri: string): PickResult => ({
+const emptyPickResult = (fileUri: string, fileBookmark?: string | null): PickResult => ({
     tasks: [],
     projects: [],
     sections: [],
     areas: [],
     settings: {},
     __fileUri: fileUri,
+    __fileBookmark: fileBookmark?.trim() || undefined,
     __icloud: isICloudUri(fileUri),
 });
 
@@ -437,6 +440,7 @@ const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
         }
 
         await assertIosDirectoryWritable(directoryUri);
+        const directoryBookmark = await createSyncPathBookmark(directoryUri);
 
         const primaryFileUri = buildSyncFileUri(directoryUri, SYNC_FILE_NAME);
         const legacyFileUri = buildSyncFileUri(directoryUri, LEGACY_SYNC_FILE_NAME);
@@ -450,9 +454,14 @@ const pickAndParseIosSyncFolder = async (): Promise<PickResult | null> => {
             }
         }
 
-        if (!fileContent) return emptyPickResult(primaryFileUri);
+        if (!fileContent) return emptyPickResult(primaryFileUri, directoryBookmark);
         const data = parseAppData(fileContent);
-        return { ...data, __fileUri: fileUri, __icloud: isICloudUri(fileUri) };
+        return {
+            ...data,
+            __fileUri: fileUri,
+            __fileBookmark: directoryBookmark?.trim() || undefined,
+            __icloud: isICloudUri(fileUri),
+        };
     } catch (error) {
         if (isPickerCanceledError(error)) {
             return await pickFolderFromExistingFile();

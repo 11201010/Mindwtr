@@ -5,6 +5,7 @@ import { AppData, Attachment, MergeStats, createSyncOrchestrator, useTaskStore, 
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFile, resolveSyncFileUri, writeSyncFile } from './storage-file';
+import { resolveSyncPathBookmark } from './sync-path-bookmarks';
 import { getBaseSyncUrl, getCloudBaseUrl, syncCloudAttachments, syncDropboxAttachments, syncFileAttachments, syncWebdavAttachments, cleanupAttachmentTempFiles } from './attachment-sync';
 import { getExternalCalendars, saveExternalCalendars } from './external-calendar';
 import { forceRefreshDropboxAccessToken, getValidDropboxAccessToken } from './dropbox-auth';
@@ -29,6 +30,7 @@ import {
   CLOUD_URL_KEY,
   CLOUD_TOKEN_KEY,
   CLOUD_PROVIDER_KEY,
+  SYNC_PATH_BOOKMARK_KEY,
   DROPBOX_LAST_REV_KEY,
 } from './sync-constants';
 
@@ -176,6 +178,39 @@ const readConfigValue = async (key: string, useCache = true): Promise<string | n
 
 const getCachedConfigValue = async (key: string): Promise<string | null> => {
   return readConfigValue(key, true);
+};
+
+const getPathLeaf = (path: string): string => {
+  const stripped = path.split('?')[0]?.split('#')[0]?.replace(/\/+$/, '') ?? '';
+  const lastSlash = Math.max(stripped.lastIndexOf('/'), stripped.lastIndexOf('\\'));
+  return lastSlash >= 0 ? stripped.slice(lastSlash + 1) : stripped;
+};
+
+const resolveBookmarkedFileSyncPath = async (syncPath: string | null): Promise<string | null> => {
+  if (Platform.OS !== 'ios') return syncPath;
+
+  const bookmark = (await getCachedConfigValue(SYNC_PATH_BOOKMARK_KEY))?.trim() ?? null;
+  if (!bookmark) return syncPath;
+
+  const bookmarkUri = await resolveSyncPathBookmark(bookmark);
+  if (!bookmarkUri) return syncPath;
+
+  let resolvedPath = bookmarkUri;
+  if (syncPath && isLikelyFilePath(syncPath) && !isLikelyFilePath(bookmarkUri)) {
+    const leafName = getPathLeaf(syncPath) || SYNC_FILE_NAME;
+    resolvedPath = `${bookmarkUri.replace(/\/+$/, '')}/${leafName}`;
+  }
+
+  if (!syncPath || resolvedPath !== syncPath) {
+    await AsyncStorage.setItem(SYNC_PATH_KEY, resolvedPath);
+    syncConfigCache.set(SYNC_PATH_KEY, { value: resolvedPath, readAt: Date.now() });
+    logSyncInfo('Resolved iOS sync-folder bookmark', {
+      bookmarkPath: bookmarkUri,
+      filePath: resolvedPath,
+    });
+  }
+
+  return resolvedPath;
 };
 
 const getSupportedBackend = (rawBackend: string | null): SyncBackend =>
@@ -371,6 +406,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
       if (backend === 'file') {
         const configuredSyncPath = (await getCachedConfigValue(SYNC_PATH_KEY))?.trim() ?? null;
         fileSyncPath = syncPathOverride || configuredSyncPath;
+        fileSyncPath = await resolveBookmarkedFileSyncPath(fileSyncPath);
         if (!fileSyncPath) {
           return { success: true };
         }

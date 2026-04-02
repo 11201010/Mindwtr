@@ -1,4 +1,5 @@
 export const SYNC_PATH_KEY = '@mindwtr_sync_path';
+export const SYNC_PATH_BOOKMARK_KEY = '@mindwtr_sync_path_bookmark';
 export const SYNC_BACKEND_KEY = '@mindwtr_sync_backend';
 export const WEBDAV_URL_KEY = '@mindwtr_webdav_url';
 export const WEBDAV_USERNAME_KEY = '@mindwtr_webdav_username';

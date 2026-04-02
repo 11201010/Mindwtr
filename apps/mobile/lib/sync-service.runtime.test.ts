@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
 const emptyData = {
   tasks: [],
@@ -61,6 +62,10 @@ const storageFileMocks = vi.hoisted(() => ({
   readSyncFile: vi.fn(),
   resolveSyncFileUri: vi.fn(),
   writeSyncFile: vi.fn(),
+}));
+
+const syncPathBookmarkMocks = vi.hoisted(() => ({
+  resolveSyncPathBookmark: vi.fn(),
 }));
 
 const logMocks = vi.hoisted(() => ({
@@ -162,6 +167,10 @@ vi.mock('./storage-file', () => ({
   writeSyncFile: storageFileMocks.writeSyncFile,
 }));
 
+vi.mock('./sync-path-bookmarks', () => ({
+  resolveSyncPathBookmark: syncPathBookmarkMocks.resolveSyncPathBookmark,
+}));
+
 vi.mock('./app-log', () => ({
   logInfo: logMocks.logInfo,
   logSyncError: logMocks.logSyncError,
@@ -198,6 +207,7 @@ describe('mobile sync-service runtime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (Platform as { OS: string }).OS = 'web';
 
     storeStateRef.current = {
       lastDataChangeAt: 1,
@@ -228,6 +238,10 @@ describe('mobile sync-service runtime', () => {
 
     storageMocks.getData.mockResolvedValue(emptyData);
     storageMocks.saveData.mockResolvedValue(undefined);
+    storageFileMocks.readSyncFile.mockResolvedValue(null);
+    storageFileMocks.resolveSyncFileUri.mockImplementation(async (uri: string) => uri);
+    storageFileMocks.writeSyncFile.mockResolvedValue(undefined);
+    syncPathBookmarkMocks.resolveSyncPathBookmark.mockResolvedValue(null);
 
     attachmentSyncMocks.syncCloudAttachments.mockResolvedValue(false);
     attachmentSyncMocks.syncDropboxAttachments.mockResolvedValue(false);
@@ -303,6 +317,27 @@ describe('mobile sync-service runtime', () => {
     expect(coreMocks.webdavGetJson).toHaveBeenCalledTimes(1);
     expect(storeStateRef.current.updateSettings).not.toHaveBeenCalled();
     expect(logMocks.logSyncError).not.toHaveBeenCalled();
+  });
+
+  it('resolves a stored iOS sync-folder bookmark before using a stale file-sync override path', async () => {
+    (Platform as { OS: string }).OS = 'ios';
+    asyncStorageMocks.getItem.mockImplementation(async (key: string) => {
+      const values: Record<string, string | null> = {
+        '@mindwtr_sync_backend': 'file',
+        '@mindwtr_sync_path': 'file:///stale/MindWtr/data.json',
+        '@mindwtr_sync_path_bookmark': 'bookmark-token',
+      };
+      return values[key] ?? null;
+    });
+    syncPathBookmarkMocks.resolveSyncPathBookmark.mockResolvedValue('file:///resolved/MindWtr');
+
+    const result = await syncServiceModule.performMobileSync('file:///stale/MindWtr/data.json');
+
+    expect(result.success).toBe(true);
+    expect(syncPathBookmarkMocks.resolveSyncPathBookmark).toHaveBeenCalledWith('bookmark-token');
+    expect(asyncStorageMocks.setItem).toHaveBeenCalledWith('@mindwtr_sync_path', 'file:///resolved/MindWtr/data.json');
+    expect(storageFileMocks.readSyncFile).toHaveBeenCalledWith('file:///resolved/MindWtr/data.json');
+    expect(storageFileMocks.writeSyncFile).toHaveBeenCalledWith('file:///resolved/MindWtr/data.json', expect.any(Object));
   });
 
   it('returns a queued retry result when fresher local edits abort the merge', async () => {

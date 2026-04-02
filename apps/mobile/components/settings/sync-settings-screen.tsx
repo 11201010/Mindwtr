@@ -61,6 +61,7 @@ import {
     CLOUD_TOKEN_KEY,
     CLOUD_URL_KEY,
     SYNC_BACKEND_KEY,
+    SYNC_PATH_BOOKMARK_KEY,
     SYNC_PATH_KEY,
     WEBDAV_PASSWORD_KEY,
     WEBDAV_URL_KEY,
@@ -619,8 +620,14 @@ export function SyncSettingsScreen() {
             const result = await pickAndParseSyncFolder();
             if (result) {
                 const fileUri = (result as { __fileUri: string }).__fileUri;
+                const fileBookmark = (result as { __fileBookmark?: string }).__fileBookmark?.trim() ?? null;
                 if (fileUri) {
                     await AsyncStorage.setItem(SYNC_PATH_KEY, fileUri);
+                    if (fileBookmark) {
+                        await AsyncStorage.setItem(SYNC_PATH_BOOKMARK_KEY, fileBookmark);
+                    } else {
+                        await AsyncStorage.removeItem(SYNC_PATH_BOOKMARK_KEY);
+                    }
                     setSyncPath(fileUri);
                     await AsyncStorage.setItem(SYNC_BACKEND_KEY, 'file');
                     setSyncBackend('file');
