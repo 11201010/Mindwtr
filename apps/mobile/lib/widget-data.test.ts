@@ -35,6 +35,7 @@ describe('widget-data', () => {
         expect(payload.items).toHaveLength(3);
         expect(payload.items.map((item) => item.title)).toEqual(['Focused 1', 'Focused 2', 'Focused 3']);
         expect(payload.inboxCount).toBe(1);
+        expect(payload.subtitle).toBe('Inbox: 1 · +2 More');
     });
 
     it('honors maxItems option for larger widgets', () => {
@@ -58,6 +59,7 @@ describe('widget-data', () => {
             'Focused 4',
             'Focused 5',
         ]);
+        expect(payload.subtitle).toBe('Inbox: 0');
     });
 
     it('includes focus-page schedule/next tasks even when none are explicitly focused', () => {

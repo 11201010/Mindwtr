@@ -208,12 +208,17 @@ export function buildWidgetPayload(
         title: task.title,
         statusLabel: tr[`status.${task.status}`] || task.status,
     }));
+    const hiddenTaskCount = Math.max(listSource.length - items.length, 0);
 
     const inboxCount = activeTasks.filter((task) => task.status === 'inbox').length;
+    const subtitleParts = [`${tr['nav.inbox'] ?? 'Inbox'}: ${inboxCount}`];
+    if (hiddenTaskCount > 0) {
+        subtitleParts.push(`+${hiddenTaskCount} ${tr['common.more'] ?? 'More'}`);
+    }
 
     return {
         headerTitle: tr['agenda.todaysFocus'] ?? 'Today',
-        subtitle: `${tr['nav.inbox'] ?? 'Inbox'}: ${inboxCount}`,
+        subtitle: subtitleParts.join(' · '),
         inboxLabel: tr['nav.inbox'] ?? 'Inbox',
         inboxCount,
         items,
