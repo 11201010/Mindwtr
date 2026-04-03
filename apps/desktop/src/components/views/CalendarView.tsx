@@ -514,7 +514,12 @@ export function CalendarView() {
                                         "text-sm font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1",
                                         isToday(day) && "bg-primary text-primary-foreground"
                                     )}>
-                                        {format(day, 'd')}
+                                        <span className={cn(
+                                            "tabular-nums leading-none",
+                                            isToday(day) && "text-primary-foreground"
+                                        )}>
+                                            {format(day, 'd')}
+                                        </span>
                                     </div>
                                     {(taskCount > 0 || eventCount > 0) && (
                                         <div className="flex items-center gap-1">
