@@ -197,6 +197,31 @@ describe('TaskStore', () => {
         expect(updatedTask.pushCount).toBe(0);
     });
 
+    it('rejects promoting a fourth task into today focus', async () => {
+        const { addTask, updateTask } = useTaskStore.getState();
+
+        const taskIds: string[] = [];
+        for (const title of ['Focused 1', 'Focused 2', 'Focused 3', 'Focused 4']) {
+            const result = await addTask(title, { status: 'next' });
+            expect(result.success).toBe(true);
+            expect(result.id).toBeTruthy();
+            if (result.id) taskIds.push(result.id);
+        }
+
+        for (const taskId of taskIds.slice(0, 3)) {
+            const result = await updateTask(taskId, { isFocusedToday: true });
+            expect(result).toEqual({ success: true });
+        }
+
+        const fourthResult = await updateTask(taskIds[3], { isFocusedToday: true });
+
+        expect(fourthResult).toEqual({ success: false, error: 'Maximum of 3 focused tasks allowed' });
+        const focusedTasks = useTaskStore.getState()._allTasks.filter((task) => task.isFocusedToday === true && !task.deletedAt);
+        expect(focusedTasks).toHaveLength(3);
+        expect(focusedTasks.map((task) => task.id)).toEqual(taskIds.slice(0, 3));
+        expect(useTaskStore.getState()._allTasks.find((task) => task.id === taskIds[3])?.isFocusedToday).not.toBe(true);
+    });
+
     it('should delete a task', () => {
         const { addTask, deleteTask } = useTaskStore.getState();
         addTask('Task to Delete');

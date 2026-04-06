@@ -51,6 +51,7 @@ type TaskActionContext = {
 
 const actionOk = (extra?: Omit<StoreActionResult, 'success'>): StoreActionResult => ({ success: true, ...extra });
 const actionFail = (error: string): StoreActionResult => ({ success: false, error });
+const MAX_FOCUS_TASKS = 3;
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 const normalizeOptionalReferenceId = (value: unknown): string | undefined => (
     typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
@@ -394,6 +395,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
             return actionFail(preparedUpdates.error);
         }
         let snapshot: AppData | null = null;
+        let focusLimitReached = false;
         set((state) => {
             const oldTask = state._allTasks.find((t) => t.id === id);
             if (!oldTask) {
@@ -410,6 +412,17 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
                 { ...preparedUpdates.updates, ...nextRevision },
                 now
             );
+
+            const isPromotingTaskFocus = updatedTask.isFocusedToday === true && oldTask.isFocusedToday !== true;
+            if (isPromotingTaskFocus) {
+                const focusedCount = state._allTasks.filter(
+                    (task) => task.isFocusedToday === true && !task.deletedAt
+                ).length;
+                if (focusedCount >= MAX_FOCUS_TASKS) {
+                    focusLimitReached = true;
+                    return state;
+                }
+            }
 
             const updatedAllTasksBase = state._allTasks.map((task) =>
                 task.id === id ? updatedTask : task
@@ -436,6 +449,11 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
 
         if (snapshot) {
             debouncedSave(snapshot, (msg) => set({ error: msg }));
+        }
+        if (focusLimitReached) {
+            const message = `Maximum of ${MAX_FOCUS_TASKS} focused tasks allowed`;
+            set({ error: message });
+            return actionFail(message);
         }
         return actionOk();
     },
