@@ -192,16 +192,21 @@ Only `--write` is supported for write access (no alternate aliases).
 ### Write Tools (Requires `--write`)
 
 - **`mindwtr_add_task`**: Create a new task. Supports natural language `quickAdd` (e.g., "Buy milk @errands /due:tomorrow").
-- **`mindwtr_update_task`**: Update an existing task (supports clearing fields with `null`).
+- **`mindwtr_update_task`**: Update an existing task, including scheduling fields like `dueDate`, `startTime`, `reviewAt`, and `isFocusedToday` (supports clearing fields with `null`).
 - **`mindwtr_complete_task`**: Mark a task as done.
 - **`mindwtr_delete_task`**: Soft-delete a task.
 - **`mindwtr_restore_task`**: Restore a soft-deleted task.
-- **`mindwtr_add_project`**: Create a new project.
-- **`mindwtr_update_project`**: Update a project.
+- **`mindwtr_add_project`**: Create a new project, including optional `dueDate` and `reviewAt`.
+- **`mindwtr_update_project`**: Update a project, including optional `dueDate` and `reviewAt`.
 - **`mindwtr_delete_project`**: Soft-delete a project.
 - **`mindwtr_add_area`**: Create a new area.
 - **`mindwtr_update_area`**: Update an area.
 - **`mindwtr_delete_area`**: Soft-delete an area.
+
+Schema note:
+- Task write tools cover `dueDate`, `startTime`, and `reviewAt` (on update).
+- Project write tools cover both `dueDate` and `reviewAt`.
+- For the exact canonical inputs, use [apps/mcp-server/README.md](https://github.com/dongdongbh/Mindwtr/blob/main/apps/mcp-server/README.md).
 
 ## Permission Matrix
 
@@ -464,6 +469,7 @@ If you need more than 500 tasks, page with `limit` + `offset` instead of expecti
 - `areaId`: string or `null`
 - `isSequential`: boolean (optional)
 - `isFocused`: boolean (optional)
+- `dueDate`: ISO string or `null`
 - `reviewAt`: ISO string or `null`
 - `supportNotes`: string or `null`
 
@@ -472,7 +478,7 @@ If you need more than 500 tasks, page with `limit` + `offset` instead of expecti
 **Input fields**
 
 - `id`: string (project UUID)
-- `title`, `color`, `status`, `areaId`, `isSequential`, `isFocused`, `reviewAt`, `supportNotes`
+- `title`, `color`, `status`, `areaId`, `isSequential`, `isFocused`, `dueDate`, `reviewAt`, `supportNotes`
 
 ### `mindwtr_delete_project` (write)
 
