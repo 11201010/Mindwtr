@@ -4,6 +4,22 @@ import ExpoModulesCore
 public class SyncPathBookmarksModule: Module {
   private var activeScopedUrl: URL?
 
+  private var bookmarkCreationOptions: URL.BookmarkCreationOptions {
+    #if os(macOS)
+      return .withSecurityScope
+    #else
+      return []
+    #endif
+  }
+
+  private var bookmarkResolutionOptions: URL.BookmarkResolutionOptions {
+    #if os(macOS)
+      return .withSecurityScope
+    #else
+      return []
+    #endif
+  }
+
   public func definition() -> ModuleDefinition {
     Name("SyncPathBookmarks")
 
@@ -20,7 +36,7 @@ public class SyncPathBookmarksModule: Module {
       }
 
       let bookmarkData = try url.bookmarkData(
-        options: .withSecurityScope,
+        options: self.bookmarkCreationOptions,
         includingResourceValuesForKeys: nil,
         relativeTo: nil
       )
@@ -36,7 +52,7 @@ public class SyncPathBookmarksModule: Module {
       var isStale = false
       let resolvedUrl = try URL(
         resolvingBookmarkData: bookmarkData,
-        options: .withSecurityScope,
+        options: self.bookmarkResolutionOptions,
         relativeTo: nil,
         bookmarkDataIsStale: &isStale
       )
