@@ -13,6 +13,7 @@ export interface EntityMergeStats {
     conflictIds: string[];
     maxClockSkewMs: number;
     maxClockSkewDirection?: ClockSkewDirection;
+    invalidTimestamps: number;
     timestampAdjustments: number;
     timestampAdjustmentIds: string[];
     conflictReasonCounts?: Partial<Record<ConflictReason, number>>;

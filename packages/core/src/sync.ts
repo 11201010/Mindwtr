@@ -83,6 +83,7 @@ function createEmptyEntityStats(localTotal: number, incomingTotal: number): Enti
         conflictIds: [],
         maxClockSkewMs: 0,
         maxClockSkewDirection: undefined,
+        invalidTimestamps: 0,
         timestampAdjustments: 0,
         timestampAdjustmentIds: [],
         conflictReasonCounts: {},
@@ -318,6 +319,7 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
 
             const deletedTimeRaw = new Date(item.deletedAt).getTime();
             if (!Number.isFinite(deletedTimeRaw)) {
+                stats.invalidTimestamps += 1;
                 invalidDeletedAtWarnings += 1;
                 if (invalidDeletedAtWarnings <= 5) {
                     logWarn('Invalid deletedAt timestamp during merge; using updatedAt fallback', {

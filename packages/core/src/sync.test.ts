@@ -1045,11 +1045,12 @@ describe('Sync Logic', () => {
                 createMockTask('1', '2023-01-02T00:00:00.000Z'),
             ]);
 
-            const merged = mergeAppData(local, incoming);
+            const merged = mergeAppDataWithStats(local, incoming);
 
-            expect(merged.tasks).toHaveLength(1);
-            expect(merged.tasks[0].deletedAt).toBeUndefined();
-            expect(merged.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.data.tasks).toHaveLength(1);
+            expect(merged.data.tasks[0].deletedAt).toBeUndefined();
+            expect(merged.data.tasks[0].updatedAt).toBe('2023-01-02T00:00:00.000Z');
+            expect(merged.stats.tasks.invalidTimestamps).toBe(1);
         });
 
         it('uses deletedAt as delete operation time when deciding delete-vs-live beyond skew window', () => {
