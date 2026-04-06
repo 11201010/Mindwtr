@@ -1,8 +1,19 @@
 use crate::obsidian_paths::normalize_obsidian_inbox_file;
 use crate::*;
 
+const KEYRING_FALLBACK_WARNING_EVENT: &str = "keyring-fallback-warning";
+
 fn keyring_enabled() -> bool {
     !crate::storage::is_portable_mode()
+}
+
+fn emit_keyring_fallback_warning(app: &tauri::AppHandle, secret_name: &str) {
+    let message = format!(
+        "{secret_name} stored in plaintext because the system keyring is unavailable."
+    );
+    if let Err(error) = app.emit(KEYRING_FALLBACK_WARNING_EVENT, message) {
+        log::warn!("Failed to emit keyring fallback warning: {error}");
+    }
 }
 
 pub(crate) fn parse_toml_string_value(raw: &str) -> Option<String> {
@@ -463,11 +474,21 @@ pub(crate) fn set_ai_key(
         }
         Err(_) => {
             let mut config = read_config(&app);
+            let should_emit_warning = next_value.is_some();
             match provider.as_str() {
                 "openai" => config.ai_key_openai = next_value,
                 "anthropic" => config.ai_key_anthropic = next_value,
                 "gemini" => config.ai_key_gemini = next_value,
                 _ => {}
+            }
+            let label = match provider.as_str() {
+                "openai" => "OpenAI API key",
+                "anthropic" => "Anthropic API key",
+                "gemini" => "Gemini API key",
+                _ => "Secret",
+            };
+            if should_emit_warning {
+                emit_keyring_fallback_warning(&app, label);
             }
             write_config_files(&get_config_path(&app), &get_secrets_path(&app), &config)
         }
@@ -672,6 +693,7 @@ pub(crate) fn set_webdav_config(
                 }
                 Err(_) => {
                     config.webdav_password = Some(next_password);
+                    emit_keyring_fallback_warning(&app, "WebDAV password");
                 }
             }
         }
@@ -747,6 +769,9 @@ pub(crate) fn set_cloud_config(
             }
             Err(_) => {
                 config.cloud_token = next_token;
+                if config.cloud_token.is_some() {
+                    emit_keyring_fallback_warning(&app, "Cloud token");
+                }
             }
         }
     }
