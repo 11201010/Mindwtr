@@ -124,7 +124,7 @@ async function updateIosWidgetsFromData(data: AppData, language: Language): Prom
     const payloadEntries = [
         [
             IOS_WIDGET_PAYLOAD_KEY,
-            buildPayloadFromData(data, language, getAdaptiveWidgetTaskLimit(IOS_WIDGET_FAMILY_HEIGHTS_DP.large)),
+            buildPayloadFromData(data, language, getAdaptiveWidgetTaskLimit(IOS_WIDGET_FAMILY_HEIGHTS_DP.medium)),
         ],
         [
             IOS_WIDGET_PAYLOAD_KEY_SMALL,

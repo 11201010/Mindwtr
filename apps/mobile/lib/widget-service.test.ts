@@ -133,7 +133,7 @@ describe('widget-service', () => {
         expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.items).toHaveLength(3);
         expect(payloadByKey.get('mindwtr-ios-widget-payload-medium')?.items).toHaveLength(5);
         expect(payloadByKey.get('mindwtr-ios-widget-payload-large')?.items).toHaveLength(8);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(8);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(5);
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrTasksWidget');
     });
 });

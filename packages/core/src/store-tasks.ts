@@ -452,7 +452,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave }: TaskA
         }
         if (focusLimitReached) {
             const message = `Maximum of ${MAX_FOCUS_TASKS} focused tasks allowed`;
-            set({ error: message });
             return actionFail(message);
         }
         return actionOk();
