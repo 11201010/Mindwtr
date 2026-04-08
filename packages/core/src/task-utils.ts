@@ -68,6 +68,12 @@ export function extractWaitingPerson(description?: string): string | null {
     return null;
 }
 
+export function getWaitingPerson(task: Pick<Task, 'assignedTo' | 'description'>): string | null {
+    const assignedTo = task.assignedTo?.trim();
+    if (assignedTo) return assignedTo;
+    return extractWaitingPerson(task.description);
+}
+
 /**
  * Sort tasks by status, due date, and creation time.
  * Order: inbox → next → waiting → someday → reference → done → archived

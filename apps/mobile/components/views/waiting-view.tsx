@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { extractWaitingPerson, safeParseDueDate, useTaskStore } from '@mindwtr/core';
+import { getWaitingPerson, safeParseDueDate, useTaskStore } from '@mindwtr/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task, TaskStatus, TimeEstimate } from '@mindwtr/core';
 import { useTheme } from '../../contexts/theme-context';
@@ -64,7 +64,7 @@ export function WaitingView() {
   const waitingPeople = useMemo(() => {
     const people = new Map<string, string>();
     for (const task of waitingTasks) {
-      const person = extractWaitingPerson(task.description);
+      const person = getWaitingPerson(task);
       if (!person) continue;
       const key = person.toLowerCase();
       if (!people.has(key)) people.set(key, person);
@@ -74,7 +74,7 @@ export function WaitingView() {
   const filteredWaitingTasks = useMemo(() => {
     return waitingTasks.filter((task) => {
       if (selectedWaitingPerson) {
-        const person = extractWaitingPerson(task.description);
+        const person = getWaitingPerson(task);
         if (!person || person.toLowerCase() !== selectedWaitingPerson.toLowerCase()) {
           return false;
         }

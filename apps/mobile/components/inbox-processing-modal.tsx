@@ -383,15 +383,9 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   const handleConfirmWaitingMobile = () => {
     if (currentTask) {
       const who = delegateWho.trim();
-      const baseDescription = processingDescription.trim() || currentTask.description || '';
-      const waitingLine = who ? `Waiting for: ${who}` : '';
-      const nextDescription = [baseDescription, waitingLine]
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .join('\n');
       const updates: Partial<Task> = {
         status: 'waiting',
-        description: nextDescription.length > 0 ? nextDescription : undefined,
+        assignedTo: who || undefined,
       };
       if (delegateFollowUpDate) {
         updates.reviewAt = delegateFollowUpDate.toISOString();

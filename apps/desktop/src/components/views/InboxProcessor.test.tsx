@@ -255,4 +255,33 @@ describe('InboxProcessor', () => {
             );
         });
     });
+
+    it('moves delegated tasks to waiting with assignedTo instead of mutating the description', async () => {
+        const { getByRole, getByText, getByPlaceholderText, updateTask } = renderInboxProcessor();
+
+        fireEvent.click(getByRole('button', { name: /process\.btn/i }));
+        fireEvent.click(getByText('process.refineNext'));
+        fireEvent.click(getByText('process.yesActionable'));
+        fireEvent.click(getByText('process.moreThanOneStepNo'));
+        fireEvent.click(getByText('process.takesLonger'));
+        fireEvent.click(getByText('process.delegate'));
+        fireEvent.change(getByPlaceholderText('process.delegateWhoPlaceholder'), {
+            target: { value: 'Alex' },
+        });
+
+        fireEvent.click(getByText('process.delegateMoveToWaiting'));
+
+        await waitFor(() => {
+            expect(updateTask).toHaveBeenCalledWith(
+                'task-1',
+                expect.objectContaining({
+                    status: 'waiting',
+                    assignedTo: 'Alex',
+                }),
+            );
+        });
+
+        const [, updates] = updateTask.mock.calls.at(-1) as [string, Task];
+        expect(updates.description).toBeUndefined();
+    });
 });

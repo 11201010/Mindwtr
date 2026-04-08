@@ -334,13 +334,7 @@ export function InboxProcessor({
 
     const handleConfirmWaiting = () => {
         if (processingTask) {
-            const baseDescription = processingDescription.trim() || processingTask.description || '';
             const who = delegateWho.trim();
-            const waitingLine = who ? `Waiting for: ${who}` : '';
-            const nextDescription = [baseDescription, waitingLine]
-                .map((line) => line.trim())
-                .filter(Boolean)
-                .join('\n');
             const followUpIso = delegateFollowUp
                 ? new Date(`${delegateFollowUp}T09:00:00`).toISOString()
                 : undefined;
@@ -349,7 +343,7 @@ export function InboxProcessor({
                 : {};
             applyProcessingEdits({
                 status: 'waiting',
-                description: nextDescription.length > 0 ? nextDescription : undefined,
+                assignedTo: who || undefined,
                 reviewAt: followUpIso,
                 ...(prioritiesEnabled ? { priority: selectedPriority ?? undefined } : {}),
                 ...scheduleUpdate,

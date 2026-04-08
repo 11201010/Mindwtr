@@ -1,7 +1,7 @@
 import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, useCallback } from 'react';
 import { AlertTriangle, Folder } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { shallow, useTaskStore, TaskPriority, TimeEstimate, DEFAULT_AREA_COLOR, sortTasksBy, parseQuickAdd, matchesHierarchicalToken, safeParseDate, isTaskInActiveProject, extractWaitingPerson } from '@mindwtr/core';
+import { shallow, useTaskStore, TaskPriority, TimeEstimate, DEFAULT_AREA_COLOR, sortTasksBy, parseQuickAdd, matchesHierarchicalToken, safeParseDate, isTaskInActiveProject, getWaitingPerson } from '@mindwtr/core';
 import type { StoreActionResult, Task, TaskStatus } from '@mindwtr/core';
 import type { TaskSortBy } from '@mindwtr/core';
 import { TaskItem } from '../TaskItem';
@@ -314,7 +314,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             if (task.deletedAt || task.status !== 'waiting') continue;
             if (!isTaskInActiveProject(task, projectMap)) continue;
             if (!taskMatchesAreaFilter(task, resolvedAreaFilter, projectMap, areaById)) continue;
-            const person = extractWaitingPerson(task.description);
+            const person = getWaitingPerson(task);
             if (!person) continue;
             const key = person.toLowerCase();
             if (!people.has(key)) people.set(key, person);
@@ -440,7 +440,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                     && (!t.timeEstimate || !deferredFilterInputs.activeTimeEstimates.includes(t.timeEstimate))
                 ) return false;
                 if (deferredFilterInputs.statusFilter === 'waiting' && deferredFilterInputs.selectedWaitingPerson) {
-                    const person = extractWaitingPerson(t.description);
+                    const person = getWaitingPerson(t);
                     if (!person || person.toLowerCase() !== deferredFilterInputs.selectedWaitingPerson.toLowerCase()) return false;
                 }
                 if (showViewFilterInput && normalizedSearchQuery && !t.title.toLowerCase().includes(normalizedSearchQuery)) {

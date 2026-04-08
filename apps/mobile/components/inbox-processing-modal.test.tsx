@@ -86,6 +86,17 @@ vi.mock('@react-native-community/datetimepicker', () => ({
 }));
 
 describe('InboxProcessingModal', () => {
+  const findNodeWithText = (root: ReturnType<typeof create>['root'], text: string) => {
+    return root.find((node) => {
+      const children = node.props?.children;
+      if (children === text) return true;
+      if (Array.isArray(children)) {
+        return children.some((child) => child === text);
+      }
+      return false;
+    });
+  };
+
   it('replaces the header next action with skip and saves edits before advancing', () => {
     mockSettings.features = undefined;
     mockSettings.gtd.inboxProcessing = {};
@@ -203,6 +214,57 @@ describe('InboxProcessingModal', () => {
         contexts: ['@home'],
         tags: ['#old'],
         priority: 'high',
+      })
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('moves delegated tasks to waiting with assignedTo and keeps the description clean', () => {
+    mockSettings.features = undefined;
+    mockSettings.gtd.inboxProcessing = {};
+    updateTask.mockClear();
+    const onClose = vi.fn();
+    let tree: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={onClose} />);
+    });
+
+    const root = tree!.root;
+    const delegateLabel = findNodeWithText(root, 'inbox.delegate');
+    const delegateButton = delegateLabel.parent;
+
+    if (!delegateButton) {
+      throw new Error('Delegate button not found');
+    }
+
+    act(() => {
+      delegateButton.props.onPress();
+    });
+
+    const whoInput = root.findByProps({ placeholder: 'process.delegateWhoPlaceholder' });
+
+    act(() => {
+      whoInput.props.onChangeText('Alex');
+    });
+
+    const nextTaskLabel = findNodeWithText(root, 'Next task →');
+    const nextTaskButton = nextTaskLabel.parent;
+
+    if (!nextTaskButton) {
+      throw new Error('Next task button not found');
+    }
+
+    act(() => {
+      nextTaskButton.props.onPress();
+    });
+
+    expect(updateTask).toHaveBeenCalledWith(
+      'inbox-1',
+      expect.objectContaining({
+        status: 'waiting',
+        assignedTo: 'Alex',
+        description: 'Original description',
       })
     );
     expect(onClose).toHaveBeenCalled();
