@@ -921,13 +921,14 @@ export class SyncService {
                 if (!context.webdavConfig?.url) {
                     throw new Error('WebDAV URL not configured');
                 }
-                const normalizedUrl = normalizeWebdavUrl(context.webdavConfig.url);
+                const webdavConfig = context.webdavConfig;
+                const normalizedUrl = normalizeWebdavUrl(webdavConfig.url);
                 context.syncUrl = normalizedUrl;
                 const fetcher = helpers.createFetchWithAbort((await getTauriFetch()) ?? fetch);
                 const data = await withRetry(
                     () => webdavGetJson<AppData>(normalizedUrl, {
-                        username: context.webdavConfig.username,
-                        password: context.webdavConfig.password || '',
+                        username: webdavConfig.username,
+                        password: webdavConfig.password || '',
                         fetcher,
                     }),
                     WEBDAV_READ_RETRY_OPTIONS,
