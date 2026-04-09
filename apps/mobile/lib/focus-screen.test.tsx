@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import FocusScreen from './focus';
+import FocusScreen from '../app/(drawer)/(tabs)/focus';
 import { SwipeableTaskItem } from '@/components/swipeable-task-item';
 
 const storeState = {
@@ -51,11 +51,11 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
 }));
 
-vi.mock('../../../contexts/theme-context', () => ({
+vi.mock('../contexts/theme-context', () => ({
   useTheme: () => ({ isDark: false }),
 }));
 
-vi.mock('../../../contexts/language-context', () => ({
+vi.mock('../contexts/language-context', () => ({
   useLanguage: () => ({
     t: (key: string) =>
       ({
