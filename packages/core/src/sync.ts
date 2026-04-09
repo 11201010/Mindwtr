@@ -827,11 +827,21 @@ export async function performSyncCycle(io: SyncCycleIO): Promise<SyncCycleResult
         },
     };
     const pruned = purgeExpiredTombstones(nextMergedData, nowIso, io.tombstoneRetentionDays);
-    if (pruned.removedTaskTombstones > 0 || pruned.removedAttachmentTombstones > 0 || pruned.removedPendingRemoteDeletes > 0) {
+    if (
+        pruned.removedTaskTombstones > 0
+        || pruned.removedProjectTombstones > 0
+        || pruned.removedSectionTombstones > 0
+        || pruned.removedAreaTombstones > 0
+        || pruned.removedAttachmentTombstones > 0
+        || pruned.removedPendingRemoteDeletes > 0
+    ) {
         logWarn('Purged expired sync tombstones', {
             scope: 'sync',
             context: {
                 removedTaskTombstones: pruned.removedTaskTombstones,
+                removedProjectTombstones: pruned.removedProjectTombstones,
+                removedSectionTombstones: pruned.removedSectionTombstones,
+                removedAreaTombstones: pruned.removedAreaTombstones,
                 removedAttachmentTombstones: pruned.removedAttachmentTombstones,
                 removedPendingRemoteDeletes: pruned.removedPendingRemoteDeletes,
             },

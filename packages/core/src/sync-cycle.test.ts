@@ -315,6 +315,14 @@ describe('performSyncCycle', () => {
             purgedAt: '2025-06-01T00:00:00.000Z',
         } as Task;
         const oldDeletedTask = createMockTask('old-deleted', '2025-06-01T00:00:00.000Z', '2025-06-01T00:00:00.000Z');
+        const oldDeletedProject = createMockProject('old-project', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');
+        const oldDeletedSection = createMockSection(
+            'old-section',
+            'old-project',
+            '2025-01-01T00:00:00.000Z',
+            '2025-01-01T00:00:00.000Z'
+        );
+        const oldDeletedArea = createMockArea('old-area', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');
         const taskWithDeletedAttachment = {
             ...createMockTask('with-deleted-attachment', '2025-12-20T00:00:00.000Z'),
             attachments: [{
@@ -328,7 +336,12 @@ describe('performSyncCycle', () => {
             }],
         } as Task;
 
-        const base = mockAppData([oldPurgedTask, oldDeletedTask, taskWithDeletedAttachment]);
+        const base = mockAppData(
+            [oldPurgedTask, oldDeletedTask, taskWithDeletedAttachment],
+            [oldDeletedProject],
+            [oldDeletedSection]
+        );
+        base.areas = [oldDeletedArea];
         base.settings = {
             attachments: {
                 pendingRemoteDeletes: [
@@ -359,6 +372,9 @@ describe('performSyncCycle', () => {
         expect(saved).not.toBeNull();
         expect(saved!.tasks.some((task) => task.id === 'old-purged')).toBe(false);
         expect(saved!.tasks.some((task) => task.id === 'old-deleted')).toBe(true);
+        expect(saved!.projects.some((project) => project.id === 'old-project')).toBe(false);
+        expect(saved!.sections.some((section) => section.id === 'old-section')).toBe(false);
+        expect(saved!.areas.some((area) => area.id === 'old-area')).toBe(false);
         const keptTask = saved!.tasks.find((task) => task.id === 'with-deleted-attachment');
         expect(keptTask).toBeTruthy();
         expect(keptTask!.attachments).toBeUndefined();

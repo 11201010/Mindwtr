@@ -579,13 +579,22 @@ export const createSettingsActions = ({
                 );
                 allTasks = cleanup.data.tasks;
                 allProjects = cleanup.data.projects;
-                if (cleanup.removedTaskTombstones > 0 || cleanup.removedAttachmentTombstones > 0) {
+                if (
+                    cleanup.removedTaskTombstones > 0
+                    || cleanup.removedProjectTombstones > 0
+                    || cleanup.removedSectionTombstones > 0
+                    || cleanup.removedAreaTombstones > 0
+                    || cleanup.removedAttachmentTombstones > 0
+                ) {
                     didTombstoneCleanup = true;
                     logWarn('Purged expired tombstones during data fetch', {
                         scope: 'store',
                         category: 'storage',
                         context: {
                             removedTaskTombstones: cleanup.removedTaskTombstones,
+                            removedProjectTombstones: cleanup.removedProjectTombstones,
+                            removedSectionTombstones: cleanup.removedSectionTombstones,
+                            removedAreaTombstones: cleanup.removedAreaTombstones,
                             removedAttachmentTombstones: cleanup.removedAttachmentTombstones,
                         },
                     });
