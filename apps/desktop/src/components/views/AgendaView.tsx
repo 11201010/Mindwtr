@@ -435,7 +435,6 @@ export function AgendaView() {
         const schedule = filteredActiveTasks.filter((task) => {
             if (task.isFocusedToday) return false;
             if (task.status !== 'next') return false;
-            if (task.status === 'waiting') return false;
             if (isSequentialBlocked(task)) return false;
             const dueDate = safeParseDueDate(task.dueDate);
             const startDate = safeParseDate(task.startTime);

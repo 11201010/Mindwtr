@@ -364,7 +364,7 @@ describe('InboxProcessor', () => {
             );
         });
 
-        const [, updates] = updateTask.mock.calls.at(-1) as [string, Task];
+        const [, updates] = updateTask.mock.calls[updateTask.mock.calls.length - 1] as [string, Task];
         expect(updates.description).toBeUndefined();
     });
 });

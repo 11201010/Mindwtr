@@ -75,7 +75,7 @@ describe('CalendarView', () => {
 
     it('shows external events that span into the selected day', async () => {
         vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({
-            calendars: [{ id: 'work', name: 'Work' }],
+            calendars: [{ id: 'work', name: 'Work', url: 'https://calendar.example/work', enabled: true }],
             events: [{
                 id: 'event-1',
                 sourceId: 'work',

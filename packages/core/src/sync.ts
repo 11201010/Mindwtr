@@ -417,16 +417,18 @@ function mergeEntitiesWithStats<T extends MergeableEntity>(
 }
 
 function mergeAreas(local: Area[], incoming: Area[], nowIso: string): { merged: Area[]; stats: EntityMergeStats } {
-    const localNormalized = local.map((area) => normalizeAreaForSyncMerge(area, nowIso));
-    const incomingNormalized = incoming.map((area) => normalizeAreaForSyncMerge(area, nowIso));
+    const localNormalized = local.map((area) => normalizeRevisionMetadata(normalizeAreaForSyncMerge(area, nowIso)));
+    const incomingNormalized = incoming.map((area) => normalizeRevisionMetadata(normalizeAreaForSyncMerge(area, nowIso)));
     const result = mergeEntitiesWithStats(localNormalized, incomingNormalized);
     let fallbackOrder = result.merged.reduce((maxOrder, area) => {
-        const order = Number.isFinite(area.order) ? area.order : -1;
+        const order = typeof area.order === 'number' && Number.isFinite(area.order) ? area.order : -1;
         return Math.max(maxOrder, order);
     }, -1) + 1;
-    const merged = result.merged.map((area) => {
-        if (Number.isFinite(area.order)) return area;
-        const normalized = { ...area, order: fallbackOrder };
+    const merged: Area[] = result.merged.map((area) => {
+        const order = typeof area.order === 'number' && Number.isFinite(area.order)
+            ? area.order
+            : fallbackOrder;
+        const normalized: Area = { ...area, order };
         fallbackOrder += 1;
         return normalized;
     });
@@ -459,14 +461,14 @@ const getClockSkewWarning = (stats: MergeResult['stats']): ClockSkewWarning | un
 
 export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeResult {
     const nowIso = new Date().toISOString();
-    const localNormalized: AppData = {
+    const localNormalized = {
         ...local,
         tasks: (local.tasks || []).map((task) => normalizeRevisionMetadata(normalizeTaskForSyncMerge(task, nowIso))),
         projects: (local.projects || []).map((project) => normalizeRevisionMetadata(normalizeProjectForSyncMerge(project))),
         sections: (local.sections || []).map((section) => normalizeRevisionMetadata(section)),
         areas: (local.areas || []).map((area) => normalizeRevisionMetadata(normalizeAreaForSyncMerge(area, nowIso))),
     };
-    const incomingNormalized: AppData = {
+    const incomingNormalized = {
         ...incoming,
         tasks: (incoming.tasks || []).map((task) => normalizeRevisionMetadata(normalizeTaskForSyncMerge(task, nowIso))),
         projects: (incoming.projects || []).map((project) => normalizeRevisionMetadata(normalizeProjectForSyncMerge(project))),
@@ -599,7 +601,7 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData): MergeR
         normalizeSectionForContentComparison
     );
 
-    const areasResult = mergeAreas(localNormalized.areas, incomingNormalized.areas, nowIso);
+    const areasResult = mergeAreas(local.areas || [], incoming.areas || [], nowIso);
 
     const stats = {
         tasks: tasksResult.stats,
