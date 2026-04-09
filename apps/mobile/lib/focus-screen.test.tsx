@@ -12,6 +12,7 @@ const storeState = {
       title: 'Focus task',
       status: 'next',
       isFocusedToday: true,
+      dueDate: '2000-01-01',
       tags: [],
       contexts: [],
       createdAt: '2026-04-01T00:00:00.000Z',

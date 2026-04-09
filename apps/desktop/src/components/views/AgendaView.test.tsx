@@ -59,7 +59,7 @@ describe('AgendaView', () => {
         expect(getByText('Checklist item')).toBeInTheDocument();
     });
 
-    it('shows non-next tasks with start time today in Today section', () => {
+    it('keeps non-next tasks with start time today out of Today', () => {
         const now = new Date();
         const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0, 0).toISOString();
         const startTodayTask: Task = {
@@ -84,10 +84,10 @@ describe('AgendaView', () => {
             highlightTaskId: null,
         });
 
-        const { getByRole, getByText } = renderAgenda();
+        const { queryByRole, queryByText } = renderAgenda();
 
-        expect(getByRole('heading', { name: /today/i })).toBeInTheDocument();
-        expect(getByText('Start today inbox task')).toBeInTheDocument();
+        expect(queryByRole('heading', { name: /today/i })).not.toBeInTheDocument();
+        expect(queryByText('Start today inbox task')).not.toBeInTheDocument();
     });
 
     it('shows next tasks with start time today in Today section (not Next Actions)', () => {

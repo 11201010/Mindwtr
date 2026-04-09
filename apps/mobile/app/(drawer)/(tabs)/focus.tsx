@@ -110,6 +110,7 @@ export default function FocusScreen() {
 
   const { schedule, nextActions } = useMemo(() => {
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     const isPlannedForFuture = (task: Task) => {
@@ -125,13 +126,16 @@ export default function FocusScreen() {
     const scheduleItems = orderFocusedTasksFirst(visibleTasks.filter((task) => {
       if (task.deletedAt) return false;
       if (task.status === 'done' || task.status === 'reference') return false;
+      if (task.status !== 'next') return false;
       if (isSequentialBlocked(task)) return false;
       const due = safeParseDueDate(task.dueDate);
       const start = safeParseDate(task.startTime);
-      const startReady = !start || start <= endOfToday;
-      return Boolean(task.isFocusedToday)
-        || (startReady && Boolean(due && due <= endOfToday))
-        || (startReady && Boolean(start && start <= endOfToday));
+      const startsToday = Boolean(
+        start
+        && start >= startOfToday
+        && start <= endOfToday
+      );
+      return Boolean(due && due <= endOfToday) || startsToday;
     }));
 
     const scheduleIds = new Set(scheduleItems.map((task) => task.id));

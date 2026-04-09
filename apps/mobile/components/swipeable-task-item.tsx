@@ -26,6 +26,7 @@ export interface SwipeableTaskItemProps {
     showFocusToggle?: boolean;
     hideStatusBadge?: boolean;
     disableSwipe?: boolean;
+    hideChecklistProgress?: boolean;
     onProjectPress?: (projectId: string) => void;
     onContextPress?: (context: string) => void;
     onTagPress?: (tag: string) => void;
@@ -56,6 +57,7 @@ export function SwipeableTaskItem({
     showFocusToggle = false,
     hideStatusBadge = false,
     disableSwipe = false,
+    hideChecklistProgress = false,
     onProjectPress,
     onContextPress,
     onTagPress,
@@ -555,7 +557,7 @@ export function SwipeableTaskItem({
                                 {metaParts}
                             </View>
                         )}
-                        {checklistProgress && (
+                        {!hideChecklistProgress && checklistProgress && (
                             <Pressable
                                 onPress={() => setShowChecklist((v) => !v)}
                                 style={styles.checklistRow}

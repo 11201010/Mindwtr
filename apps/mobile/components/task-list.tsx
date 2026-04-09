@@ -215,15 +215,16 @@ function TaskListComponent({
   const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
   const keyRequired = isAIKeyRequired(settings);
   const timeEstimatesEnabled = settings?.features?.timeEstimates !== false;
+  const showTimeEstimateFilters = timeEstimatesEnabled && statusFilter !== 'inbox';
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
-  const hasActiveTimeEstimateFilters = timeEstimatesEnabled && selectedTimeEstimates.length > 0;
+  const hasActiveTimeEstimateFilters = showTimeEstimateFilters && selectedTimeEstimates.length > 0;
   const { areaById, resolvedAreaFilter, selectedAreaIdForNewTasks } = useMobileAreaFilter();
 
   useEffect(() => {
-    if (!timeEstimatesEnabled && selectedTimeEstimates.length > 0) {
+    if (!showTimeEstimateFilters && selectedTimeEstimates.length > 0) {
       setSelectedTimeEstimates([]);
     }
-  }, [selectedTimeEstimates.length, timeEstimatesEnabled]);
+  }, [selectedTimeEstimates.length, showTimeEstimateFilters]);
 
   const toggleTimeEstimate = useCallback((estimate: TimeEstimate) => {
     setSelectedTimeEstimates((prev) => (
@@ -246,12 +247,12 @@ function TaskListComponent({
         const start = safeParseDate(t.startTime);
         if (start && start > now) return false;
       }
-      if (timeEstimatesEnabled && !matchesSelectedTimeEstimates(t, selectedTimeEstimates)) return false;
+      if (showTimeEstimateFilters && !matchesSelectedTimeEstimates(t, selectedTimeEstimates)) return false;
       if (!taskMatchesAreaFilter(t, resolvedAreaFilter, projectById, areaById)) return false;
       return matchesStatus && matchesProject;
     });
     return filtered;
-  }, [tasks, statusFilter, projectId, selectedTimeEstimates, timeEstimatesEnabled, resolvedAreaFilter, projectById, areaById]);
+  }, [tasks, statusFilter, projectId, selectedTimeEstimates, showTimeEstimateFilters, resolvedAreaFilter, projectById, areaById]);
 
   const orderedTasks = useMemo(() => {
     return sortTasksBy(filteredTasks, sortBy);
@@ -635,6 +636,7 @@ function TaskListComponent({
 
   const sortOptions: TaskSortBy[] = ['default', 'due', 'start', 'review', 'title', 'created', 'created-desc'];
   const hideStatusBadgeForList = statusFilter === 'next' || statusFilter === 'waiting';
+  const hideChecklistProgressForList = statusFilter === 'inbox';
 
   const renderTask = useCallback(({ item }: { item: Task }) => (
     <ErrorBoundary>
@@ -650,6 +652,7 @@ function TaskListComponent({
         onDelete={() => deleteTask(item.id)}
         isHighlighted={item.id === highlightTaskId}
         hideStatusBadge={hideStatusBadgeForList}
+        hideChecklistProgress={hideChecklistProgressForList}
         onProjectPress={projectId ? undefined : openProjectScreen}
         onContextPress={openContextsScreen}
         onTagPress={openContextsScreen}
@@ -663,6 +666,7 @@ function TaskListComponent({
     isDark,
     multiSelectedIds,
     selectionMode,
+    hideChecklistProgressForList,
     hideStatusBadgeForList,
     themeColorsMemo,
     toggleMultiSelect,
@@ -740,7 +744,7 @@ function TaskListComponent({
         <View style={styles.headerAccessoryRow}>{headerAccessory}</View>
       ) : null}
 
-      {timeEstimatesEnabled && (
+      {showTimeEstimateFilters && (
         <View style={[styles.filterSection, { borderBottomColor: themeColorsMemo.border, backgroundColor: themeColorsMemo.cardBg }]}>
           <Text style={[styles.filterLabel, { color: themeColorsMemo.secondaryText }]}>
             {t('filters.timeEstimate')}

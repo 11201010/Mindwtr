@@ -373,6 +373,7 @@ export function AgendaView() {
     // Categorize tasks
     const sections = useMemo(() => {
         const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
         const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         const isDeferred = (task: Task) => {
             const start = safeParseDate(task.startTime);
@@ -433,13 +434,18 @@ export function AgendaView() {
         };
         const schedule = filteredActiveTasks.filter((task) => {
             if (task.isFocusedToday) return false;
+            if (task.status !== 'next') return false;
             if (task.status === 'waiting') return false;
             if (isSequentialBlocked(task)) return false;
             const dueDate = safeParseDueDate(task.dueDate);
             const startDate = safeParseDate(task.startTime);
-            const startReady = !startDate || startDate <= endOfToday;
-            return Boolean(startReady && dueDate && dueDate <= endOfToday)
-                || Boolean(startReady && startDate && startDate <= endOfToday);
+            const startsToday = Boolean(
+                startDate
+                && startDate >= startOfToday
+                && startDate <= endOfToday
+            );
+            return Boolean(dueDate && dueDate <= endOfToday)
+                || startsToday;
         });
         const scheduleIds = new Set(schedule.map((task) => task.id));
         const nextActions = filteredActiveTasks.filter((task) => {
