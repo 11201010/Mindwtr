@@ -517,7 +517,7 @@ jobs:
               try {
                 $submission = Get-PendingSubmissionFromStore -ApplicationId $applicationId
               } catch {
-                Write-Warning "Failed to inspect pending submissions after create attempt $createAttempt: $($_.Exception.Message)"
+                Write-Warning "Failed to inspect pending submissions after create attempt ${createAttempt}: $($_.Exception.Message)"
               }
 
               if ($submission) {
