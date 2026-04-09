@@ -1,8 +1,9 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LanguageProvider } from '../../contexts/language-context';
 import { CalendarView } from './CalendarView';
+import { fetchExternalCalendarEvents } from '../../lib/external-calendar-events';
 
 vi.mock('@mindwtr/core', async () => {
     const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
@@ -48,6 +49,7 @@ describe('CalendarView', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-04-03T14:48:00.000Z'));
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({ calendars: [], events: [] });
     });
 
     afterEach(() => {
@@ -69,5 +71,38 @@ describe('CalendarView', () => {
         const markerStyle = todayNumber.parentElement?.getAttribute('style') ?? '';
         expect(markerStyle).toContain('background-color: hsl(var(--primary));');
         expect(markerStyle).toContain('color: hsl(var(--primary-foreground));');
+    });
+
+    it('shows external events that span into the selected day', async () => {
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({
+            calendars: [{ id: 'work', name: 'Work' }],
+            events: [{
+                id: 'event-1',
+                sourceId: 'work',
+                title: 'Launch window',
+                start: '2026-04-02T23:30:00',
+                end: '2026-04-03T00:30:00',
+                allDay: false,
+            }],
+        });
+
+        render(
+            <LanguageProvider>
+                <CalendarView />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            vi.runAllTimers();
+            await Promise.resolve();
+        });
+
+        fireEvent.click(screen.getByText('3'));
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(screen.getByText(/Launch window/)).toBeInTheDocument();
     });
 });

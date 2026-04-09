@@ -133,16 +133,32 @@ export function CalendarView() {
             .catch((error) => reportError('Failed to mark task done', error));
     }, [updateTask]);
 
-    const getExternalEventsForDay = (date: Date) => {
-        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-        const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0);
-        return externalEvents.filter((event) => {
+    const externalEventsByDay = useMemo(() => {
+        const map = new Map<string, ExternalCalendarEvent[]>();
+        for (const event of externalEvents) {
             const start = safeParseDate(event.start);
             const end = safeParseDate(event.end);
-            if (!start || !end) return false;
-            return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
-        });
-    };
+            if (!start || !end) continue;
+
+            const lastMoment = new Date(Math.max(start.getTime(), end.getTime() - 1));
+            const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+            const lastDay = new Date(lastMoment.getFullYear(), lastMoment.getMonth(), lastMoment.getDate());
+
+            while (cursor.getTime() <= lastDay.getTime()) {
+                const key = dayKey(cursor);
+                const existing = map.get(key);
+                if (existing) existing.push(event);
+                else map.set(key, [event]);
+                cursor.setDate(cursor.getDate() + 1);
+            }
+        }
+        return map;
+    }, [externalEvents]);
+
+    const getExternalEventsForDay = useCallback(
+        (date: Date) => externalEventsByDay.get(dayKey(date)) ?? [],
+        [externalEventsByDay]
+    );
 
     const timeEstimateToMinutes = (estimate: any): number => {
         if (!timeEstimatesEnabled) return 30;
@@ -425,6 +441,7 @@ export function CalendarView() {
         setScheduleError(null);
         setCurrentMonth((prev) => addMonths(prev, 1));
     };
+    const selectedExternalEvents = selectedDate ? getExternalEventsForDay(selectedDate) : [];
 
     return (
         <ErrorBoundary>
@@ -644,7 +661,7 @@ export function CalendarView() {
                                 {externalError && (
                                     <div className="text-sm text-red-400">{externalError}</div>
                                 )}
-                                {getExternalEventsForDay(selectedDate).map((event) => {
+                                {selectedExternalEvents.map((event) => {
                                     const start = safeParseDate(event.start);
                                     const end = safeParseDate(event.end);
                                     const timeLabel = event.allDay
@@ -661,7 +678,7 @@ export function CalendarView() {
                                         </div>
                                     );
                                 })}
-                                {!isExternalLoading && !externalError && getExternalEventsForDay(selectedDate).length === 0 && (
+                                {!isExternalLoading && !externalError && selectedExternalEvents.length === 0 && (
                                     <div className="text-sm text-muted-foreground">{t('calendar.noTasks')}</div>
                                 )}
                             </div>
