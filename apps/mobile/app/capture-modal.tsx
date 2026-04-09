@@ -132,6 +132,14 @@ export default function CaptureScreen() {
 
   const placeholderColor = tc.secondaryText;
 
+  const handleCancel = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/inbox');
+    }
+  };
+
   const handleSave = () => {
     if (!value.trim()) return;
     const { title, props, invalidDateCommands } = parseQuickAdd(value, projects, new Date(), areas);
@@ -216,7 +224,7 @@ export default function CaptureScreen() {
           <Text style={[styles.help, { color: tc.secondaryText }]}>{t('quickAdd.help')}</Text>
         )}
         <View style={styles.actions}>
-          <TouchableOpacity onPress={() => router.back()} style={[styles.button, styles.cancel, { backgroundColor: tc.inputBg }]}>
+          <TouchableOpacity onPress={handleCancel} style={[styles.button, styles.cancel, { backgroundColor: tc.inputBg }]}>
             <Text style={{ color: tc.text }}>{t('common.cancel')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleSave} style={[styles.button, styles.save]}>
