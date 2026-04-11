@@ -592,6 +592,55 @@ describe('cloud server api', () => {
         expect((await invalidAction.json()).error).toBe('Invalid task id');
     });
 
+    test('paginates /v1/search results for both tasks and projects', async () => {
+        const iso = '2026-01-01T00:00:00.000Z';
+        const seedResponse = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                tasks: [
+                    { id: 'task-1', title: 'Alpha Task 1', status: 'inbox', createdAt: iso, updatedAt: iso },
+                    { id: 'task-2', title: 'Alpha Task 2', status: 'inbox', createdAt: iso, updatedAt: iso },
+                    { id: 'task-3', title: 'Alpha Task 3', status: 'inbox', createdAt: iso, updatedAt: iso },
+                ],
+                projects: [
+                    { id: 'project-1', title: 'Alpha Project 1', status: 'active', createdAt: iso, updatedAt: iso },
+                    { id: 'project-2', title: 'Alpha Project 2', status: 'active', createdAt: iso, updatedAt: iso },
+                    { id: 'project-3', title: 'Alpha Project 3', status: 'active', createdAt: iso, updatedAt: iso },
+                ],
+                sections: [],
+                areas: [],
+                settings: {},
+            }),
+        });
+        expect(seedResponse.status).toBe(200);
+
+        const response = await fetch(`${baseUrl}/v1/search?query=Alpha&limit=2&offset=1`, {
+            headers: authHeaders,
+        });
+        expect(response.status).toBe(200);
+
+        const body = await response.json();
+        expect(body.limit).toBe(2);
+        expect(body.offset).toBe(1);
+        expect(body.taskTotal).toBe(3);
+        expect(body.projectTotal).toBe(3);
+        expect((body.tasks as Array<{ id: string }>).map((task) => task.id)).toEqual(['task-2', 'task-3']);
+        expect((body.projects as Array<{ id: string }>).map((project) => project.id)).toEqual(['project-2', 'project-3']);
+    });
+
+    test('rejects invalid /v1/search pagination parameters', async () => {
+        const response = await fetch(`${baseUrl}/v1/search?query=Alpha&limit=0`, {
+            headers: authHeaders,
+        });
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toBe('Invalid limit');
+    });
+
     test('rejects reserved fields on task patch', async () => {
         const createResponse = await fetch(`${baseUrl}/v1/tasks`, {
             method: 'POST',

@@ -536,11 +536,22 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                     if (req.method === 'GET' && pathname === '/v1/search') {
                         throwIfRequestAborted(requestAbortController.signal);
                         const query = url.searchParams.get('query') || '';
+                        const pagination = parsePagination(url.searchParams);
+                        if ('error' in pagination) return errorResponse(pagination.error, 400);
                         const data = loadAppData(filePath);
                         const tasks = data.tasks.filter((t) => !t.deletedAt);
                         const projects = data.projects.filter((p: any) => !p.deletedAt);
                         const results = searchAll(tasks, projects, query);
-                        return jsonResponse(results);
+                        const taskTotal = results.tasks.length;
+                        const projectTotal = results.projects.length;
+                        return jsonResponse({
+                            tasks: results.tasks.slice(pagination.offset, pagination.offset + pagination.limit),
+                            projects: results.projects.slice(pagination.offset, pagination.offset + pagination.limit),
+                            taskTotal,
+                            projectTotal,
+                            limit: pagination.limit,
+                            offset: pagination.offset,
+                        });
                     }
 
                     if (pathname.startsWith('/v1/tasks') || pathname === '/v1/projects' || pathname === '/v1/search') {
