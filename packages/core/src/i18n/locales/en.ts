@@ -76,6 +76,8 @@ export const en: Record<string, string> = {
         'keybindings.goBoard': 'Go to Board',
         'keybindings.goDone': 'Go to Done',
         'keybindings.goArchived': 'Go to Archived',
+        'keybindings.switchArea': 'Switch to Area 1-9',
+        'keybindings.clearAreaFilter': 'Clear area filter',
         'keybindings.list.nextPrev': 'Move selection down/up',
         'keybindings.list.firstLast': 'Jump to top/bottom',
         'keybindings.list.edit': 'Edit selected task',
