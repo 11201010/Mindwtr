@@ -1,4 +1,4 @@
-- Added iOS Share Sheet support so you can send text and links into Mindwtr from other apps.
-- Inbox processing now keeps priority, assignee, and energy details more consistently.
-- Focus and Inbox views are clearer with collapsible sections, tighter Today rules, and less Inbox clutter.
-- Sync and merge handling are safer around deleted items, area cleanup, and follow-up typecheck fixes.
+- Quick capture now understands natural language dates like tomorrow and next Friday.
+- Mobile feedback is calmer with queued toasts, larger action targets, and fewer blocking alerts.
+- Sync and cloud handling are more reliable, with safer attachment uploads and clearer server request IDs.
+- Focus and settings flows are steadier with prioritized focus tasks and more consistent error toasts.

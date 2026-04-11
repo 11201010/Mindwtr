@@ -30,7 +30,7 @@
           "完全离线可用，无需互联网连接",
           "完全开源，安全透明"
         ],
-        "ReleaseNotes": "• 新增桌面文字大小设置，阅读和布局调整更灵活。\n• 桌面收集箱整理现在可稳定处理优先级、负责人和能量等级信息。\n• 日历与“今天”视图更清晰，选中日期事件显示更稳定，任务归类规则也更严格。\n• 桌面同步与存储更稳健，区域合并处理更安全，任务元数据筛选也更快。",
+        "ReleaseNotes": "• 桌面端快速收集现已支持“明天”等自然语言日期解析。\n• 桌面同步现在会保留排队中的重试、恢复 Dropbox 自动同步，并在刷新时更稳定地保留滚动位置。\n• 确认对话框以及项目拖拽、日历和同步错误都会更清晰地显示出来，不再被重渲染吞掉。\n• 自托管云端错误更清晰，危险上传会被更安全地拦截，500 错误也会附带请求 ID。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "No internet connection required to function",
           "Open source and transparent"
         ],
-        "ReleaseNotes": "• Added adjustable desktop text size settings so layouts are easier to tune.\n• Desktop inbox processing now handles priority, assignee, and energy details more reliably.\n• Calendar and Today views are clearer, with steadier selected-day events and stricter task grouping rules.\n• Desktop sync and storage are more robust, with safer area merges and faster task metadata filtering.",
+        "ReleaseNotes": "• Added natural-language date parsing to desktop quick capture so inbox entry can understand phrases like tomorrow.\n• Desktop sync now preserves queued reruns, restores Dropbox autosync, and keeps scroll position steadier during refreshes.\n• Confirmation dialogs and project, calendar, and sync failures surface more clearly instead of disappearing in rerenders.\n• Self-hosted cloud errors are clearer with safer upload blocking and request IDs on 500 responses.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -130,7 +130,7 @@
           "No requiere conexión a internet para funcionar",
           "Código abierto y transparente"
         ],
-        "ReleaseNotes": "• Agregamos ajuste de tamano de texto en escritorio para adaptar mejor la interfaz.\n• El procesamiento del inbox en escritorio ahora maneja mejor prioridad, responsable y nivel de energia.\n• Calendario y la vista de Hoy son mas claros, con eventos del dia seleccionado mas estables y reglas mas estrictas.\n• El sync y el almacenamiento en escritorio son mas robustos, con fusiones de areas mas seguras y filtros mas rapidos.",
+        "ReleaseNotes": "• Agregamos fechas en lenguaje natural para la captura rapida de escritorio, con frases como manana.\n• El sync de escritorio ahora conserva reintentos en cola, recupera el autosync de Dropbox y mantiene mejor el scroll durante refrescos.\n• Los dialogos de confirmacion y los errores de proyectos, calendario y sync se muestran con mas claridad.\n• Los errores de nube autohospedada son mas claros, con uploads bloqueados de forma mas segura e IDs de solicitud en errores 500.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

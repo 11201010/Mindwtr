@@ -1,4 +1,4 @@
-- Agregamos soporte para Share Sheet en iOS para enviar texto y enlaces a Mindwtr desde otras apps.
-- El procesamiento del inbox ahora conserva mejor prioridad, responsable y nivel de energia.
-- Las vistas de Foco e Inbox son mas claras con secciones plegables, una regla de Hoy mas precisa y menos ruido visual.
-- El sync y las fusiones son mas seguros al limpiar areas, manejar borrados y corregir validaciones de tipos.
+- La captura rapida ahora entiende fechas naturales como manana y el proximo viernes.
+- La retroalimentacion movil es mas tranquila con toasts en cola, acciones mas grandes y menos alertas bloqueantes.
+- El sync y la nube son mas confiables, con subidas de adjuntos mas seguras e identificadores de solicitud mas claros.
+- Foco y Ajustes son mas estables con tareas enfocadas priorizadas y errores mostrados de forma consistente.
