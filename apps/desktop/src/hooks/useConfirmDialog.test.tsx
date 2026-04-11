@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { useConfirmDialog } from './useConfirmDialog';
 
@@ -36,7 +36,9 @@ describe('useConfirmDialog', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Open' }));
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
-        expect(await screen.findByTestId('result')).toHaveTextContent('true');
+        await waitFor(() => {
+            expect(screen.getByTestId('result')).toHaveTextContent('true');
+        });
     });
 
     it('resolves false when cancelled', async () => {
@@ -45,6 +47,8 @@ describe('useConfirmDialog', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Open' }));
         fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-        expect(await screen.findByTestId('result')).toHaveTextContent('false');
+        await waitFor(() => {
+            expect(screen.getByTestId('result')).toHaveTextContent('false');
+        });
     });
 });
