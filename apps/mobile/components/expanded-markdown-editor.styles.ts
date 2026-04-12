@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-export const fullscreenMarkdownEditorStyles = StyleSheet.create({
+export const expandedMarkdownEditorStyles = StyleSheet.create({
     container: {
         flex: 1,
     },

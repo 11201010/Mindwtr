@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-    InteractionManager,
     Keyboard,
     KeyboardAvoidingView,
     Modal,
@@ -14,38 +13,39 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useLanguage } from '@/contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 
-import { fullscreenMarkdownEditorStyles as styles } from './fullscreen-markdown-editor.styles';
+import { expandedMarkdownEditorStyles as styles } from './expanded-markdown-editor.styles';
 import { MarkdownText } from './markdown-text';
 
-type FullscreenMarkdownEditorProps = {
-    visible: boolean;
+type ExpandedMarkdownEditorProps = {
+    isOpen: boolean;
     onClose: () => void;
     value: string;
-    onChangeText: (text: string) => void;
+    onChange: (value: string) => void;
     onCommit?: () => void;
     title: string;
     placeholder: string;
+    t: (key: string) => string;
     initialMode?: 'edit' | 'preview';
     direction?: 'ltr' | 'rtl';
 };
 
-export function FullscreenMarkdownEditor({
-    visible,
+export function ExpandedMarkdownEditor({
+    isOpen,
     onClose,
     value,
-    onChangeText,
+    onChange,
     onCommit,
     title,
     placeholder,
+    t,
     initialMode = 'edit',
     direction,
-}: FullscreenMarkdownEditorProps) {
-    const { t } = useLanguage();
+}: ExpandedMarkdownEditorProps) {
     const tc = useThemeColors();
     const inputRef = React.useRef<TextInput | null>(null);
+    const focusTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const [mode, setMode] = React.useState<'edit' | 'preview'>(initialMode);
     const directionStyle = direction
         ? {
@@ -55,19 +55,22 @@ export function FullscreenMarkdownEditor({
         : undefined;
 
     React.useEffect(() => {
-        if (!visible) return;
+        if (!isOpen) return;
         setMode(initialMode);
-    }, [initialMode, visible]);
+    }, [initialMode, isOpen]);
 
     React.useEffect(() => {
-        if (!visible || mode !== 'edit') return;
-        const interaction = InteractionManager.runAfterInteractions(() => {
+        if (!isOpen || mode !== 'edit') return;
+        focusTimerRef.current = setTimeout(() => {
             inputRef.current?.focus();
-        });
+        }, 30);
         return () => {
-            interaction.cancel();
+            if (focusTimerRef.current) {
+                clearTimeout(focusTimerRef.current);
+                focusTimerRef.current = null;
+            }
         };
-    }, [mode, visible]);
+    }, [isOpen, mode]);
 
     const handleClose = React.useCallback(() => {
         onCommit?.();
@@ -86,7 +89,7 @@ export function FullscreenMarkdownEditor({
 
     return (
         <Modal
-            visible={visible}
+            visible={isOpen}
             animationType="slide"
             presentationStyle="fullScreen"
             onRequestClose={handleClose}
@@ -95,15 +98,14 @@ export function FullscreenMarkdownEditor({
                 <View style={[styles.header, { borderBottomColor: tc.border }]}>
                     <TouchableOpacity
                         onPress={handleClose}
-                        style={styles.closeButton}
+                        style={[
+                            styles.closeButton,
+                            direction === 'rtl' ? { left: undefined, right: 16 } : null,
+                        ]}
                         accessibilityRole="button"
                         accessibilityLabel={t('markdown.collapse')}
                     >
-                        <Ionicons
-                            name={Platform.OS === 'ios' ? 'chevron-down' : 'close'}
-                            size={24}
-                            color={tc.text}
-                        />
+                        <Ionicons name="close" size={24} color={tc.text} />
                     </TouchableOpacity>
 
                     <Text style={[styles.title, { color: tc.text }]} numberOfLines={1}>
@@ -112,7 +114,11 @@ export function FullscreenMarkdownEditor({
 
                     <TouchableOpacity
                         onPress={handleToggleMode}
-                        style={[styles.modeButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+                        style={[
+                            styles.modeButton,
+                            direction === 'rtl' ? { right: undefined, left: 16 } : null,
+                            { backgroundColor: tc.cardBg, borderColor: tc.border },
+                        ]}
                         accessibilityRole="button"
                         accessibilityLabel={mode === 'edit' ? t('markdown.preview') : t('markdown.edit')}
                     >
@@ -137,7 +143,7 @@ export function FullscreenMarkdownEditor({
                                     { color: tc.text, backgroundColor: tc.inputBg, borderColor: tc.border },
                                 ]}
                                 value={value}
-                                onChangeText={onChangeText}
+                                onChangeText={onChange}
                                 placeholder={placeholder}
                                 placeholderTextColor={tc.secondaryText}
                                 multiline

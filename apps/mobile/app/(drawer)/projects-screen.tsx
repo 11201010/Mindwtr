@@ -20,7 +20,7 @@ import { ProjectImagePreviewModal, ProjectLinkModal, ProjectTagPickerModal } fro
 import { ProjectRow } from '@/components/projects-screen/ProjectRow';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { useProjectFiltering, type ProjectSectionItem } from '@/hooks/use-project-filtering';
-import { FullscreenMarkdownEditor } from '../../components/fullscreen-markdown-editor';
+import { ExpandedMarkdownEditor } from '../../components/expanded-markdown-editor';
 import { TaskList } from '../../components/task-list';
 import { useMobileAreaFilter } from '@/hooks/use-mobile-area-filter';
 import { useLanguage } from '../../contexts/language-context';
@@ -1334,14 +1334,15 @@ export default function ProjectsScreen() {
                   showSort={false}
                 />
                 </ScrollView>
-                <FullscreenMarkdownEditor
-                  visible={notesFullscreen}
+                <ExpandedMarkdownEditor
+                  isOpen={notesFullscreen}
                   onClose={() => setNotesFullscreen(false)}
                   value={selectedProjectNotes}
-                  onChangeText={handleSelectedProjectNotesChange}
+                  onChange={handleSelectedProjectNotesChange}
                   onCommit={commitSelectedProjectNotes}
                   title={t('project.notes')}
                   placeholder={t('projects.notesPlaceholder')}
+                  t={t}
                   initialMode="edit"
                   direction={selectedProjectNotesDirection}
                 />

@@ -27,7 +27,7 @@ import {
 } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
-import { FullscreenMarkdownEditor } from '../fullscreen-markdown-editor';
+import { ExpandedMarkdownEditor } from '../expanded-markdown-editor';
 import { MarkdownText } from '../markdown-text';
 import { buildRecurrenceValue } from './recurrence-utils';
 import type { SetEditedTask } from './use-task-edit-state';
@@ -201,7 +201,7 @@ export function TaskEditFieldRenderer(input: TaskEditFieldRendererProps) {
     const inputStyle = { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text };
     const combinedText = `${titleDraft ?? ''}\n${descriptionDraft ?? ''}`.trim();
     const resolvedDirection = resolveAutoTextDirection(combinedText, language);
-    const [descriptionFullscreen, setDescriptionFullscreen] = React.useState(false);
+    const [descriptionExpanded, setDescriptionExpanded] = React.useState(false);
     const textDirectionStyle = {
         writingDirection: resolvedDirection,
         textAlign: resolvedDirection === 'rtl' ? 'right' : 'left',
@@ -882,7 +882,7 @@ export function TaskEditFieldRenderer(input: TaskEditFieldRendererProps) {
                                     </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    onPress={() => setDescriptionFullscreen(true)}
+                                    onPress={() => setDescriptionExpanded(true)}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('markdown.expand')}
                                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -910,13 +910,14 @@ export function TaskEditFieldRenderer(input: TaskEditFieldRendererProps) {
                                 accessibilityHint={t('taskEdit.descriptionPlaceholder')}
                             />
                         )}
-                        <FullscreenMarkdownEditor
-                            visible={descriptionFullscreen}
-                            onClose={() => setDescriptionFullscreen(false)}
+                        <ExpandedMarkdownEditor
+                            isOpen={descriptionExpanded}
+                            onClose={() => setDescriptionExpanded(false)}
                             value={descriptionDraft}
-                            onChangeText={handleDescriptionChange}
+                            onChange={handleDescriptionChange}
                             title={t('taskEdit.descriptionLabel')}
                             placeholder={t('taskEdit.descriptionPlaceholder')}
+                            t={t}
                             initialMode="edit"
                             direction={resolvedDirection}
                         />
