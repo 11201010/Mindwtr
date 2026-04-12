@@ -5,7 +5,7 @@ import { X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { MarkdownFormatToolbar } from './MarkdownFormatToolbar';
 import { Markdown } from './Markdown';
-import type { MarkdownSelection, MarkdownToolbarActionId } from '@mindwtr/core';
+import type { MarkdownSelection, MarkdownToolbarActionId, MarkdownToolbarResult } from '@mindwtr/core';
 
 type ExpandedMarkdownEditorProps = {
     isOpen: boolean;
@@ -21,7 +21,7 @@ type ExpandedMarkdownEditorProps = {
     direction?: 'ltr' | 'rtl';
     canUndo: boolean;
     onUndo: () => MarkdownSelection | void;
-    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownSelection | void;
+    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownToolbarResult | void;
     onSelectionChange: (selection: MarkdownSelection) => void;
     onEditorKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 };

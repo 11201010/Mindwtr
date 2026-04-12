@@ -21,6 +21,7 @@ import {
     type TaskEnergyLevel,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
     type TaskPriority,
     TaskStatus,
     type TimeEstimate,
@@ -69,7 +70,7 @@ type TaskEditFieldRendererProps = {
     setIsDescriptionInputFocused: React.Dispatch<React.SetStateAction<boolean>>;
     handleDescriptionChange: (text: string) => void;
     handleDescriptionUndo: () => MarkdownSelection | undefined;
-    handleDescriptionApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownSelection;
+    handleDescriptionApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownToolbarResult;
     openDescriptionExpandedEditor: () => void;
     downloadAttachment: (attachment: Attachment) => void | Promise<void>;
     editedTask: Partial<Task>;

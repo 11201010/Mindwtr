@@ -4,6 +4,7 @@ import {
     applyMarkdownToolbarAction,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
     type Task,
 } from '@mindwtr/core';
 
@@ -60,11 +61,8 @@ export function useTaskDescriptionEditor({
         setDescriptionUndoDepth(0);
         setIsDescriptionInputFocused(false);
         setDescriptionExpanded(false);
-        setDescriptionSelection({
-            start: descriptionDraft.length,
-            end: descriptionDraft.length,
-        });
-    }, [task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+        setDescriptionSelection({ start: 0, end: 0 });
+    }, [task?.id]);
 
     const pushDescriptionUndoEntry = React.useCallback((value: string, selection: MarkdownSelection) => {
         const previousEntry = descriptionUndoRef.current[descriptionUndoRef.current.length - 1];
@@ -132,13 +130,13 @@ export function useTaskDescriptionEditor({
         return previousEntry.selection;
     }, [applyDescriptionValue]);
 
-    const handleDescriptionApplyAction = React.useCallback((actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => {
+    const handleDescriptionApplyAction = React.useCallback((actionId: MarkdownToolbarActionId, selection: MarkdownSelection): MarkdownToolbarResult => {
         const next = applyMarkdownToolbarAction(descriptionDraftRef.current, selection, actionId);
         applyDescriptionValue(next.value, {
             baseSelection: selection,
             nextSelection: next.selection,
         });
-        return next.selection;
+        return next;
     }, [applyDescriptionValue, descriptionDraftRef]);
 
     const openDescriptionExpandedEditor = React.useCallback(() => {

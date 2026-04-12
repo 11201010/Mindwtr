@@ -11,6 +11,7 @@ import {
     type Attachment,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
     type RecurrenceRule,
     type RecurrenceStrategy,
     type Task,
@@ -220,13 +221,13 @@ export function TaskItemFieldRenderer({
         });
         return previousEntry.selection;
     };
-    const handleDescriptionApplyAction = (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => {
+    const handleDescriptionApplyAction = (actionId: MarkdownToolbarActionId, selection: MarkdownSelection): MarkdownToolbarResult => {
         const next = applyMarkdownToolbarAction(editDescription, selection, actionId);
         applyDescriptionValue(next.value, {
             baseSelection: selection,
             nextSelection: next.selection,
         });
-        return next.selection;
+        return next;
     };
     const handleDescriptionKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
         if (!(event.metaKey || event.ctrlKey) || event.altKey) return;

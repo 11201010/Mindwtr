@@ -4,6 +4,7 @@ import {
     MARKDOWN_TOOLBAR_ACTIONS,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
 } from '@mindwtr/core';
 
 import { cn } from '../lib/utils';
@@ -14,7 +15,7 @@ type MarkdownFormatToolbarProps = {
     className?: string;
     canUndo: boolean;
     onUndo: () => MarkdownSelection | void;
-    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownSelection | void;
+    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownToolbarResult | void;
 };
 
 const translateWithFallback = (t: (key: string) => string, key: string, fallback: string) => {
@@ -77,7 +78,7 @@ export function MarkdownFormatToolbar({
     }, [canUndo, onUndo, restoreSelection]);
 
     const handleApplyAction = useCallback((actionId: MarkdownToolbarActionId) => {
-        restoreSelection(onApplyAction(actionId, getSelection()));
+        restoreSelection(onApplyAction(actionId, getSelection())?.selection);
     }, [getSelection, onApplyAction, restoreSelection]);
 
     return (

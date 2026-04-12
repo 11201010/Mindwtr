@@ -13,6 +13,7 @@ import {
     MARKDOWN_TOOLBAR_ACTIONS,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
 } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 
@@ -28,7 +29,7 @@ type MarkdownFormatToolbarProps = {
     visible: boolean;
     canUndo: boolean;
     onUndo: () => MarkdownSelection | void;
-    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownSelection | void;
+    onApplyAction: (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => MarkdownToolbarResult | void;
     onInteractionStart?: () => void;
 };
 
@@ -138,7 +139,7 @@ export function MarkdownFormatToolbar({
     }, [canUndo, onUndo, restoreSelection]);
 
     const handleApplyAction = React.useCallback((actionId: MarkdownToolbarActionId) => {
-        restoreSelection(onApplyAction(actionId, selection));
+        restoreSelection(onApplyAction(actionId, selection)?.selection);
     }, [onApplyAction, restoreSelection, selection]);
 
     if (!visible || keyboardInset <= 0) {

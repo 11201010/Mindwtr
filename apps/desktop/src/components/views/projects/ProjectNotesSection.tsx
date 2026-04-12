@@ -6,6 +6,7 @@ import {
     type Attachment,
     type MarkdownSelection,
     type MarkdownToolbarActionId,
+    type MarkdownToolbarResult,
     type Project,
 } from '@mindwtr/core';
 
@@ -125,13 +126,13 @@ export function ProjectNotesSection({
         return previousEntry.selection;
     };
 
-    const handleNotesApplyAction = (actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => {
+    const handleNotesApplyAction = (actionId: MarkdownToolbarActionId, selection: MarkdownSelection): MarkdownToolbarResult => {
         const next = applyMarkdownToolbarAction(draftNotesRef.current, selection, actionId);
         applyNotesValue(next.value, {
             baseSelection: selection,
             nextSelection: next.selection,
         });
-        return next.selection;
+        return next;
     };
 
     const handleNotesKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, Modal, Alert, Pressable, Scrol
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { AREA_PRESET_COLORS, Area, Attachment, DEFAULT_PROJECT_COLOR, generateUUID, getAttachmentDisplayTitle, normalizeLinkAttachmentInput, Project, resolveAutoTextDirection, safeParseDate, Task, type MarkdownSelection, type MarkdownToolbarActionId, applyMarkdownToolbarAction, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
+import { AREA_PRESET_COLORS, Area, Attachment, DEFAULT_PROJECT_COLOR, generateUUID, getAttachmentDisplayTitle, normalizeLinkAttachmentInput, Project, resolveAutoTextDirection, safeParseDate, Task, type MarkdownSelection, type MarkdownToolbarActionId, type MarkdownToolbarResult, applyMarkdownToolbarAction, useTaskStore, validateAttachmentForUpload } from '@mindwtr/core';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Linking from 'expo-linking';
@@ -282,13 +282,13 @@ export default function ProjectsScreen() {
     });
     return previousEntry.selection;
   }, [applySelectedProjectNotesValue]);
-  const handleSelectedProjectNotesApplyAction = useCallback((actionId: MarkdownToolbarActionId, selection: MarkdownSelection) => {
+  const handleSelectedProjectNotesApplyAction = useCallback((actionId: MarkdownToolbarActionId, selection: MarkdownSelection): MarkdownToolbarResult => {
     const next = applyMarkdownToolbarAction(selectedProjectNotesRef.current, selection, actionId);
     applySelectedProjectNotesValue(next.value, {
       baseSelection: selection,
       nextSelection: next.selection,
     });
-    return next.selection;
+    return next;
   }, [applySelectedProjectNotesValue, selectedProjectNotesRef]);
   const commitSelectedProjectNotes = () => {
     if (!selectedProject) return;
