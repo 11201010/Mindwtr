@@ -876,6 +876,10 @@ export const en: Record<string, string> = {
         'settings.weeklyReviewIncludeContextsStep': 'Include Contexts step',
         'settings.weeklyReviewIncludeContextsStepDesc': 'Show a dedicated contexts review step between Waiting For and Projects.',
         'widget.capture': 'Quick capture',
+        'obsidian.taskNotesDetectedTitle': 'TaskNotes mode is active',
+        'obsidian.taskNotesDetectedBody': 'Mindwtr detected TaskNotes-style frontmatter in these files, so inline checklist tasks from other notes are ignored.',
+        'obsidian.taskNotesDetectedHint': 'Look for a status field plus TaskNotes metadata like tags: [task], due, scheduled, contexts, projects, timeEstimate, recurrence, or completedDate.',
+        'obsidian.taskNotesDetectedMore': 'more matching files',
 
         'digest.morningTitle': 'Morning briefing',
         'digest.morningBody': 'Open Mindwtr to plan your day.',
