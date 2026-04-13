@@ -2,6 +2,10 @@ import { ArrowRight, BookOpen, CheckCircle, ClipboardList, Clock, Trash2, User, 
 import { DEFAULT_PROJECT_COLOR, type Area, type Project, type Task, type TaskPriority } from '@mindwtr/core';
 
 import { cn } from '../lib/utils';
+import {
+    InboxProcessingScheduleFields,
+    type InboxProcessingScheduleFieldsControls,
+} from './InboxProcessingScheduleFields';
 import { ProjectSelector } from './ui/ProjectSelector';
 
 type QuickActionabilityChoice = 'actionable' | 'trash' | 'someday' | 'reference';
@@ -28,11 +32,7 @@ type InboxProcessingQuickPanelProps = {
     executionChoice: QuickExecutionChoice;
     setExecutionChoice: (value: QuickExecutionChoice) => void;
     showScheduleFields: boolean;
-    scheduleDate: string;
-    scheduleTimeDraft: string;
-    setScheduleDate: (value: string) => void;
-    setScheduleTimeDraft: (value: string) => void;
-    onScheduleTimeCommit: () => void;
+    scheduleFields: InboxProcessingScheduleFieldsControls;
     delegateWho: string;
     setDelegateWho: (value: string) => void;
     delegateFollowUp: string;
@@ -100,11 +100,7 @@ export function InboxProcessingQuickPanel({
     executionChoice,
     setExecutionChoice,
     showScheduleFields,
-    scheduleDate,
-    scheduleTimeDraft,
-    setScheduleDate,
-    setScheduleTimeDraft,
-    onScheduleTimeCommit,
+    scheduleFields,
     delegateWho,
     setDelegateWho,
     delegateFollowUp,
@@ -339,28 +335,11 @@ export function InboxProcessingQuickPanel({
                 {showDecisionFields ? (
                     <>
                         {showScheduleFields ? (
-                            <div className="space-y-2">
-                                <label className="text-[11px] text-muted-foreground font-medium">{t('taskEdit.startDateLabel')}</label>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="date"
-                                        aria-label={t('taskEdit.startDateLabel')}
-                                        value={scheduleDate}
-                                        onChange={(event) => setScheduleDate(event.target.value)}
-                                        className="flex-1 text-sm bg-muted/50 border border-border rounded px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/40 focus:outline-none"
-                                    />
-                                    <input
-                                        type="text"
-                                        aria-label={t('task.aria.startTime')}
-                                        value={scheduleTimeDraft}
-                                        inputMode="numeric"
-                                        placeholder="HH:MM"
-                                        onChange={(event) => setScheduleTimeDraft(event.target.value)}
-                                        onBlur={onScheduleTimeCommit}
-                                        className="w-28 text-sm bg-muted/50 border border-border rounded px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/40 focus:outline-none"
-                                    />
-                                </div>
-                            </div>
+                            <InboxProcessingScheduleFields
+                                t={t}
+                                fields={scheduleFields}
+                                variant="quick"
+                            />
                         ) : null}
 
                         <div className="space-y-3">
@@ -656,7 +635,6 @@ export function InboxProcessingQuickPanel({
                     <button
                         type="button"
                         onClick={() => {
-                            onScheduleTimeCommit();
                             void onSubmit();
                         }}
                         className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors shrink-0"

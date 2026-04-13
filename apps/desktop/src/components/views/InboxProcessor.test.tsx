@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { AppData, Area, Project, Task } from '@mindwtr/core';
 
 import { InboxProcessor } from './InboxProcessor';
@@ -77,6 +77,10 @@ const renderInboxProcessor = (settings?: AppData['settings']): RenderResult => {
 };
 
 describe('InboxProcessor', () => {
+    afterEach(() => {
+        cleanup();
+    });
+
     it('shows an error toast when project conversion fails', async () => {
         useUiStore.setState({ toasts: [] });
         const { getByRole, getByText, addProject } = renderInboxProcessor();
@@ -111,8 +115,8 @@ describe('InboxProcessor', () => {
 
         fireEvent.click(getByRole('button', { name: /process\.btn/i }));
 
-        expect(getByText('process.quickDesc')).toBeInTheDocument();
-        expect(queryByText('process.refineDesc')).not.toBeInTheDocument();
+        expect(getByText('process.quickDesc')).toBeTruthy();
+        expect(queryByText('process.refineDesc')).toBeNull();
     });
 
     it('routes actionable multi-step tasks directly to project conversion', async () => {
@@ -167,7 +171,7 @@ describe('InboxProcessor', () => {
         fireEvent.click(getByText('process.yesActionable'));
         fireEvent.click(getByText('process.moreThanOneStepNo'));
 
-        expect(getByText('process.twoMinDesc')).toBeInTheDocument();
+        expect(getByText('process.twoMinDesc')).toBeTruthy();
     });
 
     it('merges the two-minute shortcut into the actionable step by default', async () => {
@@ -194,14 +198,14 @@ describe('InboxProcessor', () => {
         fireEvent.click(getByRole('button', { name: /process\.btn/i }));
         fireEvent.click(getByText('process.refineNext'));
 
-        expect(queryByText('process.reference')).not.toBeInTheDocument();
+        expect(queryByText('process.reference')).toBeNull();
 
         fireEvent.click(getByText('process.yesActionable'));
         fireEvent.click(getByText('process.moreThanOneStepNo'));
         fireEvent.click(getByText('process.takesLonger'));
 
-        expect(getByText('process.nextStepDesc')).toBeInTheDocument();
-        expect(queryByText('taskEdit.startDateLabel')).not.toBeInTheDocument();
+        expect(getByText('process.nextStepDesc')).toBeTruthy();
+        expect(queryByText('taskEdit.startDateLabel')).toBeNull();
     });
 
     it('shows scheduling and reference options when enabled in settings', () => {
@@ -217,13 +221,15 @@ describe('InboxProcessor', () => {
         fireEvent.click(getByRole('button', { name: /process\.btn/i }));
         fireEvent.click(getByText('process.refineNext'));
 
-        expect(getByText('process.reference')).toBeInTheDocument();
+        expect(getByText('process.reference')).toBeTruthy();
 
         fireEvent.click(getByText('process.yesActionable'));
         fireEvent.click(getByText('process.moreThanOneStepNo'));
         fireEvent.click(getByText('process.takesLonger'));
 
-        expect(getByText('taskEdit.startDateLabel')).toBeInTheDocument();
+        expect(getByText('taskEdit.startDateLabel')).toBeTruthy();
+        expect(getByText('taskEdit.dueDateLabel')).toBeTruthy();
+        expect(getByText('taskEdit.reviewDateLabel')).toBeTruthy();
     });
 
     it('hides energy and assigned-to fields when the task editor layout disables them', () => {
@@ -238,8 +244,8 @@ describe('InboxProcessor', () => {
         fireEvent.click(getByRole('button', { name: /process\.btn/i }));
         fireEvent.click(getByRole('button', { name: 'process.modeQuick' }));
 
-        expect(queryByLabelText('taskEdit.energyLevel')).not.toBeInTheDocument();
-        expect(queryByLabelText('taskEdit.assignedTo')).not.toBeInTheDocument();
+        expect(queryByLabelText('taskEdit.energyLevel')).toBeNull();
+        expect(queryByLabelText('taskEdit.assignedTo')).toBeNull();
 
         fireEvent.click(getByRole('button', { name: 'process.modeGuided' }));
         fireEvent.click(getByText('process.refineNext'));
@@ -248,11 +254,11 @@ describe('InboxProcessor', () => {
         fireEvent.click(getByText('process.takesLonger'));
         fireEvent.click(getByText('process.doIt'));
 
-        expect(queryByLabelText('taskEdit.energyLevel')).not.toBeInTheDocument();
-        expect(queryByLabelText('taskEdit.assignedTo')).not.toBeInTheDocument();
+        expect(queryByLabelText('taskEdit.energyLevel')).toBeNull();
+        expect(queryByLabelText('taskEdit.assignedTo')).toBeNull();
     });
 
-    it('processes a task from quick mode with schedule, contexts, tags, and priority by default', async () => {
+    it('processes a task from quick mode with start, due, review, contexts, tags, and priority by default', async () => {
         const { getByRole, getByLabelText, updateTask } = renderInboxProcessor({
             gtd: {
                 inboxProcessing: {
@@ -286,6 +292,12 @@ describe('InboxProcessor', () => {
         fireEvent.change(getByLabelText('taskEdit.startDateLabel'), {
             target: { value: '2026-03-23' },
         });
+        fireEvent.change(getByLabelText('taskEdit.dueDateLabel'), {
+            target: { value: '2026-03-24' },
+        });
+        fireEvent.change(getByLabelText('taskEdit.reviewDateLabel'), {
+            target: { value: '2026-03-25' },
+        });
 
         fireEvent.click(getByRole('button', { name: 'process.next' }));
 
@@ -302,9 +314,67 @@ describe('InboxProcessor', () => {
                     assignedTo: 'Morgan',
                     priority: 'high',
                     startTime: '2026-03-23',
+                    dueDate: '2026-03-24',
+                    reviewAt: '2026-03-25',
                 }),
             );
         });
+    });
+
+    it('parses quick-add date commands from the guided refine title before saving', async () => {
+        const { getByRole, getByText, getByDisplayValue, updateTask } = renderInboxProcessor();
+
+        fireEvent.click(getByRole('button', { name: /process\.btn/i }));
+        fireEvent.change(getByDisplayValue('Plan launch'), {
+            target: {
+                value: 'Clarified task /start:2026-03-23 12:00 /due:2026-03-24 13:00 /review:2026-03-25 14:00',
+            },
+        });
+        fireEvent.click(getByText('process.refineNext'));
+        fireEvent.click(getByText('process.yesActionable'));
+        fireEvent.click(getByText('process.moreThanOneStepNo'));
+        fireEvent.click(getByText('process.takesLonger'));
+        fireEvent.click(getByText('process.doIt'));
+        fireEvent.click(getByRole('button', { name: /process\.next/ }));
+        fireEvent.click(getByRole('button', { name: /process\.noProject/ }));
+
+        await waitFor(() => {
+            expect(updateTask).toHaveBeenCalledWith(
+                'task-1',
+                expect.objectContaining({
+                    title: 'Clarified task',
+                    status: 'next',
+                    startTime: expect.stringContaining('2026-03-23'),
+                    dueDate: expect.stringContaining('2026-03-24'),
+                    reviewAt: expect.stringContaining('2026-03-25'),
+                }),
+            );
+        });
+    });
+
+    it('shows an error toast and blocks processing when the title contains an invalid date command', async () => {
+        useUiStore.setState({ toasts: [] });
+        const { getByRole, getByLabelText, updateTask } = renderInboxProcessor();
+
+        fireEvent.click(getByRole('button', { name: /process\.btn/i }));
+        fireEvent.click(getByRole('button', { name: 'process.modeQuick' }));
+        fireEvent.change(getByLabelText('taskEdit.titleLabel'), {
+            target: { value: 'Broken task /due:2026-04-31' },
+        });
+
+        fireEvent.click(getByRole('button', { name: 'process.next' }));
+
+        await waitFor(() => {
+            expect(useUiStore.getState().toasts).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        message: 'quickAdd.invalidDateCommand: /due:2026-04-31',
+                        tone: 'error',
+                    }),
+                ]),
+            );
+        });
+        expect(updateTask).not.toHaveBeenCalled();
     });
 
     it('processes a task from guided mode with priority in the context step by default', async () => {

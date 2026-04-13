@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseQuickAdd } from './quick-add';
+import { parseQuickAdd, parseQuickAddDateCommands } from './quick-add';
 
 describe('quick-add', () => {
     it('parses status, due, note, tags, contexts', () => {
@@ -61,6 +61,28 @@ describe('quick-add', () => {
         expect(result.invalidDateCommands).toEqual(['/start:monx']);
         expect(result.props.startTime).toBeUndefined();
         expect(result.props.dueDate).toBe(new Date(2025, 0, 2, now.getHours(), now.getMinutes(), 0, 0).toISOString());
+    });
+
+    it('parses date commands without stripping unrelated quick-add tokens', () => {
+        const now = new Date('2026-04-13T10:00:00Z');
+        const result = parseQuickAddDateCommands(
+            'Review talk @school #urgent /start:tomorrow /due:friday 2pm /review:next monday',
+            now
+        );
+
+        expect(result.title).toBe('Review talk @school #urgent');
+        expect(result.props.startTime).toBe(new Date(2026, 3, 14, 0, 0, 0, 0).toISOString());
+        expect(result.props.dueDate).toBe(new Date(2026, 3, 17, 14, 0, 0, 0).toISOString());
+        expect(result.props.reviewAt).toBe(new Date(2026, 3, 20, 0, 0, 0, 0).toISOString());
+    });
+
+    it('keeps invalid date commands in the title-only parser output', () => {
+        const now = new Date('2026-04-13T10:00:00Z');
+        const result = parseQuickAddDateCommands('Task /due:2026-04-31', now);
+
+        expect(result.title).toBe('Task /due:2026-04-31');
+        expect(result.invalidDateCommands).toEqual(['/due:2026-04-31']);
+        expect(result.props.dueDate).toBeUndefined();
     });
 
     it('parses relative due dates with numbers without treating numbers as time tokens', () => {

@@ -3,6 +3,10 @@ import { ArrowRight, BookOpen, CheckCircle, ChevronLeft, ClipboardList, Clock, T
 import { DEFAULT_PROJECT_COLOR, type Area, type Project, type Task, type TaskPriority } from '@mindwtr/core';
 
 import { cn } from '../lib/utils';
+import {
+    InboxProcessingScheduleFields,
+    type InboxProcessingScheduleFieldsControls,
+} from './InboxProcessingScheduleFields';
 import { ProjectSelector } from './ui/ProjectSelector';
 
 export type ProcessingStep = 'refine' | 'actionable' | 'projectcheck' | 'twomin' | 'decide' | 'context' | 'project' | 'delegate';
@@ -85,12 +89,8 @@ type InboxProcessingWizardProps = {
     setSelectedProjectId: (value: string | null) => void;
     selectedAreaId: string | null;
     setSelectedAreaId: (value: string | null) => void;
-    scheduleDate: string;
-    scheduleTimeDraft: string;
-    setScheduleDate: (value: string) => void;
-    setScheduleTimeDraft: (value: string) => void;
-    onScheduleTimeCommit: () => void;
     showScheduleFields: boolean;
+    scheduleFields: InboxProcessingScheduleFieldsControls;
 };
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
@@ -174,12 +174,8 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
     setSelectedProjectId,
     selectedAreaId,
     setSelectedAreaId,
-    scheduleDate,
-    scheduleTimeDraft,
-    setScheduleDate,
-    setScheduleTimeDraft,
-    onScheduleTimeCommit,
     showScheduleFields,
+    scheduleFields,
 }: InboxProcessingWizardProps) {
     if (!isProcessing || !processingTask) return null;
 
@@ -466,26 +462,11 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                         {t('process.nextStepDesc')}
                     </p>
                     {showScheduleFields && (
-                        <div className="space-y-1">
-                            <label className="text-xs text-muted-foreground font-medium">{t('taskEdit.startDateLabel')}</label>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="date"
-                                    value={scheduleDate}
-                                    onChange={(e) => setScheduleDate(e.target.value)}
-                                    className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-                                />
-                                <input
-                                    type="text"
-                                    value={scheduleTimeDraft}
-                                    inputMode="numeric"
-                                    placeholder="HH:MM"
-                                    onChange={(e) => setScheduleTimeDraft(e.target.value)}
-                                    onBlur={onScheduleTimeCommit}
-                                    className="text-xs bg-muted/50 border border-border rounded px-2 py-1 text-foreground"
-                                />
-                            </div>
-                        </div>
+                        <InboxProcessingScheduleFields
+                            t={t}
+                            fields={scheduleFields}
+                            variant="guided"
+                        />
                     )}
                     <div className="flex gap-3">
                         <button

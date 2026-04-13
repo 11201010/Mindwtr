@@ -17,6 +17,12 @@ export interface QuickAddResult {
     detectedDate?: QuickAddDetectedDate;
 }
 
+export interface QuickAddDateCommandsResult {
+    title: string;
+    props: Pick<Partial<Task>, 'startTime' | 'dueDate' | 'reviewAt'>;
+    invalidDateCommands?: string[];
+}
+
 const STATUS_TOKENS: Record<string, TaskStatus> = {
     inbox: 'inbox',
     next: 'next',
@@ -159,6 +165,63 @@ function parseDateCommand(
     };
 }
 
+function parseDateCommandsFromWorking(
+    working: string,
+    now: Date,
+): {
+    working: string;
+    startTime?: string;
+    dueDate?: string;
+    reviewAt?: string;
+    invalidDateCommands?: string[];
+} {
+    const invalidDateCommands: string[] = [];
+
+    const startResult = parseDateCommand('start', working, now);
+    const startTime = startResult.value;
+    if (startResult.invalidCommand) invalidDateCommands.push(startResult.invalidCommand);
+    working = startResult.working;
+
+    const dueResult = parseDateCommand('due', working, now);
+    const dueDate = dueResult.value;
+    if (dueResult.invalidCommand) invalidDateCommands.push(dueResult.invalidCommand);
+    working = dueResult.working;
+
+    const reviewResult = parseDateCommand('review', working, now);
+    const reviewAt = reviewResult.value;
+    if (reviewResult.invalidCommand) invalidDateCommands.push(reviewResult.invalidCommand);
+    working = reviewResult.working;
+
+    return {
+        working,
+        startTime,
+        dueDate,
+        reviewAt,
+        invalidDateCommands: invalidDateCommands.length > 0 ? invalidDateCommands : undefined,
+    };
+}
+
+export function parseQuickAddDateCommands(input: string, now: Date = new Date()): QuickAddDateCommandsResult {
+    const protectedInput = protectEscapes(input.trim());
+    const {
+        working,
+        startTime,
+        dueDate,
+        reviewAt,
+        invalidDateCommands,
+    } = parseDateCommandsFromWorking(protectedInput, now);
+
+    return {
+        title: restoreEscapes(working.replace(/\s{2,}/g, ' ').trim()),
+        props: {
+            ...(startTime ? { startTime } : {}),
+            ...(dueDate ? { dueDate } : {}),
+            ...(reviewAt ? { reviewAt } : {}),
+        },
+        invalidDateCommands,
+    };
+}
+
 export function parseQuickAdd(input: string, projects?: Project[], now: Date = new Date(), areas?: Area[]): QuickAddResult {
     let working = protectEscapes(input.trim());
     const hadExplicitDueCommand = /(?:^|\s)\/due:/i.test(working);
@@ -219,22 +282,14 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
     }
 
     // Date commands: /start:..., /due:..., /review:...
-    const invalidDateCommands: string[] = [];
-
-    const startResult = parseDateCommand('start', working, now);
-    let startTime = startResult.value;
-    if (startResult.invalidCommand) invalidDateCommands.push(startResult.invalidCommand);
-    working = startResult.working;
-
-    const dueResult = parseDateCommand('due', working, now);
-    let dueDate = dueResult.value;
-    if (dueResult.invalidCommand) invalidDateCommands.push(dueResult.invalidCommand);
-    working = dueResult.working;
-
-    const reviewResult = parseDateCommand('review', working, now);
-    let reviewAt = reviewResult.value;
-    if (reviewResult.invalidCommand) invalidDateCommands.push(reviewResult.invalidCommand);
-    working = reviewResult.working;
+    const {
+        working: workingWithoutDates,
+        startTime,
+        dueDate,
+        reviewAt,
+        invalidDateCommands,
+    } = parseDateCommandsFromWorking(working, now);
+    working = workingWithoutDates;
 
     // Status tokens like /next, /waiting, etc.
     let status: TaskStatus | undefined;
@@ -295,7 +350,7 @@ export function parseQuickAdd(input: string, projects?: Project[], now: Date = n
         title,
         props,
         projectTitle,
-        invalidDateCommands: invalidDateCommands.length > 0 ? invalidDateCommands : undefined,
+        invalidDateCommands,
         detectedDate,
     };
 }
