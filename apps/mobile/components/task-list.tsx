@@ -50,6 +50,7 @@ export interface TaskListProps {
   showSort?: boolean;
   showQuickAddHelp?: boolean;
   emptyText?: string;
+  emptyHint?: string;
   headerAccessory?: React.ReactNode;
   enableCopilot?: boolean;
   defaultEditTab?: 'task' | 'view';
@@ -68,6 +69,7 @@ function TaskListComponent({
   showSort = true,
   showQuickAddHelp = true,
   emptyText,
+  emptyHint,
   headerAccessory,
   enableCopilot = true,
   defaultEditTab,
@@ -972,9 +974,11 @@ function TaskListComponent({
           {listItems.length === 0 ? (
             <ListEmptyState
               message={emptyMessage}
+              hint={emptyHint}
               backgroundColor={themeColors.cardBg}
               borderColor={themeColors.border}
               textColor={themeColors.text}
+              mutedTextColor={themeColors.secondaryText}
             />
           ) : (
             listItems.map((item) => (
@@ -1005,9 +1009,11 @@ function TaskListComponent({
           ListEmptyComponent={
             <ListEmptyState
               message={emptyMessage}
+              hint={emptyHint}
               backgroundColor={themeColors.cardBg}
               borderColor={themeColors.border}
               textColor={themeColors.text}
+              mutedTextColor={themeColors.secondaryText}
             />
           }
         />
