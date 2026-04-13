@@ -1,8 +1,5 @@
-import { existsSync } from 'fs';
-
 import type { Area, Project, Task } from './queries.js';
-import type { DbOptions } from './db.js';
-import { resolveMindwtrDbPath } from './paths.js';
+import { ensureMindwtrDbPath, type DbOptions } from './db.js';
 
 type CoreStore = {
   getState: () => {
@@ -135,20 +132,13 @@ const isDuplicateColumnError = (error: unknown): boolean => {
 };
 
 const ensureCoreReady = async (options: DbOptions) => {
-  const resolvedPath = resolveMindwtrDbPath(options.dbPath);
+  const resolvedPath = await ensureMindwtrDbPath(options);
   if (coreReady && coreDbPath === resolvedPath && coreReadonly === Boolean(options.readonly)) {
     return coreReady;
   }
 
   coreDbPath = resolvedPath;
   coreReadonly = Boolean(options.readonly);
-  if (!existsSync(coreDbPath)) {
-    throw new Error(
-      `Mindwtr database not found at: ${coreDbPath}\n` +
-      `Please ensure the Mindwtr app has been run at least once to create the database, ` +
-      `or specify a custom path using --db /path/to/mindwtr.db or MINDWTR_DB_PATH environment variable.`
-    );
-  }
   coreReady = (async () => {
     const core = await loadCoreModules();
     const { client } = await createSqliteClient(coreDbPath!, coreReadonly);
