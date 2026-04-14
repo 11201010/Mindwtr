@@ -1,5 +1,4 @@
 import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, useCallback } from 'react';
-import { AlertTriangle, Folder } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { shallow, useTaskStore, TaskPriority, TimeEstimate, DEFAULT_AREA_COLOR, sortTasksBy, parseQuickAdd, matchesHierarchicalToken, safeParseDate, isTaskInActiveProject, getWaitingPerson } from '@mindwtr/core';
 import type { Task, TaskStatus } from '@mindwtr/core';
@@ -8,12 +7,9 @@ import { TaskItem } from '../TaskItem';
 import { ConfirmModal } from '../ConfirmModal';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { ListEmptyState } from './list/ListEmptyState';
-import { ListQuickAdd } from './list/ListQuickAdd';
+import { ListControlsPanel } from './list/ListControlsPanel';
 import { PromptModal } from '../PromptModal';
 import { InboxProcessor } from './InboxProcessor';
-import { ListFiltersPanel } from './list/ListFiltersPanel';
-import { ListHeader } from './list/ListHeader';
-import { ListBulkActions } from './list/ListBulkActions';
 import { useLanguage } from '../../contexts/language-context';
 import { useKeybindings } from '../../contexts/keybinding-context';
 import { useListCopilot } from './list/useListCopilot';
@@ -598,7 +594,6 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const isInbox = statusFilter === 'inbox';
     const isNextView = statusFilter === 'next';
     const isWaitingView = statusFilter === 'waiting';
-    const NEXT_WARNING_THRESHOLD = 15;
     const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
     const timeEstimateOptions: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
     const formatEstimate = (estimate: TimeEstimate) => {
@@ -707,180 +702,74 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     return (
         <ErrorBoundary>
             <div className="flex h-full flex-col">
-                <div className="space-y-6">
-                    <ListHeader
-                        title={title}
-                        showNextCount={isNextView}
-                        nextCount={nextCount}
-                        taskCount={filteredTasks.length}
-                        hasFilters={hasFilters}
-                        filterSummaryLabel={filterSummaryLabel}
-                        filterSummarySuffix={filterSummarySuffix}
-                        sortBy={sortBy}
-                        onChangeSortBy={(value) => updateSettings({ taskSortBy: value })}
-                        showGroupBy={isNextView}
-                        groupBy={activeNextGroupBy}
-                        onChangeGroupBy={(value) => setListOptions({ nextGroupBy: value })}
-                        selectionMode={selectionMode}
-                        onToggleSelection={toggleSelectionMode}
-                        showListDetails={showListDetails}
-                        onToggleDetails={() => setListOptions({ showDetails: !showListDetails })}
-                        densityMode={densityMode}
-                        onToggleDensity={() => {
-                            void updateSettings({
-                                appearance: {
-                                    density: densityMode === 'compact' ? 'comfortable' : 'compact',
-                                },
-                            });
-                        }}
-                        t={t}
-                    />
-
-                    {(isProcessing || isBatchDeleting) && (
-                        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                            {isBatchDeleting
-                                ? (t('bulk.deleting') || 'Deleting selected tasks...')
-                                : (t('common.loading') || 'Loading...')}
-                        </div>
-                    )}
-
-                    {selectionMode && selectedIdsArray.length > 0 && (
-                        <ListBulkActions
-                            selectionCount={selectedIdsArray.length}
-                            onMoveToStatus={handleBatchMove}
-                            onAssignArea={handleBatchAssignArea}
-                            areaOptions={bulkAreaOptions}
-                            onAddTag={handleBatchAddTag}
-                            onAddContext={handleBatchAddContext}
-                            onRemoveContext={handleBatchRemoveContext}
-                            onDelete={handleBatchDelete}
-                            isDeleting={isBatchDeleting}
+                <ListControlsPanel
+                    title={title}
+                    t={t}
+                    nextCount={nextCount}
+                    taskCount={filteredTasks.length}
+                    hasFilters={hasFilters}
+                    filterSummaryLabel={filterSummaryLabel}
+                    filterSummarySuffix={filterSummarySuffix}
+                    sortBy={sortBy}
+                    onChangeSortBy={(value) => updateSettings({ taskSortBy: value })}
+                    activeNextGroupBy={activeNextGroupBy}
+                    onChangeGroupBy={(value) => setListOptions({ nextGroupBy: value })}
+                    selectionMode={selectionMode}
+                    onToggleSelection={toggleSelectionMode}
+                    showListDetails={showListDetails}
+                    onToggleDetails={() => setListOptions({ showDetails: !showListDetails })}
+                    densityMode={densityMode}
+                    onToggleDensity={() => {
+                        void updateSettings({
+                            appearance: {
+                                density: densityMode === 'compact' ? 'comfortable' : 'compact',
+                            },
+                        });
+                    }}
+                    isProcessing={isProcessing}
+                    isBatchDeleting={isBatchDeleting}
+                    selectedCount={selectedIdsArray.length}
+                    onMoveToStatus={handleBatchMove}
+                    onAssignArea={handleBatchAssignArea}
+                    areaOptions={bulkAreaOptions}
+                    onAddTag={handleBatchAddTag}
+                    onAddContext={handleBatchAddContext}
+                    onRemoveContext={handleBatchRemoveContext}
+                    onDeleteSelection={handleBatchDelete}
+                    isNextView={isNextView}
+                    showDeferredProjectSection={showDeferredProjectSection}
+                    deferredProjects={deferredProjects}
+                    areaById={areaById}
+                    onOpenProject={handleOpenProject}
+                    onReactivateProject={handleReactivateProject}
+                    inboxProcessor={(
+                        <InboxProcessor
                             t={t}
+                            isInbox={isInbox}
+                            tasks={tasks}
+                            projects={projects}
+                            areas={areas}
+                            settings={settings}
+                            addProject={addProject}
+                            updateTask={updateTask}
+                            deleteTask={deleteTask}
+                            allContexts={allContexts}
+                            isProcessing={isProcessing}
+                            setIsProcessing={setIsProcessing}
                         />
                     )}
-
-            {/* Next Actions Warning */}
-            {isNextView && nextCount > NEXT_WARNING_THRESHOLD && (
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5" />
-                    <div>
-                        <p className="font-medium text-amber-700 dark:text-amber-400">
-                            {nextCount} {t('next.warningCount')}
-                        </p>
-                        <p className="text-sm text-amber-600 dark:text-amber-500 mt-1">
-                            {t('next.warningHint')}
-                        </p>
-                    </div>
-                </div>
-            )}
-
-            {showDeferredProjectSection && (
-                <div className="rounded-lg border border-border bg-card/50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        {t('projects.title') || 'Projects'}
-                    </div>
-                    <div className="mt-3 space-y-2">
-                        {deferredProjects.map((project) => {
-                            const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
-                            return (
-                                <div
-                                    key={project.id}
-                                    className="flex w-full items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2"
-                                >
-                                    <button
-                                        type="button"
-                                        onClick={() => handleOpenProject(project.id)}
-                                        className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-primary"
-                                        aria-label={`${t('projects.title') || 'Project'}: ${project.title}`}
-                                    >
-                                        <Folder className="h-4 w-4 shrink-0" style={{ color: project.color }} />
-                                        <span className="text-sm font-medium text-foreground truncate">{project.title}</span>
-                                        {projectArea && (
-                                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                <span
-                                                    className="h-2 w-2 rounded-full"
-                                                    style={{ backgroundColor: projectArea.color || DEFAULT_AREA_COLOR }}
-                                                />
-                                                {projectArea.name}
-                                            </span>
-                                        )}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleReactivateProject(project.id)}
-                                        className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                                    >
-                                        {t('projects.reactivate')}
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
-
-            <InboxProcessor
-                t={t}
-                isInbox={isInbox}
-                tasks={tasks}
-                projects={projects}
-                areas={areas}
-                settings={settings}
-                addProject={addProject}
-                updateTask={updateTask}
-                deleteTask={deleteTask}
-                allContexts={allContexts}
-                isProcessing={isProcessing}
-                setIsProcessing={setIsProcessing}
-            />
-
-            {showViewFilterInput && !isProcessing && (
-                <input
-                    ref={viewFilterInputRef}
-                    type="text"
-                    data-view-filter-input
-                    placeholder={t('common.search')}
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    className="w-full text-sm px-3 py-2 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-            )}
-
-            {isWaitingView && !isProcessing && (
-                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
-                    <span className="text-xs font-medium text-muted-foreground">{t('process.delegateWhoLabel')}</span>
-                    <select
-                        value={selectedWaitingPerson}
-                        onChange={(event) => setSelectedWaitingPerson(event.target.value)}
-                        className="text-xs bg-background text-foreground border border-border rounded px-2 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    >
-                        <option value="">{t('common.all')}</option>
-                        {waitingPeople.map((person) => (
-                            <option key={person} value={person}>
-                                {person}
-                            </option>
-                        ))}
-                    </select>
-                    {selectedWaitingPerson && (
-                        <button
-                            type="button"
-                            onClick={() => setSelectedWaitingPerson('')}
-                            className="text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                        >
-                            {t('common.clear')}
-                        </button>
-                    )}
-                </div>
-            )}
-
-            {/* Filters */}
-            {showFilters && !isProcessing && (
-                <ListFiltersPanel
-                    t={t}
-                    hasFilters={hasFilters}
+                    showViewFilterInput={showViewFilterInput}
+                    searchQuery={searchQuery}
+                    onChangeSearch={setSearchQuery}
+                    isWaitingView={isWaitingView}
+                    waitingPeople={waitingPeople}
+                    selectedWaitingPerson={selectedWaitingPerson}
+                    onChangeSelectedWaitingPerson={setSelectedWaitingPerson}
+                    onClearSelectedWaitingPerson={() => setSelectedWaitingPerson('')}
+                    showFilters={showFilters}
                     showFiltersPanel={showFiltersPanel}
                     onClearFilters={clearFilters}
-                    onToggleOpen={() => setListFilters({ open: !filtersOpen })}
+                    onToggleFiltersOpen={() => setListFilters({ open: !filtersOpen })}
                     allTokens={allTokens}
                     selectedTokens={selectedTokens}
                     tokenCounts={tokenCounts}
@@ -894,57 +783,48 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                     selectedTimeEstimates={selectedTimeEstimates}
                     onToggleEstimate={toggleTimeFilter}
                     formatEstimate={formatEstimate}
-                />
-            )}
-
-            {/* Only show add task for inbox/next - other views are read-only */}
-            {['inbox', 'next'].includes(statusFilter) && (
-                <ListQuickAdd
-                    inputRef={addInputRef}
-                    value={newTaskTitle}
+                    showQuickAdd={['inbox', 'next'].includes(statusFilter)}
+                    quickAddValue={newTaskTitle}
+                    addInputRef={addInputRef}
                     projects={projects}
                     areas={areas}
-                    contexts={allTokens}
-                    t={t}
-                    dense={isCompact}
                     onCreateProject={async (title) => {
                         const created = await addProject(title, DEFAULT_AREA_COLOR);
                         return created?.id ?? null;
                     }}
-                    onChange={(next) => {
-                        setNewTaskTitle(next);
-                        resetCopilot();
-                    }}
-                    onSubmit={handleAddTask}
-                    onOpenAudio={() => openQuickAdd(statusFilter, 'audio')}
+                    onChangeQuickAdd={setNewTaskTitle}
+                    onSubmitQuickAdd={handleAddTask}
+                    onOpenAudioQuickAdd={() => openQuickAdd(statusFilter, 'audio')}
                     onResetCopilot={resetCopilot}
+                    quickAddFooter={(
+                        <>
+                            {aiEnabled && copilotSuggestion && !copilotApplied && (
+                                <button
+                                    type="button"
+                                    onClick={() => applyCopilotSuggestion(copilotSuggestion)}
+                                    className="mt-2 rounded border border-border bg-muted/30 px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+                                >
+                                    ✨ {t('copilot.suggested')}{' '}
+                                    {copilotSuggestion.context ? `${copilotSuggestion.context} ` : ''}
+                                    {copilotSuggestion.tags?.length ? copilotSuggestion.tags.join(' ') : ''}
+                                    <span className="ml-2 text-muted-foreground/70">{t('copilot.applyHint')}</span>
+                                </button>
+                            )}
+                            {aiEnabled && copilotApplied && (
+                                <div className="mt-2 rounded border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
+                                    ✅ {t('copilot.applied')}{' '}
+                                    {copilotContext ? `${copilotContext} ` : ''}
+                                    {copilotTags.length ? copilotTags.join(' ') : ''}
+                                </div>
+                            )}
+                            {!isProcessing && (
+                                <p className="text-xs text-muted-foreground">
+                                    {t('quickAdd.help')}
+                                </p>
+                            )}
+                        </>
+                    )}
                 />
-            )}
-            {['inbox', 'next'].includes(statusFilter) && aiEnabled && copilotSuggestion && !copilotApplied && (
-                <button
-                    type="button"
-                    onClick={() => applyCopilotSuggestion(copilotSuggestion)}
-                    className="mt-2 text-xs px-2 py-1 rounded bg-muted/30 border border-border text-muted-foreground hover:bg-muted/60 transition-colors text-left"
-                >
-                    ✨ {t('copilot.suggested')}{' '}
-                    {copilotSuggestion.context ? `${copilotSuggestion.context} ` : ''}
-                    {copilotSuggestion.tags?.length ? copilotSuggestion.tags.join(' ') : ''}
-                    <span className="ml-2 text-muted-foreground/70">{t('copilot.applyHint')}</span>
-                </button>
-            )}
-            {['inbox', 'next'].includes(statusFilter) && aiEnabled && copilotApplied && (
-                <div className="mt-2 text-xs px-2 py-1 rounded bg-muted/30 border border-border text-muted-foreground">
-                    ✅ {t('copilot.applied')}{' '}
-                    {copilotContext ? `${copilotContext} ` : ''}
-                    {copilotTags.length ? copilotTags.join(' ') : ''}
-                </div>
-            )}
-            {['inbox', 'next'].includes(statusFilter) && !isProcessing && (
-                <p className="text-xs text-muted-foreground">
-                    {t('quickAdd.help')}
-                </p>
-            )}
-            </div>
             <div
                 ref={listScrollRef}
                 className="flex-1 min-h-0 overflow-y-auto pt-3"
