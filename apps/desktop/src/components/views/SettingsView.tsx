@@ -52,13 +52,11 @@ import {
   APP_STORE_LISTING_URL,
   checkForUpdates,
   compareVersions,
-  findPortableZipAsset,
   getFlatpakInstallChannel,
   HOMEBREW_CASK_URL,
   normalizeInstallSource,
   type UpdateInfo,
   type InstallSource,
-  GITHUB_RELEASES_URL,
   MS_STORE_URL,
   verifyDownloadChecksum,
   WINGET_PACKAGE_URL,
@@ -74,6 +72,14 @@ import { useAiSettings } from "./settings/useAiSettings";
 import { useCalendarSettings } from "./settings/useCalendarSettings";
 import { useObsidianSettings } from "./settings/useObsidianSettings";
 import { useSyncSettings } from "./settings/useSyncSettings";
+import {
+  buildLinuxPostDownloadNotice,
+  canDownloadRecommendedUpdate,
+  resolveLinuxFlavor,
+  resolvePreferredDownloadUrl,
+  resolveRecommendedDownload,
+  type LinuxDistroInfo,
+} from "./settings/update-platform";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { usePerformanceMonitor } from "../../hooks/usePerformanceMonitor";
 import { checkBudget } from "../../config/performanceBudgets";
@@ -100,7 +106,6 @@ type SettingsPage =
   | "integrations"
   | "ai"
   | "about";
-type LinuxDistroInfo = { id?: string; id_like?: string[] };
 type DateFormatUiSetting = DateFormatSetting;
 
 const SettingsMainPage = lazy(
@@ -840,7 +845,7 @@ export function SettingsView() {
       return;
     }
     if (updateInfo?.platform === "linux" && linuxFlavor === "arch") {
-      setDownloadNotice(getLinuxPostDownloadNotice());
+      setDownloadNotice(linuxPostDownloadNotice);
       return;
     }
     if (!targetUrl) {
@@ -874,7 +879,7 @@ export function SettingsView() {
         return;
       }
       if (updateInfo?.platform === "linux") {
-        setDownloadNotice(getLinuxPostDownloadNotice());
+        setDownloadNotice(linuxPostDownloadNotice);
       } else {
         setDownloadNotice(t.downloadStarted);
       }
@@ -899,159 +904,43 @@ export function SettingsView() {
     { value: 4096, label: t.aiThinkingHigh },
   ];
 
-  const linuxFlavor = useMemo(() => {
-    if (!linuxDistro) return null;
-    const tokens = [linuxDistro.id, ...(linuxDistro.id_like ?? [])]
-      .filter(Boolean)
-      .map((value) => String(value).toLowerCase());
-    if (
-      tokens.some(
-        (token) => token.includes("arch") || token.includes("manjaro"),
-      )
-    )
-      return "arch";
-    if (
-      tokens.some(
-        (token) =>
-          token.includes("debian") ||
-          token.includes("ubuntu") ||
-          token.includes("pop"),
-      )
-    )
-      return "debian";
-    if (
-      tokens.some(
-        (token) =>
-          token.includes("fedora") ||
-          token.includes("rhel") ||
-          token.includes("redhat") ||
-          token.includes("centos") ||
-          token.includes("rocky") ||
-          token.includes("alma"),
-      )
-    )
-      return "rpm";
-    if (
-      tokens.some(
-        (token) => token.includes("suse") || token.includes("opensuse"),
-      )
-    )
-      return "rpm";
-    return "other";
-  }, [linuxDistro]);
-
-  const getLinuxPostDownloadNotice = useCallback((): string => {
-    if (linuxFlavor === "arch") {
-      if (installSource === "aur-source") {
-        return `${t.downloadAURHint}: yay -Syu mindwtr / paru -Syu mindwtr`;
-      }
-      if (installSource === "aur-bin") {
-        return `${t.downloadAURHint}: yay -Syu mindwtr-bin / paru -Syu mindwtr-bin`;
-      }
-      return `${t.downloadAURHint}: yay -Syu mindwtr / paru -Syu mindwtr`;
-    }
-    if (linuxFlavor === "debian") {
-      return `${t.linuxUpdateHint} APT repo update: sudo apt update && sudo apt install --only-upgrade mindwtr. Local file install: sudo apt install ./<downloaded-file>.deb`;
-    }
-    if (linuxFlavor === "rpm") {
-      return `${t.linuxUpdateHint} Repo update: sudo dnf upgrade mindwtr. Local file install: sudo dnf install ./<downloaded-file>.rpm`;
-    }
-    return `${t.linuxUpdateHint} AppImage tip: chmod +x <downloaded-file>.AppImage && ./<downloaded-file>.AppImage`;
-  }, [installSource, linuxFlavor, t.downloadAURHint, t.linuxUpdateHint]);
-
-  const recommendedDownload = useMemo(() => {
-    if (!updateInfo) return null;
-    if (installSource === "homebrew") {
-      return { label: "Homebrew" };
-    }
-    if (installSource === "winget") {
-      return { label: "winget" };
-    }
-    if (installSource === "mac-app-store") {
-      return { label: "App Store" };
-    }
-    if (installSource === "microsoft-store") {
-      return { label: "Microsoft Store" };
-    }
-    const assets = updateInfo.assets || [];
-    const findAsset = (patterns: RegExp[]) =>
-      assets.find((asset) =>
-        patterns.some((pattern) => pattern.test(asset.name)),
-      );
-
-    if (updateInfo.platform === "windows") {
-      if (installSource === "portable") {
-        const asset = findPortableZipAsset(assets);
-        return asset?.url ? { label: ".zip (portable)", url: asset.url } : null;
-      }
-      const asset = findAsset([/\.msi$/i, /\.exe$/i]);
-      return asset ? { label: ".msi/.exe", url: asset.url } : null;
-    }
-
-    if (updateInfo.platform === "macos") {
-      return { label: "Homebrew (recommended)", url: HOMEBREW_CASK_URL };
-    }
-
-    if (updateInfo.platform === "linux") {
-      if (linuxFlavor === "arch") {
-        return { label: "AUR" };
-      }
-      if (linuxFlavor === "debian") {
-        const asset = findAsset([/\.deb$/i]);
-        return asset?.url ? { label: ".deb", url: asset.url } : null;
-      }
-      if (linuxFlavor === "rpm") {
-        const asset = findAsset([/\.rpm$/i]);
-        return asset?.url ? { label: ".rpm", url: asset.url } : null;
-      }
-      const asset = findAsset([/\.AppImage$/i]);
-      return asset?.url ? { label: ".AppImage", url: asset.url } : null;
-    }
-
-    return null;
-  }, [installSource, linuxFlavor, updateInfo]);
-
-  const preferredDownloadUrl = useMemo(() => {
-    if (!updateInfo) return null;
-    if (
-      installSource === "homebrew" ||
-      installSource === "winget" ||
-      installSource === "mac-app-store" ||
-      installSource === "microsoft-store"
-    ) {
-      return null;
-    }
-    if (updateInfo.platform === "linux") {
-      if (linuxFlavor === "arch") return null;
-      if (linuxFlavor === "debian" || linuxFlavor === "rpm") {
-        return (
-          recommendedDownload?.url ??
-          updateInfo.releaseUrl ??
-          GITHUB_RELEASES_URL
-        );
-      }
-    }
-    return (
-      recommendedDownload?.url ??
-      updateInfo.downloadUrl ??
-      updateInfo.releaseUrl ??
-      GITHUB_RELEASES_URL
-    );
-  }, [installSource, linuxFlavor, recommendedDownload, updateInfo]);
+  const linuxFlavor = useMemo(() => resolveLinuxFlavor(linuxDistro), [linuxDistro]);
+  const linuxPostDownloadNotice = useMemo(
+    () =>
+      buildLinuxPostDownloadNotice({
+        downloadAURHint: t.downloadAURHint,
+        installSource,
+        linuxFlavor,
+        linuxUpdateHint: t.linuxUpdateHint,
+      }),
+    [installSource, linuxFlavor, t.downloadAURHint, t.linuxUpdateHint],
+  );
+  const recommendedDownload = useMemo(
+    () => resolveRecommendedDownload({ installSource, linuxFlavor, updateInfo }),
+    [installSource, linuxFlavor, updateInfo],
+  );
+  const preferredDownloadUrl = useMemo(
+    () =>
+      resolvePreferredDownloadUrl({
+        installSource,
+        linuxFlavor,
+        recommendedDownload,
+        updateInfo,
+      }),
+    [installSource, linuxFlavor, recommendedDownload, updateInfo],
+  );
 
   const isArchLinuxUpdate =
     updateInfo?.platform === "linux" && linuxFlavor === "arch";
-  const canDownloadUpdate = useMemo(() => {
-    if (
-      installSource === "homebrew" ||
-      installSource === "winget" ||
-      installSource === "mac-app-store" ||
-      installSource === "microsoft-store"
-    ) {
-      return true;
-    }
-    return Boolean(preferredDownloadUrl) && !isArchLinuxUpdate;
-  }, [installSource, isArchLinuxUpdate, preferredDownloadUrl]);
+  const canDownloadUpdate = useMemo(
+    () =>
+      canDownloadRecommendedUpdate({
+        installSource,
+        isArchLinuxUpdate,
+        preferredDownloadUrl,
+      }),
+    [installSource, isArchLinuxUpdate, preferredDownloadUrl],
+  );
 
   const lastSyncAt = settings?.lastSyncAt;
   const lastSyncStats = settings?.lastSyncStats ?? null;
