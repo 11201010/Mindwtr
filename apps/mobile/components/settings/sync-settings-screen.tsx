@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Constants from 'expo-constants';
-import { ActivityIndicator, Alert, Platform, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -78,6 +78,12 @@ import {
 
 import { CloudProvider, MobileExtraConfig, isValidHttpUrl } from './settings.constants';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
+import {
+    SyncBackupSection,
+    SyncDiagnosticsCard,
+    SyncLastStatusCard,
+    SyncPreferencesCard,
+} from './sync-settings-sections';
 import { SettingsTopBar, SubHeader } from './settings.shell';
 import { styles } from './settings.styles';
 
@@ -1196,42 +1202,19 @@ export function SyncSettingsScreen() {
     };
 
     const lastSyncCard = (
-        <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
-            <View style={styles.settingRow}>
-                <View style={styles.settingInfo}>
-                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.lastSync')}</Text>
-                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                        {settings.lastSyncAt ? new Date(settings.lastSyncAt).toLocaleString() : t('settings.lastSyncNever')}
-                        {settings.lastSyncStatus === 'error' && t('settings.syncStatusFailedSuffix')}
-                        {settings.lastSyncStatus === 'conflict' && t('settings.syncStatusConflictsSuffix')}
-                    </Text>
-                    {showLastSyncStats && (
-                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {t('settings.lastSyncConflicts')}: {syncConflictCount}
-                        </Text>
-                    )}
-                    {showLastSyncStats && maxClockSkewMs > 0 && (
-                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {t('settings.lastSyncSkew')}: {formatClockSkew(maxClockSkewMs)}
-                        </Text>
-                    )}
-                    {showLastSyncStats && timestampAdjustments > 0 && (
-                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {t('settings.lastSyncAdjusted')}: {timestampAdjustments}
-                        </Text>
-                    )}
-                    {showLastSyncStats && conflictIds.length > 0 && (
-                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                            {t('settings.lastSyncConflictIds')}: {conflictIds.join(', ')}
-                        </Text>
-                    )}
-                    {settings.lastSyncStatus === 'error' && settings.lastSyncError && (
-                        <Text style={[styles.settingDescription, { color: '#EF4444' }]}>{settings.lastSyncError}</Text>
-                    )}
-                    {renderSyncHistory()}
-                </View>
-            </View>
-        </View>
+        <SyncLastStatusCard
+            conflictCount={syncConflictCount}
+            conflictIds={conflictIds}
+            historyContent={renderSyncHistory()}
+            lastSyncAt={settings.lastSyncAt}
+            lastSyncError={settings.lastSyncError}
+            lastSyncStatus={settings.lastSyncStatus}
+            maxClockSkewLabel={maxClockSkewMs > 0 ? formatClockSkew(maxClockSkewMs) : undefined}
+            showLastSyncStats={showLastSyncStats}
+            t={t}
+            tc={tc}
+            timestampAdjustments={timestampAdjustments}
+        />
     );
 
     return (
@@ -1747,173 +1730,45 @@ export function SyncSettingsScreen() {
                     </>
                 )}
 
-                <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 24 }]}>{t('settings.backup')}</Text>
-                <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                    <TouchableOpacity style={styles.settingRow} onPress={() => void handleBackup()} disabled={isSyncing || isBackupBusy}>
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: '#3B82F6' }]}>{t('settings.exportBackup')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{t('settings.saveToSyncFolder')}</Text>
-                        </View>
-                        {backupAction === 'export' && <ActivityIndicator size="small" color={tc.tint} />}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                        onPress={() => void handleRestoreBackup()}
-                        disabled={isSyncing || isBackupBusy}
-                    >
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.tint }]}>{localize('Restore Backup', '恢复备份')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                {localize('Replace local data from a backup JSON file.', '从备份 JSON 文件替换本地数据。')}
-                            </Text>
-                        </View>
-                        {backupAction === 'restore' && <ActivityIndicator size="small" color={tc.tint} />}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                        onPress={() => void handleImportTodoist()}
-                        disabled={isSyncing || isBackupBusy}
-                    >
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.tint }]}>{localize('Import from Todoist', '从 Todoist 导入')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                {localize('Import Todoist CSV or ZIP exports into Mindwtr projects.', '将 Todoist 的 CSV 或 ZIP 导出导入为 Mindwtr 项目。')}
-                            </Text>
-                        </View>
-                        {backupAction === 'import' && <ActivityIndicator size="small" color={tc.tint} />}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                        onPress={() => void handleImportDgt()}
-                        disabled={isSyncing || isBackupBusy}
-                    >
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.tint }]}>{localize('Import from DGT GTD', '从 DGT GTD 导入')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                {localize('Import DGT GTD JSON or ZIP exports into Mindwtr areas, projects, and tasks.', '将 DGT GTD 的 JSON 或 ZIP 导出导入为 Mindwtr 的领域、项目和任务。')}
-                            </Text>
-                        </View>
-                        {backupAction === 'import' && <ActivityIndicator size="small" color={tc.tint} />}
-                    </TouchableOpacity>
-                </View>
+                <SyncBackupSection
+                    backupAction={backupAction}
+                    formatRecoverySnapshotLabel={formatRecoverySnapshotLabel}
+                    handleBackup={() => void handleBackup()}
+                    handleImportDgt={() => void handleImportDgt()}
+                    handleImportTodoist={() => void handleImportTodoist()}
+                    handleRestoreBackup={() => void handleRestoreBackup()}
+                    handleRestoreRecoverySnapshot={(snapshot) => void handleRestoreRecoverySnapshot(snapshot)}
+                    isBackupBusy={isBackupBusy}
+                    isLoadingRecoverySnapshots={isLoadingRecoverySnapshots}
+                    isSyncing={isSyncing}
+                    localize={localize}
+                    recoverySnapshots={recoverySnapshots}
+                    recoverySnapshotsOpen={recoverySnapshotsOpen}
+                    setRecoverySnapshotsOpen={setRecoverySnapshotsOpen}
+                    t={t}
+                    tc={tc}
+                />
 
-                <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
-                    <TouchableOpacity style={styles.settingRow} onPress={() => setRecoverySnapshotsOpen((prev) => !prev)}>
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.recoverySnapshots')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                {localize(
-                                    'Saved automatically before restore and import operations.',
-                                    '在恢复和导入之前自动保存。'
-                                )}
-                            </Text>
-                        </View>
-                        <Text style={[styles.chevron, { color: tc.secondaryText }]}>{recoverySnapshotsOpen ? '▾' : '▸'}</Text>
-                    </TouchableOpacity>
-                    {recoverySnapshotsOpen && (
-                        <>
-                            {isLoadingRecoverySnapshots && (
-                                <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                        {t('settings.recoverySnapshotsLoading')}
-                                    </Text>
-                                </View>
-                            )}
-                            {!isLoadingRecoverySnapshots && recoverySnapshots.length === 0 && (
-                                <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-                                        {t('settings.recoverySnapshotsEmpty')}
-                                    </Text>
-                                </View>
-                            )}
-                            {!isLoadingRecoverySnapshots && recoverySnapshots.map((snapshot) => (
-                                <TouchableOpacity
-                                    key={snapshot}
-                                    style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                                    onPress={() => void handleRestoreRecoverySnapshot(snapshot)}
-                                    disabled={isSyncing || isBackupBusy}
-                                >
-                                    <View style={styles.settingInfo}>
-                                        <Text style={[styles.settingLabel, { color: tc.text }]} numberOfLines={1}>
-                                            {formatRecoverySnapshotLabel(snapshot)}
-                                        </Text>
-                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]} numberOfLines={1}>
-                                            {snapshot}
-                                        </Text>
-                                    </View>
-                                    {backupAction === 'snapshot'
-                                        ? <ActivityIndicator size="small" color={tc.tint} />
-                                        : <Text style={[styles.settingLabel, { color: tc.tint }]}>{t('settings.recoverySnapshotsRestore')}</Text>}
-                                </TouchableOpacity>
-                            ))}
-                        </>
-                    )}
-                </View>
+                <SyncPreferencesCard
+                    syncAiEnabled={syncAiEnabled}
+                    syncAppearanceEnabled={syncAppearanceEnabled}
+                    syncExternalCalendarsEnabled={syncExternalCalendarsEnabled}
+                    syncLanguageEnabled={syncLanguageEnabled}
+                    syncOptionsOpen={syncOptionsOpen}
+                    t={t}
+                    tc={tc}
+                    toggleSyncOptionsOpen={() => setSyncOptionsOpen((prev) => !prev)}
+                    updateSyncPreferences={updateSyncPreferences}
+                />
 
-                <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 16 }]}>
-                    <TouchableOpacity style={styles.settingRow} onPress={() => setSyncOptionsOpen((prev) => !prev)}>
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncPreferences')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{t('settings.syncPreferencesDesc')}</Text>
-                        </View>
-                        <Text style={[styles.chevron, { color: tc.secondaryText }]}>{syncOptionsOpen ? '▾' : '▸'}</Text>
-                    </TouchableOpacity>
-                    {syncOptionsOpen && (
-                        <>
-                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncPreferenceAppearance')}</Text>
-                                </View>
-                                <Switch value={syncAppearanceEnabled} onValueChange={(value) => updateSyncPreferences({ appearance: value })} trackColor={{ false: '#767577', true: '#3B82F6' }} />
-                            </View>
-                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncPreferenceLanguage')}</Text>
-                                </View>
-                                <Switch value={syncLanguageEnabled} onValueChange={(value) => updateSyncPreferences({ language: value })} trackColor={{ false: '#767577', true: '#3B82F6' }} />
-                            </View>
-                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncPreferenceExternalCalendars')}</Text>
-                                </View>
-                                <Switch value={syncExternalCalendarsEnabled} onValueChange={(value) => updateSyncPreferences({ externalCalendars: value })} trackColor={{ false: '#767577', true: '#3B82F6' }} />
-                            </View>
-                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.syncPreferenceAi')}</Text>
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{t('settings.syncPreferenceAiHint')}</Text>
-                                </View>
-                                <Switch value={syncAiEnabled} onValueChange={(value) => updateSyncPreferences({ ai: value })} trackColor={{ false: '#767577', true: '#3B82F6' }} />
-                            </View>
-                        </>
-                    )}
-                </View>
-
-                <Text style={[styles.sectionTitle, { color: tc.text, marginTop: 24 }]}>{t('settings.diagnostics')}</Text>
-                <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                    <View style={styles.settingRow}>
-                        <View style={styles.settingInfo}>
-                            <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.debugLogging')}</Text>
-                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{t('settings.debugLoggingDesc')}</Text>
-                        </View>
-                        <Switch value={loggingEnabled} onValueChange={toggleDebugLogging} trackColor={{ false: '#767577', true: '#3B82F6' }} />
-                    </View>
-                    {loggingEnabled && (
-                        <>
-                            <TouchableOpacity style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]} onPress={() => void handleShareLog()}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.tint }]}>{t('settings.shareLog')}</Text>
-                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{t('settings.logFile')}</Text>
-                                </View>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]} onPress={() => void handleClearLog()}>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: tc.secondaryText }]}>{t('settings.clearLog')}</Text>
-                                </View>
-                            </TouchableOpacity>
-                        </>
-                    )}
-                </View>
+                <SyncDiagnosticsCard
+                    handleClearLog={() => void handleClearLog()}
+                    handleShareLog={() => void handleShareLog()}
+                    loggingEnabled={loggingEnabled}
+                    t={t}
+                    tc={tc}
+                    toggleDebugLogging={toggleDebugLogging}
+                />
             </ScrollView>
         </SafeAreaView>
     );
