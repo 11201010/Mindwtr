@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { dataDir } from '@tauri-apps/api/path';
 import { BaseDirectory, readFile, readTextFile, size } from '@tauri-apps/plugin-fs';
 import { loadAIKey } from '../../lib/ai-config';
+import { normalizeAttachmentPathForUrl, resolveAttachmentOpenTarget, toAttachmentBrowserUrl } from '../../lib/attachment-paths';
 import { normalizeAttachmentInput } from '../../lib/attachment-utils';
 import { isTauriRuntime } from '../../lib/runtime';
 import { logWarn } from '../../lib/app-log';
@@ -52,11 +53,13 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
 
     const resolveAudioBlobSource = useCallback(async (attachment: Attachment) => {
         if (!isTauriRuntime()) return null;
-        const uri = attachment.uri.replace(/^file:\/\//i, '');
+        const uri = resolveAttachmentOpenTarget(attachment.uri);
         try {
             const baseDir = await dataDir();
-            if (!uri.startsWith(baseDir)) return null;
-            const relative = uri.slice(baseDir.length).replace(/^[\\/]/, '');
+            const normalizedUri = normalizeAttachmentPathForUrl(uri);
+            const normalizedBaseDir = normalizeAttachmentPathForUrl(baseDir);
+            if (!normalizedUri.startsWith(normalizedBaseDir)) return null;
+            const relative = normalizedUri.slice(normalizedBaseDir.length).replace(/^[\\/]/, '');
             const bytes = await readFile(relative, { baseDir: BaseDirectory.Data });
             const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
             const mimeType = attachment.mimeType || 'audio/wav';
@@ -75,13 +78,15 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         if (!isTauriRuntime()) {
             throw new Error(resolveText('attachments.fileNotSupported', 'File not supported.'));
         }
-        const uri = attachment.uri.replace(/^file:\/\//i, '');
+        const uri = resolveAttachmentOpenTarget(attachment.uri);
         if (/^https?:\/\//i.test(uri)) {
             throw new Error(resolveText('attachments.fileNotSupported', 'File not supported.'));
         }
         const base = await dataDir();
-        if (uri.startsWith(base)) {
-            const relative = uri.slice(base.length).replace(/^[\\/]/, '');
+        const normalizedUri = normalizeAttachmentPathForUrl(uri);
+        const normalizedBase = normalizeAttachmentPathForUrl(base);
+        if (normalizedUri.startsWith(normalizedBase)) {
+            const relative = normalizedUri.slice(normalizedBase.length).replace(/^[\\/]/, '');
             const bytes = await readFile(relative, { baseDir: BaseDirectory.Data });
             return {
                 bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
@@ -99,13 +104,15 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         if (!isTauriRuntime()) {
             throw new Error(t('attachments.fileNotSupported'));
         }
-        const uri = attachment.uri.replace(/^file:\/\//i, '');
+        const uri = resolveAttachmentOpenTarget(attachment.uri);
         if (/^https?:\/\//i.test(uri)) {
             throw new Error(t('attachments.fileNotSupported'));
         }
         const base = await dataDir();
-        if (uri.startsWith(base)) {
-            const relative = uri.slice(base.length).replace(/^[\\/]/, '');
+        const normalizedUri = normalizeAttachmentPathForUrl(uri);
+        const normalizedBase = normalizeAttachmentPathForUrl(base);
+        if (normalizedUri.startsWith(normalizedBase)) {
+            const relative = normalizedUri.slice(normalizedBase.length).replace(/^[\\/]/, '');
             return await readTextFile(relative, { baseDir: BaseDirectory.Data });
         }
         return await readTextFile(uri);
@@ -113,11 +120,11 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
 
     const openExternal = useCallback(async (uri: string) => {
         setAttachmentError(null);
-        const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(uri);
-        const normalized = hasScheme ? uri : `file://${uri}`;
+        const normalized = toAttachmentBrowserUrl(uri);
+        const openTarget = resolveAttachmentOpenTarget(uri);
         if (isTauriRuntime()) {
             try {
-                await invoke('open_path', { path: uri });
+                await invoke('open_path', { path: openTarget });
                 return;
             } catch (error) {
                 void logWarn('Failed to open attachment', {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { type Attachment, generateUUID, type Project, validateAttachmentForUpload } from '@mindwtr/core';
+import { resolveAttachmentOpenTarget, toAttachmentBrowserUrl } from '../../../lib/attachment-paths';
 import { isTauriRuntime } from '../../../lib/runtime';
 import { logWarn } from '../../../lib/app-log';
 
@@ -25,12 +26,12 @@ export function useProjectAttachmentActions({
     }, [selectedProject?.id]);
 
     const openAttachment = useCallback(async (attachment: Attachment) => {
-        const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(attachment.uri);
-        const normalized = hasScheme ? attachment.uri : `file://${attachment.uri}`;
+        const normalized = toAttachmentBrowserUrl(attachment.uri);
+        const openTarget = resolveAttachmentOpenTarget(attachment.uri);
         if (isTauriRuntime()) {
             try {
                 const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('open_path', { path: attachment.uri });
+                await invoke('open_path', { path: openTarget });
                 return;
             } catch (error) {
                 void logWarn('Failed to open attachment', {
