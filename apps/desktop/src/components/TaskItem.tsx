@@ -30,6 +30,7 @@ import { useTaskItemFieldLayout } from './Task/useTaskItemFieldLayout';
 import { useTaskItemSubmit } from './Task/useTaskItemSubmit';
 import { dispatchNavigateEvent } from '../lib/navigation-events';
 import { reportError } from '../lib/report-error';
+import { resolveNativeDateInputLocale } from '../lib/native-date-input-locale';
 import { useTaskItemStoreState, useTaskItemUiState } from './Task/useTaskItemStoreState';
 
 interface TaskItemProps {
@@ -125,6 +126,18 @@ export const TaskItem = memo(function TaskItem({
         [setProjectView]
     );
     const { t, language } = useLanguage();
+    const nativeDateInputLocale = useMemo(() => {
+        const systemLocale = typeof navigator !== 'undefined'
+            ? String(navigator.languages?.[0] || navigator.language || '').trim()
+            : '';
+        return resolveNativeDateInputLocale({
+            language,
+            dateFormat: settings?.dateFormat,
+            timeFormat: settings?.timeFormat,
+            weekStart: settings?.weekStart === 'monday' ? 'monday' : 'sunday',
+            systemLocale,
+        });
+    }, [language, settings?.dateFormat, settings?.timeFormat, settings?.weekStart]);
     const recurrenceWeekdayLabels = useMemo(
         () => getLocalizedWeekdayLabels(language, 'long'),
         [language]
@@ -470,6 +483,7 @@ export const TaskItem = memo(function TaskItem({
         editContexts,
         editTags,
         language,
+        nativeDateInputLocale,
         popularContextOptions,
         popularTagOptions,
     }), [
@@ -494,6 +508,7 @@ export const TaskItem = memo(function TaskItem({
         editContexts,
         editTags,
         language,
+        nativeDateInputLocale,
         popularContextOptions,
         popularTagOptions,
     ]);
