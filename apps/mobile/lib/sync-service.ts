@@ -721,6 +721,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
           await mobileStorage.saveData(data);
           wroteLocal = true;
         },
+        flushPendingLocalBeforeRetryRead: flushPendingSave,
         prepareRemoteWrite: prepareRemoteWriteData,
         writeRemote: async (data) => {
           ensureLocalSnapshotFresh();
