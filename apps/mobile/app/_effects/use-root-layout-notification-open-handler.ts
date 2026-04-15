@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useTaskStore } from '@mindwtr/core';
 
@@ -10,13 +10,26 @@ type RouterLike = {
 };
 
 type UseRootLayoutNotificationOpenHandlerParams = {
+    appReady: boolean;
+    pathname?: string | null;
     router: RouterLike;
 };
 
 export function useRootLayoutNotificationOpenHandler({
+    appReady,
+    pathname,
     router,
 }: UseRootLayoutNotificationOpenHandlerParams) {
-    const handleNotificationOpen = useCallback((payload: {
+    const pendingPayloadRef = useRef<{
+        notificationId?: string;
+        taskId?: string;
+        projectId?: string;
+        kind?: string;
+    } | null>(null);
+    const normalizedPathname = useMemo(() => String(pathname || '').trim(), [pathname]);
+    const canNavigate = appReady && normalizedPathname.length > 0 && normalizedPathname !== '/';
+
+    const routeNotificationOpen = useCallback((payload: {
         notificationId?: string;
         taskId?: string;
         projectId?: string;
@@ -44,6 +57,19 @@ export function useRootLayoutNotificationOpenHandler({
         }
     }, [router]);
 
+    const handleNotificationOpen = useCallback((payload: {
+        notificationId?: string;
+        taskId?: string;
+        projectId?: string;
+        kind?: string;
+    }) => {
+        if (!canNavigate) {
+            pendingPayloadRef.current = payload;
+            return;
+        }
+        routeNotificationOpen(payload);
+    }, [canNavigate, routeNotificationOpen]);
+
     useEffect(() => {
         setNotificationOpenHandler(handleNotificationOpen);
         void consumePendingNotificationOpenPayload().then((payload) => {
@@ -54,4 +80,11 @@ export function useRootLayoutNotificationOpenHandler({
             setNotificationOpenHandler(null);
         };
     }, [handleNotificationOpen]);
+
+    useEffect(() => {
+        if (!canNavigate || !pendingPayloadRef.current) return;
+        const pendingPayload = pendingPayloadRef.current;
+        pendingPayloadRef.current = null;
+        routeNotificationOpen(pendingPayload);
+    }, [canNavigate, routeNotificationOpen]);
 }

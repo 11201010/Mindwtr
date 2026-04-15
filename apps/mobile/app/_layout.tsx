@@ -190,8 +190,14 @@ function RootLayoutContentInner() {
     requestSync,
     storageInitError,
   });
+  const isShellReady = themeReady && languageReady;
+  const isFirstPaintReady = isShellReady && (dataReady || Boolean(storageInitError));
 
-  useRootLayoutNotificationOpenHandler({ router });
+  useRootLayoutNotificationOpenHandler({
+    appReady: isFirstPaintReady,
+    pathname,
+    router,
+  });
   useRootLayoutExternalCapture({
     dataReady,
     hasShareIntent,
@@ -242,9 +248,6 @@ function RootLayoutContentInner() {
       systemLocale: getDeviceLocale(),
     });
   }, [language, settingsDateFormat, settingsLanguage, settingsTimeFormat]);
-
-  const isShellReady = themeReady && languageReady;
-  const isFirstPaintReady = isShellReady && (dataReady || Boolean(storageInitError));
   useEffect(() => {
     if (!isFirstPaintReady) return;
     markStartupPhase('js.shell_ready');

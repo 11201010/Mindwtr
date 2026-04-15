@@ -38,7 +38,28 @@ vi.mock('@/modules/notification-open-intents', () => ({
 }));
 
 function TestHarness({ router }: { router: { push: ReturnType<typeof vi.fn> } }) {
-  useRootLayoutNotificationOpenHandler({ router });
+  useRootLayoutNotificationOpenHandler({
+    appReady: true,
+    pathname: '/inbox',
+    router,
+  });
+  return null;
+}
+
+function TestHarnessWithState({
+  appReady,
+  pathname,
+  router,
+}: {
+  appReady: boolean;
+  pathname?: string | null;
+  router: { push: ReturnType<typeof vi.fn> };
+}) {
+  useRootLayoutNotificationOpenHandler({
+    appReady,
+    pathname,
+    router,
+  });
   return null;
 }
 
@@ -87,6 +108,30 @@ describe('useRootLayoutNotificationOpenHandler', () => {
     });
 
     expect(consumePendingNotificationOpenPayload).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/weekly-review',
+      params: { openToken: 'pending-weekly' },
+    });
+  });
+
+  it('waits for startup navigation to leave the root path before replaying a pending open', async () => {
+    const router = { push: vi.fn() };
+    consumePendingNotificationOpenPayload.mockResolvedValue({
+      kind: 'weekly-review',
+      notificationId: 'pending-weekly',
+    });
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<TestHarnessWithState appReady={false} pathname="/" router={router} />);
+    });
+
+    expect(router.push).not.toHaveBeenCalled();
+
+    await act(async () => {
+      tree.update(<TestHarnessWithState appReady pathname="/inbox" router={router} />);
+    });
+
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/weekly-review',
       params: { openToken: 'pending-weekly' },
