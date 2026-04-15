@@ -852,6 +852,11 @@ export const en: Record<string, string> = {
         'obsidian.taskNotesDetectedBody': 'Mindwtr detected TaskNotes-style frontmatter in these files, so inline checklist tasks from other notes are ignored.',
         'obsidian.taskNotesDetectedHint': 'Look for a status field plus TaskNotes metadata like tags: [task], due, scheduled, contexts, projects, timeEstimate, recurrence, or completedDate.',
         'obsidian.taskNotesDetectedMore': 'more matching files',
+        'obsidian.showCompleted': 'Show completed',
+        'obsidian.hideCompleted': 'Hide completed',
+        'obsidian.completedHidden': 'Completed hidden',
+        'obsidian.completedOnlyTitle': 'Only completed tasks are hidden',
+        'obsidian.completedOnlyBody': 'This vault only has completed imported tasks right now. Turn on Show completed to inspect or reopen them.',
 
         'digest.morningTitle': 'Morning briefing',
         'digest.morningBody': 'Open Mindwtr to plan your day.',
