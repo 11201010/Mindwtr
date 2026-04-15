@@ -362,7 +362,7 @@ You can help in several ways:
 
 - 🤖 Add to F-Droid ([#219](https://github.com/dongdongbh/Mindwtr/issues/219))
 - ✉️ Email to Inbox ([#35](https://github.com/dongdongbh/Mindwtr/issues/35))
-- 🗓️ One-way Mindwtr -> external calendar export/sync ([#361](https://github.com/dongdongbh/Mindwtr/issues/361))
+- 🗓️ One-way Mindwtr -> local system calendar sync (mobile first) ([#361](https://github.com/dongdongbh/Mindwtr/issues/361))
 
 ## Documentation
 

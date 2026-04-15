@@ -349,7 +349,7 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
 - 🤖 上架 F-Droid（[#219](https://github.com/dongdongbh/Mindwtr/issues/219)）
 - 🗣️ iOS 提醒事项收件箱导入（Siri 收集 -> Mindwtr 收件箱）
 - ✉️ 邮件添加到收件箱（[#35](https://github.com/dongdongbh/Mindwtr/issues/35)）
-- 🗓️ Mindwtr 单向导出/同步到外部日历（[#361](https://github.com/dongdongbh/Mindwtr/issues/361)）
+- 🗓️ Mindwtr 单向同步到本地系统日历（移动端优先）（[#361](https://github.com/dongdongbh/Mindwtr/issues/361)）
 
 ## 文档
 
