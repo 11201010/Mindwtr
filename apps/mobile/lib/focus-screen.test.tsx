@@ -52,6 +52,15 @@ vi.mock('@mindwtr/core', () => {
   });
 
   return {
+    getUsedTaskTokens: (tasks: Task[], selector: (task: Task) => string[]) => {
+      const tokens = new Set<string>();
+      tasks.forEach((task) => {
+        selector(task).forEach((token) => {
+          if (token) tokens.add(token);
+        });
+      });
+      return Array.from(tokens).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    },
     useTaskStore,
     safeParseDate: (value?: string) => (value ? new Date(value) : null),
     safeParseDueDate: (value?: string) => (value ? new Date(value) : null),
