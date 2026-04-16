@@ -554,13 +554,19 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         e.preventDefault();
         if (!newTaskTitle.trim()) return;
         try {
-            const { title: parsedTitle, props, projectTitle, invalidDateCommands } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
+            const { title: parsedTitle, props, projectTitle, invalidDateCommands, detectedDate } = parseQuickAdd(newTaskTitle, projects, new Date(), areas);
             if (invalidDateCommands && invalidDateCommands.length > 0) {
                 showToast(`${t('quickAdd.invalidDateCommand')}: ${invalidDateCommands.join(', ')}`, 'error');
                 return;
             }
-            const finalTitle = parsedTitle || newTaskTitle;
             const initialProps: Partial<Task> = { ...props };
+            const shouldApplyDetectedDate = Boolean(detectedDate?.date && !initialProps.dueDate);
+            if (shouldApplyDetectedDate && detectedDate) {
+                initialProps.dueDate = detectedDate.date;
+            }
+            const finalTitle = shouldApplyDetectedDate && detectedDate
+                ? detectedDate.titleWithoutDate
+                : (parsedTitle || newTaskTitle);
             if (!initialProps.projectId && projectTitle) {
                 const created = await addProject(projectTitle, DEFAULT_AREA_COLOR);
                 if (!created) return;

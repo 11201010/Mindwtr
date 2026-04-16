@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import type { Task } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -39,7 +39,7 @@ const renderStaticListView = (statusFilter: 'inbox' | 'done', title: string) =>
     </LanguageProvider>
   );
 
-const renderListView = (statusFilter: 'next' | 'done' | 'archived' = 'next', title = 'Next') =>
+const renderListView = (statusFilter: 'inbox' | 'next' | 'done' | 'archived' = 'next', title = 'Next') =>
   render(
     <LanguageProvider>
       <KeybindingProvider currentView={statusFilter} onNavigate={() => {}}>
@@ -208,5 +208,38 @@ describe('ListView', () => {
 
     expect(reportErrorMock).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('applies trailing date NLP in the desktop inline inbox quick add', async () => {
+    const addTask = vi.fn().mockResolvedValue({ success: true });
+    const now = new Date('2026-04-16T10:00:00Z');
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(now);
+
+      useTaskStore.setState({
+        addTask,
+      });
+
+      const { container, getByRole } = renderListView('inbox', 'Inbox');
+
+      const input = getByRole('combobox', { name: '' });
+      await act(async () => {
+        fireEvent.change(input, { target: { value: 'Tax deadline — April 15' } });
+      });
+
+      const form = container.querySelector('form');
+      expect(form).not.toBeNull();
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      expect(addTask).toHaveBeenCalledWith('Tax deadline', expect.objectContaining({
+        dueDate: '2027-04-15T10:00:00.000Z',
+        status: 'inbox',
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -162,6 +162,17 @@ describe('quick-add', () => {
         expect(result.detectedDate).toBeUndefined();
     });
 
+    it('strips unicode dashes before an auto-detected trailing date', () => {
+        const now = new Date('2026-04-16T10:00:00Z');
+        const result = parseQuickAdd('Tax deadline — April 15', undefined, now);
+
+        expect(result.detectedDate).toEqual({
+            date: '2027-04-15T10:00:00.000Z',
+            matchedText: 'April 15',
+            titleWithoutDate: 'Tax deadline',
+        });
+    });
+
     it('skips trailing NLP detection when an explicit due command is present', () => {
         const now = new Date('2026-04-06T10:00:00Z');
         const result = parseQuickAdd('Call mom tomorrow /due:friday', undefined, now);

@@ -39,7 +39,7 @@ const NATURAL_TIME_HINT_RE = /\b(?:\d{1,2}:\d{2}(?:\s*[ap]m)?|\d{1,2}\s*[ap]m|no
 const PURE_TIME_ONLY_RE = /^(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)?|noon|midnight)$/i;
 const BARE_MONTH_RE = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/i;
 const TRAILING_DATE_SUFFIX_RE = /^[\s).,!?:;'"\]]*$/u;
-const TRAILING_DATE_SEPARATOR_RE = /[\s,;:()[\]{}-]+$/u;
+const TRAILING_DATE_SEPARATOR_RE = /[\s,;:()[\]{}\-–—]+$/u;
 
 function protectEscapes(input: string): string {
     let result = '';
