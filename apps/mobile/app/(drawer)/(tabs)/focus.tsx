@@ -44,6 +44,11 @@ const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 const ENERGY_LEVEL_OPTIONS: TaskEnergyLevel[] = ['low', 'medium', 'high'];
 const DEFAULT_TIME_ESTIMATE_PRESETS: TimeEstimate[] = ['10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
 
+function filterSelectionStable<T>(current: T[], predicate: (item: T) => boolean): T[] {
+  const next = current.filter(predicate);
+  return next.length === current.length && next.every((item, index) => item === current[index]) ? current : next;
+}
+
 export default function FocusScreen() {
   const { taskId, openToken } = useLocalSearchParams<{ taskId?: string; openToken?: string }>();
   const { tasks, projects, settings, updateTask, deleteTask, highlightTaskId, setHighlightTask } = useTaskStore();
@@ -185,12 +190,12 @@ export default function FocusScreen() {
   }, [highlightTaskId, setHighlightTask]);
 
   useEffect(() => {
-    setSelectedTokens((current) => current.filter((token) => tokenOptions.includes(token)));
+    setSelectedTokens((current) => filterSelectionStable(current, (token) => tokenOptions.includes(token)));
   }, [tokenOptions]);
 
   useEffect(() => {
     const validProjectIds = new Set(projectOptions.map((project) => project.id));
-    setSelectedProjects((current) => current.filter((projectId) => (
+    setSelectedProjects((current) => filterSelectionStable(current, (projectId) => (
       projectId === NO_PROJECT_FILTER_ID ? showNoProjectOption : validProjectIds.has(projectId)
     )));
   }, [projectOptions, showNoProjectOption]);
