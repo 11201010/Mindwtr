@@ -512,6 +512,9 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()((rawSet, get) => {
 });
 
 const originalSetState = useTaskStore.setState;
+// Zustand callers outside our action creators can still use setState directly.
+// Keep all external writes flowing through prepareStoreStateUpdate so derived maps,
+// tombstone-aware collections, and visible lists stay aligned.
 useTaskStore.setState = ((partial, replace) => {
     if (typeof partial === 'function') {
         originalSetState((state) => prepareStoreStateUpdate(state, partial(state as TaskStore) as Partial<TaskStore> | TaskStore), replace);

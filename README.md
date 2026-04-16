@@ -160,7 +160,7 @@ _Don't show me a cockpit when I just want to ride a bike._
 - ♻️ **Restore from Backup** - Replace local data from a validated Mindwtr backup with a recovery snapshot first
 - 📥 **Todoist + DGT GTD Import** - Import Todoist CSV/ZIP exports or DGT GTD JSON/ZIP exports into Mindwtr
 - 🔗 **Obsidian Integration** - Desktop vault task import with deep links back to source notes
-- 🗓️ **External Calendars (System + ICS)** - Mobile reads system calendars; desktop supports ICS subscriptions
+- 🗓️ **External Calendars (System + ICS)** - Mobile reads system calendars and can push due-dated tasks to a dedicated device calendar; desktop supports ICS subscriptions
 
 ### Automation
 
@@ -362,7 +362,7 @@ You can help in several ways:
 
 - 🤖 Add to F-Droid ([#219](https://github.com/dongdongbh/Mindwtr/issues/219))
 - ✉️ Email to Inbox ([#35](https://github.com/dongdongbh/Mindwtr/issues/35))
-- 🗓️ One-way Mindwtr -> local system calendar sync (mobile first) ([#361](https://github.com/dongdongbh/Mindwtr/issues/361))
+- 🗓️ Expand one-way Mindwtr -> local system calendar sync beyond the shipped mobile implementation ([#361](https://github.com/dongdongbh/Mindwtr/issues/361))
 
 ## Documentation
 
