@@ -113,7 +113,7 @@ vi.mock('@/components/pomodoro-panel', () => ({
 }));
 
 vi.mock('@/hooks/use-mobile-area-filter', () => ({
-  useMobileAreaFilter: () => ({ areaById: new Map(), resolvedAreaFilter: null }),
+  useMobileAreaFilter: () => ({ areaById: new Map(), resolvedAreaFilter: '__all__' }),
 }));
 
 vi.mock('@/lib/area-filter', () => ({
@@ -218,4 +218,5 @@ describe('FocusScreen', () => {
     expect(tree.root.findAllByType(SwipeableTaskItem)).toHaveLength(1);
     expect(() => tree.root.findByProps({ children: 'All clear' })).toThrow();
   });
+
 });
