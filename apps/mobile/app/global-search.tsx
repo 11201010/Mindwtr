@@ -274,6 +274,15 @@ export default function SearchScreen() {
         setIncludeCompleted(false);
         setIncludeReference(true);
     };
+    const hasActiveFilters = (
+        selectedStatuses.length > 0
+        || selectedArea !== 'all'
+        || selectedTokens.length > 0
+        || duePreset !== 'any'
+        || scope !== 'all'
+        || includeCompleted
+        || !includeReference
+    );
     const activeChips: Array<{ key: string; label: string; onPress: () => void }> = [];
     selectedStatuses.forEach((status) => {
         activeChips.push({
@@ -320,13 +329,6 @@ export default function SearchScreen() {
             onPress: () => setIncludeCompleted(false),
         });
     }
-    if (includeReference) {
-        activeChips.push({
-            key: 'includeReference',
-            label: t('search.includeReference'),
-            onPress: () => setIncludeReference(false),
-        });
-    }
 
     const renderChip = (label: string, selected: boolean, onPress: () => void) => (
         <TouchableOpacity
@@ -350,7 +352,7 @@ export default function SearchScreen() {
             </Text>
         </TouchableOpacity>
     );
-    const filtersActive = filtersOpen || activeChips.length > 0;
+    const filtersActive = filtersOpen || hasActiveFilters;
     const searchPlaceholderRaw = t('search.placeholder');
     const searchPlaceholder = searchPlaceholderRaw === 'search.placeholder'
       ? t('common.search')
@@ -411,7 +413,7 @@ export default function SearchScreen() {
                 <View style={[styles.filtersPanel, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
                     <View style={styles.filtersHeader}>
                         <Text style={[styles.filtersTitle, { color: tc.text }]}>{t('filters.label')}</Text>
-                        {activeChips.length > 0 && (
+                        {hasActiveFilters && (
                             <TouchableOpacity onPress={clearFilters}>
                                 <Text style={[styles.clearFiltersText, { color: tc.tint }]}>{t('common.clear')}</Text>
                             </TouchableOpacity>
@@ -634,6 +636,7 @@ const styles = StyleSheet.create({
     activeChips: {
         paddingHorizontal: 16,
         paddingTop: 8,
+        alignItems: 'center',
         gap: 8,
     },
     filtersPanel: {
