@@ -118,6 +118,38 @@ describe('ListView', () => {
     });
   });
 
+  it('collapses expanded task details when page details are turned off', async () => {
+    const expandedTask = makeTask('1', {
+      title: 'Expanded task',
+      description: 'Expanded task note',
+    });
+    useTaskStore.setState({
+      tasks: [expandedTask],
+      _allTasks: [expandedTask],
+      lastDataChangeAt: 1,
+    });
+    useUiStore.setState((state) => ({
+      ...state,
+      listOptions: {
+        ...state.listOptions,
+        showDetails: true,
+      },
+      expandedTaskIds: { '1': true },
+    }));
+
+    const { getByRole, queryByText } = renderListView();
+
+    expect(queryByText('Expanded task note')).toBeInTheDocument();
+
+    fireEvent.click(getByRole('button', { name: /^details$/i }));
+
+    await waitFor(() => {
+      expect(queryByText('Expanded task note')).not.toBeInTheDocument();
+      expect(useUiStore.getState().listOptions.showDetails).toBe(false);
+      expect(useUiStore.getState().expandedTaskIds).toEqual({});
+    });
+  });
+
   it('applies token filters from the UI store', async () => {
     useTaskStore.setState({
       tasks: [

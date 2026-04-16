@@ -113,6 +113,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const showListDetails = useUiStore((state) => state.listOptions.showDetails);
     const nextGroupBy = useUiStore((state) => state.listOptions.nextGroupBy);
     const setListOptions = useUiStore((state) => state.setListOptions);
+    const collapseAllTaskDetails = useUiStore((state) => state.collapseAllTaskDetails);
     const setProjectView = useUiStore((state) => state.setProjectView);
     const [baseTasks, setBaseTasks] = useState<Task[]>(() => (statusFilter === 'archived' ? [] : tasks));
     const queryCacheRef = useRef<Map<string, Task[]>>(new Map());
@@ -711,6 +712,14 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 };
         }
     }, [resolveText, statusFilter, t]);
+    const handleToggleDetails = useCallback(() => {
+        if (showListDetails) {
+            collapseAllTaskDetails();
+            setListOptions({ showDetails: false });
+            return;
+        }
+        setListOptions({ showDetails: true });
+    }, [collapseAllTaskDetails, setListOptions, showListDetails]);
 
     return (
         <ErrorBoundary>
@@ -730,7 +739,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                     selectionMode={selectionMode}
                     onToggleSelection={toggleSelectionMode}
                     showListDetails={showListDetails}
-                    onToggleDetails={() => setListOptions({ showDetails: !showListDetails })}
+                    onToggleDetails={handleToggleDetails}
                     densityMode={densityMode}
                     onToggleDensity={() => {
                         void updateSettings({

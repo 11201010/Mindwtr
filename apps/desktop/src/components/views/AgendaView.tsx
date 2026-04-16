@@ -171,10 +171,11 @@ export function AgendaView() {
     const getDerivedState = useTaskStore((state) => state.getDerivedState);
     const { projectMap, sequentialProjectIds } = getDerivedState();
     const { t } = useLanguage();
-    const { showListDetails, nextGroupBy, setListOptions } = useUiStore((state) => ({
+    const { showListDetails, nextGroupBy, setListOptions, collapseAllTaskDetails } = useUiStore((state) => ({
         showListDetails: state.listOptions.showDetails,
         nextGroupBy: state.listOptions.nextGroupBy,
         setListOptions: state.setListOptions,
+        collapseAllTaskDetails: state.collapseAllTaskDetails,
     }));
     const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
     const [selectedPriorities, setSelectedPriorities] = useState<TaskPriority[]>([]);
@@ -695,6 +696,14 @@ export function AgendaView() {
         });
         return Array.from(byId.values());
     }, [focusedTasks, sections]);
+    const handleToggleDetails = useCallback(() => {
+        if (showListDetails) {
+            collapseAllTaskDetails();
+            setListOptions({ showDetails: false });
+            return;
+        }
+        setListOptions({ showDetails: true });
+    }, [collapseAllTaskDetails, setListOptions, showListDetails]);
 
     return (
         <ErrorBoundary>
@@ -703,7 +712,7 @@ export function AgendaView() {
                 nextActionsCount={nextActionsCount}
                 nextGroupBy={nextGroupBy}
                 onChangeGroupBy={(value) => setListOptions({ nextGroupBy: value })}
-                onToggleDetails={() => setListOptions({ showDetails: !showListDetails })}
+                onToggleDetails={handleToggleDetails}
                 onToggleTop3={() => setTop3Only((prev) => !prev)}
                 resolveText={resolveText}
                 showListDetails={showListDetails}

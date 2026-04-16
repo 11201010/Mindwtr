@@ -37,6 +37,7 @@ interface UiState {
     editingTaskId: string | null;
     setEditingTaskId: (value: string | null) => void;
     expandedTaskIds: Record<string, true>;
+    collapseAllTaskDetails: () => void;
     setTaskExpanded: (taskId: string, expanded: boolean) => void;
     toggleTaskExpanded: (taskId: string) => void;
     boardFilters: {
@@ -98,6 +99,8 @@ export const useUiStore = createWithEqualityFn<UiState>()((set) => ({
     editingTaskId: null,
     setEditingTaskId: (value) => set({ editingTaskId: value }),
     expandedTaskIds: {},
+    collapseAllTaskDetails: () =>
+        set((state) => (Object.keys(state.expandedTaskIds).length === 0 ? state : { expandedTaskIds: {} })),
     setTaskExpanded: (taskId, expanded) =>
         set((state) => {
             const currentExpanded = Boolean(state.expandedTaskIds[taskId]);

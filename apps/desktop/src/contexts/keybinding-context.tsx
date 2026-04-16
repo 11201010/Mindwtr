@@ -129,6 +129,7 @@ export function KeybindingProvider({
     const showToast = useUiStore((state) => state.showToast);
     const listOptions = useUiStore((state) => state.listOptions);
     const setListOptions = useUiStore((state) => state.setListOptions);
+    const collapseAllTaskDetails = useUiStore((state) => state.collapseAllTaskDetails);
     const editingTaskId = useUiStore((state) => state.editingTaskId);
     const editingTaskIdRef = useRef<string | null>(editingTaskId);
 
@@ -155,8 +156,13 @@ export function KeybindingProvider({
         updateSettings({ sidebarCollapsed: !isSidebarCollapsed }).catch((error) => reportError('Failed to update settings', error));
     }, [updateSettings, isSidebarCollapsed]);
     const toggleListDetails = useCallback(() => {
-        setListOptions({ showDetails: !listOptions.showDetails });
-    }, [listOptions.showDetails, setListOptions]);
+        if (listOptions.showDetails) {
+            collapseAllTaskDetails();
+            setListOptions({ showDetails: false });
+            return;
+        }
+        setListOptions({ showDetails: true });
+    }, [collapseAllTaskDetails, listOptions.showDetails, setListOptions]);
     const toggleDensity = useCallback(() => {
         const nextDensity = settings.appearance?.density === 'compact' ? 'comfortable' : 'compact';
         updateSettings({ appearance: { density: nextDensity } })

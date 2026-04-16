@@ -44,6 +44,7 @@ describe('AgendaView', () => {
                 showDetails: false,
                 nextGroupBy: 'none',
             },
+            expandedTaskIds: {},
         });
     });
 
@@ -57,6 +58,48 @@ describe('AgendaView', () => {
         fireEvent.click(checklistItem);
 
         expect(getByText('Checklist item')).toBeInTheDocument();
+    });
+
+    it('collapses expanded task details when page details are turned off', () => {
+        const nextTask: Task = {
+            id: 'next-action-task',
+            title: 'Next action task',
+            status: 'next',
+            description: 'Expanded task note',
+            tags: [],
+            contexts: [],
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        };
+
+        useTaskStore.setState({
+            tasks: [nextTask],
+            _allTasks: [nextTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: {},
+            highlightTaskId: null,
+        });
+        useUiStore.setState((state) => ({
+            ...state,
+            listOptions: {
+                ...state.listOptions,
+                showDetails: true,
+            },
+            expandedTaskIds: { 'next-action-task': true },
+        }));
+
+        const { getByRole, queryByText } = renderAgenda();
+
+        expect(queryByText('Expanded task note')).toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: /^details$/i }));
+
+        expect(queryByText('Expanded task note')).not.toBeInTheDocument();
+        expect(useUiStore.getState().listOptions.showDetails).toBe(false);
+        expect(useUiStore.getState().expandedTaskIds).toEqual({});
     });
 
     it('keeps non-next tasks with start time today out of Today', () => {
