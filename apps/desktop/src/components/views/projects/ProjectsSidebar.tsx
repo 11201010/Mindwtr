@@ -427,14 +427,16 @@ export function ProjectsSidebar({
                                                                     <Star className="w-4 h-4" fill={project.isFocused ? 'currentColor' : 'none'} />
                                                                 </button>
                                                                 <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
-                                                                <span className="flex-1 truncate font-medium">{project.title}</span>
+                                                                <span className="flex-1 truncate font-medium" title={project.title}>
+                                                                    {project.title}
+                                                                </span>
                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted/60 text-muted-foreground min-w-5 text-center">
                                                                     {projTasks.length}
                                                                 </span>
                                                             </div>
                                                             <div className="px-2 pb-2 pl-10">
                                                                 {nextAction ? (
-                                                                    <span className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                                                                    <span className="text-xs text-muted-foreground truncate flex items-center gap-1" title={nextAction.title}>
                                                                         <CornerDownRight className="w-3 h-3" />
                                                                         {nextAction.title}
                                                                     </span>
@@ -534,7 +536,9 @@ export function ProjectsSidebar({
                                                                                 {handle}
                                                                             </span>
                                                                             <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
-                                                                            <span className="flex-1 truncate font-medium">{project.title}</span>
+                                                                            <span className="flex-1 truncate font-medium" title={project.title}>
+                                                                                {project.title}
+                                                                            </span>
                                                                             <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/60 text-muted-foreground uppercase">
                                                                                 {t(`status.${project.status}`) || project.status}
                                                                             </span>
@@ -630,7 +634,9 @@ export function ProjectsSidebar({
                                                                                     {handle}
                                                                                 </span>
                                                                                 <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
-                                                                                <span className="flex-1 truncate font-medium">{project.title}</span>
+                                                                                <span className="flex-1 truncate font-medium" title={project.title}>
+                                                                                    {project.title}
+                                                                                </span>
                                                                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/60 text-muted-foreground uppercase">
                                                                                     {t(`status.${project.status}`) || project.status}
                                                                                 </span>

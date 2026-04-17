@@ -194,6 +194,50 @@ describe('ProjectsSidebar', () => {
         expect(onSelectProject).not.toHaveBeenCalled();
     });
 
+    it('exposes the full project title as a hover tooltip for truncated rows', () => {
+        const longTitle = 'An unusually long project title that needs more room in the sidebar';
+
+        render(
+            <ProjectsSidebar
+                t={t}
+                selectedTag={allTagsId}
+                noAreaId={noAreaId}
+                allTagsId={allTagsId}
+                noTagsId={noTagsId}
+                tagOptions={{ list: [], hasNoTags: true }}
+                isCreating={false}
+                isCreatingProject={false}
+                newProjectTitle=""
+                onStartCreate={vi.fn()}
+                onCancelCreate={vi.fn()}
+                onCreateProject={vi.fn()}
+                onChangeNewProjectTitle={vi.fn()}
+                onSelectTag={vi.fn()}
+                groupedActiveProjects={[[noAreaId, [buildProject('project-long', longTitle, 0)]]]}
+                groupedDeferredProjects={[]}
+                groupedArchivedProjects={[]}
+                areaById={new Map()}
+                collapsedAreas={{}}
+                onToggleAreaCollapse={vi.fn()}
+                showDeferredProjects={false}
+                onToggleDeferredProjects={vi.fn()}
+                showArchivedProjects={false}
+                onToggleArchivedProjects={vi.fn()}
+                selectedProjectId={null}
+                onSelectProject={vi.fn()}
+                getProjectColor={(project) => project.color}
+                tasksByProject={{}}
+                projects={[buildProject('project-long', longTitle, 0)]}
+                toggleProjectFocus={vi.fn()}
+                updateProject={vi.fn()}
+                reorderProjects={vi.fn()}
+                onDuplicateProject={vi.fn()}
+            />
+        );
+
+        expect(screen.getByText(longTitle)).toHaveAttribute('title', longTitle);
+    });
+
     it('switches projects with one click while the current title input blurs and rerenders', async () => {
         const user = userEvent.setup();
 
