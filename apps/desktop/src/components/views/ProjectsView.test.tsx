@@ -118,15 +118,23 @@ describe('ProjectsView', () => {
     });
 
     it('allows keyboard resizing of the projects sidebar and persists the width', async () => {
-        const clientWidthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+        const originalInnerWidth = window.innerWidth;
+        Object.defineProperty(window, 'innerWidth', {
+            configurable: true,
+            value: 1500,
+        });
+        const clientWidthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1800);
 
         render(<ProjectsView />);
 
         const separator = screen.getByRole('separator', { name: 'Resize projects panel' });
         const sidebar = screen.getByTestId('projects-sidebar').parentElement?.parentElement;
+        const layout = sidebar?.parentElement;
 
         expect(sidebar).not.toBeNull();
+        expect(layout).not.toBeNull();
         expect(sidebar).toHaveStyle({ width: '304px' });
+        expect(layout).toHaveStyle({ maxWidth: '1344px' });
 
         fireEvent.keyDown(separator, { key: 'ArrowRight' });
 
@@ -134,9 +142,16 @@ describe('ProjectsView', () => {
             expect(sidebar).toHaveStyle({ width: '328px' });
         });
         await waitFor(() => {
+            expect(layout).toHaveStyle({ maxWidth: '1368px' });
+        });
+        await waitFor(() => {
             expect(window.localStorage.getItem('mindwtr:projects:sidebarWidth')).toBe('328');
         });
 
         clientWidthSpy.mockRestore();
+        Object.defineProperty(window, 'innerWidth', {
+            configurable: true,
+            value: originalInnerWidth,
+        });
     });
 });

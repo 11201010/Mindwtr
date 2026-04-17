@@ -30,6 +30,7 @@ import { useAreaSidebarState } from './projects/useAreaSidebarState';
 import { useProjectsViewStore } from './projects/useProjectsViewStore';
 import { splitProjectsForSidebar } from './projects/project-sidebar-grouping';
 import {
+    PROJECTS_SIDEBAR_DEFAULT_WIDTH,
     PROJECTS_SIDEBAR_MAX_WIDTH,
     PROJECTS_SIDEBAR_MIN_WIDTH,
     clampProjectsSidebarWidth,
@@ -40,6 +41,9 @@ import {
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 
 const COLLAPSED_AREAS_STORAGE_KEY = 'mindwtr:projects:collapsedAreas';
+const PROJECTS_VIEW_DEFAULT_MAX_WIDTH = 1344;
+const PROJECTS_VIEW_2XL_MAX_WIDTH = 1408;
+const PROJECTS_VIEW_2XL_BREAKPOINT = 1536;
 
 function loadCollapsedAreas(): Record<string, boolean> {
     if (typeof window === 'undefined') return {};
@@ -115,6 +119,7 @@ export function ProjectsView() {
     const sidebarResizeCleanupRef = useRef<(() => void) | null>(null);
     const [sidebarWidth, setSidebarWidth] = useState(loadProjectsSidebarWidth);
     const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+    const [availableProjectsWidth, setAvailableProjectsWidth] = useState<number | null>(null);
     const [showAreaManager, setShowAreaManager] = useState(false);
     const [newAreaName, setNewAreaName] = useState('');
     const [newAreaColor, setNewAreaColor] = useState(DEFAULT_AREA_COLOR);
@@ -128,14 +133,27 @@ export function ProjectsView() {
     const NO_TAGS = '__none__';
     const [selectedTag, setSelectedTag] = useState(ALL_TAGS);
 
-    const getProjectsLayoutWidth = useCallback(
-        () => projectsLayoutRef.current?.clientWidth,
-        [],
-    );
+    const getProjectsBaseMaxWidth = useCallback(() => {
+        if (typeof window === 'undefined') return PROJECTS_VIEW_DEFAULT_MAX_WIDTH;
+        return window.innerWidth >= PROJECTS_VIEW_2XL_BREAKPOINT
+            ? PROJECTS_VIEW_2XL_MAX_WIDTH
+            : PROJECTS_VIEW_DEFAULT_MAX_WIDTH;
+    }, []);
+
+    const projectsLayoutMaxWidth = useMemo(() => {
+        const baseMaxWidth = getProjectsBaseMaxWidth();
+        const desiredMaxWidth = baseMaxWidth + Math.max(0, sidebarWidth - PROJECTS_SIDEBAR_DEFAULT_WIDTH);
+
+        if (typeof availableProjectsWidth !== 'number' || !Number.isFinite(availableProjectsWidth)) {
+            return desiredMaxWidth;
+        }
+
+        return Math.min(desiredMaxWidth, availableProjectsWidth);
+    }, [availableProjectsWidth, getProjectsBaseMaxWidth, sidebarWidth]);
 
     const clampSidebarWidth = useCallback(
-        (width: number) => clampProjectsSidebarWidth(width, getProjectsLayoutWidth()),
-        [getProjectsLayoutWidth],
+        (width: number) => clampProjectsSidebarWidth(width, projectsLayoutMaxWidth),
+        [projectsLayoutMaxWidth],
     );
 
     useEffect(() => {
@@ -144,8 +162,10 @@ export function ProjectsView() {
 
     useEffect(() => {
         const syncSidebarWidth = () => {
+            const nextAvailableWidth = projectsLayoutRef.current?.parentElement?.clientWidth ?? null;
+            setAvailableProjectsWidth((current) => current === nextAvailableWidth ? current : nextAvailableWidth);
             setSidebarWidth((current) => {
-                const next = clampProjectsSidebarWidth(current, getProjectsLayoutWidth());
+                const next = clampProjectsSidebarWidth(current, projectsLayoutMaxWidth);
                 return current === next ? current : next;
             });
         };
@@ -155,12 +175,14 @@ export function ProjectsView() {
         if (typeof ResizeObserver === 'function' && projectsLayoutRef.current) {
             const observer = new ResizeObserver(syncSidebarWidth);
             observer.observe(projectsLayoutRef.current);
+            const parentElement = projectsLayoutRef.current.parentElement;
+            if (parentElement) observer.observe(parentElement);
             return () => observer.disconnect();
         }
 
         window.addEventListener('resize', syncSidebarWidth);
         return () => window.removeEventListener('resize', syncSidebarWidth);
-    }, [getProjectsLayoutWidth]);
+    }, [projectsLayoutMaxWidth]);
 
     useEffect(() => () => {
         sidebarResizeCleanupRef.current?.();
@@ -227,12 +249,12 @@ export function ProjectsView() {
                 break;
             case 'End':
                 event.preventDefault();
-                setSidebarWidth(clampSidebarWidth(getProjectsSidebarMaxWidth(getProjectsLayoutWidth())));
+                setSidebarWidth(clampSidebarWidth(getProjectsSidebarMaxWidth(projectsLayoutMaxWidth)));
                 break;
             default:
                 break;
         }
-    }, [clampSidebarWidth, getProjectsLayoutWidth]);
+    }, [clampSidebarWidth, projectsLayoutMaxWidth]);
 
     const handleDuplicateProject = useCallback(async (projectId: string) => {
         try {
@@ -412,7 +434,8 @@ export function ProjectsView() {
             <div className="h-full px-4 py-3">
                 <div
                     ref={projectsLayoutRef}
-                    className="flex h-full w-full min-w-0 gap-5 xl:gap-6"
+                    className="mx-auto flex h-full w-full min-w-0 gap-5 xl:gap-6"
+                    style={{ maxWidth: `${projectsLayoutMaxWidth}px` }}
                 >
                     <div className="relative min-h-0 flex-none" style={{ width: `${sidebarWidth}px` }}>
                         <div id="projects-sidebar-panel" className="h-full min-w-0">
