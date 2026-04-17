@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TaskEditViewTab } from './TaskEditViewTab';
 
+function MockTaskStatusBadge(props: any) {
+  return React.createElement('TaskStatusBadge', props);
+}
+
 vi.mock('../task-status-badge', () => ({
-  TaskStatusBadge: (props: any) => React.createElement('TaskStatusBadge', props),
+  TaskStatusBadge: MockTaskStatusBadge,
 }));
 
 vi.mock('../markdown-text', () => ({
@@ -89,7 +93,7 @@ describe('TaskEditViewTab', () => {
       );
     });
 
-    const badge = tree.root.findByType('TaskStatusBadge');
+    const badge = tree.root.findByType(MockTaskStatusBadge);
     expect(badge.props.status).toBe('next');
 
     renderer.act(() => {
