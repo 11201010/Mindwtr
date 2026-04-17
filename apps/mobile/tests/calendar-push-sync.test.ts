@@ -23,6 +23,7 @@ const {
     mockLogInfo,
     mockLogWarn,
     mockLogError,
+    mockPlatform,
 } = vi.hoisted(() => ({
     mockGetItem: vi.fn(async () => null as string | null),
     mockSetItem: vi.fn(async () => {}),
@@ -46,6 +47,7 @@ const {
     mockLogInfo: vi.fn(),
     mockLogWarn: vi.fn(),
     mockLogError: vi.fn(),
+    mockPlatform: { OS: 'ios' },
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -72,7 +74,7 @@ vi.mock('expo-calendar', () => ({
 }));
 
 vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
+    Platform: mockPlatform,
 }));
 
 vi.mock('@mindwtr/core', () => ({
@@ -147,6 +149,7 @@ function setupEnabled(calendarId = 'cal-1') {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockPlatform.OS = 'ios';
     // Default: the stored calendar still exists
     mockGetCalendarsAsync.mockResolvedValue([{ id: 'cal-1', title: 'Mindwtr' }]);
     // Default: no prior sync entries
@@ -178,6 +181,28 @@ describe('ensureMindwtrCalendar', () => {
         expect(mockCreateCalendarAsync).toHaveBeenCalledOnce();
         expect(id).toBe('cal-2');
         expect(mockSetItem).toHaveBeenCalledWith('mindwtr:calendar-push-sync:calendar-id', 'cal-2');
+    });
+
+    it('creates an Android local calendar with the required source metadata', async () => {
+        mockPlatform.OS = 'android';
+        mockGetItem.mockResolvedValueOnce(null);
+        mockCreateCalendarAsync.mockResolvedValue('cal-android');
+
+        const id = await ensureMindwtrCalendar();
+
+        expect(id).toBe('cal-android');
+        expect(mockCreateCalendarAsync).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Mindwtr',
+            name: 'mindwtr',
+            ownerAccount: 'Mindwtr',
+            accessLevel: 'owner',
+            isVisible: true,
+            isSynced: true,
+            source: {
+                name: 'Mindwtr',
+                isLocalAccount: true,
+            },
+        }));
     });
 });
 

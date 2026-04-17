@@ -25,6 +25,8 @@ const CALENDAR_PUSH_ENABLED_KEY = 'mindwtr:calendar-push-sync:enabled';
 const CALENDAR_ID_KEY = 'mindwtr:calendar-push-sync:calendar-id';
 const PLATFORM = Platform.OS;
 const SYNC_DEBOUNCE_MS = 2500;
+const MANAGED_CALENDAR_TITLE = 'Mindwtr';
+const MANAGED_CALENDAR_NAME = 'mindwtr';
 
 // MARK: - Settings
 
@@ -83,14 +85,21 @@ export const ensureMindwtrCalendar = async (): Promise<string | null> => {
         let calendarDetails: Parameters<typeof Calendar.createCalendarAsync>[0];
 
         if (Platform.OS === 'android') {
-            // Android does not use sources; needs name, ownerAccount, and accessLevel
+            // Expo Calendar on Android requires a local-account source object
+            // when creating device calendars.
             calendarDetails = {
-                title: 'Mindwtr',
+                title: MANAGED_CALENDAR_TITLE,
                 color: '#3B82F6',
                 entityType: Calendar.EntityTypes.EVENT,
-                name: 'mindwtr',
-                ownerAccount: 'mindwtr',
+                name: MANAGED_CALENDAR_NAME,
+                ownerAccount: MANAGED_CALENDAR_TITLE,
                 accessLevel: Calendar.CalendarAccessLevel.OWNER,
+                source: {
+                    name: MANAGED_CALENDAR_TITLE,
+                    isLocalAccount: true,
+                },
+                isVisible: true,
+                isSynced: true,
             };
         } else {
             // iOS requires a source
@@ -108,7 +117,7 @@ export const ensureMindwtrCalendar = async (): Promise<string | null> => {
             }
 
             calendarDetails = {
-                title: 'Mindwtr',
+                title: MANAGED_CALENDAR_TITLE,
                 color: '#3B82F6',
                 entityType: Calendar.EntityTypes.EVENT,
                 sourceId: source.id,
