@@ -239,6 +239,7 @@ describe('useSyncSettingsTransportActions', () => {
         expect(mocked.webdavGetJson).toHaveBeenCalledWith(
             'http://nas.local/remote.php/dav/files/alice/mindwtr/data.json',
             expect.objectContaining({
+                allowInsecureHttp: true,
                 password: 'secret',
                 timeoutMs: 10_000,
                 username: 'alice',

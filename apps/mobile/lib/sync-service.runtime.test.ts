@@ -485,6 +485,7 @@ describe('mobile sync-service runtime', () => {
         ],
       }),
       expect.objectContaining({
+        allowInsecureHttp: true,
         username: 'user',
         password: 'pass',
       }),

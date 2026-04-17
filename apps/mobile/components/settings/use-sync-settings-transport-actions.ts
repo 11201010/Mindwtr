@@ -21,6 +21,7 @@ import {
     isDropboxConnected,
 } from '@/lib/dropbox-auth';
 import { performMobileSync } from '@/lib/sync-service';
+import { MOBILE_WEBDAV_REQUEST_OPTIONS } from '@/lib/webdav-request-options';
 import {
     getSyncConflictCount,
     getSyncMaxClockSkewMs,
@@ -750,6 +751,7 @@ export function useSyncSettingsTransportActions({
                     return;
                 }
                 await webdavGetJson<unknown>(normalizeWebdavUrl(trimmedWebDavUrl), {
+                    ...MOBILE_WEBDAV_REQUEST_OPTIONS,
                     username: effectiveWebdav.username.trim(),
                     password: effectiveWebdav.password,
                     timeoutMs: 10_000,

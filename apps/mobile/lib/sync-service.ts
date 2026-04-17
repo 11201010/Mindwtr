@@ -33,6 +33,7 @@ import {
   SYNC_PATH_BOOKMARK_KEY,
   DROPBOX_LAST_REV_KEY,
 } from './sync-constants';
+import { MOBILE_WEBDAV_REQUEST_OPTIONS } from './webdav-request-options';
 
 const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
 const WEBDAV_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 30_000 };
@@ -531,6 +532,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
             const data = await withRetry(
               () =>
                 webdavGetJson<AppData>(webdavConfig.url, {
+                  ...MOBILE_WEBDAV_REQUEST_OPTIONS,
                   username: webdavConfig.username,
                   password: webdavConfig.password,
                   timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
@@ -646,6 +648,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
             await withRetry(
               () =>
                 webdavPutJson(webdavConfig.url, sanitized, {
+                  ...MOBILE_WEBDAV_REQUEST_OPTIONS,
                   username: webdavConfig.username,
                   password: webdavConfig.password,
                   timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,
@@ -875,6 +878,7 @@ const mobileSyncOrchestrator = createSyncOrchestrator<string | undefined, Mobile
                 if (isWebdavBackend && webdavConfigValue) {
                   const baseSyncUrl = getBaseSyncUrl(webdavConfigValue.url);
                   await webdavDeleteFile(`${baseSyncUrl}/${attachment.cloudKey}`, {
+                    ...MOBILE_WEBDAV_REQUEST_OPTIONS,
                     username: webdavConfigValue.username,
                     password: webdavConfigValue.password,
                     timeoutMs: DEFAULT_SYNC_TIMEOUT_MS,

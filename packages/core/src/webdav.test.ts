@@ -40,6 +40,26 @@ describe('webdav http helpers', () => {
         expect(fetcher).not.toHaveBeenCalled();
     });
 
+    it('allows explicit insecure HTTP overrides for public targets', async () => {
+        const fetcher = vi.fn(
+            async () =>
+                ({
+                    ok: false,
+                    status: 404,
+                    statusText: 'Not Found',
+                    text: async () => '',
+                }) as Response,
+        );
+
+        await expect(
+            webdavGetJson('http://8.8.8.8/dav/data.json', {
+                fetcher,
+                allowInsecureHttp: true,
+            }),
+        ).resolves.toBeNull();
+        expect(fetcher).toHaveBeenCalledOnce();
+    });
+
     it('treats empty successful body as missing remote data', async () => {
         const fetcher = vi.fn(
             async () =>

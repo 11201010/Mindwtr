@@ -15,6 +15,7 @@ export interface WebDavOptions {
     timeoutMs?: number;
     fetcher?: typeof fetch;
     onProgress?: (loaded: number, total: number) => void;
+    allowInsecureHttp?: boolean;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -77,11 +78,16 @@ const WEBDAV_INSECURE_OPTIONS = { allowAndroidEmulatorInDev: true, allowLocalHos
 const WEBDAV_TIMEOUT_ERROR = 'WebDAV request timed out';
 const UTF8_BOM = '\uFEFF';
 
+const assertWebdavUrl = (url: string, options: WebDavOptions): void => {
+    if (options.allowInsecureHttp) return;
+    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+};
+
 export async function webdavGetJson<T>(
     url: string,
     options: WebDavOptions = {}
 ): Promise<T | null> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,
@@ -117,7 +123,7 @@ export async function webdavPutJson(
     data: unknown,
     options: WebDavOptions = {}
 ): Promise<void> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const headers = buildHeaders(options);
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
@@ -146,7 +152,7 @@ export async function webdavMakeDirectory(
     url: string,
     options: WebDavOptions = {}
 ): Promise<void> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,
@@ -166,7 +172,7 @@ export async function webdavPutFile(
     contentType: string,
     options: WebDavOptions = {}
 ): Promise<void> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const headers = buildHeaders(options);
     headers['Content-Type'] = contentType || 'application/octet-stream';
@@ -200,7 +206,7 @@ export async function webdavFileExists(
     url: string,
     options: WebDavOptions = {}
 ): Promise<boolean> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,
@@ -224,7 +230,7 @@ export async function webdavGetFile(
     url: string,
     options: WebDavOptions = {}
 ): Promise<ArrayBuffer> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,
@@ -266,7 +272,7 @@ export async function webdavDeleteFile(
     url: string,
     options: WebDavOptions = {}
 ): Promise<void> {
-    assertSecureUrl(url, WEBDAV_HTTPS_ERROR, WEBDAV_INSECURE_OPTIONS);
+    assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     const res = await fetchWithTimeout(
         url,

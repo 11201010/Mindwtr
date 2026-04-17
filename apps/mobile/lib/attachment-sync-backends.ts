@@ -60,6 +60,7 @@ import {
   WEBDAV_ATTACHMENT_RETRY_OPTIONS,
   writeBytesSafely,
 } from './attachment-sync-utils';
+import { MOBILE_WEBDAV_REQUEST_OPTIONS } from './webdav-request-options';
 
 const encodeBase64Utf8 = (value: string): string => {
   const Encoder = typeof TextEncoder === 'function' ? TextEncoder : undefined;
@@ -250,6 +251,7 @@ export const syncWebdavAttachments = async (
   const attachmentsDirUrl = `${baseSyncUrl}/${ATTACHMENTS_DIR_NAME}`;
   try {
     await webdavMakeDirectory(attachmentsDirUrl, {
+      ...MOBILE_WEBDAV_REQUEST_OPTIONS,
       username: webDavConfig.username,
       password: webDavConfig.password,
     });
@@ -310,6 +312,7 @@ export const syncWebdavAttachments = async (
           async () => {
             await waitForSlot();
             return await webdavFileExists(`${baseSyncUrl}/${attachment.cloudKey}`, {
+              ...MOBILE_WEBDAV_REQUEST_OPTIONS,
               username: webDavConfig.username,
               password: webDavConfig.password,
             });
@@ -444,6 +447,7 @@ export const syncWebdavAttachments = async (
                 buffer,
                 attachment.mimeType || DEFAULT_CONTENT_TYPE,
                 {
+                  ...MOBILE_WEBDAV_REQUEST_OPTIONS,
                   username: webDavConfig.username,
                   password: webDavConfig.password,
                 }
@@ -525,6 +529,7 @@ export const syncWebdavAttachments = async (
           async () => {
             await waitForSlot();
             return await webdavGetFile(downloadUrl, {
+              ...MOBILE_WEBDAV_REQUEST_OPTIONS,
               username: webDavConfig.username,
               password: webDavConfig.password,
               onProgress: (loaded, total) => reportProgress(attachment.id, 'download', loaded, total, 'active'),
