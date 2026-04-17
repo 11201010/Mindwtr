@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InboxProcessingModal } from './inbox-processing-modal';
 
@@ -107,6 +107,19 @@ vi.mock('@react-native-community/datetimepicker', () => ({
 }));
 
 describe('InboxProcessingModal', () => {
+  beforeEach(() => {
+    mockSettings.features = undefined;
+    mockSettings.gtd = { inboxProcessing: {}, taskEditor: undefined };
+    mockSettings.ai = {};
+    storeState.projects = [];
+    storeState.areas = [];
+    updateTask.mockClear();
+    deleteTask.mockClear();
+    addProject.mockClear();
+    push.mockClear();
+    clarifyTask.mockClear();
+  });
+
   const findNodeWithText = (root: ReturnType<typeof create>['root'], text: string) => {
     return root.find((node) => {
       const children = node.props?.children;
@@ -160,7 +173,6 @@ describe('InboxProcessingModal', () => {
         description: 'Updated description',
         projectId: undefined,
         contexts: ['@home'],
-        tags: ['#old'],
       })
     );
     expect(onClose).toHaveBeenCalled();
@@ -201,11 +213,6 @@ describe('InboxProcessingModal', () => {
   });
 
   it('saves the selected priority by default when priorities are not explicitly disabled', () => {
-    mockSettings.features = undefined;
-    mockSettings.gtd.inboxProcessing = {};
-    storeState.projects = [];
-    storeState.areas = [];
-    updateTask.mockClear();
     const onClose = vi.fn();
     let tree: ReturnType<typeof create>;
 
@@ -241,11 +248,71 @@ describe('InboxProcessingModal', () => {
       expect.objectContaining({
         projectId: undefined,
         contexts: ['@home'],
-        tags: ['#old'],
         priority: 'high',
       })
     );
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('saves energy level and time estimate during inbox processing', () => {
+    const onClose = vi.fn();
+    let tree: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={onClose} />);
+    });
+
+    const root = tree!.root;
+    const energyLabel = root.findByProps({ children: 'energyLevel.high' });
+    const energyButton = energyLabel.parent;
+    const estimateLabel = root.findByProps({ children: '30m' });
+    const estimateButton = estimateLabel.parent;
+    const skipLabel = root.findByProps({ children: 'Skip' });
+    const skipButton = skipLabel.parent;
+
+    if (!energyButton || !estimateButton || !skipButton) {
+      throw new Error('Expected inbox processing controls were not found');
+    }
+
+    act(() => {
+      energyButton.props.onPress();
+      estimateButton.props.onPress();
+    });
+
+    act(() => {
+      skipButton.props.onPress();
+    });
+
+    expect(updateTask).toHaveBeenCalledWith(
+      'inbox-1',
+      expect.objectContaining({
+        energyLevel: 'high',
+        timeEstimate: '30min',
+      })
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('hides organization fields when the task editor layout disables them', () => {
+    mockSettings.gtd = {
+      inboxProcessing: {},
+      taskEditor: {
+        hidden: ['energyLevel', 'timeEstimate'],
+      },
+    };
+    const onClose = vi.fn();
+    let tree: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={onClose} />);
+    });
+
+    const root = tree!.root;
+
+    expect(root.findAllByProps({ children: 'taskEdit.energyLevel' })).toHaveLength(0);
+    expect(root.findAllByProps({ children: 'taskEdit.timeEstimateLabel' })).toHaveLength(0);
+    expect(root.findAllByProps({ children: 'energyLevel.high' })).toHaveLength(0);
+    expect(root.findAllByProps({ children: '30m' })).toHaveLength(0);
   });
 
   it('moves delegated tasks to waiting with assignedTo and keeps the description clean', () => {

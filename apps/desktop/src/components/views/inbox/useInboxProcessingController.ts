@@ -12,6 +12,8 @@ import {
     type Task,
     type TaskEnergyLevel,
     type TaskPriority,
+    type TaskEditorFieldId,
+    type TimeEstimate,
 } from '@mindwtr/core';
 
 import type {
@@ -20,7 +22,10 @@ import type {
     QuickExecutionChoice,
     QuickTwoMinuteChoice,
 } from '../../InboxProcessingQuickPanel';
-import type { InboxProcessingScheduleFieldsControls } from '../../InboxProcessingScheduleFields';
+import type {
+    InboxProcessingScheduleFieldKey,
+    InboxProcessingScheduleFieldsControls,
+} from '../../InboxProcessingScheduleFields';
 import type { InboxProcessingWizardProps, ProcessingStep } from '../../InboxProcessingWizard';
 import { DEFAULT_TASK_EDITOR_HIDDEN } from '../../Task/task-item-helpers';
 import { resolveAreaFilter, taskMatchesAreaFilter } from '../../../lib/area-filter';
@@ -35,6 +40,8 @@ import {
 } from './inbox-processing-utils';
 
 type ProcessingMode = 'guided' | 'quick';
+
+const ALL_TIME_ESTIMATE_OPTIONS: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
 
 type UseInboxProcessingControllerParams = {
     t: (key: string) => string;
@@ -84,6 +91,7 @@ export function useInboxProcessingController({
     const [selectedEnergyLevel, setSelectedEnergyLevel] = useState<TaskEnergyLevel | undefined>(undefined);
     const [selectedAssignedTo, setSelectedAssignedTo] = useState('');
     const [selectedPriority, setSelectedPriority] = useState<TaskPriority | undefined>(undefined);
+    const [selectedTimeEstimate, setSelectedTimeEstimate] = useState<TimeEstimate | undefined>(undefined);
     const [delegateWho, setDelegateWho] = useState('');
     const [delegateFollowUp, setDelegateFollowUp] = useState('');
     const [projectSearch, setProjectSearch] = useState('');
@@ -116,12 +124,44 @@ export function useInboxProcessingController({
     const scheduleEnabled = inboxProcessing.scheduleEnabled === true;
     const referenceEnabled = inboxProcessing.referenceEnabled === true;
     const prioritiesEnabled = settings?.features?.priorities !== false;
-    const hiddenTaskEditorFields = useMemo(
-        () => new Set(settings?.gtd?.taskEditor?.hidden ?? DEFAULT_TASK_EDITOR_HIDDEN),
-        [settings?.gtd?.taskEditor?.hidden],
-    );
+    const timeEstimatesEnabled = settings?.features?.timeEstimates !== false;
+    const defaultHiddenTaskEditorFields = useMemo(() => {
+        const featureHiddenFields = new Set<TaskEditorFieldId>();
+        if (!prioritiesEnabled) featureHiddenFields.add('priority');
+        if (!timeEstimatesEnabled) featureHiddenFields.add('timeEstimate');
+        return DEFAULT_TASK_EDITOR_HIDDEN.filter((fieldId) => !featureHiddenFields.has(fieldId));
+    }, [prioritiesEnabled, timeEstimatesEnabled]);
+    const hiddenTaskEditorFields = useMemo(() => {
+        const next = new Set(settings?.gtd?.taskEditor?.hidden ?? defaultHiddenTaskEditorFields);
+        if (!prioritiesEnabled) next.add('priority');
+        if (!timeEstimatesEnabled) next.add('timeEstimate');
+        return next;
+    }, [defaultHiddenTaskEditorFields, prioritiesEnabled, settings?.gtd?.taskEditor?.hidden, timeEstimatesEnabled]);
+    const showProjectField = !hiddenTaskEditorFields.has('project');
+    const showAreaField = !hiddenTaskEditorFields.has('area');
+    const showContextsField = !hiddenTaskEditorFields.has('contexts');
+    const showTagsField = !hiddenTaskEditorFields.has('tags');
+    const showPriorityField = prioritiesEnabled && !hiddenTaskEditorFields.has('priority');
     const showEnergyLevelField = !hiddenTaskEditorFields.has('energyLevel');
     const showAssignedToField = !hiddenTaskEditorFields.has('assignedTo');
+    const showTimeEstimateField = timeEstimatesEnabled && !hiddenTaskEditorFields.has('timeEstimate');
+    const showProjectStep = showProjectField || showAreaField;
+    const visibleScheduleFieldKeys = useMemo<InboxProcessingScheduleFieldKey[]>(() => {
+        if (!scheduleEnabled) return [];
+        const next: InboxProcessingScheduleFieldKey[] = [];
+        if (!hiddenTaskEditorFields.has('startTime')) next.push('start');
+        if (!hiddenTaskEditorFields.has('dueDate')) next.push('due');
+        if (!hiddenTaskEditorFields.has('reviewAt')) next.push('review');
+        return next;
+    }, [hiddenTaskEditorFields, scheduleEnabled]);
+    const showScheduleFields = visibleScheduleFieldKeys.length > 0;
+    const showOrganizationStep = (
+        (contextStepEnabled && (showContextsField || showTagsField))
+        || showPriorityField
+        || showEnergyLevelField
+        || showAssignedToField
+        || showTimeEstimateField
+    );
 
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -179,6 +219,7 @@ export function useInboxProcessingController({
         setSelectedEnergyLevel(undefined);
         setSelectedAssignedTo('');
         setSelectedPriority(undefined);
+        setSelectedTimeEstimate(undefined);
         setDelegateWho('');
         setDelegateFollowUp('');
         setProjectSearch('');
@@ -231,6 +272,7 @@ export function useInboxProcessingController({
         setSelectedEnergyLevel(task.energyLevel);
         setSelectedAssignedTo(task.assignedTo ?? '');
         setSelectedPriority(task.priority);
+        setSelectedTimeEstimate(task.timeEstimate);
         setCustomContext('');
         setCustomTag('');
         setProjectSearch('');
@@ -303,6 +345,7 @@ export function useInboxProcessingController({
         setSelectedEnergyLevel(undefined);
         setSelectedAssignedTo('');
         setSelectedPriority(undefined);
+        setSelectedTimeEstimate(undefined);
     }, [hydrateProcessingTask, processingTask?.id, tasks, setIsProcessing, skippedIds, matchesAreaFilter]);
 
     const handleSkip = useCallback(() => {
@@ -451,6 +494,7 @@ export function useInboxProcessingController({
             status: 'waiting',
             energyLevel: selectedEnergyLevel ?? undefined,
             assignedTo: who || undefined,
+            timeEstimate: selectedTimeEstimate ?? undefined,
             ...(prioritiesEnabled ? { priority: selectedPriority ?? undefined } : {}),
             ...scheduleUpdates,
             reviewAt: followUpIso,
@@ -470,6 +514,7 @@ export function useInboxProcessingController({
         processingTask,
         selectedEnergyLevel,
         selectedPriority,
+        selectedTimeEstimate,
     ]);
 
     const handleDelegateBack = useCallback(() => {
@@ -646,13 +691,14 @@ export function useInboxProcessingController({
         if (!processingTask) return;
         const applied = applyProcessingEdits({
             status: 'next',
-            contexts: selectedContexts,
-            tags: selectedTags,
+            contexts: showContextsField ? selectedContexts : (processingTask.contexts ?? []),
+            tags: showTagsField ? selectedTags : (processingTask.tags ?? []),
             energyLevel: selectedEnergyLevel ?? undefined,
             assignedTo: selectedAssignedTo.trim() || undefined,
+            timeEstimate: selectedTimeEstimate ?? undefined,
             ...(prioritiesEnabled ? { priority: selectedPriority ?? undefined } : {}),
             projectId: projectId || undefined,
-            areaId: projectId ? undefined : (selectedAreaId || undefined),
+            areaId: projectId ? undefined : (showAreaField ? (selectedAreaId || undefined) : (processingTask.areaId || undefined)),
             ...buildScheduleUpdates(),
         });
         if (applied) {
@@ -669,7 +715,11 @@ export function useInboxProcessingController({
         selectedContexts,
         selectedEnergyLevel,
         selectedPriority,
+        selectedTimeEstimate,
         selectedTags,
+        showAreaField,
+        showContextsField,
+        showTagsField,
     ]);
 
     const handleConfirmContexts = useCallback(() => {
@@ -677,11 +727,15 @@ export function useInboxProcessingController({
             handleSetProject(selectedProjectId);
             return;
         }
+        if (!showProjectStep) {
+            handleSetProject(selectedProjectId);
+            return;
+        }
         goToStep('project');
-    }, [goToStep, handleSetProject, projectFirst, selectedProjectId]);
+    }, [goToStep, handleSetProject, projectFirst, selectedProjectId, showProjectStep]);
 
     const handleDefer = useCallback(() => {
-        if (contextStepEnabled) {
+        if (showOrganizationStep) {
             setSelectedContexts(processingTask?.contexts ?? []);
             setSelectedTags(processingTask?.tags ?? []);
             goToStep('context');
@@ -691,15 +745,20 @@ export function useInboxProcessingController({
             handleSetProject(selectedProjectId);
             return;
         }
+        if (!showProjectStep) {
+            handleSetProject(selectedProjectId);
+            return;
+        }
         goToStep('project');
     }, [
-        contextStepEnabled,
         goToStep,
         handleSetProject,
         processingTask?.contexts,
         processingTask?.tags,
         projectFirst,
         selectedProjectId,
+        showOrganizationStep,
+        showProjectStep,
     ]);
 
     const handleConvertToProject = useCallback(async () => {
@@ -717,10 +776,11 @@ export function useInboxProcessingController({
             if (!project) return;
             const applied = applyProcessingEdits({
                 status: 'next',
-                contexts: selectedContexts,
-                tags: selectedTags,
+                contexts: showContextsField ? selectedContexts : (processingTask.contexts ?? []),
+                tags: showTagsField ? selectedTags : (processingTask.tags ?? []),
                 energyLevel: selectedEnergyLevel ?? undefined,
                 assignedTo: selectedAssignedTo.trim() || undefined,
+                timeEstimate: selectedTimeEstimate ?? undefined,
                 ...(prioritiesEnabled ? { priority: selectedPriority ?? undefined } : {}),
                 projectId: project.id,
                 ...buildScheduleUpdates(),
@@ -747,7 +807,10 @@ export function useInboxProcessingController({
         selectedContexts,
         selectedEnergyLevel,
         selectedPriority,
+        selectedTimeEstimate,
         selectedTags,
+        showContextsField,
+        showTagsField,
         showToast,
         t,
     ]);
@@ -763,6 +826,19 @@ export function useInboxProcessingController({
     const handleTagsInputChange = useCallback((value: string) => {
         setSelectedTags(parseTokenListInput(value, '#'));
     }, []);
+
+    const timeEstimateOptions = useMemo<TimeEstimate[]>(() => {
+        const savedPresets = settings?.gtd?.timeEstimatePresets ?? [];
+        const normalizedPresets = ALL_TIME_ESTIMATE_OPTIONS.filter((value) => savedPresets.includes(value));
+        if (normalizedPresets.length > 0) {
+            return selectedTimeEstimate && !normalizedPresets.includes(selectedTimeEstimate)
+                ? [...normalizedPresets, selectedTimeEstimate]
+                : normalizedPresets;
+        }
+        return selectedTimeEstimate && !ALL_TIME_ESTIMATE_OPTIONS.includes(selectedTimeEstimate)
+            ? [...ALL_TIME_ESTIMATE_OPTIONS, selectedTimeEstimate]
+            : ALL_TIME_ESTIMATE_OPTIONS;
+    }, [selectedTimeEstimate, settings?.gtd?.timeEstimatePresets]);
 
     const handleQuickSubmit = useCallback(async () => {
         handleScheduleTimeCommit();
@@ -823,8 +899,9 @@ export function useInboxProcessingController({
             setTwoMinuteChoice: setQuickTwoMinuteChoice,
             executionChoice: quickExecutionChoice,
             setExecutionChoice: setQuickExecutionChoice,
-            showScheduleFields: scheduleEnabled,
+            showScheduleFields,
             scheduleFields,
+            visibleScheduleFieldKeys,
             delegateWho,
             setDelegateWho,
             delegateFollowUp,
@@ -836,9 +913,15 @@ export function useInboxProcessingController({
             setSelectedEnergyLevel,
             selectedAssignedTo,
             setSelectedAssignedTo,
+            selectedTimeEstimate,
+            setSelectedTimeEstimate,
+            timeEstimateOptions,
+            showContextsField,
+            showTagsField,
             showEnergyLevelField,
             showAssignedToField,
-            prioritiesEnabled,
+            showTimeEstimateField,
+            showPriorityField,
             selectedPriority,
             setSelectedPriority,
             onContextsInputChange: handleContextsInputChange,
@@ -853,6 +936,8 @@ export function useInboxProcessingController({
             setSelectedProjectId,
             selectedAreaId,
             setSelectedAreaId,
+            showProjectField,
+            showAreaField,
             convertToProject,
             setConvertToProject,
             projectTitleDraft,
@@ -903,9 +988,15 @@ export function useInboxProcessingController({
         setSelectedEnergyLevel,
         selectedAssignedTo,
         setSelectedAssignedTo,
+        selectedTimeEstimate,
+        setSelectedTimeEstimate,
+        timeEstimateOptions,
+        showContextsField,
+        showTagsField,
         showEnergyLevelField,
         showAssignedToField,
-        prioritiesEnabled,
+        showTimeEstimateField,
+        showPriorityField,
         selectedPriority,
         setSelectedPriority,
         allContexts,
@@ -937,13 +1028,16 @@ export function useInboxProcessingController({
         hasExactProjectMatch,
         areaById,
         remainingCount: remainingInboxCount,
-        showProjectInRefine: projectFirst,
+        showProjectInRefine: projectFirst && showProjectStep,
         selectedProjectId,
         setSelectedProjectId,
         selectedAreaId,
         setSelectedAreaId,
-        showScheduleFields: scheduleEnabled,
+        showProjectField,
+        showAreaField,
+        showScheduleFields,
         scheduleFields,
+        visibleScheduleFieldKeys,
     };
 
     return {

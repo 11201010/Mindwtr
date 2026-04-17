@@ -17,9 +17,12 @@ export type InboxProcessingScheduleFieldsControls = {
     review: InboxProcessingScheduleFieldControl;
 };
 
+export type InboxProcessingScheduleFieldKey = keyof InboxProcessingScheduleFieldsControls;
+
 type InboxProcessingScheduleFieldsProps = {
     t: (key: string) => string;
     fields: InboxProcessingScheduleFieldsControls;
+    visibleFieldKeys?: InboxProcessingScheduleFieldKey[];
     variant?: 'quick' | 'guided';
 };
 
@@ -44,14 +47,18 @@ const FIELD_CONFIG = [
 export function InboxProcessingScheduleFields({
     t,
     fields,
+    visibleFieldKeys,
     variant = 'quick',
 }: InboxProcessingScheduleFieldsProps) {
     const compact = variant === 'quick';
     const clearText = t('common.clear') === 'common.clear' ? 'Clear' : t('common.clear');
+    const renderedFieldConfig = visibleFieldKeys?.length
+        ? FIELD_CONFIG.filter(({ key }) => visibleFieldKeys.includes(key))
+        : FIELD_CONFIG;
 
     return (
         <div className="space-y-3">
-            {FIELD_CONFIG.map(({ key, labelKey, timeAriaKey }) => {
+            {renderedFieldConfig.map(({ key, labelKey, timeAriaKey }) => {
                 const field = fields[key];
                 const label = t(labelKey);
                 const showClear = Boolean(field.date || field.timeDraft);
