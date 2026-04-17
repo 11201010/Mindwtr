@@ -13,6 +13,19 @@ const createSyncService = (overrides: Partial<Parameters<typeof canDesktopAutoSy
 });
 
 describe('canDesktopAutoSync', () => {
+    it('allows CloudKit autosync on desktop when the backend is enabled', async () => {
+        const syncService = createSyncService({
+            getSyncBackend: vi.fn(async () => 'cloudkit' as const),
+        });
+
+        await expect(canDesktopAutoSync(syncService)).resolves.toBe(true);
+        expect(syncService.getSyncPath).not.toHaveBeenCalled();
+        expect(syncService.getWebDavConfig).not.toHaveBeenCalled();
+        expect(syncService.getCloudConfig).not.toHaveBeenCalled();
+        expect(syncService.getDropboxAppKey).not.toHaveBeenCalled();
+        expect(syncService.isDropboxConnected).not.toHaveBeenCalled();
+    });
+
     it('allows self-hosted cloud autosync when the URL is configured', async () => {
         const syncService = createSyncService({
             getSyncBackend: vi.fn(async () => 'cloud' as const),

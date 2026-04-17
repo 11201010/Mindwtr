@@ -14,6 +14,7 @@ type SyncServiceLike = {
 export async function canDesktopAutoSync(syncService: SyncServiceLike): Promise<boolean> {
     const backend = await syncService.getSyncBackend();
     if (backend === 'off') return false;
+    if (backend === 'cloudkit') return true;
 
     if (backend === 'file') {
         const path = await syncService.getSyncPath();
