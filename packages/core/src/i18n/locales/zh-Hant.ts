@@ -105,7 +105,7 @@ export const zhHant: Record<string, string> = {
         'list.groupByContext': '情境',
         'list.groupByArea': '領域',
         'reference.empty': '暫無參考資料。',
-        'reference.emptyHint': '參考資料包含你日後可能需要的訊息 —— 無需採取任何行動。'
+        'reference.emptyHint': '參考資料包含你日後可能需要的訊息 —— 無需採取任何行動。',
         'status.inbox': '收集箱',
         'status.todo': '待辦',
         'status.next': '下一步',
