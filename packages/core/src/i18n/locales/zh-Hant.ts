@@ -104,7 +104,8 @@ export const zhHant: Record<string, string> = {
         'list.groupByNone': '不分組',
         'list.groupByContext': '情境',
         'list.groupByArea': '領域',
-        'reference.empty': '暫無參考條目。',
+        'reference.empty': '暫無參考資料。',
+        'reference.emptyHint': '參考資料包含你日後可能需要的訊息 —— 無需採取任何行動。'
         'status.inbox': '收集箱',
         'status.todo': '待辦',
         'status.next': '下一步',
@@ -923,7 +924,7 @@ export const zhHant: Record<string, string> = {
         'search.deleteConfirm': '刪除此已保存的搜索？',
         'search.helpOperators': '可用操作符：status:、context:、tag:、project:、due:<=7d 等。',
         'search.includeCompleted': '包含已完成和歸檔任務',
-        'search.includeReference': '包含參考任務',
+        'search.includeReference': '包含參考資料',
         'search.include.label': '包含',
         'search.scope.label': '範圍',
         'search.scope.all': '全部',
