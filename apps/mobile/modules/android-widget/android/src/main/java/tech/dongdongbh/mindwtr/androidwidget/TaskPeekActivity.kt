@@ -1,0 +1,128 @@
+package tech.dongdongbh.mindwtr.androidwidget
+
+import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+
+/**
+ * The task sheet a widget row opens (#1173): the tapped task's details over
+ * the launcher, without starting the app. Everything it shows comes from the
+ * stored widget payload — it never reads the database — so it opens instantly
+ * and shows exactly what the row already had. "Complete" goes through the same
+ * check-off queue as the row's ring, undo window included; "Open" hands over
+ * to the app's own deep link.
+ */
+class TaskPeekActivity : AppCompatActivity() {
+  private var taskId: String = ""
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    taskId = intent?.getStringExtra(EXTRA_TASK_ID)?.trim().orEmpty()
+    val payload = WidgetPayloadStore.read(this)
+    val item = payload.itemFor(taskId)
+    if (item == null) {
+      // The payload moved on since the row was drawn: let the app answer.
+      finish()
+      return
+    }
+    setContentView(R.layout.mindwtr_task_peek)
+    val palette = payload.palette?.takeUnless { payload.usesSystemColors }
+    val mutedColor = palette?.mutedText ?: getColor(R.color.mindwtr_widget_muted_text)
+    val textColor = palette?.text ?: getColor(R.color.mindwtr_widget_text)
+
+    findViewById<TextView>(R.id.mindwtr_task_peek_title).apply {
+      text = item.title
+      setTextColor(textColor)
+    }
+    findViewById<TextView>(R.id.mindwtr_task_peek_context).apply {
+      isVisible(item.contextLabel != null)
+      text = item.contextLabel
+      setTextColor(mutedColor)
+      item.identityColor?.let { setCompoundDrawablesRelativeWithIntrinsicBounds(dot(it), null, null, null) }
+    }
+    findViewById<TextView>(R.id.mindwtr_task_peek_description).apply {
+      isVisible(item.description != null)
+      text = item.description
+      setTextColor(textColor)
+    }
+
+    val chips = findViewById<LinearLayout>(R.id.mindwtr_task_peek_chips)
+    for (token in item.contexts + item.tags) chips.addView(chip(token, mutedColor, palette?.card))
+    findViewById<View>(R.id.mindwtr_task_peek_chip_row).isVisible(chips.childCount > 0)
+
+    val meta = findViewById<LinearLayout>(R.id.mindwtr_task_peek_meta)
+    addMetaLine(meta, payload.taskPeek.start, item.startLabel, mutedColor)
+    addMetaLine(meta, payload.taskPeek.due, item.dueLabel, mutedColor)
+    addMetaLine(meta, payload.taskPeek.priority, item.priorityLabel, mutedColor)
+    meta.isVisible(meta.childCount > 0)
+
+    findViewById<Button>(R.id.mindwtr_task_peek_open).apply {
+      text = payload.taskPeek.open
+      palette?.let { setTextColor(it.accent) }
+      setOnClickListener {
+        startActivity(WidgetRenderer.appIntent(this@TaskPeekActivity, item.openUri ?: payload.focusUri))
+        finish()
+      }
+    }
+    findViewById<Button>(R.id.mindwtr_task_peek_complete).apply {
+      text = payload.taskPeek.complete
+      palette?.let {
+        (background?.mutate() as? GradientDrawable)?.setColor(it.accent)
+        setTextColor(it.onAccent)
+      }
+      setOnClickListener { complete() }
+    }
+    palette?.let {
+      (findViewById<View>(R.id.mindwtr_task_peek_root).background?.mutate() as? GradientDrawable)?.setColor(it.background)
+    }
+  }
+
+  /** Same path as the row's ring, so the undo window and the queue are shared. */
+  private fun complete() {
+    if (!CheckoffStore.isCommitted(this, taskId)) CheckoffStore.toggle(this, taskId)
+    WidgetRenderer.refreshAll(this)
+    finish()
+  }
+
+  private fun addMetaLine(parent: LinearLayout, label: String, value: String?, color: Int) {
+    if (value.isNullOrEmpty()) return
+    parent.addView(TextView(this).apply {
+      text = "$label: $value"
+      textSize = 13f
+      setTextColor(color)
+      setPadding(0, dp(2), 0, dp(2))
+    })
+  }
+
+  private fun chip(label: String, textColor: Int, fill: Int?): TextView = TextView(this).apply {
+    text = label
+    textSize = 12f
+    setTextColor(textColor)
+    setBackgroundResource(R.drawable.mindwtr_dialog_field)
+    fill?.let { (background?.mutate() as? GradientDrawable)?.setColor(it) }
+    setPadding(dp(10), dp(4), dp(10), dp(4))
+    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+      .apply { marginEnd = dp(6) }
+  }
+
+  private fun dot(color: Int): GradientDrawable = GradientDrawable().apply {
+    shape = GradientDrawable.OVAL
+    setColor(color)
+    setSize(dp(8), dp(8))
+  }
+
+  private fun View.isVisible(visible: Boolean) {
+    visibility = if (visible) View.VISIBLE else View.GONE
+  }
+
+  private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+  companion object {
+    const val EXTRA_TASK_ID = "tech.dongdongbh.mindwtr.androidwidget.taskId"
+  }
+}

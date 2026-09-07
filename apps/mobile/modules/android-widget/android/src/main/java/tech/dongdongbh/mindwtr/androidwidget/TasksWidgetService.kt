@@ -109,8 +109,9 @@ class TasksWidgetFactory(
       views.setInt(R.id.mindwtr_widget_item_divider, "setBackgroundColor", palette.border)
     }
     // Merged into the renderer's row template, which fixes component + action
-    // and leaves the data to this row: the task's own open link, else Focus.
-    views.setOnClickFillInIntent(R.id.mindwtr_widget_item, Intent().setData(Uri.parse(item.openUri ?: payload.focusUri)))
+    // and leaves the data to this row: the task's own sheet, else Focus.
+    val rowUri = if (item.id.isNotEmpty()) WidgetTapActivity.peekUri(item.id) else payload.focusUri
+    views.setOnClickFillInIntent(R.id.mindwtr_widget_item, Intent().setData(Uri.parse(rowUri)))
     return views
   }
 

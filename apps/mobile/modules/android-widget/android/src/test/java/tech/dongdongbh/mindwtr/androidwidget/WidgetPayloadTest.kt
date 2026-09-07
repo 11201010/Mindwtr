@@ -17,7 +17,7 @@ class WidgetPayloadTest {
       "inboxLabel": "Inbox",
       "inboxCount": 3,
       "items": [
-        {"id": "a", "title": "Call the bank", "statusLabel": "Next", "dueLabel": "Today", "dueEmphasis": true, "openUri": "mindwtr://open?task=a"},
+        {"id": "a", "title": "Call the bank", "statusLabel": "Next", "dueLabel": "Today", "dueEmphasis": true, "openUri": "mindwtr://open?task=a", "description": "Ask about the fee", "contexts": ["@calls", "  "], "tags": ["#money"], "startLabel": "Today 09:00", "priorityLabel": "High"},
         {"id": "b", "title": "Write report", "statusLabel": "Next", "dueLabel": null, "dueEmphasis": false, "openUri": "https://evil.example"},
         {"id": "c", "title": "   ", "statusLabel": "Next", "dueLabel": null, "dueEmphasis": false}
       ],
@@ -37,6 +37,7 @@ class WidgetPayloadTest {
       "focusUri": "mindwtr:///focus",
       "themeMode": "dark",
       "palette": {"background": "#111827", "card": "#1F2937", "text": "#F9FAFB", "mutedText": "#CBD5E1", "accent": "#2563EB", "onAccent": "#FFFFFF", "border": "#374151", "warning": "#F59E0B", "headerWash": "#2563EB2E"},
+      "taskPeek": {"complete": "Complete", "open": "Open", "start": "Start", "due": "Due date", "priority": "Priority"},
       "quickCapture": {"title": "Quick capture", "placeholder": "Add task to inbox...", "save": "Save", "cancel": "Cancel", "added": "Task added to Mindwtr."}
     }
   """.trimIndent()
@@ -130,6 +131,23 @@ class WidgetPayloadTest {
     // A filter the user deleted is in neither the lists nor the options.
     assertNull(payload.titleFor("filter:gone"))
     assertEquals("Focus", payload.listFor("filter:gone").title)
+  }
+
+  @Test
+  fun theTaskSheetFindsItsRowAnywhereInThePayloadAndReadsItsDetails() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val item = payload.itemFor("a")!!
+    assertEquals("Ask about the fee", item.description)
+    assertEquals(listOf("@calls"), item.contexts)
+    assertEquals(listOf("#money"), item.tags)
+    assertEquals("Today 09:00", item.startLabel)
+    assertEquals("High", item.priorityLabel)
+    assertEquals("Complete", payload.taskPeek.complete)
+    // Rows that live only inside a named list are reachable too.
+    assertEquals("Reply from Sam", payload.itemFor("w")?.title)
+    assertNull(payload.itemFor("nope"))
+    assertNull(payload.itemFor(""))
   }
 
   @Test

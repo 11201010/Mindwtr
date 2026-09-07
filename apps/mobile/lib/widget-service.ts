@@ -8,6 +8,7 @@ import * as AndroidWidget from '../modules/android-widget';
 import {
     type AndroidTasksWidgetPayload,
     buildAndroidQuickCaptureLabels,
+    buildAndroidTaskPeekLabels,
     buildShortcutsSnapshot,
     buildWidgetPayload,
     IOS_SHORTCUTS_SNAPSHOT_KEY,
@@ -131,6 +132,7 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
                 items: list.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
             }])),
             quickCapture: buildAndroidQuickCaptureLabels(language),
+            taskPeek: buildAndroidTaskPeekLabels(language),
         };
         AndroidWidget.setPayload(JSON.stringify(payload));
         AndroidWidget.updateWidgets();

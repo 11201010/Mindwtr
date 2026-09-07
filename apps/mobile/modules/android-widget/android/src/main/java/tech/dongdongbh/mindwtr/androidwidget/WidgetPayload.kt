@@ -26,6 +26,7 @@ data class WidgetPayload(
   val themeMode: String,
   val palette: Palette?,
   val quickCapture: QuickCaptureLabels,
+  val taskPeek: TaskPeekLabels,
 ) {
   data class Item(
     val id: String,
@@ -37,6 +38,12 @@ data class WidgetPayload(
     val contextLabel: String?,
     val identityColor: Int?,
     val dueTone: DueTone,
+    // Only the task sheet reads the rest; absent on rows that carry none.
+    val description: String?,
+    val contexts: List<String>,
+    val tags: List<String>,
+    val startLabel: String?,
+    val priorityLabel: String?,
   )
 
   enum class DueTone { OVERDUE, TODAY, NORMAL }
@@ -59,6 +66,14 @@ data class WidgetPayload(
     val border: Int,
     val warning: Int,
     val headerWash: Int,
+  )
+
+  data class TaskPeekLabels(
+    val complete: String,
+    val open: String,
+    val start: String,
+    val due: String,
+    val priority: String,
   )
 
   data class QuickCaptureLabels(
@@ -85,6 +100,18 @@ data class WidgetPayload(
     }
     ids.remove("")
     return ids
+  }
+
+  /** The row a tap names, wherever the payload carries it; null when the payload has moved on. */
+  fun itemFor(taskId: String): Item? {
+    if (taskId.isEmpty()) return null
+    items.firstOrNull { it.id == taskId }?.let { return it }
+    sections.forEach { section -> section.items.firstOrNull { it.id == taskId }?.let { return it } }
+    lists.values.forEach { list ->
+      list.items.firstOrNull { it.id == taskId }?.let { return it }
+      list.sections.forEach { section -> section.items.firstOrNull { it.id == taskId }?.let { return it } }
+    }
+    return null
   }
 
   /** A list the chooser offers, named even before the app has built its rows. */
@@ -129,6 +156,13 @@ data class WidgetPayload(
         save = "Save",
         cancel = "Cancel",
         added = "Task added to Mindwtr.",
+      ),
+      taskPeek = TaskPeekLabels(
+        complete = "Complete",
+        open = "Open",
+        start = "Start",
+        due = "Due date",
+        priority = "Priority",
       ),
     )
 
@@ -175,6 +209,14 @@ data class WidgetPayload(
         cancel = labels.stringOr("cancel", defaults.quickCapture.cancel),
         added = labels.stringOr("added", defaults.quickCapture.added),
       )
+      val peek = root.optJSONObject("taskPeek")
+      val taskPeek = TaskPeekLabels(
+        complete = peek.stringOr("complete", defaults.taskPeek.complete),
+        open = peek.stringOr("open", defaults.taskPeek.open),
+        start = peek.stringOr("start", defaults.taskPeek.start),
+        due = peek.stringOr("due", defaults.taskPeek.due),
+        priority = peek.stringOr("priority", defaults.taskPeek.priority),
+      )
       return WidgetPayload(
         headerTitle = root.stringOr("headerTitle", defaults.headerTitle),
         dateLabel = root.stringOr("dateLabel", defaults.dateLabel),
@@ -190,6 +232,7 @@ data class WidgetPayload(
         themeMode = root.stringOr("themeMode", "system"),
         palette = parsePalette(root.optJSONObject("palette")),
         quickCapture = quickCapture,
+        taskPeek = taskPeek,
       )
     }
 
@@ -227,10 +270,25 @@ data class WidgetPayload(
               "today" -> DueTone.TODAY
               else -> if (item.optBoolean("dueEmphasis", false)) DueTone.TODAY else DueTone.NORMAL
             },
+            description = item.optString("description").trim().takeIf { it.isNotEmpty() && !item.isNull("description") },
+            contexts = parseStrings(item.optJSONArray("contexts")),
+            tags = parseStrings(item.optJSONArray("tags")),
+            startLabel = item.optString("startLabel").trim().takeIf { it.isNotEmpty() && !item.isNull("startLabel") },
+            priorityLabel = item.optString("priorityLabel").trim().takeIf { it.isNotEmpty() && !item.isNull("priorityLabel") },
           ),
         )
       }
       return items
+    }
+
+    private fun parseStrings(json: JSONArray?): List<String> {
+      if (json == null) return emptyList()
+      val values = ArrayList<String>()
+      for (index in 0 until json.length()) {
+        val value = json.optString(index).trim()
+        if (value.isNotEmpty()) values.add(value)
+      }
+      return values
     }
 
     private fun parsePalette(json: JSONObject?): Palette? {

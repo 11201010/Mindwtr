@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppData } from '@mindwtr/core';
-import { buildShortcutsSnapshot, buildWidgetPayload, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP } from './widget-data';
+import { buildShortcutsSnapshot, buildWidgetPayload, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX } from './widget-data';
 
 const baseData: AppData = {
     tasks: [],
@@ -118,6 +118,48 @@ describe('widget-data', () => {
             maxItems: 5,
             focusFilter: { criteria: { contexts: ['@office'] }, sortBy: 'title' },
         }))).toEqual(['Alpha at the office', 'Zebra at the office']);
+    });
+
+    it('carries the task-sheet details, trimmed, and leaves empty ones out (#1173)', () => {
+        const now = new Date().toISOString();
+        const today = new Date(); today.setHours(9, 0, 0, 0);
+        const data: AppData = {
+            ...baseData,
+            settings: { features: { priorities: true } } as AppData['settings'],
+            tasks: [
+                {
+                    id: '1',
+                    title: 'Detailed',
+                    status: 'next',
+                    isFocusedToday: true,
+                    description: `# Heading\n\nSome **bold** note. ${'x'.repeat(700)}`,
+                    contexts: ['@calls', '@office', '@home', '@errand', '@a', '@b', '@c', '@d', '@e'],
+                    tags: ['#money'],
+                    startTime: today.toISOString(),
+                    priority: 'high',
+                    createdAt: now,
+                    updatedAt: now,
+                },
+                { id: '2', title: 'Bare', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
+            ],
+        };
+
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 5 });
+        const detailed = payload.items.find((item) => item.title === 'Detailed')!;
+        expect(detailed.description).toHaveLength(WIDGET_PEEK_DESCRIPTION_MAX + 1);
+        expect(detailed.description?.startsWith('Heading')).toBe(true);
+        expect(detailed.description?.endsWith('…')).toBe(true);
+        expect(detailed.contexts).toHaveLength(WIDGET_PEEK_TOKEN_MAX);
+        expect(detailed.tags).toEqual(['#money']);
+        expect(detailed.startLabel).toBe('Today 9:00 AM');
+        expect(detailed.priorityLabel).toBe('High');
+
+        // A task with none of it adds no keys at all: these ride every row.
+        const bare = payload.items.find((item) => item.title === 'Bare')!;
+        expect(Object.keys(bare)).not.toContain('description');
+        expect(Object.keys(bare)).not.toContain('contexts');
+        expect(Object.keys(bare)).not.toContain('startLabel');
+        expect(Object.keys(bare)).not.toContain('priorityLabel');
     });
 
     it('hides tasks the device\'s area selection hides in the app (#1173)', () => {

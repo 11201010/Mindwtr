@@ -11,6 +11,7 @@ const SERVICE_NAME = `${MODULE_PACKAGE}.TasksWidgetService`;
 const ACTIVITY_NAME = `${MODULE_PACKAGE}.QuickCaptureActivity`;
 const CONFIGURE_ACTIVITY_NAME = `${MODULE_PACKAGE}.WidgetConfigureActivity`;
 const TAP_ACTIVITY_NAME = `${MODULE_PACKAGE}.WidgetTapActivity`;
+const PEEK_ACTIVITY_NAME = `${MODULE_PACKAGE}.TaskPeekActivity`;
 const WIDGET_UPDATE_ACTION = 'android.appwidget.action.APPWIDGET_UPDATE';
 const WIDGET_PROVIDER_META = 'android.appwidget.provider';
 const WIDGET_STRINGS_FILE_NAME = 'mindwtr_widget_strings.xml';
@@ -225,6 +226,25 @@ const ensureTapActivity = (application) => {
   };
 };
 
+// The task sheet a widget row opens: floats over the launcher in its own task,
+// like the capture dialog, and never surfaces MainActivity.
+const ensurePeekActivity = (application) => {
+  const activities = ensureArray(application, 'activity');
+  let activity = findByName(activities, PEEK_ACTIVITY_NAME);
+  if (!activity) {
+    activity = { $: {} };
+    activities.push(activity);
+  }
+  activity.$ = {
+    'android:name': PEEK_ACTIVITY_NAME,
+    'android:exported': 'false',
+    'android:theme': `@style/${QUICK_CAPTURE_THEME}`,
+    'android:excludeFromRecents': 'true',
+    'android:noHistory': 'true',
+    'android:taskAffinity': '',
+  };
+};
+
 const ensureWidgetComponents = (androidManifest, props) => {
   const application = androidManifest?.manifest?.application?.[0];
   if (!application) return androidManifest;
@@ -235,6 +255,7 @@ const ensureWidgetComponents = (androidManifest, props) => {
   ensureQuickCaptureActivity(application);
   ensureConfigureActivity(application);
   ensureTapActivity(application);
+  ensurePeekActivity(application);
   return androidManifest;
 };
 

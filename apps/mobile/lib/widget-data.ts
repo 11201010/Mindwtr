@@ -17,9 +17,11 @@ import {
     resolveI18nText,
     resolveTaskSortByForFeatures,
     resolveThemeColorScheme,
+    safeParseDate,
     safeParseDueDate,
     sortTasksBy,
     sortTasksBySavedPreference,
+    stripMarkdown,
     SUPPORTED_LANGUAGES,
     type AppData,
     type AppTheme,
@@ -83,7 +85,19 @@ export interface WidgetTaskItem {
     identityColor: string | null;
     // How the due label should read: overdue (warning), today (accent), normal.
     dueTone: WidgetDueTone;
+    // The rest is only read by the Android task sheet (#1173), so every field
+    // is left out when it is empty: they ride every row of every list.
+    description?: string;
+    contexts?: string[];
+    tags?: string[];
+    startLabel?: string;
+    priorityLabel?: string;
 }
+
+// The sheet shows an excerpt, not the note: a description is per-row payload
+// weight, and the app is one tap away for the whole thing.
+export const WIDGET_PEEK_DESCRIPTION_MAX = 600;
+export const WIDGET_PEEK_TOKEN_MAX = 8;
 
 export type WidgetDueTone = 'overdue' | 'today' | 'normal';
 
@@ -163,8 +177,18 @@ export interface AndroidQuickCaptureLabels {
     added: string;
 }
 
+// Labels for the native Android task sheet a widget row opens (#1173).
+export interface AndroidTaskPeekLabels {
+    complete: string;
+    open: string;
+    start: string;
+    due: string;
+    priority: string;
+}
+
 export interface AndroidTasksWidgetPayload extends TasksWidgetPayload {
     quickCapture: AndroidQuickCaptureLabels;
+    taskPeek: AndroidTaskPeekLabels;
 }
 
 // Core's translator owns the locale-then-English chain; a second raw dictionary
@@ -178,6 +202,18 @@ export function buildAndroidQuickCaptureLabels(language: Language): AndroidQuick
         save: resolveI18nText(t, 'common.save', { fallback: 'Save' }),
         cancel: resolveI18nText(t, 'common.cancel', { fallback: 'Cancel' }),
         added: resolveI18nText(t, 'obsidian.bringIntoMindwtrSuccess', { fallback: 'Task added to Mindwtr.' }),
+    };
+}
+
+export function buildAndroidTaskPeekLabels(language: Language): AndroidTaskPeekLabels {
+    void loadTranslations(language);
+    const t = getTranslator(language);
+    return {
+        complete: resolveI18nText(t, 'projects.complete', { fallback: 'Complete' }),
+        open: resolveI18nText(t, 'common.open', { fallback: 'Open' }),
+        start: resolveI18nText(t, 'taskEdit.start', { fallback: 'Start' }),
+        due: resolveI18nText(t, 'task.aria.dueDate', { fallback: 'Due date' }),
+        priority: resolveI18nText(t, 'taskEdit.priorityLabel', { fallback: 'Priority' }),
     };
 }
 
@@ -228,6 +264,24 @@ const formatNumericDate = (date: Date, language: string): string => {
     }
 };
 
+// Today / Tomorrow / weekday inside the week / a short date, shared by the row
+// due label and the task sheet's start line.
+const formatRelativeDayLabel = (
+    date: Date,
+    tr: Record<string, string>,
+    language: string,
+    startOfToday: Date,
+    endOfToday: Date,
+): string => {
+    if (date < startOfToday) return formatNumericDate(date, language);
+    if (date <= endOfToday) return tr['quickDate.today'] ?? 'Today';
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const daysAhead = Math.round((dayStart.getTime() - startOfToday.getTime()) / DAY_MS);
+    if (daysAhead === 1) return tr['quickDate.tomorrow'] ?? 'Tomorrow';
+    if (daysAhead <= 6) return formatShortWeekday(date, language);
+    return formatNumericDate(date, language);
+};
+
 const computeDueLabel = (
     dueDate: string | undefined | null,
     tr: Record<string, string>,
@@ -237,21 +291,10 @@ const computeDueLabel = (
 ): Pick<WidgetTaskItem, 'dueLabel' | 'dueEmphasis' | 'dueTone'> => {
     const due = safeParseDueDate(dueDate);
     if (!due) return { dueLabel: null, dueEmphasis: false, dueTone: 'normal' };
-    if (due < startOfToday) {
-        return { dueLabel: formatNumericDate(due, language), dueEmphasis: true, dueTone: 'overdue' };
-    }
-    if (due <= endOfToday) {
-        return { dueLabel: tr['quickDate.today'] ?? 'Today', dueEmphasis: true, dueTone: 'today' };
-    }
-    const dueDayStart = new Date(due.getFullYear(), due.getMonth(), due.getDate());
-    const daysAhead = Math.round((dueDayStart.getTime() - startOfToday.getTime()) / DAY_MS);
-    if (daysAhead === 1) {
-        return { dueLabel: tr['quickDate.tomorrow'] ?? 'Tomorrow', dueEmphasis: false, dueTone: 'normal' };
-    }
-    if (daysAhead <= 6) {
-        return { dueLabel: formatShortWeekday(due, language), dueEmphasis: false, dueTone: 'normal' };
-    }
-    return { dueLabel: formatNumericDate(due, language), dueEmphasis: false, dueTone: 'normal' };
+    const dueLabel = formatRelativeDayLabel(due, tr, language, startOfToday, endOfToday);
+    if (due < startOfToday) return { dueLabel, dueEmphasis: true, dueTone: 'overdue' };
+    if (due <= endOfToday) return { dueLabel, dueEmphasis: true, dueTone: 'today' };
+    return { dueLabel, dueEmphasis: false, dueTone: 'normal' };
 };
 
 // A due TIME for a row inside a dated section (Todoist shows "17:00", not the
@@ -410,9 +453,29 @@ export function buildWidgetPayload(
         : 3;
 
     const prioritiesEnabled = resolveFeatureFlags(data.settings).priorities;
+    const peekDescription = (task: Task): string | undefined => {
+        const text = stripMarkdown(task.description ?? '').trim();
+        if (!text) return undefined;
+        return text.length > WIDGET_PEEK_DESCRIPTION_MAX
+            ? `${text.slice(0, WIDGET_PEEK_DESCRIPTION_MAX).trimEnd()}…`
+            : text;
+    };
+    const peekStartLabel = (task: Task): string | undefined => {
+        const start = safeParseDate(task.startTime);
+        if (!start) return undefined;
+        const day = formatRelativeDayLabel(start, tr, language, startOfToday, endOfToday);
+        return hasTimeComponent(task.startTime) ? `${day} ${formatDueTime(start, language)}` : day;
+    };
     const toItem = (task: Task): WidgetTaskItem => {
         const project = task.projectId ? projectById.get(task.projectId) : undefined;
         const area = task.areaId ? areaById.get(task.areaId) : undefined;
+        const description = peekDescription(task);
+        const contexts = (task.contexts ?? []).slice(0, WIDGET_PEEK_TOKEN_MAX);
+        const tags = (task.tags ?? []).slice(0, WIDGET_PEEK_TOKEN_MAX);
+        const startLabel = peekStartLabel(task);
+        const priorityLabel = prioritiesEnabled && task.priority
+            ? tr[`priority.${task.priority}`] ?? task.priority
+            : undefined;
         return {
             id: task.id,
             title: task.title,
@@ -422,6 +485,11 @@ export function buildWidgetPayload(
             priorityColor: prioritiesEnabled && task.priority ? TASK_PRIORITY_COLORS[task.priority] ?? null : null,
             contextLabel: project?.title ?? area?.name ?? null,
             identityColor: getTaskAccentColor(task, projectById, areaById) ?? null,
+            ...(description ? { description } : {}),
+            ...(contexts.length ? { contexts } : {}),
+            ...(tags.length ? { tags } : {}),
+            ...(startLabel ? { startLabel } : {}),
+            ...(priorityLabel ? { priorityLabel } : {}),
         };
     };
     const items = listSource.slice(0, maxItems).map(toItem);

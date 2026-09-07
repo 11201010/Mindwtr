@@ -94,7 +94,15 @@ describe('android-widget', () => {
     expect(application.service).toEqual([{
       $: { 'android:name': SERVICE_NAME, 'android:permission': 'android.permission.BIND_REMOTEVIEWS', 'android:exported': 'false' },
     }]);
-    expect(application.activity).toHaveLength(3);
+    expect(application.activity).toHaveLength(4);
+    // The task sheet a widget row opens: floating, own task, never exported.
+    expect(application.activity[3].$).toMatchObject({
+      'android:name': 'tech.dongdongbh.mindwtr.androidwidget.TaskPeekActivity',
+      'android:exported': 'false',
+      'android:theme': '@style/Theme.Mindwtr.QuickCapture',
+      'android:excludeFromRecents': 'true',
+      'android:taskAffinity': '',
+    });
     expect(application.activity[2].$).toMatchObject({ 'android:name': TAP_ACTIVITY_NAME, 'android:exported': 'false', 'android:theme': '@android:style/Theme.NoDisplay' });
     // No affinity: the widget header's chooser runs in its own task, so closing
     // it goes back to the launcher rather than to the app's last screen (#1173).
