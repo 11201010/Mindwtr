@@ -293,8 +293,11 @@ describe('ios-watch', () => {
     ]);
 
     expect(phaseForTarget(project, hostTarget, 'PBXCopyFilesBuildPhase', 'Embed Watch Content').files).toHaveLength(1);
-    expect(phaseForTarget(project, watchTarget, 'PBXCopyFilesBuildPhase', 'Embed App Extensions').files).toHaveLength(1);
-    expect(project.writeSync()).toContain('MindwtrWatchWidgets.appex in Embed App Extensions');
+    expect(phaseForTarget(project, watchTarget, 'PBXCopyFilesBuildPhase', 'Embed Watch Extensions').files).toHaveLength(1);
+    expect(project.writeSync()).toContain('MindwtrWatchWidgets.appex in Embed Watch Extensions');
+    // The iPhone widget plugin asks this before creating its own embed phase.
+    // node-xcode must not return the Watch target's phase as a global fallback.
+    expect(project.buildPhaseObject('PBXCopyFilesBuildPhase', 'Embed App Extensions', 'HOST_TARGET')).toBeNull();
   });
 
   it('does not let a later extension reuse the Watch privacy resource build file', () => {

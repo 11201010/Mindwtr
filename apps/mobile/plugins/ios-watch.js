@@ -147,7 +147,7 @@ const addNativeTarget = (project, {
   const productFile = project.addProductFile(name, {
     basename: `${name}.${productExtension}`,
     explicitFileType: productExtension === 'app' ? 'wrapper.application' : 'wrapper.app-extension',
-    group: productExtension === 'app' ? 'Embed Watch Content' : 'Embed App Extensions',
+    group: productExtension === 'app' ? 'Embed Watch Content' : 'Embed Watch Extensions',
     includeInIndex: 0,
     path: `${name}.${productExtension}`,
     sourceTree: 'BUILT_PRODUCTS_DIR',
@@ -478,7 +478,9 @@ const addWatchTargetsToProject = (project, options) => {
     destination: '"$(CONTENTS_FOLDER_PATH)/Watch"',
   });
   addProductEmbedPhase(project, watch.target.uuid, widget.productFile, {
-    name: 'Embed App Extensions',
+    // xcode.buildPhaseObject falls back to a global name lookup if the host
+    // has no matching phase yet. Keep this distinct from iPhone extensions.
+    name: 'Embed Watch Extensions',
     targetType: 'app_extension',
     destination: '""',
   });

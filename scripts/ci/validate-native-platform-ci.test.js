@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { parse } from "yaml";
 
 test("native CI generates clean projects and compiles Android and iOS sources", () => {
   const workflow = readFileSync(".github/workflows/native-platform-ci.yml", "utf8");
@@ -69,7 +73,13 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(workflow).toContain("name: iOS Swift compile");
   expect(workflow).toContain("gem install cocoapods --version 1.16.2 --no-document");
   expect(workflow).toMatch(/prebuild \\\n\s+--clean \\\n\s+--platform ios/);
-  expect(workflow).toContain("-sdk iphonesimulator");
+  expect(iosJob).toContain("-destination 'generic/platform=iOS Simulator'");
+  expect(iosJob).not.toContain("-sdk iphonesimulator");
+  expect(iosJob).toContain("-target MindwtrWatch");
+  expect(iosJob).toContain("-sdk watchsimulator");
+  expect(iosJob).toContain('MINDWTR_WATCH_ENABLED: "true"');
+  expect(iosJob).toContain("swift test --package-path apps/mobile/modules/watch-connectivity");
+  expect(iosJob).toContain("name: Validate generated Watch Xcode project");
   expect(workflow).toContain("CODE_SIGNING_ALLOWED=NO");
   expect(iosJob).toContain("name: Run attachment installer Swift recovery tests");
   expect(iosJob).toContain(
@@ -241,7 +251,6 @@ test("desktop Rust pull requests check and test the native library on Windows", 
 
   expect(workflow.match(/- "apps\/desktop\/src-tauri\/\*\*"/g)).toHaveLength(2);
   expect(workflow).toContain("windows: ${{ steps.filter.outputs.windows }}");
-  expect(workflow).toContain('echo "windows=true" >> "$GITHUB_OUTPUT"');
   expect(workflow).toMatch(
     /apps\/desktop\/src-tauri\/\*\|\.github\/workflows\/native-platform-ci\.yml\)\n\s+windows=true/,
   );
@@ -262,6 +271,28 @@ test("desktop Rust pull requests check and test the native library on Windows", 
   expect(windowsJob).toContain(
     "run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib",
   );
+});
+
+test("manual native CI selects one platform or all platforms", () => {
+  const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
+  const platforms = ["ios", "android", "macos", "windows"];
+  expect(workflow.on.workflow_dispatch.inputs.platform.default).toBe("all");
+  const script = workflow.jobs.changes.steps.find((step) => step.id === "filter").run;
+  const directory = mkdtempSync(join(tmpdir(), "mindwtr-native-dispatch-"));
+  try {
+    for (const selection of ["all", ...platforms]) {
+      const output = join(directory, selection);
+      execFileSync("bash", ["-euc", script], {
+        env: { ...process.env, EVENT_NAME: "workflow_dispatch", DISPATCH_PLATFORM: selection, GITHUB_OUTPUT: output },
+      });
+      const actual = Object.fromEntries(readFileSync(output, "utf8").trim().split("\n").map((line) => line.split("=")));
+      expect(actual).toEqual(Object.fromEntries(platforms.map((platform) => [
+        platform, String(selection === "all" || selection === platform),
+      ])));
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("macOS native CI links the release Rust and Swift bridges", () => {

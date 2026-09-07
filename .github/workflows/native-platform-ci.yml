@@ -470,6 +470,9 @@ jobs:
               abort("Missing source for #{name}: #{file.display_name}") unless file.file_ref&.real_path&.file?
             end
           end
+          watch = project.targets.find { |target| target.name == 'MindwtrWatch' }
+          embedded = watch.copy_files_build_phases.flat_map(&:files).map { |file| file.file_ref.path }
+          abort("Wrong Watch embedded products: #{embedded.inspect}") unless embedded == ['MindwtrWatchWidgets.appex']
           project.save
           puts 'Watch targets and source references survive Xcodeproj serialization'
           RUBY
