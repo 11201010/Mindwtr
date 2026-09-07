@@ -46,6 +46,27 @@ class PendingCaptureWriterTest {
   }
 
   @Test
+  fun undoRemovesTheQueuedCompletionAndToleratesOneAlreadyGone() {
+    val filesDir = tempFilesDir()
+    val written = PendingCaptureWriter.writeCompletion(filesDir, "task-9")
+
+    assertTrue(PendingCaptureWriter.deleteQueued(filesDir, written.name))
+    assertTrue(!written.exists())
+    assertTrue(PendingCaptureWriter.deleteQueued(filesDir, written.name))
+  }
+
+  @Test
+  fun undoRefusesANameThatIsNotAPlainQueueFile() {
+    val filesDir = tempFilesDir()
+    val outside = File(filesDir, "keep.json").apply { writeText("{}") }
+
+    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, "../keep.json"))
+    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, "sub/keep.json"))
+    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, ""))
+    assertTrue(outside.exists())
+  }
+
+  @Test
   fun leavesNoTempFileBehindAndUsesUniqueNames() {
     val filesDir = tempFilesDir()
 

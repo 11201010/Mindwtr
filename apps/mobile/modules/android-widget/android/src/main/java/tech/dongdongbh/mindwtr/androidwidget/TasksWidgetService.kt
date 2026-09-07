@@ -79,9 +79,10 @@ class TasksWidgetFactory(
       if (struck) R.drawable.mindwtr_widget_circle else R.drawable.mindwtr_widget_ring,
     )
     views.setInt(R.id.mindwtr_widget_item_priority, "setColorFilter", item.priorityColor ?: mutedText)
-    // A committed row has no ring action left (the completion is queued); its
-    // tap falls through to the row and opens the task like any other.
-    if (item.id.isNotEmpty() && !CheckoffStore.isCommitted(context, item.id)) {
+    // The ring always acts: it checks the task off, undoes it inside the window,
+    // and un-queues it after that. Without an action here the tap fell through
+    // to the row and opened the app, which read as "check-off does nothing".
+    if (item.id.isNotEmpty()) {
       views.setOnClickFillInIntent(R.id.mindwtr_widget_item_ring_target, Intent().setData(Uri.parse(WidgetTapActivity.checkoffUri(item.id))))
     }
     val contextLabel = item.contextLabel

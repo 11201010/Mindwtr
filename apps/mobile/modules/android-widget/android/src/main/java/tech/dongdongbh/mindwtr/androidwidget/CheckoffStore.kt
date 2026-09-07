@@ -17,9 +17,9 @@ import android.os.SystemClock
  * from a main-thread Handler (~3 s), an inexact alarm (~15 s) if the process
  * died first, and a sweep on every widget update.
  *
- * A committed task stays struck through (`committed` set) until the app has
- * ingested it and republished a payload without it; the commit itself never
- * redraws the widget. Redrawing a collection widget from a background Handler
+ * A committed task stays struck through until the app has ingested it and
+ * republished a payload without it; its ring then undoes the check-off, which
+ * deletes the queued item again. The commit itself never redraws the widget. Redrawing a collection widget from a background Handler
  * broke the app-side collection cache on Android 16 (ColorOS): every later
  * update was silently dropped until the process restarted, which read as
  * "I cannot undo and cannot check any other task".
@@ -43,8 +43,16 @@ object CheckoffStore {
 
   fun isPending(context: Context, taskId: String): Boolean = pending(context).containsKey(taskId)
 
-  fun committed(context: Context): Set<String> =
-    context.getSharedPreferences(COMMITTED_PREFS_NAME, Context.MODE_PRIVATE).all.keys
+  /**
+   * Committed task id -> the queue file holding its completion, so a later undo
+   * can remove it. An entry written by an older build holds `true` rather than a
+   * name; it maps to "" and still reads as struck, only its undo cannot unqueue.
+   */
+  fun committedFiles(context: Context): Map<String, String> =
+    context.getSharedPreferences(COMMITTED_PREFS_NAME, Context.MODE_PRIVATE).all
+      .mapValues { (_, value) -> value as? String ?: "" }
+
+  fun committed(context: Context): Set<String> = committedFiles(context).keys
 
   fun isCommitted(context: Context, taskId: String): Boolean = committed(context).contains(taskId)
 
@@ -56,14 +64,25 @@ object CheckoffStore {
    * the task went away). Called on every render so the set cannot grow forever.
    */
   fun prune(context: Context, presentTaskIds: Set<String>) {
-    val current = committed(context)
+    val current = committedFiles(context)
     val keep = pruned(current, presentTaskIds)
     if (keep.size == current.size) return
     writeCommitted(context, keep)
   }
 
-  fun pruned(committed: Set<String>, presentTaskIds: Set<String>): Set<String> =
-    committed.filterTo(HashSet()) { it in presentTaskIds }
+  fun pruned(committed: Map<String, String>, presentTaskIds: Set<String>): Map<String, String> =
+    committed.filterKeys { it in presentTaskIds }
+
+  /**
+   * Undoes a committed check-off: drops the queued completion the app has not
+   * read yet and un-strikes the row. A file already gone (ingested, or written
+   * by a build that stored no name) only clears the entry.
+   */
+  fun undo(context: Context, taskId: String) {
+    val committed = committedFiles(context)
+    committed[taskId]?.let { PendingCaptureWriter.deleteQueued(context.filesDir, it) }
+    writeCommitted(context, committed - taskId)
+  }
 
   /** Marks or, when already pending, un-marks (undo). Returns true when now pending. A committed task is left alone. */
   fun toggle(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Boolean {
@@ -81,11 +100,10 @@ object CheckoffStore {
     val due = expired(current, now, UNDO_WINDOW_MS)
     if (due.isEmpty()) return false
     val remaining = current.toMutableMap()
-    val done = committed(context).toMutableSet()
+    val done = committedFiles(context).toMutableMap()
     for (taskId in due) {
-      PendingCaptureWriter.writeCompletion(context.filesDir, taskId)
+      done[taskId] = PendingCaptureWriter.writeCompletion(context.filesDir, taskId).name
       remaining.remove(taskId)
-      done.add(taskId)
     }
     write(context, remaining)
     writeCommitted(context, done)
@@ -99,9 +117,9 @@ object CheckoffStore {
   fun expired(pending: Map<String, Long>, now: Long, windowMs: Long): List<String> =
     pending.filter { (_, tappedAt) -> now - tappedAt >= windowMs }.keys.sorted()
 
-  private fun writeCommitted(context: Context, committed: Set<String>) {
+  private fun writeCommitted(context: Context, committed: Map<String, String>) {
     val editor = context.getSharedPreferences(COMMITTED_PREFS_NAME, Context.MODE_PRIVATE).edit().clear()
-    for (taskId in committed) editor.putBoolean(taskId, true)
+    for ((taskId, fileName) in committed) editor.putString(taskId, fileName)
     editor.commit()
   }
 

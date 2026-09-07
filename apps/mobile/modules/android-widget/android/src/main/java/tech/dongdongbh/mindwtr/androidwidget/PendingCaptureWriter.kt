@@ -53,6 +53,18 @@ object PendingCaptureWriter {
     return publish(filesDir, id, json)
   }
 
+  /**
+   * Removes a queued item the app has not ingested yet (a widget check-off the
+   * user undid). The name comes from our own SharedPreferences, but it still
+   * names a file path, so anything but a plain `<uuid>.json` is refused.
+   * Returns true when the queue no longer holds the file.
+   */
+  fun deleteQueued(filesDir: File, fileName: String): Boolean {
+    if (!fileName.endsWith(".json") || fileName.contains('/') || fileName.contains('\\') || fileName.contains("..")) return false
+    val file = File(File(filesDir, DIRECTORY), fileName)
+    return !file.exists() || file.delete()
+  }
+
   private fun publish(filesDir: File, id: String, json: String): File {
     val directory = File(filesDir, DIRECTORY)
     if (!directory.isDirectory && !directory.mkdirs()) {

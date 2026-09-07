@@ -16,9 +16,9 @@ class CheckoffStoreTest {
 
   @Test
   fun committedIdsSurviveOnlyWhileThePayloadStillListsThem() {
-    val committed = setOf("queued", "ingested")
-    assertEquals(setOf("queued"), CheckoffStore.pruned(committed, setOf("queued", "other")))
-    assertEquals(emptySet<String>(), CheckoffStore.pruned(committed, emptySet()))
+    val committed = mapOf("queued" to "a.json", "ingested" to "b.json")
+    assertEquals(mapOf("queued" to "a.json"), CheckoffStore.pruned(committed, setOf("queued", "other")))
+    assertEquals(emptyMap<String, String>(), CheckoffStore.pruned(committed, emptySet()))
   }
 
   @Test
