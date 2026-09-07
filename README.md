@@ -89,18 +89,16 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 
 ## How it works
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/1c685f99-87a5-44c1-9fdd-d228a66de67c" controls playsinline width="900" aria-label="GTD in Mindwtr"></video>
-  <br>
-  <b>GTD in Mindwtr</b>
-</p>
-
 Your head is for having ideas, not for holding them (David Allen, who wrote the book on this). Mindwtr holds them for you:
 
 1. **Dump it.** A task, an idea, a worry: type it (or speak it) and it lands in your Inbox. Global hotkey on desktop, widget and share sheet on your phone.
 2. **Sort it.** A short guided pass over the Inbox. Takes two minutes? Do it now. Has a date? Schedule it. Waiting on someone else? Track it. Just a maybe? Shelve it for someday.
 3. **Do it.** Open Focus and see only what you can act on right now. Everything else stays out of sight.
 4. **Reset weekly.** A guided review catches loose ends, so the list stays trustworthy and your head stays clear.
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1c685f99-87a5-44c1-9fdd-d228a66de67c" controls playsinline width="900" aria-label="GTD in Mindwtr"></video>
+</p>
 
 If you know GTD: that is Capture, Clarify, Organize, Engage, and Reflect, end to end. If you don't, no problem: Mindwtr walks you through each step, and [GTD in 15 minutes](https://hamberg.no/gtd) is a friendly introduction whenever you're curious.
 
