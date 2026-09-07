@@ -975,6 +975,7 @@ export const frOverrides: Record<string, string> = {
         'settings.syncPreferenceLanguage': 'Langue et format d’heure/date',
   'settings.syncPreferenceGtd': 'Paramètres et valeurs par défaut GTD',
         'settings.syncPreferenceExternalCalendars': 'URL de calendriers externes',
+        'settings.syncPreferenceSavedFilters': 'Filtres enregistrés',
         'settings.syncPreferenceAi': 'Paramètres de l’IA (modèles, fournisseurs)',
         'settings.syncPreferenceAiHint': 'Les clés API et les chemins de modèle locaux ne sont jamais synchronisés.',
         'settings.lastSync': 'Dernière synchronisation',
