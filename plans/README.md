@@ -159,3 +159,14 @@ Planned against `77137ce0d` / `a68aeeb6f`. All reviews use GPT-6 Astra; implemen
 No logical dependencies; isolated implementations may run in parallel. Diagnostics ledger and field-test additions are integrated by root, preserving all entries. Public docs plan079 also receives one scoped mindwtr-web commit.
 
 Considered and rejected: no fresh evidence reopens the snapshot-sync ADRs, MCP per-process multi-database state (one configured database is the supported host), cloud revision ceiling without a production trigger, or a suspected calendar duplicate-submit path without reproduction. Existing image-size/quick-xml/rkyv advisory deferrals remain; fresh shipped npm lock audits are clean except the exact documented Metro chain. No additional dependency or CI restructuring plan is warranted. No new roadmap feature was selected.
+
+
+### Architecture deepening, 2026-09-07
+
+| # | Plan | Priority | Effort | Status |
+|---|------|----------|--------|--------|
+| 082 | webdav-presence-proof | P2 | M | TODO |
+
+Strong and automatically selected: both WebDAV adapters can stamp an unknown remote result as a completed daily proof. Replace their duplicated decision with the existing core attachment-presence module. Keep each platform's local-prepass, cancellation, cooldown and activation behavior. No dependencies on077–081. The timestamped HTML report is a temporary review artifact; plan082 is the durable Spec.
+
+Rejected after current-body comparison: whole attachment-backend consolidation and deletion of existing Cloud/Dropbox adapters widen interfaces without removing domain decisions; sync configuration transactions already have a deep module; notification polling and native alarm scheduling remain distinct adapters; editor mega-interface and Daily Review direction remain unselected.
