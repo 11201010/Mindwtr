@@ -128,6 +128,9 @@ Mindwtr is simple by default, powerful when you need it, and forgiving when life
 
 ## Features
 
+<details>
+<summary>See all features</summary>
+
 - The full GTD loop, guided: capture, sort, do, review.
 - Focus view puts today's schedule and your next actions on one screen.
 - Your data lives on your device. Sync is optional, and you pick where: iCloud on Apple devices, Dropbox, a shared folder, your own server, or WebDAV.
@@ -139,9 +142,6 @@ Mindwtr is simple by default, powerful when you need it, and forgiving when life
 - For developers: a local REST API, a CLI, and the [`mindwtr-mcp`](https://www.npmjs.com/package/mindwtr-mcp) server so AI assistants can manage your tasks.
 
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.dongdongbh%2Fmindwtr.svg)](https://mcptoplist.com/server/io.github.dongdongbh%2Fmindwtr)
-
-<details>
-<summary>See all features</summary>
 
 ### GTD Workflow
 

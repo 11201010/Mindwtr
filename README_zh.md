@@ -128,6 +128,9 @@ Mindwtr 默认简单，需要时足够强大，生活一团糟时也不苛责你
 
 ## 功能
 
+<details>
+<summary>查看完整功能列表</summary>
+
 - 完整的 GTD 流程，全程有引导：记下来、理一理、去做、每周回顾。
 - 聚焦视图把今天的日程和下一步行动放在同一屏。
 - 数据保存在你自己的设备上。同步是可选的，存哪儿你说了算：Apple 设备上的 iCloud、Dropbox、共享文件夹、自己的服务器，或 WebDAV。
@@ -138,9 +141,6 @@ Mindwtr 默认简单，需要时足够强大，生活一团糟时也不苛责你
 - 面向开发者：本地 REST API、CLI，以及让 AI 助手管理任务的 [`mindwtr-mcp`](https://www.npmjs.com/package/mindwtr-mcp) 服务器。
 
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.dongdongbh%2Fmindwtr.svg)](https://mcptoplist.com/server/io.github.dongdongbh%2Fmindwtr)
-
-<details>
-<summary>查看完整功能列表</summary>
 
 ### GTD 工作流
 - **收集** - 随时快速添加任务（全局快捷键弹窗、托盘、分享、语音）
