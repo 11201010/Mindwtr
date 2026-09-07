@@ -435,6 +435,20 @@ jobs:
 
           echo "Using iPhoneOS SDK ${IOS_SDK_VERSION}"
 
+      - name: Typecheck Watch receiver against the iOS SDK
+        run: |
+          xcrun swiftc \
+            -typecheck \
+            -parse-as-library \
+            -swift-version 5 \
+            -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -target "$(uname -m)-apple-ios16.4-simulator" \
+            apps/mobile/modules/watch-connectivity/ios/MindwtrCanonicalWave.swift \
+            apps/mobile/modules/watch-connectivity/ios/MindwtrWatchAudioPathResolver.swift \
+            apps/mobile/modules/watch-connectivity/ios/MindwtrWatchPayloadValidator.swift \
+            apps/mobile/modules/watch-connectivity/ios/MindwtrWatchReceiptStateMachine.swift \
+            apps/mobile/modules/watch-connectivity/ios/MindwtrWatchConnectivityReceiver.swift
+
       - name: Run attachment installer Swift recovery tests
         run: swift test --package-path apps/mobile/modules/attachment-file-installer/ios
 

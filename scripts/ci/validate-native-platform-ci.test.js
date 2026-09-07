@@ -74,12 +74,16 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(workflow).toContain("gem install cocoapods --version 1.16.2 --no-document");
   expect(workflow).toMatch(/prebuild \\\n\s+--clean \\\n\s+--platform ios/);
   expect(iosJob).toContain("-destination 'generic/platform=iOS Simulator'");
-  expect(iosJob).not.toContain("-sdk iphonesimulator");
+  const hostCompile = parse(workflow).jobs["ios-native"].steps
+    .find((step) => step.name === "Compile iOS app and native Swift modules").run;
+  expect(hostCompile).not.toContain("-sdk iphonesimulator");
   expect(iosJob).toContain("-target MindwtrWatch");
   expect(iosJob).toContain("-sdk watchsimulator");
   expect(iosJob).toContain('MINDWTR_WATCH_ENABLED: "true"');
   expect(iosJob).toContain("swift test --package-path apps/mobile/modules/watch-connectivity");
   expect(iosJob).toContain("name: Validate generated Watch Xcode project");
+  expect(iosJob).toContain("name: Typecheck Watch receiver against the iOS SDK");
+  expect(iosJob).toContain("apps/mobile/modules/watch-connectivity/ios/MindwtrWatchConnectivityReceiver.swift");
   expect(workflow).toContain("CODE_SIGNING_ALLOWED=NO");
   expect(iosJob).toContain("name: Run attachment installer Swift recovery tests");
   expect(iosJob).toContain(

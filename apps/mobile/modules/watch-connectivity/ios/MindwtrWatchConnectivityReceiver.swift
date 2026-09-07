@@ -92,7 +92,7 @@ final class MindwtrWatchConnectivityReceiver: NSObject, WCSessionDelegate {
 
     func activate() async throws {
         guard isAvailable else { throw MindwtrWatchConnectivityError.featureUnavailable }
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             workQueue.async { [weak self] in
                 guard let self else {
                     continuation.resume(throwing: MindwtrWatchConnectivityError.activationFailed)
