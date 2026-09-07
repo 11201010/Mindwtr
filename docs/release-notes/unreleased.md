@@ -4,6 +4,7 @@ Changes collected after `v1.2.8` and before the next version tag.
 
 ## Full Change List
 
+- Desktop: notification toasts pause while hovered or keyboard-focused and use opaque backgrounds so messages remain readable over task lists. (#1001)
 - Desktop and mobile: **Cancel task** and **Cancel project** preserve commitments that you decided not to continue. Cancelled tasks stay in Archive with a **Cancelled** label, without counting as completed work. Cancelling a project preserves finished steps and cancels its remaining actions; Reactivate restores untouched actions. **Cancel recurring series** stops the current series without creating another occurrence. Projects now group finished and cancelled outcomes under **Closed**. Upgrade every device and automation client that writes to your synced data before using cancellation; older versions can lose the cancellation label.
 - Desktop and mobile: Focus and Next Actions now follow a sequential project's visible manual hierarchy across sections: section order first, then task order, with No Section last. Moving a section or task updates the sequence; custom display sorts do not change it.
 - Desktop: editing the completion time from the Done list works again. Clicking a task's Completed timestamp opened the prompt, but Save changed nothing because Done rows are read-only. Reported through in-app feedback.

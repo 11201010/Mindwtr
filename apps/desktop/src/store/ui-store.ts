@@ -3,7 +3,32 @@ import { DONE_TASK_LIST_SORT_OPTIONS, useTaskStore, type FilterCriteria, type Ta
 import { DONE_AXES, FOCUS_AXES, REFERENCE_AXES, SOMEDAY_AXES, sanitizeAxis, type DoneGroupBy, type NextGroupBy, type ReferenceGroupBy, type SomedayGroupBy } from '../components/views/list/next-grouping';
 import { HIDDEN_SIDEBAR_VIEWS_STORAGE_KEY, sanitizeHiddenSidebarViews, type HideableSidebarViewId } from '../lib/sidebar-views';
 
-const toastTimeouts = new Map<string, number>();
+type ToastPauseReason = 'pointer' | 'focus';
+
+type ToastTimer = {
+    timeoutId: number | null;
+    remainingMs: number;
+    startedAt: number;
+    pauseReasons: Set<ToastPauseReason>;
+};
+
+const toastTimers = new Map<string, ToastTimer>();
+
+const clearToastTimer = (id: string) => {
+    const timer = toastTimers.get(id);
+    if (timer?.timeoutId !== null && timer?.timeoutId !== undefined) {
+        window.clearTimeout(timer.timeoutId);
+    }
+    toastTimers.delete(id);
+};
+
+const scheduleToastTimer = (id: string, timer: ToastTimer, onElapsed: () => void) => {
+    timer.startedAt = Date.now();
+    timer.timeoutId = window.setTimeout(() => {
+        toastTimers.delete(id);
+        onElapsed();
+    }, timer.remainingMs);
+};
 // These are the localStorage sanitizers for what the Focus/Next and Reference
 // dropdowns write. They read the dropdowns' own rosters, so a value the menu
 // offers can never be one this rejects — which would silently reset the user's
@@ -194,6 +219,8 @@ interface UiState {
         action?: { label: string; onClick: () => void }
     ) => void;
     dismissToast: (id: string) => void;
+    pauseToast: (id: string, reason: ToastPauseReason) => void;
+    resumeToast: (id: string, reason: ToastPauseReason) => void;
     listFilters: {
         criteria: FilterCriteria;
         open: boolean;
@@ -230,19 +257,37 @@ export const useUiStore = createWithEqualityFn<UiState>()((set) => ({
     showToast: (message, tone = 'info', durationMs = 3000, action) => {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         set((state) => ({ toasts: [...state.toasts, { id, message, tone, action }] }));
-        const timeoutId = window.setTimeout(() => {
-            toastTimeouts.delete(id);
+        const timer: ToastTimer = {
+            timeoutId: null,
+            remainingMs: durationMs,
+            startedAt: Date.now(),
+            pauseReasons: new Set(),
+        };
+        toastTimers.set(id, timer);
+        scheduleToastTimer(id, timer, () => {
             set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));
-        }, durationMs);
-        toastTimeouts.set(id, timeoutId);
+        });
     },
     dismissToast: (id) => {
-        const timeoutId = toastTimeouts.get(id);
-        if (timeoutId) {
-            window.clearTimeout(timeoutId);
-            toastTimeouts.delete(id);
-        }
+        clearToastTimer(id);
         set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));
+    },
+    pauseToast: (id, reason) => {
+        const timer = toastTimers.get(id);
+        if (!timer || timer.pauseReasons.has(reason)) return;
+        if (timer.pauseReasons.size === 0 && timer.timeoutId !== null) {
+            window.clearTimeout(timer.timeoutId);
+            timer.timeoutId = null;
+            timer.remainingMs = Math.max(0, timer.remainingMs - Math.max(0, Date.now() - timer.startedAt));
+        }
+        timer.pauseReasons.add(reason);
+    },
+    resumeToast: (id, reason) => {
+        const timer = toastTimers.get(id);
+        if (!timer || !timer.pauseReasons.delete(reason) || timer.pauseReasons.size > 0 || timer.timeoutId !== null) return;
+        scheduleToastTimer(id, timer, () => {
+            set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));
+        });
     },
     listFilters: {
         criteria: {},
@@ -326,3 +371,13 @@ export const useUiStore = createWithEqualityFn<UiState>()((set) => ({
             return { hiddenSidebarViews: next };
         }),
 }));
+
+// Tests and full UI resets replace toast state directly. Clear any timer whose
+// toast disappeared so an old callback cannot outlive its surface.
+useUiStore.subscribe((state, previousState) => {
+    if (state.toasts === previousState.toasts) return;
+    const visibleToastIds = new Set(state.toasts.map((toast) => toast.id));
+    for (const id of toastTimers.keys()) {
+        if (!visibleToastIds.has(id)) clearToastTimer(id);
+    }
+});
