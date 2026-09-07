@@ -162,7 +162,7 @@ const recreateCloudKitZone = async (signal: AbortSignal | undefined): Promise<vo
     await AsyncStorage.setItem(CLOUDKIT_ZONE_CREATED_KEY, '1');
     void logWarn('CloudKit zone was deleted or cleared; recreated it and reset the change token', {
         scope: 'cloudkit',
-        extra: { releaseCheck: 'v1.2.9/cloudkit-zone-recreated' },
+        extra: { releaseCheck: 'v1.3.0/cloudkit-zone-recreated' },
     });
 };
 

@@ -299,7 +299,7 @@ export const syncFileAttachments = async (
         // (2026-09-06 feedback).
         void logWarn('File Sync activation left an attachment the folder does not hold yet', {
           scope: 'attachment',
-          extra: { releaseCheck: 'v1.2.9/mobile-file-activation-absent-blob' },
+          extra: { releaseCheck: 'v1.3.0/mobile-file-activation-absent-blob' },
         });
         return false;
       }

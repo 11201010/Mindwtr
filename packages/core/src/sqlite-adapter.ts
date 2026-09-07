@@ -1574,7 +1574,7 @@ export class SqliteAdapter {
                 scope: 'sqlite',
                 category: 'storage',
                 context: {
-                    releaseCheck: 'v1.2.9/sqlite-final-tombstone-expiry',
+                    releaseCheck: 'v1.3.0/sqlite-final-tombstone-expiry',
                     count: expiredTombstonesPruned,
                     outcome: 'pruned',
                 },

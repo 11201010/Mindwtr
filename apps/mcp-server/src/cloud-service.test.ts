@@ -414,7 +414,7 @@ describe('cloud-backed MCP service', () => {
     expect(logs).toEqual([{
       message: 'MCP attachment link replacement committed',
       context: {
-        releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+        releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
         backend: 'cloud',
         entity: 'task',
         count: 1,

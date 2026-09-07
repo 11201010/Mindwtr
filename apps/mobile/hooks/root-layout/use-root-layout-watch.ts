@@ -15,8 +15,8 @@ import { getFocusWidgetFilter } from '@/lib/focus-widget-filter';
 import { buildWidgetPayload } from '@/lib/widget-data';
 import { buildWatchApplicationContext, watchPomodoroPublicationKey } from '@/lib/watch-snapshot';
 
-const WATCH_SNAPSHOT_RELEASE_CHECK = 'v1.2.9/watch-snapshot';
-const WATCH_NUMERIC_BRIDGE_RELEASE_CHECK = 'v1.2.9/watch-numeric-bridge';
+const WATCH_SNAPSHOT_RELEASE_CHECK = 'v1.3.0/watch-snapshot';
+const WATCH_NUMERIC_BRIDGE_RELEASE_CHECK = 'v1.3.0/watch-numeric-bridge';
 const WATCH_PUBLICATION_COALESCE_MS = 120;
 
 export function useRootLayoutWatch({

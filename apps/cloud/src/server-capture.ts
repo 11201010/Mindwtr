@@ -399,7 +399,7 @@ function removeOrphanedCaptureAudio(cloudKey: string, options: CaptureRequestOpt
     const retain = (retentionReason: 'referenced' | 'unreadable' | 'storage-authority'): void => {
         try {
             logWarn('Capture audio retained after failed document write', {
-                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                releaseCheck: 'v1.3.0/cloud-capture-audio-retained',
                 retentionReason,
             });
         } catch {

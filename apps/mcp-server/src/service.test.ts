@@ -926,7 +926,7 @@ describe('mcp service', () => {
         {
           message: 'MCP attachment link replacement committed',
           context: {
-            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
             backend: 'local',
             entity: 'task',
             count: 1,
@@ -935,7 +935,7 @@ describe('mcp service', () => {
         {
           message: 'MCP attachment link replacement committed',
           context: {
-            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
             backend: 'local',
             entity: 'project',
             count: 1,

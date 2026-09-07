@@ -327,7 +327,7 @@ describe('cancellation store lifecycle', () => {
             expect.objectContaining({
                 level: 'info',
                 context: {
-                    releaseCheck: 'v1.2.9/commitment-cancelled',
+                    releaseCheck: 'v1.3.0/commitment-cancelled',
                     kind: 'task',
                     outcome: 'cancelled',
                     count: 1,
@@ -336,7 +336,7 @@ describe('cancellation store lifecycle', () => {
             expect.objectContaining({
                 level: 'info',
                 context: {
-                    releaseCheck: 'v1.2.9/commitment-cancelled',
+                    releaseCheck: 'v1.3.0/commitment-cancelled',
                     kind: 'project',
                     outcome: 'cancelled',
                     count: 1,

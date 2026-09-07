@@ -525,7 +525,7 @@ describe('POST /v1/capture', () => {
             );
             expect(retentionLines).toHaveLength(1);
             expect(retentionLines[0].context).toEqual({
-                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                releaseCheck: 'v1.3.0/cloud-capture-audio-retained',
                 retentionReason: 'referenced',
             });
             const serialized = captured.join('');
@@ -598,7 +598,7 @@ describe('POST /v1/capture', () => {
                 (line) => line.message === 'Capture audio retained after failed document write',
             );
             expect(retentionLine?.context).toEqual({
-                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                releaseCheck: 'v1.3.0/cloud-capture-audio-retained',
                 retentionReason: 'unreadable',
             });
         } finally {
@@ -717,7 +717,7 @@ describe('POST /v1/capture', () => {
                 (line) => line.message === 'Capture audio retained after failed document write',
             );
             expect(retentionLine?.context).toEqual({
-                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                releaseCheck: 'v1.3.0/cloud-capture-audio-retained',
                 retentionReason: 'storage-authority',
             });
         } finally {

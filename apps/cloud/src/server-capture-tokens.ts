@@ -176,6 +176,6 @@ async function createCaptureToken(options: CaptureTokensRequestOptions, label: s
         return errorResponse('Failed to store capture token', 500);
     }
     // Nothing identifying: no id, label, digest or token.
-    logInfo('Capture token created', { releaseCheck: 'v1.2.9/cloud-capture-token', tokenScope: 'capture' });
+    logInfo('Capture token created', { releaseCheck: 'v1.3.0/cloud-capture-token', tokenScope: 'capture' });
     return jsonResponse({ ...publicView(record), token }, { status: 201 });
 }

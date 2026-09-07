@@ -438,7 +438,7 @@ export default function CaptureScreen() {
     if (returnToPreviousApp()) {
       void logInfo('Quick capture opened from a system entry point returned to the previous screen', {
         scope: 'capture',
-        extra: { releaseCheck: 'v1.2.9/system-capture-return' },
+        extra: { releaseCheck: 'v1.3.0/system-capture-return' },
       });
     }
   }, [closeCapture, launchedFromSystem]);

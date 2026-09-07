@@ -2150,7 +2150,7 @@ describe('desktop sync attachment backends', () => {
             expect(deps.logSyncInfo).toHaveBeenCalledWith(
                 'WebDAV attachment presence proof finished',
                 {
-                    releaseCheck: 'v1.2.9/webdav-presence-proof',
+                    releaseCheck: 'v1.3.0/webdav-presence-proof',
                     checked: '1',
                     cleared: '0',
                     complete: 'false',

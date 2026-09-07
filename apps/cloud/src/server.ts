@@ -701,7 +701,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 task.status = focusDecision.status;
                 task.isFocusedToday = focusDecision.isFocusedToday;
                 logInfo('Cloud task Focus write policy applied', {
-                    releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                    releaseCheck: 'v1.3.0/cloud-focus-write-parity',
                     operation: 'create',
                     outcome: focusDecision.outcome,
                     count: focusedCount + (focusDecision.outcome === 'focused' ? 1 : 0),
@@ -735,7 +735,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 const focusTaskLimit = normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit);
                 if (focusedCount >= focusTaskLimit) {
                     logInfo('Cloud task Focus write policy applied', {
-                        releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                        releaseCheck: 'v1.3.0/cloud-focus-write-parity',
                         operation: 'patch',
                         outcome: 'refused-limit',
                         count: focusedCount,
@@ -743,7 +743,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                     return errorResponse(`Focus limit of ${focusTaskLimit} reached`, 409);
                 }
                 logInfo('Cloud task Focus write policy applied', {
-                    releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                    releaseCheck: 'v1.3.0/cloud-focus-write-parity',
                     operation: 'patch',
                     outcome: 'focused',
                     count: focusedCount + 1,

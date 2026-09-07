@@ -216,7 +216,7 @@ describe('widget-service', () => {
         expect(mockLogInfo).toHaveBeenCalledWith('Android widget Focus and Today payload published', {
             scope: 'widget',
             extra: {
-                releaseCheck: 'v1.2.9/widget-focus-today',
+                releaseCheck: 'v1.3.0/widget-focus-today',
                 focusItems: '15',
                 todayItems: '5',
                 totalItems: '20',
@@ -232,7 +232,7 @@ describe('widget-service', () => {
         expect(mockLogInfo).toHaveBeenCalledWith('Legacy Android Tasks widgets refreshed', {
             scope: 'widget',
             extra: {
-                releaseCheck: 'v1.2.9/android-widget-provider-compat',
+                releaseCheck: 'v1.3.0/android-widget-provider-compat',
                 legacyWidgetCount: '2',
             },
         });

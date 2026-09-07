@@ -668,7 +668,7 @@ describe('attachment sync', () => {
     });
     expect(vi.mocked(appLog.logWarn)).toHaveBeenCalledWith(
       'File Sync activation left an attachment the folder does not hold yet',
-      expect.objectContaining({ extra: expect.objectContaining({ releaseCheck: 'v1.2.9/mobile-file-activation-absent-blob' }) }),
+      expect.objectContaining({ extra: expect.objectContaining({ releaseCheck: 'v1.3.0/mobile-file-activation-absent-blob' }) }),
     );
   });
 
@@ -1143,7 +1143,7 @@ describe('attachment sync', () => {
         {
           scope: 'attachment',
           extra: {
-            releaseCheck: 'v1.2.9/webdav-presence-proof',
+            releaseCheck: 'v1.3.0/webdav-presence-proof',
             checked: '1',
             cleared: '0',
             complete: 'false',

@@ -107,9 +107,9 @@ function buildPayloadFromData(
 // The native widget's task list scrolls (RemoteViewsService), so the payload
 // carries a fixed slice instead of a per-widget-height budget.
 const ANDROID_WIDGET_MAX_ITEMS = 20;
-const ANDROID_WIDGET_RELEASE_CHECK = 'v1.2.9/android-native-widget';
-const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.2.9/android-widget-provider-compat';
-const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.2.9/widget-focus-today';
+const ANDROID_WIDGET_RELEASE_CHECK = 'v1.3.0/android-native-widget';
+const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.3.0/android-widget-provider-compat';
+const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.3.0/widget-focus-today';
 let androidWidgetUnavailableLogged = false;
 
 function capWidgetSections(

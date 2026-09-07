@@ -242,7 +242,7 @@ export const createCloudService = (options: CloudServiceOptions): MindwtrService
         const preservedExistingNetworkLink = applied.preservedNetworkLinkCount > 0;
         options.logInfo?.('MCP attachment link replacement committed', {
           ...(preservedExistingNetworkLink ? {
-            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
             count: applied.preservedNetworkLinkCount,
           } : {
             releaseCheck: 'v1.2.8/mcp-attachment-link-guard',

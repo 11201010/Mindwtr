@@ -88,6 +88,23 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="1.3.0-rc.1" date="2026-09-07">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.0-rc.1</url>
+      <description>
+        <p>Mindwtr 1.3.0-rc.1 adds cancellation, sequential-project ordering, safer sync, and more direct capture.</p>
+        <p xml:lang="de">Mindwtr 1.3.0-rc.1 bringt Abbrechen, die Reihenfolge sequenzieller Projekte, sichereren Sync und direktere Erfassung.</p>
+        <ul>
+          <li>Cancel tasks, projects, and recurring series while keeping completed and cancelled outcomes distinct in Archive.</li>
+          <li xml:lang="de">Aufgaben, Projekte und wiederkehrende Serien lassen sich abbrechen; abgeschlossene und abgebrochene Ergebnisse bleiben im Archiv unterscheidbar.</li>
+          <li>Focus and Next Actions follow the visible manual hierarchy of sequential projects.</li>
+          <li xml:lang="de">Fokus und Naechste Aktionen folgen der sichtbaren manuellen Hierarchie sequenzieller Projekte.</li>
+          <li>WebDAV works through compressing proxies, File Sync accepts attachments that have not arrived yet, and self-hosted capture keeps voice attachments intact.</li>
+          <li xml:lang="de">WebDAV funktioniert hinter komprimierenden Proxys, Dateisynchronisierung akzeptiert noch nicht eingetroffene Anhaenge, und selbst gehostete Erfassung behaelt Sprachanhaenge.</li>
+          <li>Desktop task editing, project menus, notes lists, calendar blocks, notifications, Timeline colors, and KDE Plasma launcher matching are more reliable.</li>
+          <li xml:lang="de">Aufgabenbearbeitung, Projektmenues, Notizlisten, Kalenderbloecke, Benachrichtigungen, Zeitleistenfarben und die KDE-Plasma-Starterzuordnung sind zuverlaessiger.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.8" date="2026-09-05">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.2.8</url>
       <description>

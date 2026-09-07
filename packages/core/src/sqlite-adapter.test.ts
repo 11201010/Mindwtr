@@ -2338,7 +2338,7 @@ describeSqlite('SqliteAdapter final tombstone expiry', () => {
             scope: 'sqlite',
             category: 'storage',
             context: {
-                releaseCheck: 'v1.2.9/sqlite-final-tombstone-expiry',
+                releaseCheck: 'v1.3.0/sqlite-final-tombstone-expiry',
                 count: 5,
                 outcome: 'pruned',
             },

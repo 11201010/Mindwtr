@@ -268,7 +268,7 @@ export const createProjectCoreActions = ({
                 scope: 'store',
                 category: 'storage',
                 context: {
-                    releaseCheck: 'v1.2.9/commitment-cancelled',
+                    releaseCheck: 'v1.3.0/commitment-cancelled',
                     kind: 'project',
                     outcome: 'cancelled',
                     count: 1,

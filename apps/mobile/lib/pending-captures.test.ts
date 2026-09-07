@@ -212,7 +212,7 @@ describe('ingestPendingCaptures', () => {
         expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1);
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Quick capture dialog item ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.2.9/android-quick-capture-dialog' },
+            extra: { releaseCheck: 'v1.3.0/android-quick-capture-dialog' },
         });
     });
 
@@ -242,7 +242,7 @@ describe('ingestPendingCaptures', () => {
         expect(flushPendingSave).toHaveBeenCalledOnce();
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Android automation capture ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.2.9/android-capture-intent' },
+            extra: { releaseCheck: 'v1.3.0/android-capture-intent' },
         });
         expect(flushPendingSave.mock.invocationCallOrder[0])
             .toBeLessThan(appLogMocks.logInfo.mock.invocationCallOrder[0]);
@@ -384,7 +384,7 @@ describe('ingestPendingCaptures', () => {
         );
         expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(1, 'Watch audio ready for transcription', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.2.9/watch-audio-ready', outcome: 'validated' },
+            extra: { releaseCheck: 'v1.3.0/watch-audio-ready', outcome: 'validated' },
         });
         expect(appLogMocks.logInfo.mock.invocationCallOrder[0])
             .toBeLessThan(transcribeAudio.mock.invocationCallOrder[0]);
@@ -481,7 +481,7 @@ describe('ingestPendingCaptures', () => {
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Watch command ingested', {
             scope: 'capture',
             extra: {
-                releaseCheck: 'v1.2.9/watch-command',
+                releaseCheck: 'v1.3.0/watch-command',
                 kind: 'pomodoro',
                 action: 'pause',
                 outcome: 'applied',

@@ -24,9 +24,9 @@ import { deleteAsync, documentDirectory, getInfoAsync, readAsStringAsync, readDi
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const ANDROID_QUICK_CAPTURE_SOURCE = 'android-quick-capture';
 export const ANDROID_CAPTURE_INTENT_SOURCE = 'android-capture-intent';
-const ANDROID_QUICK_CAPTURE_RELEASE_CHECK = 'v1.2.9/android-quick-capture-dialog';
-const ANDROID_CAPTURE_INTENT_RELEASE_CHECK = 'v1.2.9/android-capture-intent';
-const ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK = 'v1.2.9/android-widget-checkoff';
+const ANDROID_QUICK_CAPTURE_RELEASE_CHECK = 'v1.3.0/android-quick-capture-dialog';
+const ANDROID_CAPTURE_INTENT_RELEASE_CHECK = 'v1.3.0/android-capture-intent';
+const ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK = 'v1.3.0/android-widget-checkoff';
 
 // A new task to add (the iOS Shortcut and the Android dialog; `kind` absent).
 export type PendingCapture = {
@@ -228,9 +228,9 @@ type IngestDeps = {
     applyPomodoroCommand?: (command: PendingPomodoro) => Promise<'applied' | 'already-applied' | 'stale'>;
 };
 
-const WATCH_CAPTURE_RELEASE_CHECK = 'v1.2.9/watch-capture';
-const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.2.9/watch-audio-ready';
-const WATCH_COMMAND_RELEASE_CHECK = 'v1.2.9/watch-command';
+const WATCH_CAPTURE_RELEASE_CHECK = 'v1.3.0/watch-capture';
+const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.3.0/watch-audio-ready';
+const WATCH_COMMAND_RELEASE_CHECK = 'v1.3.0/watch-command';
 
 function isValidDateOnly(value: string): boolean {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);

@@ -688,7 +688,7 @@ export async function syncWebdavAttachments(
             clear: (attachment) => recordPatch({ ...attachment, cloudKey: undefined }),
         });
         deps.logSyncInfo('WebDAV attachment presence proof finished', {
-            releaseCheck: 'v1.2.9/webdav-presence-proof',
+            releaseCheck: 'v1.3.0/webdav-presence-proof',
             checked: String(presenceResult.checked),
             cleared: String(presenceResult.cleared),
             complete: presenceResult.complete ? 'true' : 'false',
