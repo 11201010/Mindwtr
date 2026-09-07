@@ -12,7 +12,8 @@ import {
     formatTimeEstimateLabel,
     formatTimeSpentLabel,
     hasTimeComponent,
-    isTaskFinished,
+    isTaskCancelled,
+    isTaskCompleted,
     resolveTaskTextDirection,
     safeFormatDate,
     safeParseDate,
@@ -172,11 +173,25 @@ export function SwipeableTaskItemContent({
     const dateIssueLabel = getTaskDateCoherenceIssues(task).some((issue) => issue.code === 'start_after_due')
         ? tFallback(t, 'task.dateIssue.startAfterDue', 'Starts after due date')
         : null;
-    const completionLabel = (() => {
-        if (!isTaskFinished(task)) return null;
+    const terminalTimestamp = (() => {
+        if (isTaskCancelled(task)) {
+            if (!task.cancelledAt) return null;
+            return {
+                key: 'cancelled',
+                label: tFallback(t, 'task.cancelled', 'Cancelled'),
+                timestamp: safeFormatDate(task.cancelledAt, 'Pp', task.cancelledAt),
+                editable: false,
+            };
+        }
+        if (!isTaskCompleted(task)) return null;
         const completionTimestamp = task.completedAt || task.updatedAt;
         if (!completionTimestamp) return null;
-        return safeFormatDate(completionTimestamp, 'Pp', completionTimestamp);
+        return {
+            key: 'completed',
+            label: tFallback(t, 'list.done', 'Completed'),
+            timestamp: safeFormatDate(completionTimestamp, 'Pp', completionTimestamp),
+            editable: true,
+        };
     })();
     const ageLabel = getTaskAgeLabel(task.createdAt, language as Language);
     // Age is detail: the Focus "hide details" toggle drops it with the rest.
@@ -334,21 +349,23 @@ export function SwipeableTaskItemContent({
         );
     }
 
-    if (completionLabel) {
+    if (terminalTimestamp) {
         addMetaPart(
             renderMetaItem({
-                key: 'completed',
-                onPress: canNavigateMeta && onEditCompletedAt ? onEditCompletedAt : undefined,
-                accessibilityLabel: tFallback(t, 'task.editCompletedAt', 'Edit completion time'),
+                key: terminalTimestamp.key,
+                onPress: terminalTimestamp.editable && canNavigateMeta && onEditCompletedAt ? onEditCompletedAt : undefined,
+                accessibilityLabel: terminalTimestamp.editable
+                    ? tFallback(t, 'task.editCompletedAt', 'Edit completion time')
+                    : undefined,
                 children: (
                     <CompactText
                         style={[styles.metaText, { color: tc.secondaryText }]}
                     >
-                        {`${tFallback(t, 'list.done', 'Completed')}: ${completionLabel}`}
+                        {`${terminalTimestamp.label}: ${terminalTimestamp.timestamp}`}
                     </CompactText>
                 ),
             }),
-            'completed'
+            terminalTimestamp.key
         );
     }
 

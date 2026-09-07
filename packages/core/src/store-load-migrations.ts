@@ -6,12 +6,14 @@ import { normalizePeopleForLoad } from './people';
 import { purgeExpiredTombstones } from './sync';
 import {
     archiveSectionForProjectArchive,
+    cancelTaskForProjectArchive,
     clearDeletedTaskProjectArchiveMetadata,
     completeTaskForProjectArchive,
     ensureDeviceId,
     isTaskSectionProjectArchiveReference,
     nextRevision,
 } from './store-helpers';
+import { isProjectCancelled } from './project-status';
 import { getAutoArchiveDays, shouldAutoArchiveCompletedTask } from './task-utils';
 import { isTaskActionable, isTaskFinished } from './task-status';
 import { generateUUID as uuidv4 } from './uuid';
@@ -530,23 +532,30 @@ const archiveDescendantsOfArchivedProjectsMigration: LoadMigration = {
     // Reads project.status === 'archived', so must run after any step above
     // that can change project status (normalize-project-status-and-tags).
     run: (data, ctx) => {
-        const archivedProjectIds = new Set(
+        const archivedProjectsById = new Map(
             data.projects
                 .filter((project) => !project.deletedAt && project.status === 'archived')
-                .map((project) => project.id)
+                .map((project) => [project.id, project] as const)
         );
-        if (archivedProjectIds.size === 0) return null;
+        if (archivedProjectsById.size === 0) return null;
         const deviceId = data.settings.deviceId;
         let changed = false;
         const tasks = data.tasks.map((task) => {
-            if (task.deletedAt || isTaskFinished(task)) return task;
-            if (!task.projectId || !archivedProjectIds.has(task.projectId)) return task;
+            if (task.deletedAt || !task.projectId) return task;
+            const project = archivedProjectsById.get(task.projectId);
+            if (!project) return task;
+            if (isProjectCancelled(project)) {
+                if (!isTaskActionable(task)) return task;
+                changed = true;
+                return cancelTaskForProjectArchive(task, project.cancelledAt!, deviceId, ctx.nowIso);
+            }
+            if (isTaskFinished(task)) return task;
             changed = true;
             return completeTaskForProjectArchive(task, ctx.nowIso, deviceId);
         });
         const sections = data.sections.map((section) => {
             if (section.deletedAt) return section;
-            if (!archivedProjectIds.has(section.projectId)) return section;
+            if (!archivedProjectsById.has(section.projectId)) return section;
             changed = true;
             return archiveSectionForProjectArchive(section, ctx.nowIso, deviceId);
         });

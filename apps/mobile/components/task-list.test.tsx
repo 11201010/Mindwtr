@@ -76,6 +76,7 @@ const storeState = vi.hoisted(() => ({
   _allTasks: [] as Task[],
   projects: [projectFixture as Project],
   sections: [],
+  _allSections: [],
   areas: [] as Area[],
   addTask: addTaskMock,
   updateTask: updateTaskMock,
@@ -353,6 +354,8 @@ describe('TaskList', () => {
     storeState._allTasks = [];
     storeState.areas = [];
     storeState.projects = [projectFixture as Project];
+    storeState.sections = [];
+    storeState._allSections = [];
     storeState.highlightTaskId = null;
     mobileAreaFilterState.current = {
       areaById: new Map(),
@@ -411,6 +414,68 @@ describe('TaskList', () => {
     } finally {
       storeState.projects = [projectFixture as Project];
     }
+  });
+
+  it('shows only project-archive-owned sections in read-only project history', async () => {
+    const archivedAt = '2026-09-07T17:55:52.636Z';
+    const manuallyDeletedAt = '2026-09-01T10:00:00.000Z';
+    const archivedSection = {
+      id: 'section-archived',
+      projectId: project.id,
+      title: 'Preserved history',
+      order: 0,
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: archivedAt,
+      deletedAt: archivedAt,
+      projectArchivedAt: archivedAt,
+    };
+    const manuallyDeletedSection = {
+      id: 'section-manual',
+      projectId: project.id,
+      title: 'Deleted earlier',
+      order: 1,
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: archivedAt,
+      deletedAt: archivedAt,
+      projectArchivedAt: archivedAt,
+      deletedAtBeforeProjectArchive: manuallyDeletedAt,
+    };
+    const linkedTask = makeTask('task-linked', 'Cancelled in section', {
+      status: 'archived',
+      sectionId: archivedSection.id,
+      cancelledAt: archivedAt,
+      projectArchivedAt: archivedAt,
+    });
+    const formerlyLinkedTask = makeTask('task-unsectioned', 'Previously deleted section', {
+      status: 'archived',
+      sectionId: manuallyDeletedSection.id,
+      cancelledAt: archivedAt,
+      projectArchivedAt: archivedAt,
+    });
+    storeState._allSections = [archivedSection, manuallyDeletedSection] as any;
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <TaskList
+          project={{ id: project.id, includeArchived: true, readOnly: true }}
+          showHeader={false}
+          statusFilter="all"
+          taskSource={[linkedTask, formerlyLinkedTask]}
+          title={project.title}
+        />,
+      );
+    });
+
+    const data = flatListPropsSpy.mock.calls.at(-1)?.[0].data as Array<{ type: string; id?: string; task?: Task }>;
+    expect(data.find((item) => item.type === 'section' && item.id === archivedSection.id)).toBeTruthy();
+    expect(data.find((item) => item.type === 'section' && item.id === manuallyDeletedSection.id)).toBeUndefined();
+    expect(data.find((item) => item.type === 'task' && item.task?.id === linkedTask.id)).toBeTruthy();
+    expect(data.find((item) => item.type === 'section' && item.id === 'no-section')).toBeTruthy();
+
+    act(() => {
+      tree.unmount();
+    });
   });
 
   it('passes a group control to non-reference list headers', async () => {

@@ -57,6 +57,7 @@ const translate = vi.hoisted(() => {
     'agenda.removeFromFocus': 'Remove from focus',
     'list.taskDeleted': 'Task deleted',
     'list.done': 'Completed',
+    'task.cancelled': 'Cancelled',
     'status.inbox': 'Inbox',
     'status.done': 'Done',
     'status.next': 'Next',
@@ -1224,6 +1225,40 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     });
 
     expect(hasText(tree, 'Completed: May 12, 2026, 8:30 AM')).toBe(true);
+  });
+
+  it('shows cancellation time without exposing the completion-time editor', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <SwipeableTaskItem
+          task={{
+            id: 'task-1',
+            title: 'Cancelled trip',
+            status: 'archived',
+            cancelledAt: '2026-05-12T08:30:00.000Z',
+            createdAt: '2026-05-01T08:30:00.000Z',
+            updatedAt: '2026-05-12T08:30:00.000Z',
+          } as any}
+          isDark={false}
+          tc={{
+            taskItemBg: '#111111',
+            border: '#222222',
+            text: '#ffffff',
+            secondaryText: '#999999',
+            tint: '#3b82f6',
+            warning: '#f59e0b',
+          } as any}
+          onPress={vi.fn()}
+          onStatusChange={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      );
+    });
+
+    expect(hasText(tree, 'Cancelled: May 12, 2026, 8:30 AM')).toBe(true);
+    expect(hasText(tree, 'Completed:')).toBe(false);
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'Edit completion time' })).toHaveLength(0);
   });
 
   // #1164: Waiting For completes from the quick action; Someday still promotes to Next.

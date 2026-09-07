@@ -771,7 +771,7 @@ describe('sync normalization', () => {
         expect(repaired.areas[0].deletedAt).toBe('2026-01-01T00:00:00.000Z');
     });
 
-    it('preserves only operation-owned task links to archived project sections', () => {
+    it('preserves terminal links to archive-owned sections but repairs ordinary deleted sections', () => {
         const archivedAt = '2025-12-31T22:00:00.000Z';
         const cancelledAt = '2025-12-01T08:00:00.000Z';
         const data: AppData = {
@@ -802,15 +802,21 @@ describe('sync normalization', () => {
         expect(repaired).toEqual(data);
         expect(validateMergedSyncData(repaired)).toEqual([]);
 
-        const mismatched = structuredClone(data);
-        mismatched.tasks[0].projectArchivedAt = '2025-12-31T21:00:00.000Z';
-        const repairedMismatch = repairMergedSyncReferences(mismatched, NOW);
-        expect(repairedMismatch.tasks[0]).toMatchObject({
+        const ordinaryDeletedSection = structuredClone(data);
+        ordinaryDeletedSection.sections[0].projectArchivedAt = undefined;
+        const repairedOrdinaryDelete = repairMergedSyncReferences(ordinaryDeletedSection, NOW);
+        expect(repairedOrdinaryDelete.tasks[0]).toMatchObject({
             sectionId: undefined,
             order: 7,
             revBy: SYNC_REPAIR_REV_BY,
             updatedAt: NOW,
         });
+
+        const activeChild = structuredClone(data);
+        activeChild.tasks[0].status = 'next';
+        activeChild.tasks[0].cancelledAt = undefined;
+        const repairedActiveChild = repairMergedSyncReferences(activeChild, NOW);
+        expect(repairedActiveChild.tasks[0].sectionId).toBeUndefined();
 
         const activeProject = structuredClone(data);
         activeProject.projects[0].status = 'active';

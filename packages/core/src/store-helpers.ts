@@ -531,8 +531,9 @@ export const archiveSectionForProjectArchive = (section: Section, archivedAt: st
 });
 
 /**
- * A project-archive section remains a valid container only for a child changed
- * by that exact archive operation while the owning project is still archived.
+ * A project-archive section remains a valid container for a child changed by
+ * that operation, plus completed/reference children the cascade deliberately
+ * left untouched, while the owning project is still archived.
  */
 export const isTaskSectionProjectArchiveReference = (
     task: Task,
@@ -540,12 +541,10 @@ export const isTaskSectionProjectArchiveReference = (
     project: Project | undefined,
 ): boolean => {
     if (!section || !project || project.deletedAt || project.purgedAt || project.status !== 'archived') return false;
-    const archivedAt = task.projectArchivedAt;
-    if (!archivedAt || archivedAt !== section.projectArchivedAt) return false;
+    const sectionArchivedAt = section.projectArchivedAt;
+    if (!sectionArchivedAt || section.deletedAt !== sectionArchivedAt) return false;
     if (task.projectId !== project.id || section.projectId !== project.id) return false;
-    if (section.deletedAt !== section.projectArchivedAt) return false;
-    return (task.status === 'done' && task.completedAt === archivedAt)
-        || (task.status === 'archived' && normalizeCancellationTimestamp(task.cancelledAt) !== undefined);
+    return isTaskFinished(task) || task.status === 'reference';
 };
 
 export const restoreSectionFromProjectArchive = (section: Section, restoredAt: string, deviceId?: string): Section => {

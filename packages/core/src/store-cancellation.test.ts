@@ -215,7 +215,7 @@ describe('cancellation store lifecycle', () => {
         });
     });
 
-    it('keeps project section membership and order through canonical sync repair and reactivation', async () => {
+    it('keeps mixed child history, section membership, and order through canonical reload and reactivation', async () => {
         const { addProject, addSection, addTask, cancelProject, updateProject, updateSection } = useTaskStore.getState();
         const project = await addProject('Round-trip cancellation', '#123456');
         expect(project).not.toBeNull();
@@ -230,14 +230,43 @@ describe('cancellation store lifecycle', () => {
             sectionId: section.id,
             order: 7,
         });
+        const completedAt = '2026-09-01T10:00:00.000Z';
+        const completed = await addTask('Completed child', {
+            status: 'done',
+            completedAt,
+            projectId: project.id,
+            sectionId: section.id,
+            order: 8,
+        });
+        const reference = await addTask('Reference child', {
+            status: 'reference',
+            projectId: project.id,
+            sectionId: section.id,
+            order: 9,
+        });
+        const previousCancelledAt = '2026-08-15T10:00:00.000Z';
+        const previouslyCancelled = await addTask('Previously cancelled child', {
+            status: 'archived',
+            cancelledAt: previousCancelledAt,
+            projectId: project.id,
+            sectionId: section.id,
+            order: 10,
+        });
+        const previousCancelledRev = useTaskStore.getState()._tasksById.get(previouslyCancelled.id!)?.rev;
 
         await cancelProject(project.id);
         const written = structuredClone(saveData.mock.calls.at(-1)?.[0]);
         const repaired = repairMergedSyncReferences(written, '2026-09-07T14:30:00.000Z');
         expect(validateMergedSyncData(repaired)).toEqual([]);
-        expect(repaired.tasks.find((candidate) => candidate.id === task.id)).toMatchObject({
+        expect(repaired.tasks.find((candidate) => candidate.id === task.id)).toMatchObject({ status: 'archived', sectionId: section.id, order: 7 });
+        expect(repaired.tasks.find((candidate) => candidate.id === completed.id)).toMatchObject({ status: 'done', completedAt, sectionId: section.id, order: 8 });
+        expect(repaired.tasks.find((candidate) => candidate.id === reference.id)).toMatchObject({ status: 'reference', sectionId: section.id, order: 9 });
+        expect(repaired.tasks.find((candidate) => candidate.id === previouslyCancelled.id)).toMatchObject({
+            status: 'archived',
+            cancelledAt: previousCancelledAt,
             sectionId: section.id,
-            order: 7,
+            order: 10,
+            rev: previousCancelledRev,
         });
         expect(repaired.sections.find((candidate) => candidate.id === section.id)).toMatchObject({
             order: 4,
@@ -250,6 +279,15 @@ describe('cancellation store lifecycle', () => {
             saveData,
         });
         await useTaskStore.getState().fetchData({ silent: true });
+        expect(useTaskStore.getState()._tasksById.get(completed.id!)).toMatchObject({ status: 'done', completedAt, sectionId: section.id, order: 8 });
+        expect(useTaskStore.getState()._tasksById.get(reference.id!)).toMatchObject({ status: 'reference', sectionId: section.id, order: 9 });
+        expect(useTaskStore.getState()._tasksById.get(previouslyCancelled.id!)).toMatchObject({
+            status: 'archived',
+            cancelledAt: previousCancelledAt,
+            sectionId: section.id,
+            order: 10,
+            rev: previousCancelledRev,
+        });
         vi.setSystemTime(new Date('2026-09-07T15:00:00.000Z'));
         await updateProject(project.id, { status: 'active' });
 
@@ -257,6 +295,15 @@ describe('cancellation store lifecycle', () => {
             status: 'next',
             sectionId: section.id,
             order: 7,
+        });
+        expect(useTaskStore.getState()._tasksById.get(completed.id!)).toMatchObject({ status: 'done', completedAt, sectionId: section.id, order: 8 });
+        expect(useTaskStore.getState()._tasksById.get(reference.id!)).toMatchObject({ status: 'reference', sectionId: section.id, order: 9 });
+        expect(useTaskStore.getState()._tasksById.get(previouslyCancelled.id!)).toMatchObject({
+            status: 'archived',
+            cancelledAt: previousCancelledAt,
+            sectionId: section.id,
+            order: 10,
+            rev: previousCancelledRev,
         });
         expect(useTaskStore.getState()._sectionsById.get(section.id)).toMatchObject({
             order: 4,

@@ -19,6 +19,7 @@ import {
   tFallback,
   isTaskInActiveProject,
   getTaskMetadataFilterVisibility,
+  getProjectSectionsForView,
 } from '@mindwtr/core';
 
 import { TaskEditModal } from './task-edit-modal';
@@ -252,6 +253,7 @@ function TaskListComponent({
     tasks,
     projects,
     sections,
+    allSections,
     areas,
     addTask,
     allVisibleTasks,
@@ -276,6 +278,7 @@ function TaskListComponent({
     allVisibleTasks: state.tasks,
     projects: state.projects,
     sections: state.sections,
+    allSections: state._allSections,
     areas: state.areas,
     addTask: state.addTask,
     updateTask: state.updateTask,
@@ -589,16 +592,12 @@ function TaskListComponent({
   }, [orderedTasks, shouldGroupCompletedTasks]);
 
   const projectSections = useMemo(() => {
-    if (!projectId) return [];
-    return sections
-      .filter((section) => section.projectId === projectId && !section.deletedAt)
-      .sort((a, b) => {
-        const aOrder = Number.isFinite(a.order) ? a.order : 0;
-        const bOrder = Number.isFinite(b.order) ? b.order : 0;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        return a.title.localeCompare(b.title);
-      });
-  }, [projectId, sections]);
+    return getProjectSectionsForView(
+      projectId ? { id: projectId, status: projectReadOnly ? 'archived' : 'active' } : null,
+      sections,
+      allSections,
+    );
+  }, [allSections, projectId, projectReadOnly, sections]);
 
   type ListItem =
     | { type: 'section'; id: string; title: string; count: number; muted?: boolean; collapsible?: boolean; collapsed?: boolean }
