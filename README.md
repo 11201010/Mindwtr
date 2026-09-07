@@ -74,7 +74,7 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/d48c261f-c2af-4548-a080-b88f005622d8" controls playsinline width="900" aria-label="Try Mindwtr"></video>
+  <video src="https://github.com/user-attachments/assets/3682cee5-06fb-40cf-993c-0be383fa6ba5" controls playsinline width="900" aria-label="Try Mindwtr"></video>
   <p><b>Try Mindwtr</b></p>
 
   <p>

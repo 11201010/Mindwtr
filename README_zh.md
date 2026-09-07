@@ -74,7 +74,7 @@
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/d48c261f-c2af-4548-a080-b88f005622d8" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
+  <video src="https://github.com/user-attachments/assets/3682cee5-06fb-40cf-993c-0be383fa6ba5" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
   <p><b>试试 Mindwtr</b></p>
 
   <p>
