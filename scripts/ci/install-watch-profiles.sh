@@ -10,15 +10,34 @@ install_profile() {
   security cms -D -i "$profile_path" > "$plist_path"
   python3 - "$plist_path" "$expected_bundle" "$prefix" "$profile_path" <<'PY'
 import datetime
+import hashlib
 import os
 import pathlib
 import plistlib
+import re
 import shutil
+import subprocess
 import sys
 
 plist_path, bundle, prefix, profile_path = sys.argv[1:]
 with open(plist_path, 'rb') as stream:
     profile = plistlib.load(stream)
+identity = os.environ['IOS_SIGNING_IDENTITY']
+identities = subprocess.check_output(
+    ['security', 'find-identity', '-v', '-p', 'codesigning', os.environ['KEYCHAIN_PATH']], text=True,
+)
+selected = {
+    fingerprint.upper()
+    for fingerprint, name in re.findall(r'\d+\)\s+([0-9a-fA-F]{40})\s+"([^"]+)"', identities)
+    if name == identity or fingerprint.upper() == identity.upper()
+}
+assert len(selected) == 1, f'{prefix}: could not uniquely resolve the configured iOS signing certificate'
+fingerprint = selected.pop()
+certificates = {hashlib.sha1(certificate).hexdigest().upper() for certificate in profile.get('DeveloperCertificates', [])}
+assert fingerprint in certificates, (
+    f'{prefix}: profile does not include the CI signing certificate (SHA-1 {fingerprint}). '
+    'Regenerate this Watch profile using the same Apple Distribution certificate as the iPhone App Store profile.'
+)
 team = os.environ['EXPECTED_TEAM_ID']
 entitlements = profile.get('Entitlements', {})
 assert team in profile.get('TeamIdentifier', []), f'{prefix}: wrong signing team'
