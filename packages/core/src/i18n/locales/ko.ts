@@ -1450,9 +1450,8 @@ export const koOverrides: Record<string, string> = {
         // Agenda
         'agenda.title': '집중',
         'agenda.active': '활성 항목',
-        'agenda.top3Only': '상위 3개만 표시',
-        'agenda.top3Title': '오늘의 Top 3',
-        'agenda.showMore': '{{count}} 추가 할 일 표시...',
+        'agenda.collapseOtherSections': '포커스만',
+        'agenda.expandOtherSections': '섹션 펼치기',
         'agenda.zenMode': '젠 모드',
         'agenda.zenHidden': '그리고 {{count}}개의 할 일이 더 숨겨져 있습니다...',
         'agenda.todaysFocus': '오늘의 집중',

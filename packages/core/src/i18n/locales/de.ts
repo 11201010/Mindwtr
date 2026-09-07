@@ -1130,9 +1130,8 @@ export const deOverrides: Record<string, string> = {
         // Agenda
         'agenda.title': 'Fokus',
         'agenda.active': 'Aktive Elemente',
-        'agenda.top3Only': 'Nur die Top 3 anzeigen',
-        'agenda.top3Title': 'Die heutigen Top 3',
-        'agenda.showMore': '{{count}} mehr Aufgaben anzeigen …',
+        'agenda.collapseOtherSections': 'Nur Fokus',
+        'agenda.expandOtherSections': 'Abschnitte ausklappen',
         'agenda.zenMode': 'Zen-Modus',
         'agenda.zenHidden': 'Und weitere {{count}} Aufgaben sind versteckt …',
         'agenda.todaysFocus': 'Heutiger Fokus',

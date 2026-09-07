@@ -1340,9 +1340,8 @@ export const frOverrides: Record<string, string> = {
         // Agenda
         'agenda.title': 'Priorités du jour',
         'agenda.active': 'Éléments actifs',
-        'agenda.top3Only': 'Afficher uniquement les 3 premiers',
-        'agenda.top3Title': 'Les 3 priorités du jour',
-        'agenda.showMore': 'Afficher {{count}} tâches supplémentaires…',
+        'agenda.collapseOtherSections': 'Focus uniquement',
+        'agenda.expandOtherSections': 'Développer les sections',
         'agenda.zenMode': 'Mode Zen',
         'agenda.zenHidden': 'Et {{count}} tâches cachées supplémentaires…',
         'agenda.todaysFocus': 'Priorités du jour',

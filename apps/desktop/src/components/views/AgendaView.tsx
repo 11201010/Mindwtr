@@ -57,7 +57,7 @@ const AGENDA_ACTIVE_STATUSES: Task['status'][] = ['inbox', 'next', 'waiting', 's
 const DEFAULT_FOCUS_SORT_BY: SortField = 'default';
 const FOCUS_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:focus:v1';
 
-type FocusSectionKey = 'schedule' | 'nextActions' | 'upcoming' | 'reviewDue';
+type FocusSectionKey = 'schedule' | 'nextActions' | 'upcoming' | 'reviewDue' | 'reviewProjects';
 type SetFocusCollapsedGroups = (
     updater: (current: CollapsedGroups<NextGroupBy>) => CollapsedGroups<NextGroupBy>,
 ) => void;
@@ -73,6 +73,7 @@ const DEFAULT_FOCUS_VIEW_STATE: FocusPersistedViewState = {
         nextActions: true,
         upcoming: true,
         reviewDue: true,
+        reviewProjects: true,
     },
     collapsedGroups: emptyCollapsedGroups(FOCUS_AXES),
 };
@@ -90,6 +91,7 @@ function sanitizeFocusViewState(value: unknown, fallback: FocusPersistedViewStat
             nextActions: typeof expandedSections.nextActions === 'boolean' ? expandedSections.nextActions : fallback.expandedSections.nextActions,
             upcoming: typeof expandedSections.upcoming === 'boolean' ? expandedSections.upcoming : fallback.expandedSections.upcoming,
             reviewDue: typeof expandedSections.reviewDue === 'boolean' ? expandedSections.reviewDue : fallback.expandedSections.reviewDue,
+            reviewProjects: typeof expandedSections.reviewProjects === 'boolean' ? expandedSections.reviewProjects : fallback.expandedSections.reviewProjects,
         },
         collapsedGroups: sanitizeCollapsedGroups(FOCUS_AXES, parsed.collapsedGroups, fallback.collapsedGroups),
     };
@@ -269,10 +271,9 @@ export function AgendaView() {
     const { t } = useLanguage();
     const { requestConfirmation, confirmModal } = useConfirmDialog();
     const localDayKey = useLocalDayKey();
-    const { showListDetails, focusGroupBy, top3Only, setListOptions, collapseAllTaskDetails, setProjectView, showToast } = useUiStore((state) => ({
+    const { showListDetails, focusGroupBy, setListOptions, collapseAllTaskDetails, setProjectView, showToast } = useUiStore((state) => ({
         showListDetails: state.listOptions.showDetails,
         focusGroupBy: state.listOptions.focusGroupBy,
-        top3Only: state.listOptions.focusTop3Only,
         setListOptions: state.setListOptions,
         collapseAllTaskDetails: state.collapseAllTaskDetails,
         setProjectView: state.setProjectView,
@@ -870,25 +871,19 @@ export function AgendaView() {
     const getProjectDeadlineLabel = useCallback((taskId: string) => (
         getProjectDeadlineBoostLabel(sections.projectDeadlineBoosts.get(taskId), resolveText)
     ), [resolveText, sections.projectDeadlineBoosts]);
-    const { top3Tasks, remainingCount } = useMemo(() => {
-        const byId = new Map<string, Task>();
-        [...sections.schedule, ...sections.reviewDue, ...sections.nextActions].forEach((task) => {
-            if (!byId.has(task.id)) {
-                byId.set(task.id, task);
-            }
-        });
-        const candidates = Array.from(byId.values());
-        const top3 = candidates.slice(0, 3);
-        return {
-            top3Tasks: top3,
-            remainingCount: Math.max(candidates.length - top3.length, 0),
-        };
-    }, [sections]);
+    const visibleOtherSectionKeys: FocusSectionKey[] = [];
+    if (sections.schedule.length > 0) visibleOtherSectionKeys.push('schedule');
+    if (sections.reviewDue.length > 0) visibleOtherSectionKeys.push('reviewDue');
+    if (sections.nextActions.length > 0) visibleOtherSectionKeys.push('nextActions');
+    if (sections.upcoming.length > 0) visibleOtherSectionKeys.push('upcoming');
+    if (reviewDueProjects.length > 0) visibleOtherSectionKeys.push('reviewProjects');
+    const canToggleOtherSections = visibleOtherSectionKeys.length > 0;
+    const collapseOtherSections = visibleOtherSectionKeys
+        .some((sectionKey) => expandedSections[sectionKey]);
 
     // The keyboard scope walks exactly what is on screen, in render order:
     // collapsed sections and collapsed groups contribute no rows.
     const visibleTasks = useMemo(() => {
-        if (top3Only) return [...focusedTasks, ...top3Tasks];
         const visible = [...focusedTasks];
         if (expandedSections.schedule) visible.push(...sections.schedule);
         if (expandedSections.reviewDue) visible.push(...sections.reviewDue);
@@ -899,8 +894,6 @@ export function AgendaView() {
         expandedSections,
         focusedTasks,
         sections,
-        top3Only,
-        top3Tasks,
         visibleNextActions,
     ]);
     const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
@@ -967,6 +960,19 @@ export function AgendaView() {
             },
         }));
     }, [setPersistedViewState]);
+    const toggleOtherSections = useCallback(() => {
+        const expanded = !collapseOtherSections;
+        setPersistedViewState((current) => ({
+            ...current,
+            expandedSections: {
+                schedule: expanded,
+                reviewDue: expanded,
+                nextActions: expanded,
+                upcoming: expanded,
+                reviewProjects: expanded,
+            },
+        }));
+    }, [collapseOtherSections, setPersistedViewState]);
     const nextActionsCount = sections.nextActions.length;
     const hasAgendaContent = focusedTasks.length > 0
         || sections.schedule.length > 0
@@ -1092,14 +1098,15 @@ export function AgendaView() {
                 filtersOpen={filtersOpen}
                 nextActionsCount={nextActionsCount}
                 nextGroupBy={effectiveNextGroupBy}
+                canToggleOtherSections={canToggleOtherSections}
+                collapseOtherSections={collapseOtherSections}
                 onChangeGroupBy={updateFocusGroupBy}
                 onToggleFilters={() => setFiltersOpen((prev) => !prev)}
                 onToggleDetails={handleToggleDetails}
-                onToggleTop3={() => setListOptions({ focusTop3Only: !top3Only })}
+                onToggleOtherSections={toggleOtherSections}
                 resolveText={resolveText}
                 showListDetails={showListDetails}
                 t={t}
-                top3Only={top3Only}
             />
 
             {savedFocusFilters.length > 0 && (
@@ -1226,179 +1233,145 @@ export function AgendaView() {
                 </div>
             )}
 
-            {top3Only ? (
-                <div className="space-y-4">
-                    {todaysFocusSection}
-                    <div className="space-y-2">
-                        <h3 className="font-semibold">{t('agenda.top3Title')}</h3>
-                        {top3Tasks.length > 0 ? (
-                            <div className="divide-y divide-border/30">
-                                {top3Tasks.map(task => (
-                                    <StoreTaskItem
-                                        key={task.id}
-                                        taskId={task.id}
-                                        buildFocusToggle={buildFocusToggle}
-                                        showProjectBadgeInActions={false}
-                                        compactMetaEnabled={showListDetails}
-                                        enableDoubleClickEdit
-                                        projectDeadlineLabel={getProjectDeadlineLabel(task.id)}
-                                    />
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="text-muted-foreground text-sm">{t('agenda.noTasks')}</p>
-                        )}
-                    </div>
-                    {remainingCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setListOptions({ focusTop3Only: false })}
-                            className="text-xs px-3 py-2 rounded bg-muted/50 text-muted-foreground hover:bg-muted transition-colors"
-                        >
-                            {t('agenda.showMore').replace('{{count}}', `${remainingCount}`)}
-                        </button>
-                    )}
-                </div>
-            ) : (
-                <>
-                    {todaysFocusSection}
+            {todaysFocusSection}
 
-                    {/* Other Sections */}
-                    <div className="space-y-6">
-                        {sections.schedule.length > 0 && (
-                            <AgendaCollapsibleSection
-                                title={tFallback(t, 'focus.schedule', t('agenda.dueToday'))}
-                                icon={Clock}
-                                color="text-warning"
-                                count={sections.schedule.length}
-                                expanded={expandedSections.schedule}
-                                onToggle={() => toggleSection('schedule')}
-                                controlsId="agenda-section-schedule"
-                            >
-                                <AgendaTaskList
-                                    tasks={sections.schedule}
-                                    buildFocusToggle={buildFocusToggle}
-                                    getAppearsAtLabel={getScheduleAppearsAtLabel}
-                                    showListDetails={showListDetails}
-                                    highlightTaskId={highlightTaskId}
-                                />
-                            </AgendaCollapsibleSection>
-                        )}
-
-                        {sections.reviewDue.length > 0 && (
-                            <AgendaCollapsibleSection
-                                title={tFallback(t, 'agenda.reviewDue', 'Review Due')}
-                                icon={Clock}
-                                color="text-status-someday"
-                                count={sections.reviewDue.length}
-                                expanded={expandedSections.reviewDue}
-                                onToggle={() => toggleSection('reviewDue')}
-                                controlsId="agenda-section-reviewDue"
-                            >
-                                <AgendaTaskList
-                                    tasks={sections.reviewDue}
-                                    buildFocusToggle={buildFocusToggle}
-                                    showListDetails={showListDetails}
-                                    highlightTaskId={highlightTaskId}
-                                />
-                            </AgendaCollapsibleSection>
-                        )}
-
-                        {effectiveNextGroupBy === 'none' ? (
-                            sections.nextActions.length > 0 && (
-                                <AgendaCollapsibleSection
-                                    title={t('agenda.nextActions')}
-                                    icon={ArrowRight}
-                                    color="text-info"
-                                    count={sections.nextActions.length}
-                                    expanded={expandedSections.nextActions}
-                                    onToggle={() => toggleSection('nextActions')}
-                                    controlsId="agenda-section-nextActions"
-                                >
-                                    <AgendaTaskList
-                                        tasks={sections.nextActions}
-                                        buildFocusToggle={buildFocusToggle}
-                                        getProjectDeadlineLabel={getProjectDeadlineLabel}
-                                        showListDetails={showListDetails}
-                                        highlightTaskId={highlightTaskId}
-                                    />
-                                </AgendaCollapsibleSection>
-                            )
-                        ) : (
-                            sections.nextActions.length > 0 && (
-                                <AgendaCollapsibleSection
-                                    title={t('agenda.nextActions')}
-                                    icon={ArrowRight}
-                                    color="text-info"
-                                    count={sections.nextActions.length}
-                                    expanded={expandedSections.nextActions}
-                                    onToggle={() => toggleSection('nextActions')}
-                                    controlsId="agenda-section-nextActions"
-                                >
-                                    <div className="space-y-2">
-                                        {nextActionGroups.map((group, index) => {
-                                            const collapsed = collapsedNextActionGroupIds.has(group.id);
-                                            const controlsId = getNextActionSectionDomId(group, index);
-                                            return (
-                                                <div key={group.id} className="overflow-hidden rounded-lg border border-border/50 bg-card/40">
-                                                    <GroupedTaskSectionHeader
-                                                        group={group}
-                                                        collapsed={collapsed}
-                                                        controlsId={controlsId}
-                                                        onToggleGroup={toggleNextActionGroup}
-                                                    />
-                                                    {!collapsed && (
-                                                        <div id={controlsId} className="ml-4 border-l border-border/40 pl-3">
-                                                            <AgendaTaskList
-                                                                tasks={group.tasks}
-                                                                buildFocusToggle={buildFocusToggle}
-                                                                getProjectDeadlineLabel={getProjectDeadlineLabel}
-                                                                showListDetails={showListDetails}
-                                                                highlightTaskId={highlightTaskId}
-                                                            />
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </AgendaCollapsibleSection>
-                            )
-                        )}
-
-                        {sections.upcoming.length > 0 && (
-                            <AgendaCollapsibleSection
-                                title={tFallback(t, 'agenda.upcoming', 'Upcoming')}
-                                icon={CalendarDays}
-                                color="text-muted-foreground"
-                                count={sections.upcoming.length}
-                                expanded={expandedSections.upcoming}
-                                onToggle={() => toggleSection('upcoming')}
-                                controlsId="agenda-section-upcoming"
-                            >
-                                <AgendaTaskList
-                                    tasks={sections.upcoming}
-                                    buildFocusToggle={buildUpcomingFocusToggle}
-                                    getAppearsAtLabel={getUpcomingAppearsAtLabel}
-                                    showListDetails={showListDetails}
-                                    highlightTaskId={highlightTaskId}
-                                />
-                            </AgendaCollapsibleSection>
-                        )}
-
-                        <AgendaProjectSection
-                            title={tFallback(t, 'agenda.reviewDueProjects', 'Projects to review')}
-                            icon={Folder}
-                            onProjectPress={handleOpenReviewProject}
-                            projects={reviewDueProjects}
-                            color="text-status-reference"
-                            t={t}
+            {/* Other Sections */}
+            <div className="space-y-6">
+                {sections.schedule.length > 0 && (
+                    <AgendaCollapsibleSection
+                        title={tFallback(t, 'focus.schedule', t('agenda.dueToday'))}
+                        icon={Clock}
+                        color="text-warning"
+                        count={sections.schedule.length}
+                        expanded={expandedSections.schedule}
+                        onToggle={() => toggleSection('schedule')}
+                        controlsId="agenda-section-schedule"
+                    >
+                        <AgendaTaskList
+                            tasks={sections.schedule}
+                            buildFocusToggle={buildFocusToggle}
+                            getAppearsAtLabel={getScheduleAppearsAtLabel}
+                            showListDetails={showListDetails}
+                            highlightTaskId={highlightTaskId}
                         />
-                    </div>
-                </>
-            )}
+                    </AgendaCollapsibleSection>
+                )}
 
-            {!top3Only && !hasAgendaContent && (
+                {sections.reviewDue.length > 0 && (
+                    <AgendaCollapsibleSection
+                        title={tFallback(t, 'agenda.reviewDue', 'Review Due')}
+                        icon={Clock}
+                        color="text-status-someday"
+                        count={sections.reviewDue.length}
+                        expanded={expandedSections.reviewDue}
+                        onToggle={() => toggleSection('reviewDue')}
+                        controlsId="agenda-section-reviewDue"
+                    >
+                        <AgendaTaskList
+                            tasks={sections.reviewDue}
+                            buildFocusToggle={buildFocusToggle}
+                            showListDetails={showListDetails}
+                            highlightTaskId={highlightTaskId}
+                        />
+                    </AgendaCollapsibleSection>
+                )}
+
+                {effectiveNextGroupBy === 'none' ? (
+                    sections.nextActions.length > 0 && (
+                        <AgendaCollapsibleSection
+                            title={t('agenda.nextActions')}
+                            icon={ArrowRight}
+                            color="text-info"
+                            count={sections.nextActions.length}
+                            expanded={expandedSections.nextActions}
+                            onToggle={() => toggleSection('nextActions')}
+                            controlsId="agenda-section-nextActions"
+                        >
+                            <AgendaTaskList
+                                tasks={sections.nextActions}
+                                buildFocusToggle={buildFocusToggle}
+                                getProjectDeadlineLabel={getProjectDeadlineLabel}
+                                showListDetails={showListDetails}
+                                highlightTaskId={highlightTaskId}
+                            />
+                        </AgendaCollapsibleSection>
+                    )
+                ) : (
+                    sections.nextActions.length > 0 && (
+                        <AgendaCollapsibleSection
+                            title={t('agenda.nextActions')}
+                            icon={ArrowRight}
+                            color="text-info"
+                            count={sections.nextActions.length}
+                            expanded={expandedSections.nextActions}
+                            onToggle={() => toggleSection('nextActions')}
+                            controlsId="agenda-section-nextActions"
+                        >
+                            <div className="space-y-2">
+                                {nextActionGroups.map((group, index) => {
+                                    const collapsed = collapsedNextActionGroupIds.has(group.id);
+                                    const controlsId = getNextActionSectionDomId(group, index);
+                                    return (
+                                        <div key={group.id} className="overflow-hidden rounded-lg border border-border/50 bg-card/40">
+                                            <GroupedTaskSectionHeader
+                                                group={group}
+                                                collapsed={collapsed}
+                                                controlsId={controlsId}
+                                                onToggleGroup={toggleNextActionGroup}
+                                            />
+                                            {!collapsed && (
+                                                <div id={controlsId} className="ml-4 border-l border-border/40 pl-3">
+                                                    <AgendaTaskList
+                                                        tasks={group.tasks}
+                                                        buildFocusToggle={buildFocusToggle}
+                                                        getProjectDeadlineLabel={getProjectDeadlineLabel}
+                                                        showListDetails={showListDetails}
+                                                        highlightTaskId={highlightTaskId}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </AgendaCollapsibleSection>
+                    )
+                )}
+
+                {sections.upcoming.length > 0 && (
+                    <AgendaCollapsibleSection
+                        title={tFallback(t, 'agenda.upcoming', 'Upcoming')}
+                        icon={CalendarDays}
+                        color="text-muted-foreground"
+                        count={sections.upcoming.length}
+                        expanded={expandedSections.upcoming}
+                        onToggle={() => toggleSection('upcoming')}
+                        controlsId="agenda-section-upcoming"
+                    >
+                        <AgendaTaskList
+                            tasks={sections.upcoming}
+                            buildFocusToggle={buildUpcomingFocusToggle}
+                            getAppearsAtLabel={getUpcomingAppearsAtLabel}
+                            showListDetails={showListDetails}
+                            highlightTaskId={highlightTaskId}
+                        />
+                    </AgendaCollapsibleSection>
+                )}
+
+                <AgendaProjectSection
+                    title={tFallback(t, 'agenda.reviewDueProjects', 'Projects to review')}
+                    icon={Folder}
+                    onProjectPress={handleOpenReviewProject}
+                    projects={reviewDueProjects}
+                    color="text-status-reference"
+                    controlsId="agenda-section-reviewProjects"
+                    expanded={expandedSections.reviewProjects}
+                    onToggle={() => toggleSection('reviewProjects')}
+                    t={t}
+                />
+            </div>
+
+            {!hasAgendaContent && (
                 <div className="flex flex-col items-center gap-1 py-8 text-center text-muted-foreground">
                     <CheckCircle2 className="h-6 w-6 text-success/80" aria-hidden="true" strokeWidth={1.5} />
                     <p className="text-base font-medium text-foreground">{t('agenda.allClear')}</p>

@@ -117,7 +117,6 @@ describe('AgendaView', () => {
                 focusGroupBy: 'none', inboxGroupBy: 'none', nextGroupBy: 'none',
                 waitingGroupBy: 'none', somedayGroupBy: 'none',
                 referenceGroupBy: 'area', doneGroupBy: 'none', archivedGroupBy: 'none',
-                focusTop3Only: false,
             },
             expandedTaskIds: {},
             projectView: { selectedProjectId: null },
@@ -234,78 +233,92 @@ describe('AgendaView', () => {
         expect(sectionClassName).not.toContain('dark:to-amber');
     });
 
-    it('keeps today focus visible when Top 3 mode is enabled', () => {
-        const task = (id: string, title: string, createdAt: string): Task => ({
-            id,
-            title,
-            status: 'next',
-            tags: [],
-            contexts: [],
-            createdAt,
-            updatedAt: createdAt,
-        });
+    it('collapses populated non-focus sections while keeping Focus and every heading available', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(nowIso));
+        const focusTasks = Array.from({ length: 4 }, (_, index) => makeAgendaTask(
+            `focused-${index}`,
+            `Focused task ${index + 1}`,
+            { isFocusedToday: true },
+        ));
         const tasks = [
-            focusedTask,
-            task('top-1', 'Top task 1', '2026-02-28T09:00:00.000Z'),
-            task('top-2', 'Top task 2', '2026-02-28T10:00:00.000Z'),
-            task('top-3', 'Top task 3', '2026-02-28T11:00:00.000Z'),
-            task('top-4', 'Top task 4', '2026-02-28T12:00:00.000Z'),
+            ...focusTasks,
+            makeAgendaTask('today-task', 'Today task', { dueDate: '2026-02-28' }),
+            makeAgendaTask('review-task', 'Review task', {
+                status: 'waiting',
+                reviewAt: '2026-02-27T09:00:00.000Z',
+            }),
+            makeAgendaTask('next-task', 'Next task'),
+            makeAgendaTask('upcoming-task', 'Upcoming task', { startTime: '2026-03-03' }),
         ];
-
+        const reviewProject: Project = {
+            id: 'review-project',
+            title: 'Review project',
+            status: 'active',
+            color: '#3b82f6',
+            order: 0,
+            tagIds: [],
+            reviewAt: '2026-02-27T09:00:00.000Z',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        };
         useTaskStore.setState({
             tasks,
             _allTasks: tasks,
-            projects: [],
-            _allProjects: [],
+            projects: [reviewProject],
+            _allProjects: [reviewProject],
             areas: [],
             _allAreas: [],
             settings: {},
             error: null,
             highlightTaskId: null,
         });
-        useUiStore.setState((state) => ({
-            ...state,
-            listOptions: {
-                ...state.listOptions,
-                focusTop3Only: true,
-            },
-        }));
+        const { getByRole, getByTestId, getByText, queryByText } = renderAgenda();
 
-        const { getByTestId, getByText, queryByText } = renderAgenda();
+        fireEvent.click(getByRole('button', { name: 'Focus only' }));
 
         expect(getByTestId('todays-focus-section')).toBeInTheDocument();
-        expect(getByText('Focused task')).toBeInTheDocument();
-        expect(getByText('Top task 1')).toBeInTheDocument();
-        expect(getByText('Top task 2')).toBeInTheDocument();
-        expect(getByText('Top task 3')).toBeInTheDocument();
-        expect(queryByText('Top task 4')).not.toBeInTheDocument();
+        focusTasks.forEach((task) => expect(getByText(task.title)).toBeInTheDocument());
+        expect(getByRole('button', { name: /Today\s*\(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /Review Due\s*\(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /Next Actions\s*\(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /Upcoming\s*\(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /Projects to review\s*\(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+        expect(queryByText('Today task')).not.toBeInTheDocument();
+        expect(queryByText('Review task')).not.toBeInTheDocument();
+        expect(queryByText('Next task')).not.toBeInTheDocument();
+        expect(queryByText('Upcoming task')).not.toBeInTheDocument();
+        expect(queryByText('Review project')).not.toBeInTheDocument();
+        expect(getByRole('button', { name: 'Expand sections' })).toBeInTheDocument();
+        expect(JSON.parse(window.localStorage.getItem(focusViewStateStorageKey) ?? '{}').expandedSections)
+            .toEqual({ schedule: false, reviewDue: false, nextActions: false, upcoming: false, reviewProjects: false });
+
+        fireEvent.click(getByRole('button', { name: /Next Actions\s*\(1\)/ }));
+        expect(getByText('Next task')).toBeInTheDocument();
+        expect(getByRole('button', { name: 'Focus only' })).toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: 'Focus only' }));
+        expect(queryByText('Next task')).not.toBeInTheDocument();
     });
 
-    it('prioritizes a review-due task over ordinary Next Actions in Top 3 mode', () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date(nowIso));
-        const tasks = [
-            makeAgendaTask('next-1', 'Next task 1', { createdAt: '2026-02-28T09:00:00.000Z' }),
-            makeAgendaTask('next-2', 'Next task 2', { createdAt: '2026-02-28T10:00:00.000Z' }),
-            makeAgendaTask('next-3', 'Next task 3', { createdAt: '2026-02-28T11:00:00.000Z' }),
-            makeAgendaTask('review-due', 'Review due task', {
-                status: 'waiting',
-                reviewAt: '2026-02-27T09:00:00.000Z',
-            }),
-        ];
+    it('persists folded sections and keeps no-focus content recoverable after remount', () => {
+        const nextTask = makeAgendaTask('next-task', 'Next task');
+        setAgendaTasks([nextTask]);
 
-        setAgendaTasks(tasks);
-        useUiStore.setState((state) => ({
-            ...state,
-            listOptions: { ...state.listOptions, focusTop3Only: true },
-        }));
+        const first = renderAgenda();
+        fireEvent.click(first.getByRole('button', { name: 'Focus only' }));
 
-        const { getByText, queryByText } = renderAgenda();
+        expect(first.getByRole('button', { name: /Next Actions\s*\(1\)/ })).toBeInTheDocument();
+        expect(first.queryByText('Next task')).not.toBeInTheDocument();
+        expect(first.queryByText('All clear')).not.toBeInTheDocument();
+        first.unmount();
 
-        expect(getByText('Review due task')).toBeInTheDocument();
-        expect(getByText('Next task 1')).toBeInTheDocument();
-        expect(getByText('Next task 2')).toBeInTheDocument();
-        expect(queryByText('Next task 3')).not.toBeInTheDocument();
+        const second = renderAgenda();
+        expect(second.getByRole('button', { name: 'Expand sections' })).toBeInTheDocument();
+        expect(second.queryByText('Next task')).not.toBeInTheDocument();
+
+        fireEvent.click(second.getByRole('button', { name: 'Expand sections' }));
+        expect(second.getByText('Next task')).toBeInTheDocument();
     });
 
     it('collapses expanded task details when page details are turned off', () => {
@@ -1204,6 +1217,21 @@ describe('AgendaView', () => {
         expect(focusedTaskId()).toBe('next-task');
         fireEvent.keyDown(window, { key: 'j' });
         expect(focusedTaskId()).toBe('upcoming-task');
+    });
+
+    it('keeps folded section rows out of the keyboard task scope', () => {
+        const nextTask = makeAgendaTask('next-task', 'Next task');
+        setAgendaTasks([focusedTask, nextTask]);
+
+        const { getByRole } = renderAgendaWithKeyboard();
+        fireEvent.click(getByRole('button', { name: 'Focus only' }));
+
+        fireEvent.keyDown(window, { key: 'j' });
+        expect(document.activeElement?.closest<HTMLElement>('[data-task-id]')?.dataset.taskId)
+            .toBe('focused-task');
+        fireEvent.keyDown(window, { key: 'j' });
+        expect(document.activeElement?.closest<HTMLElement>('[data-task-id]')?.dataset.taskId)
+            .toBe('focused-task');
     });
 
     it('shows a review-due Next task only in Review Due and walks it once', () => {

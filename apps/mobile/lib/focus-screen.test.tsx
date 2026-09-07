@@ -757,6 +757,99 @@ describe('FocusScreen', () => {
     expect(() => tree.root.findByProps({ children: 'All clear' })).toThrow();
   });
 
+  it('collapses every other section, reopens Focus, and treats a manual reopen as mixed state', () => {
+    storeState.projects = [
+      makeProject('review-project', {
+        title: 'Review project',
+        reviewAt: '2026-03-30T09:00:00.000Z',
+      }),
+    ];
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    act(() => {
+      findButtonByLabel(tree, "Today's Focus").props.onPress();
+    });
+    expect(findButtonByLabel(tree, "Today's Focus").props.accessibilityState)
+      .toEqual({ expanded: false });
+
+    const collapseButton = findButtonByLabel(tree, 'Focus only');
+    expect(collapseButton.props.accessibilityState).toEqual({ disabled: false });
+    act(() => {
+      collapseButton.props.onPress();
+    });
+
+    expect(findButtonByLabel(tree, "Today's Focus").props.accessibilityState)
+      .toEqual({ expanded: true });
+    expect(findButtonByLabel(tree, 'Next Actions').props.accessibilityState)
+      .toEqual({ expanded: false });
+    expect(findButtonByLabel(tree, 'Projects to review').props.accessibilityState)
+      .toEqual({ expanded: false });
+    expect(tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id))
+      .toEqual(['focus-task']);
+    expect(() => findButtonByText(tree, 'Review project')).toThrow();
+    expect(findButtonByLabel(tree, 'Expand sections')).toBeTruthy();
+    expect(asyncStorageMock.setItem).toHaveBeenLastCalledWith(
+      'mindwtr:view:focus:v1',
+      JSON.stringify({
+        showDetails: false,
+        expandedSections: {
+          focus: true,
+          schedule: false,
+          next: false,
+          nextActions: false,
+          upcoming: false,
+          reviewDue: false,
+          reviewProjects: false,
+        },
+      }),
+    );
+
+    act(() => {
+      findButtonByLabel(tree, 'Next Actions').props.onPress();
+    });
+    expect(findButtonByLabel(tree, 'Focus only')).toBeTruthy();
+
+    act(() => {
+      findButtonByLabel(tree, 'Focus only').props.onPress();
+    });
+    expect(findButtonByLabel(tree, 'Next Actions').props.accessibilityState)
+      .toEqual({ expanded: false });
+  });
+
+  it('keeps folded sections recoverable when no task is in Today\'s Focus', () => {
+    storeState.tasks = [makeTask('plain-next', { title: 'Plain next' })];
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+    act(() => {
+      findButtonByLabel(tree, 'Focus only').props.onPress();
+    });
+
+    expect(findButtonByLabel(tree, 'Next Actions').props.accessibilityState)
+      .toEqual({ expanded: false });
+    expect(() => tree.root.findByProps({ children: 'All clear' })).toThrow();
+    expect(findButtonByLabel(tree, 'Expand sections')).toBeTruthy();
+  });
+
+  it('disables the section shortcut when there are no other sections to fold', () => {
+    storeState.tasks = [makeTask('focus-only', { isFocusedToday: true })];
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    const shortcut = findButtonByLabel(tree, 'Expand sections');
+    expect(shortcut.props.disabled).toBe(true);
+    expect(shortcut.props.accessibilityState).toEqual({ disabled: true });
+  });
+
   it('restores the persisted Next Actions collapsed state', async () => {
     const deferred = createDeferred<string | null>();
     asyncStorageMock.getItem.mockReturnValue(deferred.promise);

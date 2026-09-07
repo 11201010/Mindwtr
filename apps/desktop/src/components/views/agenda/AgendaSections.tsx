@@ -56,7 +56,10 @@ export function AgendaCollapsibleSection({
 
 type AgendaProjectSectionProps = {
     color: string;
+    controlsId: string;
+    expanded: boolean;
     icon: LucideIcon;
+    onToggle: () => void;
     onProjectPress: (projectId: string) => void;
     projects: Project[];
     t: (key: string) => string;
@@ -65,7 +68,10 @@ type AgendaProjectSectionProps = {
 
 export function AgendaProjectSection({
     color,
+    controlsId,
+    expanded,
     icon: Icon,
+    onToggle,
     onProjectPress,
     projects,
     t,
@@ -74,12 +80,15 @@ export function AgendaProjectSection({
     if (projects.length === 0) return null;
 
     return (
-        <div className="space-y-3">
-            <h3 className={cn('flex items-center gap-2 font-semibold', color)}>
-                <Icon className="h-5 w-5" />
-                {title}
-                <span className="font-normal text-muted-foreground">({projects.length})</span>
-            </h3>
+        <AgendaCollapsibleSection
+            color={color}
+            controlsId={controlsId}
+            count={projects.length}
+            expanded={expanded}
+            icon={Icon}
+            onToggle={onToggle}
+            title={title}
+        >
             <div className="space-y-2">
                 {projects.map((project) => (
                     <button
@@ -107,6 +116,6 @@ export function AgendaProjectSection({
                     </button>
                 ))}
             </div>
-        </div>
+        </AgendaCollapsibleSection>
     );
 }

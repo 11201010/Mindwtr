@@ -17,14 +17,15 @@ const renderHeader = (overrides: Partial<Parameters<typeof AgendaHeader>[0]> = {
         filtersOpen={false}
         nextActionsCount={3}
         nextGroupBy="none"
+        canToggleOtherSections
+        collapseOtherSections
         onChangeGroupBy={vi.fn()}
         onToggleDetails={vi.fn()}
         onToggleFilters={vi.fn()}
-        onToggleTop3={vi.fn()}
+        onToggleOtherSections={vi.fn()}
         resolveText={resolveText}
         showListDetails={false}
         t={t}
-        top3Only={false}
         {...overrides}
     />
 );
@@ -51,17 +52,55 @@ describe('AgendaHeader', () => {
                 filtersOpen={false}
                 nextActionsCount={3}
                 nextGroupBy="none"
+                canToggleOtherSections
+                collapseOtherSections
                 onChangeGroupBy={vi.fn()}
                 onToggleDetails={vi.fn()}
                 onToggleFilters={vi.fn()}
-                onToggleTop3={vi.fn()}
+                onToggleOtherSections={vi.fn()}
                 resolveText={resolveText}
                 showListDetails
                 t={t}
-                top3Only={false}
             />
         );
         expect(getByRole('button', { name: 'Hide details' })).not.toHaveAttribute('aria-pressed');
+    });
+
+    it('names the section shortcut by its action without claiming a pressed state', () => {
+        const { getByRole, rerender } = renderHeader();
+
+        expect(getByRole('button', { name: 'Focus only' }))
+            .not.toHaveAttribute('aria-pressed');
+
+        rerender(
+            <AgendaHeader
+                filterCount={0}
+                filtersOpen={false}
+                nextActionsCount={3}
+                nextGroupBy="none"
+                canToggleOtherSections
+                collapseOtherSections={false}
+                onChangeGroupBy={vi.fn()}
+                onToggleDetails={vi.fn()}
+                onToggleFilters={vi.fn()}
+                onToggleOtherSections={vi.fn()}
+                resolveText={resolveText}
+                showListDetails={false}
+                t={t}
+            />
+        );
+
+        expect(getByRole('button', { name: 'Expand sections' }))
+            .not.toHaveAttribute('aria-pressed');
+    });
+
+    it('disables the section shortcut when there are no sections to change', () => {
+        const { getByRole } = renderHeader({
+            canToggleOtherSections: false,
+            collapseOtherSections: false,
+        });
+
+        expect(getByRole('button', { name: 'Expand sections' })).toBeDisabled();
     });
 
     // Focus used to draw its own pill buttons and a bare select, so its controls

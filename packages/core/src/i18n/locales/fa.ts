@@ -1550,9 +1550,8 @@ export const faOverrides: Record<string, string> = {
 
         'agenda.title': 'تمرکز',
         'agenda.active': 'مورد فعال',
-        'agenda.top3Only': 'فقط ۳ مورد برتر نمایش داده شود',
-        'agenda.top3Title': '۳ مورد برتر امروز',
-        'agenda.showMore': 'نمایش {{count}} کار بیشتر...',
+        'agenda.collapseOtherSections': 'فقط تمرکز',
+        'agenda.expandOtherSections': 'باز کردن بخش‌ها',
         'agenda.zenMode': 'حالت ذن',
         'agenda.zenHidden': 'و {{count}} کار دیگر پنهان است...',
         'agenda.todaysFocus': 'تمرکز امروز',

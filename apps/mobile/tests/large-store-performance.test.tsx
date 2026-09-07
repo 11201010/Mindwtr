@@ -354,6 +354,8 @@ vi.mock('lucide-react-native', () => {
     Check: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
+    ChevronsDown: Icon,
+    ChevronsUp: Icon,
     CircleDot: Icon,
     CircleSlash: Icon,
     ClipboardCheck: Icon,

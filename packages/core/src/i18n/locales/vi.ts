@@ -1598,9 +1598,8 @@ export const viOverrides: Record<string, string> = {
         // Agenda
         'agenda.title': 'Tập trung',
         'agenda.active': 'mục đang hoạt động',
-        'agenda.top3Only': 'Chỉ hiện Top 3',
-        'agenda.top3Title': 'Top 3 hôm nay',
-        'agenda.showMore': 'Hiện thêm {{count}} nhiệm vụ...',
+        'agenda.collapseOtherSections': 'Chỉ tập trung',
+        'agenda.expandOtherSections': 'Mở rộng các phần',
         'agenda.zenMode': 'Chế độ Zen',
         'agenda.zenHidden': 'Và thêm {{count}} nhiệm vụ bị ẩn...',
         'agenda.todaysFocus': 'Tập trung hôm nay',

@@ -32,7 +32,6 @@ type ListOptions = {
     // Done list by completion date" are different questions (#959).
     archivedGroupBy: ListDoneGroupBy;
     archivedSortBy?: TaskSortBy;
-    focusTop3Only: boolean;
 };
 
 export const LIST_OPTIONS_STORAGE_KEY = 'mindwtr:list-options:v1';
@@ -53,7 +52,6 @@ const DEFAULT_LIST_OPTIONS: ListOptions = {
     referenceGroupBy: 'area',
     doneGroupBy: 'none',
     archivedGroupBy: 'none',
-    focusTop3Only: false,
 };
 
 function getPersistentStorage(): Storage | null {
@@ -97,7 +95,6 @@ function readStoredListOptions(): ListOptions {
             ...(doneSortBy ? { doneSortBy } : {}),
             archivedGroupBy: sanitizeAxis(DONE_AXES, parsed?.archivedGroupBy, DEFAULT_LIST_OPTIONS.archivedGroupBy),
             ...(archivedSortBy ? { archivedSortBy } : {}),
-            focusTop3Only: typeof parsed?.focusTop3Only === 'boolean' ? parsed.focusTop3Only : DEFAULT_LIST_OPTIONS.focusTop3Only,
         };
     } catch {
         return DEFAULT_LIST_OPTIONS;

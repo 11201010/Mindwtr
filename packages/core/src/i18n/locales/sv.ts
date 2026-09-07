@@ -1550,9 +1550,8 @@ export const svOverrides: Record<string, string> = {
 
         'agenda.title': 'Fokus',
         'agenda.active': 'aktiva poster',
-        'agenda.top3Only': 'Visa endast topp 3',
-        'agenda.top3Title': 'Dagens topp 3',
-        'agenda.showMore': 'Visa {{count}} fler uppgifter...',
+        'agenda.collapseOtherSections': 'Endast fokus',
+        'agenda.expandOtherSections': 'Fäll ut avsnitt',
         'agenda.zenMode': 'Zen-läge',
         'agenda.zenHidden': 'Och {{count}} fler uppgifter dolda...',
         'agenda.todaysFocus': 'Dagens fokus',

@@ -19,7 +19,7 @@ import {
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
-import { BookmarkPlus, Folder, GripVertical, List, SlidersHorizontal, X } from 'lucide-react-native';
+import { BookmarkPlus, ChevronsDown, ChevronsUp, Folder, GripVertical, List, SlidersHorizontal, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DraggableFlatList, {
   ScaleDecorator,
@@ -1109,6 +1109,9 @@ export default function FocusScreen() {
     () => sections.find((section) => section.totalCount > 0)?.type ?? null,
     [sections]
   );
+  const visibleOtherSections = sections.filter((section) => section.type !== 'focus' && section.totalCount > 0);
+  const canToggleOtherSections = visibleOtherSections.length > 0;
+  const collapseOtherSections = visibleOtherSections.some((section) => section.expanded);
   // Measured-height getItemLayout: without it the
   // SectionList estimates unmounted regions from a running average, and the
   // mixed row heights (group headers vs task rows) make Android's scroll
@@ -1235,6 +1238,22 @@ export default function FocusScreen() {
       return next;
     });
   }, [showDetails]);
+  const toggleOtherSections = useCallback(() => {
+    didToggleSectionRef.current = true;
+    const expanded = !collapseOtherSections;
+    setExpandedSections(() => {
+      const next = {
+        focus: true,
+        schedule: expanded,
+        next: expanded,
+        upcoming: expanded,
+        reviewDue: expanded,
+        reviewProjects: expanded,
+      };
+      AsyncStorage.setItem(FOCUS_VIEW_STATE_STORAGE_KEY, serializeFocusViewState(next, showDetails)).catch(() => {});
+      return next;
+    });
+  }, [collapseOtherSections, showDetails]);
   const toggleShowDetails = useCallback(() => {
     didToggleDetailsRef.current = true;
     setShowDetails((current) => {
@@ -1592,6 +1611,25 @@ export default function FocusScreen() {
                 </Text>
               </View>
               <View style={styles.headerActions}>
+                <Pressable
+                  accessibilityLabel={collapseOtherSections
+                    ? resolveText('agenda.collapseOtherSections', 'Focus only')
+                    : resolveText('agenda.expandOtherSections', 'Expand sections')}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canToggleOtherSections }}
+                  disabled={!canToggleOtherSections}
+                  onPress={toggleOtherSections}
+                  style={({ pressed }) => [
+                    styles.filterButton,
+                    {
+                      opacity: !canToggleOtherSections ? 0.4 : pressed ? 0.78 : 1,
+                    },
+                  ]}
+                >
+                  {collapseOtherSections
+                    ? <ChevronsUp size={20} color={tc.secondaryText} />
+                    : <ChevronsDown size={20} color={tc.secondaryText} />}
+                </Pressable>
                 <Pressable
                   accessibilityLabel={showDetails
                     ? resolveText('list.hideDetails', 'Hide details')

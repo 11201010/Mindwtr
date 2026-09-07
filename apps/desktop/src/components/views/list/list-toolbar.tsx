@@ -36,6 +36,7 @@ export { DONE_TASK_LIST_SORT_OPTIONS, TASK_LIST_SORT_OPTIONS };
 type ToolbarButtonProps = {
     active?: boolean;
     children: ReactNode;
+    disabled?: boolean;
     icon?: ReactNode;
     onClick: () => void;
     title?: string;
@@ -46,10 +47,11 @@ type ToolbarButtonProps = {
 };
 
 /** A toggle in a list toolbar: same height and radius as the selects beside it. */
-export function ToolbarButton({ active = false, children, icon, onClick, title, ...aria }: ToolbarButtonProps) {
+export function ToolbarButton({ active = false, children, disabled = false, icon, onClick, title, ...aria }: ToolbarButtonProps) {
     return (
         <button
             type="button"
+            disabled={disabled}
             onClick={onClick}
             title={title}
             {...aria}
@@ -57,6 +59,7 @@ export function ToolbarButton({ active = false, children, icon, onClick, title, 
                 TOOLBAR_CONTROL_BASE,
                 'inline-flex items-center gap-1.5 rounded-lg px-3',
                 active ? TOOLBAR_CONTROL_ACTIVE : TOOLBAR_CONTROL_MUTED,
+                'disabled:cursor-not-allowed disabled:opacity-50',
             )}
         >
             {icon}

@@ -62,7 +62,6 @@ describe('useUiStore list options', () => {
             // defaulted, not undefined.
             doneGroupBy: 'none',
             archivedGroupBy: 'none',
-            focusTop3Only: true,
         });
     });
 
@@ -81,7 +80,6 @@ describe('useUiStore list options', () => {
             doneSortBy: 'completed',
             archivedGroupBy: 'project',
             archivedSortBy: 'completed',
-            focusTop3Only: true,
         });
 
         expect(JSON.parse(window.localStorage.getItem(LIST_OPTIONS_STORAGE_KEY) || '{}')).toEqual({
@@ -96,7 +94,6 @@ describe('useUiStore list options', () => {
             doneSortBy: 'completed',
             archivedGroupBy: 'project',
             archivedSortBy: 'completed',
-            focusTop3Only: true,
         });
     });
 

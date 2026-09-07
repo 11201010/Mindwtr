@@ -1585,9 +1585,8 @@ export const jaOverrides: Record<string, string> = {
         // Agenda
         'agenda.title': 'フォーカス',
         'agenda.active': '件が進行中',
-        'agenda.top3Only': 'トップ3だけ表示',
-        'agenda.top3Title': '今日のトップ3',
-        'agenda.showMore': '他{{count}}件のタスクを表示…',
+        'agenda.collapseOtherSections': 'フォーカスのみ',
+        'agenda.expandOtherSections': 'セクションを展開',
         'agenda.zenMode': 'Zen モード',
         'agenda.zenHidden': '他に{{count}}件のタスクを隠しています…',
         'agenda.todaysFocus': '今日のフォーカス',

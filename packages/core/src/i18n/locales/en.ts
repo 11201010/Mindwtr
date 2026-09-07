@@ -1579,9 +1579,8 @@ export const en: Record<string, string> = {
         // Agenda
         'agenda.title': 'Focus',
         'agenda.active': 'active items',
-        'agenda.top3Only': 'Show Top 3 Only',
-        'agenda.top3Title': "Today's Top 3",
-        'agenda.showMore': 'Show {{count}} more tasks...',
+        'agenda.collapseOtherSections': 'Focus only',
+        'agenda.expandOtherSections': 'Expand sections',
         'agenda.zenMode': 'Zen Mode',
         'agenda.zenHidden': 'And {{count}} more tasks hidden...',
         'agenda.todaysFocus': "Today's Focus",

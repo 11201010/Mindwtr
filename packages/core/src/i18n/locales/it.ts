@@ -1221,9 +1221,8 @@ export const itOverrides: Record<string, string> = {
 
         // Agenda
         'agenda.active': 'elementi attivi',
-        'agenda.top3Only': 'Mostra solo le top 3',
-        'agenda.top3Title': 'Top 3 di oggi',
-        'agenda.showMore': 'Mostra altre {{count}} attività...',
+        'agenda.collapseOtherSections': 'Solo focus',
+        'agenda.expandOtherSections': 'Espandi sezioni',
         'agenda.zenMode': 'Modalità Zen',
         'agenda.zenHidden': 'E altre {{count}} attività nascoste...',
         'agenda.todaysFocus': 'Focus di oggi',

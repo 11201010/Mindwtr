@@ -1,4 +1,4 @@
-import { Filter, List } from 'lucide-react';
+import { ChevronsDown, ChevronsUp, Filter, List } from 'lucide-react';
 import { tFallback } from '@mindwtr/core';
 
 import { GroupBySelect } from '../list/GroupBySelect';
@@ -10,14 +10,15 @@ type AgendaHeaderProps = {
     filtersOpen: boolean;
     nextActionsCount: number;
     nextGroupBy: NextGroupBy;
+    canToggleOtherSections: boolean;
+    collapseOtherSections: boolean;
     onChangeGroupBy: (value: NextGroupBy) => void;
     onToggleFilters: () => void;
     onToggleDetails: () => void;
-    onToggleTop3: () => void;
+    onToggleOtherSections: () => void;
     resolveText: (key: string, fallback: string) => string;
     showListDetails: boolean;
     t: (key: string) => string;
-    top3Only: boolean;
 };
 
 export function AgendaHeader({
@@ -25,14 +26,15 @@ export function AgendaHeader({
     filtersOpen,
     nextActionsCount,
     nextGroupBy,
+    canToggleOtherSections,
+    collapseOtherSections,
     onChangeGroupBy,
     onToggleFilters,
     onToggleDetails,
-    onToggleTop3,
+    onToggleOtherSections,
     resolveText,
     showListDetails,
     t,
-    top3Only,
 }: AgendaHeaderProps) {
     const filtersActive = filtersOpen || filterCount > 0;
     const filtersLabel = resolveText('filters.label', 'Filters');
@@ -40,6 +42,9 @@ export function AgendaHeader({
     const detailsLabel = showListDetails
         ? tFallback(t, 'list.hideDetails', 'Hide details')
         : tFallback(t, 'list.showDetails', 'Show details');
+    const otherSectionsLabel = collapseOtherSections
+        ? tFallback(t, 'agenda.collapseOtherSections', 'Focus only')
+        : tFallback(t, 'agenda.expandOtherSections', 'Expand sections');
 
     return (
         <header className="flex flex-wrap items-start justify-between gap-3">
@@ -52,8 +57,15 @@ export function AgendaHeader({
                 </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-                <ToolbarButton active={top3Only} onClick={onToggleTop3} aria-pressed={top3Only}>
-                    {t('agenda.top3Only')}
+                <ToolbarButton
+                    onClick={onToggleOtherSections}
+                    disabled={!canToggleOtherSections}
+                    title={otherSectionsLabel}
+                    icon={collapseOtherSections
+                        ? <ChevronsUp className="h-3.5 w-3.5" aria-hidden="true" />
+                        : <ChevronsDown className="h-3.5 w-3.5" aria-hidden="true" />}
+                >
+                    {otherSectionsLabel}
                 </ToolbarButton>
                 <ToolbarButton
                     active={filtersActive}
