@@ -1801,6 +1801,17 @@ describe('cloud server api', () => {
         expect(requestId).toBeTruthy();
         return requestId!;
     };
+    const seedFocusData = async (tasks: Task[], focusTaskLimit: number): Promise<Response> => fetch(`${baseUrl}/v1/data`, {
+        method: 'PUT',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+            tasks,
+            projects: [],
+            sections: [],
+            areas: [],
+            settings: { gtd: { focusTaskLimit } },
+        } satisfies AppData),
+    });
 
     beforeEach(async () => {
         dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-test-'));
@@ -2900,6 +2911,146 @@ describe('cloud server api', () => {
         const patchJson = await patchResponse.json();
         expect(patchJson.task.status).toBe('next');
         expect(patchJson.task.isFocusedToday).toBe(true);
+    });
+
+    test('applies the shared Focus creation policy without failing refused captures', async () => {
+        const createFocused = async (title: string, props: Partial<Task>): Promise<Task> => {
+            const response = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ title, props }),
+            });
+            expect(response.status).toBe(201);
+            const created = (await response.json()).task as Task;
+            const persistedResponse = await fetch(`${baseUrl}/v1/tasks/${created.id}`, { headers: authHeaders });
+            expect(persistedResponse.status).toBe(200);
+            expect((await persistedResponse.json()).task).toEqual(created);
+            return created;
+        };
+
+        const promotedInbox = await createFocused('Focused Inbox', { isFocusedToday: true });
+        expect(promotedInbox.status).toBe('next');
+        expect(promotedInbox.isFocusedToday).toBe(true);
+
+        const deferred = await createFocused('Deferred', {
+            status: 'next',
+            startTime: '2099-01-01',
+            isFocusedToday: true,
+        });
+        expect(deferred.status).toBe('next');
+        expect(deferred.isFocusedToday).toBe(false);
+
+        for (const status of ['waiting', 'someday'] as const) {
+            const reviewDue = await createFocused(`Review due ${status}`, {
+                status,
+                reviewAt: '2020-01-01',
+                isFocusedToday: true,
+            });
+            expect(reviewDue.status).toBe(status);
+            expect(reviewDue.isFocusedToday).toBe(true);
+        }
+
+        const refusedInbox = await createFocused('Refused Inbox', { isFocusedToday: true });
+        expect(refusedInbox.status).toBe('inbox');
+        expect(refusedInbox.isFocusedToday).toBe(false);
+
+        const refusedNext = await createFocused('Refused Next', {
+            status: 'next',
+            isFocusedToday: true,
+        });
+        expect(refusedNext.status).toBe('next');
+        expect(refusedNext.isFocusedToday).toBe(false);
+    });
+
+    test('enforces a configured Focus cap only on normalized false-to-true PATCH transitions', async () => {
+        const starredId = crypto.randomUUID();
+        const plainId = crypto.randomUUID();
+        const blockedId = crypto.randomUUID();
+        expect((await seedFocusData([
+            makeTestTask({ id: starredId, title: 'Starred', status: 'next', isFocusedToday: true }),
+            makeTestTask({ id: plainId, title: 'Plain', status: 'inbox', isFocusedToday: false }),
+            makeTestTask({ id: blockedId, title: 'Blocked', status: 'next', isFocusedToday: false }),
+        ], 1)).status).toBe(200);
+
+        const editExisting = await fetch(`${baseUrl}/v1/tasks/${starredId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Starred edited' }),
+        });
+        expect(editExisting.status).toBe(200);
+        expect((await editExisting.json()).task.isFocusedToday).toBe(true);
+
+        const removeStar = await fetch(`${baseUrl}/v1/tasks/${starredId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: false }),
+        });
+        expect(removeStar.status).toBe(200);
+
+        const addStar = await fetch(`${baseUrl}/v1/tasks/${plainId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(addStar.status).toBe(200);
+        const addedTask = (await addStar.json()).task as Task;
+        expect(addedTask.status).toBe('next');
+        expect(addedTask.isFocusedToday).toBe(true);
+
+        const refused = await fetch(`${baseUrl}/v1/tasks/${blockedId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(refused.status).toBe(409);
+        expect((await refused.json()).error).toBe('Focus limit of 1 reached');
+    });
+
+    test('counts only active Focus tasks for a configured PATCH cap without adding eligibility rules', async () => {
+        const iso = '2026-01-01T00:00:00.000Z';
+        const deferredId = crypto.randomUUID();
+        const blockedId = crypto.randomUUID();
+        expect((await seedFocusData([
+            makeTestTask({ id: crypto.randomUUID(), title: 'Active one', status: 'next', isFocusedToday: true }),
+            makeTestTask({ id: crypto.randomUUID(), title: 'Active two', status: 'waiting', reviewAt: '2020-01-01', isFocusedToday: true }),
+            makeTestTask({ id: crypto.randomUUID(), title: 'Done', status: 'done', isFocusedToday: true }),
+            makeTestTask({ id: crypto.randomUUID(), title: 'Reference', status: 'reference', isFocusedToday: true }),
+            makeTestTask({ id: crypto.randomUUID(), title: 'Archived', status: 'archived', isFocusedToday: true }),
+            makeTestTask({ id: crypto.randomUUID(), title: 'Deleted', status: 'next', deletedAt: iso, isFocusedToday: true }),
+            makeTestTask({ id: deferredId, title: 'Deferred', status: 'next', startTime: '2099-01-01', isFocusedToday: false }),
+            makeTestTask({ id: blockedId, title: 'Fourth active', status: 'next', isFocusedToday: false }),
+        ], 3)).status).toBe(200);
+
+        const deferredStar = await fetch(`${baseUrl}/v1/tasks/${deferredId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(deferredStar.status).toBe(200);
+        expect((await deferredStar.json()).task.isFocusedToday).toBe(true);
+
+        const refused = await fetch(`${baseUrl}/v1/tasks/${blockedId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(refused.status).toBe(409);
+        expect((await refused.json()).error).toBe('Focus limit of 3 reached');
+    });
+
+    test('preserves a valid over-cap Focus snapshot on PUT', async () => {
+        const tasks = Array.from({ length: 4 }, (_, index) => makeTestTask({
+            id: crypto.randomUUID(),
+            title: `Focused ${index}`,
+            status: 'next',
+            isFocusedToday: true,
+        }));
+        expect((await seedFocusData(tasks, 1)).status).toBe(200);
+
+        const response = await fetch(`${baseUrl}/v1/data`, { headers: authHeaders });
+        expect(response.status).toBe(200);
+        const data = await response.json() as AppData;
+        expect(data.tasks.filter((task) => task.isFocusedToday === true)).toHaveLength(4);
     });
 
     test('filters GET /v1/tasks by isFocusedToday and rejects a non-boolean value', async () => {

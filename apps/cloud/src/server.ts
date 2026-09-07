@@ -17,10 +17,13 @@ import {
     isTaskFinished,
     mergeAppDataWithStats,
     normalizeTaskUpdate,
+    normalizeFocusTaskLimit,
     buildQuickAddParseOptions,
     parseQuickAdd,
     repairMergedSyncReferences,
     resolveCaptureStatusForStart,
+    resolveTaskFocusCreation,
+    selectFocusedCount,
     type Area,
     type AppData,
     type Project,
@@ -683,6 +686,24 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 task.order = order;
                 task.orderNum = order;
             }
+            if (task.isFocusedToday === true) {
+                const focusedCount = selectFocusedCount([...data.tasks]);
+                const focusTaskLimit = normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit);
+                const focusDecision = resolveTaskFocusCreation(task, {
+                    tasks: data.tasks,
+                    projects: data.projects,
+                    focusedCount,
+                    focusTaskLimit,
+                });
+                task.status = focusDecision.status;
+                task.isFocusedToday = focusDecision.isFocusedToday;
+                logInfo('Cloud task Focus write policy applied', {
+                    releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                    operation: 'create',
+                    outcome: focusDecision.outcome,
+                    count: focusedCount + (focusDecision.outcome === 'focused' ? 1 : 0),
+                });
+            }
             if (isTaskFinished(status) && !task.completedAt) {
                 task.completedAt = nowIso;
             }
@@ -707,6 +728,27 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             // completion/recurrence logic in applyTaskUpdates runs, so
             // REST writes obey the same rules as the desktop/mobile store.
             const normalizedUpdates = normalizeTaskUpdate(existing, updates);
+            const isAddingFocus = normalizedUpdates.isFocusedToday === true
+                && existing.isFocusedToday !== true;
+            if (isAddingFocus) {
+                const focusedCount = selectFocusedCount([...data.tasks]);
+                const focusTaskLimit = normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit);
+                if (focusedCount >= focusTaskLimit) {
+                    logInfo('Cloud task Focus write policy applied', {
+                        releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                        operation: 'patch',
+                        outcome: 'refused-limit',
+                        count: focusedCount,
+                    });
+                    return errorResponse(`Focus limit of ${focusTaskLimit} reached`, 409);
+                }
+                logInfo('Cloud task Focus write policy applied', {
+                    releaseCheck: 'v1.2.9/cloud-focus-write-parity',
+                    operation: 'patch',
+                    outcome: 'focused',
+                    count: focusedCount + 1,
+                });
+            }
             const { updatedTask, nextRecurringTask } = applyTaskUpdates(
                 existing,
                 {

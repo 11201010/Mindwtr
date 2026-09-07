@@ -1,4 +1,9 @@
-import { collectFocusEligibilityTasks, resolveFocusStarAction, type FocusStarAction } from './focus-star';
+import {
+    collectFocusEligibilityTasks,
+    resolveFocusStarAction,
+    resolveTaskFocusCreation,
+    type FocusStarAction,
+} from './focus-star';
 import type { AppData, PendingRemoteAttachmentDelete, Section, Task, TaskStatus } from './types';
 import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
@@ -27,7 +32,6 @@ import { generateUUID as uuidv4 } from './uuid';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRepeatReminderMinutes } from './schedule-utils';
 import { normalizeFocusTaskLimit } from './focus-utils';
-import { getTaskFocusEligibility } from './task-utils';
 import {
     buildTaskContainerMovePatch,
     normalizeOptionalContainerId,
@@ -450,22 +454,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
             };
 
             if (newTask.isFocusedToday === true) {
-                // Starring at capture is an explicit "this is an actionable next action I'm
-                // doing today" decision, which is incompatible with the unprocessed Inbox
-                // default. Evaluate (and, if focus sticks, commit) the task as Next so the
-                // star can take effect — focus eligibility requires status 'next'. The
-                // promotion is committed only when focus actually lands, so a refused star
-                // (cap full / ineligible) never silently reclassifies an Inbox task.
-                const promotedStatus: TaskStatus = newTask.status === 'inbox' ? 'next' : newTask.status;
-                const focusCandidate: Task = { ...newTask, status: promotedStatus, isFocusedToday: false };
-                const focusEligibility = getTaskFocusEligibility(focusCandidate, {
-                    tasks: [...nextAllTasks, focusCandidate],
+                const focusDecision = resolveTaskFocusCreation(newTask, {
+                    tasks: nextAllTasks,
                     projects: currentState._allProjects,
+                    focusedCount,
+                    focusTaskLimit,
                 });
-                if (!focusEligibility.eligible || focusedCount >= focusTaskLimit) {
-                    newTask.isFocusedToday = false;
-                } else {
-                    newTask.status = promotedStatus;
+                newTask.status = focusDecision.status;
+                newTask.isFocusedToday = focusDecision.isFocusedToday;
+                if (focusDecision.outcome === 'focused') {
                     focusedCount += 1;
                 }
             }

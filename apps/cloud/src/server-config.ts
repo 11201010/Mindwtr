@@ -40,6 +40,7 @@ export const CLOUD_LOG_MESSAGES = [
     'Capture audio retained after failed document write',
     'Capture token created',
     'Capture webhook request accepted',
+    'Cloud task Focus write policy applied',
     'Failed to clone cloud app data cache entry',
     'Failed to start server',
     'MINDWTR_CLOUD_ALLOW_ANY_TOKEN is enabled. Prefer MINDWTR_CLOUD_AUTH_TOKENS for stronger access control.',
@@ -71,6 +72,8 @@ type CloudOperationalLogContext = Partial<Record<
     | 'hint'
     | 'maxNamespaces'
     | 'method'
+    | 'operation'
+    | 'outcome'
     | 'port'
     | 'releaseCheck'
     | 'retentionReason'

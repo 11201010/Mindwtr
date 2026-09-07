@@ -1147,6 +1147,23 @@ describe('TaskStore', () => {
         expect(state._tasksById.get(unclarified.id ?? '')?.isFocusedToday).toBe(false);
     });
 
+    it('applies the focus cap sequentially within one addTasks batch', async () => {
+        const { addTasks, updateSettings } = useTaskStore.getState();
+        await updateSettings({ gtd: { focusTaskLimit: 1 } });
+
+        const result = await addTasks([
+            { title: 'First focus capture', initialProps: { isFocusedToday: true } },
+            { title: 'Second focus capture', initialProps: { isFocusedToday: true } },
+        ]);
+
+        expect(result.success).toBe(true);
+        const [firstId, secondId] = result.ids ?? [];
+        const state = useTaskStore.getState();
+        expect(state._tasksById.get(firstId)).toMatchObject({ status: 'next', isFocusedToday: true });
+        expect(state._tasksById.get(secondId)).toMatchObject({ status: 'inbox', isFocusedToday: false });
+        expect(state.getDerivedState().focusedCount).toBe(1);
+    });
+
     it('promotes a starred inbox capture to next so the star takes effect', async () => {
         const { addTask } = useTaskStore.getState();
 

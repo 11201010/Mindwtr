@@ -4,6 +4,7 @@ import {
     canStarNewCapture,
     getFocusStarBlockedText,
     resolveFocusStarAction,
+    resolveTaskFocusCreation,
     type FocusStarContext,
 } from './focus-star';
 
@@ -96,5 +97,63 @@ describe('canStarNewCapture', () => {
     it('gates only on the cap', () => {
         expect(canStarNewCapture({ focusedCount: 2, focusTaskLimit: 3 })).toBe(true);
         expect(canStarNewCapture({ focusedCount: 3, focusTaskLimit: 3 })).toBe(false);
+    });
+});
+
+describe('resolveTaskFocusCreation', () => {
+    it('promotes an eligible starred Inbox capture only when the star lands', () => {
+        const decision = resolveTaskFocusCreation(
+            makeTask({ status: 'inbox', isFocusedToday: true }),
+            baseContext(),
+        );
+
+        expect(decision).toEqual({
+            status: 'next',
+            isFocusedToday: true,
+            outcome: 'focused',
+        });
+    });
+
+    it('refuses a full-cap star without changing the requested status', () => {
+        const context = baseContext({ focusedCount: 3, focusTaskLimit: 3 });
+
+        expect(resolveTaskFocusCreation(
+            makeTask({ status: 'inbox', isFocusedToday: true }),
+            context,
+        )).toEqual({
+            status: 'inbox',
+            isFocusedToday: false,
+            outcome: 'refused-limit',
+        });
+        expect(resolveTaskFocusCreation(
+            makeTask({ status: 'next', isFocusedToday: true }),
+            context,
+        )).toEqual({
+            status: 'next',
+            isFocusedToday: false,
+            outcome: 'refused-limit',
+        });
+    });
+
+    it('refuses an ineligible star and preserves eligible review-due statuses', () => {
+        expect(resolveTaskFocusCreation(
+            makeTask({ status: 'next', isFocusedToday: true, startTime: '2099-01-01' }),
+            baseContext(),
+        )).toEqual({
+            status: 'next',
+            isFocusedToday: false,
+            outcome: 'refused-ineligible',
+        });
+
+        for (const status of ['waiting', 'someday'] as const) {
+            expect(resolveTaskFocusCreation(
+                makeTask({ status, isFocusedToday: true, reviewAt: '2020-01-01' }),
+                baseContext(),
+            )).toEqual({
+                status,
+                isFocusedToday: true,
+                outcome: 'focused',
+            });
+        }
     });
 });

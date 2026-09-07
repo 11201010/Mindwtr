@@ -36,6 +36,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'legacyWidgetCount',
     // Apple Watch capture, command and Focus/timer snapshot (#1175)
     'action', 'focusCount', 'timerPhase', 'timerRunning',
+    // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)
+    'operation',
 ];
 
 describe('release diagnostics field names', () => {

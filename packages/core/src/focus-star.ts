@@ -38,6 +38,18 @@ export type FocusStarAction = {
     patch: Pick<Task, 'isFocusedToday'>;
 };
 
+export type TaskFocusCreationOutcome =
+    | 'not-requested'
+    | 'focused'
+    | 'refused-ineligible'
+    | 'refused-limit';
+
+export type TaskFocusCreationDecision = {
+    status: Task['status'];
+    isFocusedToday: boolean;
+    outcome: TaskFocusCreationOutcome;
+};
+
 export function resolveFocusStarAction(task: Task, context: FocusStarContext): FocusStarAction {
     const isFocused = task.isFocusedToday === true;
     if (isFocused) {
@@ -72,6 +84,56 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         blockedReason,
         labelKey: 'agenda.addToFocus',
         patch: { isFocusedToday: true },
+    };
+}
+
+/**
+ * Resolve a task's initial Focus state before it is persisted. A starred Inbox
+ * capture is evaluated as Next, but that promotion is committed only when the
+ * star is accepted. This keeps a refused capture at its requested status.
+ */
+export function resolveTaskFocusCreation(
+    task: Task,
+    context: Pick<FocusStarContext, 'tasks' | 'projects' | 'focusedCount' | 'focusTaskLimit'>,
+): TaskFocusCreationDecision {
+    if (task.isFocusedToday !== true) {
+        return {
+            status: task.status,
+            isFocusedToday: false,
+            outcome: 'not-requested',
+        };
+    }
+
+    const promotedStatus: Task['status'] = task.status === 'inbox' ? 'next' : task.status;
+    const candidate: Task = {
+        ...task,
+        status: promotedStatus,
+        isFocusedToday: false,
+    };
+    const eligibility = getTaskFocusEligibility(candidate, {
+        tasks: [...context.tasks, candidate],
+        projects: context.projects,
+    });
+
+    if (!eligibility.eligible) {
+        return {
+            status: task.status,
+            isFocusedToday: false,
+            outcome: 'refused-ineligible',
+        };
+    }
+    if (context.focusedCount >= context.focusTaskLimit) {
+        return {
+            status: task.status,
+            isFocusedToday: false,
+            outcome: 'refused-limit',
+        };
+    }
+
+    return {
+        status: promotedStatus,
+        isFocusedToday: true,
+        outcome: 'focused',
     };
 }
 
