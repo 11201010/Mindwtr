@@ -216,6 +216,61 @@ describe('ingestPendingCaptures', () => {
         });
     });
 
+    it('logs Android automation capture only after the Inbox task is durably saved', async () => {
+        oneFile('automation.json', {
+            id: 'automation-1',
+            title: 'Dictated task',
+            createdAt: '2026-09-07T10:00:00.000Z',
+            source: 'android-capture-intent',
+        });
+        const addTask = addTaskMock();
+        const flushPendingSave = vi.fn(async () => undefined);
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave,
+        })).toBe(1);
+
+        expect(addTask).toHaveBeenCalledWith('Dictated task', { status: 'inbox' });
+        expect(flushPendingSave).toHaveBeenCalledOnce();
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Android automation capture ingested', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.2.9/android-capture-intent' },
+        });
+        expect(flushPendingSave.mock.invocationCallOrder[0])
+            .toBeLessThan(appLogMocks.logInfo.mock.invocationCallOrder[0]);
+    });
+
+    it('retains an Android automation capture when the durable Inbox save fails', async () => {
+        oneFile('automation.json', {
+            id: 'automation-1',
+            title: 'Keep this dictation',
+            source: 'android-capture-intent',
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave: vi.fn(async () => { throw new Error('disk full'); }),
+        })).toBe(0);
+
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+        expect(appLogMocks.logInfo).not.toHaveBeenCalled();
+    });
+
     it('completes a checked-off task through updateTask and treats done or missing tasks as a no-op that still clears the file', async () => {
         const item = (taskId: string) => JSON.stringify({ kind: 'complete', id: `c-${taskId}`, taskId, source: 'android-widget' });
         fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a.json', 'b.json', 'c.json']);

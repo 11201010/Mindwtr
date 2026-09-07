@@ -2,6 +2,14 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Captura automatizada',
+        'settings.automationCaptureDesc': 'Permite que las aplicaciones de automatización de confianza que tengan tu token pongan texto en cola en la bandeja de entrada. Las capturas aparecerán la próxima vez que abras Mindwtr.',
+        'settings.automationCaptureToken': 'Token de captura',
+        'settings.automationCaptureCopyToken': 'Copiar token',
+        'settings.automationCaptureCopied': 'Token de captura copiado.',
+        'settings.automationCaptureCopyFailed': "No se pudo copiar el token de captura.",
+        'settings.automationCaptureLoadFailed': 'No se pudo cargar la configuración de captura automatizada.',
+        'settings.automationCaptureUpdateFailed': 'No se pudo actualizar la configuración de captura automatizada.',
 'app.name': "Mindwtr",
 'app.closeStillSavingTitle': "Mindwtr todavía está guardando",
 'app.closeStillSavingBody': "Mindwtr aún no ha terminado de guardar tus cambios recientes. ¿Cerrar de todos modos? Los cambios sin guardar se perderán.",

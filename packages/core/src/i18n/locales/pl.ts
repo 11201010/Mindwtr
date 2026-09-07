@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Automatyczne przechwytywanie',
+        'settings.automationCaptureDesc': 'Zezwalaj zaufanym aplikacjom do automatyzacji używającym Twojego tokenu na dodawanie tekstu do kolejki Skrzynki odbiorczej. Przechwycone elementy pojawią się przy następnym otwarciu Mindwtr.',
+        'settings.automationCaptureToken': 'Token przechwytywania',
+        'settings.automationCaptureCopyToken': 'Kopiuj token',
+        'settings.automationCaptureCopied': 'Skopiowano token przechwytywania.',
+        'settings.automationCaptureCopyFailed': "Nie udało się skopiować tokenu przechwytywania.",
+        'settings.automationCaptureLoadFailed': 'Nie udało się wczytać ustawień automatycznego przechwytywania.',
+        'settings.automationCaptureUpdateFailed': 'Nie udało się zaktualizować ustawień automatycznego przechwytywania.',
         'taskEdit.quickAddTokenHint': 'Szybkie dodawanie: {{token}}',
         'app.name': 'Mindwtr',
         'donationPrompt.title': "Pomóż utrzymać Mindwtr jako darmowe i niezależne",

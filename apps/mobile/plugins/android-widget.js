@@ -12,6 +12,8 @@ const ACTIVITY_NAME = `${MODULE_PACKAGE}.QuickCaptureActivity`;
 const CONFIGURE_ACTIVITY_NAME = `${MODULE_PACKAGE}.WidgetConfigureActivity`;
 const TAP_ACTIVITY_NAME = `${MODULE_PACKAGE}.WidgetTapActivity`;
 const PEEK_ACTIVITY_NAME = `${MODULE_PACKAGE}.TaskPeekActivity`;
+const CAPTURE_RECEIVER_NAME = `${MODULE_PACKAGE}.CaptureIntentReceiver`;
+const CAPTURE_ACTION = 'tech.dongdongbh.mindwtr.action.CAPTURE';
 const WIDGET_UPDATE_ACTION = 'android.appwidget.action.APPWIDGET_UPDATE';
 const WIDGET_PROVIDER_META = 'android.appwidget.provider';
 const LEGACY_TASKS_RECEIVER_CLASS_SUFFIX = '.widget.TasksWidget';
@@ -176,6 +178,23 @@ const ensureListService = (application) => {
   };
 };
 
+const ensureCaptureIntentReceiver = (application) => {
+  const receivers = ensureArray(application, 'receiver');
+  let receiver = findByName(receivers, CAPTURE_RECEIVER_NAME);
+  if (!receiver) {
+    receiver = { $: {} };
+    receivers.push(receiver);
+  }
+  // Intentionally exported for explicit cross-app automation. The receiver
+  // validates the exact action, string extras, device-local token and text
+  // bounds before it queues anything.
+  receiver.$ = {
+    'android:name': CAPTURE_RECEIVER_NAME,
+    'android:exported': 'true',
+  };
+  receiver['intent-filter'] = [{ action: [{ $: { 'android:name': CAPTURE_ACTION } }] }];
+};
+
 const ensureQuickCaptureActivity = (application) => {
   const activities = ensureArray(application, 'activity');
   let activity = findByName(activities, ACTIVITY_NAME);
@@ -266,6 +285,7 @@ const ensureWidgetComponents = (androidManifest, props, androidPackage) => {
     ensureWidgetReceiver(application, kind);
   }
   if (androidPackage) ensureWidgetReceiver(application, buildLegacyTasksWidgetKind(resolved, androidPackage));
+  ensureCaptureIntentReceiver(application);
   ensureListService(application);
   ensureQuickCaptureActivity(application);
   ensureConfigureActivity(application);
@@ -333,6 +353,8 @@ module.exports = function withAndroidWidget(config, props = {}) {
 
 module.exports.__testables = {
   ACTIVITY_NAME,
+  CAPTURE_ACTION,
+  CAPTURE_RECEIVER_NAME,
   CONFIGURE_ACTIVITY_NAME,
   SERVICE_NAME,
   TAP_ACTIVITY_NAME,

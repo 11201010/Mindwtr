@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const en: Record<string, string> = {
+        'settings.automationCapture': 'Automation capture',
+        'settings.automationCaptureDesc': 'Allow trusted automation apps with your token to queue text to Inbox. Captures appear the next time Mindwtr opens.',
+        'settings.automationCaptureToken': 'Capture token',
+        'settings.automationCaptureCopyToken': 'Copy token',
+        'settings.automationCaptureCopied': 'Capture token copied.',
+        'settings.automationCaptureCopyFailed': "Couldn't copy the capture token.",
+        'settings.automationCaptureLoadFailed': "Couldn't load automation capture settings.",
+        'settings.automationCaptureUpdateFailed': "Couldn't update automation capture settings.",
         // App
         'app.name': 'Mindwtr',
         'app.closeStillSavingTitle': 'Mindwtr is still saving',

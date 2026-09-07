@@ -95,4 +95,12 @@ class PendingCaptureWriterTest {
 
     assertEquals(2000, JSONObject(written!!.readText()).getString("title").length)
   }
+
+  @Test
+  fun captureIntentRejectsOverLimitInsteadOfTruncating() {
+    val filesDir = tempFilesDir()
+
+    assertNull(PendingCaptureWriter.writeCaptureIntent(filesDir, "x".repeat(2001)))
+    assertTrue(!File(filesDir, "pending-captures").exists())
+  }
 }

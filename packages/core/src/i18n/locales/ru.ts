@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Автоматический захват',
+        'settings.automationCaptureDesc': 'Разрешить доверенным приложениям автоматизации с вашим токеном добавлять текст в очередь входящих. Добавленные данные появятся при следующем запуске Mindwtr.',
+        'settings.automationCaptureToken': 'Токен захвата',
+        'settings.automationCaptureCopyToken': 'Копировать токен',
+        'settings.automationCaptureCopied': 'Токен захвата скопирован.',
+        'settings.automationCaptureCopyFailed': "Не удалось скопировать токен сбора.",
+        'settings.automationCaptureLoadFailed': 'Не удалось загрузить настройки автоматического захвата.',
+        'settings.automationCaptureUpdateFailed': 'Не удалось обновить настройки автоматического захвата.',
         'taskEdit.quickAddTokenHint': 'Быстрое добавление: {{token}}',
         'app.name': 'Mindwtr',
         'donationPrompt.title': "Помогите Mindwtr оставаться бесплатным и независимым",

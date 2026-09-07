@@ -44,6 +44,7 @@ import {
 } from '@mindwtr/core';
 
 import { ExactAlarmNoticeRow, useExactAlarmPermission } from './exact-alarm-notice';
+import { AndroidCaptureIntentSection } from './android-capture-intent-section';
 import { SettingRow, SettingToggleRow } from './setting-row';
 import type { SettingsScreen } from './settings.constants';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
@@ -830,6 +831,7 @@ export function GtdSettingsScreen({
                             }}
                         />
                     </View>
+                    <AndroidCaptureIntentSection />
                 </ScrollView>
                 <Modal
                     visible={defaultAreaPickerVisible}

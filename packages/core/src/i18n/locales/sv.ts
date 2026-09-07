@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Automatiserad insamling',
+        'settings.automationCaptureDesc': 'Tillåt betrodda automatiseringsappar med din token att köa text till Inkorgen. Insamlat innehåll visas nästa gång Mindwtr öppnas.',
+        'settings.automationCaptureToken': 'Insamlingstoken',
+        'settings.automationCaptureCopyToken': 'Kopiera token',
+        'settings.automationCaptureCopied': 'Insamlingstoken kopierad.',
+        'settings.automationCaptureCopyFailed': "Det gick inte att kopiera insamlingstoken.",
+        'settings.automationCaptureLoadFailed': 'Det gick inte att läsa in inställningarna för automatiserad insamling.',
+        'settings.automationCaptureUpdateFailed': 'Det gick inte att uppdatera inställningarna för automatiserad insamling.',
         'app.name': 'Mindwtr',
         'app.closeStillSavingTitle': 'Mindwtr sparar fortfarande',
         'app.closeStillSavingBody': 'Mindwtr har inte sparat dina senaste ändringar än. Stäng ändå? Osparade ändringar går förlorade.',

@@ -23,7 +23,9 @@ import { deleteAsync, documentDirectory, getInfoAsync, readAsStringAsync, readDi
 // stay intact.
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const ANDROID_QUICK_CAPTURE_SOURCE = 'android-quick-capture';
+export const ANDROID_CAPTURE_INTENT_SOURCE = 'android-capture-intent';
 const ANDROID_QUICK_CAPTURE_RELEASE_CHECK = 'v1.2.9/android-quick-capture-dialog';
+const ANDROID_CAPTURE_INTENT_RELEASE_CHECK = 'v1.2.9/android-capture-intent';
 const ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK = 'v1.2.9/android-widget-checkoff';
 
 // A new task to add (the iOS Shortcut and the Android dialog; `kind` absent).
@@ -582,6 +584,11 @@ export async function ingestPendingCaptures({
             void logInfo('Quick capture dialog item ingested', {
                 scope: 'capture',
                 extra: { releaseCheck: ANDROID_QUICK_CAPTURE_RELEASE_CHECK },
+            });
+        } else if (capture.source === ANDROID_CAPTURE_INTENT_SOURCE) {
+            void logInfo('Android automation capture ingested', {
+                scope: 'capture',
+                extra: { releaseCheck: ANDROID_CAPTURE_INTENT_RELEASE_CHECK },
             });
         } else if (capture.source === 'apple-watch') {
             void logInfo('Watch capture ingested', {

@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Capture automatisée',
+        'settings.automationCaptureDesc': 'Autorisez les applications d’automatisation de confiance disposant de votre jeton à mettre du texte en attente dans la boîte de réception. Les captures apparaîtront à la prochaine ouverture de Mindwtr.',
+        'settings.automationCaptureToken': 'Jeton de capture',
+        'settings.automationCaptureCopyToken': 'Copier le jeton',
+        'settings.automationCaptureCopied': 'Jeton de capture copié.',
+        'settings.automationCaptureCopyFailed': "Impossible de copier le jeton de capture.",
+        'settings.automationCaptureLoadFailed': 'Impossible de charger les réglages de capture automatisée.',
+        'settings.automationCaptureUpdateFailed': 'Impossible de mettre à jour les réglages de capture automatisée.',
         'taskEdit.quickAddTokenHint': 'Ajout rapide : {{token}}',
         // App
         'app.name': 'Mindwtr',

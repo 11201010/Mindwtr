@@ -7,6 +7,8 @@ const plugin = require('./android-widget');
 
 const {
   ACTIVITY_NAME,
+  CAPTURE_ACTION,
+  CAPTURE_RECEIVER_NAME,
   CONFIGURE_ACTIVITY_NAME,
   SERVICE_NAME,
   TAP_ACTIVITY_NAME,
@@ -100,6 +102,9 @@ describe('android-widget', () => {
       $: { 'android:name': 'tech.dongdongbh.mindwtr.dev.widget.TasksWidget', 'android:label': 'Mindwtr Dev', 'android:exported': 'true' },
       'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
       'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/mindwtr_legacy_tasks_widget_info' } }],
+    }, {
+      $: { 'android:name': CAPTURE_RECEIVER_NAME, 'android:exported': 'true' },
+      'intent-filter': [{ action: [{ $: { 'android:name': CAPTURE_ACTION } }] }],
     }]);
     expect(application.service).toEqual([{
       $: { 'android:name': SERVICE_NAME, 'android:permission': 'android.permission.BIND_REMOTEVIEWS', 'android:exported': 'false' },

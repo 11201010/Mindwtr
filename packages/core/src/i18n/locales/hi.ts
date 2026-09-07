@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+        'settings.automationCapture': 'ऑटोमेशन कैप्चर',
+        'settings.automationCaptureDesc': 'विश्वसनीय ऑटोमेशन ऐप्स को अपने टोकन से इनबॉक्स में टेक्स्ट कतारबद्ध करने दें। कैप्चर अगली बार Mindwtr खोलने पर दिखाई देंगे।',
+        'settings.automationCaptureToken': 'कैप्चर टोकन',
+        'settings.automationCaptureCopyToken': 'टोकन कॉपी करें',
+        'settings.automationCaptureCopied': 'कैप्चर टोकन कॉपी किया गया।',
+        'settings.automationCaptureCopyFailed': "कैप्चर टोकन कॉपी नहीं हो सका।",
+        'settings.automationCaptureLoadFailed': 'ऑटोमेशन कैप्चर की सेटिंग लोड नहीं हो सकीं।',
+        'settings.automationCaptureUpdateFailed': 'ऑटोमेशन कैप्चर की सेटिंग अपडेट नहीं हो सकीं।',
         'taskEdit.quickAddTokenHint': 'त्वरित जोड़: {{token}}',
         'app.name': 'Mindwtr',
         'donationPrompt.title': "Mindwtr को मुक्त और स्वतंत्र बनाए रखें",

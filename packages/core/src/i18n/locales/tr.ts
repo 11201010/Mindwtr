@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Otomatik yakalama',
+        'settings.automationCaptureDesc': "Tokeninizi kullanan güvenilir otomasyon uygulamalarının Gelen Kutusu'na metin eklemesine izin verin. Yakalanan içerikler Mindwtr bir sonraki açılışında görünür.",
+        'settings.automationCaptureToken': 'Yakalama tokeni',
+        'settings.automationCaptureCopyToken': 'Tokeni kopyala',
+        'settings.automationCaptureCopied': 'Yakalama tokeni kopyalandı.',
+        'settings.automationCaptureCopyFailed': "Yakalama belirteci kopyalanamadı.",
+        'settings.automationCaptureLoadFailed': 'Otomatik yakalama ayarları yüklenemedi.',
+        'settings.automationCaptureUpdateFailed': 'Otomatik yakalama ayarları güncellenemedi.',
         'taskEdit.quickAddTokenHint': 'Hızlı ekleme: {{token}}',
         'app.name': 'Mindwtr',
         'donationPrompt.title': "Mindwtr ücretsiz ve bağımsız kalsın",

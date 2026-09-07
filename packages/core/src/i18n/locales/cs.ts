@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Automatizované zachytávání',
+        'settings.automationCaptureDesc': 'Umožněte důvěryhodným automatizačním aplikacím s vaším tokenem zařazovat text do schránky. Zachycené položky se zobrazí při příštím otevření Mindwtr.',
+        'settings.automationCaptureToken': 'Token pro zachytávání',
+        'settings.automationCaptureCopyToken': 'Kopírovat token',
+        'settings.automationCaptureCopied': 'Token pro zachytávání zkopírován.',
+        'settings.automationCaptureCopyFailed': "Token zachycení se nepodařilo zkopírovat.",
+        'settings.automationCaptureLoadFailed': 'Nastavení automatizovaného zachytávání se nepodařilo načíst.',
+        'settings.automationCaptureUpdateFailed': 'Nastavení automatizovaného zachytávání se nepodařilo aktualizovat.',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': 'Přeskočit na obsah',
         'accessibility.mainContent': 'Hlavní obsah',

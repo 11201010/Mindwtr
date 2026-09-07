@@ -20,6 +20,7 @@ import org.json.JSONObject
 object PendingCaptureWriter {
   const val DIRECTORY = "pending-captures"
   const val SOURCE = "android-quick-capture"
+  const val CAPTURE_INTENT_SOURCE = "android-capture-intent"
   const val CHECKOFF_SOURCE = "android-widget"
   const val MAX_TITLE_LENGTH = 2000
 
@@ -29,12 +30,30 @@ object PendingCaptureWriter {
     val title = rawTitle.trim().take(MAX_TITLE_LENGTH).trim()
     if (title.isEmpty()) return null
 
+    return writeCapture(filesDir, title, SOURCE, now)
+  }
+
+  /**
+   * Queues an automation capture without truncating it. Losing the end of a
+   * dictated note is worse than rejecting an invalid request, so callers get
+   * null for blank or over-limit text.
+   */
+  @Throws(IOException::class)
+  fun writeCaptureIntent(filesDir: File, rawTitle: String, now: Date = Date()): File? {
+    if (rawTitle.length > MAX_TITLE_LENGTH) return null
+    val title = rawTitle.trim()
+    if (title.isEmpty()) return null
+
+    return writeCapture(filesDir, title, CAPTURE_INTENT_SOURCE, now)
+  }
+
+  private fun writeCapture(filesDir: File, title: String, source: String, now: Date): File {
     val id = UUID.randomUUID().toString()
     val json = JSONObject()
       .put("id", id)
       .put("title", title)
       .put("createdAt", isoTimestamp(now))
-      .put("source", SOURCE)
+      .put("source", source)
       .toString()
     return publish(filesDir, id, json)
   }

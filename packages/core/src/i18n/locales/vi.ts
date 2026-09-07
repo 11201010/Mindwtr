@@ -1,4 +1,12 @@
 export const viOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Thu thập tự động',
+        'settings.automationCaptureDesc': 'Cho phép các ứng dụng tự động hóa đáng tin cậy dùng token của bạn để đưa văn bản vào hàng đợi Hộp thư đến. Nội dung đã thu thập sẽ xuất hiện vào lần tiếp theo bạn mở Mindwtr.',
+        'settings.automationCaptureToken': 'Token thu thập',
+        'settings.automationCaptureCopyToken': 'Sao chép token',
+        'settings.automationCaptureCopied': 'Đã sao chép token thu thập.',
+        'settings.automationCaptureCopyFailed': "Không thể sao chép mã thu thập.",
+        'settings.automationCaptureLoadFailed': 'Không thể tải cài đặt thu thập tự động.',
+        'settings.automationCaptureUpdateFailed': 'Không thể cập nhật cài đặt thu thập tự động.',
         'timeline.omittedItems': 'Thêm {{count}} mục',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': 'Bỏ qua đến nội dung',

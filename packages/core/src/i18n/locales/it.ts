@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const itOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Acquisizione automatizzata',
+        'settings.automationCaptureDesc': 'Consenti alle app di automazione attendibili che dispongono del tuo token di accodare testo nella Posta in arrivo. Le acquisizioni appariranno alla prossima apertura di Mindwtr.',
+        'settings.automationCaptureToken': 'Token di acquisizione',
+        'settings.automationCaptureCopyToken': 'Copia token',
+        'settings.automationCaptureCopied': 'Token di acquisizione copiato.',
+        'settings.automationCaptureCopyFailed': "Impossibile copiare il token di acquisizione.",
+        'settings.automationCaptureLoadFailed': 'Impossibile caricare le impostazioni di acquisizione automatizzata.',
+        'settings.automationCaptureUpdateFailed': 'Impossibile aggiornare le impostazioni di acquisizione automatizzata.',
         'taskEdit.quickAddTokenHint': 'Aggiunta rapida: {{token}}',
         // App
         'app.name': 'Mindwtr',

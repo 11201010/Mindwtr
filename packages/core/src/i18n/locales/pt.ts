@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Captura automatizada',
+        'settings.automationCaptureDesc': 'Permita que apps de automação confiáveis com seu token coloquem texto na fila da Caixa de entrada. As capturas aparecerão na próxima vez que o Mindwtr for aberto.',
+        'settings.automationCaptureToken': 'Token de captura',
+        'settings.automationCaptureCopyToken': 'Copiar token',
+        'settings.automationCaptureCopied': 'Token de captura copiado.',
+        'settings.automationCaptureCopyFailed': "Não foi possível copiar o token de captura.",
+        'settings.automationCaptureLoadFailed': 'Não foi possível carregar as configurações de captura automatizada.',
+        'settings.automationCaptureUpdateFailed': 'Não foi possível atualizar as configurações de captura automatizada.',
         'taskEdit.quickAddTokenHint': 'Adição rápida: {{token}}',
         // App
         'app.name': 'Mindwtr',

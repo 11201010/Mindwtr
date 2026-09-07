@@ -10,6 +10,14 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
+        'settings.automationCapture': '自動化キャプチャ',
+        'settings.automationCaptureDesc': '信頼できる自動化アプリが、トークンを使ってテキストを受信トレイへの取り込み待ちに追加できるようにします。取り込まれた内容は、次に Mindwtr を開いたときに表示されます。',
+        'settings.automationCaptureToken': 'キャプチャトークン',
+        'settings.automationCaptureCopyToken': 'トークンをコピー',
+        'settings.automationCaptureCopied': 'キャプチャトークンをコピーしました。',
+        'settings.automationCaptureCopyFailed': "キャプチャトークンをコピーできませんでした。",
+        'settings.automationCaptureLoadFailed': '自動化キャプチャの設定を読み込めませんでした。',
+        'settings.automationCaptureUpdateFailed': '自動化キャプチャの設定を更新できませんでした。',
         // App
         'app.name': 'Mindwtr',
         'app.closeStillSavingTitle': 'Mindwtr は保存中です',

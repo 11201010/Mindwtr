@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHant: Record<string, string> = {
+        'settings.automationCapture': '自動化擷取',
+        'settings.automationCaptureDesc': '允許受信任的自動化 App 使用你的權杖，將文字加入收件匣佇列。擷取的內容會在下次開啟 Mindwtr 時顯示。',
+        'settings.automationCaptureToken': '擷取權杖',
+        'settings.automationCaptureCopyToken': '複製權杖',
+        'settings.automationCaptureCopied': '已複製擷取權杖。',
+        'settings.automationCaptureCopyFailed': "無法複製收集權杖。",
+        'settings.automationCaptureLoadFailed': '無法載入自動化擷取設定。',
+        'settings.automationCaptureUpdateFailed': '無法更新自動化擷取設定。',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': '跳轉到內容',
         'accessibility.mainContent': '主要內容',

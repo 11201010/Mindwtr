@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+        'settings.automationCapture': 'ثبت خودکار',
+        'settings.automationCaptureDesc': 'به برنامه‌های خودکارسازی مورداعتماد اجازه دهید با توکن شما متن را برای صندوق ورودی در صف قرار دهند. موارد ثبت‌شده دفعه بعد که Mindwtr باز شود نمایش داده می‌شوند.',
+        'settings.automationCaptureToken': 'توکن ثبت',
+        'settings.automationCaptureCopyToken': 'کپی توکن',
+        'settings.automationCaptureCopied': 'توکن ثبت کپی شد.',
+        'settings.automationCaptureCopyFailed': "کپی توکن ثبت ممکن نشد.",
+        'settings.automationCaptureLoadFailed': 'تنظیمات ثبت خودکار بارگیری نشد.',
+        'settings.automationCaptureUpdateFailed': 'تنظیمات ثبت خودکار به‌روزرسانی نشد.',
         'app.name': 'Mindwtr',
         'app.closeStillSavingTitle': 'Mindwtr در حال ذخیره‌سازی است',
         'app.closeStillSavingBody': 'Mindwtr هنوز تغییرات اخیر شما را ذخیره نکرده است. با این حال بسته شود؟ تغییرات ذخیره‌نشده از بین می‌روند.',

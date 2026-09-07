@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+        'settings.automationCapture': '자동화 캡처',
+        'settings.automationCaptureDesc': '신뢰할 수 있는 자동화 앱이 토큰으로 텍스트를 받은 편지함 대기열에 추가하도록 허용합니다. 캡처한 내용은 다음에 Mindwtr를 열 때 표시됩니다.',
+        'settings.automationCaptureToken': '캡처 토큰',
+        'settings.automationCaptureCopyToken': '토큰 복사',
+        'settings.automationCaptureCopied': '캡처 토큰을 복사했습니다.',
+        'settings.automationCaptureCopyFailed': "수집 토큰을 복사하지 못했습니다.",
+        'settings.automationCaptureLoadFailed': '자동화 캡처 설정을 불러오지 못했습니다.',
+        'settings.automationCaptureUpdateFailed': '자동화 캡처 설정을 업데이트하지 못했습니다.',
         'timeline.omittedItems': '{{count}}개 더 보기',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': '본문으로 건너뛰기',

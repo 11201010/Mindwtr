@@ -19,5 +19,17 @@ class AndroidWidgetModule : Module() {
     Function("getWidgetListSelections") {
       appContext.reactContext?.let { WidgetListStore.selections(it) } ?: emptyList<String>()
     }
+
+    AsyncFunction("getCaptureIntentConfig") {
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("Capture intent is unavailable without an Android application context")
+      CaptureIntentConfigStore.read(context).toBridgeValue()
+    }
+
+    AsyncFunction("setCaptureIntentEnabled") { enabled: Boolean ->
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("Capture intent is unavailable without an Android application context")
+      CaptureIntentConfigStore.setEnabled(context, enabled).toBridgeValue()
+    }
   }
 }

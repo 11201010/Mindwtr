@@ -159,6 +159,10 @@ vi.mock('./settings.shell', () => ({
   MenuItem: (props: any) => React.createElement('MenuItem', props, props.children),
 }));
 
+vi.mock('./android-capture-intent-section', () => ({
+  AndroidCaptureIntentSection: () => React.createElement('AndroidCaptureIntentSection'),
+}));
+
 vi.mock('@/components/task-edit/task-edit-modal.utils', () => ({
   buildTaskEditorPresetConfig: () => ({ order: ['status', 'project'], hidden: [], sections: {}, sectionOpen: {} }),
   resolveTaskEditorPresetId: () => 'custom',

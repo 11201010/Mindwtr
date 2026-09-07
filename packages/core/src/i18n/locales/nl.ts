@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+        'settings.automationCapture': 'Geautomatiseerd vastleggen',
+        'settings.automationCaptureDesc': 'Sta vertrouwde automatiseringsapps met je token toe om tekst klaar te zetten voor Postvak IN. Vastgelegde items verschijnen wanneer Mindwtr de volgende keer wordt geopend.',
+        'settings.automationCaptureToken': 'Vastlegtoken',
+        'settings.automationCaptureCopyToken': 'Token kopiëren',
+        'settings.automationCaptureCopied': 'Vastlegtoken gekopieerd.',
+        'settings.automationCaptureCopyFailed': "Het vastleggingstoken kon niet worden gekopieerd.",
+        'settings.automationCaptureLoadFailed': 'Kon de instellingen voor geautomatiseerd vastleggen niet laden.',
+        'settings.automationCaptureUpdateFailed': 'Kon de instellingen voor geautomatiseerd vastleggen niet bijwerken.',
         'taskEdit.quickAddTokenHint': 'Snel toevoegen: {{token}}',
         'taskEdit.noChecklistItems': 'Geen items in de checklist',
         'app.name': 'Mindwtr',

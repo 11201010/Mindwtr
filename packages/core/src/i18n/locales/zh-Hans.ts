@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHans: Record<string, string> = {
+        'settings.automationCapture': '自动化采集',
+        'settings.automationCaptureDesc': '允许可信的自动化应用使用你的令牌，将文本加入收件箱队列。采集的内容会在下次打开 Mindwtr 时显示。',
+        'settings.automationCaptureToken': '采集令牌',
+        'settings.automationCaptureCopyToken': '复制令牌',
+        'settings.automationCaptureCopied': '已复制采集令牌。',
+        'settings.automationCaptureCopyFailed': "无法复制收集令牌。",
+        'settings.automationCaptureLoadFailed': '无法加载自动化采集设置。',
+        'settings.automationCaptureUpdateFailed': '无法更新自动化采集设置。',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': '跳转到内容',
         'accessibility.mainContent': '主要内容',

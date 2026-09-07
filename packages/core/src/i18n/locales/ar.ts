@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+        'settings.automationCapture': 'الالتقاط عبر الأتمتة',
+        'settings.automationCaptureDesc': 'اسمح لتطبيقات الأتمتة الموثوقة التي تستخدم رمزك بإضافة نص إلى قائمة الوارد. ستظهر العناصر الملتقطة عند فتح Mindwtr في المرة التالية.',
+        'settings.automationCaptureToken': 'رمز الالتقاط',
+        'settings.automationCaptureCopyToken': 'نسخ الرمز',
+        'settings.automationCaptureCopied': 'تم نسخ رمز الالتقاط.',
+        'settings.automationCaptureCopyFailed': "تعذّر نسخ رمز الالتقاط.",
+        'settings.automationCaptureLoadFailed': 'تعذر تحميل إعدادات الالتقاط عبر الأتمتة.',
+        'settings.automationCaptureUpdateFailed': 'تعذر تحديث إعدادات الالتقاط عبر الأتمتة.',
         'taskEdit.quickAddTokenHint': 'إضافة سريعة: {{token}}',
         'app.name': 'Mindwtr',
         'donationPrompt.title': "أبقِ Mindwtr مجانيًا ومستقلًا",
