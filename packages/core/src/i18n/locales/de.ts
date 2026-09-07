@@ -604,7 +604,7 @@ export const deOverrides: Record<string, string> = {
         'dailyReview.openGuide': 'Tägliche Revision',
         'dailyReview.title': 'Tägliche Revision',
         'dailyReview.introTitle': 'Tägliche Zurücksetzung',
-        'dailyReview.introDesc': 'Eine kurze Überprüfung, um auf dem Laufenden zu bleiben.', 
+        'dailyReview.introDesc': 'Eine kurze Überprüfung, um auf dem Laufenden zu bleiben.',
         'dailyReview.todayStep': 'Heute und Kalender',
         'dailyReview.todayDesc': 'Überprüfen, was heute ansteht und welche Verpflichtungen im Kalender stehen.',
         'dailyReview.focusStep': 'Heutiger Fokus',
