@@ -43,6 +43,10 @@ const promptTestControlsEnabled = process.env.PROMPT_TEST_CONTROLS_ENABLED === '
 // store app (both are literal strings in Swift and entitlements); a dev build
 // hits CloudKit's Development environment anyway, only widget payloads collide.
 const isDevVariant = (process.env.APP_VARIANT ?? '').trim() === 'development';
+// RC workflows and development/preview profiles opt in. Stable is off by default.
+const watchEnabledValue = (process.env.MINDWTR_WATCH_ENABLED ?? '').trim().toLowerCase();
+const watchEnabled = watchEnabledValue === '1' || watchEnabledValue === 'true'
+  || (!watchEnabledValue && isDevVariant);
 const DEV_VARIANT_ID_SUFFIX = '.dev';
 const DEV_VARIANT_NAME_SUFFIX = ' Dev';
 
@@ -75,10 +79,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     dropboxAppKey,
     donationPromptEnabled,
     promptTestControlsEnabled,
+    watchEnabled,
   };
 
   return withDevVariant({
     ...base,
     extra,
+    ios: {
+      ...base.ios,
+      infoPlist: { ...base.ios?.infoPlist, MindwtrWatchEnabled: watchEnabled },
+    },
+    plugins: [
+      ...(base.plugins ?? []).filter((entry) => (Array.isArray(entry) ? entry[0] : entry) !== './plugins/ios-watch'),
+      ['./plugins/ios-watch', { enabled: watchEnabled }],
+    ],
   });
 };

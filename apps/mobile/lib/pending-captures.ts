@@ -28,7 +28,7 @@ const ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK = 'v1.2.9/android-widget-checkoff';
 
 // A new task to add (the iOS Shortcut and the Android dialog; `kind` absent).
 export type PendingCapture = {
-    kind?: 'capture';
+    kind?: 'capture' | 'text';
     id: string;
     title: string;
     note?: string;
@@ -47,11 +47,38 @@ export type PendingCompletion = {
     kind: 'complete';
     id: string;
     taskId: string;
+    createdAt?: string;
     completedAt?: string;
     source?: string;
 };
 
-export type PendingQueueItem = PendingCapture | PendingCompletion;
+export type PendingAudioCapture = {
+    kind: 'audio';
+    id: string;
+    audioPath: string;
+    createdAt?: string;
+    source?: string;
+};
+
+export type PendingDefer = {
+    kind: 'defer';
+    id: string;
+    taskId: string;
+    startDate: string;
+    createdAt?: string;
+    source?: string;
+};
+
+export type PendingPomodoro = {
+    kind: 'pomodoro';
+    id: string;
+    action: 'start' | 'pause' | 'reset';
+    taskId?: string;
+    createdAt?: string;
+    source?: string;
+};
+
+export type PendingQueueItem = PendingCapture | PendingCompletion | PendingAudioCapture | PendingDefer | PendingPomodoro;
 
 const trimOrUndefined = (value: unknown): string | undefined => {
     if (typeof value !== 'string') return undefined;
@@ -92,27 +119,51 @@ export function parsePendingCapture(raw: string): PendingQueueItem | null {
     const record = parsed as Record<string, unknown>;
     const id = trimOrUndefined(record.id);
     if (!id) return null;
+    const createdAt = trimOrUndefined(record.createdAt);
+    const source = trimOrUndefined(record.source);
     if (record.kind === 'complete') {
         const taskId = trimOrUndefined(record.taskId);
         if (!taskId) return null;
         const completedAt = trimOrUndefined(record.completedAt);
-        const source = trimOrUndefined(record.source);
-        return { kind: 'complete', id, taskId, ...(completedAt ? { completedAt } : {}), ...(source ? { source } : {}) };
+        return {
+            kind: 'complete',
+            id,
+            taskId,
+            ...(createdAt ? { createdAt } : {}),
+            ...(completedAt ? { completedAt } : {}),
+            ...(source ? { source } : {}),
+        };
     }
-    if (record.kind !== undefined && record.kind !== 'capture') return null;
+    if (record.kind === 'audio') {
+        const audioPath = trimOrUndefined(record.audioPath);
+        if (!audioPath) return null;
+        return { kind: 'audio', id, audioPath, ...(createdAt ? { createdAt } : {}), ...(source ? { source } : {}) };
+    }
+    if (record.kind === 'defer') {
+        const taskId = trimOrUndefined(record.taskId);
+        const startDate = trimOrUndefined(record.startDate);
+        if (!taskId || !startDate || !isValidDateOnly(startDate)) return null;
+        return { kind: 'defer', id, taskId, startDate, ...(createdAt ? { createdAt } : {}), ...(source ? { source } : {}) };
+    }
+    if (record.kind === 'pomodoro') {
+        const taskId = trimOrUndefined(record.taskId);
+        const action = record.action;
+        if (action !== 'start' && action !== 'pause' && action !== 'reset') return null;
+        return { kind: 'pomodoro', id, action, ...(taskId ? { taskId } : {}), ...(createdAt ? { createdAt } : {}), ...(source ? { source } : {}) };
+    }
+    if (record.kind !== undefined && record.kind !== 'capture' && record.kind !== 'text') return null;
     const title = trimOrUndefined(record.title);
     if (!title) return null;
 
     const note = trimOrUndefined(record.note);
     const project = trimOrUndefined(record.project);
-    const createdAt = trimOrUndefined(record.createdAt);
     const tagsRaw = trimOrUndefined(record.tags);
     const tags = tagsRaw ? tagsRaw.split(',').map((tag) => tag.trim()).filter(Boolean) : [];
     const dueDate = sanitizeStructuredDateInput(record.dueDate);
     const startDate = sanitizeStructuredDateInput(record.startDate);
-    const source = trimOrUndefined(record.source);
 
     return {
+        ...(record.kind === 'capture' || record.kind === 'text' ? { kind: record.kind } : {}),
         id,
         title,
         ...(note ? { note } : {}),
@@ -168,7 +219,52 @@ type IngestDeps = {
     tasks: Task[];
     people: Person[];
     settings: AppData['settings'];
+    /** Fresh state for each queued command; one drain may mutate the same task twice. */
+    getTasks?: () => Task[];
+    flushPendingSave?: () => Promise<void>;
+    transcribeAudio?: (audioPath: string, settings: AppData['settings']) => Promise<string | null>;
+    applyPomodoroCommand?: (command: PendingPomodoro) => Promise<'applied' | 'already-applied' | 'stale'>;
 };
+
+const WATCH_CAPTURE_RELEASE_CHECK = 'v1.2.9/watch-capture';
+const WATCH_COMMAND_RELEASE_CHECK = 'v1.2.9/watch-command';
+
+function isValidDateOnly(value: string): boolean {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(year, month - 1, day);
+    return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+}
+
+export function resolveSafeWatchAudioPath(audioPath: string, id: string): string | null {
+    if (!documentDirectory || !/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i.test(id)) return null;
+    try {
+        const candidate = new URL(audioPath);
+        if (
+            candidate.protocol !== 'file:'
+            || candidate.host !== ''
+            || candidate.search !== ''
+            || candidate.hash !== ''
+        ) return null;
+        const segments = decodeURIComponent(candidate.pathname).split('/').filter(Boolean);
+        if (
+            segments.at(-3) !== 'Documents'
+            || segments.at(-2) !== 'watch-audio'
+            || segments.at(-1) !== `${id}.wav`
+        ) return null;
+        const currentDocuments = documentDirectory.endsWith('/') ? documentDirectory : `${documentDirectory}/`;
+        return new URL(`watch-audio/${id}.wav`, currentDocuments).href;
+    } catch {
+        return null;
+    }
+}
+
+export function isSafeWatchAudioPath(audioPath: string, id: string): boolean {
+    return resolveSafeWatchAudioPath(audioPath, id) !== null;
+}
 
 const isFailedResult = (result: unknown): boolean => (
     typeof result === 'object' && result !== null && (result as { success?: unknown }).success === false
@@ -242,22 +338,57 @@ async function assembleCaptureTask(
 // file still goes away. The success line is the phase-2 release check.
 async function applyPendingCompletion(
     completion: PendingCompletion,
-    { updateTask, tasks }: Pick<IngestDeps, 'updateTask' | 'tasks'>,
-): Promise<boolean> {
-    const task = tasks.find((candidate) => candidate.id === completion.taskId);
-    const outcome = !task || task.deletedAt ? 'missing' : task.status === 'done' ? 'already-done' : 'completed';
+    { updateTask, tasks, getTasks }: Pick<IngestDeps, 'updateTask' | 'tasks' | 'getTasks'>,
+): Promise<'completed' | 'already-done' | 'terminal' | 'missing' | null> {
+    const task = (getTasks?.() ?? tasks).find((candidate) => candidate.id === completion.taskId);
+    const watchTerminal = completion.source === 'apple-watch' && task?.status === 'archived';
+    const outcome = !task || task.deletedAt
+        ? 'missing'
+        : task.status === 'done'
+            ? 'already-done'
+            : watchTerminal
+                ? 'terminal'
+                : 'completed';
     if (outcome === 'completed') {
         const result = await updateTask(completion.taskId, { status: 'done' });
-        if (isFailedResult(result)) return false;
+        if (isFailedResult(result)) return null;
     }
-    void logInfo('Widget check-off ingested', {
-        scope: 'capture',
-        extra: { releaseCheck: ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK, outcome },
-    });
-    return true;
+    return outcome;
 }
 
-export async function ingestPendingCaptures({ addTask, updateTask, addProject, projects, areas, tasks, people, settings }: IngestDeps): Promise<number> {
+async function applyPendingDefer(
+    pending: PendingDefer,
+    { updateTask, tasks, getTasks }: Pick<IngestDeps, 'updateTask' | 'tasks' | 'getTasks'>,
+): Promise<'deferred' | 'already-deferred' | 'terminal' | 'missing' | null> {
+    const task = (getTasks?.() ?? tasks).find((candidate) => candidate.id === pending.taskId);
+    const outcome = !task || task.deletedAt
+        ? 'missing'
+        : task.status === 'done' || task.status === 'archived'
+            ? 'terminal'
+            : task.startTime === pending.startDate
+                ? 'already-deferred'
+                : 'deferred';
+    if (outcome === 'deferred') {
+        const result = await updateTask(pending.taskId, { startTime: pending.startDate });
+        if (isFailedResult(result)) return null;
+    }
+    return outcome;
+}
+
+export async function ingestPendingCaptures({
+    addTask,
+    updateTask,
+    addProject,
+    projects,
+    areas,
+    tasks,
+    people,
+    settings,
+    getTasks,
+    flushPendingSave,
+    transcribeAudio,
+    applyPomodoroCommand,
+}: IngestDeps): Promise<number> {
     if (!documentDirectory) return 0;
     const dir = `${documentDirectory}${PENDING_CAPTURES_DIRECTORY}`;
 
@@ -271,17 +402,37 @@ export async function ingestPendingCaptures({ addTask, updateTask, addProject, p
         return 0;
     }
 
-    let ingested = 0;
+    const entries: { capture: PendingQueueItem | null; fileUri: string; name: string }[] = [];
     for (const name of names.filter((entry) => entry.endsWith('.json')).sort()) {
         const fileUri = `${dir}/${name}`;
-        let capture: PendingQueueItem | null = null;
         try {
-            capture = parsePendingCapture(await readAsStringAsync(fileUri));
+            entries.push({ capture: parsePendingCapture(await readAsStringAsync(fileUri)), fileUri, name });
         } catch (error) {
             void logError(error, { scope: 'shortcuts', extra: { message: 'Failed to read pending capture', name } });
-            continue;
         }
+    }
 
+    const isWatchCommand = (capture: PendingQueueItem | null) => (
+        capture?.kind === 'defer'
+        || capture?.kind === 'pomodoro'
+        || (capture?.kind === 'complete' && capture.source === 'apple-watch')
+    );
+    const watchCommands = entries
+        .filter((entry) => isWatchCommand(entry.capture))
+        .sort((left, right) => {
+            const leftMs = left.capture?.createdAt ? Date.parse(left.capture.createdAt) : Number.POSITIVE_INFINITY;
+            const rightMs = right.capture?.createdAt ? Date.parse(right.capture.createdAt) : Number.POSITIVE_INFINITY;
+            const normalizedLeftMs = Number.isFinite(leftMs) ? leftMs : Number.POSITIVE_INFINITY;
+            const normalizedRightMs = Number.isFinite(rightMs) ? rightMs : Number.POSITIVE_INFINITY;
+            return normalizedLeftMs - normalizedRightMs || left.name.localeCompare(right.name);
+        });
+    let nextWatchCommand = 0;
+    const orderedEntries = entries.map((entry) => (
+        isWatchCommand(entry.capture) ? watchCommands[nextWatchCommand++] : entry
+    ));
+
+    let ingested = 0;
+    for (const { capture, fileUri, name } of orderedEntries) {
         if (!capture) {
             // Only our own Swift intent writes here, so an unparsable file is
             // corruption, not a transient failure — retrying forever would
@@ -292,9 +443,116 @@ export async function ingestPendingCaptures({ addTask, updateTask, addProject, p
         }
 
         if (capture.kind === 'complete') {
-            if (!(await applyPendingCompletion(capture, { updateTask, tasks }))) continue;
-            await deleteAsync(fileUri, { idempotent: true }).catch(() => undefined);
+            const outcome = await applyPendingCompletion(capture, { updateTask, tasks, getTasks });
+            if (!outcome) continue;
+            try {
+                await flushPendingSave?.();
+                await deleteAsync(fileUri, { idempotent: true });
+            } catch {
+                continue;
+            }
             ingested += 1;
+            const isWatch = capture.source === 'apple-watch';
+            void logInfo(isWatch ? 'Watch command ingested' : 'Widget check-off ingested', {
+                scope: 'capture',
+                extra: {
+                    releaseCheck: isWatch ? WATCH_COMMAND_RELEASE_CHECK : ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK,
+                    ...(isWatch ? { kind: 'complete' } : {}),
+                    outcome,
+                },
+            });
+            continue;
+        }
+
+        if (capture.kind === 'defer') {
+            const outcome = await applyPendingDefer(capture, { updateTask, tasks, getTasks });
+            if (!outcome) continue;
+            try {
+                await flushPendingSave?.();
+                await deleteAsync(fileUri, { idempotent: true });
+            } catch {
+                continue;
+            }
+            ingested += 1;
+            void logInfo('Watch command ingested', {
+                scope: 'capture',
+                extra: { releaseCheck: WATCH_COMMAND_RELEASE_CHECK, kind: 'defer', outcome },
+            });
+            continue;
+        }
+
+        if (capture.kind === 'pomodoro') {
+            if (!applyPomodoroCommand) continue;
+            const outcome = await applyPomodoroCommand(capture).catch(() => null);
+            if (!outcome) continue;
+            try {
+                await deleteAsync(fileUri, { idempotent: true });
+            } catch {
+                continue;
+            }
+            ingested += 1;
+            void logInfo('Watch command ingested', {
+                scope: 'capture',
+                extra: { releaseCheck: WATCH_COMMAND_RELEASE_CHECK, kind: 'pomodoro', action: capture.action, outcome },
+            });
+            continue;
+        }
+
+        if (capture.kind === 'audio') {
+            const resolvedAudioPath = resolveSafeWatchAudioPath(capture.audioPath, capture.id);
+            if (!resolvedAudioPath) {
+                void logWarn('Discarding Watch audio capture with invalid path', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'invalid-path' },
+                });
+                await deleteAsync(fileUri, { idempotent: true }).catch(() => undefined);
+                continue;
+            }
+            if (!transcribeAudio) continue;
+            let transcript: string | null = null;
+            try {
+                transcript = await transcribeAudio(resolvedAudioPath, settings);
+            } catch {
+                void logWarn('Watch audio capture retained for retry', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-failed' },
+                });
+                continue;
+            }
+            if (!transcript) {
+                void logWarn('Watch audio capture retained for retry', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-unavailable' },
+                });
+                continue;
+            }
+            const textCapture: PendingCapture = {
+                kind: 'text',
+                id: capture.id,
+                title: transcript,
+                tags: [],
+                createdAt: capture.createdAt,
+                source: capture.source,
+            };
+            const assembled = await assembleCaptureTask(textCapture, { addProject, projects, areas, tasks: getTasks?.() ?? tasks, people, settings });
+            const result = assembled
+                ? await addTask(assembled.title, assembled.props)
+                : await addTask(textCapture.title, buildPendingCaptureTaskProps(textCapture, projects));
+            if (isFailedResult(result)) continue;
+            try {
+                await flushPendingSave?.();
+                await deleteAsync(fileUri, { idempotent: true });
+            } catch {
+                continue;
+            }
+            // The queue must be gone before its WAV: otherwise a failed queue
+            // delete can replay an item whose audio was already removed.
+            await deleteAsync(resolvedAudioPath, { idempotent: true }).catch(() => undefined);
+            ingested += 1;
+            void logInfo('Watch capture ingested', {
+                scope: 'capture',
+                extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'created' },
+            });
             continue;
         }
 
@@ -306,12 +564,22 @@ export async function ingestPendingCaptures({ addTask, updateTask, addProject, p
 
         // Delete only after the store write resolved; a crash in between at
         // worst re-ingests one capture.
-        await deleteAsync(fileUri, { idempotent: true }).catch(() => undefined);
+        try {
+            await flushPendingSave?.();
+            await deleteAsync(fileUri, { idempotent: true });
+        } catch {
+            continue;
+        }
         ingested += 1;
         if (capture.source === ANDROID_QUICK_CAPTURE_SOURCE) {
             void logInfo('Quick capture dialog item ingested', {
                 scope: 'capture',
                 extra: { releaseCheck: ANDROID_QUICK_CAPTURE_RELEASE_CHECK },
+            });
+        } else if (capture.source === 'apple-watch') {
+            void logInfo('Watch capture ingested', {
+                scope: 'capture',
+                extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'text', outcome: 'created' },
             });
         }
     }

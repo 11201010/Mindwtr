@@ -22,6 +22,8 @@ export interface StoredPomodoroSession {
   selectedTaskId?: string;
   phaseEndsAt?: string;
   sessionHistory?: Partial<PomodoroSessionHistory>;
+  /** Device-local mutation clock used to reject delayed Watch timer commands. */
+  updatedAtMs?: number;
 }
 
 export interface ResolvedPomodoroSession {

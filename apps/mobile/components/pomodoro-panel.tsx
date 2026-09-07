@@ -1,21 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   type Task,
-  addTimeSpentMinutes,
-  createPomodoroState,
-  DEFAULT_POMODORO_DURATIONS,
   formatPomodoroClock,
   getPomodoroFocusSessionsCompletedToday,
   getPomodoroPresetOptions,
   type PomodoroAutoStartOptions,
-  type PomodoroDurations,
-  type PomodoroEvent,
-  type PomodoroSessionHistory,
-  resetPomodoroState,
-  sanitizePomodoroSessionHistory,
   tFallback,
   useTaskStore,
 } from '@mindwtr/core';
@@ -23,19 +15,9 @@ import {
 import { useLanguage } from '../contexts/language-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
-import {
-  cancelMobilePomodoroCompletionNotification,
-  scheduleMobilePomodoroCompletionNotification,
-} from '../lib/notification-service';
 import { logWarn } from '../lib/app-log';
-import {
-  POMODORO_COLLAPSED_STORAGE_KEY,
-  POMODORO_SESSION_STORAGE_KEY,
-  pausePomodoroSession,
-  resolvePomodoroSession,
-  serializePomodoroSession,
-  startPomodoroSession,
-} from '../lib/pomodoro-session';
+import { POMODORO_COLLAPSED_STORAGE_KEY } from '../lib/pomodoro-session';
+import { mobilePomodoroController, useMobilePomodoroControllerState } from '../lib/pomodoro-controller';
 
 export function PomodoroPanel({
   tasks,
@@ -47,7 +29,6 @@ export function PomodoroPanel({
   const { t } = useLanguage();
   const tc = useThemeColors();
   const filledButton = useFilledButtonColors();
-  const completionAlertEnabled = useTaskStore((state) => state.settings.gtd?.pomodoro?.completionAlert !== false);
   const customDurations = useTaskStore((state) => state.settings.gtd?.pomodoro?.customDurations);
   const linkTaskEnabled = useTaskStore((state) => state.settings.gtd?.pomodoro?.linkTask === true);
   const liveTasks = useTaskStore((state) => state.tasks);
@@ -57,82 +38,19 @@ export function PomodoroPanel({
     () => ({ autoStartBreaks, autoStartFocus }),
     [autoStartBreaks, autoStartFocus]
   );
-  const autoStartOptionsRef = useRef<PomodoroAutoStartOptions>(autoStartOptions);
-  const [durations, setDurations] = useState<PomodoroDurations>(DEFAULT_POMODORO_DURATIONS);
-  const [timerState, setTimerState] = useState(() => createPomodoroState(DEFAULT_POMODORO_DURATIONS));
-  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
+  const pomodoro = useMobilePomodoroControllerState();
+  const { durations, timerState, selectedTaskId, lastEvent, sessionHistory } = pomodoro;
   // Presentation only, and deliberately device-local: a phone folding the card
   // away should not fold it away on the desktop too, so this lives in
   // AsyncStorage rather than synced settings (#946, matching desktop's #875).
   // Starts expanded so an update never hides a timer someone was already using.
   const [collapsed, setCollapsed] = useState(false);
-  const [phaseEndsAt, setPhaseEndsAt] = useState<string | undefined>(undefined);
-  const [lastEvent, setLastEvent] = useState<PomodoroEvent | null>(null);
-  const [sessionHistory, setSessionHistory] = useState<PomodoroSessionHistory>(() => sanitizePomodoroSessionHistory());
-  const [isHydratingSession, setIsHydratingSession] = useState(true);
+  const isHydratingSession = pomodoro.isHydrating;
   const [isTaskPickerOpen, setIsTaskPickerOpen] = useState(false);
-  const hasHydratedRef = useRef(false);
-  const persistedRemainingSeconds = timerState.isRunning && phaseEndsAt
-    ? createPomodoroState(durations, timerState.phase, timerState.completedFocusSessions).remainingSeconds
-    : timerState.remainingSeconds;
-
-  const applyResolvedSession = (
-    session: ReturnType<typeof resolvePomodoroSession>,
-    options?: { emitEvent?: boolean },
-  ) => {
-    setDurations((prev) => (
-      prev.focusMinutes === session.durations.focusMinutes && prev.breakMinutes === session.durations.breakMinutes
-        ? prev
-        : session.durations
-    ));
-    setTimerState((prev) => (
-      prev.phase === session.timerState.phase
-        && prev.remainingSeconds === session.timerState.remainingSeconds
-        && prev.isRunning === session.timerState.isRunning
-        && prev.completedFocusSessions === session.timerState.completedFocusSessions
-        ? prev
-        : session.timerState
-    ));
-    setSelectedTaskId((prev) => (prev === session.selectedTaskId ? prev : session.selectedTaskId));
-    setPhaseEndsAt((prev) => (prev === session.phaseEndsAt ? prev : session.phaseEndsAt));
-    setSessionHistory((prev) => (
-      prev.totalCompletedFocusSessions === session.sessionHistory.totalCompletedFocusSessions
-        && Object.keys(prev.completedFocusSessionsByTaskId).length === Object.keys(session.sessionHistory.completedFocusSessionsByTaskId).length
-        && Object.entries(prev.completedFocusSessionsByTaskId).every(([taskId, count]) => (
-          session.sessionHistory.completedFocusSessionsByTaskId[taskId] === count
-        ))
-        ? prev
-        : session.sessionHistory
-    ));
-    if (options?.emitEvent !== false) {
-      setLastEvent(session.lastEvent);
-    }
-  };
 
   useEffect(() => {
-    autoStartOptionsRef.current = autoStartOptions;
+    void mobilePomodoroController.ensureHydrated(autoStartOptions);
   }, [autoStartOptions]);
-
-  // Completed focus sessions add their focus minutes to the linked task's
-  // synced time-spent total. Every history change funnels through
-  // setSessionHistory, so this one diff covers ticks, controls, and hydration.
-  const previousHistoryRef = useRef<PomodoroSessionHistory | null>(null);
-  useEffect(() => {
-    const prev = previousHistoryRef.current;
-    previousHistoryRef.current = sessionHistory;
-    if (!prev || prev === sessionHistory) return;
-    const { tasks: storeTasks, updateTask } = useTaskStore.getState();
-    for (const [taskId, count] of Object.entries(sessionHistory.completedFocusSessionsByTaskId)) {
-      const delta = count - (prev.completedFocusSessionsByTaskId[taskId] ?? 0);
-      if (delta <= 0) continue;
-      const target = storeTasks.find((candidate) => candidate.id === taskId);
-      if (!target) continue;
-      const nextTotal = addTimeSpentMinutes(target.timeSpentMinutes, delta * durations.focusMinutes);
-      if (nextTotal !== undefined && nextTotal !== target.timeSpentMinutes) {
-        void updateTask(taskId, { timeSpentMinutes: nextTotal });
-      }
-    }
-  }, [durations.focusMinutes, sessionHistory]);
 
   useEffect(() => {
     if (!linkTaskEnabled) {
@@ -141,87 +59,8 @@ export function PomodoroPanel({
     }
     if (!selectedTaskId) return;
     if (liveTasks.some((task) => task.id === selectedTaskId)) return;
-    setSelectedTaskId(undefined);
+    mobilePomodoroController.setSelectedTaskId(undefined);
   }, [linkTaskEnabled, liveTasks, selectedTaskId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const hydrate = async () => {
-      try {
-        const raw = await AsyncStorage.getItem(POMODORO_SESSION_STORAGE_KEY);
-        if (!raw || cancelled) return;
-        const parsed = JSON.parse(raw) as ReturnType<typeof serializePomodoroSession>;
-        if (cancelled) return;
-        // Prime the credit diff with the raw stored counts so a focus session
-        // that completed while the app was closed still credits its minutes,
-        // without re-crediting sessions recorded on earlier runs.
-        previousHistoryRef.current = sanitizePomodoroSessionHistory(parsed.sessionHistory);
-        applyResolvedSession(resolvePomodoroSession(parsed, Date.now(), autoStartOptionsRef.current), { emitEvent: false });
-      } catch (error) {
-        void logWarn('Failed to restore pomodoro session', {
-          scope: 'pomodoro',
-          extra: { error: error instanceof Error ? error.message : String(error) },
-        });
-      } finally {
-        if (!cancelled) {
-          hasHydratedRef.current = true;
-          setIsHydratingSession(false);
-        }
-      }
-    };
-
-    void hydrate();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!hasHydratedRef.current) return;
-    const payload = serializePomodoroSession({
-      durations,
-      timerState: {
-        phase: timerState.phase,
-        isRunning: timerState.isRunning,
-        completedFocusSessions: timerState.completedFocusSessions,
-        remainingSeconds: persistedRemainingSeconds,
-      },
-      selectedTaskId,
-      phaseEndsAt,
-      lastEvent: null,
-      sessionHistory,
-    });
-    void AsyncStorage.setItem(POMODORO_SESSION_STORAGE_KEY, JSON.stringify(payload)).catch((error) => {
-      void logWarn('Failed to persist pomodoro session', {
-        scope: 'pomodoro',
-        extra: { error: error instanceof Error ? error.message : String(error) },
-      });
-    });
-  }, [
-    durations,
-    phaseEndsAt,
-    selectedTaskId,
-    sessionHistory,
-    timerState.completedFocusSessions,
-    timerState.isRunning,
-    timerState.phase,
-    persistedRemainingSeconds,
-  ]);
-
-  useEffect(() => {
-    if (!timerState.isRunning || !phaseEndsAt) return;
-    const interval = setInterval(() => {
-      applyResolvedSession(resolvePomodoroSession({
-        durations,
-        timerState,
-        selectedTaskId,
-        phaseEndsAt,
-        sessionHistory,
-      }, Date.now(), autoStartOptions));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [autoStartOptions, durations, phaseEndsAt, selectedTaskId, sessionHistory, timerState]);
 
   const selectedTask = useMemo(
     () => (linkTaskEnabled && selectedTaskId ? liveTasks.find((task) => task.id === selectedTaskId) : undefined),
@@ -251,50 +90,8 @@ export function PomodoroPanel({
   const taskDoneShortLabel = tFallback(t, 'pomodoro.taskDoneShort', 'Task done');
   const runningLabel = tFallback(t, 'pomodoro.running', 'Running');
   const pausedLabel = tFallback(t, 'pomodoro.paused', 'Paused');
-  const timerIsRunning = timerState.isRunning;
-  const timerPhase = timerState.phase;
-
-  useEffect(() => {
-    // Deliberately not gated on the Task reminders setting: that switch governs
-    // date-driven reminders, it is off on every fresh install, and gating on it
-    // meant the completion alert of a timer the user had just started silently
-    // never fired (#528). The opt-out lives with the feature instead, in
-    // Pomodoro settings, and defaults on; the OS notification permission is
-    // still the outer gate.
-    //
-    // Before the stored session hydrates, the default state reads as "not
-    // running" — cancelling then would kill the pending completion alarm of a
-    // timer that is in fact still running (#888). Wait for the real state.
-    if (isHydratingSession) return;
-    if (!completionAlertEnabled || !timerIsRunning || !phaseEndsAt) {
-      void cancelMobilePomodoroCompletionNotification(
-        !completionAlertEnabled ? 'completion-alert-off' : !timerIsRunning ? 'timer-not-running' : 'no-phase-end',
-      );
-      return;
-    }
-    const fireAt = new Date(phaseEndsAt);
-    const message = timerPhase === 'focus' ? focusDoneLabel : breakDoneLabel;
-    void scheduleMobilePomodoroCompletionNotification(cardTitle, message, fireAt, {
-      phase: timerPhase === 'focus' ? 'focus-complete' : 'break-complete',
-    });
-  }, [breakDoneLabel, cardTitle, completionAlertEnabled, focusDoneLabel, isHydratingSession, phaseEndsAt, timerIsRunning, timerPhase]);
-
   const handleApplyPreset = (focusMinutes: number, breakMinutes: number) => {
-    const nextDurations = { focusMinutes, breakMinutes };
-    const session = resolvePomodoroSession({
-      durations,
-      timerState,
-      selectedTaskId,
-      phaseEndsAt,
-      sessionHistory,
-    }, Date.now(), autoStartOptions);
-    applyResolvedSession({
-      ...session,
-      durations: nextDurations,
-      timerState: resetPomodoroState(session.timerState, nextDurations, session.timerState.phase),
-      phaseEndsAt: undefined,
-      lastEvent: null,
-    });
+    mobilePomodoroController.setDurations({ focusMinutes, breakMinutes }, autoStartOptions);
   };
 
   useEffect(() => {
@@ -320,63 +117,21 @@ export function PomodoroPanel({
   };
 
   const handleToggleRun = () => {
-    const session = resolvePomodoroSession({
-      durations,
-      timerState,
-      selectedTaskId,
-      phaseEndsAt,
-      sessionHistory,
-    }, Date.now(), autoStartOptions);
-    if (session.lastEvent) {
-      applyResolvedSession(session);
-      return;
-    }
-    const next = session.timerState.isRunning
-      ? pausePomodoroSession(session, Date.now(), autoStartOptions)
-      : startPomodoroSession(session, Date.now(), autoStartOptions);
-    applyResolvedSession(next);
+    mobilePomodoroController.toggle(autoStartOptions);
   };
 
   const handleReset = () => {
-    const session = resolvePomodoroSession({
-      durations,
-      timerState,
-      selectedTaskId,
-      phaseEndsAt,
-      sessionHistory,
-    }, Date.now(), autoStartOptions);
-    applyResolvedSession({
-      ...session,
-      timerState: resetPomodoroState(session.timerState, session.durations, session.timerState.phase),
-      phaseEndsAt: undefined,
-      lastEvent: null,
-    });
+    mobilePomodoroController.reset(autoStartOptions);
   };
 
   const handleSwitchPhase = () => {
-    const session = resolvePomodoroSession({
-      durations,
-      timerState,
-      selectedTaskId,
-      phaseEndsAt,
-      sessionHistory,
-    }, Date.now(), autoStartOptions);
-    applyResolvedSession({
-      ...session,
-      timerState: resetPomodoroState(
-        session.timerState,
-        session.durations,
-        session.timerState.phase === 'focus' ? 'break' : 'focus',
-      ),
-      phaseEndsAt: undefined,
-      lastEvent: null,
-    });
+    mobilePomodoroController.switchPhase(autoStartOptions);
   };
 
   const handleMarkDone = () => {
     if (!selectedTask) return;
     onMarkDone(selectedTask.id);
-    setLastEvent(null);
+    mobilePomodoroController.clearLastEvent();
   };
 
   const collapseLabel = tFallback(t, 'pomodoro.collapse', 'Collapse timer');
@@ -574,7 +329,7 @@ export function PomodoroPanel({
                 accessibilityRole="button"
                 accessibilityState={{ selected: !selectedTaskId }}
                 onPress={() => {
-                  setSelectedTaskId(undefined);
+                  mobilePomodoroController.setSelectedTaskId(undefined);
                   setIsTaskPickerOpen(false);
                 }}
                 style={[
@@ -598,7 +353,7 @@ export function PomodoroPanel({
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
                       onPress={() => {
-                        setSelectedTaskId(task.id);
+                        mobilePomodoroController.setSelectedTaskId(task.id);
                         setIsTaskPickerOpen(false);
                       }}
                       style={[

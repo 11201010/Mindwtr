@@ -100,6 +100,11 @@ jobs:
       DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
       FEEDBACK_ENDPOINT_URL: ${{ vars.FEEDBACK_ENDPOINT_URL || vars.VITE_FEEDBACK_ENDPOINT_URL || 'https://feedback.mindwtr.app' }}
       DONATION_PROMPT_ENABLED: "true"
+      # TestFlight beta only until Watch support graduates to stable.
+      MINDWTR_WATCH_ENABLED: ${{ contains(inputs.tag || github.ref_name, '-rc.') && 'true' || 'false' }}
+      EXPECTED_WATCH_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp
+      EXPECTED_WATCH_WIDGET_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp.widgets
+      EXPECTED_WATCH_APP_GROUP: group.tech.dongdongbh.mindwtr.watch
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -181,6 +186,8 @@ jobs:
           IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
           IOS_WIDGET_PROVISIONING_PROFILE: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE }}
           IOS_SHARE_EXTENSION_PROVISIONING_PROFILE: ${{ secrets.IOS_SHARE_EXTENSION_PROVISIONING_PROFILE }}
+          IOS_WATCH_PROVISIONING_PROFILE: ${{ secrets.IOS_WATCH_PROVISIONING_PROFILE }}
+          IOS_WATCH_WIDGET_PROVISIONING_PROFILE: ${{ secrets.IOS_WATCH_WIDGET_PROVISIONING_PROFILE }}
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
           IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
@@ -202,6 +209,14 @@ jobs:
               missing=1
             fi
           done
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            for profile in IOS_WATCH_PROVISIONING_PROFILE IOS_WATCH_WIDGET_PROVISIONING_PROFILE; do
+              if [ -z "${!profile:-}" ]; then
+                echo "::error::Watch beta requires $profile."
+                missing=1
+              fi
+            done
+          fi
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -478,13 +493,16 @@ jobs:
           echo "SHARE_EXTENSION_PROFILE_UUID=$SHARE_EXTENSION_PROFILE_UUID" >> "$GITHUB_ENV"
           echo "SHARE_EXTENSION_PROFILE_NAME=$SHARE_EXTENSION_PROFILE_NAME" >> "$GITHUB_ENV"
 
-      - name: Generate iOS native project if missing
-        run: |
-          set -euo pipefail
-          if [ ! -d apps/mobile/ios ]; then
-            cd apps/mobile
-            npx expo prebuild --platform ios --non-interactive --no-install
-          fi
+      - name: Install Watch beta provisioning profiles
+        if: env.MINDWTR_WATCH_ENABLED == 'true'
+        env:
+          IOS_WATCH_PROVISIONING_PROFILE: ${{ secrets.IOS_WATCH_PROVISIONING_PROFILE }}
+          IOS_WATCH_WIDGET_PROVISIONING_PROFILE: ${{ secrets.IOS_WATCH_WIDGET_PROVISIONING_PROFILE }}
+        run: bash scripts/ci/install-watch-profiles.sh
+
+      - name: Generate iOS native project for release channel
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --non-interactive --no-install
 
       - name: Cache CocoaPods dependencies
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
@@ -581,6 +599,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_WIDGET_BUNDLE_ID string $WIDGET_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_SHARE_EXTENSION_BUNDLE_ID string $SHARE_EXTENSION_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
 
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_WATCH_BUNDLE_ID string $WATCH_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
+            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$EXPECTED_WATCH_WIDGET_BUNDLE_ID string $WATCH_WIDGET_PROFILE_NAME" "$EXPORT_OPTIONS_PATH"
+          fi
+
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH" >> "$GITHUB_ENV"
 
       - name: Apply CI signing settings to Xcode project
@@ -606,6 +629,18 @@ jobs:
               profile_uuid: ENV.fetch('SHARE_EXTENSION_PROFILE_UUID')
             }
           }
+          if ENV['MINDWTR_WATCH_ENABLED'] == 'true'
+            targets['MindwtrWatch'] = {
+              bundle: ENV.fetch('EXPECTED_WATCH_BUNDLE_ID'),
+              profile_name: ENV.fetch('WATCH_PROFILE_NAME'),
+              profile_uuid: ENV.fetch('WATCH_PROFILE_UUID')
+            }
+            targets['MindwtrWatchWidgets'] = {
+              bundle: ENV.fetch('EXPECTED_WATCH_WIDGET_BUNDLE_ID'),
+              profile_name: ENV.fetch('WATCH_WIDGET_PROFILE_NAME'),
+              profile_uuid: ENV.fetch('WATCH_WIDGET_PROFILE_UUID')
+            }
+          end
           team_id = ENV.fetch('EXPECTED_TEAM_ID')
           signing_identity = ENV.fetch('IOS_SIGNING_IDENTITY')
 
@@ -635,6 +670,11 @@ jobs:
               end
             end
             i += 1
+          end
+
+          missing_targets = targets.keys - config_to_target.values.uniq
+          unless missing_targets.empty?
+            abort("Missing signing configuration for targets: #{missing_targets.join(', ')}")
           end
 
           if config_to_target.empty?
@@ -682,6 +722,8 @@ jobs:
                     block = lines[(bs_start + 1)...bs_end]
                     indent = block.find { |line| line.match?(/\S/) }&.match(/^\s*/)&.to_s || "\t\t\t\t\t"
                     updates = {
+                      'MARKETING_VERSION' => ENV.fetch('APP_VERSION'),
+                      'CURRENT_PROJECT_VERSION' => ENV.fetch('APP_BUILD_NUMBER'),
                       'CODE_SIGN_STYLE' => 'Manual',
                       'DEVELOPMENT_TEAM' => team_id,
                       'CODE_SIGN_IDENTITY' => "\"#{signing_identity}\"",
@@ -735,7 +777,6 @@ jobs:
             -workspace "apps/mobile/ios/Mindwtr.xcworkspace" \
             -scheme "Mindwtr" \
             -configuration "Release" \
-            -sdk "iphoneos" \
             -destination "generic/platform=iOS" \
             -archivePath "$ARCHIVE_PATH" \
             DEVELOPMENT_TEAM="$EXPECTED_TEAM_ID" \
@@ -863,6 +904,15 @@ jobs:
           if [ -z "${APP_PATH:-}" ]; then
             echo "::error::Unable to locate .app payload inside IPA."
             exit 1
+          fi
+
+          python3 scripts/ci/validate-watch-bundle.py "$APP_PATH" "$MINDWTR_WATCH_ENABLED"
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            for watch_bundle in "$APP_PATH/Watch/MindwtrWatch.app" "$APP_PATH/Watch/MindwtrWatch.app/PlugIns/MindwtrWatchWidgets.appex"; do
+              codesign --verify --strict "$watch_bundle"
+              codesign -d --entitlements :- "$watch_bundle" > "$RUNNER_TEMP/watch-entitlements.plist" 2>/dev/null
+              /usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$RUNNER_TEMP/watch-entitlements.plist" | grep -Fxq "    $EXPECTED_WATCH_APP_GROUP"
+            done
           fi
 
           WIDGET_PATH="$APP_PATH/PlugIns/MindwtrWidgets.appex"
@@ -1195,6 +1245,11 @@ jobs:
           fi
           if [ -z "${WHAT_TO_TEST}" ]; then
             WHAT_TO_TEST="$DEFAULT_WHAT_TO_TEST"
+          fi
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            WHAT_TO_TEST="Apple Watch support is available in the TestFlight beta. On a paired iPhone and Apple Watch, try dictation and audio capture, capture while disconnected then reconnect, complete or defer a Focus task, and check the linked Pomodoro timer. Open Mindwtr on the iPhone to process queued captures.
+
+          $WHAT_TO_TEST"
           fi
           export TESTFLIGHT_WHAT_TO_TEST="$WHAT_TO_TEST"
           echo "Using TestFlight What to Test: ${TESTFLIGHT_WHAT_TO_TEST}"

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { PomodoroPanel } from './pomodoro-panel';
+import { mobilePomodoroController } from '../lib/pomodoro-controller';
 
 const { storeState } = vi.hoisted(() => ({
   storeState: {
@@ -109,6 +110,7 @@ const renderPanel = async () => {
 
 describe('PomodoroPanel', () => {
   beforeEach(() => {
+    mobilePomodoroController.resetForTests();
     storeState.settings = {
       notificationsEnabled: false,
       gtd: {
@@ -155,109 +157,6 @@ describe('PomodoroPanel', () => {
         },
       },
     });
-  });
-
-  it('never cancels the completion alarm before the stored session hydrates', async () => {
-    const { cancelMobilePomodoroCompletionNotification, scheduleMobilePomodoroCompletionNotification } =
-      await import('../lib/notification-service');
-    vi.mocked(cancelMobilePomodoroCompletionNotification).mockClear();
-    vi.mocked(scheduleMobilePomodoroCompletionNotification).mockClear();
-    storeState.settings = { notificationsEnabled: true, gtd: { pomodoro: {} } };
-
-    let releaseHydration!: (value: string) => void;
-    vi.mocked(AsyncStorage.getItem).mockImplementationOnce(
-      () => new Promise<string | null>((resolve) => {
-        releaseHydration = resolve;
-      })
-    );
-
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<PomodoroPanel tasks={[]} onMarkDone={vi.fn()} />);
-    });
-
-    // A running timer's alarm must survive the pre-hydration render, where the
-    // default state still reads as "not running" (#888).
-    expect(cancelMobilePomodoroCompletionNotification).not.toHaveBeenCalled();
-
-    const phaseEndsAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    await act(async () => {
-      releaseHydration(JSON.stringify({
-        durations: { focusMinutes: 25, breakMinutes: 5 },
-        timerState: {
-          phase: 'focus',
-          remainingSeconds: 600,
-          isRunning: true,
-          completedFocusSessions: 0,
-        },
-        phaseEndsAt,
-        sessionHistory: {
-          totalCompletedFocusSessions: 0,
-          completedFocusSessionsByTaskId: {},
-        },
-      }));
-    });
-
-    expect(cancelMobilePomodoroCompletionNotification).not.toHaveBeenCalled();
-    expect(scheduleMobilePomodoroCompletionNotification).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      new Date(phaseEndsAt),
-      { phase: 'focus-complete' },
-    );
-
-    tree.unmount();
-  });
-
-  it('schedules the completion alarm while task reminders are off', async () => {
-    // Task reminders are off on every fresh install, and the completion alert
-    // used to be gated on them, so a timer the user started never alerted (#528).
-    const { scheduleMobilePomodoroCompletionNotification } = await import('../lib/notification-service');
-    vi.mocked(scheduleMobilePomodoroCompletionNotification).mockClear();
-    storeState.settings = { notificationsEnabled: false, gtd: { pomodoro: {} } };
-
-    const phaseEndsAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    mockStorage({
-      '@mindwtr_pomodoro_state': JSON.stringify({
-        durations: { focusMinutes: 25, breakMinutes: 5 },
-        timerState: { phase: 'focus', remainingSeconds: 600, isRunning: true, completedFocusSessions: 0 },
-        phaseEndsAt,
-      }),
-    });
-
-    const tree = await renderPanel();
-
-    expect(scheduleMobilePomodoroCompletionNotification).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      new Date(phaseEndsAt),
-      { phase: 'focus-complete' },
-    );
-
-    tree.unmount();
-  });
-
-  it('cancels the completion alarm when the session-end alert is switched off', async () => {
-    const { cancelMobilePomodoroCompletionNotification, scheduleMobilePomodoroCompletionNotification } =
-      await import('../lib/notification-service');
-    vi.mocked(cancelMobilePomodoroCompletionNotification).mockClear();
-    vi.mocked(scheduleMobilePomodoroCompletionNotification).mockClear();
-    storeState.settings = { notificationsEnabled: true, gtd: { pomodoro: { completionAlert: false } } };
-
-    mockStorage({
-      '@mindwtr_pomodoro_state': JSON.stringify({
-        durations: { focusMinutes: 25, breakMinutes: 5 },
-        timerState: { phase: 'focus', remainingSeconds: 600, isRunning: true, completedFocusSessions: 0 },
-        phaseEndsAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      }),
-    });
-
-    const tree = await renderPanel();
-
-    expect(scheduleMobilePomodoroCompletionNotification).not.toHaveBeenCalled();
-    expect(cancelMobilePomodoroCompletionNotification).toHaveBeenCalledWith('completion-alert-off');
-
-    tree.unmount();
   });
 
   it('renders the phase as read-only status and names the next switch action', async () => {

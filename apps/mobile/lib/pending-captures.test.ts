@@ -18,10 +18,19 @@ const appLogMocks = vi.hoisted(() => ({
 }));
 vi.mock('./app-log', () => appLogMocks);
 
-import { buildPendingCaptureTaskProps, ingestPendingCaptures, parsePendingCapture, type PendingCapture } from './pending-captures';
+// eslint-disable-next-line import/first
+import {
+    buildPendingCaptureTaskProps,
+    ingestPendingCaptures,
+    isSafeWatchAudioPath,
+    parsePendingCapture,
+    resolveSafeWatchAudioPath,
+    type PendingCapture,
+} from './pending-captures';
 
 // The capture-shaped tests read capture fields; narrow once here.
 const parseCapture = (raw: string) => parsePendingCapture(raw) as PendingCapture | null;
+const WATCH_AUDIO_ID = '11111111-1111-4111-8111-111111111111';
 
 const project = (props: Partial<Project>): Project => ({
     id: 'p1',
@@ -55,6 +64,34 @@ describe('parsePendingCapture', () => {
         expect(parsePendingCapture(JSON.stringify({ kind: 'complete', id: 'c1' }))).toBeNull();
         expect(parsePendingCapture(JSON.stringify({ kind: 'archive', id: 'c1', title: 'x' }))).toBeNull();
         expect(parseCapture(JSON.stringify({ kind: 'capture', id: 'c1', title: 'Still a capture' }))?.title).toBe('Still a capture');
+    });
+
+    it('keeps legacy text compatible and parses every Watch queue variant', () => {
+        expect(parseCapture(JSON.stringify({ kind: 'text', id: 't1', title: 'Watch thought', source: 'apple-watch' })))
+            .toMatchObject({ kind: 'text', id: 't1', title: 'Watch thought', tags: [] });
+        expect(parsePendingCapture(JSON.stringify({ kind: 'audio', id: 'a1', audioPath: 'file:///data/Documents/watch-audio/a1.wav' })))
+            .toMatchObject({ kind: 'audio', id: 'a1' });
+        expect(parsePendingCapture(JSON.stringify({ kind: 'defer', id: 'd1', taskId: 'task-1', startDate: '2026-09-07' })))
+            .toMatchObject({ kind: 'defer', taskId: 'task-1', startDate: '2026-09-07' });
+        expect(parsePendingCapture(JSON.stringify({ kind: 'pomodoro', id: 'p1', action: 'start', taskId: 'task-1' })))
+            .toMatchObject({ kind: 'pomodoro', action: 'start', taskId: 'task-1' });
+        expect(parsePendingCapture(JSON.stringify({ kind: 'defer', id: 'd1', taskId: 'task-1', startDate: '2026-02-30' }))).toBeNull();
+        expect(parsePendingCapture(JSON.stringify({ kind: 'pomodoro', id: 'p1', action: 'toggle' }))).toBeNull();
+    });
+
+    it('confines Watch audio deletion to the exact queue id under Documents/watch-audio', () => {
+        const id = WATCH_AUDIO_ID;
+        expect(resolveSafeWatchAudioPath(
+            `file:///old/container/Documents/watch-audio/${id}.wav`,
+            id,
+        )).toBe(`file:///data/Documents/watch-audio/${id}.wav`);
+        expect(isSafeWatchAudioPath(`file:///data/Documents/watch-audio/${id}.wav`, id)).toBe(true);
+        expect(isSafeWatchAudioPath('file:///data/Documents/watch-audio/other.wav', id)).toBe(false);
+        expect(isSafeWatchAudioPath('file:///data/Documents/secret.wav', id)).toBe(false);
+        expect(isSafeWatchAudioPath('file:///data/Documents/watch-audio/../secret.wav', id)).toBe(false);
+        expect(isSafeWatchAudioPath(`file:///data/Documents/watch-audio/${id}.wav?alternate=1`, id)).toBe(false);
+        expect(isSafeWatchAudioPath(`file://host/data/Documents/watch-audio/${id}.wav`, id)).toBe(false);
+        expect(isSafeWatchAudioPath('file:///data/Documents/watch-audio/audio-1.wav', 'audio-1')).toBe(false);
     });
 
     it('rejects payloads without id or title', () => {
@@ -197,6 +234,198 @@ describe('ingestPendingCaptures', () => {
         expect(fileSystemMocks.deleteAsync).toHaveBeenCalledTimes(3);
         const outcomes = (appLogMocks.logInfo.mock.calls as unknown as [string, { extra: { outcome: string } }][]).map(([, context]) => context.extra.outcome);
         expect(outcomes).toEqual(['completed', 'already-done', 'missing']);
+    });
+
+    it('refreshes task state between Watch commands and treats stale terminal commands as no-ops', async () => {
+        const tasks = [
+            { id: 'open', title: 'Open', status: 'next' } as Task,
+            { id: 'archived', title: 'Archived', status: 'archived' } as Task,
+        ];
+        fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a.json', 'b.json', 'c.json']);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
+            uri.includes('c.json')
+                ? { kind: 'defer', id: 'd1', taskId: 'archived', startDate: '2026-09-07', source: 'apple-watch' }
+                : { kind: 'complete', id: uri.includes('a.json') ? 'c1' : 'c2', taskId: 'open', source: 'apple-watch' },
+        ));
+        const freshUpdateTask = vi.fn(async (id: string, updates: Partial<Task>) => {
+            const task = tasks.find((candidate) => candidate.id === id);
+            if (task) Object.assign(task, updates);
+            return { success: true };
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask: freshUpdateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks,
+            getTasks: () => tasks,
+            people: [],
+            settings: emptySettings,
+        })).toBe(3);
+
+        expect(freshUpdateTask).toHaveBeenCalledTimes(1);
+        expect(freshUpdateTask).toHaveBeenCalledWith('open', { status: 'done' });
+        const outcomeCalls = appLogMocks.logInfo.mock.calls as unknown as [string, { extra: { outcome: string } }][];
+        const outcomes = outcomeCalls.map(([, context]) => context.extra.outcome);
+        expect(outcomes).toEqual(['completed', 'already-done', 'terminal']);
+    });
+
+    it('orders Watch commands by createdAt even when UUID filenames sort differently', async () => {
+        fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a-start.json', 'z-reset.json']);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
+            uri.includes('a-start.json')
+                ? { kind: 'pomodoro', id: 'start', action: 'start', createdAt: '2026-09-06T10:01:00.000Z', source: 'apple-watch' }
+                : { kind: 'pomodoro', id: 'reset', action: 'reset', createdAt: '2026-09-06T10:00:00.000Z', source: 'apple-watch' },
+        ));
+        const applyPomodoroCommand = vi.fn(async (_command: { action: 'start' | 'pause' | 'reset' }) => 'applied' as const);
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            applyPomodoroCommand,
+        })).toBe(2);
+
+        expect(applyPomodoroCommand.mock.calls.map(([command]) => command.action)).toEqual(['reset', 'start']);
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it('flushes a Watch audio task before deleting its queue file, then deletes its confined WAV', async () => {
+        oneFile('audio.json', {
+            kind: 'audio',
+            id: WATCH_AUDIO_ID,
+            audioPath: `file:///old/container/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            createdAt: '2026-09-06T10:00:00.000Z',
+            source: 'apple-watch',
+        });
+        const addTask = addTaskMock();
+        const flushPendingSave = vi.fn(async () => undefined);
+        const transcribeAudio = vi.fn(async () => 'Buy milk /due:tomorrow');
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave,
+            transcribeAudio,
+        })).toBe(1);
+
+        expect(addTask).toHaveBeenCalledWith('Buy milk', expect.objectContaining({ status: 'inbox', dueDate: '2026-09-07' }));
+        expect(transcribeAudio).toHaveBeenCalledWith(
+            `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            emptySettings,
+        );
+        expect(flushPendingSave).toHaveBeenCalledOnce();
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(1, 'file:///data/Documents/pending-captures/audio.json', { idempotent: true });
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(2, `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`, { idempotent: true });
+    });
+
+    it('retains Watch audio and queue when transcription is unavailable', async () => {
+        oneFile('audio.json', {
+            kind: 'audio',
+            id: WATCH_AUDIO_ID,
+            audioPath: `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            source: 'apple-watch',
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            transcribeAudio: vi.fn(async () => null),
+        })).toBe(0);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+    });
+
+    it('retains the queue and WAV when the durable task flush or queue delete fails', async () => {
+        oneFile('audio.json', {
+            kind: 'audio',
+            id: WATCH_AUDIO_ID,
+            audioPath: `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            source: 'apple-watch',
+        });
+        const common = {
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            transcribeAudio: vi.fn(async () => 'Captured thought'),
+        };
+
+        expect(await ingestPendingCaptures({
+            ...common,
+            flushPendingSave: vi.fn(async () => { throw new Error('disk full'); }),
+        })).toBe(0);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+
+        fileSystemMocks.deleteAsync.mockRejectedValueOnce(new Error('queue busy'));
+        expect(await ingestPendingCaptures({
+            ...common,
+            flushPendingSave: vi.fn(async () => undefined),
+        })).toBe(0);
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledTimes(1);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalledWith(
+            `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
+            expect.anything(),
+        );
+    });
+
+    it('applies a Watch timer setter and clears its queue item after controller persistence', async () => {
+        oneFile('timer.json', {
+            kind: 'pomodoro',
+            id: 'timer-1',
+            action: 'pause',
+            createdAt: '2026-09-06T10:00:00.000Z',
+            source: 'apple-watch',
+        });
+        const applyPomodoroCommand = vi.fn(async () => 'applied' as const);
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            applyPomodoroCommand,
+        })).toBe(1);
+        expect(applyPomodoroCommand).toHaveBeenCalledWith(expect.objectContaining({ action: 'pause' }));
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledWith(
+            'file:///data/Documents/pending-captures/timer.json',
+            { idempotent: true },
+        );
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Watch command ingested', {
+            scope: 'capture',
+            extra: {
+                releaseCheck: 'v1.2.9/watch-command',
+                kind: 'pomodoro',
+                action: 'pause',
+                outcome: 'applied',
+            },
+        });
     });
 
     it('keeps the file when the store write reports failure', async () => {

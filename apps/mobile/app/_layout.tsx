@@ -56,6 +56,8 @@ import { useThemeColors } from '../hooks/use-theme-colors';
 import { useRootLayoutContextAutomation } from '@/hooks/root-layout/use-root-layout-context-automation';
 import { useRootLayoutExternalCapture } from '@/hooks/root-layout/use-root-layout-external-capture';
 import { useRootLayoutPendingCaptures } from '@/hooks/root-layout/use-root-layout-pending-captures';
+import { useRootLayoutPomodoro } from '@/hooks/root-layout/use-root-layout-pomodoro';
+import { useRootLayoutWatch } from '@/hooks/root-layout/use-root-layout-watch';
 import { useRootLayoutNotificationOpenHandler } from '@/hooks/root-layout/use-root-layout-notification-open-handler';
 import { useRootLayoutStartup } from '@/hooks/root-layout/use-root-layout-startup';
 import { resolveMobileAnalyticsVersion } from '@/lib/analytics-heartbeat';
@@ -495,7 +497,9 @@ function RootLayoutContentInner() {
     shareWebUrl: shareIntent?.webUrl,
     showToast,
   });
-  useRootLayoutPendingCaptures({ dataReady });
+  useRootLayoutPomodoro({ dataReady, resolveText });
+  const drainPendingCaptures = useRootLayoutPendingCaptures({ dataReady });
+  useRootLayoutWatch({ dataReady, language, onPendingCapture: drainPendingCaptures });
 
   if (!firstRenderLogged.current) {
     firstRenderLogged.current = true;
