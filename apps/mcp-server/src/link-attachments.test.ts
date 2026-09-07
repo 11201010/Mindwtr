@@ -149,6 +149,97 @@ describe('applyLinkAttachments', () => {
     }
   });
 
+  test('round-trips existing network-share links by id or exact uri and permits title edits', () => {
+    const networkUris = [
+      '\\\\host\\share\\file.txt',
+      '//host/share/file.txt',
+      'file://host/share/file.txt',
+    ];
+
+    for (const [index, uri] of networkUris.entries()) {
+      const existing = link({ id: `network-${index}`, title: 'Old title', uri });
+      const byId = applyLinkAttachments(
+        [existing],
+        [{ id: existing.id, title: 'Renamed by id', uri }],
+        NOW,
+        makeId,
+      );
+      expect(byId).toHaveLength(1);
+      expect(byId[0]).toMatchObject({ id: existing.id, title: 'Renamed by id', uri, updatedAt: NOW });
+
+      const byUri = applyLinkAttachments(
+        [existing],
+        [{ title: 'Renamed by uri', uri }],
+        NOW,
+        makeId,
+      );
+      expect(byUri).toHaveLength(1);
+      expect(byUri[0]).toMatchObject({ id: existing.id, title: 'Renamed by uri', uri, updatedAt: NOW });
+    }
+  });
+
+  test('preserves an unchanged existing network-share link object and timestamps', () => {
+    const existing = link({ title: 'Shared file', uri: '\\\\host\\share\\file.txt' });
+    const next = applyLinkAttachments(
+      [existing],
+      [{ id: existing.id, title: existing.title, uri: existing.uri }],
+      NOW,
+      makeId,
+    );
+
+    expect(next[0]).toBe(existing);
+    expect(next[0].updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  test('rejects network-share creation, changes, arbitrary ids, and non-exact uri matches', () => {
+    const existingNetwork = link({ id: 'network-live', uri: '\\\\host\\share\\file.txt' });
+    const existingSafe = link({ id: 'safe-live', uri: 'https://example.com/safe' });
+    const rejectedInputs = [
+      { existing: [] as Attachment[], input: { uri: existingNetwork.uri } },
+      { existing: [existingNetwork], input: { id: existingNetwork.id, uri: '\\\\host\\share\\other.txt' } },
+      { existing: [existingSafe], input: { id: existingSafe.id, uri: existingNetwork.uri } },
+      { existing: [existingNetwork], input: { id: 'arbitrary-id', uri: existingNetwork.uri } },
+      { existing: [existingNetwork], input: { uri: ` ${existingNetwork.uri}` } },
+    ];
+
+    for (const { existing, input } of rejectedInputs) {
+      expect(() => applyLinkAttachments(existing, [input], NOW, makeId)).toThrow(ValidationError);
+    }
+  });
+
+  test('does not revive a tombstoned network-share link or treat a file as an existing link', () => {
+    const uri = '//host/share/file.txt';
+    const deleted = link({ id: 'network-deleted', uri, deletedAt: '2026-02-02T00:00:00.000Z' });
+    const existingFile = file({ id: 'network-file', uri });
+
+    expect(() => applyLinkAttachments([deleted], [{ id: deleted.id, uri }], NOW, makeId))
+      .toThrow(ValidationError);
+    expect(() => applyLinkAttachments([deleted], [{ uri }], NOW, makeId))
+      .toThrow(ValidationError);
+    expect(() => applyLinkAttachments([existingFile], [{ id: existingFile.id, uri }], NOW, makeId))
+      .toThrow(ValidationError);
+  });
+
+  test('preserves a network link and files while replacing safe links', () => {
+    const existingFile = file();
+    const network = link({ id: 'network-live', title: 'Share', uri: 'file://host/share/file.txt' });
+    const removedSafe = link({ id: 'safe-old', uri: 'https://example.com/old' });
+    const next = applyLinkAttachments(
+      [existingFile, network, removedSafe],
+      [
+        { id: network.id, title: network.title, uri: network.uri },
+        { uri: 'https://example.com/new' },
+      ],
+      NOW,
+      makeId,
+    );
+
+    expect(next[0]).toBe(existingFile);
+    expect(next[1]).toBe(network);
+    expect(next.find((item) => item.id === removedSafe.id)?.deletedAt).toBe(NOW);
+    expect(next.some((item) => item.uri === 'https://example.com/new' && !item.deletedAt)).toBe(true);
+  });
+
   test('accepts local and file:// forms that are not network shares', () => {
     const accepted = [
       'file:///C:/x',

@@ -351,6 +351,77 @@ describe('cloud-backed MCP service', () => {
     }]);
   });
 
+  test('retries an existing network-link title edit against the latest cloud entity', async () => {
+    const networkUri = '\\\\host\\share\\task-notes.txt';
+    const originalLink = {
+      id: 'network-link', kind: 'link' as const, title: 'Old', uri: networkUri, createdAt: iso, updatedAt: iso,
+    };
+    const concurrentLink = { ...originalLink, title: 'Concurrent title', updatedAt: '2026-01-02T00:00:00.000Z' };
+    const requests: Array<{ method: string; headers: Headers; body?: any }> = [];
+    const logs: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    let getCount = 0;
+    let patchCount = 0;
+    const service = createCloudService({
+      url: 'https://mindwtr.example.com',
+      token: 'cloud-token',
+      logInfo: (message, context) => logs.push({ message, context }),
+      fetcher: async (_input, init) => {
+        const method = init?.method ?? 'GET';
+        const headers = new Headers(init?.headers);
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        requests.push({ method, headers, body });
+        if (method === 'GET') {
+          getCount += 1;
+          const task = {
+            ...cloudData.tasks[0],
+            attachments: [getCount === 1 ? originalLink : concurrentLink],
+          };
+          return new Response(JSON.stringify({ task }), {
+            status: 200,
+            headers: { ETag: `"mindwtr-entity-sha256-network-${getCount}"` },
+          });
+        }
+        patchCount += 1;
+        if (patchCount === 1) {
+          return new Response(JSON.stringify({ error: 'Entity changed; refresh and retry' }), { status: 412 });
+        }
+        return new Response(JSON.stringify({
+          task: { ...cloudData.tasks[0], attachments: body.attachments },
+        }), { status: 200 });
+      },
+    });
+
+    const updated = await service.updateTask({
+      id: 'task-next',
+      attachments: [{ id: originalLink.id, title: 'Renamed', uri: networkUri }],
+    });
+
+    expect(getCount).toBe(2);
+    expect(patchCount).toBe(2);
+    expect(requests.map((item) => item.method)).toEqual(['GET', 'PATCH', 'GET', 'PATCH']);
+    expect(requests[1].headers.get('if-match')).toBe('"mindwtr-entity-sha256-network-1"');
+    expect(requests[3].headers.get('if-match')).toBe('"mindwtr-entity-sha256-network-2"');
+    expect(requests[3].body.attachments[0]).toMatchObject({
+      id: originalLink.id,
+      title: 'Renamed',
+      uri: networkUri,
+    });
+    expect(updated.attachments?.[0]).toMatchObject({
+      id: originalLink.id,
+      title: 'Renamed',
+      uri: networkUri,
+    });
+    expect(logs).toEqual([{
+      message: 'MCP attachment link replacement committed',
+      context: {
+        releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+        backend: 'cloud',
+        entity: 'task',
+        count: 1,
+      },
+    }]);
+  });
+
   test('re-reads and recomputes a project link replacement after a conditional conflict', async () => {
     const liveLink = {
       id: 'project-link-old', kind: 'link' as const, title: 'Old', uri: 'https://example.com/old', createdAt: iso, updatedAt: iso,
@@ -468,6 +539,48 @@ describe('cloud-backed MCP service', () => {
       await expect(operation).rejects.toThrow(
         'Attachment link updates require Mindwtr Cloud 1.2.8 or newer; this server did not return a strong entity ETag.',
       );
+      expect(patchCount).toBe(0);
+    }
+  });
+
+  test('rejects new or changed network-share links before a cloud PATCH', async () => {
+    const networkUri = '//host/share/file.txt';
+    const cases = [
+      {
+        attachments: [],
+        input: [{ uri: networkUri }],
+      },
+      {
+        attachments: [{
+          id: 'safe-link', kind: 'link' as const, title: 'Safe', uri: 'https://example.com/safe',
+          createdAt: iso, updatedAt: iso,
+        }],
+        input: [{ id: 'safe-link', uri: networkUri }],
+      },
+      {
+        attachments: [{
+          id: 'network-link', kind: 'link' as const, title: 'Share', uri: networkUri,
+          createdAt: iso, updatedAt: iso,
+        }],
+        input: [{ id: 'network-link', uri: '//host/share/other.txt' }],
+      },
+    ];
+
+    for (const testCase of cases) {
+      let patchCount = 0;
+      const service = createCloudService({
+        url: 'https://mindwtr.example.com',
+        token: 'cloud-token',
+        fetcher: async (_input, init) => {
+          if ((init?.method ?? 'GET') === 'PATCH') patchCount += 1;
+          return new Response(JSON.stringify({
+            task: { ...cloudData.tasks[0], attachments: testCase.attachments },
+          }), { status: 200, headers: { ETag: '"mindwtr-entity-sha256-task"' } });
+        },
+      });
+
+      await expect(service.updateTask({ id: 'task-next', attachments: testCase.input }))
+        .rejects.toThrow('Link attachment uri must not point at a network share');
       expect(patchCount).toBe(0);
     }
   });

@@ -847,6 +847,106 @@ describe('mcp service', () => {
     expect(receivedAreaUpdate.updates.color).toBeUndefined();
   });
 
+  test('durably edits existing task and project network-share link titles', async () => {
+    const dir = createTempDir();
+    const dbPath = join(dir, 'mindwtr.db');
+    writeFileSync(
+      join(dir, 'data.json'),
+      JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} }),
+    );
+
+    const seedService = createService({ dbPath, readonly: false });
+    let taskId = '';
+    let projectId = '';
+    let taskLinkId = '';
+    let projectLinkId = '';
+    try {
+      const task = await seedService.addTask({
+        title: 'Existing network task',
+        attachments: [{ title: 'Task notes', uri: 'https://example.com/task-notes' }],
+      });
+      const project = await seedService.addProject({
+        title: 'Existing network project',
+        attachments: [{ title: 'Project notes', uri: 'https://example.com/project-notes' }],
+      });
+      taskId = task.id;
+      projectId = project.id;
+      taskLinkId = task.attachments?.[0]?.id ?? '';
+      projectLinkId = project.attachments?.[0]?.id ?? '';
+    } finally {
+      await seedService.close();
+    }
+
+    const networkTaskUri = '\\\\host\\share\\task-notes.txt';
+    const networkProjectUri = 'file://host/share/project-notes.txt';
+    const { db } = await mcpDb.openMindwtrDb({ dbPath, readonly: false });
+    try {
+      const [taskAttachment] = mcpQueries.getTask(db, { id: taskId }).attachments ?? [];
+      const [projectAttachment] = mcpQueries.getProject(db, { id: projectId }).attachments ?? [];
+      if (!taskAttachment || !projectAttachment) throw new Error('Expected seeded link attachments');
+      const taskAttachments = [{ ...taskAttachment, uri: networkTaskUri }];
+      const projectAttachments = [{ ...projectAttachment, uri: networkProjectUri }];
+      db.prepare('UPDATE tasks SET attachments = ? WHERE id = ?')
+        .run(JSON.stringify(taskAttachments), taskId);
+      db.prepare('UPDATE projects SET attachments = ? WHERE id = ?')
+        .run(JSON.stringify(projectAttachments), projectId);
+    } finally {
+      mcpDb.closeDb(db);
+    }
+
+    const logs: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const service = createService(
+      { dbPath, readonly: false },
+      undefined,
+      (message, context) => logs.push({ message, context }),
+    );
+    try {
+      await service.updateTask({
+        id: taskId,
+        attachments: [{ id: taskLinkId, title: 'Renamed task notes', uri: networkTaskUri }],
+      });
+      await service.updateProject({
+        id: projectId,
+        attachments: [{ title: 'Renamed project notes', uri: networkProjectUri }],
+      });
+
+      const persistedTask = await service.getTask({ id: taskId });
+      const persistedProject = (await service.listProjects()).find((item) => item.id === projectId);
+      expect(persistedTask.attachments?.[0]).toMatchObject({
+        id: taskLinkId,
+        title: 'Renamed task notes',
+        uri: networkTaskUri,
+      });
+      expect(persistedProject?.attachments?.[0]).toMatchObject({
+        id: projectLinkId,
+        title: 'Renamed project notes',
+        uri: networkProjectUri,
+      });
+      expect(logs).toEqual([
+        {
+          message: 'MCP attachment link replacement committed',
+          context: {
+            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            backend: 'local',
+            entity: 'task',
+            count: 1,
+          },
+        },
+        {
+          message: 'MCP attachment link replacement committed',
+          context: {
+            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            backend: 'local',
+            entity: 'project',
+            count: 1,
+          },
+        },
+      ]);
+    } finally {
+      await service.close();
+    }
+  }, REAL_SQLITE_TEST_TIMEOUT_MS);
+
   // R-08's executable guard for the invariants documented at runCoreWriteWithRetries: every
   // core write flushes before returning, and the retried callback re-reads storage. Together
   // they make a two-write quickAdd capture (addProject then addTask) safe to retry whole.

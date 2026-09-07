@@ -60,7 +60,7 @@ import type {
   UpdateTaskInput,
 } from './queries.js';
 import { pickDefinedTaskFields, TASK_CREATE_FIELD_NAMES, TASK_PATCH_FIELD_NAMES } from './task-write-fields.js';
-import { applyLinkAttachments, buildLinkAttachments } from './link-attachments.js';
+import { applyLinkAttachmentsWithResult, buildLinkAttachments } from './link-attachments.js';
 
 export type CloudServiceOptions = {
   url: string;
@@ -229,17 +229,24 @@ export const createCloudService = (options: CloudServiceOptions): MindwtrService
         label,
       );
       try {
+        const applied = applyLinkAttachmentsWithResult(current.entity.attachments, links);
         const result = await request<Record<'task' | 'project', T>>(
           'PATCH',
           path,
           {
             ...staticPatch,
-            attachments: applyLinkAttachments(current.entity.attachments, links),
+            attachments: applied.attachments,
           },
           { 'If-Match': current.etag },
         );
+        const preservedExistingNetworkLink = applied.preservedNetworkLinkCount > 0;
         options.logInfo?.('MCP attachment link replacement committed', {
-          releaseCheck: 'v1.2.8/mcp-attachment-link-guard',
+          ...(preservedExistingNetworkLink ? {
+            releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+            count: applied.preservedNetworkLinkCount,
+          } : {
+            releaseCheck: 'v1.2.8/mcp-attachment-link-guard',
+          }),
           backend: 'cloud',
           entity: itemKey,
         });

@@ -55,7 +55,14 @@ const defaultTitle = (uri: string): string => {
   return withoutQuery || trimmed;
 };
 
-type NormalizedLinkInput = { id?: string; title: string; uri: string };
+type NormalizedLinkInput = {
+  id?: string;
+  title: string;
+  uri: string;
+  preservedNetworkShare: boolean;
+};
+
+type NetworkSharePermission = (input: { id?: string; uri: string }) => boolean;
 
 // Desktop's open_path canonicalizes any absolute local path before its allow-list check
 // (apps/desktop/src-tauri/src/platform.rs), and on Windows canonicalizing a UNC path performs
@@ -75,24 +82,33 @@ const isNetworkShareUri = (uri: string): boolean => {
     || normalized.slice(authority[0].length).startsWith('//');
 };
 
-const normalizeInputs = (inputs: readonly LinkAttachmentInput[]): NormalizedLinkInput[] => {
+const normalizeInputs = (
+  inputs: readonly LinkAttachmentInput[],
+  mayPreserveNetworkShare: NetworkSharePermission = () => false,
+): NormalizedLinkInput[] => {
   const seenUris = new Set<string>();
   const seenIds = new Set<string>();
   const normalized: NormalizedLinkInput[] = [];
   for (const input of inputs) {
-    const uri = input.uri.trim();
-    if (!uri) throw new ValidationError('Link attachment uri must not be empty');
-    if (isNetworkShareUri(uri)) {
-      throw new ValidationError(`Link attachment uri must not point at a network share: ${uri}`);
-    }
+    const trimmedUri = input.uri.trim();
+    if (!trimmedUri) throw new ValidationError('Link attachment uri must not be empty');
     const id = input.id?.trim() || undefined;
+    const networkShare = isNetworkShareUri(trimmedUri);
+    const preservedNetworkShare = networkShare
+      && mayPreserveNetworkShare({ id, uri: input.uri });
+    if (networkShare && !preservedNetworkShare) {
+      throw new ValidationError(`Link attachment uri must not point at a network share: ${trimmedUri}`);
+    }
+    // Network-share preservation is deliberately byte-for-byte. Trimming it here after the
+    // permission check would silently change the stored reference that granted permission.
+    const uri = preservedNetworkShare ? input.uri : trimmedUri;
     if (id && seenIds.has(id)) throw new ValidationError(`Duplicate link attachment id: ${id}`);
     if (id) seenIds.add(id);
     // Two entries for one uri would create two links the app cannot tell apart; keep the first.
     if (!id && seenUris.has(uri)) continue;
     seenUris.add(uri);
     const title = input.title?.trim() || defaultTitle(uri);
-    normalized.push({ id, title, uri });
+    normalized.push({ id, title, uri, preservedNetworkShare });
   }
   return normalized;
 };
@@ -115,18 +131,22 @@ export const buildLinkAttachments = (
 };
 
 /**
- * The full attachments list an update should persist: file attachments and already-deleted
- * links pass through untouched, listed links are upserted, live links left out are
+ * Applies a complete link replacement and reports how many live, byte-identical network-share
+ * links were preserved. File attachments and deleted links pass through; omitted live links are
  * tombstoned. `null`/`[]` removes every live link.
  */
-export const applyLinkAttachments = (
+export type ApplyLinkAttachmentsResult = {
+  attachments: Attachment[];
+  preservedNetworkLinkCount: number;
+};
+
+export const applyLinkAttachmentsWithResult = (
   existing: readonly Attachment[] | undefined,
   inputs: readonly LinkAttachmentInput[] | null,
   now: string = new Date().toISOString(),
   makeId: () => string = randomUUID,
-): Attachment[] => {
+): ApplyLinkAttachmentsResult => {
   const current = existing ?? [];
-  const normalized = normalizeInputs(inputs ?? []);
   const liveLinksById = new Map<string, Attachment>();
   const liveLinksByUri = new Map<string, Attachment>();
   for (const attachment of current) {
@@ -134,10 +154,19 @@ export const applyLinkAttachments = (
     liveLinksById.set(attachment.id, attachment);
     if (!liveLinksByUri.has(attachment.uri)) liveLinksByUri.set(attachment.uri, attachment);
   }
+  const normalized = normalizeInputs(inputs ?? [], (input) => {
+    // Supplying an id commits to id matching. URI fallback is only available when no id was
+    // supplied, so an arbitrary id cannot borrow permission from another live link.
+    const match = input.id
+      ? liveLinksById.get(input.id)
+      : liveLinksByUri.get(input.uri);
+    return match?.uri === input.uri;
+  });
   const anyLinkById = new Map(current.filter((item) => item.kind === 'link').map((item) => [item.id, item]));
 
   const touched = new Map<string, Attachment>();
   const added: Attachment[] = [];
+  let preservedNetworkLinkCount = 0;
   for (const input of normalized) {
     const match = input.id
       ? anyLinkById.get(input.id)
@@ -146,6 +175,7 @@ export const applyLinkAttachments = (
       throw new ValidationError(`Attachment ${input.id} is not a link attachment`);
     }
     if (match) {
+      if (input.preservedNetworkShare) preservedNetworkLinkCount += 1;
       const unchanged = !match.deletedAt && match.title === input.title && match.uri === input.uri;
       touched.set(match.id, unchanged ? match : {
         ...match,
@@ -173,5 +203,15 @@ export const applyLinkAttachments = (
     if (attachment.deletedAt) return attachment;
     return { ...attachment, deletedAt: now, updatedAt: now };
   });
-  return [...next, ...added];
+  return {
+    attachments: [...next, ...added],
+    preservedNetworkLinkCount,
+  };
 };
+
+export const applyLinkAttachments = (
+  existing: readonly Attachment[] | undefined,
+  inputs: readonly LinkAttachmentInput[] | null,
+  now: string = new Date().toISOString(),
+  makeId: () => string = randomUUID,
+): Attachment[] => applyLinkAttachmentsWithResult(existing, inputs, now, makeId).attachments;

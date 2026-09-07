@@ -56,7 +56,7 @@ import {
   type TaskRow,
   type UpdateTaskInput,
 } from './queries.js';
-import { applyLinkAttachments, buildLinkAttachments, type LinkAttachmentInput } from './link-attachments.js';
+import { applyLinkAttachmentsWithResult, buildLinkAttachments, type LinkAttachmentInput } from './link-attachments.js';
 import { closeCoreAdapter, runCoreService } from './core-adapter.js';
 import { pickDefinedTaskFields, TASK_CREATE_FIELD_NAMES, TASK_PATCH_FIELD_NAMES } from './task-write-fields.js';
 
@@ -449,6 +449,24 @@ export type MindwtrService = {
 
 type McpOperationalLogger = (message: string, context?: Record<string, unknown>) => void;
 
+const logLocalAttachmentLinkReplacement = (
+  logInfo: McpOperationalLogger | undefined,
+  entity: 'task' | 'project',
+  preservedNetworkLinkCount: number,
+): void => {
+  const preservedExistingNetworkLink = preservedNetworkLinkCount > 0;
+  logInfo?.('MCP attachment link replacement committed', {
+    ...(preservedExistingNetworkLink ? {
+      releaseCheck: 'v1.2.9/mcp-existing-network-link-preserved',
+      count: preservedNetworkLinkCount,
+    } : {
+      releaseCheck: 'v1.2.8/mcp-attachment-link-guard',
+    }),
+    backend: 'local',
+    entity,
+  });
+};
+
 export const createService = (
   options: DbOptions,
   deps: ServiceDeps = defaultServiceDeps,
@@ -549,24 +567,25 @@ export const createService = (
     },
     updateTask: async (input) => {
       const updates = buildTaskUpdates(input);
+      let preservedNetworkLinkCount = 0;
       const updated = await runCoreWriteWithRetries(options, deps, async (core) => {
         if (input.attachments !== undefined) {
           return core.updateTask({
             id: input.id,
-            updates: (current) => ({
-              ...updates,
-              attachments: applyLinkAttachments(current.attachments, input.attachments!),
-            }),
+            updates: (current) => {
+              const applied = applyLinkAttachmentsWithResult(current.attachments, input.attachments!);
+              preservedNetworkLinkCount = applied.preservedNetworkLinkCount;
+              return {
+                ...updates,
+                attachments: applied.attachments,
+              };
+            },
           });
         }
         return core.updateTask({ id: input.id, updates });
       });
       if (input.attachments !== undefined) {
-        logInfo?.('MCP attachment link replacement committed', {
-          releaseCheck: 'v1.2.8/mcp-attachment-link-guard',
-          backend: 'local',
-          entity: 'task',
-        });
+        logLocalAttachmentLinkReplacement(logInfo, 'task', preservedNetworkLinkCount);
       }
       return updated;
     },
@@ -593,6 +612,7 @@ export const createService = (
         });
       }),
     updateProject: async (input) => {
+      let preservedNetworkLinkCount = 0;
       const updated = await runCoreWriteWithRetries(options, deps, async (core) => {
         const updates: Partial<CoreProject> = {};
         if (input.title !== undefined) updates.title = validateProjectTitle(input.title);
@@ -608,20 +628,20 @@ export const createService = (
         if (input.attachments !== undefined) {
           return core.updateProject({
             id: input.id,
-            updates: (current) => ({
-              ...updates,
-              attachments: applyLinkAttachments(current.attachments, input.attachments!),
-            }),
+            updates: (current) => {
+              const applied = applyLinkAttachmentsWithResult(current.attachments, input.attachments!);
+              preservedNetworkLinkCount = applied.preservedNetworkLinkCount;
+              return {
+                ...updates,
+                attachments: applied.attachments,
+              };
+            },
           });
         }
         return core.updateProject({ id: input.id, updates });
       });
       if (input.attachments !== undefined) {
-        logInfo?.('MCP attachment link replacement committed', {
-          releaseCheck: 'v1.2.8/mcp-attachment-link-guard',
-          backend: 'local',
-          entity: 'project',
-        });
+        logLocalAttachmentLinkReplacement(logInfo, 'project', preservedNetworkLinkCount);
       }
       return updated;
     },
