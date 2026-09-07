@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
 import {
     ATTACHMENTS_DIR_NAME,
     buildCloudKey,
@@ -12,6 +13,7 @@ import {
     errorResponse,
     jsonResponse,
     logInfo,
+    logWarn,
     MAX_TASK_TITLE_LENGTH,
 } from './server-config';
 import {
@@ -362,9 +364,9 @@ export async function handleCaptureRequest(
             if (storeResponse) return storeResponse;
         }
 
-        // From here on, the audio (if any) is already on disk. An abort or a writeCloudData
-        // throw would otherwise leave it orphaned: no task ever ends up referencing its
-        // cloudKey, so nothing later cleans it up.
+        // From here on, the audio (if any) is already on disk. A writeCloudData throw
+        // can happen after publishing the task, so cleanup requires a fresh canonical
+        // read that positively proves the cloudKey is unreferenced.
         try {
             throwIfRequestAborted(options.abortSignal);
             writeCloudData(options.filePath, finalized, { assertStorageRoot: options.assertStorageRoot });
@@ -389,15 +391,72 @@ export async function handleCaptureRequest(
     });
 }
 
-/** Best-effort cleanup for the gap above: removes an audio file storeCaptureAudio already
- *  published when the task record that would reference it never gets written. Errors from
- *  the removal itself are swallowed - the original error is what the caller rethrows. */
+/** Best-effort cleanup for the gap above. A thrown document write can still have
+ *  published the task before a later durability or authority check failed, so only
+ *  remove the audio after the canonical document positively proves it unreferenced.
+ *  Errors are swallowed because the original write failure remains authoritative. */
 function removeOrphanedCaptureAudio(cloudKey: string, options: CaptureRequestOptions): void {
+    const retain = (retentionReason: 'referenced' | 'unreadable' | 'storage-authority'): void => {
+        try {
+            logWarn('Capture audio retained after failed document write', {
+                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                retentionReason,
+            });
+        } catch {
+            // Logging must not replace the original document-write failure.
+        }
+    };
+
+    try {
+        options.assertStorageRoot();
+    } catch {
+        retain('storage-authority');
+        return;
+    }
+
+    let isReferenced: boolean;
+    try {
+        const canonical: unknown = JSON.parse(readFileSync(options.filePath, 'utf8'));
+        if (!canonical || typeof canonical !== 'object') throw new Error('Invalid canonical document');
+        const record = canonical as Record<string, unknown>;
+        if (!Array.isArray(record.tasks) || !Array.isArray(record.projects)) {
+            throw new Error('Invalid canonical attachment collections');
+        }
+        isReferenced = [...record.tasks, ...record.projects].some((entity) => {
+            if (!entity || typeof entity !== 'object') throw new Error('Invalid canonical attachment owner');
+            const attachments = (entity as Record<string, unknown>).attachments;
+            if (attachments === undefined) return false;
+            if (!Array.isArray(attachments)) throw new Error('Invalid canonical attachments');
+            return attachments.some((item) => {
+                if (!item || typeof item !== 'object') throw new Error('Invalid canonical attachment');
+                const referencedCloudKey = (item as Record<string, unknown>).cloudKey;
+                if (referencedCloudKey !== undefined && typeof referencedCloudKey !== 'string') {
+                    throw new Error('Invalid canonical attachment reference');
+                }
+                return referencedCloudKey === cloudKey;
+            });
+        });
+    } catch {
+        retain('unreadable');
+        return;
+    }
+    if (isReferenced) {
+        retain('referenced');
+        return;
+    }
+
+    try {
+        options.assertStorageRoot();
+    } catch {
+        retain('storage-authority');
+        return;
+    }
+
     try {
         const resolved = resolveAttachmentPath(options.dataDir, options.key, captureAudioStoragePath(cloudKey), { create: false });
         if (resolved) durablyRemoveFile(resolved.filePath);
     } catch {
-        // best effort only
+        // Best effort only; the original document-write failure stays authoritative.
     }
 }
 

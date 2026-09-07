@@ -462,13 +462,276 @@ describe('POST /v1/capture', () => {
         expect(new Uint8Array(await download.arrayBuffer()).byteLength).toBe(AUDIO_BYTES.byteLength);
     });
 
+    test('retains audio when the task document was published before the write failed', async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-capture-published-failure-'));
+        try {
+            const key = 'published-failure-ns';
+            const filePath = join(dataDir, `${key}.json`);
+            writeFileSync(filePath, JSON.stringify({
+                tasks: [], projects: [], sections: [], areas: [], people: [], settings: {},
+            }));
+
+            let injectedAfterPublication = false;
+            const assertStorageRoot = () => {
+                const stored = JSON.parse(readFileSync(filePath, 'utf8')) as AppData;
+                if (!injectedAfterPublication && stored.tasks.length > 0) {
+                    injectedAfterPublication = true;
+                    throw new Error('injected post-rename failure');
+                }
+            };
+            const request = new Request('http://cloud.test/v1/capture', {
+                method: 'POST',
+                headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+                body: new Blob([buildMultipartBody(captureParts({
+                    transcription: 'Keep the published recording',
+                    audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+                }))]),
+            });
+
+            const captured: string[] = [];
+            const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+                captured.push(String(chunk));
+                return true;
+            });
+            try {
+                await expect(handleCaptureRequest(request, {
+                    dataDir,
+                    key,
+                    tokenScope: 'full',
+                    filePath,
+                    maxCaptureBytes: 10_000_000,
+                    maxTextBytes: 100_000,
+                    abortSignal: new AbortController().signal,
+                    assertStorageRoot,
+                    withWriteLock: async (_key, handler) => handler(),
+                    finalizeForWrite: (data) => data,
+                })).rejects.toThrow('injected post-rename failure');
+            } finally {
+                stdoutSpy.mockRestore();
+            }
+
+            expect(injectedAfterPublication).toBe(true);
+            const stored = JSON.parse(readFileSync(filePath, 'utf8')) as AppData;
+            expect(stored.tasks).toHaveLength(1);
+            expect(stored.tasks[0].attachments).toHaveLength(1);
+            const cloudKey = stored.tasks[0].attachments?.[0].cloudKey;
+            expect(cloudKey).toBeTruthy();
+            const audioPath = join(dataDir, key, 'attachments', captureAudioStoragePath(cloudKey!));
+            expect([...new Uint8Array(readFileSync(audioPath))]).toEqual([...AUDIO_BYTES]);
+
+            const lines = captured.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+            const retentionLines = lines.filter(
+                (line) => line.message === 'Capture audio retained after failed document write',
+            );
+            expect(retentionLines).toHaveLength(1);
+            expect(retentionLines[0].context).toEqual({
+                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                retentionReason: 'referenced',
+            });
+            const serialized = captured.join('');
+            expect(serialized).not.toContain('Keep the published recording');
+            expect(serialized).not.toContain(key);
+            expect(serialized).not.toContain(filePath);
+            expect(serialized).not.toContain(cloudKey!);
+        } finally {
+            rmSync(dataDir, { recursive: true, force: true });
+        }
+    });
+
+    test('retains audio when the canonical document cannot prove whether it is referenced', async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-capture-unreadable-proof-'));
+        try {
+            const key = 'unreadable-proof-ns';
+            const filePath = join(dataDir, `${key}.json`);
+            writeFileSync(filePath, JSON.stringify({
+                tasks: [], projects: [], sections: [], areas: [], people: [], settings: {},
+            }));
+
+            let assertCalls = 0;
+            const assertStorageRoot = () => {
+                assertCalls += 1;
+                if (assertCalls === 5) {
+                    writeFileSync(filePath, '{');
+                    throw new Error('injected unreadable canonical outcome');
+                }
+            };
+            const request = new Request('http://cloud.test/v1/capture', {
+                method: 'POST',
+                headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+                body: new Blob([buildMultipartBody(captureParts({
+                    transcription: 'Preserve when proof is unavailable',
+                    audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+                }))]),
+            });
+            const captured: string[] = [];
+            const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+                captured.push(String(chunk));
+                return true;
+            });
+            try {
+                await expect(handleCaptureRequest(request, {
+                    dataDir,
+                    key,
+                    tokenScope: 'full',
+                    filePath,
+                    maxCaptureBytes: 10_000_000,
+                    maxTextBytes: 100_000,
+                    abortSignal: new AbortController().signal,
+                    assertStorageRoot,
+                    withWriteLock: async (_key, handler) => handler(),
+                    finalizeForWrite: (data) => data,
+                })).rejects.toThrow('injected unreadable canonical outcome');
+            } finally {
+                stdoutSpy.mockRestore();
+            }
+
+            expect(readFileSync(filePath, 'utf8')).toBe('{');
+            const attachmentsDir = join(dataDir, key, 'attachments');
+            const remainingAudioFiles = (readdirSync(attachmentsDir, { recursive: true }) as string[])
+                .filter((name) => name.endsWith('.m4a'));
+            expect(remainingAudioFiles).toHaveLength(1);
+            expect([...new Uint8Array(readFileSync(join(attachmentsDir, remainingAudioFiles[0])))])
+                .toEqual([...AUDIO_BYTES]);
+
+            const lines = captured.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+            const retentionLine = lines.find(
+                (line) => line.message === 'Capture audio retained after failed document write',
+            );
+            expect(retentionLine?.context).toEqual({
+                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                retentionReason: 'unreadable',
+            });
+        } finally {
+            rmSync(dataDir, { recursive: true, force: true });
+        }
+    });
+
+    test('retains audio when the canonical document disappears before cleanup proof', async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-capture-missing-proof-'));
+        try {
+            const key = 'missing-proof-ns';
+            const filePath = join(dataDir, `${key}.json`);
+            writeFileSync(filePath, JSON.stringify({
+                tasks: [], projects: [], sections: [], areas: [], people: [], settings: {},
+            }));
+
+            let assertCalls = 0;
+            const assertStorageRoot = () => {
+                assertCalls += 1;
+                if (assertCalls === 5) {
+                    rmSync(filePath);
+                    throw new Error('injected missing canonical outcome');
+                }
+            };
+            const request = new Request('http://cloud.test/v1/capture', {
+                method: 'POST',
+                headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+                body: new Blob([buildMultipartBody(captureParts({
+                    transcription: 'Preserve when the document disappears',
+                    audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+                }))]),
+            });
+
+            await expect(handleCaptureRequest(request, {
+                dataDir,
+                key,
+                tokenScope: 'full',
+                filePath,
+                maxCaptureBytes: 10_000_000,
+                maxTextBytes: 100_000,
+                abortSignal: new AbortController().signal,
+                assertStorageRoot,
+                withWriteLock: async (_key, handler) => handler(),
+                finalizeForWrite: (data) => data,
+            })).rejects.toThrow('injected missing canonical outcome');
+
+            expect(existsSync(filePath)).toBe(false);
+            const attachmentsDir = join(dataDir, key, 'attachments');
+            const remainingAudioFiles = (readdirSync(attachmentsDir, { recursive: true }) as string[])
+                .filter((name) => name.endsWith('.m4a'));
+            expect(remainingAudioFiles).toHaveLength(1);
+            expect([...new Uint8Array(readFileSync(join(attachmentsDir, remainingAudioFiles[0])))])
+                .toEqual([...AUDIO_BYTES]);
+        } finally {
+            rmSync(dataDir, { recursive: true, force: true });
+        }
+    });
+
+    test('retains audio when storage authority cannot be re-established for cleanup', async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-capture-authority-loss-'));
+        try {
+            const key = 'authority-loss-ns';
+            const filePath = join(dataDir, `${key}.json`);
+            writeFileSync(filePath, JSON.stringify({
+                tasks: [], projects: [], sections: [], areas: [], people: [], settings: {},
+            }));
+
+            let assertCalls = 0;
+            let authorityLost = false;
+            const assertStorageRoot = () => {
+                assertCalls += 1;
+                if (assertCalls === 5) authorityLost = true;
+                if (authorityLost) throw new Error('injected persistent authority loss');
+            };
+            const request = new Request('http://cloud.test/v1/capture', {
+                method: 'POST',
+                headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+                body: new Blob([buildMultipartBody(captureParts({
+                    transcription: 'Preserve after authority loss',
+                    audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+                }))]),
+            });
+            const captured: string[] = [];
+            const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+                captured.push(String(chunk));
+                return true;
+            });
+            try {
+                await expect(handleCaptureRequest(request, {
+                    dataDir,
+                    key,
+                    tokenScope: 'full',
+                    filePath,
+                    maxCaptureBytes: 10_000_000,
+                    maxTextBytes: 100_000,
+                    abortSignal: new AbortController().signal,
+                    assertStorageRoot,
+                    withWriteLock: async (_key, handler) => handler(),
+                    finalizeForWrite: (data) => data,
+                })).rejects.toThrow('injected persistent authority loss');
+            } finally {
+                stdoutSpy.mockRestore();
+            }
+
+            const stored = JSON.parse(readFileSync(filePath, 'utf8')) as AppData;
+            expect(stored.tasks).toHaveLength(0);
+            const attachmentsDir = join(dataDir, key, 'attachments');
+            const remainingAudioFiles = (readdirSync(attachmentsDir, { recursive: true }) as string[])
+                .filter((name) => name.endsWith('.m4a'));
+            expect(remainingAudioFiles).toHaveLength(1);
+            expect([...new Uint8Array(readFileSync(join(attachmentsDir, remainingAudioFiles[0])))])
+                .toEqual([...AUDIO_BYTES]);
+
+            const lines = captured.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+            const retentionLine = lines.find(
+                (line) => line.message === 'Capture audio retained after failed document write',
+            );
+            expect(retentionLine?.context).toEqual({
+                releaseCheck: 'v1.2.9/cloud-capture-audio-retained',
+                retentionReason: 'storage-authority',
+            });
+        } finally {
+            rmSync(dataDir, { recursive: true, force: true });
+        }
+    });
+
     // storeCaptureAudio publishes the audio bytes, then throwIfRequestAborted and
     // writeCloudData run. A throw in that gap used to leave the just-published file
     // orphaned on disk (no task ever ends up referencing its cloudKey). Calls
     // handleCaptureRequest directly (not through the HTTP server) so a hand-rolled
     // assertStorageRoot can fail deterministically right after the audio is durably
     // on disk, without a real race.
-    test('removes the just-published audio file when the write after it fails', async () => {
+    test('removes the just-published audio when the canonical document proves it unreferenced', async () => {
         const dataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-capture-cleanup-'));
         try {
             const key = 'cleanup-ns';
@@ -485,9 +748,11 @@ describe('POST /v1/capture', () => {
             // rename that actually publishes the file (server-storage.ts:732-742). Failing
             // from the 5th call should land in writeCloudData after publication. Check
             // the file at the injection point so a call-count change cannot hide a gap.
+            // The injected failure is one-shot: cleanup can reassert the same pinned
+            // root, reread the still-valid document, and prove the blob is unreferenced.
             const assertStorageRoot = () => {
                 assertCalls += 1;
-                if (assertCalls > 4) {
+                if (assertCalls === 5) {
                     publishedAudioFilesAtFailure = existsSync(attachmentsDir)
                         ? (readdirSync(attachmentsDir, { recursive: true }) as string[]).filter((name) => name.endsWith('.m4a'))
                         : [];

@@ -37,6 +37,7 @@ export type CloudFailureContext = {
 };
 
 export const CLOUD_LOG_MESSAGES = [
+    'Capture audio retained after failed document write',
     'Capture token created',
     'Capture webhook request accepted',
     'Failed to clone cloud app data cache entry',
@@ -72,6 +73,7 @@ type CloudOperationalLogContext = Partial<Record<
     | 'method'
     | 'port'
     | 'releaseCheck'
+    | 'retentionReason'
     | 'requestId'
     | 'route'
     | 'signal'
