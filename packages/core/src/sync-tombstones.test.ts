@@ -1,8 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import type { AppData } from './types';
-import { purgeExpiredTombstones } from './sync-tombstones';
+import { isEntityTombstoneExpired, purgeExpiredTombstones } from './sync-tombstones';
 
 const nowIso = '2026-04-08T00:00:00.000Z';
+
+describe('isEntityTombstoneExpired', () => {
+    const cutoffMs = Date.parse('2026-01-01T00:00:00.000Z');
+
+    it('matches cleanup cutoff and malformed timestamp semantics for every entity kind', () => {
+        expect(isEntityTombstoneExpired('task', { deletedAt: '2026-01-01T00:00:00.000Z' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('project', { deletedAt: '2025-01-01T00:00:00.000Z' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('section', { deletedAt: '2026-01-01T00:00:00.000Z' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('area', { deletedAt: '2026-01-01T00:00:00.000Z' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('person', { deletedAt: '2026-01-01T00:00:00.000Z' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('task', { purgedAt: '2025-01-01T00:00:00.000Z' }, cutoffMs)).toBe(false);
+        expect(isEntityTombstoneExpired('task', { deletedAt: 'not-a-date' }, cutoffMs)).toBe(false);
+    });
+
+    it('prefers valid task and project purgedAt but falls back to deletedAt when it is invalid', () => {
+        const oldDeleted = '2025-01-01T00:00:00.000Z';
+        const recentPurge = '2026-02-01T00:00:00.000Z';
+        expect(isEntityTombstoneExpired('task', { deletedAt: oldDeleted, purgedAt: recentPurge }, cutoffMs)).toBe(false);
+        expect(isEntityTombstoneExpired('project', { deletedAt: oldDeleted, purgedAt: recentPurge }, cutoffMs)).toBe(false);
+        expect(isEntityTombstoneExpired('task', { deletedAt: oldDeleted, purgedAt: 'not-a-date' }, cutoffMs)).toBe(true);
+        expect(isEntityTombstoneExpired('project', { deletedAt: oldDeleted, purgedAt: '' }, cutoffMs)).toBe(true);
+    });
+});
 
 describe('purgeExpiredTombstones', () => {
     it('purges expired task tombstones even when purgedAt is missing', () => {

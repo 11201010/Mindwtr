@@ -13,7 +13,7 @@ import { FTS_MAINTENANCE_TRIGGERS, SQLITE_BASE_SCHEMA, SQLITE_FTS_SCHEMA, SQLITE
 import { normalizeTaskStatus } from './task-status';
 import { normalizeRecurrenceForLoad } from './recurrence';
 import { normalizeRelativeStartOffset } from './task-relative-start';
-import { logWarn } from './logger';
+import { logInfo, logWarn } from './logger';
 import { normalizeSavedFilter, normalizeSavedFilters } from './saved-filters';
 import { sleep } from './async-utils';
 import { TASK_SQLITE_COLUMNS, TASK_SQLITE_MIGRATION_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
@@ -28,6 +28,7 @@ import { SECTION_SQLITE_COLUMNS, SECTION_SQLITE_MIGRATION_COLUMNS, sectionFromSq
 import { AREA_SQLITE_COLUMNS, AREA_SQLITE_MIGRATION_COLUMNS, areaFromSqliteRow, areaToSqliteRow } from './area-sync-schema';
 import { PERSON_SQLITE_COLUMNS, PERSON_SQLITE_MIGRATION_COLUMNS, personFromSqliteRow, personToSqliteRow } from './person-sync-schema';
 import { fromJson, toJson, toStringArray } from './entity-sync-schema';
+import { DEFAULT_TOMBSTONE_RETENTION_DAYS, isEntityTombstoneExpired, type EntityTombstoneKind } from './sync-tombstones';
 
 export interface SqliteClient {
     run(sql: string, params?: unknown[]): Promise<void>;
@@ -290,6 +291,18 @@ type SqliteKnownRowVersion = {
     updatedAt: string | null;
 };
 
+const SQLITE_ENTITY_TABLES = ['tasks', 'projects', 'sections', 'areas', 'people'] as const;
+type SqliteTombstoneTable = typeof SQLITE_ENTITY_TABLES[number];
+const TOMBSTONE_KIND_BY_TABLE: Record<SqliteTombstoneTable, EntityTombstoneKind> = {
+    tasks: 'task',
+    projects: 'project',
+    sections: 'section',
+    areas: 'area',
+    people: 'person',
+};
+
+const EMPTY_SNAPSHOT_REFUSAL = 'Refusing to overwrite existing data with an empty snapshot; local data left untouched';
+
 const createTempIdTableName = (table: SqliteEntityTable): string => {
     tempIdTableCounter = (tempIdTableCounter + 1) % Number.MAX_SAFE_INTEGER;
     const timestamp = Date.now().toString(36);
@@ -426,18 +439,51 @@ export class SqliteAdapter {
         return rows;
     }
 
+    private knownRowVersionFromRow(row: Record<string, unknown>): SqliteKnownRowVersion {
+        const rawRev = row.rev;
+        const parsedRev = rawRev === null || rawRev === undefined ? null : Number(rawRev);
+        return {
+            rowId: typeof row._rowid === 'number' ? row._rowid : null,
+            rev: parsedRev !== null && Number.isFinite(parsedRev) ? parsedRev : null,
+            updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : null,
+        };
+    }
+
     private knownRowVersionsFromRows(rows: Record<string, unknown>[]): Map<string, SqliteKnownRowVersion> {
         const versions = new Map<string, SqliteKnownRowVersion>();
         for (const row of rows) {
-            const rawRev = row.rev;
-            const parsedRev = rawRev === null || rawRev === undefined ? null : Number(rawRev);
-            versions.set(String(row.id), {
-                rowId: typeof row._rowid === 'number' ? row._rowid : null,
-                rev: parsedRev !== null && Number.isFinite(parsedRev) ? parsedRev : null,
-                updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : null,
-            });
+            versions.set(String(row.id), this.knownRowVersionFromRow(row));
         }
         return versions;
+    }
+
+    private async proveEmptySnapshotCanPruneExpiredTombstones(cutoffMs: number): Promise<number> {
+        let expiredTombstones = 0;
+        for (const table of SQLITE_ENTITY_TABLES) {
+            const purgedAtColumn = table === 'tasks' || table === 'projects' ? ', purgedAt' : '';
+            const rows = await this.client.all<Record<string, unknown>>(
+                `SELECT rowid AS _rowid, id, rev, updatedAt, deletedAt${purgedAtColumn} FROM ${table}`,
+            );
+            const observedRows = this.lastKnownRowVersions?.get(table);
+            for (const row of rows) {
+                const observed = observedRows?.get(String(row.id));
+                const current = this.knownRowVersionFromRow(row);
+                if (
+                    !observed
+                    || current.rowId === null
+                    || (observed.rowId !== null && observed.rowId !== current.rowId)
+                    || observed.rev !== current.rev
+                    || observed.updatedAt !== current.updatedAt
+                ) {
+                    throw new Error(EMPTY_SNAPSHOT_REFUSAL);
+                }
+                if (!isEntityTombstoneExpired(TOMBSTONE_KIND_BY_TABLE[table], row, cutoffMs)) {
+                    throw new Error(EMPTY_SNAPSHOT_REFUSAL);
+                }
+                expiredTombstones += 1;
+            }
+        }
+        return expiredTombstones;
     }
 
     private async readExternalChangeEpoch(): Promise<number> {
@@ -1142,27 +1188,16 @@ export class SqliteAdapter {
 
     async saveData(data: AppData): Promise<void> {
         await this.ensureSchema();
-        // A snapshot with zero entities while the database still holds rows
-        // means the caller lost its in-memory state: real mass-deletions keep
-        // tombstoned rows in the snapshot (#852). Desktop's Rust storage layer
-        // refuses this at its own layer; this is the same backstop for every
-        // consumer of the shared adapter (mobile, MCP local mode).
+        // A snapshot with zero entities while the database still holds rows is
+        // accepted only when the rows are unchanged tombstones observed by this
+        // adapter and every one has reached the default retention cutoff. The
+        // proof and deletion share one BEGIN IMMEDIATE transaction; otherwise the
+        // #852 empty-snapshot backstop leaves the database untouched.
         const incomingEntityCount = (data.tasks?.length ?? 0)
             + (data.projects?.length ?? 0)
             + (data.sections?.length ?? 0)
             + (data.areas?.length ?? 0)
             + (data.people?.length ?? 0);
-        if (incomingEntityCount === 0) {
-            let storedEntityCount = 0;
-            for (const table of ['tasks', 'projects', 'sections', 'areas', 'people'] as const) {
-                const rows = await this.client.all<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`);
-                storedEntityCount += Number(rows[0]?.count ?? 0);
-                if (storedEntityCount > 0) break;
-            }
-            if (storedEntityCount > 0) {
-                throw new Error('Refusing to overwrite existing data with an empty snapshot; local data left untouched');
-            }
-        }
         const previousSave = this.lastSavedFingerprints;
         const previousKnownRows = this.lastKnownRowVersions;
         const nextSave: { tables: Map<string, Map<string, string>>; settingsJson: string | null } = {
@@ -1181,6 +1216,7 @@ export class SqliteAdapter {
             sqlMs: 0,
             sqlCount: 0,
         };
+        let expiredTombstonesPruned = 0;
         const runTimed = async (sql: string, args?: unknown[]) => {
             const statementStartedAt = Date.now();
             try {
@@ -1199,6 +1235,11 @@ export class SqliteAdapter {
             saveStep = 'concurrent-write-check';
             await this.assertObservedSnapshotUnchanged();
             const nowIso = new Date().toISOString();
+            if (incomingEntityCount === 0) {
+                saveStep = 'empty-snapshot-check';
+                const cutoffMs = Date.parse(nowIso) - DEFAULT_TOMBSTONE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+                expiredTombstonesPruned = await this.proveEmptySnapshotCanPruneExpiredTombstones(cutoffMs);
+            }
             const chunkArray = <T>(items: T[], size: number): T[][] => {
                 const chunks: T[][] = [];
                 for (let i = 0; i < items.length; i += size) {
@@ -1527,6 +1568,17 @@ export class SqliteAdapter {
                 context: buildSqliteSaveFailureContext(data, saveStep),
             });
             throw error;
+        }
+        if (expiredTombstonesPruned > 0) {
+            logInfo('SQLite final tombstone expiry persisted', {
+                scope: 'sqlite',
+                category: 'storage',
+                context: {
+                    releaseCheck: 'v1.2.9/sqlite-final-tombstone-expiry',
+                    count: expiredTombstonesPruned,
+                    outcome: 'pruned',
+                },
+            });
         }
     }
 

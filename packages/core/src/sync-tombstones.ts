@@ -11,24 +11,26 @@ const resolveTombstoneRetentionDays = (value?: number): number => {
     return Math.min(MAX_TOMBSTONE_RETENTION_DAYS, Math.max(MIN_TOMBSTONE_RETENTION_DAYS, rounded));
 };
 
-const parseTimestampOrInfinity = (value?: string): number => {
-    if (!value) return Number.POSITIVE_INFINITY;
+const parseTimestampOrInfinity = (value?: unknown): number => {
+    if (typeof value !== 'string' || !value) return Number.POSITIVE_INFINITY;
     const parsed = Date.parse(value);
     return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 };
 
-const getTaskTombstoneTimestamp = (task: Task): number => {
-    if (!task.deletedAt) return Number.POSITIVE_INFINITY;
-    const purgedMs = parseTimestampOrInfinity(task.purgedAt);
-    if (Number.isFinite(purgedMs)) return purgedMs;
-    return parseTimestampOrInfinity(task.deletedAt);
-};
+export type EntityTombstoneKind = 'task' | 'project' | 'section' | 'area' | 'person';
 
-const getProjectTombstoneTimestamp = (project: Project): number => {
-    if (!project.deletedAt) return Number.POSITIVE_INFINITY;
-    const purgedMs = parseTimestampOrInfinity(project.purgedAt);
-    if (Number.isFinite(purgedMs)) return purgedMs;
-    return parseTimestampOrInfinity(project.deletedAt);
+export const isEntityTombstoneExpired = (
+    kind: EntityTombstoneKind,
+    entity: { deletedAt?: unknown; purgedAt?: unknown },
+    cutoffMs: number,
+): boolean => {
+    if (typeof entity.deletedAt !== 'string' || !entity.deletedAt) return false;
+    const deletedMs = parseTimestampOrInfinity(entity.deletedAt);
+    if (kind === 'task' || kind === 'project') {
+        const purgedMs = parseTimestampOrInfinity(entity.purgedAt);
+        return (Number.isFinite(purgedMs) ? purgedMs : deletedMs) <= cutoffMs;
+    }
+    return deletedMs <= cutoffMs;
 };
 
 const pruneAttachmentTombstones = (
@@ -114,8 +116,7 @@ export const purgeExpiredTombstones = (
     let removedSavedFilterTombstones = 0;
     const nextTasks: Task[] = [];
     for (const task of data.tasks) {
-        const tombstoneAt = getTaskTombstoneTimestamp(task);
-        if (task.deletedAt && tombstoneAt <= cutoffMs) {
+        if (isEntityTombstoneExpired('task', task, cutoffMs)) {
             removedTaskTombstones += 1;
             continue;
         }
@@ -130,8 +131,7 @@ export const purgeExpiredTombstones = (
 
     const nextProjects: Project[] = [];
     for (const project of data.projects) {
-        const tombstoneMs = getProjectTombstoneTimestamp(project);
-        if (project.deletedAt && tombstoneMs <= cutoffMs) {
+        if (isEntityTombstoneExpired('project', project, cutoffMs)) {
             removedProjectTombstones += 1;
             continue;
         }
@@ -141,8 +141,7 @@ export const purgeExpiredTombstones = (
     }
     const nextSections: Section[] = [];
     for (const section of data.sections) {
-        const deletedMs = parseTimestampOrInfinity(section.deletedAt);
-        if (section.deletedAt && deletedMs <= cutoffMs) {
+        if (isEntityTombstoneExpired('section', section, cutoffMs)) {
             removedSectionTombstones += 1;
             continue;
         }
@@ -150,8 +149,7 @@ export const purgeExpiredTombstones = (
     }
     const nextAreas: Area[] = [];
     for (const area of data.areas) {
-        const deletedMs = parseTimestampOrInfinity(area.deletedAt);
-        if (area.deletedAt && deletedMs <= cutoffMs) {
+        if (isEntityTombstoneExpired('area', area, cutoffMs)) {
             removedAreaTombstones += 1;
             continue;
         }
@@ -159,8 +157,7 @@ export const purgeExpiredTombstones = (
     }
     const nextPeople: Person[] = [];
     for (const person of data.people ?? []) {
-        const deletedMs = parseTimestampOrInfinity(person.deletedAt);
-        if (person.deletedAt && deletedMs <= cutoffMs) {
+        if (isEntityTombstoneExpired('person', person, cutoffMs)) {
             removedPersonTombstones += 1;
             continue;
         }

@@ -22,6 +22,7 @@ import type {
 import { areSyncPayloadsEqual } from './sync-helpers';
 import { computeRemoteSyncDocumentFingerprint, toRemoteSyncDocument } from './sync-document';
 import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from './store-helpers';
+import { purgeExpiredTombstones } from './sync-tombstones';
 
 const require = createRequire(import.meta.url);
 type BunStatement = {
@@ -2144,6 +2145,248 @@ describeSqlite('SqliteAdapter', () => {
     });
 });
 
+describeSqlite('SqliteAdapter final tombstone expiry', () => {
+    let db: Database;
+    let databaseDir: string;
+    let databasePath: string;
+    let adapter: SqliteAdapter;
+    let statements: string[];
+
+    const old = '2025-01-01T00:00:00.000Z';
+    const future = '2099-01-01T00:00:00.000Z';
+    const emptyData = (theme: 'light' | 'dark' = 'light'): AppData => ({
+        tasks: [],
+        projects: [],
+        sections: [],
+        areas: [],
+        people: [],
+        settings: { theme },
+    });
+    const taskTombstoneData = (overrides: Partial<Task> = {}): AppData => ({
+        ...emptyData(),
+        tasks: [{
+            id: 'expired-task',
+            title: 'Expired task tombstone',
+            status: 'inbox',
+            tags: [],
+            contexts: [],
+            createdAt: old,
+            updatedAt: old,
+            deletedAt: old,
+            rev: 1,
+            revBy: 'test',
+            ...overrides,
+        }],
+    });
+    const allEntityTombstones = (): AppData => ({
+        tasks: taskTombstoneData().tasks,
+        projects: [{
+            id: 'expired-project',
+            title: 'Expired project tombstone',
+            status: 'active',
+            color: '#94a3b8',
+            order: 0,
+            tagIds: [],
+            createdAt: old,
+            updatedAt: old,
+            deletedAt: old,
+            rev: 1,
+            revBy: 'test',
+        }],
+        sections: [{
+            id: 'expired-section',
+            projectId: 'expired-project',
+            title: 'Expired section tombstone',
+            order: 0,
+            createdAt: old,
+            updatedAt: old,
+            deletedAt: old,
+            rev: 1,
+            revBy: 'test',
+        }],
+        areas: [{
+            id: 'expired-area',
+            name: 'Expired area tombstone',
+            order: 0,
+            createdAt: old,
+            updatedAt: old,
+            deletedAt: old,
+            rev: 1,
+            revBy: 'test',
+        }],
+        people: [{
+            id: 'expired-person',
+            name: 'Expired person tombstone',
+            createdAt: old,
+            updatedAt: old,
+            deletedAt: old,
+            rev: 1,
+            revBy: 'test',
+        }],
+        settings: { theme: 'light' },
+    });
+
+    beforeEach(() => {
+        if (!RuntimeDatabase) throw new Error('No compatible sqlite runtime available for tests');
+        databaseDir = mkdtempSync(join(tmpdir(), 'mindwtr-sqlite-final-tombstone-'));
+        databasePath = join(databaseDir, 'mindwtr.db');
+        db = new RuntimeDatabase(databasePath);
+        statements = [];
+        const base = createClient(db);
+        adapter = new SqliteAdapter({
+            ...base,
+            run: async (sql: string, params: unknown[] = []) => {
+                statements.push(sql);
+                return base.run(sql, params);
+            },
+            all: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
+                statements.push(sql);
+                return base.all<T>(sql, params);
+            },
+        });
+    });
+
+    afterEach(() => {
+        setLogger(consoleLogger);
+        db.close();
+        rmSync(databaseDir, { recursive: true, force: true });
+    });
+
+    it('prunes the last observed tombstones for every entity inside the guarded transaction', async () => {
+        const logs: LogPayload[] = [];
+        setLogger((payload) => {
+            logs.push(payload);
+            if (payload.message === 'SQLite final tombstone expiry persisted') {
+                statements.push('LOG SQLite final tombstone expiry persisted');
+            }
+        });
+        await adapter.saveData(allEntityTombstones());
+
+        const observed = await adapter.getData();
+        const cleaned = purgeExpiredTombstones(observed, '2026-09-07T00:00:00.000Z').data;
+        expect([
+            cleaned.tasks,
+            cleaned.projects,
+            cleaned.sections,
+            cleaned.areas,
+            cleaned.people,
+        ].every((entities) => entities?.length === 0)).toBe(true);
+
+        statements = [];
+        await expect(adapter.saveData(cleaned)).resolves.toBeUndefined();
+        const beginIndex = statements.indexOf('BEGIN IMMEDIATE');
+        const proofIndexes = statements
+            .map((sql, index) => sql.startsWith('SELECT rowid AS _rowid') ? index : -1)
+            .filter((index) => index >= 0);
+        const firstMutationIndex = statements.findIndex((sql) =>
+            sql.startsWith('CREATE TEMP TABLE') || sql.startsWith('DELETE FROM') || sql.startsWith('INSERT INTO settings')
+        );
+        expect(proofIndexes).toHaveLength(5);
+        expect(proofIndexes.every((index) => index > beginIndex && index < firstMutationIndex)).toBe(true);
+        expect(statements.indexOf('COMMIT')).toBeLessThan(
+            statements.indexOf('LOG SQLite final tombstone expiry persisted'),
+        );
+
+        const diagnostic = logs.find((entry) => entry.message === 'SQLite final tombstone expiry persisted');
+        expect(diagnostic).toMatchObject({
+            level: 'info',
+            scope: 'sqlite',
+            category: 'storage',
+            context: {
+                releaseCheck: 'v1.2.9/sqlite-final-tombstone-expiry',
+                count: 5,
+                outcome: 'pruned',
+            },
+        });
+        expect(JSON.stringify(diagnostic)).not.toContain('expired-task');
+
+        await expect(adapter.saveData({
+            ...cleaned,
+            settings: { ...cleaned.settings, theme: 'dark' },
+        })).resolves.toBeUndefined();
+
+        const persisted = await adapter.getData();
+        expect(persisted.tasks).toEqual([]);
+        expect(persisted.settings.theme).toBe('dark');
+    });
+
+    it('accepts an expired row written successfully without an intervening read', async () => {
+        const written = taskTombstoneData();
+        await adapter.saveData(written);
+        const cleaned = purgeExpiredTombstones(written, '2026-09-07T00:00:00.000Z').data;
+
+        await expect(adapter.saveData(cleaned)).resolves.toBeUndefined();
+
+        expect((await adapter.getData()).tasks).toEqual([]);
+    });
+
+    it('allows a truly empty first-run database', async () => {
+        await expect(adapter.saveData(emptyData('dark'))).resolves.toBeUndefined();
+        expect((await adapter.getData()).settings.theme).toBe('dark');
+    });
+
+    it.each([
+        ['live', { deletedAt: undefined }],
+        ['recently deleted', { deletedAt: future }],
+        ['malformed', { deletedAt: 'not-a-date' }],
+        ['recently purged', { deletedAt: old, purgedAt: future }],
+    ] as const)('refuses a %s row and preserves both entities and settings', async (_label, overrides) => {
+        await adapter.saveData(taskTombstoneData(overrides));
+        await adapter.getData();
+
+        await expect(adapter.saveData(emptyData('dark'))).rejects.toThrow(/empty snapshot/);
+
+        const persisted = await adapter.getData();
+        expect(persisted.tasks.map((task) => task.id)).toEqual(['expired-task']);
+        expect(persisted.settings.theme).toBe('light');
+        expect(statements).toContain('ROLLBACK');
+    });
+
+    it('refuses a row that this adapter never observed', async () => {
+        const writer = new SqliteAdapter(createClient(db));
+        await writer.saveData(taskTombstoneData());
+
+        await expect(adapter.saveData(emptyData('dark'))).rejects.toThrow(/empty snapshot/);
+
+        expect((await adapter.getData()).tasks.map((task) => task.id)).toEqual(['expired-task']);
+        expect((await adapter.getData()).settings.theme).toBe('light');
+    });
+
+    it('refuses a row inserted after this adapter observed an empty database', async () => {
+        await adapter.saveData(emptyData());
+        await adapter.getData();
+        const writerDb = new RuntimeDatabase!(databasePath);
+        try {
+            const writer = new SqliteAdapter(createClient(writerDb));
+            await writer.saveData(taskTombstoneData());
+        } finally {
+            writerDb.close();
+        }
+
+        await expect(adapter.saveData(emptyData('dark'))).rejects.toThrow(/empty snapshot/);
+
+        const persisted = await adapter.getData();
+        expect(persisted.tasks.map((task) => task.id)).toEqual(['expired-task']);
+        expect(persisted.settings.theme).toBe('light');
+    });
+
+    it('refuses an observed row whose revision changed before the cleanup save', async () => {
+        await adapter.saveData(taskTombstoneData());
+        await adapter.getData();
+        runSql(
+            db,
+            'UPDATE tasks SET rev = ?, updatedAt = ? WHERE id = ?',
+            [2, '2025-02-01T00:00:00.000Z', 'expired-task'],
+        );
+
+        await expect(adapter.saveData(emptyData('dark'))).rejects.toThrow(/empty snapshot/);
+
+        const row = getSql<{ rev: number; updatedAt: string }>(db, 'SELECT rev, updatedAt FROM tasks WHERE id = ?', ['expired-task']);
+        expect(row).toEqual({ rev: 2, updatedAt: '2025-02-01T00:00:00.000Z' });
+        expect((await adapter.getData()).settings.theme).toBe('light');
+    });
+});
+
 describeSqlite('SqliteAdapter incremental saveData', () => {
     let db: Database;
     let adapter: SqliteAdapter;
@@ -2416,11 +2659,11 @@ describe('SqliteAdapter empty-snapshot backstop (#852)', () => {
         settings: {},
     };
 
-    const makeAdapter = (storedTaskCount: number) => {
+    const makeAdapter = (storedTasks: Record<string, unknown>[]) => {
         const run = vi.fn().mockResolvedValue(undefined);
         const all = vi.fn().mockImplementation(async (sql: string) => {
-            if (String(sql).startsWith('SELECT COUNT(*)')) {
-                return String(sql).includes('FROM tasks') ? [{ count: storedTaskCount }] : [{ count: 0 }];
+            if (String(sql).includes('FROM tasks')) {
+                return storedTasks;
             }
             return [];
         });
@@ -2436,16 +2679,22 @@ describe('SqliteAdapter empty-snapshot backstop (#852)', () => {
     };
 
     it('refuses an all-empty snapshot while the database still holds entities', async () => {
-        const { adapter, run } = makeAdapter(3);
+        const { adapter, run } = makeAdapter([{
+            _rowid: 1,
+            id: 'unobserved',
+            rev: 1,
+            updatedAt: '2025-01-01T00:00:00.000Z',
+            deletedAt: '2025-01-01T00:00:00.000Z',
+        }]);
 
         await expect(adapter.saveData(emptyData)).rejects.toThrow(/empty snapshot/);
 
-        // Refusal happens before any write: no transaction, no deletes.
-        expect(run).not.toHaveBeenCalled();
+        // The proof happens under the writer lock, then rolls back before data writes.
+        expect(run.mock.calls.map(([sql]) => String(sql))).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
     });
 
     it('allows an empty snapshot when the database is empty too (first run)', async () => {
-        const { adapter, run } = makeAdapter(0);
+        const { adapter, run } = makeAdapter([]);
 
         await adapter.saveData(emptyData);
 
