@@ -289,6 +289,18 @@ You can help in several ways:
 8. **Pick and build:** Community members are welcome to pick any open issue and submit a PR.
 9. **Sponsor the project:** Support ongoing development via [GitHub Sponsors](https://github.com/sponsors/dongdongbh) or [Ko-fi](https://ko-fi.com/D1D01T20WK).
 
+## More videos
+
+The introduction and GTD walkthrough are embedded above. Explore more with English captions, either directly on the website or on YouTube:
+
+| Video | Length | Website | YouTube |
+| --- | --- | --- | --- |
+| Feature tour | 1:15 | [Features](https://mindwtr.app/features#features-video) | [Watch](https://youtu.be/oDU8vZXfSoM) |
+| Desktop quick tour | 5:10 | [Watch](https://docs.mindwtr.app/start/videos#desktop) | [Watch](https://youtu.be/pSLajUzSZ2Q) |
+| Mobile quick tour | 5:47 | [Watch](https://docs.mindwtr.app/start/videos#mobile) | [Watch](https://youtu.be/l-aBufpt0c0) |
+
+[All videos on the website](https://docs.mindwtr.app/start/videos) · [Mindwtr Intro playlist](https://www.youtube.com/playlist?list=PLHqy3tAh5WlE) · [Mindwtr App Demos playlist](https://www.youtube.com/playlist?list=PLLwV6zeTfB_k)
+
 ## Documentation
 
 - 📚 [Official Docs](https://docs.mindwtr.app/)
