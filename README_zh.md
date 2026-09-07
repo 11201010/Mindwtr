@@ -75,6 +75,7 @@
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/3682cee5-06fb-40cf-993c-0be383fa6ba5" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
+  <p><i>桌面与移动端的本地优先 GTD</i></p>
 </div>
 
 ## 这些场景，是不是很熟悉？
