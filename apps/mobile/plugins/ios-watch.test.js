@@ -416,6 +416,12 @@ describe('ios-watch', () => {
     expect(intentsSource).toContain('static var openAppWhenRun: Bool { true }');
     expect(intentsSource).toContain('.foreground(.immediate)');
     expect(intentsSource).not.toContain('AudioRecordingIntent');
+    const intentDescriptions = Array.from(
+      intentsSource.matchAll(/IntentDescription\("([^"]+)"\)/g),
+      (match) => match[1],
+    );
+    expect(intentDescriptions.length).toBeGreaterThan(0);
+    expect(intentDescriptions.every((description) => !/\bapple\b/i.test(description))).toBe(true);
     expect(widgetSource).toContain('.accessoryCircular');
     expect(widgetSource).toContain('.accessoryRectangular');
     expect(widgetSource).toContain('.accessoryInline');

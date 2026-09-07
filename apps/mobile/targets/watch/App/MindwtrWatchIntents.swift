@@ -8,7 +8,7 @@ extension Notification.Name {
 @available(watchOS 10.0, *)
 struct MindwtrOpenWatchCaptureIntent: AppIntent {
     static var title: LocalizedStringResource = "Capture in Mindwtr"
-    static var description = IntentDescription("Opens Mindwtr on Apple Watch for dictation or audio capture.")
+    static var description = IntentDescription("Opens Mindwtr for dictation or audio capture.")
 
     #if compiler(>=6.0)
     @available(watchOS 26.0, *)
@@ -31,7 +31,7 @@ struct MindwtrOpenWatchCaptureIntent: AppIntent {
 @available(watchOS 10.0, *)
 struct MindwtrStartWatchPomodoroIntent: AppIntent {
     static var title: LocalizedStringResource = "Start Mindwtr Focus Timer"
-    static var description = IntentDescription("Starts the current Mindwtr Pomodoro timer from Apple Watch.")
+    static var description = IntentDescription("Starts the current Mindwtr Pomodoro timer.")
 
     #if compiler(>=6.0)
     @available(watchOS 26.0, *)
