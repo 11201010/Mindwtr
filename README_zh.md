@@ -290,17 +290,6 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
 
 [网站上的全部视频](https://docs.mindwtr.app/start/videos) · [Mindwtr Intro 播放列表](https://www.youtube.com/playlist?list=PLHqy3tAh5WlE) · [Mindwtr App Demos 播放列表](https://www.youtube.com/playlist?list=PLLwV6zeTfB_k)
 
-## 文档
-
-- 📚 [官方文档](https://docs.mindwtr.app/)
-- 🚀 [快速开始](https://docs.mindwtr.app/start/getting-started)
-- ❓ [FAQ](https://docs.mindwtr.app/start/faq)
-- 🔄 [数据与同步](https://docs.mindwtr.app/data-sync/)
-- 🛠️ [云端部署](https://docs.mindwtr.app/data-sync/cloud-deployment)
-- ☁️ [云端 API](https://docs.mindwtr.app/developers/cloud-api)
-- 🧠 [MCP 服务器](https://docs.mindwtr.app/power-users/mcp)
-- 📝 [版本说明索引](docs/release-notes/README.md)
-
 ## Star History
 
 <a href="https://www.star-history.com/?repos=dongdongbh%2FMindwtr&type=date&legend=top-left">

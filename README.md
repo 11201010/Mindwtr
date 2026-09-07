@@ -297,17 +297,6 @@ The introduction and GTD walkthrough are embedded above. Explore more with Engli
 
 [All videos on the website](https://docs.mindwtr.app/start/videos) · [Mindwtr Intro playlist](https://www.youtube.com/playlist?list=PLHqy3tAh5WlE) · [Mindwtr App Demos playlist](https://www.youtube.com/playlist?list=PLLwV6zeTfB_k)
 
-## Documentation
-
-- 📚 [Official Docs](https://docs.mindwtr.app/)
-- 🚀 [Getting Started](https://docs.mindwtr.app/start/getting-started)
-- ❓ [FAQ](https://docs.mindwtr.app/start/faq)
-- 🔄 [Data & Sync](https://docs.mindwtr.app/data-sync/)
-- 🛠️ [Cloud Deployment](https://docs.mindwtr.app/data-sync/cloud-deployment)
-- ☁️ [Cloud API](https://docs.mindwtr.app/developers/cloud-api)
-- 🧠 [MCP Server](https://docs.mindwtr.app/power-users/mcp)
-- 📝 [Release Notes Index](docs/release-notes/README.md)
-
 ## Star History
 
 <a href="https://www.star-history.com/?repos=dongdongbh%2FMindwtr&type=date&legend=top-left">
