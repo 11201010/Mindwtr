@@ -19,6 +19,39 @@ describe('mobile pomodoro controller', () => {
     nowMs = 10_000;
   });
 
+  it.each([
+    ['focus', 'start', 'focus-finished'],
+    ['focus', 'reset', 'focus-finished'],
+    ['focus', 'switch-phase', 'focus-finished'],
+    ['focus', 'dismiss', 'focus-finished'],
+    ['break', 'start', 'break-finished'],
+    ['break', 'reset', 'break-finished'],
+    ['break', 'switch-phase', 'break-finished'],
+    ['break', 'dismiss', 'break-finished'],
+  ] as const)('keeps %s completion feedback through idle ticks until %s', async (phase, action, event) => {
+    const controller = createMobilePomodoroController({ storage: makeStorage(), now: () => nowMs });
+    await controller.ensureHydrated();
+    controller.setDurations({ focusMinutes: 1, breakMinutes: 1 });
+    if (phase === 'break') controller.switchPhase();
+    controller.toggle();
+
+    nowMs += 60_000;
+    controller.reconcile();
+    expect(controller.getSnapshot().lastEvent).toBe(event);
+
+    for (let idleTick = 0; idleTick < 3; idleTick += 1) {
+      nowMs += 1_000;
+      controller.reconcile();
+    }
+    expect(controller.getSnapshot().lastEvent).toBe(event);
+
+    if (action === 'start') controller.toggle();
+    if (action === 'reset') controller.reset();
+    if (action === 'switch-phase') controller.switchPhase();
+    if (action === 'dismiss') controller.clearLastEvent();
+    expect(controller.getSnapshot().lastEvent).toBeNull();
+  });
+
   it('treats Watch actions as timestamped idempotent setters', async () => {
     const storage = makeStorage();
     const controller = createMobilePomodoroController({ storage, now: () => nowMs });

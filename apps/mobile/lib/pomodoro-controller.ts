@@ -177,7 +177,7 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
   };
 
   const reconcile = (autoStartOptions: PomodoroAutoStartOptions = {}, nowMs = now()): boolean => {
-    if (state.isHydrating) return false;
+    if (state.isHydrating || !state.timerState.isRunning) return false;
     const next = resolvePomodoroSession(state, nowMs, autoStartOptions);
     const structuralChange = next.timerState.phase !== state.timerState.phase
       || next.timerState.isRunning !== state.timerState.isRunning
