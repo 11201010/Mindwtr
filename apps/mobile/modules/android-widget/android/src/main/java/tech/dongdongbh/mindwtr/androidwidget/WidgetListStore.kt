@@ -8,11 +8,16 @@ import android.content.Context
 object WidgetListStore {
   const val PREFS_NAME = "mindwtr_widget_lists"
   const val DEFAULT_LIST = "focus"
+  /** Retired: only used to discard a selection stored before saved filters replaced project lists. */
   const val PROJECT_PREFIX = "project:"
   const val FILTER_PREFIX = "filter:"
 
-  fun read(context: Context, appWidgetId: Int): String =
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(appWidgetId.toString(), null) ?: DEFAULT_LIST
+  fun read(context: Context, appWidgetId: Int): String {
+    val stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(appWidgetId.toString(), null)
+    // Per-project lists were replaced by saved filters: a widget still holding
+    // one shows Focus, the same as any list id we can no longer name.
+    return if (stored == null || stored.startsWith(PROJECT_PREFIX)) DEFAULT_LIST else stored
+  }
 
   fun write(context: Context, appWidgetId: Int, listId: String) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(appWidgetId.toString(), listId).commit()

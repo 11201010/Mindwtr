@@ -29,11 +29,9 @@ class WidgetPayloadTest {
       "lists": {
         "focus": {"title": "Focus", "dateLabel": "Saturday, Sep 6", "sections": [{"key": "focus", "title": "Today's Focus", "items": [{"id": "a", "title": "Call the bank"}]}], "items": [{"id": "a", "title": "Call the bank"}]},
         "waiting": {"title": "Waiting For", "items": [{"id": "w", "title": "Reply from Sam"}]},
-        "project:p1": {"title": "Launch", "sections": [{"key": "s1", "title": "Prep", "items": [{"id": "x", "title": "Book venue"}]}], "items": [{"id": "x", "title": "Book venue"}]},
         "filter:f1": {"title": "Errands", "items": [{"id": "e", "title": "Post the parcel"}]}
       },
-      "listTitles": {"focus": "Focus", "inbox": "Inbox", "next": "Next Actions", "waiting": "Waiting For", "someday": "Someday/Maybe", "projects": "Projects", "savedFilters": "Saved filters"},
-      "projects": [{"id": "p1", "title": "Launch", "identityColor": "#8b5cf6"}],
+      "listTitles": {"focus": "Focus", "inbox": "Inbox", "next": "Next Actions", "waiting": "Waiting For", "someday": "Someday/Maybe", "savedFilters": "Saved filters"},
       "savedFilters": [{"id": "f1", "name": "Errands"}, {"id": "", "name": "Nameless"}],
       "emptyMessage": "All clear",
       "focusUri": "mindwtr:///focus",
@@ -99,13 +97,12 @@ class WidgetPayloadTest {
   fun listsResolveToTheSelectionOrFallBackToFocus() {
     val payload = WidgetPayload.parse(sample)!!
 
-    assertEquals(setOf("focus", "waiting", "project:p1", "filter:f1"), payload.lists.keys)
+    assertEquals(setOf("focus", "waiting", "filter:f1"), payload.lists.keys)
     assertEquals("Reply from Sam", payload.listFor("waiting").items[0].title)
+    // Per-project lists are retired: an id we cannot name draws Focus.
     assertEquals("Focus", payload.listFor("project:gone").title)
-    assertEquals("Prep", payload.listFor("project:p1").sections[0].title)
-    assertEquals(0xFF8B5CF6.toInt(), payload.projects[0].identityColor)
-    assertEquals("Projects", payload.listTitles["projects"])
-    assertEquals(2, TasksWidgetFactory.buildRows(payload.listFor("project:p1")).size)
+    assertEquals("Saved filters", payload.listTitles["savedFilters"])
+    assertEquals(2, TasksWidgetFactory.buildRows(payload.listFor("focus")).size)
   }
 
   @Test

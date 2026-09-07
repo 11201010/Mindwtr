@@ -20,7 +20,6 @@ data class WidgetPayload(
   val sections: List<Section>,
   val lists: Map<String, ListPayload>,
   val listTitles: Map<String, String>,
-  val projects: List<ProjectOption>,
   val savedFilters: List<SavedFilterOption>,
   val emptyMessage: String,
   val focusUri: String,
@@ -47,8 +46,6 @@ data class WidgetPayload(
 
   /** One list a placed Tasks widget can show (#1173). */
   data class ListPayload(val title: String, val dateLabel: String?, val sections: List<Section>, val items: List<Item>)
-
-  data class ProjectOption(val id: String, val title: String, val identityColor: Int?)
 
   data class SavedFilterOption(val id: String, val name: String)
 
@@ -94,7 +91,6 @@ data class WidgetPayload(
   fun titleFor(listId: String): String? =
     lists[listId]?.title
       ?: listTitles[listId]
-      ?: projects.firstOrNull { listId == WidgetListStore.PROJECT_PREFIX + it.id }?.title
       ?: savedFilters.firstOrNull { listId == WidgetListStore.FILTER_PREFIX + it.id }?.name
 
   /**
@@ -122,7 +118,6 @@ data class WidgetPayload(
       sections = emptyList(),
       lists = emptyMap(),
       listTitles = emptyMap(),
-      projects = emptyList(),
       savedFilters = emptyList(),
       emptyMessage = "All clear",
       focusUri = DEFAULT_FOCUS_URI,
@@ -160,15 +155,6 @@ data class WidgetPayload(
       }
       val listTitles = LinkedHashMap<String, String>()
       root.optJSONObject("listTitles")?.let { titles -> for (key in titles.keys()) listTitles[key] = titles.optString(key) }
-      val projects = ArrayList<ProjectOption>()
-      root.optJSONArray("projects")?.let { list ->
-        for (index in 0 until list.length()) {
-          val project = list.optJSONObject(index) ?: continue
-          val id = project.optString("id").trim()
-          if (id.isEmpty()) continue
-          projects.add(ProjectOption(id, project.stringOr("title", id), parseHexColor(project.optString("identityColor"))))
-        }
-      }
       val savedFilters = ArrayList<SavedFilterOption>()
       root.optJSONArray("savedFilters")?.let { list ->
         for (index in 0 until list.length()) {
@@ -198,7 +184,6 @@ data class WidgetPayload(
         sections = sections,
         lists = lists,
         listTitles = listTitles,
-        projects = projects,
         savedFilters = savedFilters,
         emptyMessage = root.stringOr("emptyMessage", defaults.emptyMessage),
         focusUri = focusUri,

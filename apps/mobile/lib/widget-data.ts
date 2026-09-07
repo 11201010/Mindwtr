@@ -32,11 +32,9 @@ import { THEME_PRESETS, type ThemePresetName } from '../constants/theme-presets'
 import { buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
 import { NO_FOCUS_WIDGET_FILTER, type FocusWidgetFilter } from './focus-widget-filter';
 import {
-    buildWidgetProjectOptions,
     buildWidgetSavedFilterOptions,
     buildWidgetTaskList,
     widgetListTitles,
-    type WidgetTaskListSection,
 } from './widget-lists';
 
 export const WIDGET_DATA_KEY = 'mindwtr-data';
@@ -123,12 +121,6 @@ export interface WidgetListPayload {
     items: WidgetTaskItem[];
 }
 
-export interface WidgetProjectOption {
-    id: string;
-    title: string;
-    identityColor: string | null;
-}
-
 export interface WidgetSavedFilterOption {
     id: string;
     name: string;
@@ -151,8 +143,6 @@ export interface TasksWidgetPayload {
     lists: Record<string, WidgetListPayload>;
     // Titles of the fixed lists for the configuration screen.
     listTitles: Record<string, string>;
-    // Projects the configuration screen offers.
-    projects: WidgetProjectOption[];
     // Saved filters the configuration screen offers.
     savedFilters: WidgetSavedFilterOption[];
     emptyMessage: string;
@@ -495,17 +485,6 @@ export function buildWidgetPayload(
 
     const dateLabel = formatDateLabel(now, language, 'long');
     const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr };
-    const capSections = (source: WidgetTaskListSection[]): WidgetTaskSection[] => {
-        let left = maxItems;
-        const out: WidgetTaskSection[] = [];
-        for (const section of source) {
-            if (left <= 0) break;
-            const sectionItems = section.items.slice(0, left).map(toItem);
-            left -= sectionItems.length;
-            out.push({ key: section.key, title: section.title, detail: null, items: sectionItems });
-        }
-        return out;
-    };
     // In a dated section the row's date is the header's date: hide it, show the
     // due time when there is one, keep an overdue date (it says the task slipped).
     const dropSameDayDue = (item: WidgetTaskItem, task: Task): WidgetTaskItem => {
@@ -529,11 +508,7 @@ export function buildWidgetPayload(
         if (listId === 'focus') continue;
         const list = buildWidgetTaskList(listId, listContext);
         if (!list) continue;
-        listPayloads[listId] = {
-            title: list.title,
-            ...(list.sections ? { sections: capSections(list.sections) } : {}),
-            items: list.tasks.slice(0, maxItems).map(toItem),
-        };
+        listPayloads[listId] = { title: list.title, items: list.tasks.slice(0, maxItems).map(toItem) };
     }
 
     return {
@@ -547,7 +522,6 @@ export function buildWidgetPayload(
         sections,
         lists: listPayloads,
         listTitles: widgetListTitles(tr),
-        projects: buildWidgetProjectOptions(data),
         savedFilters: buildWidgetSavedFilterOptions(data),
         emptyMessage: tr['agenda.allClear'] ?? 'All clear',
         captureLabel: tr['widget.capture'] ?? 'Quick capture',

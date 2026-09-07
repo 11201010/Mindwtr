@@ -14,7 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 
 /**
  * Picks which list a Tasks widget shows (#1173): the fixed GTD lists, then
- * one project, then one saved filter. Runs on placement (`android:configure`), from the launcher's
+ * one saved filter. Runs on placement (`android:configure`), from the launcher's
  * edit action (`reconfigurable`), and as a dropdown sheet when the widget's
  * own header title is tapped. OK stores the choice for this widget id and
  * redraws it; Cancel on first placement cancels the placement.
@@ -53,19 +53,13 @@ class WidgetConfigureActivity : AppCompatActivity() {
     val textColor = palette?.text ?: getColor(R.color.mindwtr_widget_text)
     val mutedColor = palette?.mutedText ?: getColor(R.color.mindwtr_widget_muted_text)
     val options = fixedOptions(payload.listTitles) +
-      payload.projects.map { WidgetListStore.PROJECT_PREFIX + it.id to it.title } +
       payload.savedFilters.map { WidgetListStore.FILTER_PREFIX + it.id to it.name }
-    val identityById = payload.projects.associate { WidgetListStore.PROJECT_PREFIX + it.id to it.identityColor }
-    // One muted label above the first row of each group.
-    val groupLabels = linkedMapOf(
-      WidgetListStore.PROJECT_PREFIX to (payload.listTitles["projects"] ?: "Projects"),
-      WidgetListStore.FILTER_PREFIX to (payload.listTitles["savedFilters"] ?: "Saved filters"),
-    )
+    var needsFilterLabel = true
     for ((id, title) in options) {
-      groupLabels.entries.firstOrNull { id.startsWith(it.key) }?.let { (prefix, label) ->
-        groupLabels.remove(prefix)
+      if (needsFilterLabel && id.startsWith(WidgetListStore.FILTER_PREFIX)) {
+        needsFilterLabel = false
         group.addView(TextView(this).apply {
-          text = label
+          text = payload.listTitles["savedFilters"] ?: "Saved filters"
           setTextColor(mutedColor)
           textSize = 12f
           setPadding(0, dp(12), 0, dp(4))
@@ -79,14 +73,6 @@ class WidgetConfigureActivity : AppCompatActivity() {
         minHeight = dp(if (dropdown) 40 else 44)
         isChecked = id == current
         if (dropdown) setOnClickListener { save(group) }
-        // The project's identity dot leads the name, as it does in the app's
-        // own lists, so the dots line up in a column instead of trailing each
-        // title at a different x.
-        identityById[id]?.let { color ->
-          val dot = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color); setSize(dp(10), dp(10)) }
-          setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null)
-          compoundDrawablePadding = dp(10)
-        }
       })
     }
 
