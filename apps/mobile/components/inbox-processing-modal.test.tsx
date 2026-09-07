@@ -1135,6 +1135,98 @@ describe('InboxProcessingModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'an archived match before an active match',
+      [
+        { ...workProject, id: 'project-archived', title: 'Plan Launch', status: 'archived' },
+        { ...homeProject, id: 'project-active', title: 'PLAN LAUNCH', status: 'active' },
+      ],
+      'project-active',
+      false,
+    ],
+    [
+      'an archived-only match',
+      [{ ...workProject, id: 'project-archived', title: 'Plan Launch', status: 'archived' }],
+      'project-created',
+      true,
+    ],
+    [
+      'completed and deleted matches',
+      [
+        { ...workProject, id: 'project-completed', title: 'Plan Launch', status: 'completed' },
+        {
+          ...homeProject,
+          id: 'project-deleted',
+          title: 'Plan Launch',
+          status: 'active',
+          deletedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      'project-created',
+      true,
+    ],
+    [
+      'an active match',
+      [{ ...workProject, id: 'project-active', title: 'Plan Launch', status: 'active' }],
+      'project-active',
+      false,
+    ],
+    [
+      'a someday match',
+      [{ ...workProject, id: 'project-someday', title: 'Plan Launch', status: 'someday' }],
+      'project-someday',
+      false,
+    ],
+  ] as [string, any[], string, boolean][])('uses an assignable mobile project for %s', async (
+    _case,
+    matchingProjects,
+    expectedProjectId,
+    shouldCreate,
+  ) => {
+    storeState.projects = matchingProjects;
+    addProject.mockResolvedValue({
+      ...workProject,
+      id: 'project-created',
+      title: 'Plan Launch',
+      status: 'active',
+    });
+    const onClose = vi.fn();
+    let tree: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={onClose} />);
+    });
+
+    const root = tree!.root;
+    walkToProjectConversion(root);
+    act(() => {
+      findTextInputByAccessibilityLabel(root, 'projects.projectName').props.onChangeText('Plan Launch');
+      root.findByProps({ accessibilityLabel: 'process.nextAction' }).props.onChangeText('Draft launch brief');
+      findPressableWithText(root, 'process.addAnotherAction').props.onPress();
+    });
+    const actionInputs = findTextInputsByAccessibilityLabel(root, 'process.nextAction');
+    act(() => {
+      actionInputs[1].props.onChangeText('Book venue');
+    });
+
+    await act(async () => {
+      findPressableWithText(root, 'process.createProject').props.onPress();
+    });
+
+    expect(addProject).toHaveBeenCalledTimes(shouldCreate ? 1 : 0);
+    expect(addTask).toHaveBeenCalledWith('Book venue', {
+      status: 'inbox',
+      projectId: expectedProjectId,
+    });
+    expect(updateTask).toHaveBeenCalledWith('inbox-1', expect.objectContaining({
+      title: 'Draft launch brief',
+      status: 'next',
+      projectId: expectedProjectId,
+    }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('chains a fresh action input from keyboard submit instead of converting (#827)', () => {
     const onClose = vi.fn();
     let tree: ReturnType<typeof create>;

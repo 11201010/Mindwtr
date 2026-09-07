@@ -8,6 +8,7 @@ import {
     enterProcessInboxStep,
     getPersonOptionNames,
     goBackProcessInboxStep,
+    isSelectableProjectForTaskAssignment,
     isProcessInboxReturningTask,
     mergeParsedProcessInboxFields,
     parseProcessInboxTitleInput,
@@ -728,7 +729,10 @@ export function useInboxProcessingController({
         }
         projectConversionInFlightRef.current = true;
         try {
-            const existing = projects.find((project) => project.title.toLowerCase() === projectTitle.toLowerCase());
+            const existing = projects.find((project) => (
+                isSelectableProjectForTaskAssignment(project)
+                && project.title.toLowerCase() === projectTitle.toLowerCase()
+            ));
             const project = existing ?? await addProject(
                 projectTitle,
                 DEFAULT_PROJECT_COLOR,

@@ -424,19 +424,25 @@ describe('useInboxProcessingController draft writes', () => {
 describe('useInboxProcessingController project conversion persistence', () => {
     const tasks = [makeTask('one')];
     const project = { id: 'p1', title: 'Plan Launch', status: 'active' } as Project;
+    type RenderControllerOptions = {
+        tasks?: Task[];
+        projects?: Project[];
+        addProject?: Parameters<typeof useInboxProcessingController>[0]['addProject'];
+    };
 
     const renderController = (
         addTask: ReturnType<typeof vi.fn>,
         updateTask: ReturnType<typeof vi.fn>,
+        options: RenderControllerOptions = {},
     ) => renderHook(() => {
         const [isProcessing, setIsProcessing] = useState(true);
         return useInboxProcessingController({
             t: (key) => key,
-            tasks,
-            projects: [project],
+            tasks: options.tasks ?? tasks,
+            projects: options.projects ?? [project],
             areas: [],
             settings: {},
-            addProject: async () => project,
+            addProject: options.addProject ?? (async () => project),
             addTask,
             updateTask,
             deleteTask: async () => ({ success: true }),
@@ -479,6 +485,92 @@ describe('useInboxProcessingController project conversion persistence', () => {
             projectId: 'p1',
         }));
         expect(addTask.mock.invocationCallOrder[0]).toBeLessThan(updateTask.mock.invocationCallOrder[0]);
+    });
+
+    it.each([
+        [
+            'an archived match before an active match',
+            [
+                { id: 'archived', title: 'Plan Launch', status: 'archived' } as Project,
+                { id: 'active', title: 'PLAN LAUNCH', status: 'active' } as Project,
+            ],
+            'active',
+            false,
+        ],
+        [
+            'an archived-only match',
+            [{ id: 'archived', title: 'Plan Launch', status: 'archived' } as Project],
+            'created',
+            true,
+        ],
+        [
+            'completed and deleted matches',
+            [
+                {
+                    id: 'completed',
+                    title: 'Plan Launch',
+                    status: 'completed',
+                    color: '#3b82f6',
+                    order: 0,
+                    tagIds: [],
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                } as unknown as Project,
+                {
+                    id: 'deleted',
+                    title: 'Plan Launch',
+                    status: 'active',
+                    deletedAt: '2026-01-01T00:00:00.000Z',
+                } as Project,
+            ],
+            'created',
+            true,
+        ],
+        [
+            'an active match',
+            [{ id: 'active', title: 'Plan Launch', status: 'active' } as Project],
+            'active',
+            false,
+        ],
+        [
+            'a someday match',
+            [{ id: 'someday', title: 'Plan Launch', status: 'someday' } as Project],
+            'someday',
+            false,
+        ],
+    ] as Array<[string, Project[], string, boolean]>)('uses an assignable project for %s', async (
+        _case,
+        matchingProjects,
+        expectedProjectId,
+        shouldCreate,
+    ) => {
+        const created = { id: 'created', title: 'Plan Launch', status: 'active' } as Project;
+        const addProject = vi.fn(async () => created);
+        const addTask = vi.fn(async () => ({ success: true }));
+        const updateTask = vi.fn(async () => ({ success: true }));
+        const { result } = renderController(addTask, updateTask, {
+            tasks: [makeTask('one'), makeTask('two')],
+            projects: matchingProjects,
+            addProject,
+        });
+        await prepareConversion(result, ['Book venue']);
+
+        await act(async () => {
+            await result.current.wizardProps.handleConvertToProject();
+        });
+
+        expect(addProject).toHaveBeenCalledTimes(shouldCreate ? 1 : 0);
+        expect(addTask).toHaveBeenCalledWith('Book venue', {
+            status: 'inbox',
+            projectId: expectedProjectId,
+        });
+        expect(updateTask).toHaveBeenCalledWith('one', expect.objectContaining({
+            status: 'next',
+            projectId: expectedProjectId,
+        }));
+        await waitFor(() => {
+            expect(result.current.wizardProps.processingTask?.id).toBe('two');
+        });
     });
 
     it('retries only uncommitted extra actions and does not advance after a partial failure', async () => {
