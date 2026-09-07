@@ -1,7 +1,8 @@
 import { format } from 'date-fns';
 import { safeParseDate, tFallback, type Project } from '@mindwtr/core';
 import { Calendar, CalendarClock, CalendarRange, Check, CheckCircle, Copy, FolderOpenDot, HelpCircle, Info, ListOrdered, Loader2, MoreHorizontal, RotateCcw, Signal, Trash2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 
 type ProjectProgress = {
     total: number;
@@ -64,6 +65,7 @@ export function ProjectDetailsHeader({
 }: ProjectDetailsHeaderProps) {
     const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
     const menuRef = useRef<HTMLDivElement | null>(null);
+    const menuPanelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const completedRatio = projectProgress && projectProgress.total > 0
         ? projectProgress.isArchived
@@ -134,11 +136,38 @@ export function ProjectDetailsHeader({
         element.style.height = `${element.scrollHeight}px`;
     }, [editTitle]);
 
+    // The menu renders through a portal with fixed coordinates. Inside the header it
+    // sat in the header's own stacking context (container-type makes one), and on
+    // macOS WebKit the sticky task toolbar below still painted over it whenever the
+    // header's actions wrapped under the chips, even with the header lifted to z-30
+    // (reported twice from 1.2.8 builds, the second time on an archived project).
+    const [menuStyle, setMenuStyle] = useState<CSSProperties>({ position: 'fixed', top: 0, right: 0 });
+    useLayoutEffect(() => {
+        if (!menuOpen) return;
+        const place = () => {
+            const rect = menuRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            setMenuStyle({
+                position: 'fixed',
+                top: rect.bottom + 4,
+                right: Math.max(8, window.innerWidth - rect.right),
+            });
+        };
+        place();
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        return () => {
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+        };
+    }, [menuOpen]);
+
     useEffect(() => {
         if (!menuOpen) return;
-        menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+        menuPanelRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
         const handlePointer = (event: Event) => {
-            if (menuRef.current && menuRef.current.contains(event.target as Node)) return;
+            const target = event.target as Node;
+            if (menuRef.current?.contains(target) || menuPanelRef.current?.contains(target)) return;
             setMenuOpen(false);
         };
         const handleKey = (event: KeyboardEvent) => {
@@ -264,10 +293,12 @@ export function ProjectDetailsHeader({
                         >
                             {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <MoreHorizontal className="w-4 h-4" />}
                         </button>
-                        {menuOpen && (
+                        {menuOpen && createPortal(
                             <div
+                                ref={menuPanelRef}
                                 role="menu"
-                                className="absolute right-0 top-full z-40 mt-1 min-w-[180px] rounded-md border border-border bg-card p-1 shadow-lg"
+                                style={menuStyle}
+                                className="z-50 min-w-[180px] rounded-md border border-border bg-card p-1 shadow-lg"
                             >
                                 <button
                                     type="button"
@@ -322,7 +353,8 @@ export function ProjectDetailsHeader({
                                     <Trash2 className="w-4 h-4" />
                                     {t('common.delete')}
                                 </button>
-                            </div>
+                            </div>,
+                            document.body,
                         )}
                     </div>
                 </div>
