@@ -63,18 +63,27 @@ export function Dialog({
     // The press has to start on the scrim as well: dragging a text selection out
     // of the panel and releasing on the scrim must not count as clicking outside.
     const pressStartedOnBackdrop = useRef(false);
+    const returnFocusTarget = useRef<HTMLElement | null | undefined>(undefined);
+    if (returnFocusTarget.current === undefined) {
+        returnFocusTarget.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+    }
 
     useEffect(() => {
-        const previouslyFocused = document.activeElement as HTMLElement | null;
+        const mountedPanel = panel.current;
         // Park focus on the panel unless a child already claimed it (autoFocus
         // runs during commit, so it wins); callers that focus a control on a
         // timer still take it from here afterwards.
-        if (!panel.current?.contains(document.activeElement)) {
-            panel.current?.focus();
+        if (!mountedPanel?.contains(document.activeElement)) {
+            mountedPanel?.focus();
         }
         return () => {
-            if (previouslyFocused?.isConnected) {
-                previouslyFocused.focus();
+            // StrictMode replays effects while the committed panel remains in the
+            // document. Restore only when this mount's panel was actually removed.
+            if (mountedPanel?.isConnected) return;
+            if (returnFocusTarget.current?.isConnected) {
+                returnFocusTarget.current.focus();
             }
         };
     }, [panel]);

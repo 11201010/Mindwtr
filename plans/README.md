@@ -154,7 +154,7 @@ Planned against `77137ce0d` / `a68aeeb6f`. All reviews use GPT-6 Astra; implemen
 | 078 | cloud-focus-write-parity | P2 | M | DONE |
 | 079 | mcp-auth-throttle-docs | P3 | S | DONE (app README and all six public locales; web check passed) |
 | 080 | inbox-project-reuse-eligibility | P2 | S | TODO |
-| 081 | dialog-autofocus-return | P2 | S | TODO |
+| 081 | dialog-autofocus-return | P2 | S | DONE |
 
 No logical dependencies; isolated implementations may run in parallel. Diagnostics ledger and field-test additions are integrated by root, preserving all entries. Public docs plan079 also receives one scoped mindwtr-web commit.
 

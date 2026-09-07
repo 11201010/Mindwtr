@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { axe } from 'vitest-axe';
@@ -165,6 +165,135 @@ describe.each(VARIANTS)('Dialog ($name)', ({ props }) => {
 });
 
 describe('Dialog', () => {
+    it('returns focus to the opener after an autoFocus child closes', () => {
+        const trigger = document.createElement('button');
+        document.body.append(trigger);
+        trigger.focus();
+
+        const { unmount } = render(
+            <Dialog onClose={vi.fn()} label="Autofocused">
+                <DialogBody>
+                    <input autoFocus aria-label="Name" />
+                </DialogBody>
+            </Dialog>,
+        );
+        expect(screen.getByLabelText('Name')).toHaveFocus();
+
+        unmount();
+
+        expect(trigger).toHaveFocus();
+        trigger.remove();
+    });
+
+    it('keeps child autofocus through StrictMode replay and restores the opener on close', () => {
+        const trigger = document.createElement('button');
+        document.body.append(trigger);
+        trigger.focus();
+
+        const { unmount } = render(
+            <StrictMode>
+                <Dialog onClose={vi.fn()} label="Strict autofocused">
+                    <DialogBody>
+                        <input autoFocus aria-label="Strict name" />
+                    </DialogBody>
+                </Dialog>
+            </StrictMode>,
+        );
+        expect(screen.getByLabelText('Strict name')).toHaveFocus();
+
+        unmount();
+
+        expect(trigger).toHaveFocus();
+        trigger.remove();
+    });
+
+    it('retains the original return target through rerenders and focus moves inside', () => {
+        const trigger = document.createElement('button');
+        document.body.append(trigger);
+        trigger.focus();
+        const dialog = (revision: number) => (
+            <Dialog onClose={vi.fn()} label="Rerendered">
+                <DialogBody>
+                    <input autoFocus aria-label="Rerendered name" />
+                    <button type="button">Inside</button>
+                    <span>{revision}</span>
+                </DialogBody>
+            </Dialog>
+        );
+        const { rerender, unmount } = render(dialog(1));
+        const inside = screen.getByRole('button', { name: 'Inside' });
+        inside.focus();
+
+        rerender(dialog(2));
+        expect(inside).toHaveFocus();
+        unmount();
+
+        expect(trigger).toHaveFocus();
+        trigger.remove();
+    });
+
+    it('returns nested dialog focus in stack order', () => {
+        const Harness = () => {
+            const [outerOpen, setOuterOpen] = useState(false);
+            const [innerOpen, setInnerOpen] = useState(false);
+            return (
+                <>
+                    <button type="button" onClick={() => setOuterOpen(true)}>Open outer</button>
+                    {outerOpen ? (
+                        <Dialog onClose={() => setOuterOpen(false)} label="Outer">
+                            <DialogBody>
+                                <button type="button" autoFocus onClick={() => setInnerOpen(true)}>Open inner</button>
+                                {innerOpen ? (
+                                    <Dialog onClose={() => setInnerOpen(false)} label="Inner">
+                                        <DialogBody>
+                                            <input autoFocus aria-label="Inner name" />
+                                        </DialogBody>
+                                    </Dialog>
+                                ) : null}
+                            </DialogBody>
+                        </Dialog>
+                    ) : null}
+                </>
+            );
+        };
+        render(<Harness />);
+        const outsideTrigger = screen.getByRole('button', { name: 'Open outer' });
+        outsideTrigger.focus();
+        fireEvent.click(outsideTrigger);
+        const parentTrigger = screen.getByRole('button', { name: 'Open inner' });
+        expect(parentTrigger).toHaveFocus();
+
+        fireEvent.click(parentTrigger);
+        const innerInput = screen.getByLabelText('Inner name');
+        expect(innerInput).toHaveFocus();
+        fireEvent.keyDown(innerInput, { key: 'Escape' });
+        expect(parentTrigger).toHaveFocus();
+
+        fireEvent.keyDown(parentTrigger, { key: 'Escape' });
+        expect(outsideTrigger).toHaveFocus();
+    });
+
+    it('leaves current focus alone when the original return target was detached', () => {
+        const trigger = document.createElement('button');
+        const fallback = document.createElement('button');
+        document.body.append(trigger, fallback);
+        trigger.focus();
+
+        const { unmount } = render(
+            <Dialog onClose={vi.fn()} label="Detached opener">
+                <DialogBody>
+                    <input autoFocus aria-label="Detached name" />
+                </DialogBody>
+            </Dialog>,
+        );
+        trigger.remove();
+        fallback.focus();
+
+        expect(() => unmount()).not.toThrow();
+        expect(fallback).toHaveFocus();
+        fallback.remove();
+    });
+
     // A sized or scrim-scrolling panel opts out of the cap with max-h-[none];
     // plain `max-h-none` is NOT in tailwind-merge's scale, so it would leave the
     // default cap in place alongside it and quietly clip the panel.
