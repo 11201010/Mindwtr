@@ -76,15 +76,6 @@
 <div align="center">
   <video src="https://github.com/user-attachments/assets/3682cee5-06fb-40cf-993c-0be383fa6ba5" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
   <p><b>试试 Mindwtr</b></p>
-
-  <p>
-    <i>桌面与移动端的本地优先 GTD</i>
-  </p>
-  <p>
-    🎥 <b><a href="https://youtu.be/c-1Fxx5gFlo">完整桌面端视频教程</a></b>
-    ·
-    <b><a href="https://youtu.be/FApCFhViwJE">完整移动端视频教程</a></b>
-  </p>
 </div>
 
 ## 这些场景，是不是很熟悉？
