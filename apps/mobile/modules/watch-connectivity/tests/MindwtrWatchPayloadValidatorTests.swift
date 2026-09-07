@@ -21,6 +21,18 @@ final class MindwtrWatchPayloadValidatorTests: XCTestCase {
         XCTAssertEqual(validated.queuePayload["protocolVersion"] as? Int, 1)
     }
 
+    func testAcceptsNumericNSNumberProtocolVersionAndRejectsBoolean() {
+        var payload = basePayload(kind: "audio")
+        payload["protocolVersion"] = NSNumber(value: 1)
+        XCTAssertNoThrow(try MindwtrWatchPayloadValidator.validateTransport(payload))
+
+        payload["protocolVersion"] = NSNumber(value: true)
+        XCTAssertThrowsError(try MindwtrWatchPayloadValidator.validateTransport(payload))
+
+        payload["protocolVersion"] = true
+        XCTAssertThrowsError(try MindwtrWatchPayloadValidator.validateTransport(payload))
+    }
+
     func testRejectsUnknownFieldsAndProtocolKinds() {
         var payload = basePayload(kind: "text")
         payload["title"] = "Capture"
@@ -63,6 +75,22 @@ final class MindwtrWatchPayloadValidatorTests: XCTestCase {
         XCTAssertThrowsError(try MindwtrWatchPayloadValidator.validateTransport(pomodoro))
     }
 
+    func testValidatesEveryTransportKindAfterJSONAndPropertyListRoundTrips() throws {
+        for (kind, payload) in transportPayloads() {
+            let jsonPayload = try jsonRoundTrip(payload)
+            XCTAssertEqual(
+                try MindwtrWatchPayloadValidator.validateTransport(jsonPayload).kind,
+                kind
+            )
+
+            let propertyListPayload = try propertyListRoundTrip(payload)
+            XCTAssertEqual(
+                try MindwtrWatchPayloadValidator.validateTransport(propertyListPayload).kind,
+                kind
+            )
+        }
+    }
+
     func testApplicationContextStripsNullsAndKeepsPropertyListShape() throws {
         let normalized = try MindwtrWatchPayloadValidator.normalizeApplicationContext([
             "protocolVersion": 1,
@@ -102,6 +130,74 @@ final class MindwtrWatchPayloadValidatorTests: XCTestCase {
         ]))
     }
 
+    func testNormalizesApplicationContextAfterJSONAndPropertyListRoundTrips() throws {
+        for context in [
+            try jsonRoundTrip(applicationContext(remainingSeconds: 1)),
+            try propertyListRoundTrip(applicationContext(remainingSeconds: 1)),
+        ] {
+            let normalized = try MindwtrWatchPayloadValidator.normalizeApplicationContext(context)
+            let pomodoro = try XCTUnwrap(normalized["pomodoro"] as? [String: Any])
+            XCTAssertEqual(pomodoro["remainingSeconds"] as? Int, 1)
+            XCTAssertEqual(pomodoro["isRunning"] as? Bool, false)
+            XCTAssertEqual(pomodoro["completionAlert"] as? Bool, true)
+        }
+    }
+
+    func testApplicationContextAcceptsZeroAndOneAsNativeAndNSNumberIntegers() throws {
+        let values: [(Any, Int)] = [
+            (0, 0),
+            (1, 1),
+            (NSNumber(value: 0), 0),
+            (NSNumber(value: 1), 1),
+        ]
+        for (value, expected) in values {
+            let normalized = try MindwtrWatchPayloadValidator.normalizeApplicationContext(
+                applicationContext(remainingSeconds: value)
+            )
+            let pomodoro = try XCTUnwrap(normalized["pomodoro"] as? [String: Any])
+            XCTAssertEqual(pomodoro["remainingSeconds"] as? Int, expected)
+        }
+    }
+
+    func testRejectsBooleansInNumericApplicationContextFields() throws {
+        for value: Any in [false, true, NSNumber(value: false), NSNumber(value: true)] {
+            XCTAssertThrowsError(try MindwtrWatchPayloadValidator.normalizeApplicationContext(
+                applicationContext(remainingSeconds: value)
+            ))
+        }
+
+        var context = applicationContext(remainingSeconds: 1)
+        var pomodoro = try XCTUnwrap(context["pomodoro"] as? [String: Any])
+        pomodoro["phaseEndTime"] = NSNumber(value: true)
+        context["pomodoro"] = pomodoro
+        XCTAssertThrowsError(try MindwtrWatchPayloadValidator.normalizeApplicationContext(context))
+    }
+
+    func testPhaseEndTimeAcceptsNumericNSNumber() throws {
+        var context = applicationContext(remainingSeconds: 1)
+        var pomodoro = try XCTUnwrap(context["pomodoro"] as? [String: Any])
+        pomodoro["phaseEndTime"] = NSNumber(value: Int64(1_800_000_000_000))
+        context["pomodoro"] = pomodoro
+
+        XCTAssertNoThrow(try MindwtrWatchPayloadValidator.normalizeApplicationContext(context))
+    }
+
+    func testRejectsNonexactAndOutOfRangeIntegerNumbersWithoutTrapping() {
+        let invalidValues: [Any] = [
+            NSNumber(value: 9_223_372_036_854_775_808.0),
+            NSNumber(value: Double.infinity),
+            NSNumber(value: Double.nan),
+            NSNumber(value: 1.5),
+            NSNumber(value: -1),
+            NSNumber(value: 86_401),
+        ]
+        for value in invalidValues {
+            XCTAssertThrowsError(try MindwtrWatchPayloadValidator.normalizeApplicationContext(
+                applicationContext(remainingSeconds: value)
+            ))
+        }
+    }
+
     private func basePayload(kind: String) -> [String: Any] {
         [
             "protocolVersion": 1,
@@ -110,5 +206,57 @@ final class MindwtrWatchPayloadValidatorTests: XCTestCase {
             "source": "apple-watch",
             "kind": kind,
         ]
+    }
+
+    private func transportPayloads() -> [(MindwtrWatchPayloadKind, [String: Any])] {
+        var text = basePayload(kind: "text")
+        text["title"] = "Capture"
+        let audio = basePayload(kind: "audio")
+        var complete = basePayload(kind: "complete")
+        complete["taskId"] = "task-1"
+        var deferTask = basePayload(kind: "defer")
+        deferTask["taskId"] = "task-1"
+        deferTask["startDate"] = "2026-09-07"
+        var pomodoro = basePayload(kind: "pomodoro")
+        pomodoro["action"] = "start"
+        pomodoro["taskId"] = "task-1"
+        return [
+            (.text, text),
+            (.audio, audio),
+            (.complete, complete),
+            (.deferTask, deferTask),
+            (.pomodoro, pomodoro),
+        ]
+    }
+
+    private func applicationContext(remainingSeconds: Any) -> [String: Any] {
+        [
+            "protocolVersion": NSNumber(value: 1),
+            "generatedAt": "2026-09-06T15:04:05Z",
+            "focus": [["id": "task-1", "title": "One"]],
+            "pomodoro": [
+                "phase": "focus",
+                "isRunning": false,
+                "remainingSeconds": remainingSeconds,
+                "completionAlert": true,
+            ],
+        ]
+    }
+
+    private func jsonRoundTrip(_ payload: [String: Any]) throws -> [String: Any] {
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func propertyListRoundTrip(_ payload: [String: Any]) throws -> [String: Any] {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: payload,
+            format: .binary,
+            options: 0
+        )
+        return try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                as? [String: Any]
+        )
     }
 }

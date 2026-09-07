@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 enum MindwtrWatchPayloadKind: String, CaseIterable {
@@ -305,24 +306,21 @@ enum MindwtrWatchPayloadValidator {
     }
 
     private static func integer(_ value: Any?) -> Int? {
-        if value is Bool { return nil }
-        if let value = value as? Int { return value }
-        guard let value = value as? NSNumber else { return nil }
-        let number = value.doubleValue
-        guard number.isFinite,
-              number.rounded(.towardZero) == number,
-              number >= Double(Int.min),
-              number <= Double(Int.max) else {
-            return nil
+        if let value = value as? NSNumber {
+            guard CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
+            return Int(exactly: value.doubleValue)
         }
-        return Int(number)
+        return value as? Int
     }
 
     private static func number(_ value: Any?) -> Double? {
-        if value is Bool { return nil }
+        if let value = value as? NSNumber {
+            guard CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
+            return value.doubleValue
+        }
         if let value = value as? Double { return value }
         if let value = value as? Int { return Double(value) }
-        return (value as? NSNumber)?.doubleValue
+        return nil
     }
 
     private static func stripNullValues(_ value: Any) -> Any? {
