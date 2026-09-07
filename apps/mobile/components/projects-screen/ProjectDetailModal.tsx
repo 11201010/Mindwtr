@@ -887,7 +887,7 @@ export function ProjectDetailModal({
         if (current.status === 'archived' || isArchivedProjectRef.current) {
             if (status !== 'active') return;
             updateProject(current.id, { status: 'active' });
-            onProjectChange({ ...current, status: 'active' });
+            onProjectChange({ ...current, status: 'active', cancelledAt: undefined });
         } else {
             updateMutableSelectedProject({ status });
         }

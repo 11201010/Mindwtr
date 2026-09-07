@@ -1207,14 +1207,18 @@ describe('ProjectDetailModal lifecycle actions', () => {
         expect(alertSpy).not.toHaveBeenCalled();
     });
 
-    it('reactivates an archived project with a plain active status write', () => {
+    it('reactivates an archived project and clears cancellation from the local projection', () => {
         const onProjectChange = vi.fn();
         let tree!: ReturnType<typeof create>;
 
         act(() => {
             tree = create(<ProjectDetailModal {...createProjectDetailModalProps({
                 onProjectChange,
-                project: { ...project('archived'), supportNotes: 'Draft' },
+                project: {
+                    ...project('archived'),
+                    cancelledAt: '2026-09-07T17:55:52.630Z',
+                    supportNotes: 'Draft',
+                },
             })} />);
         });
 
@@ -1226,7 +1230,10 @@ describe('ProjectDetailModal lifecycle actions', () => {
         });
 
         expect(storeActions.updateProject).toHaveBeenCalledWith('project-1', { status: 'active' });
-        expect(onProjectChange).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
+        expect(onProjectChange).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'active',
+            cancelledAt: undefined,
+        }));
     });
 
     it('shows the archive explanation only inside the on-demand actions menu', () => {
