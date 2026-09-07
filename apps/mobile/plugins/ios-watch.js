@@ -209,7 +209,11 @@ const addTargetGroup = (project, name, files) => {
     // the whole project. The Watch app and widget intentionally have shared
     // filenames, so each target needs its own file reference beneath its own
     // group instead of reusing the other target's object.
-    const file = new PbxFile(fileName);
+    // Later plugins (notably the Share Extension) also use addBuildPhase's
+    // global path lookup. Namespace paths from SOURCE_ROOT so their bare
+    // PrivacyInfo.xcprivacy cannot reuse a Watch resource build file.
+    const file = new PbxFile(path.posix.join(name, fileName));
+    file.sourceTree = 'SOURCE_ROOT';
     file.fileRef = project.generateUuid();
     project.addToPbxFileReferenceSection(file);
     group.children.push({ value: file.fileRef, comment: file.basename });

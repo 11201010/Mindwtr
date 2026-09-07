@@ -172,7 +172,7 @@ const sourceNamesForTarget = (project, target) => {
     .find(Boolean);
   return phase.files.map((entry) => {
     const fileRef = buildFiles[entry.value].fileRef;
-    return String(fileReferences[fileRef].path).replaceAll('"', '');
+    return path.posix.basename(String(fileReferences[fileRef].path).replaceAll('"', ''));
   });
 };
 
@@ -288,13 +288,29 @@ describe('ios-watch', () => {
     expect(sharedSourceRefs).toHaveLength(2);
     expect(new Set(sharedSourceRefs)).toHaveLength(2);
     expect(sharedSourceRefs.map((uuid) => fileReferences[uuid].path)).toEqual([
-      '"WatchSnapshotStore.swift"',
-      '"WatchSnapshotStore.swift"',
+      '"MindwtrWatch/WatchSnapshotStore.swift"',
+      '"MindwtrWatchWidgets/WatchSnapshotStore.swift"',
     ]);
 
     expect(phaseForTarget(project, hostTarget, 'PBXCopyFilesBuildPhase', 'Embed Watch Content').files).toHaveLength(1);
     expect(phaseForTarget(project, watchTarget, 'PBXCopyFilesBuildPhase', 'Embed App Extensions').files).toHaveLength(1);
     expect(project.writeSync()).toContain('MindwtrWatchWidgets.appex in Embed App Extensions');
+  });
+
+  it('does not let a later extension reuse the Watch privacy resource build file', () => {
+    const directories = createGeneratedSources();
+    const project = createFixtureProject();
+    reconcileWatchProject(project, enabledOptions(directories));
+
+    // expo-share-intent adds a bare privacy manifest after our plugin during
+    // clean prebuild; xcode's helper searches all targets by file path.
+    project.addBuildPhase(['PrivacyInfo.xcprivacy'], 'PBXResourcesBuildPhase', 'Resources', 'HOST_TARGET');
+    const uses = buildFileUseCounts(project);
+    expect([...uses.values()].every((count) => count === 1)).toBe(true);
+    reconcileWatchProject(project, { enabled: false });
+    const remainingPrivacy = nonCommentEntries(project.pbxBuildFileSection())
+      .filter(([, file]) => file.fileRef_comment === 'PrivacyInfo.xcprivacy');
+    expect(remainingPrivacy).toHaveLength(1);
   });
 
   it('is idempotent and removes every owned graph reference and generated directory when disabled', () => {
