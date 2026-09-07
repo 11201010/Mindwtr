@@ -1,4 +1,5 @@
 export const viOverrides: Record<string, string> = {
+        'timeline.omittedItems': 'Thêm {{count}} mục',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': 'Bỏ qua đến nội dung',
         'accessibility.mainContent': 'Nội dung chính',

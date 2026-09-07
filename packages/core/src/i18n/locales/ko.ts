@@ -1,5 +1,6 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+        'timeline.omittedItems': '{{count}}개 더 보기',
         // Ratchet backfill (i18n-fallback-20260730-12): new en.ts keys
         'accessibility.skipToContent': '본문으로 건너뛰기',
         'accessibility.mainContent': '본문 콘텐츠',
