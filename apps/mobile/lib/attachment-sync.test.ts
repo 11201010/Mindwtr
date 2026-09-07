@@ -1036,6 +1036,7 @@ describe('attachment sync', () => {
       fileSystemMock.getInfoAsync.mockResolvedValue({ exists: true, size: 3, modificationTime: 1 });
       fileSystemMock.readAsStringAsync.mockResolvedValue(base64Of(STEADY_BYTES));
       const core = await import('@mindwtr/core');
+      vi.mocked(core.webdavFileExists).mockReset();
       vi.mocked(core.webdavFileExists).mockResolvedValue(true);
       await stubDeviceConfig({ scope: scopeFor(WEBDAV_CONFIG.url), at: Date.now() });
     });
@@ -1056,6 +1057,37 @@ describe('attachment sync', () => {
       // Even if something else made the phase run, the settled attachment costs nothing.
       await syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
       await expect(countWebdavRequests()).resolves.toBe(0);
+    });
+
+    it('(a2) probes on every activation without replacing a fresh committed-scope stamp', async () => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const core = await import('@mindwtr/core');
+      const { syncWebdavAttachments } = attachmentSync;
+      const appData = dataWith(steadyAttachment());
+      const stampWrites = () => vi.mocked(AsyncStorage.setItem).mock.calls
+        .filter(([key]) => key === RECONCILE_KEY);
+
+      await syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
+      expect(core.webdavFileExists).not.toHaveBeenCalled();
+      expect(stampWrites()).toHaveLength(0);
+
+      await syncWebdavAttachments(
+        appData,
+        WEBDAV_CONFIG,
+        WEBDAV_BASE,
+        undefined,
+        { activationProbe: true },
+      );
+      await syncWebdavAttachments(
+        appData,
+        WEBDAV_CONFIG,
+        WEBDAV_BASE,
+        undefined,
+        { activationProbe: true },
+      );
+
+      expect(core.webdavFileExists).toHaveBeenCalledTimes(2);
+      expect(stampWrites()).toHaveLength(0);
     });
 
     it('(b) reconciles once when the stamp is older than a day, and re-stamps', async () => {
@@ -1079,6 +1111,203 @@ describe('attachment sync', () => {
         .find(([key]) => key === RECONCILE_KEY);
       expect(stamped).toBeDefined();
       expect(JSON.parse(String(stamped?.[1])).scope).toBe(scopeFor(WEBDAV_CONFIG.url));
+      await stubDeviceConfig(JSON.parse(String(stamped?.[1])));
+      await syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
+      expect(vi.mocked(core.webdavFileExists)).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['HEAD 500', () => Object.assign(new Error('WebDAV HEAD failed (500)'), { status: 500 })],
+      ['HEAD 401', () => Object.assign(new Error('WebDAV HEAD failed (401)'), { status: 401 })],
+      ['network failure', () => new Error('network unavailable')],
+    ] as const)('(b2) retries the presence proof next cycle after %s', async (_label, makeError) => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const appLog = await import('./app-log');
+      const core = await import('@mindwtr/core');
+      const { syncWebdavAttachments } = attachmentSync;
+      await stubDeviceConfig(null);
+      vi.mocked(core.webdavFileExists)
+        .mockRejectedValueOnce(makeError())
+        .mockResolvedValueOnce(true);
+      const appData = dataWith(steadyAttachment());
+      const stampWrites = () => vi.mocked(AsyncStorage.setItem).mock.calls
+        .filter(([key]) => key === RECONCILE_KEY);
+
+      await expect(syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE)).resolves.toBe(false);
+
+      expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBe('attachments/settled.txt');
+      expect(core.webdavPutFileVersioned).not.toHaveBeenCalled();
+      expect(stampWrites()).toHaveLength(0);
+      expect(appLog.logInfo).toHaveBeenCalledWith(
+        'WebDAV attachment presence proof finished',
+        {
+          scope: 'attachment',
+          extra: {
+            releaseCheck: 'v1.2.9/webdav-presence-proof',
+            checked: '1',
+            cleared: '0',
+            complete: 'false',
+          },
+        },
+      );
+
+      await syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
+
+      expect(core.webdavFileExists).toHaveBeenCalledTimes(2);
+      expect(stampWrites()).toHaveLength(1);
+    });
+
+    it('(b3) re-uploads an earlier missing blob but does not stamp after a later unknown', async () => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const appLog = await import('./app-log');
+      const core = await import('@mindwtr/core');
+      await stubDeviceConfig(null);
+      const appData = dataWith(steadyAttachment());
+      appData.tasks.push({
+        ...appData.tasks[0],
+        id: 'task-2',
+        attachments: [{
+          ...steadyAttachment(),
+          id: 'second',
+          title: 'second.txt',
+          uri: 'file://document/attachments/second.txt',
+          cloudKey: 'attachments/second.txt',
+        }],
+      });
+      vi.mocked(core.webdavFileExists)
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(new Error('network unavailable'));
+      vi.mocked(core.webdavPutFileVersioned).mockResolvedValue(undefined);
+
+      const { data } = syncResult(
+        await attachmentSync.syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE),
+        appData,
+      );
+
+      expect(data.tasks[0].attachments?.[0]?.cloudKey).toBe('attachments/settled.txt');
+      expect(data.tasks[1].attachments?.[0]?.cloudKey).toBe('attachments/second.txt');
+      expect(core.webdavPutFileVersioned).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === RECONCILE_KEY)).toHaveLength(0);
+      expect(appLog.logInfo).toHaveBeenCalledWith(
+        'WebDAV attachment presence proof finished',
+        expect.objectContaining({
+          scope: 'attachment',
+          extra: expect.objectContaining({ checked: '2', cleared: '1', complete: 'false' }),
+        }),
+      );
+    });
+
+    it.each([429, 503])(
+      '(b4) keeps the proof unstamped and stops later transfers after a HEAD %s',
+      async (status) => {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const appLog = await import('./app-log');
+        const core = await import('@mindwtr/core');
+        await stubDeviceConfig(null);
+        const appData = dataWith(steadyAttachment());
+        appData.tasks.push({
+          ...appData.tasks[0],
+          id: 'task-upload',
+          attachments: [{
+            ...steadyAttachment(),
+            id: 'upload',
+            title: 'upload.txt',
+            uri: 'file://document/attachments/upload.txt',
+            cloudKey: undefined,
+          }],
+        });
+        vi.mocked(core.webdavFileExists).mockRejectedValueOnce(
+          Object.assign(new Error(`WebDAV HEAD failed (${status})`), { status }),
+        );
+
+        await attachmentSync.syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
+
+        expect(core.webdavMakeDirectory).not.toHaveBeenCalled();
+        expect(core.webdavPutFileVersioned).not.toHaveBeenCalled();
+        expect(fileSystemMock.uploadAsync).not.toHaveBeenCalled();
+        expect(fileSystemMock.createUploadTask).not.toHaveBeenCalled();
+        expect(vi.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === RECONCILE_KEY)).toHaveLength(0);
+        expect(appLog.logWarn).toHaveBeenCalledWith(
+          'WebDAV rate limited; pausing attachment sync',
+          expect.objectContaining({ scope: 'attachment' }),
+        );
+        expect(appLog.logInfo).toHaveBeenCalledWith(
+          'WebDAV attachment presence proof finished',
+          expect.objectContaining({
+            scope: 'attachment',
+            extra: expect.objectContaining({ checked: '1', cleared: '0', complete: 'false' }),
+          }),
+        );
+      },
+    );
+
+    it('(b5) propagates cancellation during the proof and starts no upload afterward', async () => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const core = await import('@mindwtr/core');
+      await stubDeviceConfig(null);
+      const controller = new AbortController();
+      vi.mocked(core.webdavFileExists).mockImplementationOnce(async () => {
+        controller.abort('presence proof cancelled');
+        throw new Error('transport aborted');
+      });
+
+      await expect(attachmentSync.syncWebdavAttachments(
+        dataWith(steadyAttachment()),
+        WEBDAV_CONFIG,
+        WEBDAV_BASE,
+        controller.signal,
+      )).rejects.toThrow('transport aborted');
+
+      expect(core.webdavMakeDirectory).not.toHaveBeenCalled();
+      expect(core.webdavPutFileVersioned).not.toHaveBeenCalled();
+      expect(vi.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === RECONCILE_KEY)).toHaveLength(0);
+    });
+
+    it('(b6) rejects before the proof when already cancelled', async () => {
+      const core = await import('@mindwtr/core');
+      await stubDeviceConfig(null);
+      const controller = new AbortController();
+      controller.abort('presence proof cancelled');
+
+      await expect(attachmentSync.syncWebdavAttachments(
+        dataWith(steadyAttachment()),
+        WEBDAV_CONFIG,
+        WEBDAV_BASE,
+        controller.signal,
+      )).rejects.toMatchObject({ name: 'AbortError', message: 'presence proof cancelled' });
+
+      expect(core.webdavFileExists).not.toHaveBeenCalled();
+      expect(core.webdavPutFileVersioned).not.toHaveBeenCalled();
+    });
+
+    it('(b7) propagates a fatal sync fence error from the proof', async () => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const core = await import('@mindwtr/core');
+      await stubDeviceConfig(null);
+      const lost = new SyncRemoteMutationFenceLostError();
+      vi.mocked(core.webdavFileExists).mockRejectedValueOnce(lost);
+
+      await expect(attachmentSync.syncWebdavAttachments(
+        dataWith(steadyAttachment()),
+        WEBDAV_CONFIG,
+        WEBDAV_BASE,
+      )).rejects.toBe(lost);
+
+      expect(core.webdavPutFileVersioned).not.toHaveBeenCalled();
+      expect(vi.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === RECONCILE_KEY)).toHaveLength(0);
+    });
+
+    it('(b8) makes no remote request when a due proof has no candidates', async () => {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await stubDeviceConfig(null);
+      const appData: AppData = {
+        tasks: [], projects: [], sections: [], areas: [], settings: {},
+      };
+
+      await attachmentSync.syncWebdavAttachments(appData, WEBDAV_CONFIG, WEBDAV_BASE);
+
+      await expect(countWebdavRequests()).resolves.toBe(0);
+      expect(vi.mocked(AsyncStorage.setItem).mock.calls.filter(([key]) => key === RECONCILE_KEY)).toHaveLength(1);
     });
 
     it('(c) reports work for an attachment that has never been uploaded, stamp or not', async () => {

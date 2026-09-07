@@ -2126,6 +2126,137 @@ describe('desktop sync attachment backends', () => {
             expect(coreMocks.webdavFileExists).toHaveBeenCalledTimes(1);
             // A completed pass advances the stamp, so the very next cycle is free again.
             expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(false);
+            await runWebdav(settledData(), webdavDeps(SCOPE));
+            expect(coreMocks.webdavFileExists).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ['HEAD 500', () => Object.assign(new Error('WebDAV HEAD failed (500)'), { status: 500 })],
+            ['HEAD 401', () => Object.assign(new Error('WebDAV HEAD failed (401)'), { status: 401 })],
+            ['network failure', () => new Error('network unavailable')],
+        ] as const)('(b2) retries the presence proof next cycle after %s', async (_label, makeError) => {
+            coreMocks.webdavFileExists
+                .mockRejectedValueOnce(makeError())
+                .mockResolvedValueOnce(true);
+            const appData = settledData();
+            const deps = webdavDeps(SCOPE);
+
+            const first = await runWebdav(appData, deps);
+
+            expect(first).toBeNull();
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBe('attachments/attachment-1.txt');
+            expect(coreMocks.webdavMakeDirectory).not.toHaveBeenCalled();
+            expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(true);
+            expect(deps.logSyncInfo).toHaveBeenCalledWith(
+                'WebDAV attachment presence proof finished',
+                {
+                    releaseCheck: 'v1.2.9/webdav-presence-proof',
+                    checked: '1',
+                    cleared: '0',
+                    complete: 'false',
+                },
+            );
+
+            await runWebdav(appData, deps);
+
+            expect(coreMocks.webdavFileExists).toHaveBeenCalledTimes(2);
+            expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(false);
+        });
+
+        it('(b3) re-uploads an earlier missing blob but does not stamp after a later unknown', async () => {
+            const appData = settledData();
+            const first = appData.tasks[0].attachments![0];
+            appData.tasks.push({
+                ...appData.tasks[0],
+                id: 'task-2',
+                attachments: [{
+                    ...first,
+                    id: 'attachment-2',
+                    title: 'second.txt',
+                    uri: '/app-data/mindwtr/attachments/second.txt',
+                    cloudKey: 'attachments/attachment-2.txt',
+                }],
+            });
+            const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => (
+                new Response(null, { status: 200 })
+            ));
+            const deps = {
+                ...webdavDeps(SCOPE),
+                getTauriFetch: async () => fetcher as unknown as typeof fetch,
+            };
+            coreMocks.webdavFileExists
+                .mockResolvedValueOnce(false)
+                .mockRejectedValueOnce(new Error('network unavailable'));
+
+            const result = expectFoldedData(await runWebdav(appData, deps));
+
+            expect(result.tasks[0].attachments?.[0]?.cloudKey).toBe('attachments/attachment-1.txt');
+            expect(result.tasks[1].attachments?.[0]?.cloudKey).toBe('attachments/attachment-2.txt');
+            expect(fetcher.mock.calls.filter(([, init]) => (init as RequestInit)?.method === 'PUT')).toHaveLength(1);
+            expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(true);
+            expect(deps.logSyncInfo).toHaveBeenCalledWith(
+                'WebDAV attachment presence proof finished',
+                expect.objectContaining({ checked: '2', cleared: '1', complete: 'false' }),
+            );
+        });
+
+        it.each([429, 503])(
+            '(b4) keeps the proof unstamped and stops later transfers after a HEAD %s',
+            async (status) => {
+                const appData = settledData();
+                const first = appData.tasks[0].attachments![0];
+                appData.tasks.push({
+                    ...appData.tasks[0],
+                    id: 'task-upload',
+                    attachments: [{
+                        ...first,
+                        id: 'attachment-upload',
+                        title: 'upload.txt',
+                        uri: '/app-data/mindwtr/attachments/upload.txt',
+                        cloudKey: undefined,
+                    }],
+                });
+                const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => (
+                    new Response(null, { status: 200 })
+                ));
+                const deps = {
+                    ...webdavDeps(SCOPE),
+                    getTauriFetch: async () => fetcher as unknown as typeof fetch,
+                };
+                coreMocks.webdavFileExists.mockRejectedValueOnce(
+                    Object.assign(new Error(`WebDAV HEAD failed (${status})`), { status }),
+                );
+
+                await runWebdav(appData, deps);
+
+                expect(fetcher.mock.calls.filter(([, init]) => (init as RequestInit)?.method === 'PUT')).toHaveLength(0);
+                expect(coreMocks.webdavMakeDirectory).not.toHaveBeenCalled();
+                expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(true);
+                expect(deps.logSyncInfo).toHaveBeenCalledWith(
+                    'WebDAV attachment presence proof finished',
+                    expect.objectContaining({ checked: '1', cleared: '0', complete: 'false' }),
+                );
+
+                await expect(runWebdav(appData, deps)).resolves.toBeNull();
+                expect(coreMocks.webdavFileExists).toHaveBeenCalledTimes(1);
+            },
+        );
+
+        it('(b5) makes no remote request when a due proof has no candidates', async () => {
+            const deps = webdavDeps(SCOPE);
+            const appData: AppData = {
+                tasks: [], projects: [], sections: [], areas: [], settings: {},
+            };
+
+            await expect(runWebdav(appData, deps)).resolves.toBeNull();
+
+            expect(coreMocks.webdavFileExists).not.toHaveBeenCalled();
+            expect(coreMocks.webdavMakeDirectory).not.toHaveBeenCalled();
+            expect(deps.logSyncInfo).toHaveBeenCalledWith(
+                'WebDAV attachment presence proof finished',
+                expect.objectContaining({ checked: '0', cleared: '0', complete: 'true' }),
+            );
+            expect(isAttachmentPresenceReconciliationDue(SCOPE)).toBe(false);
         });
 
         it('(d) forces the HEAD pass when the stamp belongs to a different sync location', async () => {

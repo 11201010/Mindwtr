@@ -165,7 +165,7 @@ Considered and rejected: no fresh evidence reopens the snapshot-sync ADRs, MCP p
 
 | # | Plan | Priority | Effort | Status |
 |---|------|----------|--------|--------|
-| 082 | webdav-presence-proof | P2 | M | TODO |
+| 082 | webdav-presence-proof | P2 | M | DONE |
 
 Strong and automatically selected: both WebDAV adapters can stamp an unknown remote result as a completed daily proof. Replace their duplicated decision with the existing core attachment-presence module. Keep each platform's local-prepass, cancellation, cooldown and activation behavior. No dependencies on077–081. The timestamped HTML report is a temporary review artifact; plan082 is the durable Spec.
 

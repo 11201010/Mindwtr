@@ -213,8 +213,8 @@ type LocalFilePresenceProbe = ReturnType<typeof createLocalAttachmentFs>['localF
 /**
  * #1119 follow-up: the "does the sync location still hold this blob?" pre-pass for Dropbox
  * and the self-hosted cloud, the two backends that run their transfers through the shared
- * lifecycle but had no remote proof of their own. WebDAV keeps its inline loop because the
- * same walk also prunes unreadable attachments and clears download backoffs.
+ * lifecycle but had no remote proof of their own. WebDAV calls the same core proof directly
+ * after its platform-specific local pruning and download-backoff prepass.
  *
  * Only an attachment whose bytes are readable HERE is eligible: clearing `cloudKey` is a
  * request to re-upload, and a device with no local copy cannot honour it — it would just
@@ -621,19 +621,15 @@ export async function syncWebdavAttachments(
     const createUploadSnapshot = createAttachmentUploadSnapshotFactory({ readLocalFile, statLocalFile });
 
     let abortedByRateLimit = false;
+    const presenceCandidates: Attachment[] = [];
 
-    // WebDAV alone verifies that an already-uploaded attachment's remote copy is still there —
-    // if it was deleted directly on the server, clear cloudKey so the lifecycle below re-uploads
-    // it. This has to run as its own pass before the lifecycle: it's an async, network-calling,
-    // state-mutating check, which doesn't fit the lifecycle's synchronous `hasCloudCopy` predicate.
-    // ...and its REMOTE half only when `reconcilePresence` above says the proof is due. The
-    // local half below (presence, pruning an unreadable attachment out of the lifecycle,
-    // clearing a download backoff) makes no request and is not gated: skipping it would
-    // change which attachments the lifecycle sees, which is not what this change is about.
+    // The local prepass remains independent of the periodic remote proof: it prunes unreadable
+    // attachments out of the lifecycle and clears download backoff whenever bytes are present.
+    // Eligible readable attachments are collected for the shared tri-state proof below.
     const maybeYieldPrePass = createCooperativeYield(4);
     for (const attachment of attachmentsById.values()) {
         await maybeYieldPrePass();
-        if (attachment.kind !== 'file' || attachment.deletedAt || abortedByRateLimit) continue;
+        if (attachment.kind !== 'file' || attachment.deletedAt) continue;
 
         const rawUri = attachment.uri ? stripFileScheme(attachment.uri) : '';
         const isHttp = /^https?:\/\//i.test(rawUri);
@@ -659,38 +655,50 @@ export async function syncWebdavAttachments(
             webdavDownloadBackoff.deleteEntry(attachment.id);
         }
 
-        if (reconcilePresence && attachment.cloudKey && existsLocally && attachment.pendingContentUpload !== true) {
-            try {
-                const remoteExists = await withRetry(async () => {
-                    await waitForSlot();
-                    return await webdavFileExists(`${baseSyncUrl}/${attachment.cloudKey}`, {
-                        allowInsecureHttp: webDavConfig.allowInsecureHttp,
-                        username: webDavConfig.username,
-                        password,
-                        fetcher,
-                    });
-                }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
-                deps.logSyncInfo('WebDAV attachment remote exists', {
-                    id: attachment.id,
-                    exists: remoteExists ? 'true' : 'false',
-                });
-                if (!remoteExists) {
-                    recordPatch({ ...attachment, cloudKey: undefined });
-                }
-            } catch (error) {
-                if (handleRateLimit(error)) {
-                    abortedByRateLimit = true;
-                    break;
-                }
-            logAttachmentWarning(deps, 'Failed to check WebDAV attachment remote status', error);
-            }
+        if (reconcilePresence && existsLocally && isAttachmentPresenceRepairCandidate(attachment)) {
+            presenceCandidates.push(attachment);
         }
     }
 
-    // Only a pass that ran the proof to completion may advance the stamp: a rate-limit break
-    // leaves it alone so the next cycle retries, and an activation probe never stamps at all.
-    if (reconcilePresence && !abortedByRateLimit && helpers?.activationProbe !== true) {
-        markAttachmentPresenceReconciled(deps.presenceScope, deps.logSyncWarning);
+    if (reconcilePresence) {
+        const presenceResult = await repairMissingRemoteAttachments({
+            candidates: presenceCandidates,
+            probe: async (attachment) => {
+                try {
+                    const remoteExists = await withRetry(async () => {
+                        await waitForSlot();
+                        return await webdavFileExists(`${baseSyncUrl}/${attachment.cloudKey}`, {
+                            allowInsecureHttp: webDavConfig.allowInsecureHttp,
+                            username: webDavConfig.username,
+                            password,
+                            fetcher,
+                        });
+                    }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
+                    deps.logSyncInfo('WebDAV attachment remote exists', {
+                        id: attachment.id,
+                        exists: remoteExists ? 'true' : 'false',
+                    });
+                    return remoteExists;
+                } catch (error) {
+                    if (handleRateLimit(error)) abortedByRateLimit = true;
+                    else logAttachmentWarning(deps, 'Failed to check WebDAV attachment remote status', error);
+                    return null;
+                }
+            },
+            clear: (attachment) => recordPatch({ ...attachment, cloudKey: undefined }),
+        });
+        deps.logSyncInfo('WebDAV attachment presence proof finished', {
+            releaseCheck: 'v1.2.9/webdav-presence-proof',
+            checked: String(presenceResult.checked),
+            cleared: String(presenceResult.cleared),
+            complete: presenceResult.complete ? 'true' : 'false',
+        });
+        // Only a pass that ran the proof to completion may advance the stamp: an unknown
+        // result leaves it alone so the next cycle retries, and an activation probe never
+        // stamps at all because the scope names the committed configuration.
+        if (presenceResult.complete && helpers?.activationProbe !== true) {
+            markAttachmentPresenceReconciled(deps.presenceScope, deps.logSyncWarning);
+        }
     }
 
     // Throttle policy: per-run upload/download caps, plus the same rate-limit abort the pre-pass

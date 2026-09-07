@@ -2,6 +2,7 @@ import type { AppData, Attachment, SyncKeyMaterial } from '@mindwtr/core';
 import {
   applyAttachmentPatches,
   getErrorStatus,
+  isAttachmentPresenceRepairCandidate,
   isSyncRemoteMutationFenceError,
   isWebdavRemoteWriteConflictError,
   isWebdavRateLimitedError,
@@ -12,6 +13,7 @@ import {
   webdavHeadFile,
   webdavMakeDirectory,
   webdavPutFileVersioned,
+  repairMissingRemoteAttachments,
   withRetry,
 } from '@mindwtr/core';
 import { sanitizeLogMessage } from '../app-log';
@@ -161,15 +163,12 @@ export const syncWebdavAttachments = async (
   const allPatches = await migrateAttachmentsLocallyBeforeSync(attachmentsById, signal);
 
   let abortedByRateLimit = false;
+  const presenceCandidates: Attachment[] = [];
 
-  // WebDAV alone verifies that an already-uploaded attachment's remote copy is still there — if
-  // it was deleted directly on the server, clear cloudKey so the lifecycle below re-uploads it.
-  // This runs as its own pass before the lifecycle: it's an async, network-calling,
-  // state-mutating check, which doesn't fit the lifecycle's synchronous `hasCloudCopy` predicate
-  // (mirrors desktop's shape in apps/desktop/src/lib/sync-attachment-backends.ts).
-  // ...but only when `reconcilePresence` above says the proof is due.
+  // Preserve mobile's existing gated local prepass, then pass only readable, eligible
+  // attachments to the shared tri-state remote proof below.
   for (const attachment of attachmentsById.values()) {
-    if (!reconcilePresence || abortedByRateLimit) break;
+    if (!reconcilePresence) break;
     assertAttachmentSyncNotAborted(signal);
     if (attachment.kind !== 'file' || attachment.deletedAt) continue;
 
@@ -196,46 +195,54 @@ export const syncWebdavAttachments = async (
       clearWebdavDownloadBackoff(attachment.id);
     }
 
-    if (
-      attachment.cloudKey
-      && attachment.pendingContentUpload !== true
-      && hasLocalPath
-      && existsLocally
-      && !isHttp
-    ) {
-      try {
-        const remoteExists = await withRetry(async () => {
-          await waitForSlot();
-          return await webdavFileExists(`${baseSyncUrl}/${attachment.cloudKey}`, {
-            ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
-            username: webDavConfig.username,
-            password: webDavConfig.password,
-            signal,
-          });
-        }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
-        logAttachmentInfo('WebDAV attachment remote exists', {
-          id: attachment.id,
-          exists: remoteExists ? 'true' : 'false',
-        });
-        if (!remoteExists) {
-          const patched: Attachment = { ...attachment, cloudKey: undefined };
-          allPatches.set(patched.id, patched);
-          attachmentsById.set(patched.id, patched);
-          clearWebdavDownloadBackoff(attachment.id);
-        }
-      } catch (error) {
-        if (isAttachmentSyncAbortError(error, signal)) throw error;
-        if (handleRateLimit(error)) {
-          abortedByRateLimit = true;
-          break;
-        }
-        logAttachmentWarn('WebDAV attachment remote check failed', error);
-      }
+    if (hasLocalPath && existsLocally && !isHttp && isAttachmentPresenceRepairCandidate(attachment)) {
+      presenceCandidates.push(attachment);
     }
   }
 
-  if (reconcilePresence && !abortedByRateLimit && !options.activationProbe) {
-    await markAttachmentPresenceReconciled();
+  if (reconcilePresence) {
+    const presenceResult = await repairMissingRemoteAttachments({
+      candidates: presenceCandidates,
+      probe: async (attachment) => {
+        try {
+          const remoteExists = await withRetry(async () => {
+            await waitForSlot();
+            return await webdavFileExists(`${baseSyncUrl}/${attachment.cloudKey}`, {
+              ...getMobileWebDavRequestOptions(webDavConfig.allowInsecureHttp),
+              username: webDavConfig.username,
+              password: webDavConfig.password,
+              signal,
+            });
+          }, WEBDAV_ATTACHMENT_RETRY_OPTIONS);
+          logAttachmentInfo('WebDAV attachment remote exists', {
+            id: attachment.id,
+            exists: remoteExists ? 'true' : 'false',
+          });
+          return remoteExists;
+        } catch (error) {
+          if (isAttachmentSyncAbortError(error, signal)) throw error;
+          if (isSyncRemoteMutationFenceError(error) || isWebdavRemoteWriteConflictError(error)) throw error;
+          if (handleRateLimit(error)) abortedByRateLimit = true;
+          else logAttachmentWarn('WebDAV attachment remote check failed', error);
+          return null;
+        }
+      },
+      clear: (attachment) => {
+        const patched: Attachment = { ...attachment, cloudKey: undefined };
+        allPatches.set(patched.id, patched);
+        attachmentsById.set(patched.id, patched);
+        clearWebdavDownloadBackoff(attachment.id);
+      },
+    });
+    logAttachmentInfo('WebDAV attachment presence proof finished', {
+      releaseCheck: 'v1.2.9/webdav-presence-proof',
+      checked: String(presenceResult.checked),
+      cleared: String(presenceResult.cleared),
+      complete: presenceResult.complete ? 'true' : 'false',
+    });
+    if (presenceResult.complete && !options.activationProbe) {
+      await markAttachmentPresenceReconciled();
+    }
   }
 
   // Throttle policy: per-run upload/download caps, plus the same rate-limit abort the pre-pass
