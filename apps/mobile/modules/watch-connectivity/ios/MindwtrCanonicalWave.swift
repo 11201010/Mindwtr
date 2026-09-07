@@ -1,4 +1,6 @@
+#if canImport(AudioToolbox)
 import AudioToolbox
+#endif
 import Foundation
 
 enum MindwtrCanonicalWaveError: Error {
@@ -16,6 +18,7 @@ enum MindwtrCanonicalWave {
     static let bytesPerFrame: UInt16 = 2
     static let byteRate: UInt32 = sampleRate * UInt32(bytesPerFrame)
 
+    #if canImport(AudioToolbox)
     /// The client format given to Extended Audio File Services. Keeping this
     /// next to the header contract makes the resampling/downmixing target part
     /// of the package-tested compatibility seam.
@@ -32,6 +35,7 @@ enum MindwtrCanonicalWave {
             mReserved: 0
         )
     }
+    #endif
 
     static func header(dataByteCount: Int) throws -> Data {
         guard dataByteCount >= 0,
@@ -79,6 +83,32 @@ enum MindwtrCanonicalWave {
             return false
         }
         return (fileSize - headerSize).isMultiple(of: Int(bytesPerFrame))
+    }
+
+    /// Validates canonical WAV bytes independently of the file's staging or
+    /// public name. Callers enforce any filename contract at publication.
+    static func validateFile(at url: URL, maximumFileSize: Int) -> Bool {
+        guard url.isFileURL,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size > headerSize,
+              size <= maximumFileSize,
+              let handle = try? FileHandle(forReadingFrom: url) else {
+            return false
+        }
+        defer { try? handle.close() }
+
+        let header: Data
+        do {
+            guard let value = try handle.read(upToCount: headerSize) else {
+                return false
+            }
+            header = value
+        } catch {
+            return false
+        }
+        return validateHeader(header, fileSize: size, maximumFileSize: maximumFileSize)
     }
 
     private static func appendLittleEndian(_ value: UInt16, to data: inout Data) {

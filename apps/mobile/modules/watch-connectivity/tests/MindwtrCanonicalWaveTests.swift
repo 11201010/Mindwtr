@@ -1,9 +1,12 @@
+#if canImport(AudioToolbox)
 import AudioToolbox
+#endif
 import Foundation
 import XCTest
 @testable import MindwtrWatchPayloadValidation
 
 final class MindwtrCanonicalWaveTests: XCTestCase {
+    #if canImport(AudioToolbox)
     func testConversionClientFormatAlwaysTargetsWhisperPCM() {
         let format = MindwtrCanonicalWave.clientFormat()
 
@@ -17,6 +20,61 @@ final class MindwtrCanonicalWaveTests: XCTestCase {
         XCTAssertNotEqual(format.mFormatFlags & kAudioFormatFlagIsSignedInteger, 0)
         XCTAssertNotEqual(format.mFormatFlags & kAudioFormatFlagIsPacked, 0)
         XCTAssertEqual(format.mFormatFlags & kAudioFormatFlagIsBigEndian, 0)
+    }
+    #endif
+
+    func testValidatesCanonicalWaveBytesFromPrivateTemporaryFile() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".capture.wav.tmp")
+        var bytes = try MindwtrCanonicalWave.header(dataByteCount: 2)
+        bytes.append(contentsOf: [0, 0])
+        try bytes.write(to: url)
+
+        XCTAssertTrue(MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: 1_000_000))
+    }
+
+    func testFileValidationRejectsMalformedPrivateTemporaryFile() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".malformed.wav.tmp")
+        try Data(repeating: 0x7f, count: MindwtrCanonicalWave.headerSize + 2).write(to: url)
+
+        XCTAssertFalse(MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: 1_000_000))
+    }
+
+    func testFileValidationRejectsEmptyPrivateTemporaryFile() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".empty.wav.tmp")
+        try Data().write(to: url)
+
+        XCTAssertFalse(MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: 1_000_000))
+    }
+
+    func testFileValidationRejectsOversizedPrivateTemporaryFile() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".oversized.wav.tmp")
+        var bytes = try MindwtrCanonicalWave.header(dataByteCount: 22)
+        bytes.append(Data(repeating: 0, count: 22))
+        try bytes.write(to: url)
+
+        XCTAssertFalse(MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: 64))
+    }
+
+    func testFileValidationRejectsNonregularPrivateTemporaryNode() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".directory.wav.tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+
+        XCTAssertFalse(MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: 1_000_000))
     }
 
     func testBuildsExactWhisperCompatibleHeader() throws {
@@ -69,5 +127,12 @@ final class MindwtrCanonicalWaveTests: XCTestCase {
             fileSize: header.count + 31_998,
             maximumFileSize: 1_000_000
         ))
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
     }
 }

@@ -227,6 +227,7 @@ type IngestDeps = {
 };
 
 const WATCH_CAPTURE_RELEASE_CHECK = 'v1.2.9/watch-capture';
+const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.2.9/watch-audio-ready';
 const WATCH_COMMAND_RELEASE_CHECK = 'v1.2.9/watch-command';
 
 function isValidDateOnly(value: string): boolean {
@@ -510,6 +511,10 @@ export async function ingestPendingCaptures({
                 await deleteAsync(fileUri, { idempotent: true }).catch(() => undefined);
                 continue;
             }
+            void logInfo('Watch audio ready for transcription', {
+                scope: 'capture',
+                extra: { releaseCheck: WATCH_AUDIO_READY_RELEASE_CHECK, outcome: 'validated' },
+            });
             if (!transcribeAudio) continue;
             let transcript: string | null = null;
             try {

@@ -843,7 +843,7 @@ final class MindwtrWatchConnectivityReceiver: NSObject, WCSessionDelegate {
         try outputHandle.close()
         outputClosed = true
         try setBackgroundFileProtection(temp)
-        guard validWaveFile(at: temp) else {
+        guard MindwtrCanonicalWave.validateFile(at: temp, maximumFileSize: Self.maxWaveBytes) else {
             throw MindwtrWatchConnectivityError.invalidAudioFile
         }
         guard Darwin.rename(temp.path, destination.path) == 0 else {
@@ -862,29 +862,7 @@ final class MindwtrWatchConnectivityReceiver: NSObject, WCSessionDelegate {
         guard url.isFileURL, url.pathExtension.lowercased() == "wav" else {
             return false
         }
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
-              let size = values.fileSize,
-              size > MindwtrCanonicalWave.headerSize,
-              size <= Self.maxWaveBytes,
-              let handle = try? FileHandle(forReadingFrom: url) else {
-            return false
-        }
-        defer { try? handle.close() }
-        let header: Data
-        do {
-            guard let value = try handle.read(upToCount: MindwtrCanonicalWave.headerSize) else {
-                return false
-            }
-            header = value
-        } catch {
-            return false
-        }
-        return MindwtrCanonicalWave.validateHeader(
-            header,
-            fileSize: size,
-            maximumFileSize: Self.maxWaveBytes
-        )
+        return MindwtrCanonicalWave.validateFile(at: url, maximumFileSize: Self.maxWaveBytes)
     }
 
     // MARK: - Filesystem primitives

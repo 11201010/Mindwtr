@@ -327,6 +327,12 @@ describe('ingestPendingCaptures', () => {
             `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`,
             emptySettings,
         );
+        expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(1, 'Watch audio ready for transcription', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.2.9/watch-audio-ready', outcome: 'validated' },
+        });
+        expect(appLogMocks.logInfo.mock.invocationCallOrder[0])
+            .toBeLessThan(transcribeAudio.mock.invocationCallOrder[0]);
         expect(flushPendingSave).toHaveBeenCalledOnce();
         expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(1, 'file:///data/Documents/pending-captures/audio.json', { idempotent: true });
         expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(2, `file:///data/Documents/watch-audio/${WATCH_AUDIO_ID}.wav`, { idempotent: true });
