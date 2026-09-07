@@ -9,7 +9,8 @@ Status: Accepted
 
 ## Decision
 
-- Ship a native SwiftUI companion target inside the iOS build. `MINDWTR_WATCH_ENABLED` controls prebuild inclusion: development/preview and RC builds enable Watch; stable builds omit it until graduation. Incremental prebuild must remove previously generated Watch targets when disabled.
+- Ship a native SwiftUI companion target inside the iOS build. `MINDWTR_WATCH_ENABLED` controls prebuild inclusion: development/preview and Watch TestFlight builds enable it; production App Store builds omit it until graduation. Incremental prebuild must remove previously generated Watch targets when disabled.
+- Release workflows choose the explicit `watch_testflight` input. RCs ship the Watch-enabled iPhone build through TestFlight. Stable releases submit a Watch-free iPhone build, then produce a separate Watch-enabled TestFlight build with a higher build number. The Watch variant uses only the TestFlight upload API and rejects App Store review submission or forced App Store upload. Its artifacts have separate names, and its upload does not modify the production App Store version.
 - Send text captures with `transferUserInfo`, audio with `transferFile`, and task/timer commands with reachable `sendMessage` plus `transferUserInfo` fallback using the same UUID. Publish the bounded latest Focus/timer snapshot with `updateApplicationContext`.
 - Keep a durable Watch outbox until the iPhone acknowledges its queue write. A successful WatchConnectivity transfer alone does not acknowledge application persistence. The iPhone returns a content-free receipt containing protocol version, UUID, `kind: receipt`, and `accepted: true`.
 - The iPhone native receiver validates transport input and publishes one JSON file per capture/command under `Documents/pending-captures`. It never writes task storage. Legacy Shortcuts text and Android widget completion items remain valid.
@@ -26,7 +27,7 @@ Linux checks cover protocol logic, prebuild generation, channel exclusion, and T
 
 ## TestFlight signing setup
 
-The release workflow requires two additional App Store Connect distribution profiles for RC builds:
+The release workflow requires two additional App Store distribution profiles for Watch TestFlight builds from either release train:
 
 | App ID | GitHub Actions secret |
 | --- | --- |

@@ -14,6 +14,170 @@ import { parse } from "yaml";
 
 const asNeedsList = (needs) => (Array.isArray(needs) ? needs : [needs]);
 
+const readIosRelease = () => parse(readFileSync('.github/workflows/release-ios-appstore.yml', 'utf8'));
+
+test('Watch release routing separates production and beta builds', () => {
+  const stable = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
+  const rc = parse(readFileSync('.github/workflows/release-rc.yml', 'utf8'));
+  expect(stable.jobs['ios-appstore'].with.watch_testflight).toBe(false);
+  expect(stable.jobs['ios-appstore'].with.submit_for_review).toBe(true);
+  for (const job of [rc.jobs['ios-appstore'], stable.jobs['ios-watch-testflight']]) {
+    expect(job.with.watch_testflight).toBe(true);
+    expect(job.with.submit_for_review).toBe(false);
+    expect(job.with.distribute_testflight).toBe(true);
+    expect(job.with.force_appstore_upload ?? false).toBe(false);
+  }
+  expect(asNeedsList(stable.jobs['ios-watch-testflight'].needs)).toContain('ios-appstore');
+  expect(stable.jobs['ios-watch-testflight'].with.previous_build_number)
+    .toBe("${{ needs.ios-appstore.outputs.app_build_number || '0' }}");
+  expect(stable.on.workflow_dispatch.inputs.run_ios_watch_testflight.default).toBe(false);
+
+  const ios = readIosRelease();
+  expect(ios.jobs['ios-appstore'].env.MINDWTR_WATCH_ENABLED)
+    .toBe("${{ inputs.watch_testflight && 'true' || 'false' }}");
+  for (const trigger of ['workflow_call', 'workflow_dispatch']) {
+    expect(ios.on[trigger].inputs.watch_testflight.default).toBe(false);
+  }
+  expect(ios.on.workflow_call.outputs.app_build_number.value)
+    .toBe('${{ jobs.ios-appstore.outputs.app_build_number }}');
+  expect(ios.jobs['ios-appstore'].outputs.app_build_number)
+    .toBe('${{ steps.ios-version.outputs.app_build_number }}');
+});
+
+test('stable Watch beta respects recovery selection and failed prerequisites', () => {
+  const workflow = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
+  const expression = workflow.jobs['ios-watch-testflight'].if
+    .replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    .replace(/always\(\)/g, 'true')
+    .replace(/\bneeds\.([\w-]+)/g, 'needs["$1"]');
+  const selected = new Function('github', 'inputs', 'needs', `return Boolean(${expression})`);
+  const needs = {
+    validate: { result: 'success' },
+    'android-version-code': { result: 'success' },
+    'ios-appstore': { result: 'success' },
+  };
+  expect(selected({ event_name: 'push' }, {}, needs)).toBe(true);
+  expect(selected({ event_name: 'workflow_dispatch' }, {}, needs)).toBe(false);
+  const watchOnly = { run_ios_watch_testflight: true };
+  const skipped = {
+    ...needs,
+    'android-version-code': { result: 'skipped' },
+    'ios-appstore': { result: 'skipped' },
+  };
+  expect(selected({ event_name: 'workflow_dispatch' }, watchOnly, skipped)).toBe(true);
+  expect(selected({ event_name: 'workflow_dispatch' }, { ...watchOnly, run_ios_appstore: true }, skipped)).toBe(false);
+  expect(selected({ event_name: 'workflow_dispatch' }, { ...watchOnly, run_android: true }, skipped)).toBe(false);
+  for (const dependency of ['validate', 'android-version-code', 'ios-appstore']) {
+    expect(selected({ event_name: 'push' }, {}, { ...needs, [dependency]: { result: 'failure' } })).toBe(false);
+  }
+});
+
+test('Watch beta rejects production submission and forced App Store upload', () => {
+  const steps = readIosRelease().jobs['ios-appstore'].steps;
+  const gate = steps.find((step) => step.name === 'Validate Apple Watch distribution mode');
+  expect(steps.indexOf(gate)).toBeLessThan(steps.findIndex((step) => step.name === 'Import iOS distribution certificate'));
+  for (const watch of [false, true]) {
+    for (const review of [false, true]) {
+      for (const force of [false, true]) {
+        const execute = () => execFileSync('bash', ['-c', gate.run], {
+          env: {
+            ...process.env,
+            MINDWTR_WATCH_ENABLED: String(watch),
+            REQUESTED_SUBMIT_FOR_REVIEW: String(review),
+            FORCE_APPSTORE_UPLOAD: String(force),
+          },
+          stdio: 'pipe',
+        });
+        if (watch && (review || force)) expect(execute).toThrow();
+        else expect(execute).not.toThrow();
+      }
+    }
+  }
+});
+
+test('Watch beta bypasses production version state and uses only pilot upload', () => {
+  const steps = readIosRelease().jobs['ios-appstore'].steps;
+  const route = steps.find((step) => step.name === 'Resolve App Store review submission flag');
+  const temp = mkdtempSync(join(tmpdir(), 'mindwtr-watch-routing-'));
+  try {
+    const output = join(temp, 'env');
+    execFileSync('bash', ['-c', route.run], {
+      env: {
+        PATH: process.env.PATH,
+        GITHUB_ENV: output,
+        MINDWTR_WATCH_ENABLED: 'true',
+        REQUESTED_DISTRIBUTE_TESTFLIGHT: 'true',
+      },
+      stdio: 'pipe',
+    });
+    expect(readFileSync(output, 'utf8')).toBe(
+      'EFFECTIVE_SUBMIT_FOR_REVIEW=false\nSKIP_APPSTORE_UPLOAD=true\nENABLE_TESTFLIGHT_EXTERNAL_RELEASE=true\n',
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  const production = steps.find((step) => step.name === 'Upload IPA to App Store Connect');
+  expect(production.if).toContain('!inputs.watch_testflight');
+  for (const name of ['Prepare Fastlane metadata', 'Prepare Fastlane screenshots']) {
+    expect(steps.find((step) => step.name === name).if).toContain('!inputs.watch_testflight');
+  }
+  const beta = steps.find((step) => step.name === 'Upload Watch beta to TestFlight');
+  expect(beta.if).toBe('${{ inputs.upload && inputs.watch_testflight }}');
+  expect(beta.run).toContain('upload_to_testflight(');
+  expect(beta.run).toContain('skip_submission: true');
+  expect(beta.run).toContain('skip_waiting_for_build_processing: false');
+  expect(beta.run).not.toContain('deliver(');
+  const distribute = steps.find((step) => step.name === 'Distribute upload to TestFlight external group');
+  expect(distribute.run).toContain('build_number: ENV.fetch("APP_BUILD_NUMBER")');
+  expect(distribute.run).toContain('distribute_only: true');
+});
+
+test('Watch build numbering exceeds both prior upload and ASC and fails closed', () => {
+  const step = readIosRelease().jobs['ios-appstore'].steps.find((item) => item.id === 'ios-version');
+  const offset = step.run.indexOf('if [ "$MINDWTR_WATCH_ENABLED" = "true" ]');
+  expect(offset).toBeGreaterThan(0);
+  const tail = step.run.slice(offset);
+  const run = (overrides = {}) => {
+    const temp = mkdtempSync(join(tmpdir(), 'mindwtr-watch-number-'));
+    try {
+      const output = join(temp, 'output');
+      execFileSync('bash', ['-c', `set -euo pipefail\n${tail}`], {
+        env: {
+          ...process.env,
+          MINDWTR_WATCH_ENABLED: 'true', REQUESTED_UPLOAD: 'true',
+          REMOTE_LOOKUP_STATUS: 'ok', REMOTE_MAX_BUILD: '100',
+          PREVIOUS_BUILD_NUMBER: '105', APP_BUILD_NUMBER_BASE: '90', APP_VERSION: '1.2.9',
+          GITHUB_ENV: join(temp, 'env'), GITHUB_OUTPUT: output,
+          ...overrides,
+        },
+        stdio: 'pipe',
+      });
+      return readFileSync(output, 'utf8').trim();
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  };
+  expect(run()).toBe('app_build_number=106');
+  expect(run({ REMOTE_MAX_BUILD: '110' })).toBe('app_build_number=111');
+  expect(run({ APP_BUILD_NUMBER_BASE: '120' })).toBe('app_build_number=121');
+  expect(run({ PREVIOUS_BUILD_NUMBER: '0' })).toBe('app_build_number=101');
+  expect(run({ PREVIOUS_BUILD_NUMBER: '000108' })).toBe('app_build_number=109');
+  expect(() => run({ PREVIOUS_BUILD_NUMBER: 'invalid' })).toThrow();
+  expect(() => run({ REMOTE_LOOKUP_STATUS: 'api_error' })).toThrow();
+  expect(() => run({ REQUESTED_UPLOAD: 'false', REMOTE_LOOKUP_STATUS: 'api_error' })).not.toThrow();
+});
+
+test('production and Watch beta artifact names cannot collide in the same release run', () => {
+  const job = readIosRelease().jobs['ios-appstore'];
+  expect(job.env.IOS_ARTIFACT_VARIANT).toBe("${{ inputs.watch_testflight && 'watch-testflight' || 'appstore' }}");
+  const names = job.steps.filter((step) => step.uses?.startsWith('actions/upload-artifact@'))
+    .map((step) => step.with.name);
+  expect(names.length).toBeGreaterThanOrEqual(3);
+  for (const name of names) expect(name).toContain('${{ env.IOS_ARTIFACT_VARIANT }}');
+  const rendered = ['appstore', 'watch-testflight'].flatMap((variant) => names.map((name) => name.replace('${{ env.IOS_ARTIFACT_VARIANT }}', variant)));
+  expect(new Set(rendered).size).toBe(rendered.length);
+});
+
 test("Docker app builds receive only validated release identities", () => {
   const workflow = parse(
     readFileSync(".github/workflows/docker-image-reusable.yml", "utf8"),

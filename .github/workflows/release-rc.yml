@@ -21,7 +21,7 @@ on:
         default: true
         type: boolean
       run_ios_testflight:
-        description: 'Upload and distribute the iOS build to the configured external TestFlight group'
+        description: 'Upload and distribute the iOS and Apple Watch build to the configured external TestFlight group'
         required: false
         default: true
         type: boolean
@@ -310,6 +310,7 @@ jobs:
       tag: ${{ needs.validate.outputs.tag }}
       upload: true
       submit_for_review: false
+      watch_testflight: true
       distribute_testflight: true
       testflight_group: ${{ github.event_name == 'workflow_dispatch' && inputs.testflight_group || 'external_testing' }}
       skip_screenshots: true

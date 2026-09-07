@@ -41,6 +41,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_ios_watch_testflight:
+        description: 'Run the separate Apple Watch TestFlight beta job'
+        required: false
+        type: boolean
+        default: false
       force_ios_appstore_upload:
         description: 'Fail instead of silently skipping iOS App Store upload when a corrected Apple build is required'
         required: false
@@ -358,9 +363,27 @@ jobs:
       tag: ${{ needs.validate.outputs.tag }}
       upload: true
       submit_for_review: true
+      watch_testflight: false
       distribute_testflight: true
       force_appstore_upload: ${{ github.event_name == 'workflow_dispatch' && inputs.force_ios_appstore_upload || false }}
       testflight_group: 'external_testing'
+    secrets: inherit
+
+  # Serialize iOS uploads and carry the production build number forward even
+  # while App Store Connect is still indexing that upload.
+  ios-watch-testflight:
+    needs: [validate, android-version-code, ios-appstore]
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.run_ios_watch_testflight) && needs.validate.result == 'success' && (needs.ios-appstore.result == 'success' || (github.event_name == 'workflow_dispatch' && !inputs.run_ios_appstore && needs.ios-appstore.result == 'skipped')) && (needs['android-version-code'].result == 'success' || (github.event_name == 'workflow_dispatch' && !inputs.run_android && !inputs.run_android_foss)) }}
+    uses: ./.github/workflows/release-ios-appstore.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      previous_build_number: ${{ needs.ios-appstore.outputs.app_build_number || '0' }}
+      watch_testflight: true
+      upload: true
+      submit_for_review: false
+      distribute_testflight: true
+      testflight_group: 'external_testing'
+      skip_screenshots: true
     secrets: inherit
 
   macos-appstore:

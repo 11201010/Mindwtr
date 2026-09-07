@@ -2,7 +2,21 @@ name: Release iOS App Store
 
 on:
   workflow_call:
+    outputs:
+      app_build_number:
+        description: Resolved iOS build number, including an upload that is still processing
+        value: ${{ jobs.ios-appstore.outputs.app_build_number }}
     inputs:
+      watch_testflight:
+        description: Include Apple Watch and upload only to TestFlight, never App Store review
+        required: false
+        type: boolean
+        default: false
+      previous_build_number:
+        description: Build number from the preceding iOS job; this build must be higher
+        required: false
+        type: string
+        default: '0'
       tag:
         description: Release tag (e.g., v1.0.5 or v1.0.5-rc.1)
         required: false
@@ -39,6 +53,16 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      watch_testflight:
+        description: Include Apple Watch and upload only to TestFlight, never App Store review
+        required: false
+        type: boolean
+        default: false
+      previous_build_number:
+        description: Build number from the preceding iOS job; this build must be higher
+        required: false
+        type: string
+        default: '0'
       tag:
         description: Release tag (e.g., v1.0.5 or v1.0.5-rc.1)
         required: false
@@ -88,6 +112,8 @@ jobs:
   ios-appstore:
     runs-on: macos-15
     timeout-minutes: 90
+    outputs:
+      app_build_number: ${{ steps.ios-version.outputs.app_build_number }}
     env:
       EXPECTED_TEAM_ID: 5X9JC5PL7T
       EXPECTED_BUNDLE_ID: tech.dongdongbh.mindwtr
@@ -100,12 +126,24 @@ jobs:
       DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
       FEEDBACK_ENDPOINT_URL: ${{ vars.FEEDBACK_ENDPOINT_URL || vars.VITE_FEEDBACK_ENDPOINT_URL || 'https://feedback.mindwtr.app' }}
       DONATION_PROMPT_ENABLED: "true"
-      # TestFlight beta only until Watch support graduates to stable.
-      MINDWTR_WATCH_ENABLED: ${{ contains(inputs.tag || github.ref_name, '-rc.') && 'true' || 'false' }}
+      # Explicit distribution mode: a stable tag may also produce a separate Watch beta.
+      MINDWTR_WATCH_ENABLED: ${{ inputs.watch_testflight && 'true' || 'false' }}
+      IOS_ARTIFACT_VARIANT: ${{ inputs.watch_testflight && 'watch-testflight' || 'appstore' }}
       EXPECTED_WATCH_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp
       EXPECTED_WATCH_WIDGET_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp.widgets
       EXPECTED_WATCH_APP_GROUP: group.tech.dongdongbh.mindwtr.watch
     steps:
+      - name: Validate Apple Watch distribution mode
+        env:
+          REQUESTED_SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review && 'true' || 'false' }}
+          FORCE_APPSTORE_UPLOAD: ${{ inputs.force_appstore_upload && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ] && { [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ] || [ "$FORCE_APPSTORE_UPLOAD" = "true" ]; }; then
+            echo "::error::Apple Watch is TestFlight-only. Disable App Store review submission and forced App Store upload."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -222,7 +260,10 @@ jobs:
           fi
 
       - name: Resolve iOS version metadata
+        id: ios-version
         env:
+          PREVIOUS_BUILD_NUMBER: ${{ inputs.previous_build_number || '0' }}
+          REQUESTED_UPLOAD: ${{ inputs.upload && 'true' || 'false' }}
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
           IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
@@ -310,6 +351,15 @@ jobs:
             echo "::warning::Remote max build lookup skipped. Set IOS_ASC_KEY_ID / IOS_ASC_ISSUER_ID / IOS_ASC_PRIVATE_KEY secrets."
           fi
 
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ] && [ "$REQUESTED_UPLOAD" = "true" ] && [ "$REMOTE_LOOKUP_STATUS" != "ok" ]; then
+            echo "::error::Watch TestFlight upload requires a successful remote build-number lookup."
+            exit 1
+          fi
+          if ! [[ "$PREVIOUS_BUILD_NUMBER" =~ ^[0-9]{1,9}$ ]]; then
+            echo "::error::previous_build_number must be a non-negative integer of at most nine digits."
+            exit 1
+          fi
+          PREVIOUS_MIN_BUILD="$((10#$PREVIOUS_BUILD_NUMBER + 1))"
           LOCAL_MIN_BUILD=1
           if [[ "${APP_BUILD_NUMBER_BASE}" =~ ^[0-9]+$ ]]; then
             LOCAL_MIN_BUILD="$((APP_BUILD_NUMBER_BASE + 1))"
@@ -319,9 +369,13 @@ jobs:
           if [ "${REMOTE_MIN_BUILD}" -gt "${FINAL_BUILD_NUMBER}" ]; then
             FINAL_BUILD_NUMBER="${REMOTE_MIN_BUILD}"
           fi
+          if [ "$PREVIOUS_MIN_BUILD" -gt "$FINAL_BUILD_NUMBER" ]; then
+            FINAL_BUILD_NUMBER="$PREVIOUS_MIN_BUILD"
+          fi
 
           echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
           echo "APP_BUILD_NUMBER=${FINAL_BUILD_NUMBER}" >> "$GITHUB_ENV"
+          echo "app_build_number=${FINAL_BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "APPSTORE_APP_ID=${APPSTORE_APP_ID:-}" >> "$GITHUB_ENV"
           echo "Resolved iOS build number: ${FINAL_BUILD_NUMBER} (remote max: ${REMOTE_MAX_BUILD}, remote lookup: ${REMOTE_LOOKUP_STATUS}, local base: ${APP_BUILD_NUMBER_BASE})"
 
@@ -853,7 +907,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: mindwtr-ios-appstore-dsyms-${{ github.run_id }}
+          name: mindwtr-ios-${{ env.IOS_ARTIFACT_VARIANT }}-dsyms-${{ github.run_id }}
           path: ${{ runner.temp }}/Mindwtr.xcarchive/dSYMs/
           if-no-files-found: error
           retention-days: 90
@@ -953,13 +1007,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: mindwtr-ios-xcodebuild-logs
+          name: mindwtr-ios-${{ env.IOS_ARTIFACT_VARIANT }}-xcodebuild-logs
           path: ${{ runner.temp }}/ios-xcodebuild-*.log
           if-no-files-found: warn
           retention-days: 28
 
       - name: Prepare Fastlane metadata
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload && !inputs.watch_testflight }}
         env:
           RELEASE_BODY: ${{ github.event.release.body || '' }}
           APP_SUPPORT_URL: "https://mindwtr.app/support"
@@ -971,7 +1025,7 @@ jobs:
           echo "FASTLANE_METADATA_PATH=$FASTLANE_METADATA_DIR" >> "$GITHUB_ENV"
 
       - name: Prepare Fastlane screenshots
-        if: ${{ inputs.upload && !inputs.skip_screenshots }}
+        if: ${{ inputs.upload && !inputs.watch_testflight && !inputs.skip_screenshots }}
         run: |
           set -euo pipefail
           SHOULD_UPLOAD_SCREENSHOTS="$(scripts/ci/should-upload-fastlane-screenshots.sh apps/mobile/screenshots)"
@@ -1011,6 +1065,14 @@ jobs:
           FORCE_APPSTORE_UPLOAD: ${{ inputs.force_appstore_upload && 'true' || 'false' }}
         run: |
           set -euo pipefail
+
+          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+            echo "SKIP_APPSTORE_UPLOAD=true" >> "$GITHUB_ENV"
+            echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=${REQUESTED_DISTRIBUTE_TESTFLIGHT:-false}" >> "$GITHUB_ENV"
+            echo "Watch beta uses TestFlight upload only; production App Store version state is unchanged."
+            exit 0
+          fi
 
           EFFECTIVE_SUBMIT_FOR_REVIEW="${REQUESTED_SUBMIT_FOR_REVIEW:-false}"
           REQUESTED_SUBMIT_FOR_REVIEW="$EFFECTIVE_SUBMIT_FOR_REVIEW"
@@ -1148,7 +1210,7 @@ jobs:
           fi
 
       - name: Upload IPA to App Store Connect
-        if: ${{ inputs.upload && env.SKIP_APPSTORE_UPLOAD != 'true' }}
+        if: ${{ inputs.upload && !inputs.watch_testflight && env.SKIP_APPSTORE_UPLOAD != 'true' }}
         timeout-minutes: 30
         env:
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
@@ -1213,6 +1275,49 @@ jobs:
           FASTLANE_ASC_ISSUER_ID="$ASC_ISSUER_ID_CLEAN" \
           ASC_KEY_PATH="$ASC_KEY_PATH" \
           bundle exec fastlane ios upload_app_store
+
+      - name: Upload Watch beta to TestFlight
+        if: ${{ inputs.upload && inputs.watch_testflight }}
+        timeout-minutes: 30
+        env:
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          FASTLANE_HIDE_CHANGELOG: "1"
+          FASTLANE_OPT_OUT_USAGE: "1"
+          CI: "true"
+        run: |
+          set -euo pipefail
+          ASC_KEY_PATH="$RUNNER_TEMP/ios-asc-key-watch-testflight.p8"
+          bash scripts/ci/write-asc-private-key.sh "$IOS_ASC_PRIVATE_KEY" "$ASC_KEY_PATH"
+          mkdir -p fastlane
+          cat <<'EOF' > fastlane/Fastfile
+          opt_out_usage
+          default_platform(:ios)
+
+          platform :ios do
+            lane :upload_watch_beta do
+              api_key = app_store_connect_api_key(
+                key_id: ENV.fetch("IOS_ASC_KEY_ID").strip,
+                issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID").strip,
+                key_filepath: ENV.fetch("ASC_KEY_PATH"),
+                duration: 1200,
+                in_house: false
+              )
+              upload_to_testflight(
+                api_key: api_key,
+                app_identifier: ENV.fetch("EXPECTED_BUNDLE_ID"),
+                app_platform: "ios",
+                ipa: ENV.fetch("IPA_PATH"),
+                skip_submission: true,
+                skip_waiting_for_build_processing: false,
+                wait_processing_timeout_duration: 1500
+              )
+            end
+          end
+          EOF
+          ASC_KEY_PATH="$ASC_KEY_PATH" bundle exec fastlane ios upload_watch_beta
 
       - name: Distribute upload to TestFlight external group
         if: ${{ inputs.upload }}
@@ -1332,7 +1437,7 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: mindwtr-ios-appstore-ipa
+          name: mindwtr-ios-${{ env.IOS_ARTIFACT_VARIANT }}-ipa
           path: ${{ env.IPA_PATH }}
           if-no-files-found: error
           retention-days: 28
