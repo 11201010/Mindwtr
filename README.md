@@ -74,10 +74,8 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 </div>
 
 <div align="center">
-  <a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d">
-    <img src="docs/assets/videos/try-mindwtr.jpg" alt="Try Mindwtr — 0:55" width="900" />
-  </a>
-  <p><a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d"><b>▶ Try Mindwtr — 0:55</b></a></p>
+  <video src="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d" controls playsinline width="900" aria-label="Try Mindwtr — 0:55"></video>
+  <p><b>Try Mindwtr — 0:55</b></p>
 
   <p>
     <i>Local-First GTD on desktop & mobile</i>
@@ -101,11 +99,9 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 ## How it works
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa">
-    <img src="docs/assets/videos/gtd-in-mindwtr.jpg" alt="GTD in Mindwtr — 2:41" width="900" />
-  </a>
+  <video src="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa" controls playsinline width="900" aria-label="GTD in Mindwtr — 2:41"></video>
   <br>
-  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa"><b>▶ GTD in Mindwtr — 2:41</b></a>
+  <b>GTD in Mindwtr — 2:41</b>
 </p>
 
 Your head is for having ideas, not for holding them (David Allen, who wrote the book on this). Mindwtr holds them for you:
