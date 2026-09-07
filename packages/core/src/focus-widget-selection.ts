@@ -19,7 +19,7 @@
  */
 import { safeParseDate, safeParseDueDate } from './date';
 import { getFocusSequentialFirstTaskIds, sortTasksBy } from './task-utils';
-import type { Project, Task, TaskSortBy } from './types';
+import type { Project, Section, Task, TaskSortBy } from './types';
 
 export interface TodayFocusSelectionInput {
     /**
@@ -31,6 +31,7 @@ export interface TodayFocusSelectionInput {
      */
     activeTasks: Task[];
     projects: Project[];
+    sections: Section[];
     sortBy: TaskSortBy;
     now: Date;
 }
@@ -50,6 +51,7 @@ export interface TodayFocusSelection {
 export function computeTodayFocusTasks({
     activeTasks,
     projects,
+    sections,
     sortBy,
     now,
 }: TodayFocusSelectionInput): TodayFocusSelection {
@@ -84,6 +86,7 @@ export function computeTodayFocusTasks({
     const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(activeTasks, sequentialProjectIds, {
         now,
         sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        sections,
     });
     const isSequentialBlocked = (task: Task) => {
         if (!task.projectId) return false;

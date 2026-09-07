@@ -330,7 +330,7 @@ export const createCloudService = (options: CloudServiceOptions): MindwtrService
       // set (a sequential project's slot depends on tasks outside this page/filter), not
       // re-derived per platform - see getTaskFocusEligibility's own doc comment.
       const viewed = input.view ? (() => {
-        const context = buildTaskFocusEligibilityContext({ tasks: data.tasks, projects: data.projects });
+        const context = buildTaskFocusEligibilityContext({ tasks: data.tasks, projects: data.projects, sections: data.sections });
         const wanted = input.view === 'blocked' ? 'sequential' : input.view === 'deferred' ? 'deferred' : 'eligible';
         return searched.filter((task) => getTaskFocusEligibility(task, { tasks: data.tasks, ...context }).reason === wanted);
       })() : searched;

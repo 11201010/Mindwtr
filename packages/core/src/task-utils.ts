@@ -2,7 +2,7 @@
  * Utility functions for task operations
  */
 
-import { Task, TaskStatus, TaskSortBy, TaskPriority, Project, AppData, AppSettings, SortField } from './types';
+import { Task, TaskStatus, TaskSortBy, TaskPriority, Project, Section, AppData, AppSettings, SortField } from './types';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { differenceInCalendarDays, startOfDay } from 'date-fns';
 import { hasTimeComponent, isDueForReview, safeParseDate, safeParseDueDate } from './date';
@@ -110,6 +110,7 @@ type TaskStartVisibilityOptions = {
 type FocusSequentialOptions = {
     now?: Date;
     sectionScopedProjectIds?: ReadonlySet<string>;
+    sections?: readonly SequentialSection[];
 };
 
 export type TaskFocusEligibilityReason = 'eligible' | 'deferred' | 'sequential' | 'clarify';
@@ -125,15 +126,18 @@ export type TaskFocusEligibilityOptions = {
     now?: Date;
     sequentialProjectIds?: ReadonlySet<string>;
     sectionScopedProjectIds?: ReadonlySet<string>;
+    sections?: readonly SequentialSection[];
     /** Precomputed by buildTaskFocusEligibilityContext; derived per call when absent. */
     sequentialFirstTaskIds?: ReadonlySet<string>;
 };
 
 type SequentialTaskOrderFields = Pick<Task, 'createdAt' | 'order' | 'orderNum'>;
 type SequentialGroupingFields = Pick<Task, 'projectId'> & Partial<Pick<Task, 'sectionId'>>;
+type SequentialSection = Pick<Section, 'id' | 'projectId' | 'order' | 'title'> & Partial<Pick<Section, 'deletedAt'>>;
 
 type SequentialFirstTaskOptions = {
     sectionScopedProjectIds?: ReadonlySet<string>;
+    sections?: readonly SequentialSection[];
 };
 
 const NO_SECTION_GROUP = '__no_section__';
@@ -375,12 +379,83 @@ function getSequentialTaskOrderKey<T extends SequentialTaskOrderFields>(task: T,
 function getSequentialTaskGroupKey<T extends SequentialGroupingFields>(
     task: T,
     sectionScopedProjectIds?: ReadonlySet<string>,
+    sectionOrder?: SequentialSectionOrder,
 ): string | null {
     if (!task.projectId) return null;
     if (sectionScopedProjectIds?.has(task.projectId)) {
-        return `${task.projectId}:${task.sectionId || NO_SECTION_GROUP}`;
+        const sectionId = getSequentialTaskSectionId(task, sectionOrder);
+        return `${task.projectId}:${sectionId || NO_SECTION_GROUP}`;
     }
     return task.projectId;
+}
+
+type SequentialSectionOrder = {
+    sectionById: ReadonlyMap<string, SequentialSection>;
+    rankById: ReadonlyMap<string, number>;
+};
+
+function buildSequentialSectionOrder(sections?: readonly SequentialSection[]): SequentialSectionOrder | undefined {
+    if (!sections) return undefined;
+    const sectionById = new Map<string, SequentialSection>();
+    const rankById = new Map<string, number>();
+    const sectionsByProject = new Map<string, SequentialSection[]>();
+
+    sections.forEach((section) => {
+        if (section.deletedAt) return;
+        sectionById.set(section.id, section);
+        const projectSections = sectionsByProject.get(section.projectId) ?? [];
+        projectSections.push(section);
+        sectionsByProject.set(section.projectId, projectSections);
+    });
+    sectionsByProject.forEach((projectSections) => {
+        projectSections
+            .sort((a, b) => {
+                const orderDiff = (Number.isFinite(a.order) ? a.order : 0) - (Number.isFinite(b.order) ? b.order : 0);
+                if (orderDiff !== 0) return orderDiff;
+                const titleDiff = textCollator.compare(a.title, b.title);
+                return titleDiff !== 0 ? titleDiff : textCollator.compare(a.id, b.id);
+            })
+            .forEach((section, index) => rankById.set(section.id, index));
+    });
+    return { sectionById, rankById };
+}
+
+function getSequentialTaskSectionId<T extends SequentialGroupingFields>(
+    task: T,
+    sectionOrder?: SequentialSectionOrder,
+): string | null {
+    if (!task.sectionId) return null;
+    if (!sectionOrder) return task.sectionId;
+    const section = sectionOrder.sectionById.get(task.sectionId);
+    return section && section.projectId === task.projectId ? section.id : null;
+}
+
+function compareSequentialManualHierarchy<
+    T extends SequentialTaskOrderFields & SequentialGroupingFields & Pick<Task, 'id'>
+>(
+    a: T,
+    b: T,
+    hasOrder: boolean,
+    sectionOrder?: SequentialSectionOrder,
+): number {
+    if (sectionOrder && a.projectId === b.projectId) {
+        const aSectionId = getSequentialTaskSectionId(a, sectionOrder);
+        const bSectionId = getSequentialTaskSectionId(b, sectionOrder);
+        const aSectionRank = aSectionId ? (sectionOrder.rankById.get(aSectionId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
+        const bSectionRank = bSectionId ? (sectionOrder.rankById.get(bSectionId) ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
+        if (aSectionRank !== bSectionRank) return aSectionRank - bSectionRank;
+        if (aSectionId !== bSectionId) {
+            return textCollator.compare(aSectionId ?? NO_SECTION_GROUP, bSectionId ?? NO_SECTION_GROUP);
+        }
+    }
+
+    const aOrderKey = getSequentialTaskOrderKey(a, hasOrder);
+    const bOrderKey = getSequentialTaskOrderKey(b, hasOrder);
+    if (aOrderKey !== bOrderKey) return aOrderKey - bOrderKey;
+    const aCreated = safeTime(a.createdAt, Number.POSITIVE_INFINITY);
+    const bCreated = safeTime(b.createdAt, Number.POSITIVE_INFINITY);
+    if (aCreated !== bCreated) return aCreated - bCreated;
+    return textCollator.compare(a.id, b.id);
 }
 
 export function rescheduleTask(task: Task, newDueDate?: string): Task {
@@ -553,9 +628,10 @@ export function getSequentialFirstTaskIds<T extends Pick<Task, 'createdAt' | 'id
     sequentialProjectIds: ReadonlySet<string>,
     options: SequentialFirstTaskOptions = {},
 ): Set<string> {
+    const sectionOrder = buildSequentialSectionOrder(options.sections);
     const tasksByGroup = new Map<string, T[]>();
     for (const task of tasks) {
-        const groupKey = getSequentialTaskGroupKey(task, options.sectionScopedProjectIds);
+        const groupKey = getSequentialTaskGroupKey(task, options.sectionScopedProjectIds, sectionOrder);
         if (!groupKey || !task.projectId) continue;
         if (!sequentialProjectIds.has(task.projectId)) continue;
         const list = tasksByGroup.get(groupKey) ?? [];
@@ -566,18 +642,11 @@ export function getSequentialFirstTaskIds<T extends Pick<Task, 'createdAt' | 'id
     const firstTaskIds = new Set<string>();
     tasksByGroup.forEach((tasksForProject) => {
         const hasOrder = tasksForProject.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
-        let firstTaskId: string | null = null;
-        let bestKey = Number.POSITIVE_INFINITY;
+        const firstTask = tasksForProject.reduce<T | null>((best, task) => (
+            !best || compareSequentialManualHierarchy(task, best, hasOrder, sectionOrder) < 0 ? task : best
+        ), null);
 
-        tasksForProject.forEach((task) => {
-            const key = getSequentialTaskOrderKey(task, hasOrder);
-            if (!firstTaskId || key < bestKey) {
-                firstTaskId = task.id;
-                bestKey = key;
-            }
-        });
-
-        if (firstTaskId) firstTaskIds.add(firstTaskId);
+        if (firstTask) firstTaskIds.add(firstTask.id);
     });
 
     return firstTaskIds;
@@ -635,9 +704,10 @@ export function getFocusSequentialFirstTaskIds<
     options: FocusSequentialOptions = {},
 ): Set<string> {
     const now = options.now ?? new Date();
+    const sectionOrder = buildSequentialSectionOrder(options.sections);
     const tasksByGroup = new Map<string, T[]>();
     for (const task of tasks) {
-        const groupKey = getSequentialTaskGroupKey(task, options.sectionScopedProjectIds);
+        const groupKey = getSequentialTaskGroupKey(task, options.sectionScopedProjectIds, sectionOrder);
         if (!groupKey || !task.projectId) continue;
         if (!sequentialProjectIds.has(task.projectId)) continue;
         if (!isFocusSequentialCandidate(task, { now })) continue;
@@ -650,13 +720,12 @@ export function getFocusSequentialFirstTaskIds<
     tasksByGroup.forEach((tasksForProject) => {
         const hasOrder = tasksForProject.some((task) => Number.isFinite(task.order) || Number.isFinite(task.orderNum));
         let firstTaskId: string | null = null;
+        let firstTask: T | null = null;
         let bestScheduleRank = Number.POSITIVE_INFINITY;
         let bestScheduleTime = Number.POSITIVE_INFINITY;
-        let bestOrderKey = Number.POSITIVE_INFINITY;
 
         tasksForProject.forEach((task) => {
             const scheduleKey = getFocusSequentialScheduleKey(task, now);
-            const orderKey = getSequentialTaskOrderKey(task, hasOrder);
             const isBetter = !firstTaskId
                 || scheduleKey.rank < bestScheduleRank
                 || (
@@ -665,16 +734,17 @@ export function getFocusSequentialFirstTaskIds<
                         scheduleKey.time < bestScheduleTime
                         || (
                             scheduleKey.time === bestScheduleTime
-                            && orderKey < bestOrderKey
+                            && firstTask !== null
+                            && compareSequentialManualHierarchy(task, firstTask, hasOrder, sectionOrder) < 0
                         )
                     )
                 );
 
             if (isBetter) {
                 firstTaskId = task.id;
+                firstTask = task;
                 bestScheduleRank = scheduleKey.rank;
                 bestScheduleTime = scheduleKey.time;
-                bestOrderKey = orderKey;
             }
         });
 
@@ -715,6 +785,7 @@ export const getFocusEligibilitySequentialProjectIds = (
 export function buildTaskFocusEligibilityContext(options: {
     tasks: readonly Task[];
     projects: readonly Project[] | Map<string, Project>;
+    sections?: readonly SequentialSection[];
     now?: Date;
 }): Required<Pick<TaskFocusEligibilityOptions,
     'projects' | 'sequentialProjectIds' | 'sectionScopedProjectIds' | 'sequentialFirstTaskIds'>> {
@@ -732,7 +803,7 @@ export function buildTaskFocusEligibilityContext(options: {
                 && isTaskInActiveProject(candidate, projectMap)
             )),
             sequentialProjectIds,
-            { now, sectionScopedProjectIds },
+            { now, sectionScopedProjectIds, sections: options.sections },
         ),
     };
 }
@@ -761,7 +832,7 @@ export function getTaskFocusEligibility(
                 && isTaskInActiveProject(candidate, projectMap)
             )),
             sequentialProjectIds,
-            { now, sectionScopedProjectIds },
+            { now, sectionScopedProjectIds, sections: options.sections },
         );
     const isSequentialBlocked = Boolean(
         task.projectId
@@ -1232,6 +1303,7 @@ export type CalendarPlanningCandidateOptions = {
     now?: Date;
     prioritizeByPriority?: boolean;
     projects?: readonly Project[] | Map<string, Project>;
+    sections?: readonly SequentialSection[];
     sectionScopedProjectIds?: ReadonlySet<string>;
     sequentialProjectIds?: ReadonlySet<string>;
 };
@@ -1260,7 +1332,7 @@ export function getCalendarPlanningCandidates<T extends Task>(
     const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(
         activeFocusTasks,
         sequentialProjectIds,
-        { now, sectionScopedProjectIds },
+        { now, sectionScopedProjectIds, sections: options.sections },
     );
 
     const candidates = tasks.filter((task) => {

@@ -2974,6 +2974,60 @@ describe('cloud server api', () => {
         expect(refusedNext.isFocusedToday).toBe(false);
     });
 
+    test('uses section order when a focused task is created in an across-sections project', async () => {
+        const projectId = crypto.randomUUID();
+        const setupSectionId = crypto.randomUUID();
+        const finalSectionId = crypto.randomUUID();
+        const timestamp = new Date().toISOString();
+        const project = {
+            id: projectId,
+            title: 'Record a song',
+            status: 'active' as const,
+            color: '#6B7280',
+            order: 0,
+            tagIds: [],
+            isSequential: true,
+            sequentialScope: 'project' as const,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        const seed = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                tasks: [makeTestTask({
+                    id: crypto.randomUUID(),
+                    title: 'Vocal mics',
+                    status: 'next',
+                    projectId,
+                    sectionId: setupSectionId,
+                    order: 10,
+                    orderNum: 10,
+                })],
+                projects: [project],
+                sections: [
+                    { id: setupSectionId, projectId, title: 'Set up equipment', order: 0, createdAt: timestamp, updatedAt: timestamp },
+                    { id: finalSectionId, projectId, title: 'Final steps', order: 1, createdAt: timestamp, updatedAt: timestamp },
+                ],
+                areas: [],
+                settings: {},
+            } satisfies AppData),
+        });
+        expect(seed.status).toBe(200);
+
+        const response = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                title: 'Set up template',
+                props: { status: 'next', projectId, sectionId: finalSectionId, isFocusedToday: true },
+            }),
+        });
+
+        expect(response.status).toBe(201);
+        expect((await response.json()).task.isFocusedToday).toBe(false);
+    });
+
     test('enforces a configured Focus cap only on normalized false-to-true PATCH transitions', async () => {
         const starredId = crypto.randomUUID();
         const plainId = crypto.randomUUID();

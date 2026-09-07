@@ -22,6 +22,7 @@ const makeTask = (overrides: Partial<Task>): Task => ({
 const baseContext = (overrides: Partial<FocusStarContext> = {}): FocusStarContext => ({
     tasks: [],
     projects: [],
+    sections: [],
     focusedCount: 0,
     focusTaskLimit: 3,
     ...overrides,

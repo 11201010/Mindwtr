@@ -64,9 +64,10 @@ interface DailyReviewModalProps {
 }
 
 function DailyReviewFlow({ onClose }: { onClose: () => void }) {
-    const { tasks, projects, settings, updateTask, deleteTask } = useTaskStore((state) => ({
+    const { tasks, projects, sections, settings, updateTask, deleteTask } = useTaskStore((state) => ({
         tasks: state.tasks,
         projects: state.projects,
+        sections: state.sections,
         settings: state.settings,
         updateTask: state.updateTask,
         deleteTask: state.deleteTask,
@@ -199,8 +200,8 @@ function DailyReviewFlow({ onClose }: { onClose: () => void }) {
     // Single source of "what needs reviewing today" (#867): shared with
     // desktop via core so a raw startTime-vs-now check can't drift back in.
     const dailyBuckets = useMemo(
-        () => getDailyReviewBuckets(tasks, projects, { now: today, sortBy }),
-        [tasks, projects, today, sortBy],
+        () => getDailyReviewBuckets(tasks, projects, { now: today, sortBy, sections }),
+        [tasks, projects, sections, today, sortBy],
     );
     const inboxTasks = dailyBuckets.inbox;
     const focusedTasks = dailyBuckets.focused;

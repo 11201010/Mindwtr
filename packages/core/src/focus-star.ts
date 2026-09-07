@@ -1,4 +1,4 @@
-import type { Project, Task } from './types';
+import type { Project, Section, Task } from './types';
 import {
     FOCUS_ELIGIBILITY_ACTIVE_STATUSES,
     getTaskFocusEligibility,
@@ -18,6 +18,7 @@ export type FocusStarBlockedReason = 'deferred' | 'sequential' | 'clarify' | 'li
 export type FocusStarContext = {
     tasks: Task[];
     projects: readonly Project[] | Map<string, Project>;
+    sections: readonly Section[];
     focusedCount: number;
     focusTaskLimit: number;
     sequentialProjectIds?: Set<string>;
@@ -68,6 +69,7 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
         now: context.now,
         sequentialProjectIds: context.sequentialProjectIds,
         sectionScopedProjectIds: context.sectionScopedProjectIds,
+        sections: context.sections,
     });
     const eligible = eligibility.eligible
         || (context.allowUnclarified === true && eligibility.reason === 'clarify');
@@ -94,7 +96,7 @@ export function resolveFocusStarAction(task: Task, context: FocusStarContext): F
  */
 export function resolveTaskFocusCreation(
     task: Task,
-    context: Pick<FocusStarContext, 'tasks' | 'projects' | 'focusedCount' | 'focusTaskLimit'>,
+    context: Pick<FocusStarContext, 'tasks' | 'projects' | 'sections' | 'focusedCount' | 'focusTaskLimit'>,
 ): TaskFocusCreationDecision {
     if (task.isFocusedToday !== true) {
         return {
@@ -113,6 +115,7 @@ export function resolveTaskFocusCreation(
     const eligibility = getTaskFocusEligibility(candidate, {
         tasks: [...context.tasks, candidate],
         projects: context.projects,
+        sections: context.sections,
     });
 
     if (!eligibility.eligible) {

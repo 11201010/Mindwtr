@@ -165,13 +165,14 @@ const formatTimeInputValue = formatCalendarTimeInputValue;
 const parseTimeOnDate = parseCalendarTimeOnDate;
 
 export function useCalendarViewController() {
-  const { tasks, allTasks, projects, areas, addTask, addProject, updateTask, deleteTask, people, updateSettings, settings } = useTaskStore((state) => ({
+  const { tasks, allTasks, projects, sections, areas, addTask, addProject, updateTask, deleteTask, people, updateSettings, settings } = useTaskStore((state) => ({
     tasks: state.tasks,
     people: state.people,
     // Archived tasks are absent from the visible `tasks` projection, so the
     // completed look-back reads the full list like the Archive screen (#955).
     allTasks: state._allTasks,
     projects: state.projects,
+    sections: state.sections,
     areas: state.areas,
     addProject: state.addProject,
     addTask: state.addTask,
@@ -640,12 +641,13 @@ export function useCalendarViewController() {
       now: new Date(nowTick),
       prioritizeByPriority: prioritiesEnabled,
       projects,
+      sections,
     });
     // Planning candidates recompute at most once per local day, not on every
     // minute tick: nowTick only sets the "now" instant used for date/sort
     // comparisons, mirrored from recurrenceProjectedAtIso above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [areaVisibleTasks, recurrenceProjectionDayKey, prioritiesEnabled, projects, selectedDate]);
+  }, [areaVisibleTasks, recurrenceProjectionDayKey, prioritiesEnabled, projects, sections, selectedDate]);
 
   const searchCandidates = useMemo(() => {
     if (!selectedDate) return [];

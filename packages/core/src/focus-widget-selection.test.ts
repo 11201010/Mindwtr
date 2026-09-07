@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeTodayFocusTasks } from './focus-widget-selection';
-import type { Project, Task } from './types';
+import type { Project, Section, Task } from './types';
 
 const NOW = new Date('2026-03-10T09:00:00');
 const iso = (value: string) => new Date(value).toISOString();
@@ -26,8 +26,8 @@ const makeProject = (overrides: Partial<Project> & Pick<Project, 'id'>): Project
     ...overrides,
 });
 
-const select = (activeTasks: Task[], projects: Project[] = []) => (
-    computeTodayFocusTasks({ activeTasks, projects, sortBy: 'default', now: NOW })
+const select = (activeTasks: Task[], projects: Project[] = [], sections: Section[] = [], sortBy: 'default' | 'title' = 'default') => (
+    computeTodayFocusTasks({ activeTasks, projects, sections, sortBy, now: NOW })
 );
 
 const ids = (tasks: Task[]) => tasks.map((task) => task.id);
@@ -58,6 +58,20 @@ describe('computeTodayFocusTasks — sequential projects', () => {
         expect(ids(focusTasks)).toEqual(['step-1']);
     });
 
+    it('uses section hierarchy for the slot even when the widget has a custom display sort', () => {
+        const sections: Section[] = [
+            { id: 'setup', projectId: 'seq', title: 'Set up equipment', order: 0, createdAt: iso('2026-01-01T08:00:00'), updatedAt: iso('2026-01-01T08:00:00') },
+            { id: 'final', projectId: 'seq', title: 'Final steps', order: 1, createdAt: iso('2026-01-01T08:00:00'), updatedAt: iso('2026-01-01T08:00:00') },
+        ];
+        const tasks = [
+            makeTask({ id: 'set-up-template', title: 'A template', projectId: 'seq', sectionId: 'final', order: 0 }),
+            makeTask({ id: 'vocal-mics', title: 'Z vocal mics', projectId: 'seq', sectionId: 'setup', order: 10 }),
+        ];
+
+        const { focusTasks } = select(tasks, [sequential], sections, 'title');
+        expect(ids(focusTasks)).toEqual(['vocal-mics']);
+    });
+
     it('lets an earlier step deferred to a future date keep holding the slot', () => {
         // The Focus screens feed the helper their unfiltered active pool, so a
         // step hidden by its own start date still blocks the ones after it.
@@ -81,12 +95,20 @@ describe('computeTodayFocusTasks — sequential projects', () => {
 
     it('gives one slot per section for a section-scoped sequential project', () => {
         const sectionScoped = makeProject({ id: 'seq', isSequential: true, sequentialScope: 'section' });
+        const sections: Section[] = ['a', 'b'].map((id, order) => ({
+            id,
+            projectId: 'seq',
+            title: id,
+            order,
+            createdAt: iso('2026-01-01T08:00:00'),
+            updatedAt: iso('2026-01-01T08:00:00'),
+        }));
         const tasks = [
             makeTask({ id: 'a-1', projectId: 'seq', sectionId: 'a', order: 0, orderNum: 0 }),
             makeTask({ id: 'a-2', projectId: 'seq', sectionId: 'a', order: 1, orderNum: 1 }),
             makeTask({ id: 'b-1', projectId: 'seq', sectionId: 'b', order: 2, orderNum: 2 }),
         ];
-        const { focusTasks } = select(tasks, [sectionScoped]);
+        const { focusTasks } = select(tasks, [sectionScoped], sections);
         expect(ids(focusTasks)).toEqual(['a-1', 'b-1']);
     });
 

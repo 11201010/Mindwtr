@@ -694,6 +694,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 const focusDecision = resolveTaskFocusCreation(task, {
                     tasks: data.tasks,
                     projects: data.projects,
+                    sections: data.sections,
                     focusedCount,
                     focusTaskLimit,
                 });

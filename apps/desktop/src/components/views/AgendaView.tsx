@@ -243,9 +243,10 @@ function AgendaTaskList({
 
 export function AgendaView() {
     const perf = usePerformanceMonitor('AgendaView');
-    const { projects, areas, updateTask, updateSettings, reorderFocusedTasks, settings, error, highlightTaskId, setHighlightTask, taskChangeToken, hasAnyTasks } = useTaskStore(
+    const { projects, sections: projectSections, areas, updateTask, updateSettings, reorderFocusedTasks, settings, error, highlightTaskId, setHighlightTask, taskChangeToken, hasAnyTasks } = useTaskStore(
         (state) => ({
             projects: state.projects,
+            sections: state.sections,
             areas: state.areas,
             updateTask: state.updateTask,
             updateSettings: state.updateSettings,
@@ -761,6 +762,7 @@ export function AgendaView() {
         const sequentialFirstTasks = getFocusSequentialFirstTaskIds(baseActiveTasks, sequentialProjectIds, {
             now,
             sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+            sections: projectSections,
         });
         const isSequentialBlocked = (task: Task) => {
             if (!task.projectId) return false;
@@ -839,6 +841,7 @@ export function AgendaView() {
         localDayKey,
         prioritiesEnabled,
         projects,
+        projectSections,
         reviewDueCandidates,
         scheduleCandidates,
         sequentialProjectIds,

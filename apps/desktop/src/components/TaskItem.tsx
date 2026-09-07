@@ -363,12 +363,13 @@ export const TaskItem = memo(function TaskItem({
     const resolveFocusStar = useCallback((options?: { allowUnclarified?: boolean }) => resolveFocusStarAction(task, {
         tasks: collectFocusEligibilityTasks(activeTasksByStatus),
         projects: projectMap,
+        sections,
         focusedCount,
         focusTaskLimit,
         sequentialProjectIds,
         sectionScopedProjectIds: sequentialWithinSectionProjectIds,
         allowUnclarified: options?.allowUnclarified,
-    }), [activeTasksByStatus, focusTaskLimit, focusedCount, projectMap, sequentialProjectIds, sequentialWithinSectionProjectIds, task]);
+    }), [activeTasksByStatus, focusTaskLimit, focusedCount, projectMap, sections, sequentialProjectIds, sequentialWithinSectionProjectIds, task]);
     const toggleTaskFocus = useCallback(() => {
         if (effectiveReadOnly) return;
         const action = resolveFocusStar();

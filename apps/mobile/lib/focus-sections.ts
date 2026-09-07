@@ -7,6 +7,7 @@ import {
     sortFocusNextActions,
     sortTasksByFocusOrder,
     type Project,
+    type Section,
     type ProjectDeadlineBoost,
     type SortField,
     type Task,
@@ -51,6 +52,7 @@ export interface DeriveFocusTaskListsInput {
     /** The unfiltered actionable pool a sequential project's slot is decided on. */
     baseActiveTasks: Task[];
     projects: Project[];
+    sections: Section[];
     sequentialProjectIds: Set<string>;
     sequentialWithinSectionProjectIds: Set<string>;
     sortBy: SortField;
@@ -67,6 +69,7 @@ export function deriveFocusTaskLists({
     upcomingCandidates,
     baseActiveTasks,
     projects,
+    sections,
     sequentialProjectIds,
     sequentialWithinSectionProjectIds,
     sortBy,
@@ -81,6 +84,7 @@ export function deriveFocusTaskLists({
     const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(baseActiveTasks, sequentialProjectIds, {
         now,
         sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        sections,
     });
 
     const isSequentialBlocked = (task: Task) => {

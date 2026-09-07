@@ -291,7 +291,7 @@ export function listTasks(db: DbClient, input: ListTasksInput): TaskRow[] {
         .map(mapTaskRow) as unknown as CoreTask[];
       // Once, not per candidate: the sequential-chain scan is O(all), so deriving it inside the
       // filter was O(matched x all) — 10s at 10k tasks, minutes at 50k (V2).
-      const context = buildTaskFocusEligibilityContext({ tasks: all, projects });
+      const context = buildTaskFocusEligibilityContext({ tasks: all, projects, sections: listSections(db) });
       const wanted = input.view === 'blocked' ? 'sequential' : input.view === 'deferred' ? 'deferred' : 'eligible';
       matched = matched.filter((task) => getTaskFocusEligibility(task, { tasks: all, ...context }).reason === wanted);
     }

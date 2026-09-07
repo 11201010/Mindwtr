@@ -508,6 +508,7 @@ export function buildWidgetPayload(
         ).map((entry) => entry.task),
         baseActiveTasks: activeTasks,
         projects,
+        sections: data.sections || [],
         sequentialProjectIds: new Set(sequentialProjects.map((project) => project.id)),
         sequentialWithinSectionProjectIds: new Set(
             sequentialProjects.filter((project) => project.sequentialScope === 'section').map((project) => project.id),
@@ -640,6 +641,7 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
     const { starredTasks, focusTasks } = computeTodayFocusTasks({
         activeTasks,
         projects,
+        sections: data.sections || [],
         sortBy: widgetSort,
         now,
     });

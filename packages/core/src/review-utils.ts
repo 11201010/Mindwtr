@@ -2,7 +2,7 @@ import { addDays, format } from 'date-fns';
 
 import type { ReviewSnapshotItem } from './ai/types';
 import type { ExternalCalendarEvent } from './ics';
-import type { AppSettings, Area, Project, Task, TaskSortBy } from './types';
+import type { AppSettings, Area, Project, Section, Task, TaskSortBy } from './types';
 import { getWeekStartsOnIndex, hasTimeComponent, isDueForReview, safeParseDate, safeParseDueDate } from './date';
 import { timeEstimateToMinutes } from './calendar-scheduling';
 import {
@@ -278,6 +278,7 @@ export type ReviewBucketOptions = {
     weekStart?: AppSettings['weekStart'];
     showFutureStarts?: boolean;
     sortBy?: TaskSortBy;
+    sections?: readonly Section[];
     /**
      * Opt-in area narrowing, read by `getDailyReviewBuckets` only —
      * `getWeeklyReviewBuckets` ignores it. Currently unused: no caller passes
@@ -338,12 +339,18 @@ export function getDailyReviewBuckets(
     const sequentialProjectIds = new Set(
         projects.filter((project) => project.isSequential && !project.deletedAt).map((project) => project.id),
     );
+    const sectionScopedProjectIds = new Set(
+        projects
+            .filter((project) => project.isSequential && project.sequentialScope === 'section' && !project.deletedAt)
+            .map((project) => project.id),
+    );
     // Waiting tasks hold their chain slot: a waiting first step keeps a
     // sequential project's later next tasks out of the review candidates too
     // ("later steps aren't actionable yet" applies while waiting on someone).
     const sequentialFirstTaskIds = getSequentialFirstTaskIds(
         activeTasks.filter((task) => isSequentialChainStatus(task.status)),
         sequentialProjectIds,
+        { sectionScopedProjectIds, sections: opts.sections },
     );
 
     const inbox = activeTasks.filter((task) => task.status === 'inbox');

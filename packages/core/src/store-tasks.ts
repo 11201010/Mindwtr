@@ -477,6 +477,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 const focusDecision = resolveTaskFocusCreation(newTask, {
                     tasks: nextAllTasks,
                     projects: currentState._allProjects,
+                    sections: currentState._allSections,
                     focusedCount,
                     focusTaskLimit,
                 });
@@ -1410,6 +1411,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return resolveFocusStarAction(task, {
             tasks: collectFocusEligibilityTasks(derived.activeTasksByStatus),
             projects: derived.projectMap,
+            sections: state.sections,
             focusedCount: derived.focusedCount,
             focusTaskLimit: normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit),
             sequentialProjectIds: derived.sequentialProjectIds,

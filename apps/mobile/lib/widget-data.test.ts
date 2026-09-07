@@ -628,6 +628,10 @@ describe('widget-data', () => {
                     updatedAt: now,
                 },
             ],
+            sections: [
+                { id: 'section-a', projectId: 'project-1', title: 'Section A', order: 0, createdAt: now, updatedAt: now },
+                { id: 'section-b', projectId: 'project-1', title: 'Section B', order: 1, createdAt: now, updatedAt: now },
+            ],
             tasks: [
                 {
                     id: 'section-a-first',

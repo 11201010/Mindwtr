@@ -208,13 +208,14 @@ function DraggableTask({ task, dragLabel }: { task: Task; dragLabel: string }) {
 
 export function BoardView() {
     const perf = usePerformanceMonitor('BoardView');
-    const { tasks, moveTask, reorderBoardTasks, settings, projects } = useTaskStore(
+    const { tasks, moveTask, reorderBoardTasks, settings, projects, sections } = useTaskStore(
         (state) => ({
             tasks: state.tasks,
             moveTask: state.moveTask,
             reorderBoardTasks: state.reorderBoardTasks,
             settings: state.settings,
             projects: state.projects,
+            sections: state.sections,
         }),
         shallow
     );
@@ -356,6 +357,11 @@ export function BoardView() {
     const sequentialProjectIds = React.useMemo(() => {
         return new Set(projects.filter((p) => p.isSequential && !p.deletedAt).map((p) => p.id));
     }, [projects]);
+    const sequentialWithinSectionProjectIds = React.useMemo(() => new Set(
+        projects
+            .filter((project) => project.isSequential && project.sequentialScope === 'section' && !project.deletedAt)
+            .map((project) => project.id),
+    ), [projects]);
 
     const sequentialProjectFirstTasks = React.useMemo(() => {
         perf.trackUseMemo();
@@ -366,9 +372,12 @@ export function BoardView() {
             // blocks the later ones), so they join the slot computation even
             // though the board never renders them in the Next column.
             const chainTasks = filteredTasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status));
-            return getSequentialFirstTaskIds(chainTasks, sequentialProjectIds);
+            return getSequentialFirstTaskIds(chainTasks, sequentialProjectIds, {
+                sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+                sections,
+            });
         });
-    }, [computeSequential, filteredTasks, sequentialProjectIds]);
+    }, [computeSequential, filteredTasks, sections, sequentialProjectIds, sequentialWithinSectionProjectIds]);
 
     const sortByProjectOrder = React.useCallback(
         (items: Task[]) => [...items].sort(compareTasksByProjectThenOrder(projectOrderMap)),

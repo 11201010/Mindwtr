@@ -123,6 +123,7 @@ export function buildMacWidgetPayload(data: AppData, language: Language, systemI
     const { starredTasks, focusTasks } = computeTodayFocusTasks({
         activeTasks,
         projects,
+        sections: data.sections || [],
         sortBy: widgetSort,
         now,
     });

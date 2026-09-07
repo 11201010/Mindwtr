@@ -27,6 +27,7 @@ export function useListViewOptimizations(
     const sequentialProjectIds = derived.sequentialProjectIds;
     const sequentialWithinSectionProjectIds = derived.sequentialWithinSectionProjectIds;
     const tasksById = derived.tasksById;
+    const sections = useTaskStore((state) => state.sections);
 
     const sequentialProjectFirstTasks = useConditionalMemo(
         statusFilter === 'next',
@@ -40,13 +41,13 @@ export function useListViewOptimizations(
                 return getSequentialFirstTaskIds(
                     baseTasks.filter((task) => !task.deletedAt && isSequentialChainStatus(task.status)),
                     sequentialProjectIds,
-                    { sectionScopedProjectIds: sequentialWithinSectionProjectIds },
+                    { sectionScopedProjectIds: sequentialWithinSectionProjectIds, sections },
                 );
             };
 
             return perfApi?.measure ? perfApi.measure('sequentialProjectFirstTasks', compute) : compute();
         },
-        [baseTasks, sequentialProjectIds, sequentialWithinSectionProjectIds],
+        [baseTasks, sections, sequentialProjectIds, sequentialWithinSectionProjectIds],
         new Set<string>(),
     );
 

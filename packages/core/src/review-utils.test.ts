@@ -12,7 +12,7 @@ import {
     parseStoredReviewStepSession,
     resolveReviewStepSession,
 } from './review-utils';
-import type { Area, Project, Task } from './types';
+import type { Area, Project, Section, Task } from './types';
 
 const staleUpdatedAt = '2026-01-01T00:00:00.000Z';
 const now = new Date('2026-03-01T00:00:00.000Z');
@@ -307,6 +307,20 @@ describe('getDailyReviewBuckets', () => {
         const buckets = getDailyReviewBuckets([first, second], [project], { now: dailyNow });
 
         expect(buckets.focusCandidates.map((task) => task.id)).toEqual(['seq-1']);
+    });
+
+    it('uses section order for across-sections focus candidates', () => {
+        const project = createProject({ id: 'seq-project', isSequential: true });
+        const sections: Section[] = [
+            { id: 'setup', projectId: project.id, title: 'Setup', order: 0, createdAt: staleUpdatedAt, updatedAt: staleUpdatedAt },
+            { id: 'final', projectId: project.id, title: 'Final', order: 1, createdAt: staleUpdatedAt, updatedAt: staleUpdatedAt },
+        ];
+        const lower = createTask({ id: 'lower', status: 'next', projectId: project.id, sectionId: 'final', order: 0 });
+        const upper = createTask({ id: 'upper', status: 'next', projectId: project.id, sectionId: 'setup', order: 10 });
+
+        const buckets = getDailyReviewBuckets([lower, upper], [project], { now: dailyNow, sections });
+
+        expect(buckets.focusCandidates.map((task) => task.id)).toEqual(['upper']);
     });
 
     it('sorts dueToday and overdue using the requested sort order', () => {

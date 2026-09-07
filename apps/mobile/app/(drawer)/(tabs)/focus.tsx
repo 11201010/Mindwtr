@@ -225,9 +225,10 @@ const serializeFocusViewState = (expandedSections: FocusExpandedSections, showDe
 export default function FocusScreen() {
   const { taskId, openToken, taskTab } = useLocalSearchParams<{ taskId?: string; openToken?: string; taskTab?: string }>();
   const insets = useSafeAreaInsets();
-  const { tasks, projects, areas, settings, updateTask, deleteTask, reorderFocusedTasks, updateSettings, highlightTaskId, setHighlightTask } = useTaskStore((state) => ({
+  const { tasks, projects, sections: projectSections, areas, settings, updateTask, deleteTask, reorderFocusedTasks, updateSettings, highlightTaskId, setHighlightTask } = useTaskStore((state) => ({
     tasks: state.tasks,
     projects: state.projects,
+    sections: state.sections,
     areas: state.areas,
     settings: state.settings,
     updateTask: state.updateTask,
@@ -845,6 +846,7 @@ export default function FocusScreen() {
       upcomingCandidates,
       baseActiveTasks,
       projects,
+      sections: projectSections,
       sequentialProjectIds,
       sequentialWithinSectionProjectIds,
       sortBy: effectiveFocusSortBy,
@@ -859,6 +861,7 @@ export default function FocusScreen() {
     localDayKey,
     prioritiesEnabled,
     projects,
+    projectSections,
     scheduleCandidates,
     sequentialProjectIds,
     sequentialWithinSectionProjectIds,

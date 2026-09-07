@@ -61,10 +61,11 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
     const setCurrentStep = useCallback((step: DailyReviewStep) => {
         setReviewSession((session) => ({ ...session, step }));
     }, []);
-    const { tasks, projects, areas, settings, addTask, addProject, updateTask, deleteTask } = useTaskStore(
+    const { tasks, projects, sections, areas, settings, addTask, addProject, updateTask, deleteTask } = useTaskStore(
         (state) => ({
             tasks: state.tasks,
             projects: state.projects,
+            sections: state.sections,
             areas: state.areas,
             settings: state.settings,
             addTask: state.addTask,
@@ -104,8 +105,8 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
     // Single source of "what needs reviewing today" (#867): shared with
     // mobile via core so a raw startTime-vs-now check can't drift back in.
     const dailyBuckets = useMemo(
-        () => getDailyReviewBuckets(tasks, projects, { now: today, sortBy }),
-        [tasks, projects, today, sortBy],
+        () => getDailyReviewBuckets(tasks, projects, { now: today, sortBy, sections }),
+        [tasks, projects, sections, today, sortBy],
     );
     const inboxTasks = dailyBuckets.inbox;
     const focusedTasks = dailyBuckets.focused;

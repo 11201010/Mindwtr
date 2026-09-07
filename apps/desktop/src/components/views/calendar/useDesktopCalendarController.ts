@@ -96,7 +96,7 @@ export function useDesktopCalendarController() {
         const [year, monthIndex, date] = localDayKey.split('-').map(Number);
         return new Date(year!, monthIndex!, date!).toISOString();
     }, [localDayKey]);
-    const { tasks, allTasks, projects, areas, addTask, addProject, updateTask, people, settings, getDerivedState } = useTaskStore(
+    const { tasks, allTasks, projects, sections, areas, addTask, addProject, updateTask, people, settings, getDerivedState } = useTaskStore(
         (state) => ({
             addProject: state.addProject,
             addTask: state.addTask,
@@ -107,6 +107,7 @@ export function useDesktopCalendarController() {
             // the Archive view reads `_allTasks` for the same reason (#955).
             allTasks: state._allTasks,
             projects: state.projects,
+            sections: state.sections,
             areas: state.areas,
             updateTask: state.updateTask,
             settings: state.settings,
@@ -327,6 +328,7 @@ export function useDesktopCalendarController() {
             now: new Date(),
             prioritizeByPriority: prioritiesEnabled,
             projects,
+            sections,
             sectionScopedProjectIds: sequentialWithinSectionProjectIds,
             sequentialProjectIds,
         },
@@ -334,6 +336,7 @@ export function useDesktopCalendarController() {
         isSchedulableTask,
         prioritiesEnabled,
         projects,
+        sections,
         localDayKey,
         sequentialProjectIds,
         sequentialWithinSectionProjectIds,

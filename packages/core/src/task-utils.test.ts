@@ -342,6 +342,35 @@ describe('task-utils', () => {
                 'sequential-first',
             ]);
         });
+
+        it('offers the upper-section task from an across-sections project', () => {
+            const project = {
+                id: 'sequential-project',
+                title: 'Sequential project',
+                status: 'active' as const,
+                isSequential: true,
+                color: '#123456',
+                order: 0,
+                tagIds: [],
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+            };
+            const tasks = [
+                { id: 'lower', title: 'Lower', status: 'next' as const, projectId: project.id, sectionId: 'final', order: 0, orderNum: 0, tags: [], contexts: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+                { id: 'upper', title: 'Upper', status: 'next' as const, projectId: project.id, sectionId: 'setup', order: 10, orderNum: 10, tags: [], contexts: [], createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' },
+            ];
+
+            const candidates = getCalendarPlanningCandidates(tasks, {
+                now: new Date('2026-01-01T12:00:00.000Z'),
+                projects: [project],
+                sections: [
+                    { id: 'setup', projectId: project.id, title: 'Setup', order: 0 },
+                    { id: 'final', projectId: project.id, title: 'Final', order: 1 },
+                ],
+            });
+
+            expect(candidates.map((task) => task.id)).toEqual(['upper']);
+        });
     });
 
     describe('sortTasks', () => {
@@ -1117,6 +1146,29 @@ describe('task-utils', () => {
     });
 
     describe('getSequentialFirstTaskIds', () => {
+        const sections = [
+            { id: 'setup', projectId: 'p1', title: 'Set up equipment', order: 0 },
+            { id: 'final', projectId: 'p1', title: 'Final steps', order: 1 },
+        ];
+
+        it('follows section order before task order for project-scoped sequences', () => {
+            const firstTaskIds = getSequentialFirstTaskIds([
+                { id: 'set-up-template', projectId: 'p1', sectionId: 'final', order: 0, orderNum: 0, createdAt: '2026-04-01T00:00:00.000Z' },
+                { id: 'vocal-mics', projectId: 'p1', sectionId: 'setup', order: 10, orderNum: 10, createdAt: '2026-04-02T00:00:00.000Z' },
+            ], new Set(['p1']), { sections });
+
+            expect([...firstTaskIds]).toEqual(['vocal-mics']);
+        });
+
+        it('puts the visual No Section bucket after named sections', () => {
+            const firstTaskIds = getSequentialFirstTaskIds([
+                { id: 'unsectioned', projectId: 'p1', order: 0, orderNum: 0, createdAt: '2026-04-01T00:00:00.000Z' },
+                { id: 'named-section', projectId: 'p1', sectionId: 'final', order: 20, orderNum: 20, createdAt: '2026-04-02T00:00:00.000Z' },
+            ], new Set(['p1']), { sections });
+
+            expect([...firstTaskIds]).toEqual(['named-section']);
+        });
+
         it('returns the first active task per sequential project by order', () => {
             const firstTaskIds = getSequentialFirstTaskIds([
                 { id: 'p1-second', projectId: 'p1', order: 2, orderNum: undefined, createdAt: '2026-04-02T00:00:00.000Z' },
@@ -1136,6 +1188,15 @@ describe('task-utils', () => {
             expect([...firstTaskIds]).toEqual(['older']);
         });
 
+        it('keeps task manual order when the project has no sections', () => {
+            const firstTaskIds = getSequentialFirstTaskIds([
+                { id: 'later', projectId: 'p1', order: 2, orderNum: undefined, createdAt: '2026-04-01T00:00:00.000Z' },
+                { id: 'first', projectId: 'p1', order: 1, orderNum: undefined, createdAt: '2026-04-02T00:00:00.000Z' },
+            ], new Set(['p1']), { sections: [] });
+
+            expect([...firstTaskIds]).toEqual(['first']);
+        });
+
         it('returns the first active task per section for section-scoped sequential projects', () => {
             const firstTaskIds = getSequentialFirstTaskIds([
                 { id: 'phase-a-second', projectId: 'p1', sectionId: 'section-a', order: 2, orderNum: undefined, createdAt: '2026-04-02T00:00:00.000Z' },
@@ -1150,6 +1211,36 @@ describe('task-utils', () => {
 
     describe('getFocusSequentialFirstTaskIds', () => {
         const now = new Date('2026-04-05T12:00:00.000Z');
+        const sections = [
+            { id: 'setup', projectId: 'p1', title: 'Set up equipment', order: 0 },
+            { id: 'final', projectId: 'p1', title: 'Final steps', order: 1 },
+        ];
+
+        it('chooses the first task in the top section across sections', () => {
+            const tasks = [
+                { id: 'set-up-template', projectId: 'p1', sectionId: 'final', status: 'next' as const, order: 0, orderNum: 0, createdAt: '2026-04-01T00:00:00.000Z' },
+                { id: 'vocal-mics', projectId: 'p1', sectionId: 'setup', status: 'next' as const, order: 10, orderNum: 10, createdAt: '2026-04-02T00:00:00.000Z' },
+                { id: 'cables', projectId: 'p1', sectionId: 'setup', status: 'next' as const, order: 20, orderNum: 20, createdAt: '2026-04-03T00:00:00.000Z' },
+            ];
+
+            expect([...getFocusSequentialFirstTaskIds(tasks, new Set(['p1']), { now, sections })]).toEqual(['vocal-mics']);
+            expect([...getFocusSequentialFirstTaskIds(tasks.map((task) => (
+                task.id === 'cables' ? { ...task, order: 5, orderNum: 5 } : task
+            )), new Set(['p1']), { now, sections })]).toEqual(['cables']);
+            expect([...getFocusSequentialFirstTaskIds(tasks, new Set(['p1']), {
+                now,
+                sections: [...sections].reverse().map((section, index) => ({ ...section, order: index })),
+            })]).toEqual(['set-up-template']);
+        });
+
+        it('keeps the existing scheduled override ahead of section order', () => {
+            const firstTaskIds = getFocusSequentialFirstTaskIds([
+                { id: 'vocal-mics', projectId: 'p1', sectionId: 'setup', status: 'next', order: 10, orderNum: 10, createdAt: '2026-04-01T00:00:00.000Z' },
+                { id: 'set-up-template', projectId: 'p1', sectionId: 'final', status: 'next', dueDate: '2026-04-05T15:00:00.000Z', order: 0, orderNum: 0, createdAt: '2026-04-02T00:00:00.000Z' },
+            ], new Set(['p1']), { now, sections });
+
+            expect([...firstTaskIds]).toEqual(['set-up-template']);
+        });
 
         it('skips earlier inbox and someday tasks when picking the first sequential candidate', () => {
             const firstTaskIds = getFocusSequentialFirstTaskIds([
