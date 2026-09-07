@@ -883,6 +883,14 @@ export function TaskQuickActionMenu({
                         onClose();
                     },
                 })}
+                {task.status === 'done' && renderMenuAction({
+                    icon: <ChevronRight className="h-4 w-4" />,
+                    label: t('waiting.moveToNext'),
+                    onClick: () => {
+                        onStatusChange('next');
+                        onClose();
+                    },
+                })}
                 {!readOnly && onPromoteToProject && renderMenuAction({
                     icon: <FolderPlus className="h-4 w-4" />,
                     label: promoteToProjectLabel,

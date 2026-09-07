@@ -56,6 +56,7 @@ const t = (key: string) => ({
     'taskEdit.projectLabel': 'Project',
     'taskEdit.reviewDateLabel': 'Review Date',
     'taskEdit.startDateLabel': 'Start Date',
+    'waiting.moveToNext': 'Move to Next',
 }[key] ?? key);
 
 const createMenuProps = (overrides: Partial<ComponentProps<typeof TaskQuickActionMenu>> = {}): ComponentProps<typeof TaskQuickActionMenu> => ({
@@ -104,6 +105,23 @@ const renderClosableMenu = (overrides: Partial<ComponentProps<typeof TaskQuickAc
 };
 
 describe('TaskQuickActionMenu', () => {
+    it('reopens a completed task from its read-only menu using the keyboard', async () => {
+        const user = userEvent.setup();
+        const props = renderClosableMenu({ task: { ...task, status: 'done' }, readOnly: true });
+
+        expect(screen.getAllByRole('menuitem').map((item) => item.textContent))
+            .toEqual(['Duplicate', 'Move to Next', 'Delete']);
+        await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+
+        expect(props.onStatusChange).toHaveBeenCalledExactlyOnceWith('next');
+        expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+
+    it.each(['next', 'archived'] as const)('does not offer completed-task reopening for %s tasks', (status) => {
+        renderMenu({ task: { ...task, status }, readOnly: status === 'archived' });
+        expect(screen.queryByRole('menuitem', { name: 'Move to Next' })).not.toBeInTheDocument();
+    });
+
     it('opens one panel at a time and exposes dialog state without pressed state', () => {
         renderMenu();
 
