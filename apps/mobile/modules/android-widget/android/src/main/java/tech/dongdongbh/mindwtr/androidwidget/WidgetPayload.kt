@@ -16,6 +16,7 @@ data class WidgetPayload(
   val dateLabel: String,
   val inboxLabel: String,
   val inboxCount: Int,
+  val subtitle: String,
   val items: List<Item>,
   val sections: List<Section>,
   val lists: Map<String, ListPayload>,
@@ -87,8 +88,6 @@ data class WidgetPayload(
   /** True when the launcher's own day/night resources should color the widget. */
   val usesSystemColors: Boolean get() = palette == null || themeMode == "system"
 
-  val subtitle: String get() = "$inboxLabel: $inboxCount"
-
   /** Every task id the payload can draw, across the flat list, the sections and every named list. */
   fun allTaskIds(): Set<String> {
     val ids = HashSet<String>()
@@ -141,6 +140,7 @@ data class WidgetPayload(
       dateLabel = "",
       inboxLabel = "Inbox",
       inboxCount = 0,
+      subtitle = "Inbox: 0",
       items = emptyList(),
       sections = emptyList(),
       lists = emptyMap(),
@@ -217,11 +217,16 @@ data class WidgetPayload(
         due = peek.stringOr("due", defaults.taskPeek.due),
         priority = peek.stringOr("priority", defaults.taskPeek.priority),
       )
+      val inboxLabel = root.stringOr("inboxLabel", defaults.inboxLabel)
+      val inboxCount = maxOf(0, root.optInt("inboxCount", 0))
       return WidgetPayload(
         headerTitle = root.stringOr("headerTitle", defaults.headerTitle),
         dateLabel = root.stringOr("dateLabel", defaults.dateLabel),
-        inboxLabel = root.stringOr("inboxLabel", defaults.inboxLabel),
-        inboxCount = maxOf(0, root.optInt("inboxCount", 0)),
+        inboxLabel = inboxLabel,
+        inboxCount = inboxCount,
+        // Payloads written before #1173 had no subtitle; keep their exact
+        // Inbox count rather than showing a blank header chip.
+        subtitle = root.stringOr("subtitle", "$inboxLabel: $inboxCount"),
         items = items,
         sections = sections,
         lists = lists,
@@ -362,7 +367,20 @@ object WidgetPayloadStore {
     } catch (error: JSONException) {
       return null
     }
-    root.put("inboxCount", maxOf(0, root.optInt("inboxCount", 0)) + 1)
+    val inboxLabel = root.optString("inboxLabel").trim().ifEmpty { WidgetPayload.EMPTY.inboxLabel }
+    val previousCount = maxOf(0, root.optInt("inboxCount", 0))
+    val nextCount = previousCount + 1
+    val previousPrefix = "$inboxLabel: $previousCount"
+    val publishedSubtitle = root.optString("subtitle").trim()
+    val curatedSuffix = publishedSubtitle
+      .takeIf { it.startsWith(previousPrefix) }
+      ?.removePrefix(previousPrefix)
+      .orEmpty()
+    root.put("inboxCount", nextCount)
+    // Keep the RN-published curated hidden count while advancing the Inbox
+    // count immediately after native quick capture. A legacy or malformed
+    // subtitle safely falls back to Inbox only.
+    root.put("subtitle", "$inboxLabel: $nextCount$curatedSuffix")
     return root.toString()
   }
 }

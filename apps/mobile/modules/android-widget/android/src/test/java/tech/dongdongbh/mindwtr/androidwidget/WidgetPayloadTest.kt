@@ -49,7 +49,9 @@ class WidgetPayloadTest {
     assertNotNull(payload)
     payload!!
     assertEquals("Today's Focus", payload.headerTitle)
-    assertEquals("Inbox: 3", payload.subtitle)
+    assertEquals("Inbox: 3 · +2 More", payload.subtitle)
+    assertEquals("Inbox: 3 · +2 More", WidgetRenderer.taskSubtitle(payload, isFocus = true))
+    assertNull(WidgetRenderer.taskSubtitle(payload, isFocus = false))
     assertEquals(2, payload.items.size)
     assertEquals("Call the bank", payload.items[0].title)
     assertEquals("a", payload.items[0].id)
@@ -164,6 +166,7 @@ class WidgetPayloadTest {
     assertNotNull(payload)
     assertEquals(WidgetPayload.DEFAULT_FOCUS_URI, payload!!.focusUri)
     assertEquals(0, payload.inboxCount)
+    assertEquals("Inbox: 0", payload.subtitle)
     assertEquals(WidgetPayload.EMPTY.quickCapture, payload.quickCapture)
     assertNull(payload.palette)
     assertTrue(payload.items.isEmpty())
@@ -188,7 +191,18 @@ class WidgetPayloadTest {
 
     assertEquals(4, bumped.getInt("inboxCount"))
     assertEquals(2 + 1, bumped.getJSONArray("items").length())
-    assertEquals("Inbox: 4", WidgetPayload.parse(bumped.toString())!!.subtitle)
+    assertEquals("Inbox: 4 · +2 More", bumped.getString("subtitle"))
+    assertEquals("Inbox: 4 · +2 More", WidgetPayload.parse(bumped.toString())!!.subtitle)
     assertNull(WidgetPayloadStore.incrementInboxCount("nope"))
+  }
+
+  @Test
+  fun incrementInboxCountAddsALegacySubtitleWithoutInventingHiddenRows() {
+    val legacy = JSONObject(sample).apply { remove("subtitle") }.toString()
+    val bumped = JSONObject(WidgetPayloadStore.incrementInboxCount(legacy)!!)
+
+    assertEquals(4, bumped.getInt("inboxCount"))
+    assertEquals("Inbox: 4", bumped.getString("subtitle"))
+    assertEquals("Inbox: 4", WidgetPayload.parse(bumped.toString())!!.subtitle)
   }
 }

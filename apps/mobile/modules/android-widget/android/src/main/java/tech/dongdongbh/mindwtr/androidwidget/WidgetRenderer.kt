@@ -108,8 +108,9 @@ object WidgetRenderer {
         else -> list.title
       },
     )
-    views.setTextViewText(R.id.mindwtr_widget_subtitle, "${payload.inboxLabel} ${payload.inboxCount}")
-    views.setViewVisibility(R.id.mindwtr_widget_subtitle, if (isFocus) View.VISIBLE else View.GONE)
+    val subtitle = taskSubtitle(payload, isFocus)
+    views.setTextViewText(R.id.mindwtr_widget_subtitle, subtitle.orEmpty())
+    views.setViewVisibility(R.id.mindwtr_widget_subtitle, if (subtitle != null) View.VISIBLE else View.GONE)
     views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
     views.setViewVisibility(R.id.mindwtr_widget_empty, if (list.items.isEmpty() && list.sections.isEmpty()) View.VISIBLE else View.GONE)
 
@@ -160,6 +161,10 @@ object WidgetRenderer {
   }
 
   fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
+
+  /** Focus alone owns the curated hidden-row count; chooser lists keep their existing count title. */
+  internal fun taskSubtitle(payload: WidgetPayload, isFocus: Boolean): String? =
+    payload.subtitle.takeIf { isFocus }
 
   private fun immutableFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 

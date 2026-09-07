@@ -68,7 +68,7 @@ describe('widget-data', () => {
         // Widget rows open the task itself (Android row tap, #1173 seam).
         expect(payload.items.map((item) => item.openUri)).toEqual(['mindwtr://open?task=1', 'mindwtr://open?task=2', 'mindwtr://open?task=3']);
         expect(payload.inboxCount).toBe(1);
-        expect(payload.subtitle).toBe('Inbox: 1 · +2 More');
+        expect(payload.subtitle).toBe('Inbox: 1 · +1 More');
     });
 
     it('builds the requested GTD lists in the screens\' orders and ignores a retired project list (#1173)', () => {
@@ -88,36 +88,50 @@ describe('widget-data', () => {
         expect(payload.lists.focus.sections).toBe(payload.sections);
     });
 
-    it('mirrors the Focus screen\'s own filter and sort in the widget\'s Focus list (#1173)', () => {
-        const task = (id: string, title: string, contexts: string[], createdAt: string) => ({
-            id, title, status: 'next' as const, contexts, tags: [], createdAt, updatedAt: createdAt,
+    it('publishes only Today\'s Focus and Today in the Focus screen\'s filter and sort order (#1173)', () => {
+        const now = new Date().toISOString();
+        const todayAt = (hour: number) => {
+            const date = new Date();
+            date.setHours(hour, 0, 0, 0);
+            return date.toISOString();
+        };
+        const task = (id: string, title: string, contexts: string[], overrides: Partial<AppData['tasks'][number]> = {}) => ({
+            id, title, status: 'next' as const, contexts, tags: [], createdAt: now, updatedAt: now, ...overrides,
         });
         const data: AppData = {
             ...baseData,
             tasks: [
-                task('1', 'Zebra at the office', ['@office'], '2026-01-01T00:00:00.000Z'),
-                task('2', 'Alpha at the office', ['@office'], '2026-02-01T00:00:00.000Z'),
-                task('3', 'At home', ['@home'], '2026-03-01T00:00:00.000Z'),
+                task('1', 'Zebra focus', ['@office'], { isFocusedToday: true, focusOrder: 0 }),
+                task('2', 'Alpha focus', ['@office'], { isFocusedToday: true, focusOrder: 1 }),
+                task('3', 'Home focus', ['@home'], { isFocusedToday: true, focusOrder: 2 }),
+                task('4', 'Zebra today', ['@office'], { dueDate: todayAt(17) }),
+                task('5', 'Alpha today', ['@office'], { dueDate: todayAt(9) }),
+                task('6', 'Ordinary next', ['@office']),
             ],
         };
-        const nextActions = (payload: ReturnType<typeof buildWidgetPayload>) => (
-            payload.lists.focus.sections?.at(-1)?.items.map((item) => item.title)
+        const sectionTitles = (payload: ReturnType<typeof buildWidgetPayload>, key: string) => (
+            payload.sections.find((section) => section.key === key)?.items.map((item) => item.title) ?? []
         );
 
-        expect(nextActions(buildWidgetPayload(data, 'en', { maxItems: 5 })))
-            .toEqual(['Zebra at the office', 'Alpha at the office', 'At home']);
+        const defaultPayload = buildWidgetPayload(data, 'en', { maxItems: 10 });
+        expect(defaultPayload.sections.map((section) => section.key)).toEqual(['focus', 'schedule']);
+        expect(sectionTitles(defaultPayload, 'focus')).toEqual(['Zebra focus', 'Alpha focus', 'Home focus']);
+        expect(sectionTitles(defaultPayload, 'schedule')).toEqual(['Alpha today', 'Zebra today']);
+        expect(defaultPayload.items.map((item) => item.title)).not.toContain('Ordinary next');
 
-        // A context filter on the screen removes the rows it hides there.
-        expect(nextActions(buildWidgetPayload(data, 'en', {
-            maxItems: 5,
+        const filteredAndSorted = buildWidgetPayload(data, 'en', {
+            maxItems: 10,
             focusFilter: { criteria: { contexts: ['@office'] }, sortBy: 'default' },
-        }))).toEqual(['Zebra at the office', 'Alpha at the office']);
+        });
+        expect(sectionTitles(filteredAndSorted, 'focus')).toEqual(['Zebra focus', 'Alpha focus']);
+        expect(sectionTitles(filteredAndSorted, 'schedule')).toEqual(['Alpha today', 'Zebra today']);
 
-        // The screen's sort is the widget's sort: by title, not the default order.
-        expect(nextActions(buildWidgetPayload(data, 'en', {
-            maxItems: 5,
+        const titleSorted = buildWidgetPayload(data, 'en', {
+            maxItems: 10,
             focusFilter: { criteria: { contexts: ['@office'] }, sortBy: 'title' },
-        }))).toEqual(['Alpha at the office', 'Zebra at the office']);
+        });
+        expect(sectionTitles(titleSorted, 'focus')).toEqual(['Alpha focus', 'Zebra focus']);
+        expect(sectionTitles(titleSorted, 'schedule')).toEqual(['Alpha today', 'Zebra today']);
     });
 
     it('carries the task-sheet details, trimmed, and leaves empty ones out (#1173)', () => {
@@ -216,7 +230,7 @@ describe('widget-data', () => {
             projects: [{ id: 'proj-1', title: 'Launch', status: 'active', color: '#8b5cf6', order: 0, tagIds: [], createdAt: now, updatedAt: now }],
             settings: { features: { priorities: true } } as AppData['settings'],
             tasks: [
-                { id: '1', title: 'Starred', status: 'next', isFocusedToday: true, priority: 'urgent', projectId: 'proj-1', tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '1', title: 'Starred', status: 'next', isFocusedToday: true, dueDate: today.toISOString(), priority: 'urgent', projectId: 'proj-1', tags: [], contexts: [], createdAt: now, updatedAt: now },
                 { id: '2', title: 'Due today', status: 'next', dueDate: today.toISOString(), areaId: 'area-1', tags: [], contexts: [], createdAt: now, updatedAt: now },
                 { id: '6', title: 'Due today all day', status: 'next', dueDate: todayDay, tags: [], contexts: [], createdAt: now, updatedAt: now },
                 { id: '7', title: 'Slipped', status: 'next', dueDate: '2020-01-01', tags: [], contexts: [], createdAt: now, updatedAt: now },
@@ -228,7 +242,6 @@ describe('widget-data', () => {
         expect(payload.sections.map((section) => [section.key, section.title, section.items.map((item) => item.title)])).toEqual([
             ['focus', "Today's Focus", ['Starred']],
             ['schedule', 'Today', ['Slipped', 'Due today', 'Due today all day']],
-            ['next', 'Next Actions', ['Alpha next']],
         ]);
         const scheduleByTitle = new Map(payload.sections[1].items.map((item) => [item.title, item]));
         expect(scheduleByTitle.get('Slipped')).toMatchObject({ dueTone: 'overdue', dueLabel: '1/1' });
@@ -243,18 +256,18 @@ describe('widget-data', () => {
         expect(scheduleByTitle.get('Due today')?.dueLabel).toMatch(/\d/);
         expect(scheduleByTitle.get('Due today')?.dueLabel).not.toBe('Today');
         expect(payload.sections[1].detail).toMatch(/\d/);
-        expect(payload.sections[2].detail).toBeNull();
         expect(payload.dateLabel).toMatch(/\d/);
         expect(payload.palette.warning).toMatch(/^#/);
         expect(payload.palette.headerWash).toMatch(/^#[0-9a-f]{8}$/i);
         expect(scheduleByTitle.get('Due today')?.contextLabel).toBe('Home');
-        expect(payload.sections[2].items[0]).toMatchObject({ priorityColor: null, contextLabel: null });
+        expect(payload.items.map((item) => item.id)).toEqual(payload.sections.flatMap((section) => section.items.map((item) => item.id)));
+        expect(new Set(payload.items.map((item) => item.id)).size).toBe(payload.items.length);
         // Priorities off: the colour is gated with the feature.
         const gated = buildWidgetPayload({ ...data, settings: { features: { priorities: false } } as AppData['settings'] }, 'en', { maxItems: 5 });
         expect(gated.sections[0].items[0].priorityColor).toBeNull();
     });
 
-    it('honors maxItems option for larger widgets', () => {
+    it('keeps the cap, hidden count and every default payload form consistent', () => {
         const now = new Date().toISOString();
         const data: AppData = {
             ...baseData,
@@ -266,16 +279,19 @@ describe('widget-data', () => {
                 { id: '5', title: 'Focused 5', status: 'next', isFocusedToday: true, tags: [], contexts: [], createdAt: now, updatedAt: now },
             ],
         };
-        const payload = buildWidgetPayload(data, 'en', { maxItems: 5 });
-        expect(payload.items).toHaveLength(5);
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 4 });
+        expect(payload.items).toHaveLength(4);
         expect(payload.items.map((item) => item.title)).toEqual([
             'Focused 1',
             'Focused 2',
             'Focused 3',
             'Focused 4',
-            'Focused 5',
         ]);
-        expect(payload.subtitle).toBe('Inbox: 0');
+        expect(payload.sections.flatMap((section) => section.items.map((item) => item.id)))
+            .toEqual(payload.items.map((item) => item.id));
+        expect(payload.lists.focus.items.map((item) => item.id)).toEqual(payload.items.map((item) => item.id));
+        expect(payload.lists.focus.sections).toBe(payload.sections);
+        expect(payload.subtitle).toBe('Inbox: 0 · +1 More');
     });
 
     it('puts starred tasks first and counts them in focusedCount regardless of maxItems (#821)', () => {
@@ -294,7 +310,7 @@ describe('widget-data', () => {
         expect(payload.focusedCount).toBe(2);
     });
 
-    it('reports zero focusedCount when nothing is starred while still listing next actions (#821)', () => {
+    it('keeps every default form empty while ordinary Next backlog remains available explicitly (#1173)', () => {
         const now = new Date().toISOString();
         const data: AppData = {
             ...baseData,
@@ -303,9 +319,15 @@ describe('widget-data', () => {
                 { id: '2', title: 'Test 2', status: 'next', isFocusedToday: false, tags: [], contexts: [], createdAt: now, updatedAt: now },
             ],
         };
-        const payload = buildWidgetPayload(data, 'en');
-        expect(payload.items.map((item) => item.title)).toEqual(['Test1', 'Test 2']);
+        const payload = buildWidgetPayload(data, 'en', { listIds: ['next'] });
+        expect(payload.items).toEqual([]);
+        expect(payload.sections).toEqual([]);
+        expect(payload.lists.focus.items).toEqual([]);
+        expect(payload.lists.focus.sections).toEqual([]);
+        expect(payload.lists.next.items.map((item) => item.title)).toEqual(['Test 2', 'Test1']);
         expect(payload.focusedCount).toBe(0);
+        expect(payload.subtitle).toBe('Inbox: 0');
+        expect(payload.emptyMessage).toBe('No tasks found');
     });
 
     it('keeps the widget palette aligned with Sepia theme settings', () => {
@@ -375,7 +397,7 @@ describe('widget-data', () => {
         expect(payload.palette.text).toBe('#F9FAFB');
     });
 
-    it('includes focus-page schedule/next tasks even when none are explicitly focused', () => {
+    it('includes Today tasks without falling back to ordinary Next tasks', () => {
         const now = new Date().toISOString();
         const data: AppData = {
             ...baseData,
@@ -412,7 +434,7 @@ describe('widget-data', () => {
             ],
         };
         const payload = buildWidgetPayload(data, 'en');
-        expect(payload.items.map((item) => item.id)).toEqual(['next-due', 'next-now']);
+        expect(payload.items.map((item) => item.id)).toEqual(['next-due']);
     });
 
     it('keeps deferred project tasks out of widget focus items and inbox count', () => {
@@ -475,9 +497,10 @@ describe('widget-data', () => {
             ],
         };
 
-        const payload = buildWidgetPayload(data, 'en');
+        const payload = buildWidgetPayload(data, 'en', { listIds: ['next'] });
 
-        expect(payload.items.map((item) => item.id)).toEqual(['active-next']);
+        expect(payload.items).toEqual([]);
+        expect(payload.lists.next.items.map((item) => item.id)).toEqual(['active-next']);
         expect(payload.inboxCount).toBe(0);
     });
 
@@ -515,6 +538,7 @@ describe('widget-data', () => {
                     id: 'available-next',
                     title: 'Available next',
                     status: 'next',
+                    dueDate: '2000-01-01',
                     projectId: 'project-1',
                     order: 1,
                     orderNum: 1,
@@ -609,6 +633,7 @@ describe('widget-data', () => {
                     id: 'section-a-first',
                     title: 'Section A first',
                     status: 'next',
+                    dueDate: '2000-01-01',
                     projectId: 'project-1',
                     sectionId: 'section-a',
                     order: 0,
@@ -622,6 +647,7 @@ describe('widget-data', () => {
                     id: 'section-a-second',
                     title: 'Section A second',
                     status: 'next',
+                    dueDate: '2000-01-01',
                     projectId: 'project-1',
                     sectionId: 'section-a',
                     order: 1,
@@ -635,6 +661,7 @@ describe('widget-data', () => {
                     id: 'section-b-first',
                     title: 'Section B first',
                     status: 'next',
+                    dueDate: '2000-01-01',
                     projectId: 'project-1',
                     sectionId: 'section-b',
                     order: 2,
@@ -652,7 +679,7 @@ describe('widget-data', () => {
         expect(payload.items.map((item) => item.id)).toEqual(['section-a-first', 'section-b-first']);
     });
 
-    it('keeps future-start tasks out of the widget payload even when focused', () => {
+    it('keeps starred tasks visible despite future starts while hiding unstarred future work', () => {
         const created = new Date().toISOString();
         const future = '2999-01-01T09:00:00.000Z';
         const data: AppData = {
@@ -683,10 +710,10 @@ describe('widget-data', () => {
             ],
         };
         const payload = buildWidgetPayload(data, 'en');
-        expect(payload.items).toHaveLength(0);
+        expect(payload.items.map((item) => item.id)).toEqual(['focus-future']);
     });
 
-    it('orders focused tasks using task sort setting before taking top three', () => {
+    it('orders focused tasks using the Focus screen sort before taking top three', () => {
         const data: AppData = {
             ...baseData,
             settings: { taskSortBy: 'created-desc' },
@@ -733,7 +760,9 @@ describe('widget-data', () => {
                 },
             ],
         };
-        const payload = buildWidgetPayload(data, 'en');
+        const payload = buildWidgetPayload(data, 'en', {
+            focusFilter: { criteria: {}, sortBy: 'created-desc' },
+        });
         expect(payload.items.map((item) => item.id)).toEqual(['newest', 'middle', 'old']);
     });
 

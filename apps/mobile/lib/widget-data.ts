@@ -127,7 +127,7 @@ export interface WidgetPalette {
 }
 
 // One list a placed Tasks widget can show (#1173); `focus` mirrors the
-// payload's top-level sections/items.
+// payload's curated Today's Focus + Today sections/items.
 export interface WidgetListPayload {
     title: string;
     dateLabel?: string;
@@ -149,8 +149,8 @@ export interface TasksWidgetPayload {
     inboxCount: number;
     focusedCount: number;
     items: WidgetTaskItem[];
-    // The Focus screen's sections (#1173): same buckets, order and titles as
-    // the screen, empty sections dropped, `maxItems` shared across sections.
+    // The calm default from the Focus screen (#1173): Today's Focus + Today,
+    // empty sections dropped, with `maxItems` shared across the two sections.
     // `items` stays for the iOS widget and the QuickCapture kind.
     sections: WidgetTaskSection[];
     // The lists placed widgets asked for (always `focus`), keyed by list id.
@@ -440,13 +440,6 @@ export function buildWidgetPayload(
     });
 
     const widgetSort = resolveWidgetTaskSort(data);
-    const { starredTasks, focusTasks } = computeTodayFocusTasks({
-        activeTasks,
-        projects,
-        sortBy: widgetSort,
-        now,
-    });
-    const listSource = [...starredTasks, ...focusTasks];
 
     const maxItems = Number.isFinite(options?.maxItems)
         ? Math.max(1, Math.floor(options?.maxItems as number))
@@ -492,9 +485,6 @@ export function buildWidgetPayload(
             ...(priorityLabel ? { priorityLabel } : {}),
         };
     };
-    const items = listSource.slice(0, maxItems).map(toItem);
-    const hiddenTaskCount = Math.max(listSource.length - items.length, 0);
-
     // The Focus screen's own pools through the shared derivation (#1173),
     // narrowed by exactly what the screen is filtering and sorting by. Today's
     // Focus keeps drawing from every starred task, as it does on the screen:
@@ -530,9 +520,19 @@ export function buildWidgetPayload(
             sortOrder: focusFilter.sortOrder,
         }),
     });
+    // A home-screen glance should stay calm: reuse the app's canonical Focus
+    // derivation, but publish only Today's Focus followed by Today. The other
+    // Focus-screen sections remain available through their explicit widget
+    // lists and must never become an implicit fallback here.
+    const curatedTasks = [...lists.focusedTasks, ...lists.schedule];
+    const items = curatedTasks.slice(0, maxItems).map(toItem);
+    const hiddenTaskCount = Math.max(curatedTasks.length - items.length, 0);
+
     let remaining = maxItems;
     const sections: WidgetTaskSection[] = [];
-    for (const section of buildFocusTaskSections(lists, (key) => tr[key])) {
+    const curatedSections = buildFocusTaskSections(lists, (key) => tr[key])
+        .filter((section) => section.key === 'focus' || section.key === 'schedule');
+    for (const section of curatedSections) {
         if (remaining <= 0) break;
         if (section.items.length === 0) continue;
         const sectionItems = section.items.slice(0, remaining).map(toItem);
@@ -585,13 +585,13 @@ export function buildWidgetPayload(
         subtitle: subtitleParts.join(' · '),
         inboxLabel: tr['nav.inbox'] ?? 'Inbox',
         inboxCount,
-        focusedCount: starredTasks.length,
+        focusedCount: lists.focusedTasks.length,
         items,
         sections,
         lists: listPayloads,
         listTitles: widgetListTitles(tr),
         savedFilters: buildWidgetSavedFilterOptions(data),
-        emptyMessage: tr['agenda.allClear'] ?? 'All clear',
+        emptyMessage: tr['list.noTasks'] ?? 'No tasks found',
         captureLabel: tr['widget.capture'] ?? 'Quick capture',
         focusUri: WIDGET_FOCUS_URI,
         quickCaptureUri: WIDGET_QUICK_CAPTURE_URI,

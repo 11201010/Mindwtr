@@ -109,10 +109,30 @@ function buildPayloadFromData(
 const ANDROID_WIDGET_MAX_ITEMS = 20;
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.2.9/android-native-widget';
 const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.2.9/android-widget-provider-compat';
+const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.2.9/widget-focus-today';
 let androidWidgetUnavailableLogged = false;
 
-// `rendered` is the fingerprint build below (up to WIDGET_FINGERPRINT_MAX_ITEMS
-// items), reused so a render costs one payload build, not two.
+function capWidgetSections(
+    sections: TasksWidgetPayload['sections'] | undefined,
+    maxItems: number,
+): TasksWidgetPayload['sections'] | undefined {
+    if (!sections) return undefined;
+    let remaining = maxItems;
+    const capped: TasksWidgetPayload['sections'] = [];
+    for (const section of sections) {
+        if (remaining <= 0) break;
+        const items = section.items.slice(0, remaining);
+        if (items.length === 0) continue;
+        capped.push({ ...section, items });
+        remaining -= items.length;
+    }
+    return capped;
+}
+
+// `rendered` is built at the Android publication cap. The broader fingerprint
+// below still detects changes in chooser lists, but reusing its 50-row payload
+// here would make the published subtitle claim that no rows were hidden after
+// this path sliced the native payload to 20.
 async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, language: Language): Promise<boolean> {
     if (Platform.OS !== 'android') return false;
     // Expo Go does not link modules/android-widget. Say so once, then stay quiet.
@@ -128,9 +148,11 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
         const payload: AndroidTasksWidgetPayload = {
             ...rendered,
             items: rendered.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
+            sections: capWidgetSections(rendered.sections, ANDROID_WIDGET_MAX_ITEMS) ?? [],
             lists: Object.fromEntries(Object.entries(rendered.lists).map(([id, list]) => [id, {
                 ...list,
                 items: list.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
+                ...(list.sections ? { sections: capWidgetSections(list.sections, ANDROID_WIDGET_MAX_ITEMS) } : {}),
             }])),
             quickCapture: buildAndroidQuickCaptureLabels(language),
             taskPeek: buildAndroidTaskPeekLabels(language),
@@ -149,6 +171,15 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
         void logInfo('Android widget payload published', {
             scope: 'widget',
             extra: { releaseCheck: ANDROID_WIDGET_RELEASE_CHECK, items: String(payload.items.length) },
+        });
+        void logInfo('Android widget Focus and Today payload published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: WIDGET_FOCUS_TODAY_RELEASE_CHECK,
+                focusItems: String(payload.sections.find((section) => section.key === 'focus')?.items.length ?? 0),
+                todayItems: String(payload.sections.find((section) => section.key === 'schedule')?.items.length ?? 0),
+                totalItems: String(payload.items.length),
+            },
         });
         return true;
     } catch (error) {
@@ -325,7 +356,10 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
     let widgetUpdated = true;
     if (widgetFingerprint !== lastRenderedWidgetFingerprint) {
         widgetUpdated = Platform.OS === 'android'
-            ? await updateAndroidWidgetsFromData(fingerprintPayload, language)
+            ? await updateAndroidWidgetsFromData(
+                buildPayloadFromData(data, language, ANDROID_WIDGET_MAX_ITEMS),
+                language,
+            )
             : await updateIosWidgetPayloadsFromData(data, language);
         if (widgetUpdated) {
             lastRenderedWidgetFingerprint = widgetFingerprint;
