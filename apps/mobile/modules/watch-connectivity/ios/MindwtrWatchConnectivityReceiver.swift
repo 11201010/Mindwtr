@@ -780,17 +780,7 @@ final class MindwtrWatchConnectivityReceiver: NSObject, WCSessionDelegate {
             throw MindwtrWatchConnectivityError.invalidAudioFile
         }
 
-        var pcmFormat = AudioStreamBasicDescription(
-            mSampleRate: Double(MindwtrCanonicalWave.sampleRate),
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: UInt32(MindwtrCanonicalWave.bytesPerFrame),
-            mFramesPerPacket: 1,
-            mBytesPerFrame: UInt32(MindwtrCanonicalWave.bytesPerFrame),
-            mChannelsPerFrame: UInt32(MindwtrCanonicalWave.channelCount),
-            mBitsPerChannel: UInt32(MindwtrCanonicalWave.bitsPerSample),
-            mReserved: 0
-        )
+        var pcmFormat = MindwtrCanonicalWave.clientFormat()
         try checkAudioStatus(ExtAudioFileSetProperty(
             inputFile,
             kExtAudioFileProperty_ClientDataFormat,

@@ -35,4 +35,20 @@ describe('app.config APP_VARIANT', () => {
     expect(config.scheme).toBe('mindwtr');
     expect(widgetLabels(config)).toEqual(['Mindwtr Dev']);
   });
+
+  it.each([
+    ['', '', false],
+    ['development', '', true],
+    ['development', 'false', false],
+    ['', 'true', true],
+    ['', '1', true],
+    ['', '0', false],
+  ])('gates Watch for variant=%s flag=%s', async (variant, flag, enabled) => {
+    vi.stubEnv('APP_VARIANT', variant);
+    vi.stubEnv('MINDWTR_WATCH_ENABLED', flag);
+    const config = await loadConfig();
+    expect(config.extra?.watchEnabled).toBe(enabled);
+    expect(config.ios?.infoPlist?.MindwtrWatchEnabled).toBe(enabled);
+    expect(config.plugins).toContainEqual(['./plugins/ios-watch', { enabled }]);
+  });
 });

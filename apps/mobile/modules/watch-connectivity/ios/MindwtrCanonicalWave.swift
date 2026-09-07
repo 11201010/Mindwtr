@@ -1,3 +1,4 @@
+import AudioToolbox
 import Foundation
 
 enum MindwtrCanonicalWaveError: Error {
@@ -14,6 +15,23 @@ enum MindwtrCanonicalWave {
     static let bitsPerSample: UInt16 = 16
     static let bytesPerFrame: UInt16 = 2
     static let byteRate: UInt32 = sampleRate * UInt32(bytesPerFrame)
+
+    /// The client format given to Extended Audio File Services. Keeping this
+    /// next to the header contract makes the resampling/downmixing target part
+    /// of the package-tested compatibility seam.
+    static func clientFormat() -> AudioStreamBasicDescription {
+        AudioStreamBasicDescription(
+            mSampleRate: Double(sampleRate),
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: UInt32(bytesPerFrame),
+            mFramesPerPacket: 1,
+            mBytesPerFrame: UInt32(bytesPerFrame),
+            mChannelsPerFrame: UInt32(channelCount),
+            mBitsPerChannel: UInt32(bitsPerSample),
+            mReserved: 0
+        )
+    }
 
     static func header(dataByteCount: Int) throws -> Data {
         guard dataByteCount >= 0,

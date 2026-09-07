@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { storeState } = vi.hoisted(() => ({
@@ -53,11 +53,22 @@ describe('useRootLayoutPomodoro', () => {
     vi.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('does not cancel an existing alarm before hydration and schedules the restored run', async () => {
+    vi.useFakeTimers();
     let release!: (value: string) => void;
     vi.mocked(AsyncStorage.getItem).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     let tree!: renderer.ReactTestRenderer;
     act(() => { tree = renderer.create(<Harness />); });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+    });
+
+    expect(mobilePomodoroController.getSnapshot().isHydrating).toBe(true);
     expect(notificationMocks.cancelMobilePomodoroCompletionNotification).not.toHaveBeenCalled();
 
     const phaseEndsAt = new Date(Date.now() + 600_000).toISOString();
@@ -67,6 +78,7 @@ describe('useRootLayoutPomodoro', () => {
         timerState: { phase: 'focus', remainingSeconds: 600, isRunning: true, completedFocusSessions: 0 },
         phaseEndsAt,
       }));
+      await Promise.resolve();
     });
 
     expect(notificationMocks.scheduleMobilePomodoroCompletionNotification).toHaveBeenCalledWith(

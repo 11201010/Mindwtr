@@ -1,8 +1,24 @@
+import AudioToolbox
 import Foundation
 import XCTest
 @testable import MindwtrWatchPayloadValidation
 
 final class MindwtrCanonicalWaveTests: XCTestCase {
+    func testConversionClientFormatAlwaysTargetsWhisperPCM() {
+        let format = MindwtrCanonicalWave.clientFormat()
+
+        XCTAssertEqual(format.mSampleRate, 16_000)
+        XCTAssertEqual(format.mFormatID, kAudioFormatLinearPCM)
+        XCTAssertEqual(format.mChannelsPerFrame, 1)
+        XCTAssertEqual(format.mBitsPerChannel, 16)
+        XCTAssertEqual(format.mBytesPerFrame, 2)
+        XCTAssertEqual(format.mBytesPerPacket, 2)
+        XCTAssertEqual(format.mFramesPerPacket, 1)
+        XCTAssertNotEqual(format.mFormatFlags & kAudioFormatFlagIsSignedInteger, 0)
+        XCTAssertNotEqual(format.mFormatFlags & kAudioFormatFlagIsPacked, 0)
+        XCTAssertEqual(format.mFormatFlags & kAudioFormatFlagIsBigEndian, 0)
+    }
+
     func testBuildsExactWhisperCompatibleHeader() throws {
         let oneSecondDataBytes = Int(MindwtrCanonicalWave.byteRate)
         let header = try MindwtrCanonicalWave.header(dataByteCount: oneSecondDataBytes)
