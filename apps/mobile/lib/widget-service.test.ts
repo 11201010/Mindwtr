@@ -15,6 +15,9 @@ const {
     mockAndroidWidgetIsSupported,
     mockAndroidWidgetSetPayload,
     mockAndroidWidgetUpdateWidgets,
+    mockLogError,
+    mockLogInfo,
+    mockLogWarn,
     mockUseTaskStoreGetState,
 } = vi.hoisted(() => ({
     mockAsyncStorageGetItem: vi.fn(),
@@ -28,7 +31,10 @@ const {
     mockAndroidWidgetGetWidgetListSelections: vi.fn(() => [] as string[]),
     mockAndroidWidgetIsSupported: vi.fn(() => true),
     mockAndroidWidgetSetPayload: vi.fn(),
-    mockAndroidWidgetUpdateWidgets: vi.fn(),
+    mockAndroidWidgetUpdateWidgets: vi.fn(() => undefined as number | undefined),
+    mockLogError: vi.fn(),
+    mockLogInfo: vi.fn(),
+    mockLogWarn: vi.fn(),
     mockUseTaskStoreGetState: vi.fn(),
 }));
 
@@ -74,6 +80,12 @@ vi.mock('../modules/android-widget', () => ({
     isSupported: mockAndroidWidgetIsSupported,
     setPayload: mockAndroidWidgetSetPayload,
     updateWidgets: mockAndroidWidgetUpdateWidgets,
+}));
+
+vi.mock('./app-log', () => ({
+    logError: mockLogError,
+    logInfo: mockLogInfo,
+    logWarn: mockLogWarn,
 }));
 
 vi.mock('react-native-widgetkit', () => ({
@@ -124,6 +136,10 @@ describe('widget-service', () => {
         mockAndroidWidgetGetWidgetListSelections.mockReturnValue([]);
         mockAndroidWidgetSetPayload.mockReset();
         mockAndroidWidgetUpdateWidgets.mockReset();
+        mockAndroidWidgetUpdateWidgets.mockReturnValue(undefined);
+        mockLogError.mockReset();
+        mockLogInfo.mockReset();
+        mockLogWarn.mockReset();
         mockUseTaskStoreGetState.mockReset();
         // app-log's isLoggingEnabled reads useTaskStore.getState().settings on
         // every log call; give it a safe default even in tests that never call
@@ -176,6 +192,20 @@ describe('widget-service', () => {
             save: 'Save',
             cancel: 'Cancel',
             added: 'Task added to Mindwtr.',
+        });
+    });
+
+    it('logs the number of legacy provider widgets refreshed by the native update', async () => {
+        mockAndroidWidgetUpdateWidgets.mockReturnValue(2);
+
+        expect(await updateMobileWidgetFromData(buildData(3))).toBe(true);
+
+        expect(mockLogInfo).toHaveBeenCalledWith('Legacy Android Tasks widgets refreshed', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.2.9/android-widget-provider-compat',
+                legacyWidgetCount: '2',
+            },
         });
     });
 

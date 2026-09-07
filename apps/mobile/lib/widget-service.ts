@@ -108,6 +108,7 @@ function buildPayloadFromData(
 // carries a fixed slice instead of a per-widget-height budget.
 const ANDROID_WIDGET_MAX_ITEMS = 20;
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.2.9/android-native-widget';
+const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.2.9/android-widget-provider-compat';
 let androidWidgetUnavailableLogged = false;
 
 // `rendered` is the fingerprint build below (up to WIDGET_FINGERPRINT_MAX_ITEMS
@@ -135,7 +136,16 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
             taskPeek: buildAndroidTaskPeekLabels(language),
         };
         AndroidWidget.setPayload(JSON.stringify(payload));
-        AndroidWidget.updateWidgets();
+        const legacyWidgetCount = AndroidWidget.updateWidgets();
+        if (typeof legacyWidgetCount === 'number' && legacyWidgetCount > 0) {
+            void logInfo('Legacy Android Tasks widgets refreshed', {
+                scope: 'widget',
+                extra: {
+                    releaseCheck: ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK,
+                    legacyWidgetCount: String(legacyWidgetCount),
+                },
+            });
+        }
         void logInfo('Android widget payload published', {
             scope: 'widget',
             extra: { releaseCheck: ANDROID_WIDGET_RELEASE_CHECK, items: String(payload.items.length) },

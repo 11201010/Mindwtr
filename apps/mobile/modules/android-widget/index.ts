@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 type AndroidWidgetModule = {
   setPayload(json: string): void;
-  updateWidgets(): void;
+  updateWidgets(): number | undefined;
   getWidgetListSelections(): string[];
 };
 
@@ -22,8 +22,8 @@ export function setPayload(json: string): void {
 }
 
 /** Redraw every placed home-screen widget from the stored payload. */
-export function updateWidgets(): void {
-  nativeModule?.updateWidgets();
+export function updateWidgets(): number | undefined {
+  return nativeModule?.updateWidgets();
 }
 
 /** Distinct list ids the placed Tasks widgets are configured to show. */

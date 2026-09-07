@@ -13,7 +13,7 @@ class AndroidWidgetModule : Module() {
     }
 
     Function("updateWidgets") {
-      appContext.reactContext?.let { WidgetRenderer.refreshAll(it) }
+      appContext.reactContext?.let { WidgetRenderer.refreshAll(it) } ?: 0
     }
 
     Function("getWidgetListSelections") {

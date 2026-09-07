@@ -32,7 +32,23 @@ object WidgetListStore {
   /** Distinct list ids bound to the Tasks widgets currently placed. */
   fun selections(context: Context): List<String> {
     val manager = AppWidgetManager.getInstance(context) ?: return emptyList()
-    val ids = manager.getAppWidgetIds(ComponentName(context, TasksWidgetProvider::class.java))
-    return ids.map { read(context, it) }.distinct()
+    return selectionsForProviders(
+      context.packageName,
+      idsForProvider = { className ->
+        manager.getAppWidgetIds(ComponentName(context.packageName, className))
+      },
+      readSelection = { appWidgetId -> read(context, appWidgetId) },
+    )
   }
+
+  internal fun selectionsForProviders(
+    applicationPackage: String,
+    idsForProvider: (String) -> IntArray,
+    readSelection: (Int) -> String,
+  ): List<String> = WidgetProviderRegistry
+    .placed(applicationPackage, idsForProvider)
+    .filter { it.identity.kind == WidgetKind.TASKS }
+    .flatMap { it.ids.asIterable() }
+    .map(readSelection)
+    .distinct()
 }

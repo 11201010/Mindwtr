@@ -14,6 +14,8 @@ const TAP_ACTIVITY_NAME = `${MODULE_PACKAGE}.WidgetTapActivity`;
 const PEEK_ACTIVITY_NAME = `${MODULE_PACKAGE}.TaskPeekActivity`;
 const WIDGET_UPDATE_ACTION = 'android.appwidget.action.APPWIDGET_UPDATE';
 const WIDGET_PROVIDER_META = 'android.appwidget.provider';
+const LEGACY_TASKS_RECEIVER_CLASS_SUFFIX = '.widget.TasksWidget';
+const LEGACY_TASKS_INFO_RESOURCE = 'mindwtr_legacy_tasks_widget_info';
 const WIDGET_STRINGS_FILE_NAME = 'mindwtr_widget_strings.xml';
 const WIDGET_STYLES_FILE_NAME = 'mindwtr_widget_styles.xml';
 const WIDGET_PREVIEW_FILE_NAME = 'mindwtr_widget_preview.png';
@@ -56,6 +58,7 @@ const buildWidgetKinds = (props) => [
     previewImage: props.previewImage,
     // Picks the list on placement; `reconfigurable` adds the launcher's edit action (#1173).
     configure: CONFIGURE_ACTIVITY_NAME,
+    widgetFeatures: 'reconfigurable|configuration_optional',
   },
   {
     kind: 'QuickCapture',
@@ -76,6 +79,16 @@ const buildWidgetKinds = (props) => [
   },
 ];
 
+const buildLegacyTasksWidgetKind = (props, androidPackage) => ({
+  ...buildWidgetKinds(props)[0],
+  kind: 'LegacyTasks',
+  receiver: `${androidPackage}${LEGACY_TASKS_RECEIVER_CLASS_SUFFIX}`,
+  infoResource: LEGACY_TASKS_INFO_RESOURCE,
+  // API 28+ launchers can hide the compatibility component from the picker;
+  // older hosts ignore the hint but keep already-placed widgets alive.
+  widgetFeatures: 'reconfigurable|configuration_optional|hide_from_picker',
+});
+
 const escapeXml = (value) => String(value)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -95,8 +108,8 @@ const buildWidgetInfoXml = (kind) => `<?xml version="1.0" encoding="utf-8"?>
     android:initialLayout="@layout/${kind.layout}"${kind.previewImage ? `
     android:previewImage="@drawable/${WIDGET_PREVIEW_FILE_NAME.replace(/\.png$/, '')}"` : ''}
     android:resizeMode="${kind.resizeMode}"${kind.configure ? `
-    android:configure="${kind.configure}"
-    android:widgetFeatures="reconfigurable|configuration_optional"` : ''}
+    android:configure="${kind.configure}"` : ''}${kind.widgetFeatures ? `
+    android:widgetFeatures="${kind.widgetFeatures}"` : ''}
     android:widgetCategory="home_screen|keyguard"
     android:description="@string/${kind.descriptionResource}" />
 `;
@@ -245,12 +258,14 @@ const ensurePeekActivity = (application) => {
   };
 };
 
-const ensureWidgetComponents = (androidManifest, props) => {
+const ensureWidgetComponents = (androidManifest, props, androidPackage) => {
   const application = androidManifest?.manifest?.application?.[0];
   if (!application) return androidManifest;
-  for (const kind of buildWidgetKinds(resolveProps(props))) {
+  const resolved = resolveProps(props);
+  for (const kind of buildWidgetKinds(resolved)) {
     ensureWidgetReceiver(application, kind);
   }
+  if (androidPackage) ensureWidgetReceiver(application, buildLegacyTasksWidgetKind(resolved, androidPackage));
   ensureListService(application);
   ensureQuickCaptureActivity(application);
   ensureConfigureActivity(application);
@@ -259,11 +274,30 @@ const ensureWidgetComponents = (androidManifest, props) => {
   return androidManifest;
 };
 
+const buildLegacyTasksWidgetSource = (androidPackage) => `package ${androidPackage}.widget;
+
+/** Keeps the provider component used by Mindwtr 1.2.7 widgets alive after upgrade. */
+public final class TasksWidget extends tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider {}
+`;
+
+const writeLegacyTasksWidgetSource = async (mainRoot, androidPackage) => {
+  const sourcePath = path.join(
+    mainRoot,
+    'java',
+    ...androidPackage.split('.'),
+    'widget',
+    'TasksWidget.java',
+  );
+  await fs.promises.mkdir(path.dirname(sourcePath), { recursive: true });
+  await fs.promises.writeFile(sourcePath, buildLegacyTasksWidgetSource(androidPackage), 'utf8');
+  return sourcePath;
+};
+
 module.exports = function withAndroidWidget(config, props = {}) {
   const resolved = resolveProps(props);
 
   const withManifest = withAndroidManifest(config, (cfg) => {
-    ensureWidgetComponents(cfg.modResults, resolved);
+    ensureWidgetComponents(cfg.modResults, resolved, cfg.android?.package);
     return cfg;
   });
 
@@ -278,7 +312,11 @@ module.exports = function withAndroidWidget(config, props = {}) {
       await fs.promises.mkdir(valuesDir, { recursive: true });
       await fs.promises.mkdir(drawableDir, { recursive: true });
       const kinds = buildWidgetKinds(resolved);
-      for (const kind of kinds) {
+      const androidPackage = cfg.android?.package;
+      const resourceKinds = androidPackage
+        ? [...kinds, buildLegacyTasksWidgetKind(resolved, androidPackage)]
+        : kinds;
+      for (const kind of resourceKinds) {
         await fs.promises.writeFile(path.join(xmlDir, `${kind.infoResource}.xml`), buildWidgetInfoXml(kind), 'utf8');
       }
       await fs.promises.writeFile(path.join(valuesDir, WIDGET_STRINGS_FILE_NAME), buildWidgetStringsXml(kinds), 'utf8');
@@ -287,6 +325,7 @@ module.exports = function withAndroidWidget(config, props = {}) {
         path.resolve(cfg.modRequest.projectRoot, resolved.previewImage),
         path.join(drawableDir, WIDGET_PREVIEW_FILE_NAME),
       );
+      if (androidPackage) await writeLegacyTasksWidgetSource(mainRoot, androidPackage);
       return cfg;
     },
   ]);
@@ -299,8 +338,11 @@ module.exports.__testables = {
   TAP_ACTIVITY_NAME,
   buildWidgetInfoXml,
   buildWidgetKinds,
+  buildLegacyTasksWidgetKind,
+  buildLegacyTasksWidgetSource,
   buildWidgetStringsXml,
   buildWidgetStylesXml,
   ensureWidgetComponents,
   resolveProps,
+  writeLegacyTasksWidgetSource,
 };

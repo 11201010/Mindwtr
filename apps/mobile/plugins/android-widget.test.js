@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const plugin = require('./android-widget');
@@ -9,10 +12,13 @@ const {
   TAP_ACTIVITY_NAME,
   buildWidgetInfoXml,
   buildWidgetKinds,
+  buildLegacyTasksWidgetKind,
+  buildLegacyTasksWidgetSource,
   buildWidgetStringsXml,
   buildWidgetStylesXml,
   ensureWidgetComponents,
   resolveProps,
+  writeLegacyTasksWidgetSource,
 } = plugin.__testables;
 
 const appJsonProps = () => {
@@ -76,9 +82,9 @@ describe('android-widget', () => {
   it('registers the receiver, list service and capture activity with explicit boundaries, idempotently', () => {
     const manifest = { manifest: { application: [{}] } };
 
-    ensureWidgetComponents(manifest, { label: 'Mindwtr Dev' });
+    ensureWidgetComponents(manifest, { label: 'Mindwtr Dev' }, 'tech.dongdongbh.mindwtr.dev');
     const once = JSON.stringify(manifest);
-    ensureWidgetComponents(manifest, { label: 'Mindwtr Dev' });
+    ensureWidgetComponents(manifest, { label: 'Mindwtr Dev' }, 'tech.dongdongbh.mindwtr.dev');
     expect(JSON.stringify(manifest)).toBe(once);
 
     const application = manifest.manifest.application[0];
@@ -90,6 +96,10 @@ describe('android-widget', () => {
       $: { 'android:name': 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider', 'android:label': 'Mindwtr Dev quick capture', 'android:exported': 'true' },
       'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
       'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/mindwtr_quick_capture_widget_info' } }],
+    }, {
+      $: { 'android:name': 'tech.dongdongbh.mindwtr.dev.widget.TasksWidget', 'android:label': 'Mindwtr Dev', 'android:exported': 'true' },
+      'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
+      'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/mindwtr_legacy_tasks_widget_info' } }],
     }]);
     expect(application.service).toEqual([{
       $: { 'android:name': SERVICE_NAME, 'android:permission': 'android.permission.BIND_REMOTEVIEWS', 'android:exported': 'false' },
@@ -135,5 +145,34 @@ describe('android-widget', () => {
     const actions = manifest.manifest.application[0].receiver[0]['intent-filter']
       .flatMap((filter) => filter.action.map((action) => action.$['android:name']));
     expect(actions).toEqual(['android.appwidget.action.APPWIDGET_UPDATE']);
+  });
+
+  it.each([
+    'tech.dongdongbh.mindwtr',
+    'tech.dongdongbh.mindwtr.dev',
+  ])('generates an idempotent real legacy provider for %s and replaces the retired RNWidget source', async (androidPackage) => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mindwtr-widget-compat-'));
+    const mainRoot = path.join(projectRoot, 'app', 'src', 'main');
+    const sourcePath = path.join(mainRoot, 'java', ...androidPackage.split('.'), 'widget', 'TasksWidget.java');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.writeFileSync(sourcePath, 'public class TasksWidget extends RNWidgetProvider {}\n');
+
+    try {
+      await writeLegacyTasksWidgetSource(mainRoot, androidPackage);
+      const generated = fs.readFileSync(sourcePath, 'utf8');
+      expect(generated).toBe(buildLegacyTasksWidgetSource(androidPackage));
+      expect(generated).toContain(`package ${androidPackage}.widget;`);
+      expect(generated).toContain('extends tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider');
+      expect(generated).not.toContain('RNWidgetProvider');
+
+      await writeLegacyTasksWidgetSource(mainRoot, androidPackage);
+      expect(fs.readFileSync(sourcePath, 'utf8')).toBe(generated);
+
+      const legacyKind = buildLegacyTasksWidgetKind(resolveProps({ label: 'Mindwtr' }), androidPackage);
+      expect(legacyKind.receiver).toBe(`${androidPackage}.widget.TasksWidget`);
+      expect(buildWidgetInfoXml(legacyKind)).toContain('android:widgetFeatures="reconfigurable|configuration_optional|hide_from_picker"');
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });

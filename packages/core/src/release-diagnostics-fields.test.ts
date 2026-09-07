@@ -32,6 +32,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'reason', 'detail',
     // android-native-widget (apps/mobile/lib/widget-service.ts) / android-widget-checkoff (pending-captures.ts)
     'items', 'outcome',
+    // android-widget-provider-compat (apps/mobile/lib/widget-service.ts)
+    'legacyWidgetCount',
     // Apple Watch capture, command and Focus/timer snapshot (#1175)
     'action', 'focusCount', 'timerPhase', 'timerRunning',
 ];

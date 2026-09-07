@@ -21,13 +21,28 @@ object WidgetRenderer {
   // enough that it can never land on one of the fixed codes above.
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
 
-  fun refreshAll(context: Context) {
-    val manager = AppWidgetManager.getInstance(context) ?: return
-    for (kind in WidgetKind.entries) {
-      val ids = manager.getAppWidgetIds(ComponentName(context, kind.providerClass))
-      if (ids.isEmpty()) continue
-      render(context, manager, ids, kind)
+  fun refreshAll(context: Context): Int {
+    val manager = AppWidgetManager.getInstance(context) ?: return 0
+    return refreshProviders(
+      context.packageName,
+      idsForProvider = { className ->
+        manager.getAppWidgetIds(ComponentName(context.packageName, className))
+      },
+      renderProvider = { ids, kind -> render(context, manager, ids, kind) },
+    )
+  }
+
+  internal fun refreshProviders(
+    applicationPackage: String,
+    idsForProvider: (String) -> IntArray,
+    renderProvider: (IntArray, WidgetKind) -> Unit,
+  ): Int {
+    var legacyWidgetCount = 0
+    for (placed in WidgetProviderRegistry.placed(applicationPackage, idsForProvider)) {
+      renderProvider(placed.ids, placed.identity.kind)
+      if (placed.identity.isLegacy) legacyWidgetCount += placed.ids.size
     }
+    return legacyWidgetCount
   }
 
   fun render(context: Context, manager: AppWidgetManager, ids: IntArray, kind: WidgetKind) {

@@ -16,6 +16,40 @@ enum class WidgetKind(val layoutRes: Int, val providerClass: Class<out MindwtrWi
   }
 }
 
+data class WidgetProviderIdentity(
+  val kind: WidgetKind,
+  val className: String,
+  val isLegacy: Boolean,
+)
+
+data class PlacedWidgetProvider(
+  val identity: WidgetProviderIdentity,
+  val ids: IntArray,
+)
+
+/** Provider identities shared by refresh and per-widget list selection. */
+object WidgetProviderRegistry {
+  fun identities(applicationPackage: String): List<WidgetProviderIdentity> = WidgetKind.entries.flatMap { kind ->
+    val current = WidgetProviderIdentity(kind, kind.providerClass.name, isLegacy = false)
+    if (kind == WidgetKind.TASKS) {
+      listOf(
+        current,
+        WidgetProviderIdentity(kind, "$applicationPackage.widget.TasksWidget", isLegacy = true),
+      )
+    } else {
+      listOf(current)
+    }
+  }
+
+  fun placed(
+    applicationPackage: String,
+    idsForProvider: (String) -> IntArray,
+  ): List<PlacedWidgetProvider> = identities(applicationPackage).mapNotNull { identity ->
+    val ids = idsForProvider(identity.className)
+    if (ids.isEmpty()) null else PlacedWidgetProvider(identity, ids)
+  }
+}
+
 /** Every kind's receiver: the platform needs one class per kind; rendering is shared. */
 abstract class MindwtrWidgetProvider(private val kind: WidgetKind) : android.appwidget.AppWidgetProvider() {
   override fun onUpdate(
@@ -27,7 +61,7 @@ abstract class MindwtrWidgetProvider(private val kind: WidgetKind) : android.app
   }
 }
 
-class TasksWidgetProvider : MindwtrWidgetProvider(WidgetKind.TASKS) {
+open class TasksWidgetProvider : MindwtrWidgetProvider(WidgetKind.TASKS) {
   override fun onDeleted(context: android.content.Context, appWidgetIds: IntArray) {
     WidgetListStore.remove(context, appWidgetIds)
   }
