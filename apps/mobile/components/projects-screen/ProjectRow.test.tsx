@@ -237,4 +237,29 @@ describe('ProjectRow', () => {
     expect(hapticsMocks.selectionAsync).toHaveBeenCalledTimes(1);
     expect(onDuplicateProject).toHaveBeenCalledWith('project-1');
   });
+
+  it('distinguishes completed and cancelled closed projects', () => {
+    const renderStatus = (cancelledAt?: string) => {
+      let tree!: renderer.ReactTestRenderer;
+      renderer.act(() => {
+        tree = renderer.create(
+          <ProjectRow
+            project={{ ...project, status: 'archived', cancelledAt }}
+            tc={tc}
+            focusedCount={0}
+            statusPalette={statusPalette as any}
+            t={(key) => ({ 'list.done': 'Completed', 'projects.cancelled': 'Cancelled' }[key] ?? key)}
+            onDeleteProject={vi.fn()}
+            onDuplicateProject={vi.fn()}
+            onOpenProject={vi.fn()}
+            onToggleProjectFocus={vi.fn()}
+          />,
+        );
+      });
+      return tree.root.findAllByType(Text).map((node) => node.props.children);
+    };
+
+    expect(renderStatus()).toContain('Completed');
+    expect(renderStatus('2026-04-02T00:00:00.000Z')).toContain('Cancelled');
+  });
 });

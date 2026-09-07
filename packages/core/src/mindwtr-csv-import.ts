@@ -86,6 +86,7 @@ export type ParsedMindwtrCsvSection = {
 export type ParsedMindwtrCsvTask = {
     areaSourceKey?: string;
     assignedTo?: string;
+    cancelledAt?: string;
     checklist: ChecklistItem[];
     completedAt?: string;
     contexts: string[];
@@ -303,10 +304,11 @@ const resolveStatus = (
     raw: string,
     hasProject: boolean,
     hasCompletedAt: boolean,
+    hasCancelledAt: boolean,
     counters: MindwtrCsvWarningCounters
 ): TaskStatus => {
     const trimmed = raw.trim().toLowerCase();
-    if (!trimmed) return hasCompletedAt ? 'done' : hasProject ? 'next' : 'inbox';
+    if (!trimmed) return hasCancelledAt ? 'archived' : hasCompletedAt ? 'done' : hasProject ? 'next' : 'inbox';
     if (VALID_STATUSES.has(trimmed as TaskStatus)) return trimmed as TaskStatus;
     counters.unknownStatuses += 1;
     return 'inbox';
@@ -524,7 +526,14 @@ const parseMindwtrCsvRows = (
         }
 
         const completedAt = parseTimestampCell(readCell(row, headerIndex, 'COMPLETED AT'), counters);
-        const status = resolveStatus(readCell(row, headerIndex, 'STATUS'), Boolean(projectSourceKey), Boolean(completedAt), counters);
+        const cancelledAt = parseTimestampCell(readCell(row, headerIndex, 'CANCELLED AT'), counters);
+        const status = resolveStatus(
+            readCell(row, headerIndex, 'STATUS'),
+            Boolean(projectSourceKey),
+            Boolean(completedAt),
+            Boolean(cancelledAt),
+            counters,
+        );
         const idColumn = readCell(row, headerIndex, 'ID').trim();
         const rowNumber = rowIndex + 1;
         const sourceIdentityKind = idColumn ? 'explicit-id' : 'row-fallback';
@@ -542,6 +551,7 @@ const parseMindwtrCsvRows = (
         tasks.push({
             areaSourceKey,
             assignedTo: readCell(row, headerIndex, 'ASSIGNED TO').trim() || undefined,
+            cancelledAt,
             checklist: parseChecklist(readCell(row, headerIndex, 'CHECKLIST'), archiveBudget),
             completedAt,
             contexts: parseContexts(readCell(row, headerIndex, 'CONTEXTS')),

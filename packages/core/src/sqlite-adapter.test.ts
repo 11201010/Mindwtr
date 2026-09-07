@@ -1884,6 +1884,8 @@ describeSqlite('SqliteAdapter', () => {
         `);
         db.exec(`CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);`);
         db.exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);`);
+        db.exec(`INSERT INTO tasks (id, title, status) VALUES ('preexisting-task', 'Keep task', 'next');`);
+        db.exec(`INSERT INTO projects (id, title, status, color) VALUES ('preexisting-project', 'Keep project', 'active', '#6B7280');`);
 
         await adapter.ensureSchema();
 
@@ -1898,6 +1900,7 @@ describeSqlite('SqliteAdapter', () => {
         expect(names).toContain('relativeStartOffset');
         expect(names).toContain('rev');
         expect(names).toContain('revBy');
+        expect(names).toContain('cancelledAt');
         const taskIndexes = allSql<{ name: string }>(db, 'PRAGMA index_list(tasks)');
         const taskIndexNames = new Set(taskIndexes.map((row) => row.name));
         expect(taskIndexNames.has('idx_tasks_dueDate')).toBe(true);
@@ -1910,6 +1913,7 @@ describeSqlite('SqliteAdapter', () => {
         expect(projectColumnNames).toContain('startDate');
         expect(projectColumnNames).toContain('rev');
         expect(projectColumnNames).toContain('revBy');
+        expect(projectColumnNames).toContain('cancelledAt');
         const projectIndexes = allSql<{ name: string }>(db, 'PRAGMA index_list(projects)');
         expect(projectIndexes.map((row) => row.name)).toContain('idx_projects_dueDate');
 
@@ -1960,6 +1964,47 @@ describeSqlite('SqliteAdapter', () => {
         ]);
         const savedFilterIndexes = allSql<{ name: string }>(db, 'PRAGMA index_list(saved_filters)');
         expect(savedFilterIndexes.map((row) => row.name)).toContain('idx_saved_filters_view');
+
+        const beforeCancellation = await adapter.getData();
+        expect(beforeCancellation.tasks[0].title).toBe('Keep task');
+        expect(beforeCancellation.projects[0].title).toBe('Keep project');
+
+        const cancelledAt = '2026-09-07T12:00:00.000Z';
+        await adapter.saveData({
+            ...beforeCancellation,
+            tasks: beforeCancellation.tasks.map((task) => ({
+                ...task,
+                status: 'archived' as const,
+                cancelledAt,
+                completedAt: undefined,
+                createdAt: '2026-09-01T00:00:00.000Z',
+                updatedAt: cancelledAt,
+                rev: 1,
+                revBy: 'migration-test',
+            })),
+            projects: beforeCancellation.projects.map((project) => ({
+                ...project,
+                status: 'archived' as const,
+                cancelledAt,
+                createdAt: '2026-09-01T00:00:00.000Z',
+                updatedAt: cancelledAt,
+                rev: 1,
+                revBy: 'migration-test',
+            })),
+        });
+
+        const afterCancellation = await adapter.getData();
+        expect(afterCancellation.tasks[0]).toMatchObject({
+            id: 'preexisting-task',
+            title: 'Keep task',
+            cancelledAt,
+            completedAt: undefined,
+        });
+        expect(afterCancellation.projects[0]).toMatchObject({
+            id: 'preexisting-project',
+            title: 'Keep project',
+            cancelledAt,
+        });
     });
 
     it('migrates FTS triggers atomically once and rebuilds aligned indexes', async () => {

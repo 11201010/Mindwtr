@@ -30,6 +30,7 @@ This folder contains small, focused decision documents that explain **why** we m
 - [ADR 0024: Mobile native SQLite engine (op-sqlite)](0024-mobile-native-sqlite-engine.md)
 - [ADR 0025: No encryption of the server-merged sync payload; passphrase-encrypted blob backends are first-party](0025-no-first-party-payload-encryption.md)
 - [ADR 0026: Apple Watch companion and durable capture boundary](0026-watch-companion-boundary.md)
+- [ADR 0027: Cancellation as an archived outcome](0027-cancellation-outcome.md)
 
 ## Template
 

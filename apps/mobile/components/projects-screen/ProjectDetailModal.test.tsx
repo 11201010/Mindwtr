@@ -49,6 +49,9 @@ const translate = vi.hoisted(() => (key: string) => ({
     'project.notes': 'Project notes',
     'projects.archive': 'Archive',
     'projects.complete': 'Complete',
+    'projects.cancel': 'Cancel project',
+    'projects.cancelConfirmTitle': 'Cancel project?',
+    'projects.cancelConfirmBody': 'Cancel this project and its unfinished tasks? Completed work and project history will be kept.',
     'projects.areaLabel': 'Area',
     'projects.addSection': 'Add Section',
     'projects.deleteSectionConfirm': 'Are you sure you want to delete this section?',
@@ -95,6 +98,7 @@ vi.mock('../../contexts/language-context', () => ({
 const storeActions = vi.hoisted(() => ({
     _allProjects: [] as Project[],
     addSection: vi.fn(),
+    cancelProject: vi.fn(),
     deleteSection: vi.fn(),
     reorderSections: vi.fn(),
     updateProject: vi.fn(),
@@ -1161,6 +1165,27 @@ describe('ProjectDetailModal lifecycle actions', () => {
         expect(props.onDeleteProject).toHaveBeenCalledWith(props.project?.id);
     });
 
+    it('confirms cancellation and uses the dedicated project action', async () => {
+        storeActions.cancelProject.mockResolvedValue({ success: true });
+        vi.spyOn(Alert, 'alert').mockImplementation(((_title, _message, buttons) => {
+            buttons?.[1]?.onPress?.();
+        }) as typeof Alert.alert);
+        let tree!: ReturnType<typeof create>;
+
+        await act(async () => {
+            tree = create(<ProjectDetailModal {...createProjectDetailModalProps()} />);
+        });
+        act(() => tree.root.findByProps({ testID: 'project-actions-menu-button' }).props.onPress());
+        act(() => tree.root.findByProps({ testID: 'project-cancel-button' }).props.onPress());
+
+        expect(Alert.alert).toHaveBeenCalledWith(
+            'Cancel project?',
+            'Cancel this project and its unfinished tasks? Completed work and project history will be kept.',
+            expect.any(Array),
+        );
+        expect(storeActions.cancelProject).toHaveBeenCalledWith('project-1');
+    });
+
     it('archives from the Archive action with a single tap and no native confirm', () => {
         const onProjectChange = vi.fn();
         const alertSpy = vi.spyOn(Alert, 'alert');
@@ -1242,6 +1267,7 @@ describe('ProjectDetailModal lifecycle actions', () => {
 
         expect(tree.root.findByProps({ testID: 'project-reactivate-button' })).toBeTruthy();
         expect(tree.root.findAllByProps({ testID: 'project-archive-button' })).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'project-cancel-button' })).toHaveLength(0);
     });
 });
 

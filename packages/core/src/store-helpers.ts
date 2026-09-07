@@ -6,7 +6,17 @@ import {
 } from './task-token-usage';
 import { resolveRelativeStartUpdates } from './task-relative-start';
 import { compareTasksByProjectOrder, isTaskFutureStart, rescheduleTask, shouldAutoArchiveCompletedTask, baseTextCollator } from './task-utils';
-import { isTaskActionable, isTaskFinished } from './task-status';
+import {
+    isTaskActionable,
+    isTaskFinished,
+    normalizeCancellationTimestamp,
+    normalizeTaskLifecycleFields,
+} from './task-status';
+import {
+    isProjectCancelled,
+    normalizeProjectLifecycleFields,
+    normalizeProjectUpdate,
+} from './project-status';
 import { safeParseDate } from './date';
 import { filterNotDeleted } from './sync-helpers';
 import { nextRevision, normalizeRevision } from './sync-revision';
@@ -76,6 +86,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
     const explicitCompletedAt = typeof updates.completedAt === 'string' && safeParseDate(updates.completedAt)
         ? updates.completedAt
         : undefined;
+    const explicitCancelledAt = normalizeCancellationTimestamp(updates.cancelledAt);
 
     // A manual Focus position only means something while the task is in Today's
     // Focus (types.ts: focusOrder is "cleared when the task leaves Today's
@@ -93,6 +104,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
             ...updatesToApply,
             status: incomingStatus,
             completedAt,
+            cancelledAt: undefined,
             isFocusedToday: false,
             ...clearsFocusOrder,
         };
@@ -106,7 +118,10 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
         finalUpdates = {
             ...updatesToApply,
             status: incomingStatus,
-            completedAt: explicitCompletedAt ?? (oldTask.completedAt || now),
+            completedAt: explicitCancelledAt
+                ? undefined
+                : explicitCompletedAt ?? (oldTask.completedAt || now),
+            cancelledAt: explicitCancelledAt,
             isFocusedToday: false,
             ...clearsFocusOrder,
         };
@@ -115,6 +130,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
             ...updatesToApply,
             status: incomingStatus,
             completedAt: undefined,
+            cancelledAt: undefined,
         };
     }
 
@@ -142,7 +158,7 @@ export function applyTaskUpdates(oldTask: Task, updates: Partial<Task>, now: str
     }
 
     return {
-        updatedTask: { ...oldTask, ...finalUpdates, updatedAt: now },
+        updatedTask: normalizeTaskLifecycleFields({ ...oldTask, ...finalUpdates, updatedAt: now }),
         nextRecurringTask,
     };
 }
@@ -164,6 +180,23 @@ export const normalizeTaskUpdate = (
     context?: { settings?: AppData['settings']; nowMs?: number },
 ): Partial<Task> => {
     let adjustedUpdates = updates;
+    if (hasOwnField(updates, 'cancelledAt')) {
+        const cancelledAt = normalizeCancellationTimestamp(updates.cancelledAt);
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            cancelledAt,
+            ...(cancelledAt && !hasOwnField(updates, 'status') ? { status: 'archived' as const } : {}),
+        };
+    }
+    const resolvedLifecycleStatus = hasOwnField(adjustedUpdates, 'status')
+        ? adjustedUpdates.status
+        : task.status;
+    if (resolvedLifecycleStatus !== 'archived') {
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            cancelledAt: undefined,
+        };
+    }
     if (hasOwnField(updates, 'recurrence')) {
         const recurrence = normalizeRecurrenceForLoad(updates.recurrence);
         const existingRecurrence = normalizeRecurrenceForLoad(task.recurrence);
@@ -310,6 +343,28 @@ export const normalizeTaskUpdate = (
             isFocusedToday: false,
         };
     }
+    const resolvedFinalStatus = hasOwnField(adjustedUpdates, 'status')
+        ? adjustedUpdates.status
+        : task.status;
+    if (isTaskFinished(resolvedFinalStatus)) {
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            isFocusedToday: false,
+            ...(!hasOwnField(updates, 'focusOrder') ? { focusOrder: undefined } : {}),
+        };
+    }
+    // Any direct edit breaks the reversible project-archive operation marker.
+    // Project restoration calls its pure child helper directly, so only an
+    // independent task writer reaches this normalization path.
+    if (task.projectArchivedAt) {
+        adjustedUpdates = {
+            ...adjustedUpdates,
+            statusBeforeProjectArchive: undefined,
+            completedAtBeforeProjectArchive: undefined,
+            isFocusedTodayBeforeProjectArchive: undefined,
+            projectArchivedAt: undefined,
+        };
+    }
     return adjustedUpdates;
 };
 
@@ -376,7 +431,9 @@ export const completeTaskForProjectArchive = (task: Task, archivedAt: string, de
     ...task,
     status: 'done',
     completedAt: archivedAt,
+    cancelledAt: undefined,
     isFocusedToday: false,
+    focusOrder: undefined,
     statusBeforeProjectArchive: task.status,
     completedAtBeforeProjectArchive: task.completedAt,
     isFocusedTodayBeforeProjectArchive: task.isFocusedToday,
@@ -386,16 +443,44 @@ export const completeTaskForProjectArchive = (task: Task, archivedAt: string, de
     revBy: deviceId,
 });
 
+/** Cancel one actionable child as part of a reversible project cancellation. */
+export const cancelTaskForProjectArchive = (
+    task: Task,
+    cancelledAt: string,
+    deviceId?: string,
+    operationAt: string = cancelledAt,
+): Task => ({
+    ...task,
+    status: 'archived',
+    completedAt: undefined,
+    cancelledAt,
+    isFocusedToday: false,
+    focusOrder: undefined,
+    statusBeforeProjectArchive: task.status,
+    completedAtBeforeProjectArchive: task.completedAt,
+    isFocusedTodayBeforeProjectArchive: task.isFocusedToday,
+    projectArchivedAt: operationAt,
+    updatedAt: operationAt,
+    rev: nextRevision(task.rev),
+    revBy: deviceId,
+});
+
 export const restoreTaskFromProjectArchive = (task: Task, restoredAt: string, deviceId?: string): Task => {
     const previousStatus = task.statusBeforeProjectArchive;
     const archivedAt = task.projectArchivedAt;
+    const wasCompletedByProject = task.status === 'done'
+        && task.cancelledAt === undefined
+        && task.completedAt === archivedAt;
+    const wasCancelledByProject = task.status === 'archived'
+        && normalizeCancellationTimestamp(task.cancelledAt) !== undefined
+        && task.completedAt === undefined;
     const shouldRestore =
         !task.deletedAt &&
         Boolean(previousStatus) &&
         !isTaskFinished(previousStatus) &&
-        task.status === 'done' &&
         Boolean(archivedAt) &&
-        task.completedAt === archivedAt;
+        task.updatedAt === archivedAt &&
+        (wasCompletedByProject || wasCancelledByProject);
 
     if (!shouldRestore) {
         return task;
@@ -405,6 +490,7 @@ export const restoreTaskFromProjectArchive = (task: Task, restoredAt: string, de
         ...task,
         status: previousStatus!,
         completedAt: task.completedAtBeforeProjectArchive ?? undefined,
+        cancelledAt: undefined,
         isFocusedToday: task.isFocusedTodayBeforeProjectArchive ?? false,
         statusBeforeProjectArchive: undefined,
         completedAtBeforeProjectArchive: undefined,
@@ -444,10 +530,29 @@ export const archiveSectionForProjectArchive = (section: Section, archivedAt: st
     revBy: deviceId,
 });
 
+/**
+ * A project-archive section remains a valid container only for a child changed
+ * by that exact archive operation while the owning project is still archived.
+ */
+export const isTaskSectionProjectArchiveReference = (
+    task: Task,
+    section: Section | undefined,
+    project: Project | undefined,
+): boolean => {
+    if (!section || !project || project.deletedAt || project.purgedAt || project.status !== 'archived') return false;
+    const archivedAt = task.projectArchivedAt;
+    if (!archivedAt || archivedAt !== section.projectArchivedAt) return false;
+    if (task.projectId !== project.id || section.projectId !== project.id) return false;
+    if (section.deletedAt !== section.projectArchivedAt) return false;
+    return (task.status === 'done' && task.completedAt === archivedAt)
+        || (task.status === 'archived' && normalizeCancellationTimestamp(task.cancelledAt) !== undefined);
+};
+
 export const restoreSectionFromProjectArchive = (section: Section, restoredAt: string, deviceId?: string): Section => {
     const archivedAt = section.projectArchivedAt;
     const shouldRestore =
         Boolean(archivedAt) &&
+        section.updatedAt === archivedAt &&
         section.deletedAt === archivedAt &&
         // `== null`: a live section archived by an older client carries `null`, a
         // current one absent, and SQLite reads both back as absent (#1156).
@@ -466,6 +571,81 @@ export const restoreSectionFromProjectArchive = (section: Section, restoredAt: s
         rev: nextRevision(section.rev),
         revBy: deviceId,
     };
+};
+
+export type ProjectLifecycleTransition = {
+    projectUpdates: Partial<Project>;
+    tasks: Task[];
+    sections: Section[];
+};
+
+const mapChanged = <T>(items: T[], mapper: (item: T) => T): T[] => {
+    let changed = false;
+    const next = items.map((item) => {
+        const mapped = mapper(item);
+        if (mapped !== item) changed = true;
+        return mapped;
+    });
+    return changed ? next : items;
+};
+
+/**
+ * Pure project lifecycle transition shared by the store and external writers.
+ * Child helpers stamp their own revisions because they are independent synced
+ * entities; the caller stamps the returned project patch on the project itself.
+ */
+export const applyProjectLifecycleTransition = (
+    project: Project,
+    updates: Partial<Project>,
+    tasks: Task[],
+    sections: Section[],
+    now: string,
+    deviceId?: string,
+): ProjectLifecycleTransition => {
+    const projectUpdates = normalizeProjectUpdate(project, updates);
+    const normalizedProject = normalizeProjectLifecycleFields({ ...project, ...projectUpdates });
+    const incomingStatus = normalizedProject.status;
+    const enteredArchive = project.status !== 'archived' && incomingStatus === 'archived';
+    const activatedCancellation = isProjectCancelled(normalizedProject)
+        && (!isProjectCancelled(project) || project.cancelledAt !== normalizedProject.cancelledAt);
+    const reactivated = project.status === 'archived' && incomingStatus !== 'archived';
+
+    let nextTasks = tasks;
+    let nextSections = sections;
+    if (enteredArchive || activatedCancellation) {
+        const cancelledAt = normalizedProject.cancelledAt;
+        nextTasks = mapChanged(tasks, (task) => {
+            if (task.projectId !== project.id || task.deletedAt) return task;
+            if (isProjectCancelled(normalizedProject)) {
+                return isTaskActionable(task)
+                    ? cancelTaskForProjectArchive(task, cancelledAt!, deviceId, now)
+                    : task;
+            }
+            return !isTaskFinished(task)
+                ? completeTaskForProjectArchive(task, now, deviceId)
+                : task;
+        });
+        if (enteredArchive) {
+            nextSections = mapChanged(sections, (section) => (
+                section.projectId === project.id && !section.deletedAt
+                    ? archiveSectionForProjectArchive(section, now, deviceId)
+                    : section
+            ));
+        }
+    } else if (reactivated) {
+        nextTasks = mapChanged(tasks, (task) => (
+            task.projectId === project.id && task.projectArchivedAt
+                ? restoreTaskFromProjectArchive(task, now, deviceId)
+                : task
+        ));
+        nextSections = mapChanged(sections, (section) => (
+            section.projectId === project.id && section.projectArchivedAt
+                ? restoreSectionFromProjectArchive(section, now, deviceId)
+                : section
+        ));
+    }
+
+    return { projectUpdates, tasks: nextTasks, sections: nextSections };
 };
 
 export const buildEntityMap = <T extends EntityWithId>(items: readonly T[]): Map<string, T> =>

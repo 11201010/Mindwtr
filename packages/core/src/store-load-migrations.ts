@@ -9,6 +9,7 @@ import {
     clearDeletedTaskProjectArchiveMetadata,
     completeTaskForProjectArchive,
     ensureDeviceId,
+    isTaskSectionProjectArchiveReference,
     nextRevision,
 } from './store-helpers';
 import { getAutoArchiveDays, shouldAutoArchiveCompletedTask } from './task-utils';
@@ -573,6 +574,7 @@ const repairDanglingEntityReferencesMigration: LoadMigration = {
             };
         });
         const activeProjectIds = new Set(projects.filter((project) => !project.deletedAt).map((project) => project.id));
+        const projectsById = new Map(projects.map((project) => [project.id, project] as const));
         const sections = data.sections.map((section) => {
             if (section.deletedAt || activeProjectIds.has(section.projectId)) return section;
             changed = true;
@@ -587,6 +589,7 @@ const repairDanglingEntityReferencesMigration: LoadMigration = {
         const activeSectionProjectIds = new Map(
             sections.filter((section) => !section.deletedAt).map((section) => [section.id, section.projectId])
         );
+        const sectionsById = new Map(sections.map((section) => [section.id, section] as const));
         const tasks = data.tasks.map((task) => {
             if (task.deletedAt) return task;
             let nextTask = task;
@@ -596,7 +599,17 @@ const repairDanglingEntityReferencesMigration: LoadMigration = {
                 taskChanged = true;
             }
             const sectionProjectId = nextTask.sectionId ? activeSectionProjectIds.get(nextTask.sectionId) : undefined;
-            if (nextTask.sectionId && (!sectionProjectId || (nextTask.projectId && sectionProjectId !== nextTask.projectId))) {
+            const hasOwnedArchivedSection = nextTask.sectionId
+                ? isTaskSectionProjectArchiveReference(
+                    nextTask,
+                    sectionsById.get(nextTask.sectionId),
+                    nextTask.projectId ? projectsById.get(nextTask.projectId) : undefined,
+                )
+                : false;
+            if (nextTask.sectionId && (
+                (!sectionProjectId && !hasOwnedArchivedSection)
+                || (sectionProjectId && nextTask.projectId && sectionProjectId !== nextTask.projectId)
+            )) {
                 nextTask = { ...nextTask, sectionId: undefined };
                 taskChanged = true;
             }

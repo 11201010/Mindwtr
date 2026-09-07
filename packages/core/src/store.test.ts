@@ -4447,7 +4447,7 @@ describe('TaskStore', () => {
         const projectSections = useTaskStore.getState()._allSections.filter((item) => item.projectId === project.id);
 
         expect(nextTask?.status).toBe('next');
-        expect(nextTask?.completedAt).toBe('2026-03-18T10:00:00.000Z');
+        expect(nextTask?.completedAt).toBeUndefined();
         expect(nextTask?.isFocusedToday).toBe(true);
         expect(nextTask?.statusBeforeProjectArchive).toBeUndefined();
         expect(nextTask?.projectArchivedAt).toBeUndefined();

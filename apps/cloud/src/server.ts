@@ -4,6 +4,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { basename, join } from 'path';
 import {
     applyTaskUpdates,
+    applyProjectLifecycleTransition,
     areSyncPayloadsEqual,
     buildHttpRemoteFileFingerprint,
     compactPurgedProjectSectionTombstone,
@@ -14,9 +15,10 @@ import {
     generateUUID,
     getNextProjectOrder,
     getTaskOrder,
-    isTaskFinished,
     mergeAppDataWithStats,
     normalizeTaskUpdate,
+    normalizeTaskLifecycleFields,
+    normalizeProjectLifecycleFields,
     normalizeFocusTaskLimit,
     buildQuickAddParseOptions,
     parseQuickAdd,
@@ -669,18 +671,18 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             // sibling (missing order is +Infinity in compareTasksByProjectOrder).
             const hasExplicitOrder = Object.prototype.hasOwnProperty.call(props, 'order')
                 || Object.prototype.hasOwnProperty.call(props, 'orderNum');
-            const task: Task = {
+            const task: Task = normalizeTaskLifecycleFields({
                 id: generateUUID(),
                 title,
                 ...restProps,
-                status,
+                status: props.cancelledAt && rawStatus === undefined ? 'archived' : status,
                 tags,
                 contexts,
                 rev: 1,
                 revBy: CLOUD_API_REV_BY,
                 createdAt: nowIso,
                 updatedAt: nowIso,
-            } as Task;
+            } as Task);
             if (!hasExplicitOrder && task.projectId) {
                 const order = getNextProjectOrder(task.projectId, data.tasks);
                 task.order = order;
@@ -703,9 +705,6 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                     outcome: focusDecision.outcome,
                     count: focusedCount + (focusDecision.outcome === 'focused' ? 1 : 0),
                 });
-            }
-            if (isTaskFinished(status) && !task.completedAt) {
-                task.completedAt = nowIso;
             }
             return task;
         },
@@ -800,12 +799,12 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 areaId: _areaId,
                 ...restProps
             } = props;
-            return {
+            const project: Project = {
                 id: generateUUID(),
                 title,
                 ...restProps,
                 areaId: areaId || undefined,
-                status,
+                status: props.cancelledAt && rawStatus === undefined ? 'archived' : status,
                 color: typeof rawColor === 'string' && rawColor.trim() ? rawColor : '#6B7280',
                 order: typeof rawOrder === 'number' && Number.isFinite(rawOrder) ? rawOrder : nextOrder(data.projects),
                 tagIds: Array.isArray(rawTagIds) ? rawTagIds.filter((item): item is string => typeof item === 'string') : [],
@@ -814,6 +813,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 rev: 1,
                 revBy: CLOUD_API_REV_BY,
             };
+            return normalizeProjectLifecycleFields(project);
         },
         canPatchDeletedEntity: isProjectPurgePatch,
         patchEntity: (bodyRecord, existing: Project, data, nowIso): Project | Response => {
@@ -838,9 +838,14 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             if (areaId && !data.areas.some((area) => area.id === areaId && !area.deletedAt)) {
                 return errorResponse('Area not found', 404);
             }
+            const lifecycle = applyProjectLifecycleTransition(
+                existing, updates, data.tasks, data.sections ?? [], nowIso, CLOUD_API_REV_BY,
+            );
+            data.tasks = lifecycle.tasks;
+            data.sections = lifecycle.sections;
             const updatedProject = {
                 ...existing,
-                ...updates,
+                ...lifecycle.projectUpdates,
                 title: typeof updates.title === 'string' ? updates.title.trim() : existing.title,
                 areaId: areaId !== undefined ? areaId ?? undefined : existing.areaId,
                 updatedAt: nowIso,

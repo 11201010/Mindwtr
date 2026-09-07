@@ -7,6 +7,7 @@ import {
     PROJECT_SYNC_SCHEMA_FIXTURE,
     PROJECT_SYNC_SCHEMA_VERSION,
 } from './project-sync-schema';
+import cloudKitProductionSchema from './cloudkit-production-schema.json';
 
 // The pre-refactor snapshot-equality guards that used to live here (PROJECT_SQLITE_COLUMNS,
 // PROJECT_UPSERT_UPDATE_CLAUSE, and the ensureProjectColumns migration list, each pinned to a
@@ -44,5 +45,18 @@ describe('Project sync schema contract', () => {
         expect(field?.cloudWrite).toBe('create-patch');
         expect(field?.sqliteColumn).toBe('startDate');
         expect(field?.sqliteType).toBe('TEXT');
+    });
+
+    it('declares cancellation as an optional synced field deployed to CloudKit production', () => {
+        const field = PROJECT_SYNC_FIELD_SCHEMA.find((entry) => entry.name === 'cancelledAt');
+        expect(field).toMatchObject({
+            nullability: 'optional',
+            cloudSynced: true,
+            cloudWrite: 'create-patch',
+            sqliteColumn: 'cancelledAt',
+            sqliteType: 'TEXT',
+        });
+        expect(cloudKitProductionSchema.records.MindwtrProject.deployed).toContain('cancelledAt');
+        expect(cloudKitProductionSchema.records.MindwtrProject.pendingProduction).not.toContain('cancelledAt');
     });
 });

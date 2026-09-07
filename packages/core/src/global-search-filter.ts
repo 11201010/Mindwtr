@@ -3,7 +3,8 @@ import { matchesHierarchicalToken } from './hierarchy-utils';
 import { parseSearchQuery, searchAll } from './search';
 import { SEARCH_RESULT_LIMIT, type SearchProjectResult, type SearchResults, type SearchTaskResult } from './storage';
 import { shouldShowTaskForStart } from './task-utils';
-import { isTaskFinished } from './task-status';
+import { isTaskCompleted } from './task-status';
+import { isProjectCancelled } from './project-status';
 import type { Project, Task, TaskStatus } from './types';
 
 export type GlobalSearchScope = 'all' | 'projects' | 'tasks' | 'project_tasks';
@@ -259,7 +260,7 @@ export const computeGlobalSearchResults = ({
         } else {
             // A positive `id:` term is an unambiguous request for one task, so it
             // outranks the default done/archived/reference hiding.
-            if (!shouldBypassDefaultStatusHiding && !includeCompleted && isTaskFinished(task)) return false;
+            if (!shouldBypassDefaultStatusHiding && !includeCompleted && isTaskCompleted(task)) return false;
             if (!shouldBypassDefaultStatusHiding && !includeReference && task.status === 'reference') return false;
         }
         return passesNonStatusTaskFilters(task);
@@ -267,7 +268,7 @@ export const computeGlobalSearchResults = ({
 
     const filteredProjects = effectiveResults.projects.filter((project: SearchProjectResult) => {
         if (normalizedLocationQuery) return false;
-        if (!includeCompleted && project.status === 'archived') return false;
+        if (!includeCompleted && project.status === 'archived' && !isProjectCancelled(project)) return false;
         if (!matchesArea(project.areaId ?? null)) return false;
         return true;
     });
@@ -279,7 +280,7 @@ export const computeGlobalSearchResults = ({
         && !shouldBypassDefaultStatusHiding
         && scope !== 'projects'
         ? effectiveResults.tasks.filter((task) =>
-            isTaskFinished(task) && passesNonStatusTaskFilters(task)
+            isTaskCompleted(task) && passesNonStatusTaskFilters(task)
         ).length
         : 0;
     const hiddenArchivedProjectCount = !includeCompleted
@@ -287,7 +288,9 @@ export const computeGlobalSearchResults = ({
         && scope !== 'project_tasks'
         && !normalizedLocationQuery
         ? effectiveResults.projects.filter(
-            (project) => project.status === 'archived' && matchesArea(project.areaId ?? null)
+            (project) => project.status === 'archived'
+                && !isProjectCancelled(project)
+                && matchesArea(project.areaId ?? null)
         ).length
         : 0;
 

@@ -738,17 +738,18 @@ describe('task-utils', () => {
     });
 
     describe('completed task grouping', () => {
-        it('splits done tasks from active tasks without changing order inside either group', () => {
+        it('splits terminal task history from active tasks without changing order inside either group', () => {
             const tasks = [
                 { id: 'done-1', status: 'done', title: 'Done first', createdAt: '2026-01-01' },
                 { id: 'next-1', status: 'next', title: 'Next', createdAt: '2026-01-02' },
                 { id: 'waiting-1', status: 'waiting', title: 'Waiting', createdAt: '2026-01-03' },
                 { id: 'done-2', status: 'done', title: 'Done second', createdAt: '2026-01-04' },
+                { id: 'cancelled', status: 'archived', cancelledAt: '2026-01-05T12:00:00.000Z', title: 'Cancelled', createdAt: '2026-01-05' },
             ] as Task[];
 
             expect(splitCompletedTasks(tasks)).toEqual({
                 activeTasks: [tasks[1], tasks[2]],
-                completedTasks: [tasks[0], tasks[3]],
+                completedTasks: [tasks[0], tasks[3], tasks[4]],
             });
         });
 

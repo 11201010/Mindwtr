@@ -538,6 +538,7 @@ export function ProjectDetailModal({
         deleteSection,
         reorderSections,
         updateProject,
+        cancelProject,
         updateSection,
         settings,
         allProjects,
@@ -546,6 +547,7 @@ export function ProjectDetailModal({
         deleteSection: state.deleteSection,
         reorderSections: state.reorderSections,
         updateProject: state.updateProject,
+        cancelProject: state.cancelProject,
         updateSection: state.updateSection,
         settings: state.settings,
         allProjects: state._allProjects,
@@ -775,7 +777,9 @@ export function ProjectDetailModal({
     );
     const projectDisplayStatus = isArchivedProject ? 'archived' : selectedProject?.status;
     const projectStatusLabel = selectedProject
-        ? (projectDisplayStatus === 'active'
+        ? (selectedProject.cancelledAt
+            ? tFallback(t, 'projects.cancelled', 'Cancelled')
+            : projectDisplayStatus === 'active'
             ? t('status.active')
             : projectDisplayStatus === 'waiting'
                 ? t('status.waiting')
@@ -895,6 +899,46 @@ export function ProjectDetailModal({
     // apparently dead.
     const handleArchiveSelectedProject = () => {
         updateMutableSelectedProject({ status: 'archived' });
+    };
+    const handleCancelSelectedProject = () => {
+        const current = getMutableSelectedProject();
+        if (!current) return;
+        const projectId = current.id;
+        Alert.alert(
+            tFallback(t, 'projects.cancelConfirmTitle', 'Cancel project?'),
+            tFallback(
+                t,
+                'projects.cancelConfirmBody',
+                'Cancel this project and its unfinished tasks? Completed work and project history will be kept.',
+            ),
+            [
+                { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
+                {
+                    text: tFallback(t, 'projects.cancel', 'Cancel project'),
+                    style: 'destructive',
+                    onPress: () => {
+                        void cancelProject(projectId)
+                            .then((result) => {
+                                if (result.success) {
+                                    const stored = useTaskStore.getState()._allProjects?.find((project) => project.id === projectId);
+                                    if (stored) onProjectChange(stored);
+                                    return;
+                                }
+                                Alert.alert(
+                                    tFallback(t, 'common.error', 'Error'),
+                                    result.error || tFallback(t, 'projects.cancelFailed', 'Failed to cancel project'),
+                                );
+                            })
+                            .catch(() => {
+                                Alert.alert(
+                                    tFallback(t, 'common.error', 'Error'),
+                                    tFallback(t, 'projects.cancelFailed', 'Failed to cancel project'),
+                                );
+                            });
+                    },
+                },
+            ],
+        );
     };
     const openAreaPicker = () => {
         if (!getMutableSelectedProject()) return;
@@ -1788,6 +1832,19 @@ export function ProjectDetailModal({
                                             : 'project-archive-button'}
                                         tc={tc}
                                     />
+                                    {!isArchivedProject ? (
+                                        <ProjectOptionRow
+                                            icon="close-circle-outline"
+                                            label={tFallback(t, 'projects.cancel', 'Cancel project')}
+                                            onPress={() => {
+                                                setProjectActionsVisible(false);
+                                                handleCancelSelectedProject();
+                                            }}
+                                            testID="project-cancel-button"
+                                            tone="danger"
+                                            tc={tc}
+                                        />
+                                    ) : null}
                                     <ProjectOptionRow
                                         icon="trash-outline"
                                         label={t('common.delete')}

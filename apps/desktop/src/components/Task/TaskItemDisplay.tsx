@@ -1,6 +1,6 @@
-import { AlertTriangle, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal } from 'lucide-react';
+import { AlertTriangle, Calendar as CalendarIcon, Tag, Trash2, ArrowRight, Repeat, Check, Clock, Timer, Link2, Paperclip, RotateCcw, Copy, MapPin, History, Hourglass, Play, Zap, MoreHorizontal, XCircle } from 'lucide-react';
 import type { Area, Attachment, Project, RangeSelectionOptions, Section, Task, TaskStatus, RecurrenceRule, RecurrenceStrategy, Language } from '@mindwtr/core';
-import { DEFAULT_AREA_COLOR, TASK_PRIORITY_COLORS, formatRecurrenceLabel, formatTimeEstimateLabel, formatTimeSpentLabel, getChecklistProgress, getContextColor, getInlineMarkdownPreview, getRecurringTaskPreviewDate, getTaskAgeLabel, getTaskDateCoherenceIssues, getTaskStaleness, getTaskUrgency, hasTimeComponent, isTaskActionable, isTaskFinished, safeFormatDate, resolveTaskTextDirection, tFallback } from '@mindwtr/core';
+import { DEFAULT_AREA_COLOR, TASK_PRIORITY_COLORS, formatRecurrenceLabel, formatTimeEstimateLabel, formatTimeSpentLabel, getChecklistProgress, getContextColor, getInlineMarkdownPreview, getRecurringTaskPreviewDate, getTaskAgeLabel, getTaskDateCoherenceIssues, getTaskStaleness, getTaskUrgency, hasTimeComponent, isTaskActionable, isTaskCancelled, isTaskCompleted, isTaskFinished, safeFormatDate, resolveTaskTextDirection, tFallback } from '@mindwtr/core';
 import { cn } from '../../lib/utils';
 import { STATUS_PILL_CLASSES } from '../../lib/status-colors';
 import { useBareFileReferenceCheck } from '../../lib/attachment-reference';
@@ -186,9 +186,13 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
     const showAgeBadge = showTaskAge
         && !isTaskFinished(task)
         && Boolean(ageLabel);
-    const completionTimestamp = isTaskFinished(task)
-        ? task.completedAt || task.updatedAt
-        : undefined;
+    const taskIsCancelled = isTaskCancelled(task);
+    const taskIsCompleted = isTaskCompleted(task);
+    const completionTimestamp = taskIsCancelled
+        ? task.cancelledAt || task.updatedAt
+        : taskIsCompleted
+            ? task.completedAt || task.updatedAt
+            : undefined;
     const completionLabel = completionTimestamp
         ? safeFormatDate(completionTimestamp, 'Pp', completionTimestamp)
         : '';
@@ -399,7 +403,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
         && !selectionMode
         && !readOnly
         && isTaskActionable(task);
-    const canEditCompletedAt = Boolean(completionLabel && onEditCompletedAt)
+    const canEditCompletedAt = Boolean(taskIsCompleted && completionLabel && onEditCompletedAt)
         && !selectionMode
         && !interactionDisabled;
     // A read-only row restores to where the task belongs: an archived task goes
@@ -414,8 +418,10 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
         const badge = (
             <MetadataBadge
                 variant="info"
-                icon={Check}
-                label={`${tFallback(t, 'list.done', 'Completed')}: ${completionLabel}`}
+                icon={taskIsCancelled ? XCircle : Check}
+                label={`${taskIsCancelled
+                    ? tFallback(t, 'task.cancelled', 'Cancelled')
+                    : tFallback(t, 'list.done', 'Completed')}: ${completionLabel}`}
             />
         );
         // Done/archived rows are readOnly by design, but correcting the completion
@@ -776,9 +782,7 @@ export const TaskItemDisplay = memo(function TaskItemDisplay({
                             className={cn(
                                 "task-item-display__title font-semibold whitespace-normal break-words text-foreground group-hover/content:text-primary transition-colors",
                                 dense ? "text-sm" : "text-base",
-                                // Archived work is finished work, so it reads struck
-                                // through the same way Done does.
-                                isTaskFinished(task) && "line-through text-muted-foreground",
+                                taskIsCompleted && "line-through text-muted-foreground",
                                 actionsOverlay && "pr-20",
                                 (overlayDragHandle || overlayQuickDone) && "pl-12"
                             )}

@@ -14,6 +14,8 @@ type TaskEditHeaderProps = {
   onShare: () => void;
   onDuplicate: () => void;
   onPromoteToProject?: () => void;
+  onCancelTask?: () => void;
+  cancelTaskLabel?: string;
   onDelete: () => void;
   onConvertToReference?: () => void;
   showConvertToReference?: boolean;
@@ -28,6 +30,8 @@ export function TaskEditHeader({
   onShare,
   onDuplicate,
   onPromoteToProject,
+  onCancelTask,
+  cancelTaskLabel,
   onDelete,
   onConvertToReference,
   showConvertToReference = false,
@@ -163,6 +167,19 @@ export function TaskEditHeader({
                   <Text style={[styles.menuItemText, { color: tc.text }]}>{t('task.convertToSection')}</Text>
                 </AppPressable>
               )}
+              {onCancelTask && cancelTaskLabel ? (
+                <AppPressable
+                  style={styles.menuItem}
+                  accessibilityRole="button"
+                  accessibilityLabel={cancelTaskLabel}
+                  onPress={() => {
+                    setMenuVisible(false);
+                    onCancelTask();
+                  }}
+                >
+                  <Text style={[styles.menuItemText, { color: tc.danger }]}>{cancelTaskLabel}</Text>
+                </AppPressable>
+              ) : null}
               <AppPressable
                 style={styles.menuItem}
                 accessibilityRole="button"

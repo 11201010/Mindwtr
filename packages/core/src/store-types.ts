@@ -75,6 +75,8 @@ export interface TaskStore {
     addTasks: (items: Array<{ title: string; initialProps?: Partial<Task> }>) => Promise<StoreActionResult>;
     /** Update an existing task */
     updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
+    /** Archive a task as cancelled without completing it */
+    cancelTask: (id: string) => Promise<StoreActionResult>;
     /** Soft-delete a task */
     deleteTask: (id: string) => Promise<StoreActionResult>;
     /** Restore a soft-deleted task */
@@ -123,6 +125,8 @@ export interface TaskStore {
     addProject: (title: string, color: string, initialProps?: Partial<Project>) => Promise<Project | null>;
     /** Update a project */
     updateProject: (id: string, updates: Partial<Project>) => Promise<StoreActionResult>;
+    /** Archive a project as cancelled and cancel its unfinished child tasks */
+    cancelProject: (id: string) => Promise<StoreActionResult>;
     /** Delete a project */
     deleteProject: (id: string) => Promise<StoreActionResult>;
     /** Restore a soft-deleted project and its cascaded children */

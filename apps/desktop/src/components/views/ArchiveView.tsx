@@ -76,7 +76,10 @@ const ArchiveProjectRow = memo(function ArchiveProjectRow({
     const handleOpen = useCallback(() => onOpen(project.id), [onOpen, project.id]);
     const handleRestore = useCallback(() => onRestore(project.id), [onRestore, project.id]);
     const handleDelete = useCallback(() => onDelete(project), [onDelete, project]);
-    const archivedText = `${tFallback(t, 'list.done', 'Completed')}: ${project.updatedAt ? safeFormatDate(project.updatedAt, 'Pp', project.updatedAt) : 'Unknown'}`;
+    const outcomeTimestamp = project.cancelledAt || project.updatedAt;
+    const archivedText = `${project.cancelledAt
+        ? tFallback(t, 'projects.cancelled', 'Cancelled')
+        : tFallback(t, 'list.done', 'Completed')}: ${outcomeTimestamp ? safeFormatDate(outcomeTimestamp, 'Pp', outcomeTimestamp) : 'Unknown'}`;
 
     return (
         <div className="rounded-lg px-3 py-3 flex items-center justify-between group hover:bg-muted/50 transition-colors">
@@ -87,7 +90,7 @@ const ArchiveProjectRow = memo(function ArchiveProjectRow({
                     onClick={handleOpen}
                     className="min-w-0 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
-                    <h3 className="font-medium text-foreground line-through opacity-70">{project.title}</h3>
+                    <h3 className={cn('font-medium text-foreground opacity-70', !project.cancelledAt && 'line-through')}>{project.title}</h3>
                     <p className="text-xs text-muted-foreground mt-1">
                         {archivedText}
                         {areaName ? ` • ${areaName}` : ''}

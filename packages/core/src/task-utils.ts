@@ -8,7 +8,7 @@ import { differenceInCalendarDays, startOfDay } from 'date-fns';
 import { hasTimeComponent, isDueForReview, safeParseDate, safeParseDueDate } from './date';
 import { hasRecurrenceRule } from './recurrence';
 import { timeEstimateToMinutes } from './calendar-scheduling';
-import { isTaskActionable, TASK_STATUS_ORDER } from './task-status';
+import { isTaskActionable, isTaskFinished, TASK_STATUS_ORDER } from './task-status';
 import { isTaskInActiveProject } from './project-utils';
 import type { Language } from './i18n/i18n-types';
 
@@ -1047,7 +1047,7 @@ export function splitCompletedTasks<T extends Pick<Task, 'status'>>(tasks: T[]):
     const completedTasks: T[] = [];
 
     tasks.forEach((task) => {
-        if (task.status === 'done') {
+        if (isTaskFinished(task)) {
             completedTasks.push(task);
         } else {
             activeTasks.push(task);

@@ -475,6 +475,7 @@ describe('project archive restore helpers', () => {
             completedAtBeforeProjectArchive: '2026-01-03T00:00:00.000Z',
             isFocusedTodayBeforeProjectArchive: true,
             projectArchivedAt: archivedAt,
+            updatedAt: archivedAt,
             rev: 4,
         });
 
@@ -560,6 +561,7 @@ describe('project archive restore helpers', () => {
             deletedAt: archivedAt,
             deletedAtBeforeProjectArchive: null,
             projectArchivedAt: archivedAt,
+            updatedAt: archivedAt,
             rev: 7,
         });
         const preDeletedSection = createSection('deleted-section', 'project-1', 1, {
@@ -958,14 +960,14 @@ describe('completion timestamp updates', () => {
         expect(updatedTask.focusOrder).toBeUndefined();
     });
 
-    it('preserves an explicit focusOrder supplied in the same completion update', () => {
+    it('clears an explicit focusOrder supplied in the same completion update', () => {
         const task = createTask('t10', undefined, 0, {
             status: 'next',
             isFocusedToday: true,
             focusOrder: 3,
         });
         const { updatedTask } = applyTaskUpdates(task, { status: 'done', focusOrder: 7 }, now);
-        expect(updatedTask.focusOrder).toBe(7);
+        expect(updatedTask.focusOrder).toBeUndefined();
     });
 });
 

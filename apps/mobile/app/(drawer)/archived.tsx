@@ -5,6 +5,8 @@ import {
     getInlineMarkdownPreview,
     getTaskMetadataFilterVisibility,
     getUsedTaskTokens,
+    DONE_TASK_LIST_SORT_OPTIONS,
+    isTaskCancelled,
     projectMatchesAreaFilterSelection,
     resolveFeatureFlags,
     resolveTaskSortByForFeatures,
@@ -15,14 +17,15 @@ import {
     taskMatchesAreaFilterSelection,
     tFallback,
     useTaskStore,
+    type Project,
+    type Task,
+    type TaskSortBy,
 } from '@mindwtr/core';
-import type { Project, Task, TaskSortBy } from '@mindwtr/core';
 import { FilterChip, TaskFilterSheet } from '@/components/task-filter-sheet';
 import { resolveTimeEstimateFilterOptions } from '@/components/time-estimate-filter-utils';
 import { taskMatchesFilterSelections, useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 import { useLocalDayKey } from '@/hooks/use-local-day-key';
 import { buildTaskGroupSections, getTaskGroupByLabel, type TaskGroupItem } from '@/lib/task-group-sections';
-import { DONE_TASK_LIST_SORT_OPTIONS } from '@mindwtr/core';
 import {
     ARCHIVED_LIST_GROUP_OPTIONS,
     ARCHIVED_LIST_VIEW_STATE_STORAGE_KEY,
@@ -55,6 +58,7 @@ function ArchivedTaskItem({
     onEditCompletedAt,
     onToggleSelect,
     completedLabel,
+    cancelledLabel,
     editCompletedAtLabel,
     selectLabel,
     restoreLabel,
@@ -71,6 +75,7 @@ function ArchivedTaskItem({
     onEditCompletedAt: () => void;
     onToggleSelect: () => void;
     completedLabel: string;
+    cancelledLabel: string;
     editCompletedAtLabel: string;
     selectLabel: string;
     restoreLabel: string;
@@ -80,7 +85,10 @@ function ArchivedTaskItem({
     isHighlighted?: boolean;
 }) {
     const swipeableRef = useRef<Swipeable>(null);
-    const completionTimestamp = task.completedAt || task.updatedAt;
+    const cancelled = isTaskCancelled(task);
+    const completionTimestamp = cancelled
+        ? task.cancelledAt || task.updatedAt
+        : task.completedAt || task.updatedAt;
     const completionDateLabel = completionTimestamp
         ? safeFormatDate(completionTimestamp, 'Pp', completionTimestamp)
         : 'Unknown';
@@ -141,7 +149,10 @@ function ArchivedTaskItem({
                     </View>
                 )}
                 <View style={styles.taskContent}>
-                    <Text style={[styles.taskTitle, { color: tc.secondaryText }]} numberOfLines={2}>
+                    <Text
+                        style={[styles.taskTitle, !cancelled && styles.completedTitle, { color: tc.secondaryText }]}
+                        numberOfLines={2}
+                    >
                         {task.title}
                     </Text>
                     {task.description && (
@@ -152,21 +163,27 @@ function ArchivedTaskItem({
                             numberOfLines={1}
                         />
                     )}
-                    <Pressable
-                        disabled={selectionMode}
-                        onPress={(event) => {
-                            event.stopPropagation();
-                            onEditCompletedAt();
-                        }}
-                        hitSlop={6}
-                        accessibilityRole="button"
-                        accessibilityLabel={editCompletedAtLabel}
-                        style={styles.archivedDateButton}
-                    >
+                    {cancelled ? (
                         <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>
-                            {completedLabel}: {completionDateLabel}
+                            {cancelledLabel}: {completionDateLabel}
                         </Text>
-                    </Pressable>
+                    ) : (
+                        <Pressable
+                            disabled={selectionMode}
+                            onPress={(event) => {
+                                event.stopPropagation();
+                                onEditCompletedAt();
+                            }}
+                            hitSlop={6}
+                            accessibilityRole="button"
+                            accessibilityLabel={editCompletedAtLabel}
+                            style={styles.archivedDateButton}
+                        >
+                            <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>
+                                {completedLabel}: {completionDateLabel}
+                            </Text>
+                        </Pressable>
+                    )}
                 </View>
                 <View style={[styles.statusIndicator, { backgroundColor: '#6B7280' }]} />
             </Pressable>
@@ -184,6 +201,7 @@ function ArchivedProjectItem({
     onRestore,
     onDelete,
     completedLabel,
+    cancelledLabel,
     restoreLabel,
     deleteLabel,
 }: {
@@ -194,12 +212,14 @@ function ArchivedProjectItem({
     onRestore: () => void;
     onDelete: () => void;
     completedLabel: string;
+    cancelledLabel: string;
     restoreLabel: string;
     deleteLabel: string;
 }) {
     const swipeableRef = useRef<Swipeable>(null);
-    const archivedDateLabel = project.updatedAt
-        ? safeFormatDate(project.updatedAt, 'Pp', project.updatedAt)
+    const outcomeTimestamp = project.cancelledAt || project.updatedAt;
+    const archivedDateLabel = outcomeTimestamp
+        ? safeFormatDate(outcomeTimestamp, 'Pp', outcomeTimestamp)
         : 'Unknown';
 
     const renderLeftActions = () => (
@@ -245,11 +265,14 @@ function ArchivedProjectItem({
                 ]}
             >
                 <View style={styles.taskContent}>
-                    <Text style={[styles.taskTitle, { color: tc.secondaryText }]} numberOfLines={2}>
+                    <Text
+                        style={[styles.taskTitle, !project.cancelledAt && styles.completedTitle, { color: tc.secondaryText }]}
+                        numberOfLines={2}
+                    >
                         {project.title}
                     </Text>
                     <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>
-                        {completedLabel}: {archivedDateLabel}
+                        {project.cancelledAt ? cancelledLabel : completedLabel}: {archivedDateLabel}
                     </Text>
                     {areaName ? (
                         <Text style={[styles.archivedDate, { color: tc.secondaryText }]}>{areaName}</Text>
@@ -587,6 +610,7 @@ export default function ArchivedScreen() {
             onRestore={() => handleRestoreProject(item.id)}
             onDelete={() => handleDeleteProject(item.id)}
             completedLabel={tFallback(t, 'list.done', 'Completed')}
+            cancelledLabel={tFallback(t, 'projects.cancelled', 'Cancelled')}
             restoreLabel={tFallback(t, 'trash.restore', 'Restore')}
             deleteLabel={tFallback(t, 'common.delete', 'Delete')}
         />
@@ -602,6 +626,7 @@ export default function ArchivedScreen() {
             onEditCompletedAt={() => setCompletedAtTaskId(item.id)}
             onToggleSelect={() => toggleMultiSelect(item.id)}
             completedLabel={tFallback(t, 'list.done', 'Completed')}
+            cancelledLabel={tFallback(t, 'task.cancelled', 'Cancelled')}
             editCompletedAtLabel={tFallback(t, 'task.editCompletedAt', 'Edit completion time')}
             selectLabel={tFallback(t, 'bulk.select', 'Select')}
             restoreLabel={tFallback(t, 'trash.restore', 'Restore')}
@@ -1085,6 +1110,8 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         marginBottom: 4,
+    },
+    completedTitle: {
         textDecorationLine: 'line-through',
     },
     taskDescription: {

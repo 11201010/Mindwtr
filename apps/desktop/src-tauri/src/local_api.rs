@@ -1421,6 +1421,32 @@ fn has_non_empty_string(task: &Map<String, Value>, key: &str) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
+// Cancellation is an archived outcome, never a completed occurrence. Keep this
+// boundary aligned with core's normalizeTaskLifecycleFields for native writes.
+fn normalize_local_task_lifecycle(task: &mut Map<String, Value>, now: &str) {
+    let status = task
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("inbox")
+        .to_string();
+    if status != "archived" {
+        task.remove("cancelledAt");
+    }
+    if status == "archived" && has_non_empty_string(task, "cancelledAt") {
+        task.remove("completedAt");
+    } else if matches!(status.as_str(), "done" | "archived") {
+        if !has_non_empty_string(task, "completedAt") {
+            task.insert("completedAt".to_string(), Value::String(now.to_string()));
+        }
+    } else {
+        task.remove("completedAt");
+    }
+    if matches!(status.as_str(), "done" | "archived") {
+        task.insert("isFocusedToday".to_string(), Value::Bool(false));
+        task.remove("focusOrder");
+    }
+}
+
 /// The complete/archive/restore mutation lifted out of `route_api_request`'s
 /// closure (previously untestable without a `tauri::AppHandle`). Mirrors
 /// core's write-invariant home for tasks: `applyTaskUpdates` for
@@ -1455,6 +1481,7 @@ fn apply_task_action(
     match action {
         "complete" => {
             let previous_task = task.clone();
+            task.remove("cancelledAt");
             // archived -> done is a lifecycle correction, not a new
             // completion: keep the existing completedAt (falling back to
             // `now` only if it is somehow missing) instead of overwriting it,
@@ -2480,6 +2507,10 @@ fn create_task_from_body(
     if !had_explicit_status && has_non_empty_string(&task, "startTime") {
         task.insert("status".to_string(), Value::String("next".to_string()));
     }
+    if !had_explicit_status && has_non_empty_string(&task, "cancelledAt") {
+        task.insert("status".to_string(), Value::String("archived".to_string()));
+    }
+    normalize_local_task_lifecycle(&mut task, &now);
     if task.get("status").and_then(Value::as_str) == Some("reference") {
         normalize_created_reference_task(&mut task);
     }
@@ -2559,6 +2590,7 @@ fn apply_task_patch_internal(
             _ => {}
         }
     }
+    let cancelling = has_non_empty_string(&sanitized, "cancelledAt");
     for (key, value) in sanitized {
         if value.is_null() {
             task.remove(&key);
@@ -2566,7 +2598,13 @@ fn apply_task_patch_internal(
             task.insert(key, value);
         }
     }
-    task.insert("updatedAt".to_string(), Value::String(now_iso()));
+    let now = now_iso();
+    if cancelling {
+        task.insert("status".to_string(), Value::String("archived".to_string()));
+        task.remove("boardOrder");
+    }
+    normalize_local_task_lifecycle(task, &now);
+    task.insert("updatedAt".to_string(), Value::String(now));
     bump_task_revision(task, device_id);
     Ok(())
 }
@@ -2634,6 +2672,13 @@ fn sanitize_task_patch_map(patch: &mut Map<String, Value>) -> Result<(), String>
             }
             "startTime" | "dueDate" | "reviewAt" => {
                 value.is_null() || value.as_str().is_some_and(valid_iso_date_like)
+            }
+            "cancelledAt" => {
+                value.is_null()
+                    || value.as_str().is_some_and(|timestamp| {
+                        timestamp.as_bytes().get(10) == Some(&b'T')
+                            && OffsetDateTime::parse(timestamp, &Rfc3339).is_ok()
+                    })
             }
             "timeEstimate" => value.is_null() || valid_time_estimate(value),
             "showFutureRecurrence" | "isFocusedToday" | "suppressMindwtrReminders" => {
@@ -4637,6 +4682,75 @@ mod tests {
                 writable,
                 "Local API write parity for {name}"
             );
+        }
+    }
+
+    #[test]
+    fn cancellation_patch_preserves_history_and_stops_recurrence() {
+        let mut task = json!({
+            "id": "cancel-series", "title": "Weekly action", "status": "next",
+            "description": "Keep this history", "isFocusedToday": true,
+            "focusOrder": 2, "boardOrder": 4, "rev": 3,
+            "recurrence": { "rule": "weekly", "seriesId": "cancel-series" }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let patch = json!({"cancelledAt": "2026-09-07T12:00:00.000Z"});
+        apply_task_patch(&mut task, patch.as_object().unwrap(), "device-a").unwrap();
+        assert_eq!(task["status"], "archived");
+        assert_eq!(task["cancelledAt"], "2026-09-07T12:00:00.000Z");
+        assert_eq!(task["description"], "Keep this history");
+        assert_eq!(task["recurrence"]["rule"], "weekly");
+        assert_eq!(task["isFocusedToday"], false);
+        assert!(!task.contains_key("completedAt"));
+        assert!(!task.contains_key("focusOrder"));
+        assert!(!task.contains_key("boardOrder"));
+        assert_eq!(task["rev"], 4);
+
+        // A later notes edit must not turn cancellation into completion.
+        apply_task_patch(
+            &mut task,
+            json!({"description": "Reason added"}).as_object().unwrap(),
+            "device-a",
+        )
+        .unwrap();
+        assert!(!task.contains_key("completedAt"));
+        assert!(task.contains_key("cancelledAt"));
+
+        // Correcting the outcome to Completed clears cancellation and does not
+        // create another recurring occurrence from an already archived item.
+        let follow_up = apply_task_action(
+            &mut task,
+            "complete",
+            "archived",
+            "2026-09-08T12:00:00.000Z",
+            "device-a",
+            &LiveContainers::default(),
+        )
+        .unwrap();
+        assert!(follow_up.is_none());
+        assert_eq!(task["status"], "done");
+        assert!(!task.contains_key("cancelledAt"));
+        assert_eq!(task["completedAt"], "2026-09-08T12:00:00.000Z");
+    }
+
+    #[test]
+    fn cancellation_creation_and_timestamp_validation() {
+        let body = json!({"title": "Closed action", "props": {"cancelledAt": "2026-09-07T12:00:00.000Z", "isFocusedToday": true}});
+        let task =
+            create_task_from_body(body.as_object().unwrap(), "device-a", &json!({})).unwrap();
+        assert_eq!(task["status"], "archived");
+        assert_eq!(task["isFocusedToday"], false);
+        assert!(!task.contains_key("completedAt"));
+        for value in [
+            json!("2026-09-07"),
+            json!("tomorrow"),
+            json!(42),
+            json!("2026-02-30T12:00:00Z"),
+        ] {
+            let mut patch = Map::from_iter([("cancelledAt".to_string(), value)]);
+            assert!(sanitize_task_patch_map(&mut patch).is_err());
         }
     }
 

@@ -37,10 +37,10 @@ const SNAPSHOT_RETENTION_RECENT_COUNT: usize = 2;
 const SQLITE_BUSY_TIMEOUT_MS: u64 = 5_000;
 const STORAGE_RETRY_ATTEMPTS: usize = 4;
 const STORAGE_RETRY_BASE_DELAY_MS: u64 = 120;
-// Version 7 adds projects.startDate. Increment this whenever SQLITE_SCHEMA or
+// Version 8 adds tasks.cancelledAt and projects.cancelledAt. Increment this whenever SQLITE_SCHEMA or
 // an ensure_* migration changes; otherwise the warm schema-state fast path can
 // incorrectly skip the migration on an existing database.
-const STORAGE_SCHEMA_VERSION: i64 = 7;
+const STORAGE_SCHEMA_VERSION: i64 = 8;
 const STORAGE_SCHEMA_STATE_TABLE: &str = "storage_schema_state";
 // Version 4 adds assignedTo to the desktop-native FTS schema and forces one
 // content rebuild after the corrected triggers are installed.
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   repeatReminderMinutes INTEGER,
   reviewAt TEXT,
   completedAt TEXT,
+  cancelledAt TEXT,
   statusBeforeProjectArchive TEXT,
   completedAtBeforeProjectArchive TEXT,
   isFocusedTodayBeforeProjectArchive INTEGER,
@@ -146,7 +147,8 @@ CREATE TABLE IF NOT EXISTS projects (
   updatedAt TEXT NOT NULL,
   deletedAt TEXT,
   purgedAt TEXT,
-  startDate TEXT
+  startDate TEXT,
+  cancelledAt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS areas (
@@ -489,6 +491,7 @@ fn initialize_sqlite_schema(conn: &mut Connection) -> Result<i64, String> {
         ensure_column(&transaction, "tasks", "suppressMindwtrReminders", "INTEGER")?;
         ensure_column(&transaction, "tasks", "repeatReminderMinutes", "INTEGER")?;
         ensure_column(&transaction, "tasks", "timeSpentMinutes", "INTEGER")?;
+        ensure_column(&transaction, "tasks", "cancelledAt", "TEXT")?;
         ensure_column(&transaction, "tasks", "statusBeforeProjectArchive", "TEXT")?;
         ensure_column(
             &transaction,
@@ -530,6 +533,7 @@ fn initialize_sqlite_schema(conn: &mut Connection) -> Result<i64, String> {
         ensure_column(&transaction, "projects", "taskSortBy", "TEXT")?;
         ensure_projects_due_date_column(&transaction)?;
         ensure_column(&transaction, "projects", "startDate", "TEXT")?;
+        ensure_column(&transaction, "projects", "cancelledAt", "TEXT")?;
         ensure_projects_purged_at_column(&transaction)?;
         ensure_projects_area_order_index(&transaction)?;
         ensure_sync_revision_columns(&transaction)?;
@@ -1687,7 +1691,7 @@ fn replace_task_row(conn: &Connection, task: &Value) -> Result<(), String> {
     let normalized_rev = normalized_revision_for_storage(task.get("rev"));
     let normalized_rev_by = normalized_rev_by(task.get("revBy"));
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, title, status, priority, energyLevel, assignedTo, taskMode, startTime, relativeStartOffset, dueDate, recurrence, showFutureRecurrence, pushCount, tags, contexts, checklist, description, textDirection, attachments, location, projectId, sectionId, viewSectionIds, areaId, orderNum, boardOrder, focusOrder, isFocusedToday, timeEstimate, suppressMindwtrReminders, repeatReminderMinutes, reviewAt, completedAt, statusBeforeProjectArchive, completedAtBeforeProjectArchive, isFocusedTodayBeforeProjectArchive, projectArchivedAt, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, timeSpentMinutes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)",
+        "INSERT OR REPLACE INTO tasks (id, title, status, priority, energyLevel, assignedTo, taskMode, startTime, relativeStartOffset, dueDate, recurrence, showFutureRecurrence, pushCount, tags, contexts, checklist, description, textDirection, attachments, location, projectId, sectionId, viewSectionIds, areaId, orderNum, boardOrder, focusOrder, isFocusedToday, timeEstimate, suppressMindwtrReminders, repeatReminderMinutes, reviewAt, completedAt, cancelledAt, statusBeforeProjectArchive, completedAtBeforeProjectArchive, isFocusedTodayBeforeProjectArchive, projectArchivedAt, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, timeSpentMinutes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45)",
         params![
             task.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
             task.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -1729,6 +1733,7 @@ fn replace_task_row(conn: &Connection, task: &Value) -> Result<(), String> {
             task.get("repeatReminderMinutes").and_then(|v| v.as_i64()),
             task.get("reviewAt").and_then(|v| v.as_str()),
             task.get("completedAt").and_then(|v| v.as_str()),
+            task.get("cancelledAt").and_then(|v| v.as_str()),
             task
                 .get("statusBeforeProjectArchive")
                 .and_then(|v| v.as_str()),
@@ -1962,6 +1967,11 @@ fn row_to_task_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Error> 
             map.insert("completedAt".to_string(), Value::String(v));
         }
     }
+    if let Ok(val) = row.get::<_, Option<String>>("cancelledAt") {
+        if let Some(v) = val {
+            map.insert("cancelledAt".to_string(), Value::String(v));
+        }
+    }
     if let Ok(val) = row.get::<_, Option<String>>("statusBeforeProjectArchive") {
         if let Some(v) = val {
             map.insert("statusBeforeProjectArchive".to_string(), Value::String(v));
@@ -2080,6 +2090,11 @@ fn row_to_project_value(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Erro
     if let Ok(val) = row.get::<_, Option<String>>("reviewAt") {
         if let Some(v) = val {
             map.insert("reviewAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("cancelledAt") {
+        if let Some(v) = val {
+            map.insert("cancelledAt".to_string(), Value::String(v));
         }
     }
     if let Ok(val) = row.get::<_, Option<String>>("areaId") {
@@ -3120,7 +3135,7 @@ fn replace_data_in_transaction(conn: &Connection, mut data: Value) -> Result<Val
         let tag_ids_json = json_str_or_default(project.get("tagIds"), "[]");
         let attachments_json = json_str(project.get("attachments"));
         conn.execute(
-            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            "INSERT OR REPLACE INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 project.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 project.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -3145,6 +3160,7 @@ fn replace_data_in_transaction(conn: &Connection, mut data: Value) -> Result<Val
                 project.get("deletedAt").and_then(|v| v.as_str()),
                 project.get("purgedAt").and_then(|v| v.as_str()),
                 project.get("startDate").and_then(|v| v.as_str()),
+                project.get("cancelledAt").and_then(|v| v.as_str()),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -3207,7 +3223,7 @@ fn replace_data_in_transaction(conn: &Connection, mut data: Value) -> Result<Val
         let attachments_json = json_str(task.get("attachments"));
         let view_section_ids_json = json_str(task.get("viewSectionIds"));
         conn.execute(
-            "INSERT OR REPLACE INTO tasks (id, title, status, priority, energyLevel, assignedTo, taskMode, startTime, relativeStartOffset, dueDate, recurrence, showFutureRecurrence, pushCount, tags, contexts, checklist, description, textDirection, attachments, location, projectId, sectionId, viewSectionIds, areaId, orderNum, boardOrder, focusOrder, isFocusedToday, timeEstimate, suppressMindwtrReminders, repeatReminderMinutes, reviewAt, completedAt, statusBeforeProjectArchive, completedAtBeforeProjectArchive, isFocusedTodayBeforeProjectArchive, projectArchivedAt, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, timeSpentMinutes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)",
+            "INSERT OR REPLACE INTO tasks (id, title, status, priority, energyLevel, assignedTo, taskMode, startTime, relativeStartOffset, dueDate, recurrence, showFutureRecurrence, pushCount, tags, contexts, checklist, description, textDirection, attachments, location, projectId, sectionId, viewSectionIds, areaId, orderNum, boardOrder, focusOrder, isFocusedToday, timeEstimate, suppressMindwtrReminders, repeatReminderMinutes, reviewAt, completedAt, cancelledAt, statusBeforeProjectArchive, completedAtBeforeProjectArchive, isFocusedTodayBeforeProjectArchive, projectArchivedAt, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, timeSpentMinutes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45)",
             params![
                 task.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
                 task.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
@@ -3249,6 +3265,7 @@ fn replace_data_in_transaction(conn: &Connection, mut data: Value) -> Result<Val
                 task.get("repeatReminderMinutes").and_then(|v| v.as_i64()),
                 task.get("reviewAt").and_then(|v| v.as_str()),
                 task.get("completedAt").and_then(|v| v.as_str()),
+                task.get("cancelledAt").and_then(|v| v.as_str()),
                 task
                     .get("statusBeforeProjectArchive")
                     .and_then(|v| v.as_str()),
@@ -5452,10 +5469,13 @@ mod tests {
         let db_path = temp.path().join("version-six-projects.sqlite");
         let conn = Connection::open(&db_path).expect("open legacy database");
         let version_six_schema = SQLITE_SCHEMA.replace(
-            "  purgedAt TEXT,\n  startDate TEXT\n);",
-            "  purgedAt TEXT\n);",
+            "  purgedAt TEXT,\n  startDate TEXT,\n  cancelledAt TEXT\n);",
+            "  purgedAt TEXT,\n  cancelledAt TEXT\n);",
         );
-        assert_ne!(version_six_schema, SQLITE_SCHEMA, "fixture must omit projects.startDate");
+        assert_ne!(
+            version_six_schema, SQLITE_SCHEMA,
+            "fixture must omit projects.startDate"
+        );
         conn.execute_batch(&version_six_schema)
             .expect("create version six schema");
         let schema_generation = sqlite_schema_generation(&conn).expect("read legacy generation");
@@ -5469,6 +5489,70 @@ mod tests {
         let reopened = open_sqlite_path(&db_path).expect("migrate version six database");
 
         assert!(has_column(&reopened, "projects", "startDate").expect("inspect project columns"));
+        let state = stored_sqlite_schema_state(&reopened)
+            .expect("read migrated state")
+            .expect("migrated state row");
+        assert_eq!(state.storage_version, STORAGE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn sqlite_open_migrates_version_seven_tables_missing_cancellation_timestamps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("version-seven-cancellation.sqlite");
+        let conn = Connection::open(&db_path).expect("open legacy database");
+        let version_seven_schema = SQLITE_SCHEMA
+            .replace(
+                "  completedAt TEXT,\n  cancelledAt TEXT,\n",
+                "  completedAt TEXT,\n",
+            )
+            .replace(
+                "  startDate TEXT,\n  cancelledAt TEXT\n);",
+                "  startDate TEXT\n);",
+            );
+        assert_ne!(
+            version_seven_schema, SQLITE_SCHEMA,
+            "fixture must omit cancellation columns"
+        );
+        conn.execute_batch(&version_seven_schema)
+            .expect("create version seven schema");
+        conn.execute(
+            "INSERT INTO tasks (id, title, status, createdAt, updatedAt) VALUES ('kept-task', 'Keep task', 'next', '2026-09-01', '2026-09-01')",
+            [],
+        )
+        .expect("seed legacy task");
+        conn.execute(
+            "INSERT INTO projects (id, title, status, color, createdAt, updatedAt) VALUES ('kept-project', 'Keep project', 'active', '#6B7280', '2026-09-01', '2026-09-01')",
+            [],
+        )
+        .expect("seed legacy project");
+        let schema_generation = sqlite_schema_generation(&conn).expect("read legacy generation");
+        conn.execute(
+            "INSERT INTO storage_schema_state (id, storage_version, schema_generation) VALUES (1, 7, ?1)",
+            params![schema_generation],
+        )
+        .expect("record version seven schema state");
+        drop(conn);
+
+        let reopened = open_sqlite_path(&db_path).expect("migrate version seven database");
+
+        assert!(has_column(&reopened, "tasks", "cancelledAt").expect("inspect task columns"));
+        assert!(has_column(&reopened, "projects", "cancelledAt").expect("inspect project columns"));
+        let task_title: String = reopened
+            .query_row(
+                "SELECT title FROM tasks WHERE id = 'kept-task'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read preserved task");
+        let project_title: String = reopened
+            .query_row(
+                "SELECT title FROM projects WHERE id = 'kept-project'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read preserved project");
+        assert_eq!(task_title, "Keep task");
+        assert_eq!(project_title, "Keep project");
         let state = stored_sqlite_schema_state(&reopened)
             .expect("read migrated state")
             .expect("migrated state row");
@@ -5941,6 +6025,7 @@ mod tests {
             "repeatReminderMinutes": 15,
             "reviewAt": "2026-06-03T09:00:00.000Z",
             "completedAt": "2026-06-04T10:00:00.000Z",
+            "cancelledAt": "2026-06-04T11:00:00.000Z",
             "statusBeforeProjectArchive": "next",
             "completedAtBeforeProjectArchive": "2026-06-05T10:00:00.000Z",
             "isFocusedTodayBeforeProjectArchive": false,
@@ -5977,6 +6062,7 @@ mod tests {
             "dueDate": "2026-06-10T12:00:00.000Z",
             "startDate": "2026-06-01T09:00:00.000Z",
             "reviewAt": "2026-06-11T09:00:00.000Z",
+            "cancelledAt": "2026-06-11T10:00:00.000Z",
             "areaId": "area-1",
             "areaTitle": "Work",
             "rev": 43,
@@ -6059,6 +6145,7 @@ mod tests {
             "repeatReminderMinutes",
             "reviewAt",
             "completedAt",
+            "cancelledAt",
             "statusBeforeProjectArchive",
             "completedAtBeforeProjectArchive",
             "isFocusedTodayBeforeProjectArchive",
@@ -6094,6 +6181,7 @@ mod tests {
             "dueDate",
             "startDate",
             "reviewAt",
+            "cancelledAt",
             "areaId",
             "areaTitle",
             "rev",

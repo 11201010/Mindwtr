@@ -190,6 +190,20 @@ describe('mindwtr csv import', () => {
         expect(result.parsedData?.tasks).toMatchObject([{ status: 'done' }]);
     });
 
+    it('defaults empty Status to archived when Cancelled At is set', () => {
+        const csv = buildCsv(
+            ['Title', 'Status', 'Cancelled At'],
+            [['Cancelled already', '', '2026-08-05T10:00:00Z']],
+        );
+
+        const result = parseMindwtrCsvImportSource({ fileName: 'export.csv', text: csv });
+
+        expect(result.parsedData?.tasks).toMatchObject([{
+            status: 'archived',
+            cancelledAt: '2026-08-05T10:00:00.000Z',
+        }]);
+    });
+
     it('warns once about unknown columns without repeating per row', () => {
         const csv = buildCsv(
             ['Title', 'Notes'],

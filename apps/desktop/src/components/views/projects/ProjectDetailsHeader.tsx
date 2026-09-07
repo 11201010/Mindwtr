@@ -1,6 +1,6 @@
 import { format } from 'date-fns';
 import { safeParseDate, tFallback, type Project } from '@mindwtr/core';
-import { Calendar, CalendarClock, CalendarRange, Check, CheckCircle, Copy, FolderOpenDot, HelpCircle, Info, ListOrdered, Loader2, MoreHorizontal, RotateCcw, Signal, Trash2 } from 'lucide-react';
+import { Calendar, CalendarClock, CalendarRange, Check, CheckCircle, Copy, FolderOpenDot, HelpCircle, Info, ListOrdered, Loader2, MoreHorizontal, RotateCcw, Signal, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -26,6 +26,7 @@ type ProjectDetailsHeaderProps = {
     onToggleDetails: () => void;
     onDuplicate: () => void;
     onArchive: () => Promise<void> | void;
+    onCancel?: () => Promise<void> | void;
     onReactivate: () => void;
     onDelete: () => Promise<void> | void;
     isDeleting?: boolean;
@@ -55,6 +56,7 @@ export function ProjectDetailsHeader({
     onToggleDetails,
     onDuplicate,
     onArchive,
+    onCancel,
     onReactivate,
     onDelete,
     isDeleting = false,
@@ -67,12 +69,16 @@ export function ProjectDetailsHeader({
     const menuRef = useRef<HTMLDivElement | null>(null);
     const menuPanelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
-    const completedRatio = projectProgress && projectProgress.total > 0
+    const completedRatio = project.cancelledAt
+        ? 0
+        : projectProgress && projectProgress.total > 0
         ? projectProgress.isArchived
             ? 100
             : Math.round((projectProgress.doneCount / projectProgress.total) * 100)
         : 0;
-    const progressText = projectProgress?.isArchived && projectProgress.total > 0
+    const progressText = project.cancelledAt
+        ? tFallback(t, 'projects.cancelled', 'Cancelled')
+        : projectProgress?.isArchived && projectProgress.total > 0
         ? `${projectProgress.total} ${tFallback(t, 'list.done', 'Completed')}`
         : projectProgress && projectProgress.total > 0
           ? `${projectProgress.doneCount}/${projectProgress.total} ${t('status.done')} • ${projectProgress.remainingCount} ${t('process.remaining')}`
@@ -99,7 +105,9 @@ export function ProjectDetailsHeader({
         {
             key: 'status',
             icon: Signal,
-            label: tFallback(t, `status.${project.status}`, project.status),
+            label: project.cancelledAt
+                ? tFallback(t, 'projects.cancelled', 'Cancelled')
+                : tFallback(t, `status.${project.status}`, project.status),
         },
         ...(areaLabel ? [{
             key: 'area',
@@ -331,15 +339,28 @@ export function ProjectDetailsHeader({
                                         {t('projects.reactivate')}
                                     </button>
                                 ) : (
-                                    <button
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => runMenuAction(onArchive)}
-                                        className={MENU_ITEM_CLASS}
-                                    >
-                                        <CheckCircle className="w-4 h-4" />
-                                        {t('projects.complete')}
-                                    </button>
+                                    <>
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            onClick={() => runMenuAction(onArchive)}
+                                            className={MENU_ITEM_CLASS}
+                                        >
+                                            <CheckCircle className="w-4 h-4" />
+                                            {t('projects.complete')}
+                                        </button>
+                                        {onCancel && (
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onClick={() => runMenuAction(onCancel)}
+                                                className={`${MENU_ITEM_CLASS} text-destructive hover:bg-destructive/10 focus:bg-destructive/10`}
+                                            >
+                                                <XCircle className="w-4 h-4" />
+                                                {tFallback(t, 'projects.cancel', 'Cancel project')}
+                                            </button>
+                                        )}
+                                    </>
                                 )}
                                 <div className="my-1 border-t border-border/60" role="separator" />
                                 <button

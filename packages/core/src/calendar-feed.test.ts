@@ -72,7 +72,14 @@ describe('buildCalendarFeedEvents', () => {
     it('excludes tasks the Calendar view hides', () => {
         expect(uids([
             task({ id: 'done', status: 'done', startTime: '2026-05-06T09:00:00.000Z' }),
-            task({ id: 'archived', status: 'archived', startTime: '2026-05-06T09:00:00.000Z' }),
+            task({
+                id: 'cancelled-recurring',
+                status: 'archived',
+                cancelledAt: '2026-05-04T12:00:00.000Z',
+                startTime: '2026-05-06T09:00:00.000Z',
+                recurrence: 'daily',
+                showFutureRecurrence: true,
+            }),
             task({ id: 'reference', status: 'reference', startTime: '2026-05-06T09:00:00.000Z' }),
             task({ id: 'deleted', deletedAt: '2026-05-02T00:00:00.000Z', startTime: '2026-05-06T09:00:00.000Z' }),
             task({ id: 'undated' }),

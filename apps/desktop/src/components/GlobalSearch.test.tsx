@@ -425,6 +425,7 @@ describe('GlobalSearch', () => {
         const dateTasks: Task[] = [
             { ...base, id: 'zeta-done', title: 'Zeta done', status: 'done', completedAt },
             { ...base, id: 'zeta-archived', title: 'Zeta archived', status: 'archived', completedAt },
+            { ...base, id: 'zeta-cancelled', title: 'Zeta cancelled', status: 'archived', cancelledAt: completedAt },
             { ...base, id: 'zeta-unstamped', title: 'Zeta unstamped', status: 'archived' },
             { ...base, id: 'zeta-due', title: 'Zeta due', dueDate: '2099-01-01' },
             { ...base, id: 'zeta-overdue', title: 'Zeta overdue', dueDate: '2020-01-01' },
@@ -473,6 +474,9 @@ describe('GlobalSearch', () => {
             expect(rowFor('Zeta done').textContent).toContain(label);
             // A status gate that only checks 'done' misses archived (#968).
             expect(rowFor('Zeta archived').textContent).toContain(label);
+            expect(rowFor('Zeta cancelled').textContent)
+                .toContain(`Cancelled ${safeFormatDate(completedAt, 'Pp')}`);
+            expect(rowFor('Zeta cancelled').textContent).not.toContain('Completed');
         });
 
         it('labels an unfinished task with its due date and reddens only the overdue one', async () => {

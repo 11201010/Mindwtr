@@ -1444,6 +1444,42 @@ describe('TaskItemDisplay', () => {
         expect(onEditCompletedAt).toHaveBeenCalled();
     });
 
+    it('labels a cancelled archive row without completion styling or time editing', () => {
+        const cancelledAt = '2026-01-02T10:00:00.000Z';
+        const { container, getByText, queryByLabelText } = render(
+            <LanguageProvider>
+                <TaskItemDisplay
+                    task={{ ...baseTask, status: 'archived', cancelledAt }}
+                    language="en"
+                    selectionMode={false}
+                    isViewOpen={false}
+                    actions={{
+                        onToggleView: vi.fn(),
+                        onEdit: vi.fn(),
+                        onDelete: vi.fn(),
+                        onDuplicate: vi.fn(),
+                        onStatusChange: vi.fn(),
+                        openAttachment: vi.fn(),
+                        onEditCompletedAt: vi.fn(),
+                    }}
+                    visibleAttachments={[]}
+                    recurrenceRule=""
+                    recurrenceStrategy="strict"
+                    prioritiesEnabled={false}
+                    timeEstimatesEnabled={false}
+                    isStagnant={false}
+                    showQuickDone={false}
+                    readOnly
+                    t={(key: string) => ({ 'task.cancelled': 'Cancelled' }[key] ?? key)}
+                />
+            </LanguageProvider>
+        );
+
+        expect(getByText(`Cancelled: ${safeFormatDate(cancelledAt, 'Pp', cancelledAt)}`)).toBeInTheDocument();
+        expect(queryByLabelText('Edit completion time')).not.toBeInTheDocument();
+        expect(container.querySelector('.task-item-display__title')).not.toHaveClass('line-through');
+    });
+
     it('offers no mutating actions when the surrounding project is strictly read-only', () => {
         const archivedTask: Task = {
             ...baseTask,

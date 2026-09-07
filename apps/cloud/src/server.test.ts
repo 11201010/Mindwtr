@@ -614,6 +614,18 @@ describe('cloud server utils', () => {
         }
     });
 
+    test('validates cancellation timestamps on task and project writes', () => {
+        for (const kind of ['task', 'project'] as const) {
+            for (const mode of ['create', 'patch'] as const) {
+                expect(validateEntityProps(kind, mode, { cancelledAt: '2026-09-07T16:00:00.000Z' }).ok).toBe(true);
+                expect(validateEntityProps(kind, mode, { cancelledAt: null }).ok).toBe(true);
+                for (const cancelledAt of ['2026-09-07', '2026-02-30T12:00:00Z', '2026-09-07T24:00:00Z', 'tomorrow', '', 123, true]) {
+                    expect(validateEntityProps(kind, mode, { cancelledAt }).ok).toBe(false);
+                }
+            }
+        }
+    });
+
     test('rejects reserved task creation props', () => {
         expect(validateEntityProps('task', 'create', {
             status: 'next',
@@ -3698,6 +3710,105 @@ describe('cloud server api', () => {
         expect(patchResponse.status).toBe(400);
         const payload = await patchResponse.json();
         expect(payload.error).toContain('Unsupported task updates');
+    });
+
+    test('creation applies cancellation precedence while preserving normalized project fields', async () => {
+        const headers = { ...authHeaders, 'content-type': 'application/json' };
+        const cancelledAt = '2026-09-01T12:00:00.000Z';
+        for (const entity of ['task', 'project'] as const) {
+            const response = await fetch(`${baseUrl}/v1/${entity}s`, {
+                method: 'POST', headers,
+                body: JSON.stringify({ title: 'Historical commitment', props: {
+                    cancelledAt,
+                    ...(entity === 'task' ? { isFocusedToday: true } : { color: ' ', tagIds: ['travel'] }),
+                } }),
+            });
+            expect(response.status).toBe(201);
+            const record = (await response.json())[entity];
+            expect(record.status).toBe('archived');
+            expect(record.cancelledAt).toBe(cancelledAt);
+            expect(record.completedAt).toBeUndefined();
+            if (entity === 'project') expect(record.color).toBe('#6B7280');
+            else expect(record.isFocusedToday).toBe(false);
+
+            const explicitStatus = entity === 'task' ? 'next' : 'active';
+            const activeResponse = await fetch(`${baseUrl}/v1/${entity}s`, {
+                method: 'POST', headers,
+                body: JSON.stringify({ title: 'Active commitment', props: { status: explicitStatus, cancelledAt } }),
+            });
+            expect(activeResponse.status).toBe(201);
+            const active = (await activeResponse.json())[entity];
+            expect(active.status).toBe(explicitStatus);
+            expect(active.cancelledAt).toBeUndefined();
+        }
+    });
+
+    test('cancels a recurring task through REST without creating a follow-up', async () => {
+        const headers = { ...authHeaders, 'content-type': 'application/json' };
+        const created = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST', headers,
+            body: JSON.stringify({ title: 'Weekly booking', props: { status: 'next', recurrence: { rule: 'weekly', strategy: 'strict' }, dueDate: '2026-09-07' } }),
+        });
+        expect(created.status).toBe(201);
+        const task = (await created.json()).task;
+        const cancelledAt = new Date().toISOString();
+        const response = await fetch(`${baseUrl}/v1/tasks/${task.id}`, {
+            method: 'PATCH', headers, body: JSON.stringify({ cancelledAt }),
+        });
+        expect(response.status).toBe(200);
+        const cancelled = (await response.json()).task;
+        expect(cancelled.status).toBe('archived');
+        expect(cancelled.cancelledAt).toBe(cancelledAt);
+        expect(cancelled.completedAt).toBeUndefined();
+        expect(cancelled.isFocusedToday).toBe(false);
+        const data = await (await fetch(`${baseUrl}/v1/data`, { headers: authHeaders })).json();
+        expect(data.tasks).toHaveLength(1);
+        const resumed = await fetch(`${baseUrl}/v1/tasks/${task.id}`, {
+            method: 'PATCH', headers, body: JSON.stringify({ status: 'next' }),
+        });
+        expect(resumed.status).toBe(200);
+        expect((await resumed.json()).task.cancelledAt).toBeUndefined();
+    });
+
+    test('project cancellation and reactivation share the reversible child lifecycle through REST', async () => {
+        const headers = { ...authHeaders, 'content-type': 'application/json' };
+        const createProject = await fetch(`${baseUrl}/v1/projects`, {
+            method: 'POST', headers, body: JSON.stringify({ title: 'Japan trip' }),
+        });
+        expect(createProject.status).toBe(201);
+        const project = (await createProject.json()).project;
+        const createTask = async (title: string, status: string) => {
+            const response = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST', headers, body: JSON.stringify({ title, props: { projectId: project.id, status } }),
+            });
+            expect(response.status).toBe(201);
+            return (await response.json()).task;
+        };
+        const done = await createTask('Research flights', 'done');
+        const remaining = await createTask('Book hotel', 'waiting');
+        const cancelledAt = new Date().toISOString();
+        const cancelled = await fetch(`${baseUrl}/v1/projects/${project.id}`, {
+            method: 'PATCH', headers, body: JSON.stringify({ cancelledAt }),
+        });
+        expect(cancelled.status).toBe(200);
+        const closedProject = (await cancelled.json()).project;
+        expect(closedProject.status).toBe('archived');
+        expect(closedProject.cancelledAt).toBe(cancelledAt);
+        const getTask = async (id: string) => (await (await fetch(`${baseUrl}/v1/tasks/${id}`, { headers: authHeaders })).json()).task;
+        const preserved = await getTask(done.id);
+        expect(preserved.status).toBe('done');
+        expect(preserved.completedAt).toBe(done.completedAt);
+        const stopped = await getTask(remaining.id);
+        expect(stopped.status).toBe('archived');
+        expect(stopped.cancelledAt).toBeTruthy();
+        expect(stopped.completedAt).toBeUndefined();
+        const resumed = await fetch(`${baseUrl}/v1/projects/${project.id}`, {
+            method: 'PATCH', headers, body: JSON.stringify({ status: 'active' }),
+        });
+        expect(resumed.status).toBe(200);
+        expect((await resumed.json()).project.cancelledAt).toBeUndefined();
+        expect((await getTask(remaining.id)).status).toBe('waiting');
+        expect((await getTask(done.id)).status).toBe('done');
     });
 
     test('bumps revision when completing and archiving a task', async () => {

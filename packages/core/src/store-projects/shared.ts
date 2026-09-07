@@ -13,6 +13,7 @@ export type ProjectActions = Pick<
     TaskStore,
     | 'addProject'
     | 'updateProject'
+    | 'cancelProject'
     | 'deleteProject'
     | 'restoreProject'
     | 'purgeProject'
@@ -46,12 +47,14 @@ export type ProjectActionContext = {
     set: (partial: Partial<TaskStore> | ((state: TaskStore) => Partial<TaskStore> | TaskStore)) => void;
     get: () => TaskStore;
     debouncedSave: (data: AppData, onError?: (msg: string) => void) => void;
+    flushPendingSave: () => Promise<void>;
 };
 
 export type ProjectCoreActions = Pick<
     ProjectActions,
     | 'addProject'
     | 'updateProject'
+    | 'cancelProject'
     | 'deleteProject'
     | 'restoreProject'
     | 'purgeProject'

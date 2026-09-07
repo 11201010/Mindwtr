@@ -1361,6 +1361,31 @@ describe('TaskItem', () => {
         expect(rowClassTokens()).toContain('ring-primary/40');
     });
 
+    it('does not offer cancellation for a reference item', () => {
+        const referenceTask: Task = {
+            ...mockTask,
+            id: 'reference-menu-task',
+            status: 'reference',
+        };
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [referenceTask],
+                _allTasks: [referenceTask],
+                _tasksById: new Map([[referenceTask.id, referenceTask]]),
+            }));
+        });
+
+        const { container, queryByRole } = render(
+            <LanguageProvider>
+                <TaskItem task={referenceTask} />
+            </LanguageProvider>
+        );
+        fireEvent.contextMenu(container.querySelector('[data-task-id="reference-menu-task"]')!);
+
+        expect(queryByRole('menuitem', { name: /cancel task/i })).toBeNull();
+    });
+
     it('adds an eligible next action to today focus from the task quick actions menu', async () => {
         const nextTask: Task = {
             ...mockTask,

@@ -39,6 +39,7 @@ describe('buildProjectListRows', () => {
     'projects.noArea': 'No Area',
     'status.archived': 'Archived',
     'projects.completed': 'Completed',
+    'projects.closed': 'Closed',
   }[key] ?? key);
 
   it('keeps deferred and archived projects out of the active area list by default', () => {
@@ -77,6 +78,8 @@ describe('buildProjectListRows', () => {
     ]);
     expect(rows.find((row) => row.type === 'project' && row.project.title === 'Waiting Project')).toBeUndefined();
     expect(rows.find((row) => row.type === 'project' && row.project.title === 'Archived Project')).toBeUndefined();
+    expect(rows.find((row) => row.type === 'section-toggle' && row.sectionKind === 'archived'))
+      .toMatchObject({ title: 'Closed' });
   });
 
   it('hides projects under collapsed areas while keeping the area header visible', () => {

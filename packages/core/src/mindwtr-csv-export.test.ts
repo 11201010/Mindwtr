@@ -113,6 +113,30 @@ describe('serializeMindwtrCsv', () => {
         expect(new Date(parsed.tasks[0].dueDate!).toISOString()).toBe('2026-09-05T14:30:00.000Z');
     });
 
+    it('round-trips task cancellation without manufacturing a completion timestamp', () => {
+        const cancelledAt = '2026-09-07T12:00:00.000Z';
+        const exported = appData({
+            tasks: [task({
+                id: 'cancelled-task',
+                status: 'archived',
+                cancelledAt,
+                completedAt: undefined,
+            })],
+        });
+
+        const parsed = reimport(serializeMindwtrCsv(exported));
+        expect(parsed.tasks[0]).toMatchObject({
+            sourceId: 'cancelled-task',
+            status: 'archived',
+            cancelledAt,
+        });
+        expect(parsed.tasks[0].completedAt).toBeUndefined();
+
+        const imported = applyMindwtrCsvImport(appData(), parsed);
+        expect(imported.data.tasks[0]).toMatchObject({ status: 'archived', cancelledAt });
+        expect(imported.data.tasks[0].completedAt).toBeUndefined();
+    });
+
     // D1: the previous version of this test only checked the PARSE output, so it proved the
     // parser was deterministic and never that importing an export leaves the task count alone.
     // Round-trip through applyMindwtrCsvImport or it proves nothing.

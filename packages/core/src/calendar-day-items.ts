@@ -6,7 +6,7 @@
 import { safeParseDate, safeParseDueDate } from './date';
 import type { ExternalCalendarEvent } from './ics';
 import { isProjectedRecurringTask } from './recurrence';
-import { isTaskActionable } from './task-status';
+import { isTaskActionable, isTaskCompleted } from './task-status';
 import type { Task } from './types';
 
 /**
@@ -15,8 +15,10 @@ import type { Task } from './types';
  * timestamps were recorded, which is the same thing the Archive list shows as
  * their completion time — without it those tasks would silently never appear.
  */
-export const getTaskCompletionInstant = (task: Pick<Task, 'completedAt' | 'updatedAt'>): Date | null => (
-    safeParseDate(task.completedAt ?? task.updatedAt)
+export const getTaskCompletionInstant = (
+    task: Pick<Task, 'status' | 'cancelledAt' | 'completedAt' | 'updatedAt'>,
+): Date | null => (
+    isTaskCompleted(task) ? safeParseDate(task.completedAt ?? task.updatedAt) : null
 );
 
 /**
@@ -26,7 +28,7 @@ export const getTaskCompletionInstant = (task: Pick<Task, 'completedAt' | 'updat
  */
 export const isCompletedCalendarTask = (task: Task): boolean => (
     !task.deletedAt
-    && (task.status === 'done' || task.status === 'archived')
+    && isTaskCompleted(task)
     && getTaskCompletionInstant(task) !== null
 );
 
@@ -71,7 +73,7 @@ export type CalendarDayItemsInput = {
 export function buildCalendarDayItems({ completed = [], deadlines, events, scheduled }: CalendarDayItemsInput): CalendarDayItem[] {
     const scheduledIds = new Set(scheduled.map((task) => task.id));
     return [
-        ...completed.map((task): CalendarDayItem => ({
+        ...completed.filter(isCompletedCalendarTask).map((task): CalendarDayItem => ({
             id: `completed-${task.id}`,
             kind: 'completed',
             start: getTaskCompletionInstant(task),

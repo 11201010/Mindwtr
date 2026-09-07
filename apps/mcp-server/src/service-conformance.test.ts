@@ -461,3 +461,89 @@ describe('MindwtrService conformance: local SQLite vs cloud REST', () => {
     });
   });
 });
+
+
+describe('cancellation writes through the local MCP core adapter', () => {
+  let service: MindwtrService;
+  let directory: string;
+  const cancelledAt = '2026-09-07T16:00:00.000Z';
+  beforeAll(() => {
+    directory = mkdtempSync(join(tmpdir(), 'mindwtr-cancellation-mcp-'));
+    writeFileSync(join(directory, 'data.json'), JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], settings: {} }));
+    service = createService({ dbPath: join(directory, 'mindwtr.db'), readonly: false });
+  });
+  afterAll(async () => {
+    await service.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test('cancels and reactivates a task without losing its notes', async () => {
+    const task = await service.addTask({ title: 'Trip booking', status: 'next', description: 'Visa was denied' });
+    const cancelled = await service.updateTask({ id: task.id, cancelledAt });
+    expect(cancelled.status).toBe('archived');
+    expect(cancelled.cancelledAt).toBe(cancelledAt);
+    expect(cancelled.completedAt).toBeUndefined();
+    expect((await service.getTask({ id: task.id })).description).toBe('Visa was denied');
+    const active = await service.updateTask({ id: task.id, status: 'next' });
+    expect(active.cancelledAt).toBeUndefined();
+    expect(active.completedAt).toBeUndefined();
+  });
+
+  test('project cancellation preserves completed children and restores only its cancelled children', async () => {
+    const project = await service.addProject({ title: 'Japan trip' });
+    const prepared = await service.addTask({ title: 'Research flights', projectId: project.id });
+    const remaining = await service.addTask({ title: 'Book hotel', projectId: project.id, status: 'waiting' });
+    const done = await service.completeTask(prepared.id);
+    const cancelled = await service.updateProject({ id: project.id, cancelledAt });
+    expect(cancelled.status).toBe('archived');
+    expect(cancelled.cancelledAt).toBe(cancelledAt);
+    const doneAfter = await service.getTask({ id: prepared.id });
+    expect(doneAfter.status).toBe('done');
+    expect(doneAfter.completedAt).toBe(done.completedAt);
+    expect(doneAfter.cancelledAt).toBeUndefined();
+    const remainingAfter = await service.getTask({ id: remaining.id });
+    expect(remainingAfter.status).toBe('archived');
+    expect(remainingAfter.cancelledAt).toBeTruthy();
+    expect(remainingAfter.completedAt).toBeUndefined();
+    await service.updateProject({ id: project.id, status: 'active' });
+    expect((await service.getTask({ id: remaining.id })).status).toBe('waiting');
+    expect((await service.getTask({ id: prepared.id })).status).toBe('done');
+  });
+});
+
+describe('cancellation forwarding through the cloud MCP adapter', () => {
+  test('preserves task/project timestamps and explicit null clearing in create and patch bodies', async () => {
+    const writes: Array<{ method: string; path: string; body: Record<string, any> }> = [];
+    const service = createCloudService({
+      url: 'https://mindwtr.example.com', token: 'conformance-test-token',
+      fetcher: async (input, init) => {
+        const method = init?.method ?? 'GET';
+        const path = new URL(String(input)).pathname;
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, any>;
+        writes.push({ method, path, body });
+        const entity = path.includes('/projects') ? 'project' : 'task';
+        return new Response(JSON.stringify({ [entity]: {
+          id: `${entity}-1`, title: 'Cancelled commitment', status: 'archived',
+          createdAt: iso('01'), updatedAt: iso('01'), ...(body.props ?? body),
+        } }), { status: method === 'POST' ? 201 : 200 });
+      },
+    });
+    const cancelledAt = '2026-09-07T12:00:00.000Z';
+    await service.addTask({ title: 'Cancelled action', cancelledAt });
+    await service.updateTask({ id: 'task-1', cancelledAt });
+    await service.updateTask({ id: 'task-1', cancelledAt: null });
+    await service.addProject({ title: 'Cancelled project', cancelledAt });
+    await service.updateProject({ id: 'project-1', cancelledAt });
+    await service.updateProject({ id: 'project-1', cancelledAt: null });
+    expect(writes.map(({ method, path, body }) => ({
+      method, path, cancelledAt: body.props?.cancelledAt ?? body.cancelledAt,
+    }))).toEqual([
+      { method: 'POST', path: '/v1/tasks', cancelledAt },
+      { method: 'PATCH', path: '/v1/tasks/task-1', cancelledAt },
+      { method: 'PATCH', path: '/v1/tasks/task-1', cancelledAt: null },
+      { method: 'POST', path: '/v1/projects', cancelledAt },
+      { method: 'PATCH', path: '/v1/projects/project-1', cancelledAt },
+      { method: 'PATCH', path: '/v1/projects/project-1', cancelledAt: null },
+    ]);
+  });
+});

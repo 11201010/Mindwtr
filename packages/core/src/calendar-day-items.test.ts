@@ -33,11 +33,11 @@ const event = (overrides: Partial<ExternalCalendarEvent>): ExternalCalendarEvent
 
 describe('completed look-back (#955)', () => {
     it('files a completed task under its completion instant, falling back to updatedAt', () => {
-        expect(getTaskCompletionInstant({ completedAt: '2026-05-04T09:00:00.000Z', updatedAt: '2026-05-06T00:00:00.000Z' })?.toISOString())
+        expect(getTaskCompletionInstant({ status: 'done', completedAt: '2026-05-04T09:00:00.000Z', updatedAt: '2026-05-06T00:00:00.000Z' })?.toISOString())
             .toBe('2026-05-04T09:00:00.000Z');
         // Archived before completion timestamps existed: the Archive list shows
         // updatedAt as the completion time, so the calendar must agree.
-        expect(getTaskCompletionInstant({ updatedAt: '2026-05-06T00:00:00.000Z' })?.toISOString())
+        expect(getTaskCompletionInstant({ status: 'archived', updatedAt: '2026-05-06T00:00:00.000Z' })?.toISOString())
             .toBe('2026-05-06T00:00:00.000Z');
         expect(buildCalendarDayItems({
             completed: [task({ status: 'archived', updatedAt: '2026-05-06T09:00:00.000Z' })],
@@ -69,6 +69,19 @@ describe('completed look-back (#955)', () => {
         expect(isCompletedCalendarTask(task({ status: 'next' }))).toBe(false);
         expect(isCompletedCalendarTask(task({ status: 'reference' }))).toBe(false);
         expect(isCompletedCalendarTask(task({ status: 'done', deletedAt: '2026-05-05T00:00:00.000Z' }))).toBe(false);
+        const cancelled = task({
+            status: 'archived',
+            cancelledAt: '2026-05-05T00:00:00.000Z',
+            completedAt: undefined,
+        });
+        expect(isCompletedCalendarTask(cancelled)).toBe(false);
+        expect(getTaskCompletionInstant(cancelled)).toBeNull();
+        expect(buildCalendarDayItems({
+            completed: [cancelled],
+            deadlines: [],
+            events: [],
+            scheduled: [],
+        })).toEqual([]);
     });
 
     it('orders completed items by completion time among the day\'s other items', () => {

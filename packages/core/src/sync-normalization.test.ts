@@ -61,6 +61,128 @@ const normalizeForMerge = (data: AppData, nowIso = NOW): AppData => {
 };
 
 describe('sync normalization', () => {
+    const cancellationTimestamp = '2025-12-31T23:59:00.000Z';
+    const cancelledTask = (): Task => ({
+        ...createMockTask('task-cancelled', '2025-12-31T23:00:00.000Z', cancellationTimestamp),
+        status: 'archived',
+        completedAt: undefined,
+        cancelledAt: cancellationTimestamp,
+        rev: 2,
+        revBy: 'new-client',
+    });
+    const cancelledProject = (): Project => ({
+        ...createMockProject('project-cancelled', '2025-12-31T23:00:00.000Z', cancellationTimestamp),
+        status: 'archived',
+        cancelledAt: cancellationTimestamp,
+        rev: 2,
+        revBy: 'new-client',
+    });
+
+    it('merges aligned cancellation data without conflicts and reaches a second-merge fixed point', () => {
+        const aligned = mockAppData([cancelledTask()], [cancelledProject()]);
+        const remote = JSON.parse(JSON.stringify(aligned)) as AppData;
+
+        const first = mergeAppDataWithStats(aligned, remote, { nowIso: NOW });
+        expect(first.stats.tasks.conflicts).toBe(0);
+        expect(first.stats.projects.conflicts).toBe(0);
+        expect(first.data.tasks[0]).toMatchObject({ cancelledAt: cancellationTimestamp, completedAt: undefined });
+        expect(first.data.projects[0].cancelledAt).toBe(cancellationTimestamp);
+
+        const second = mergeAppDataWithStats(first.data, first.data, { nowIso: NOW });
+        expect(second.stats.tasks.conflicts).toBe(0);
+        expect(second.stats.projects.conflicts).toBe(0);
+        expect(second.data).toEqual(first.data);
+    });
+
+    it('preserves cancellation against an older raw document omission when it has not made a newer edit', () => {
+        const task = cancelledTask();
+        const project = cancelledProject();
+        const { cancelledAt: _taskMarker, ...olderTask } = {
+            ...task,
+            rev: 1,
+            revBy: 'old-client',
+            updatedAt: '2025-12-31T23:58:00.000Z',
+        };
+        const { cancelledAt: _projectMarker, ...olderProject } = {
+            ...project,
+            rev: 1,
+            revBy: 'old-client',
+            updatedAt: '2025-12-31T23:58:00.000Z',
+        };
+
+        const merged = mergeAppData(
+            mockAppData([task], [project]),
+            mockAppData([olderTask as Task], [olderProject as Project]),
+            { nowIso: NOW },
+        );
+
+        expect(merged.tasks[0]).toMatchObject({ cancelledAt: cancellationTimestamp, completedAt: undefined });
+        expect(merged.projects[0].cancelledAt).toBe(cancellationTimestamp);
+    });
+
+    it('repairs the exact equal-revision shape written by the previous version after it strips cancellation', () => {
+        const task = cancelledTask();
+        const project = cancelledProject();
+        const { cancelledAt: _taskMarker, ...strippedTask } = task;
+        const { cancelledAt: _projectMarker, ...strippedProject } = project;
+        const oldWriterTask = { ...strippedTask, completedAt: cancellationTimestamp } as Task;
+
+        const forward = mergeAppData(
+            mockAppData([task], [project]),
+            mockAppData([oldWriterTask], [strippedProject as Project]),
+            { nowIso: NOW },
+        );
+        const reverse = mergeAppData(
+            mockAppData([oldWriterTask], [strippedProject as Project]),
+            mockAppData([task], [project]),
+            { nowIso: NOW },
+        );
+
+        expect(forward.tasks[0]).toMatchObject({ cancelledAt: cancellationTimestamp, completedAt: undefined });
+        expect(forward.projects[0].cancelledAt).toBe(cancellationTimestamp);
+        expect(reverse).toEqual(forward);
+    });
+
+    it('lets a real newer reactivation clear cancellation', () => {
+        const task = cancelledTask();
+        const project = cancelledProject();
+        const reactivatedTask: Task = {
+            ...task,
+            status: 'next',
+            cancelledAt: undefined,
+            rev: 3,
+            updatedAt: NOW,
+        };
+        const reactivatedProject: Project = {
+            ...project,
+            status: 'active',
+            cancelledAt: undefined,
+            rev: 3,
+            updatedAt: NOW,
+        };
+
+        const merged = mergeAppData(
+            mockAppData([task], [project]),
+            mockAppData([reactivatedTask], [reactivatedProject]),
+            { nowIso: NOW },
+        );
+
+        expect(merged.tasks[0].status).toBe('next');
+        expect(merged.tasks[0].cancelledAt).toBeUndefined();
+        expect(merged.projects[0].status).toBe('active');
+        expect(merged.projects[0].cancelledAt).toBeUndefined();
+    });
+
+    it('canonicalizes null cancellation timestamps to the same shape as omission', () => {
+        const task = createMockTask('task-null-cancellation', NOW);
+        const project = createMockProject('project-null-cancellation', NOW);
+
+        expect(normalizeTaskForSyncMerge({ ...task, cancelledAt: null } as unknown as Task, NOW))
+            .toEqual(normalizeTaskForSyncMerge(task, NOW));
+        expect(normalizeProjectForSyncMerge({ ...project, cancelledAt: null } as unknown as Project))
+            .toEqual(normalizeProjectForSyncMerge(project));
+    });
+
     it('preserves viewSectionIds when merging with an old-client task that lacks the field', () => {
         const localTask = {
             ...createMockTask('task-view-section', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
@@ -647,6 +769,53 @@ describe('sync normalization', () => {
             revBy: SYNC_REPAIR_REV_BY,
         });
         expect(repaired.areas[0].deletedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('preserves only operation-owned task links to archived project sections', () => {
+        const archivedAt = '2025-12-31T22:00:00.000Z';
+        const cancelledAt = '2025-12-01T08:00:00.000Z';
+        const data: AppData = {
+            tasks: [{
+                ...createMockTask('cancelled-child', archivedAt),
+                status: 'archived',
+                projectId: 'archived-project',
+                sectionId: 'archived-section',
+                order: 7,
+                cancelledAt,
+                projectArchivedAt: archivedAt,
+            }],
+            projects: [{
+                ...createMockProject('archived-project', archivedAt),
+                status: 'archived',
+                cancelledAt,
+            }],
+            sections: [{
+                ...createMockSection('archived-section', 'archived-project', archivedAt, archivedAt),
+                order: 4,
+                projectArchivedAt: archivedAt,
+            }],
+            areas: [],
+            settings: {},
+        };
+
+        const repaired = repairMergedSyncReferences(data, NOW);
+        expect(repaired).toEqual(data);
+        expect(validateMergedSyncData(repaired)).toEqual([]);
+
+        const mismatched = structuredClone(data);
+        mismatched.tasks[0].projectArchivedAt = '2025-12-31T21:00:00.000Z';
+        const repairedMismatch = repairMergedSyncReferences(mismatched, NOW);
+        expect(repairedMismatch.tasks[0]).toMatchObject({
+            sectionId: undefined,
+            order: 7,
+            revBy: SYNC_REPAIR_REV_BY,
+            updatedAt: NOW,
+        });
+
+        const activeProject = structuredClone(data);
+        activeProject.projects[0].status = 'active';
+        const repairedActive = repairMergedSyncReferences(activeProject, NOW);
+        expect(repairedActive.tasks[0].sectionId).toBeUndefined();
     });
 
     it('repairs missing task container references once before sync persistence', () => {

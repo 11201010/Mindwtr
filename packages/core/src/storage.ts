@@ -11,10 +11,10 @@ export type TaskQueryOptions = {
 
 export type SearchTaskResult = Pick<
     Task,
-    'id' | 'title' | 'status' | 'startTime' | 'dueDate' | 'projectId' | 'areaId' | 'tags' | 'contexts' | 'location'
+    'id' | 'title' | 'status' | 'cancelledAt' | 'startTime' | 'dueDate' | 'projectId' | 'areaId' | 'tags' | 'contexts' | 'location'
 >;
 
-export type SearchProjectResult = Pick<Project, 'id' | 'title' | 'status' | 'areaId'>;
+export type SearchProjectResult = Pick<Project, 'id' | 'title' | 'status' | 'cancelledAt' | 'areaId'>;
 
 export const SEARCH_RESULT_LIMIT = 200;
 

@@ -3,6 +3,7 @@ import { isSha256Hex } from './attachment-hash';
 import { normalizePersonName, normalizePersonNote, normalizePersonReferenceLink } from './people';
 import { normalizeProjectSequentialScope, normalizeProjectTaskSortBy } from './project-utils';
 import { normalizeTaskForLoad } from './task-status';
+import { isTaskSectionProjectArchiveReference } from './store-helpers';
 import { SYNC_REPAIR_REV_BY } from './sync-types';
 import { MAX_SYNC_REVISION, isValidRevision, nextRevision, normalizeRevision } from './sync-revision';
 import { sameShallowRecord } from './shallow-identity';
@@ -248,6 +249,7 @@ export const normalizeTaskForSyncMerge = (
         repeatReminderMinutes: normalized.repeatReminderMinutes,
         reviewAt: normalized.reviewAt,
         completedAt: normalized.completedAt,
+        cancelledAt: normalized.cancelledAt,
         statusBeforeProjectArchive: normalized.statusBeforeProjectArchive,
         // Older clients uploaded these as explicit `null`; absent is the canonical shape (#1156).
         completedAtBeforeProjectArchive: normalized.completedAtBeforeProjectArchive ?? undefined,
@@ -305,6 +307,7 @@ export const normalizeProjectForSyncMerge = (
         dueDate: normalizeOptionalString(project.dueDate),
         startDate: normalizeOptionalString(project.startDate),
         reviewAt: normalizeOptionalString(project.reviewAt),
+        cancelledAt: normalizeOptionalString(project.cancelledAt),
         areaId: normalizeOptionalString(project.areaId),
         areaTitle: normalizeOptionalString(project.areaTitle),
     };
@@ -420,6 +423,11 @@ export const repairMergedSyncReferences = (data: AppData, nowIso: string): AppDa
             .filter((project) => hasDeletedAt(project))
             .map((project) => project.id)
     );
+    const archivedProjectsById = new Map(
+        repairedProjects
+            .filter((project) => !hasDeletedAt(project) && project.status === 'archived')
+            .map((project) => [project.id, project] as const)
+    );
     const purgedProjectsById = new Map(
         repairedProjects
             .filter((project): project is Project & { purgedAt: string } => Boolean(project.purgedAt))
@@ -448,6 +456,11 @@ export const repairMergedSyncReferences = (data: AppData, nowIso: string): AppDa
             .filter((section) => !hasDeletedAt(section) && liveProjectIds.has(section.projectId))
             .map((section) => [section.id, section] as const)
     );
+    const archivedSections = new Map(
+        repairedSections
+            .filter((section) => hasDeletedAt(section) && archivedProjectsById.has(section.projectId))
+            .map((section) => [section.id, section] as const)
+    );
 
     const repairedTasks = data.tasks.map((task) => {
         const originalProjectId = normalizeOptionalString(task.projectId);
@@ -472,7 +485,16 @@ export const repairMergedSyncReferences = (data: AppData, nowIso: string): AppDa
             changed = true;
         }
 
-        const sectionProjectId = nextSectionId ? liveSections.get(nextSectionId)?.projectId : undefined;
+        const liveSection = nextSectionId ? liveSections.get(nextSectionId) : undefined;
+        const archivedSection = !liveSection && nextSectionId ? archivedSections.get(nextSectionId) : undefined;
+        const sectionProjectId = liveSection?.projectId
+            ?? (archivedSection && isTaskSectionProjectArchiveReference(
+                task,
+                archivedSection,
+                nextProjectId ? archivedProjectsById.get(nextProjectId) : undefined,
+            )
+                ? archivedSection.projectId
+                : undefined);
         const resolvedContainer = resolveTaskContainerHierarchy({
             projectId: nextProjectId,
             sectionId: nextSectionId,
@@ -697,6 +719,18 @@ export const validateMergedSyncData = (data: AppData): string[] => {
             ? data.projects.filter((project) => isObjectRecord(project) && isNonEmptyString(project.deletedAt)).map((project) => String(project.id))
             : []
     );
+    const archivedProjectsById = new Map(
+        Array.isArray(data.projects)
+            ? data.projects
+                .filter((project) => (
+                    isObjectRecord(project)
+                    && isNonEmptyString(project.id)
+                    && !isNonEmptyString(project.deletedAt)
+                    && project.status === 'archived'
+                ))
+                .map((project) => [String(project.id), project as unknown as Project] as const)
+            : []
+    );
     const liveSections = new Map(
         Array.isArray(data.sections)
             ? data.sections
@@ -709,6 +743,13 @@ export const validateMergedSyncData = (data: AppData): string[] => {
             ? data.sections
                 .filter((section) => isObjectRecord(section) && isNonEmptyString(section.deletedAt))
                 .map((section) => String(section.id))
+            : []
+    );
+    const archivedSections = new Map(
+        Array.isArray(data.sections)
+            ? data.sections
+                .filter((section) => isObjectRecord(section) && isNonEmptyString(section.deletedAt))
+                .map((section) => [String(section.id), section] as const)
             : []
     );
     const allSectionIds = new Set(
@@ -771,6 +812,17 @@ export const validateMergedSyncData = (data: AppData): string[] => {
             }
             if (isNonEmptyString(task.sectionId)) {
                 if (deletedSectionIds.has(task.sectionId)) {
+                    const section = archivedSections.get(task.sectionId);
+                    const project = isNonEmptyString(task.projectId)
+                        ? archivedProjectsById.get(task.projectId)
+                        : undefined;
+                    if (section && isTaskSectionProjectArchiveReference(
+                        task as unknown as Task,
+                        section as unknown as Section,
+                        project,
+                    )) {
+                        return;
+                    }
                     errors.push(`tasks[${index}].sectionId must not reference a deleted section`);
                     return;
                 }

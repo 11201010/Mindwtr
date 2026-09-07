@@ -34,6 +34,7 @@ type Harness = {
     onSave: (taskId: string, updates: Partial<Task>) => unknown;
     onClose: () => void;
     showToast: ReturnType<typeof vi.fn>;
+    cancelTask?: (taskId: string) => Promise<StoreActionResult>;
     deleteTask?: (taskId: string) => Promise<StoreActionResult>;
     resetTaskChecklist?: (taskId: string) => Promise<StoreActionResult>;
     restoreTask?: (taskId: string) => Promise<StoreActionResult>;
@@ -42,6 +43,7 @@ type Harness = {
 };
 
 let saveHandle: () => Promise<boolean>;
+let cancelHandle: () => Promise<void>;
 let deleteHandle: () => Promise<void>;
 let resetHandle: () => Promise<void>;
 let convertToSectionHandle: () => Promise<void>;
@@ -50,6 +52,7 @@ function SaveProbe({
     onSave,
     onClose,
     showToast,
+    cancelTask = vi.fn(async () => ({ success: true })),
     deleteTask = vi.fn(async () => ({ success: true })),
     resetTaskChecklist = vi.fn(async () => ({ success: true })),
     restoreTask = vi.fn(async () => ({ success: true })),
@@ -73,6 +76,7 @@ function SaveProbe({
     state.titleDraftRef.current = 'Plan launch v2';
     const actions = useTaskEditActions({
         aiEnabled: false,
+        cancelTask,
         closeAIModal: vi.fn(),
         deleteTask,
         descriptionDraft: '',
@@ -105,6 +109,7 @@ function SaveProbe({
 
     saveHandle = state.draftLifecycle.save;
     deleteHandle = actions.handleDeleteTask;
+    cancelHandle = actions.handleCancelTask;
     resetHandle = actions.handleResetChecklist;
     convertToSectionHandle = actions.handleConvertToSection;
     return <Text>probe</Text>;
@@ -207,6 +212,18 @@ describe('task editor save results', () => {
             tone: 'error',
             message: 'Task is missing',
         }));
+    });
+
+    it('uses the cancellation write and closes only after it succeeds', async () => {
+        const cancelTask = vi.fn(async () => ({ success: true }));
+        const { onClose } = await renderActions({ cancelTask });
+
+        await act(async () => {
+            await cancelHandle();
+        });
+
+        expect(cancelTask).toHaveBeenCalledWith('task-1');
+        expect(onClose).toHaveBeenCalledOnce();
     });
 
     it('does not reset the draft when checklist reset resolves to a failure', async () => {

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   repeatReminderMinutes INTEGER,
   reviewAt TEXT,
   completedAt TEXT,
+  cancelledAt TEXT,
   statusBeforeProjectArchive TEXT,
   completedAtBeforeProjectArchive TEXT,
   isFocusedTodayBeforeProjectArchive INTEGER,
@@ -81,7 +82,8 @@ CREATE TABLE IF NOT EXISTS projects (
   updatedAt TEXT NOT NULL,
   deletedAt TEXT,
   purgedAt TEXT,
-  startDate TEXT
+  startDate TEXT,
+  cancelledAt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS areas (

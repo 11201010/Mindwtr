@@ -7,6 +7,7 @@ import {
   getAttachmentDisplayTitle,
   getRecurringTaskPreviewDate,
   hasTimeComponent,
+  isTaskCancelled,
   tFallback,
 } from '@mindwtr/core';
 import type {
@@ -149,7 +150,11 @@ function TaskEditViewTabComponent({
   const area = areas.find((a) => a.id === mergedTask.areaId);
   const checklist = mergedTask.checklist || [];
 
-  const statusLabel = mergedTask.status ? (tFallback(t, `status.${mergedTask.status}`, mergedTask.status)) : undefined;
+  const statusLabel = isTaskCancelled(mergedTask as Task)
+    ? tFallback(t, 'task.cancelled', 'Cancelled')
+    : mergedTask.status
+      ? tFallback(t, `status.${mergedTask.status}`, mergedTask.status)
+      : undefined;
   const isReference = mergedTask.status === 'reference';
   const priorityLabel = mergedTask.priority ? (tFallback(t, `priority.${mergedTask.priority}`, mergedTask.priority)) : undefined;
   const energyLevelLabel = mergedTask.energyLevel

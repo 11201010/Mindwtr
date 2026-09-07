@@ -97,12 +97,12 @@ describe('cloud Project schema contract', () => {
         expect(sorted(CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS)).toEqual(sorted(expected));
     });
 
-    it('derives CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS identical to the pre-refactor literal', () => {
-        expect(sorted(CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS)).toEqual(sorted(PRE_REFACTOR_CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS));
+    it('preserves the project creation contract plus the cancellation field', () => {
+        expect(sorted(CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS)).toEqual(sorted([...PRE_REFACTOR_CLOUD_PROJECT_CREATION_ALLOWED_PROP_KEYS, 'cancelledAt']));
     });
 
-    it('derives CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS identical to the pre-refactor literal', () => {
-        expect(sorted(CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS)).toEqual(sorted(PRE_REFACTOR_CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS));
+    it('preserves the project patch contract plus the cancellation field', () => {
+        expect(sorted(CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS)).toEqual(sorted([...PRE_REFACTOR_CLOUD_PROJECT_PATCH_ALLOWED_PROP_KEYS, 'cancelledAt']));
     });
 });
 

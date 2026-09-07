@@ -23,6 +23,7 @@ export const useProjectWorkspaceStore = (selectedProjectId: string | null) => {
             reorderSections: state.reorderSections,
             reorderProjectTasks: state.reorderProjectTasks,
             updateProject: state.updateProject,
+            cancelProject: state.cancelProject,
             deleteProject: state.deleteProject,
             restoreProject: state.restoreProject,
             updateTask: state.updateTask,

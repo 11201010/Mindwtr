@@ -74,6 +74,30 @@ describe('ArchiveView', () => {
         expect(getByText(`Completed: ${completionLabel}`)).toBeInTheDocument();
     });
 
+    it('shows a cancelled task as Cancelled without completion styling', () => {
+        const cancelledAt = '2026-05-12T09:45:00.000Z';
+        const cancelledTask = {
+            ...archivedTask,
+            title: 'Cancelled task',
+            completedAt: undefined,
+            cancelledAt,
+        };
+        useTaskStore.setState({
+            _allTasks: [cancelledTask],
+            _tasksById: new Map([[cancelledTask.id, cancelledTask]]),
+        });
+
+        const { container } = render(
+            <LanguageProvider>
+                <ArchiveView />
+            </LanguageProvider>
+        );
+
+        expect(screen.getByText(`Cancelled: ${safeFormatDate(cancelledAt, 'Pp')}`)).toBeInTheDocument();
+        expect(screen.queryByText(/^Completed:/)).not.toBeInTheDocument();
+        expect(container.querySelector('.task-item-display__title')).not.toHaveClass('line-through');
+    });
+
     // The whole point of #968: an archived task's notes and checklist are readable
     // in place, so nobody has to restore a task just to read what it said.
     it('opens an archived task read-only, without restoring it', () => {
@@ -200,6 +224,25 @@ describe('ArchiveView', () => {
         expect(screen.queryByText('Archived project')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
         expect(screen.getByText('Archived project')).toBeInTheDocument();
+    });
+
+    it('distinguishes cancelled projects in the Archive project segment', () => {
+        const cancelledAt = '2026-05-11T09:00:00.000Z';
+        const cancelledProject = { ...archivedProject, cancelledAt };
+        useTaskStore.setState({
+            projects: [cancelledProject],
+            _allProjects: [cancelledProject],
+        });
+
+        render(
+            <LanguageProvider>
+                <ArchiveView />
+            </LanguageProvider>
+        );
+        fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+
+        expect(screen.getByText(`Cancelled: ${safeFormatDate(cancelledAt, 'Pp')}`)).toBeInTheDocument();
+        expect(screen.queryByText(/^Completed:/)).not.toBeInTheDocument();
     });
 
     it('opens an archived project from its title row', () => {

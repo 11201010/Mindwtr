@@ -136,6 +136,32 @@ describe('runLoadMigrations', () => {
         expect(result.tasks[0].areaId).toBeUndefined();
     });
 
+    it('repair-dangling-entity-references: preserves an operation-owned archived section link', () => {
+        const createdAt = '2026-04-01T00:00:00.000Z';
+        const archivedAt = '2026-04-09T00:00:00.000Z';
+        const cancelledAt = '2026-04-08T10:00:00.000Z';
+        const data = settledData({
+            projects: [{
+                id: 'p1', title: 'P', status: 'archived', cancelledAt, color: '#000', order: 0, tagIds: [],
+                createdAt, updatedAt: archivedAt,
+            } as Project],
+            sections: [{
+                id: 's1', projectId: 'p1', title: 'S', order: 4,
+                createdAt, updatedAt: archivedAt, deletedAt: archivedAt, projectArchivedAt: archivedAt,
+            } as Section],
+            tasks: [{
+                id: 't1', title: 'T', status: 'archived', tags: [], contexts: [],
+                projectId: 'p1', sectionId: 's1', order: 7, cancelledAt, projectArchivedAt: archivedAt,
+                statusBeforeProjectArchive: 'next', createdAt, updatedAt: archivedAt,
+            } as Task],
+        });
+
+        const { data: result, applied } = runLoadMigrations(data, ctxFor(data));
+        expect(applied).not.toContain('repair-dangling-entity-references');
+        expect(result.tasks[0]).toMatchObject({ sectionId: 's1', order: 7 });
+        expect(result.sections[0]).toMatchObject({ order: 4, deletedAt: archivedAt });
+    });
+
     it('clear-deleted-task-project-archive-metadata: clears archive metadata from a deleted task tombstone', () => {
         const data = settledData({
             tasks: [{

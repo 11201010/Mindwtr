@@ -100,6 +100,31 @@ describe('backup transfer', () => {
         expect(result.warnings).toEqual([]);
     });
 
+    it('round-trips task and project cancellation through data JSON', () => {
+        const cancelledAt = '2026-03-30T13:00:00.000Z';
+        const data = buildAppData();
+        data.tasks[0] = {
+            ...data.tasks[0],
+            status: 'archived',
+            completedAt: undefined,
+            cancelledAt,
+            updatedAt: cancelledAt,
+        };
+        data.projects[0] = {
+            ...data.projects[0],
+            status: 'archived',
+            cancelledAt,
+            updatedAt: cancelledAt,
+        };
+
+        const result = validateBackupJson(serializeBackupData(data));
+
+        expect(result.valid).toBe(true);
+        expect(result.data?.tasks[0].cancelledAt).toBe(cancelledAt);
+        expect(result.data?.tasks[0]).not.toHaveProperty('completedAt');
+        expect(result.data?.projects[0].cancelledAt).toBe(cancelledAt);
+    });
+
     it('removes permanently deleted content from backup tombstones', () => {
         const purgedAt = '2026-03-31T12:00:00.000Z';
         const data = buildAppData();

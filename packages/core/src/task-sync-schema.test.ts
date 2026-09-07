@@ -82,6 +82,19 @@ describe('Task sync schema contract', () => {
             .not.toContain('viewSectionIds');
     });
 
+    it('declares cancellation as an optional content field deployed to CloudKit production', () => {
+        const field = TASK_SYNC_FIELD_SCHEMA.find((entry) => entry.name === 'cancelledAt');
+        expect(field).toMatchObject({
+            nullability: 'optional',
+            signature: 'content',
+            cloudWrite: 'create-patch',
+            sqliteColumn: 'cancelledAt',
+            sqliteType: 'TEXT',
+        });
+        expect(cloudKitProductionSchema.records.MindwtrTask.deployed).toContain('cancelledAt');
+        expect(cloudKitProductionSchema.records.MindwtrTask.pendingProduction).not.toContain('cancelledAt');
+    });
+
     it('reads NULL project-archive columns as absent so a phone-read task matches the merge winner (#1156)', () => {
         const task: Task = { ...TASK_SYNC_SCHEMA_FIXTURE, completedAtBeforeProjectArchive: undefined, isFocusedTodayBeforeProjectArchive: undefined } as Task;
         const row = taskToSqliteRow(task);

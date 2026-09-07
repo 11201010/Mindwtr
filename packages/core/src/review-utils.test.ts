@@ -276,15 +276,22 @@ describe('getDailyReviewBuckets', () => {
         expect(buckets.focusCandidates).toEqual([]);
     });
 
-    it('excludes done tasks from every bucket', () => {
+    it('excludes completed and cancelled tasks from every bucket', () => {
         const done = createTask({
             id: 'done-task',
             status: 'done',
             isFocusedToday: true,
             dueDate: new Date(2026, 2, 1).toISOString(),
         });
+        const cancelled = createTask({
+            id: 'cancelled-task',
+            status: 'archived',
+            cancelledAt: new Date(2026, 2, 1).toISOString(),
+            isFocusedToday: true,
+            dueDate: new Date(2026, 2, 1).toISOString(),
+        });
 
-        const buckets = getDailyReviewBuckets([done], [], { now: dailyNow });
+        const buckets = getDailyReviewBuckets([done, cancelled], [], { now: dailyNow });
 
         expect(buckets.focused).toEqual([]);
         expect(buckets.dueToday).toEqual([]);
@@ -412,6 +419,26 @@ describe('getWeeklyReviewBuckets', () => {
         expect(getWeeklyReviewBuckets([sundayCompletion], [], {
             now: reviewNow,
             weekStart: 'sunday',
+        }).lookBack.completedCount).toBe(1);
+    });
+
+    it('counts historical archives as completed work and excludes cancellations', () => {
+        const reviewNow = new Date(2026, 2, 4, 12, 0, 0);
+        const eventAt = new Date(2026, 2, 3, 12, 0, 0).toISOString();
+        const historicalArchive = createTask({
+            id: 'historical-archive',
+            status: 'archived',
+            completedAt: eventAt,
+        });
+        const cancelled = createTask({
+            id: 'cancelled',
+            status: 'archived',
+            cancelledAt: eventAt,
+        });
+
+        expect(getWeeklyReviewBuckets([historicalArchive, cancelled], [], {
+            now: reviewNow,
+            weekStart: 'monday',
         }).lookBack.completedCount).toBe(1);
     });
 

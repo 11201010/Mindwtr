@@ -203,6 +203,7 @@ const taskColumnValues = (task: Task): Record<string, unknown> => {
         suppressMindwtrReminders: toBool(task.suppressMindwtrReminders),
         reviewAt: task.reviewAt ?? null,
         completedAt: task.completedAt ?? null,
+        cancelledAt: task.cancelledAt ?? null,
         statusBeforeProjectArchive: task.statusBeforeProjectArchive ?? null,
         completedAtBeforeProjectArchive: task.completedAtBeforeProjectArchive ?? null,
         isFocusedTodayBeforeProjectArchive: toNullableBool(task.isFocusedTodayBeforeProjectArchive),
@@ -277,6 +278,7 @@ export const taskFromSqliteRow = (row: Record<string, unknown>): Task => {
                 ? fromOptional(row.completedAt as string | null)
                 : undefined;
         })(),
+        cancelledAt: fromOptional(row.cancelledAt as string | null),
         statusBeforeProjectArchive: fromOptional(row.statusBeforeProjectArchive as Task['statusBeforeProjectArchive'] | null),
         // NULL reads as absent even though the type allows `null`: SQLite stores absent and
         // null in the same column, the desktop's Rust reader already drops NULL, and a phone

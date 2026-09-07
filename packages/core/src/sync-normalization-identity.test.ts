@@ -397,6 +397,7 @@ describe('value parity — a stripped or added key counts as a change', () => {
             repeatReminderMinutes: undefined,
             reviewAt: undefined,
             completedAt: undefined,
+            cancelledAt: undefined,
             statusBeforeProjectArchive: undefined,
             completedAtBeforeProjectArchive: undefined,
             isFocusedTodayBeforeProjectArchive: undefined,

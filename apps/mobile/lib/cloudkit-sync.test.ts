@@ -97,6 +97,34 @@ describe('CloudKit native field specs', () => {
         expect(macosProjectFields).toContain('purgedAt');
     });
 
+    it('maps task and project cancellation timestamps in both native CloudKit mappers', () => {
+        const swiftTaskFields = extractSourceBlock(
+            swiftMapperSource,
+            /private static let taskFieldSpecs: \[FieldSpec\] = \[([\s\S]*?)\n    \]/,
+            'Swift task',
+        );
+        const swiftProjectFields = extractSourceBlock(
+            swiftMapperSource,
+            /private static let projectFieldSpecs: \[FieldSpec\] = \[([\s\S]*?)\n    \]/,
+            'Swift project',
+        );
+        const macosTaskFields = extractSourceBlock(
+            macosBridgeSource,
+            /static const MWFieldSpec kTaskFields\[\] = \{([\s\S]*?)\n\};/,
+            'macOS task',
+        );
+        const macosProjectFields = extractSourceBlock(
+            macosBridgeSource,
+            /static const MWFieldSpec kProjectFields\[\] = \{([\s\S]*?)\n\};/,
+            'macOS project',
+        );
+
+        expect(swiftTaskFields).toContain('FieldSpec(jsKey: "cancelledAt", ckKey: "cancelledAt", kind: .date)');
+        expect(swiftProjectFields).toContain('FieldSpec(jsKey: "cancelledAt", ckKey: "cancelledAt", kind: .date)');
+        expect(macosTaskFields).toMatch(/\{"cancelledAt",\s*"cancelledAt",\s*MWFieldKindDate\}/);
+        expect(macosProjectFields).toMatch(/\{"cancelledAt",\s*"cancelledAt",\s*MWFieldKindDate\}/);
+    });
+
     it('maps project archive restore metadata in Swift and macOS CloudKit mappers', () => {
         const swiftTaskFields = extractSourceBlock(
             swiftMapperSource,
@@ -342,6 +370,33 @@ describe('cloudkit-sync change token and purge invariants', () => {
 
         expect(cloudKitSync.fetchChanges).toHaveBeenCalledWith('token-1');
         expect(storage.get(CLOUDKIT_CHANGE_TOKEN_KEY)).toBe('token-2');
+    });
+
+    it('forwards task and project cancellation timestamps to the native writer', async () => {
+        const cancelledAt = '2026-09-07T12:00:00.000Z';
+        cloudKitSync.fetchChanges.mockResolvedValue({ records: {}, deletedIDs: {} });
+
+        await writeRemoteCloudKit(makeAppData({
+            tasks: [makeTask('task-cancelled', { status: 'archived', cancelledAt })],
+            projects: [{
+                id: 'project-cancelled',
+                title: 'Cancelled project',
+                status: 'archived',
+                color: '#6B7280',
+                order: 0,
+                tagIds: [],
+                createdAt: cancelledAt,
+                updatedAt: cancelledAt,
+                cancelledAt,
+            }],
+        } as unknown as Partial<AppData>));
+
+        const taskPayload = cloudKitSync.saveRecords.mock.calls
+            .find(([recordType]) => recordType === 'MindwtrTask')?.[1];
+        const projectPayload = cloudKitSync.saveRecords.mock.calls
+            .find(([recordType]) => recordType === 'MindwtrProject')?.[1];
+        expect(JSON.parse(taskPayload)).toMatchObject([{ id: 'task-cancelled', cancelledAt }]);
+        expect(JSON.parse(projectPayload)).toMatchObject([{ id: 'project-cancelled', cancelledAt }]);
     });
 
     it('deletes only purged records from CloudKit', async () => {

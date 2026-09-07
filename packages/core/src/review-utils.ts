@@ -12,7 +12,7 @@ import {
 } from './area-filter';
 import { isTaskInActiveProject } from './project-utils';
 import { getSequentialFirstTaskIds, isSequentialChainStatus, shouldShowTaskForStart, sortTasksBy } from './task-utils';
-import { isTaskActionable } from './task-status';
+import { isTaskActionable, isTaskCompleted } from './task-status';
 import { normalizeTimeSpentMinutes } from './time-spent';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -143,7 +143,7 @@ function deriveWeeklyReview(
     const reviewWindowEnd = now.getTime();
 
     tasks.forEach((task) => {
-        const completedAt = task.status === 'done' && !task.deletedAt
+        const completedAt = isTaskCompleted(task) && !task.deletedAt
             ? safeParseDate(task.completedAt)
             : null;
         if (
@@ -170,8 +170,7 @@ function deriveWeeklyReview(
         if (
             task.projectId
             && !task.deletedAt
-            && task.status !== 'done'
-            && task.status !== 'reference'
+            && isTaskActionable(task)
         ) {
             projectTasksById.get(task.projectId)?.push(task);
         }
@@ -303,7 +302,8 @@ export type DailyReviewBuckets = {
 };
 
 /**
- * Daily Review's per-step task lists. `done` is excluded once, at the base —
+ * Daily Review's per-step task lists. Finished and reference tasks are excluded
+ * once, at the base —
  * every bucket below is a further filter of that same active set.
  *
  * A review deliberately ignores the app-wide area filter and sweeps the whole
@@ -332,8 +332,7 @@ export function getDailyReviewBuckets(
 
     const activeTasks = tasks.filter((task) => (
         isTaskVisibleInArea(task, visibility)
-        && task.status !== 'reference'
-        && task.status !== 'done'
+        && isTaskActionable(task)
     ));
 
     const sequentialProjectIds = new Set(
@@ -541,8 +540,7 @@ export function getReviewOverviewGroups({
                 projectById,
                 resolvedAreaFilter: areaFilter,
             })
-            && task.status !== 'done'
-            && task.status !== 'reference'
+            && isTaskActionable(task)
         )),
         sortBy,
     );

@@ -30,6 +30,7 @@ const translations: Record<string, string> = {
     'projects.title': 'Projects',
     'status.archived': 'Archived',
     'projects.completed': 'Completed',
+    'projects.closed': 'Closed',
     'status.waiting': 'Waiting',
 };
 
@@ -481,7 +482,7 @@ describe('ProjectsSidebar', () => {
 
         const deferredToggle = screen.getByRole('button', { name: 'Deferred projects' });
         const deferredSection = deferredToggle.parentElement;
-        const archivedToggle = screen.getByRole('button', { name: 'Completed' });
+        const archivedToggle = screen.getByRole('button', { name: 'Closed' });
         const archivedSection = archivedToggle.parentElement;
 
         expect(deferredSection).not.toBeNull();

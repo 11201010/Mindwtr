@@ -2,6 +2,7 @@ import { logInfo, logWarn } from './logger';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { markCoreStartupPhase, measureCoreStartupPhase } from './startup-profiler';
 import { normalizeTaskForLoad } from './task-status';
+import { normalizeProjectLifecycleFields } from './project-status';
 import type { StorageAdapter } from './storage';
 import type { AppData } from './types';
 import type { DerivedCache, TaskStore } from './store-types';
@@ -216,11 +217,12 @@ export const createSettingsActions = ({
             // same as `stripSensitiveSettings` above. Loading data never mutates it
             // for persistence purposes — only the explicit one-time passes below do.
             const normalizedTasks = rawTasks.map((task) => normalizeTaskForLoad(task, nowIso));
+            const normalizedProjects = rawProjects.map(normalizeProjectLifecycleFields);
 
             const loadContext = buildLoadContext(settings, isFreshInstall, nowIso, nowMs);
             const initialData: AppData = {
                 tasks: normalizedTasks,
-                projects: rawProjects,
+                projects: normalizedProjects,
                 sections: rawSections,
                 areas: rawAreas,
                 people: rawPeople,

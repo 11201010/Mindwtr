@@ -1,5 +1,5 @@
 {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "sinceVersionPolicy": "Contract versions start at 1 for every field present when this table was introduced; they are independent of SQLite migration versions.",
     "fields": [
         { "name": "id", "sync": "identity", "nullability": "required", "sinceVersion": 1, "signature": "content", "sqliteColumn": "id", "cloudKit": null, "cloudWrite": "managed", "sqliteOrder": 0, "sqliteType": null },
@@ -33,6 +33,7 @@
         { "name": "repeatReminderMinutes", "sync": "content", "nullability": "optional", "sinceVersion": 1, "signature": "content", "sqliteColumn": "repeatReminderMinutes", "cloudKit": { "key": "repeatReminderMinutes", "kind": "integer" }, "cloudWrite": "create-patch", "sqliteOrder": 13, "sqliteType": "INTEGER" },
         { "name": "reviewAt", "sync": "content", "nullability": "optional", "sinceVersion": 1, "signature": "content", "sqliteColumn": "reviewAt", "cloudKit": { "key": "reviewAt", "kind": "date" }, "cloudWrite": "create-patch", "sqliteOrder": 31, "sqliteType": "TEXT" },
         { "name": "completedAt", "sync": "content", "nullability": "optional", "sinceVersion": 1, "signature": "content", "sqliteColumn": "completedAt", "cloudKit": { "key": "completedAt", "kind": "date" }, "cloudWrite": "managed", "sqliteOrder": 32, "sqliteType": "TEXT" },
+        { "name": "cancelledAt", "sync": "content", "nullability": "optional", "sinceVersion": 3, "signature": "content", "sqliteColumn": "cancelledAt", "cloudKit": { "key": "cancelledAt", "kind": "date" }, "cloudWrite": "create-patch", "sqliteOrder": 44, "sqliteType": "TEXT" },
         { "name": "statusBeforeProjectArchive", "sync": "archive-metadata", "nullability": "optional", "sinceVersion": 1, "signature": "opaque", "sqliteColumn": "statusBeforeProjectArchive", "cloudKit": { "key": "statusBeforeProjectArchive", "kind": "string" }, "cloudWrite": "managed", "sqliteOrder": 33, "sqliteType": "TEXT" },
         { "name": "completedAtBeforeProjectArchive", "sync": "archive-metadata", "nullability": "optional-nullable", "sinceVersion": 1, "signature": "opaque", "sqliteColumn": "completedAtBeforeProjectArchive", "cloudKit": { "key": "completedAtBeforeProjectArchive", "kind": "date" }, "cloudWrite": "managed", "sqliteOrder": 34, "sqliteType": "TEXT" },
         { "name": "isFocusedTodayBeforeProjectArchive", "sync": "archive-metadata", "nullability": "optional-nullable", "sinceVersion": 1, "signature": "opaque", "sqliteColumn": "isFocusedTodayBeforeProjectArchive", "cloudKit": { "key": "isFocusedTodayBeforeProjectArchive", "kind": "boolean" }, "cloudWrite": "managed", "sqliteOrder": 35, "sqliteType": "INTEGER" },
@@ -87,6 +88,7 @@
         "repeatReminderMinutes": 15,
         "reviewAt": "2026-07-20T12:00:00.000Z",
         "completedAt": "2026-07-14T11:00:00.000Z",
+        "cancelledAt": "2026-07-14T11:15:00.000Z",
         "statusBeforeProjectArchive": "next",
         "completedAtBeforeProjectArchive": "2026-07-13T11:00:00.000Z",
         "isFocusedTodayBeforeProjectArchive": false,

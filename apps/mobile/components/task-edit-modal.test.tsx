@@ -43,6 +43,7 @@ vi.mock('@mindwtr/core', async () => {
     addProject: vi.fn(),
     addSection: vi.fn(),
     addArea: vi.fn(),
+    cancelTask: vi.fn(),
     deleteTask: vi.fn(),
     getDerivedState: () => ({
       allContexts: [],
@@ -202,6 +203,31 @@ describe('TaskEditModal', () => {
         );
       });
     }).not.toThrow();
+  });
+
+  it.each(['done', 'reference'] as const)('does not offer cancellation for a %s task', (status) => {
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(
+        <TaskEditModal
+          visible
+          task={{
+            id: 'finished-task',
+            title: 'Finished task',
+            status,
+            tags: [],
+            contexts: [],
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-01-01T00:00:00.000Z',
+          }}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />,
+      );
+    });
+
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'More options' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'Cancel task' })).toHaveLength(0);
   });
 
   it('keeps an archived-project task open as a read-only inspection surface', async () => {

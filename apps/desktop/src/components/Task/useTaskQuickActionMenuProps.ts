@@ -1,6 +1,8 @@
 import { createElement, useCallback, useMemo } from 'react';
 import {
     DEFAULT_PROJECT_COLOR,
+    isProjectedRecurringTask,
+    isTaskActionable,
     isTaskFinished,
     normalizeWeekStartSetting,
     resolveFeatureFlags,
@@ -180,6 +182,33 @@ export function useTaskQuickActionMenuProps(
         deleteTaskWithUndo(task.id, { t, onBeforeDelete: overrides?.onBeforeDelete });
     }, [overrides?.onBeforeDelete, t, task.id]);
 
+    const cancelAction = useMemo(() => {
+        if (readOnly || !isTaskActionable(task) || isProjectedRecurringTask(task)) return [];
+        return [{
+            id: 'cancel-task',
+            label: task.recurrence
+                ? tFallback(t, 'task.cancelRecurringSeries', 'Cancel recurring series')
+                : tFallback(t, 'task.cancel', 'Cancel task'),
+            onSelect: async () => {
+                try {
+                    const result = await useTaskStore.getState().cancelTask(task.id);
+                    if (!result.success) {
+                        useUiStore.getState().showToast(
+                            result.error || tFallback(t, 'task.cancelFailed', 'Failed to cancel task'),
+                            'error',
+                        );
+                    }
+                } catch (error) {
+                    reportError('Failed to cancel task', error);
+                    useUiStore.getState().showToast(
+                        tFallback(t, 'task.cancelFailed', 'Failed to cancel task'),
+                        'error',
+                    );
+                }
+            },
+        }];
+    }, [readOnly, t, task]);
+
     // Canonical store-level status change (task-list-scope.ts's setStatusSelected
     // pattern): move + undo + the shared moved/marked-done toast text. Callers
     // with row-specific behaviour (TaskItem's waiting-assignment prompt) replace
@@ -238,7 +267,7 @@ export function useTaskQuickActionMenuProps(
         onStatusChange: overrides?.onStatusChange ?? defaultOnStatusChange,
         onCreateArea,
         onUpdateTask,
-        extraActions: overrides?.extraActions,
+        extraActions: [...cancelAction, ...(overrides?.extraActions ?? [])],
     };
 }
 

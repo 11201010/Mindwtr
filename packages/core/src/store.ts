@@ -713,6 +713,7 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelec
             set,
             get,
             debouncedSave,
+            flushPendingSave,
             trackImmediateSave,
             hasQueuedSnapshotSave: () => pendingSaves.length > 0,
             getStorage: () => storage,
@@ -721,6 +722,7 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelec
             set,
             get,
             debouncedSave,
+            flushPendingSave,
         }),
     });
 }));

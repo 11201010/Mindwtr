@@ -9,6 +9,7 @@ const translations: Record<string, string> = {
     'common.delete': 'Delete',
     'projects.archive': 'Archive',
     'projects.complete': 'Complete',
+    'projects.cancel': 'Cancel project',
     'projects.details': 'Details',
     'projects.duplicate': 'Duplicate',
     'projects.noActiveTasks': 'No active tasks',
@@ -112,6 +113,7 @@ describe('ProjectDetailsHeader', () => {
     it('routes duplicate, archive, and delete through the menu and closes it on Escape', () => {
         const onDuplicate = vi.fn();
         const onArchive = vi.fn();
+        const onCancel = vi.fn();
         const onDelete = vi.fn();
 
         render(
@@ -127,6 +129,7 @@ describe('ProjectDetailsHeader', () => {
                 onToggleDetails={vi.fn()}
                 onDuplicate={onDuplicate}
                 onArchive={onArchive}
+                onCancel={onCancel}
                 onReactivate={vi.fn()}
                 onDelete={onDelete}
                 t={t}
@@ -142,6 +145,10 @@ describe('ProjectDetailsHeader', () => {
         openMenu();
         fireEvent.click(screen.getByRole('menuitem', { name: 'Complete' }));
         expect(onArchive).toHaveBeenCalledTimes(1);
+
+        openMenu();
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel project' }));
+        expect(onCancel).toHaveBeenCalledTimes(1);
 
         openMenu();
         fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));

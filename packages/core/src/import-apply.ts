@@ -53,6 +53,7 @@ export type ImportSectionSource = {
 export type ImportTaskSource = {
     areaSourceKey?: string;
     assignedTo?: string;
+    cancelledAt?: string;
     checklist?: ChecklistItem[];
     completedAt?: string;
     contexts?: string[];
@@ -447,7 +448,8 @@ export function applyImport(
         const createdAt = resolveTimestamp(task.createdAt, nowIso);
         const updatedAt = resolveTimestamp(task.updatedAt, createdAt);
         const status = resolveTaskStatus(task.status, projectId);
-        const completedAt = isTaskFinished(status)
+        const cancelledAt = status === 'archived' ? task.cancelledAt : undefined;
+        const completedAt = !cancelledAt && isTaskFinished(status)
             ? task.completedAt ?? updatedAt
             : undefined;
         const nextTask: Task = {
@@ -468,6 +470,7 @@ export function applyImport(
             reviewAt: task.reviewAt,
             recurrence: task.recurrence,
             completedAt,
+            cancelledAt,
             pushCount: 0,
             createdAt,
             updatedAt,

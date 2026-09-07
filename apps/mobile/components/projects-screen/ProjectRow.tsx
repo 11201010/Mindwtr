@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Alert, Pressable, Text, TouchableOpacity, View } from 'react-native';
-import { type Project } from '@mindwtr/core';
+import { tFallback, type Project } from '@mindwtr/core';
 import * as Haptics from 'expo-haptics';
 import { Copy, Trash2, AlertTriangle } from 'lucide-react-native';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -36,11 +36,13 @@ const PROJECT_SWIPE_FRICTION = 1.25;
 const PROJECT_SWIPE_OPEN_THRESHOLD = 72;
 const PROJECT_SWIPE_DRAG_OFFSET = 28;
 
-function getStatusLabel(status: Project['status'], t: (key: string) => string) {
-    if (status === 'active') return t('status.active');
-    if (status === 'waiting') return t('status.waiting');
-    if (status === 'someday') return t('status.someday');
-    return t('status.archived');
+function getStatusLabel(project: Project, t: (key: string) => string) {
+    if (project.status === 'active') return t('status.active');
+    if (project.status === 'waiting') return t('status.waiting');
+    if (project.status === 'someday') return t('status.someday');
+    return project.cancelledAt
+        ? tFallback(t, 'projects.cancelled', 'Cancelled')
+        : tFallback(t, 'list.done', 'Completed');
 }
 
 export function ProjectRow({
@@ -193,7 +195,7 @@ export function ProjectRow({
                                 { color: statusPalette[project.status]?.text ?? tc.secondaryText },
                             ]}
                         >
-                            {getStatusLabel(project.status, t)}
+                            {getStatusLabel(project, t)}
                         </Text>
                     )}
                 </View>

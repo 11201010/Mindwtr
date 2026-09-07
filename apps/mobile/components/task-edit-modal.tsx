@@ -19,6 +19,8 @@ import { Task,
     normalizeClockTimeInput,
     resolveTaskViewSection,
     resolveFeatureFlags,
+    isProjectedRecurringTask,
+    isTaskActionable,
     setTaskViewSectionId,
     shallow,
     sortViewSectionDefinitions,
@@ -113,6 +115,7 @@ function TaskEditModalInner({
         addSection,
         addArea,
         addPerson,
+        cancelTask,
         deleteTask,
         restoreTask,
         allContexts = [],
@@ -139,6 +142,7 @@ function TaskEditModalInner({
             addArea: state.addArea,
             addPerson: state.addPerson,
             deleteTask: state.deleteTask,
+            cancelTask: state.cancelTask,
             restoreTask: state.restoreTask,
             allContexts: derived.allContexts,
             allTags: derived.allTags,
@@ -704,6 +708,7 @@ function TaskEditModalInner({
         handleAttemptClose,
         handleConvertToReference,
         handleConvertToSection,
+        handleCancelTask,
         handleDeleteTask,
         handleDone,
         handleDuplicateTask,
@@ -712,6 +717,7 @@ function TaskEditModalInner({
         handleShare,
     } = useTaskEditActions({
         aiEnabled,
+        cancelTask,
         closeAIModal,
         deleteTask,
         descriptionDraft,
@@ -992,6 +998,12 @@ function TaskEditModalInner({
                         onShare={handleShare}
                         onDuplicate={handleDuplicateTask}
                         onPromoteToProject={handlePromoteTaskToProject}
+                        onCancelTask={task && isTaskActionable(task) && !isProjectedRecurringTask(task)
+                            ? handleCancelTask
+                            : undefined}
+                        cancelTaskLabel={task?.recurrence
+                            ? tFallback(t, 'task.cancelRecurringSeries', 'Cancel recurring series')
+                            : tFallback(t, 'task.cancel', 'Cancel task')}
                         onDelete={handleDeleteTask}
                         onConvertToReference={handleConvertToReference}
                         showConvertToReference={!isReference}

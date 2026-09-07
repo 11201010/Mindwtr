@@ -95,6 +95,53 @@ describe('TaskEditViewTab', () => {
     expect(titleNode.props.numberOfLines).toBeUndefined();
   });
 
+  it('labels a cancelled read-only task as Cancelled instead of Archived', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <TaskEditViewTab
+          t={(key) => ({
+            'task.cancelled': 'Cancelled',
+            'taskEdit.statusLabel': 'Status',
+            'status.archived': 'Archived',
+          }[key] ?? key)}
+          tc={{ text: '#fff', secondaryText: '#aaa', inputBg: '#111', border: '#222', cardBg: '#000', tint: '#3b82f6' } as any}
+          styles={taskEditStyles as any}
+          mergedTask={{
+            id: 'task-1',
+            title: 'Cancelled task',
+            status: 'archived',
+            cancelledAt: '2026-04-02T00:00:00.000Z',
+            tags: [],
+            contexts: [],
+            createdAt: '2026-04-01T00:00:00.000Z',
+            updatedAt: '2026-04-02T00:00:00.000Z',
+          }}
+          projects={[]}
+          sections={[]}
+          areas={[]}
+          prioritiesEnabled={false}
+          timeEstimatesEnabled={false}
+          formatTimeEstimateLabel={(value) => String(value)}
+          formatDate={(value) => value}
+          formatDueDate={(value) => value}
+          getRecurrenceRuleValue={() => ''}
+          getRecurrenceStrategyValue={() => 'strict'}
+          applyChecklistUpdate={vi.fn()}
+          visibleAttachments={[]}
+          openAttachment={vi.fn()}
+          isImageAttachment={() => false}
+          textDirectionStyle={{}}
+          resolvedDirection="ltr"
+          readOnly
+        />
+      );
+    });
+
+    expect(tree.root.findAllByProps({ children: 'Cancelled' })).not.toHaveLength(0);
+    expect(tree.root.findAllByProps({ children: 'Archived' })).toHaveLength(0);
+  });
+
   it('renders an interactive status badge and forwards updates', () => {
     const onBackdatedComplete = vi.fn();
     const onStatusUpdate = vi.fn();

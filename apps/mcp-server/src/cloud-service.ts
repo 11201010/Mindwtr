@@ -471,6 +471,7 @@ export const createCloudService = (options: CloudServiceOptions): MindwtrService
         props: filterUndefined({
           color: input.color,
           status: input.status,
+          cancelledAt: input.cancelledAt ?? undefined,
           areaId: input.areaId ?? undefined,
           isSequential: input.isSequential,
           isFocused: input.isFocused,
@@ -488,6 +489,7 @@ export const createCloudService = (options: CloudServiceOptions): MindwtrService
       if (input.title !== undefined) patch.title = input.title;
       if (input.color !== undefined) patch.color = input.color;
       if (input.status !== undefined) patch.status = input.status;
+      if (input.cancelledAt !== undefined) patch.cancelledAt = input.cancelledAt;
       if (input.areaId !== undefined) patch.areaId = input.areaId;
       if (input.isSequential !== undefined) patch.isSequential = input.isSequential;
       if (input.isFocused !== undefined) patch.isFocused = input.isFocused;

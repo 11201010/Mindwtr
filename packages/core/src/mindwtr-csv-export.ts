@@ -93,6 +93,7 @@ export function serializeMindwtrCsv(data: AppData, options: MindwtrCsvExportOpti
             'Due Date': task.dueDate ?? '',
             'Review Date': task.reviewAt ?? '',
             'Completed At': task.completedAt ?? '',
+            'Cancelled At': task.cancelledAt ?? '',
             'Checklist': formatChecklist(task),
             'Location': task.location ?? '',
             'Order': String(task.order ?? 0),

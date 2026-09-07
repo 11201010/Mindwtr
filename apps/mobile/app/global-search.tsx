@@ -25,6 +25,8 @@ import { useTaskStore,
     getTaskUrgency,
     hasTimeComponent,
     isTaskFinished,
+    isTaskCancelled,
+    isTaskCompleted,
     safeFormatDate,
     TaskStatus,
     PRESET_CONTEXTS,
@@ -42,7 +44,7 @@ import {
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useLanguage } from '../contexts/language-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Search, X, Folder, CheckCircle, ChevronRight, SlidersHorizontal } from 'lucide-react-native';
+import { Search, X, Folder, CheckCircle, ChevronRight, SlidersHorizontal, XCircle } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { ThemedAlertHost } from '@/components/themed-alert';
@@ -228,7 +230,15 @@ export default function SearchScreen() {
     const resolveResultDate = (result: SearchTaskResult): { color: string; label: string } | null => {
         const task = taskById.get(result.id);
         if (!task) return null;
-        if (isTaskFinished(task)) {
+        if (isTaskCancelled(task)) {
+            return {
+                color: tc.secondaryText,
+                label: formatI18nTemplate(t('search.cancelledDate'), {
+                    date: safeFormatDate(task.cancelledAt!, hasTimeComponent(task.cancelledAt) ? 'Pp' : 'P'),
+                }),
+            };
+        }
+        if (isTaskCompleted(task)) {
             if (!task.completedAt) return null;
             return {
                 color: tc.secondaryText,
@@ -742,6 +752,8 @@ export default function SearchScreen() {
                         >
                             {item.type === 'project' ? (
                                 <Folder size={24} color={tc.tint} />
+                            ) : isTaskCancelled(taskById.get(item.item.id)) ? (
+                                <XCircle size={24} color={tc.secondaryText} />
                             ) : isTaskFinished(item.item as SearchTaskResult) ? (
                                 <CheckCircle size={24} color={tc.tint} />
                             ) : (

@@ -96,6 +96,7 @@ export interface Project {
     startDate?: string; // Optional project start date (ISO date or datetime); with dueDate it spans a bar on the desktop Timeline.
     dueDate?: string; // Optional project deadline/target date (ISO date or datetime).
     reviewAt?: string; // Tickler/review date (ISO string). If set, project is due for review at/after this time.
+    cancelledAt?: string; // ISO datetime with timezone when the project was cancelled. Cancelled projects are archived.
     areaId?: string;
     areaTitle?: string;
     rev?: number; // Monotonic revision counter for sync conflict resolution
@@ -257,6 +258,7 @@ export interface Task {
     repeatReminderMinutes?: number; // Repeat the due-time reminder every N minutes (presets 5|10|15|30|60). Absent/0 = off. Due-time only.
     reviewAt?: string; // Tickler/review date (ISO string). If set, task is due for review at/after this time.
     completedAt?: string; // ISO timestamp when task was last completed/archived.
+    cancelledAt?: string; // ISO datetime with timezone when the task was cancelled. Cancelled tasks are archived, not completed.
     statusBeforeProjectArchive?: TaskStatus; // Original status when a project archive auto-completed this task.
     completedAtBeforeProjectArchive?: string | null; // Original completion timestamp before project archive auto-completion.
     isFocusedTodayBeforeProjectArchive?: boolean | null; // Original focus flag before project archive auto-completion.

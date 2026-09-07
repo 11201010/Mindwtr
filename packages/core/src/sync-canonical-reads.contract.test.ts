@@ -795,6 +795,8 @@ describe('canonical local reads contract', () => {
                 id,
                 updates: { title: `Contract batch ${id}` },
             }))),
+            cancelProject: () => call('cancelProject', projectId),
+            cancelTask: () => call('cancelTask', taskId),
             convertTaskToSection: () => call('convertTaskToSection', projectTaskIds[0]),
             deleteArea: () => call('deleteArea', areaId),
             deleteContext: () => call('deleteContext', '@home'),

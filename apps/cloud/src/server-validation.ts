@@ -1,5 +1,6 @@
 import {
     filterNotDeleted,
+    normalizeCancellationTimestamp,
     normalizeRecurrenceForLoad,
     normalizeRelativeStartOffset,
     normalizeRepeatReminderMinutes,
@@ -107,8 +108,16 @@ function validateTaskViewSectionIds(value: Record<string, unknown>): string | nu
         : 'Invalid task viewSectionIds';
 }
 
+function validateCancellationTimestamp(value: Record<string, unknown>, entity: 'task' | 'project'): string | null {
+    if (!hasOwnField(value, 'cancelledAt') || value.cancelledAt == null) return null;
+    return normalizeCancellationTimestamp(value.cancelledAt) !== undefined
+        ? null
+        : `Invalid ${entity} cancelledAt: expected an ISO timestamp with timezone`;
+}
+
 function validateTaskPropValues(value: Record<string, unknown>): string | null {
-    return validateTaskRepeatReminderMinutes(value)
+    return validateCancellationTimestamp(value, 'task')
+        ?? validateTaskRepeatReminderMinutes(value)
         ?? validateTaskTimeSpentMinutes(value)
         ?? validateTaskRelativeStartOffset(value)
         ?? validateTaskRecurrence(value)
@@ -116,6 +125,8 @@ function validateTaskPropValues(value: Record<string, unknown>): string | null {
 }
 
 function validateProjectPropValues(value: Record<string, unknown>): string | null {
+    const cancellationError = validateCancellationTimestamp(value, 'project');
+    if (cancellationError) return cancellationError;
     if (!hasOwnField(value, 'taskSortBy')) return null;
     const taskSortBy = value.taskSortBy;
     if (taskSortBy === undefined || taskSortBy === null) return null;

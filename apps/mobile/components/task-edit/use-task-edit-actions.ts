@@ -44,6 +44,7 @@ type ShowToast = (options: {
 
 type TaskEditActionsParams = {
     aiEnabled: boolean;
+    cancelTask: (taskId: string) => Promise<StoreActionResult>;
     closeAIModal: () => void;
     deleteTask: (taskId: string) => Promise<StoreActionResult>;
     descriptionDraft: string;
@@ -79,6 +80,7 @@ type TaskEditActionsParams = {
 
 export function useTaskEditActions({
     aiEnabled,
+    cancelTask,
     closeAIModal,
     deleteTask,
     descriptionDraft,
@@ -121,6 +123,7 @@ export function useTaskEditActions({
     const runStoreAction = useCallback(async (
         action: () => Promise<StoreActionResult>,
         logMessage: string,
+        fallbackMessage?: string,
     ): Promise<boolean> => {
         if (!canMutate()) return false;
         const outcome = await settleStoreAction(action);
@@ -128,7 +131,7 @@ export function useTaskEditActions({
         if ('cause' in outcome) {
             logTaskError(logMessage, outcome.cause);
         }
-        showTaskWriteError(outcome.message);
+        showTaskWriteError(outcome.message || fallbackMessage);
         return false;
     }, [canMutate, showTaskWriteError]);
 
@@ -337,6 +340,16 @@ export function useTaskEditActions({
         onClose();
     }, [canMutate, deleteTask, onClose, restoreTask, runStoreAction, showToast, t, task]);
 
+    const handleCancelTask = useCallback(async () => {
+        if (!task || !canMutate()) return;
+        const cancelled = await runStoreAction(
+            () => cancelTask(task.id),
+            'Failed to cancel task',
+            tFallback(t, 'task.cancelFailed', 'Failed to cancel task'),
+        );
+        if (cancelled) onClose();
+    }, [canMutate, cancelTask, onClose, runStoreAction, t, task]);
+
     const handleConvertToReference = useCallback(() => {
         if (!canMutate()) return;
         void draftLifecycle.convertToReference();
@@ -525,6 +538,7 @@ export function useTaskEditActions({
         handleAttemptClose,
         handleConvertToReference,
         handleConvertToSection,
+        handleCancelTask,
         handleDeleteTask,
         handleDone,
         handleDuplicateTask,

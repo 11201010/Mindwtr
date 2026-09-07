@@ -11,6 +11,7 @@ vi.mock('../../contexts/language-context', () => ({
     'common.save': 'Save',
     'common.more': 'More',
     'task.createProjectFromTask': 'Create project',
+    'task.cancel': 'Cancel task',
   }[key] ?? key) }),
 }));
 
@@ -26,6 +27,10 @@ vi.mock('../../hooks/use-theme-colors', () => ({
     text: '#111',
     danger: '#f00',
   }),
+}));
+
+vi.mock('../../hooks/use-theme-tokens', () => ({
+  useThemeTokens: () => ({ isMaterial: false, roles: null, shape: { medium: 10 } }),
 }));
 
 describe('TaskEditHeader', () => {
@@ -58,5 +63,30 @@ describe('TaskEditHeader', () => {
 
     expect(onDone).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('exposes task cancellation from the existing More menu', () => {
+    const onCancelTask = vi.fn();
+    let tree!: renderer.ReactTestRenderer;
+
+    act(() => {
+      tree = renderer.create(
+        <TaskEditHeader
+          onDone={vi.fn()}
+          onClose={vi.fn()}
+          onShare={vi.fn()}
+          onDuplicate={vi.fn()}
+          onCancelTask={onCancelTask}
+          cancelTaskLabel="Cancel task"
+          onDelete={vi.fn()}
+        />,
+      );
+    });
+
+    act(() => tree.root.findByProps({ accessibilityLabel: 'More' }).props.onPress());
+    const cancelButton = tree.root.findByProps({ accessibilityLabel: 'Cancel task' });
+    act(() => cancelButton.props.onPress());
+
+    expect(onCancelTask).toHaveBeenCalledOnce();
   });
 });

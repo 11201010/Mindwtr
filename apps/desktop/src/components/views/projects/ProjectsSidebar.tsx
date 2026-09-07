@@ -584,7 +584,7 @@ export function ProjectsSidebar({
                             onClick={onToggleArchivedProjects}
                             className="w-full flex items-center justify-between py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors"
                         >
-                            <span>{tFallback(t, 'projects.completed', 'Completed')}</span>
+                            <span>{tFallback(t, 'projects.closed', 'Closed')}</span>
                             {showArchivedProjects ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </button>
                         {showArchivedProjects && (
@@ -650,7 +650,9 @@ export function ProjectsSidebar({
                                                                                     {project.title}
                                                                                 </span>
                                                                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/60 text-muted-foreground uppercase">
-                                                                                    {tFallback(t, `status.${project.status}`, project.status)}
+                                                                                    {project.cancelledAt
+                                                                                        ? tFallback(t, 'projects.cancelled', 'Cancelled')
+                                                                                        : tFallback(t, 'list.done', 'Completed')}
                                                                                 </span>
                                                                             </div>
                                                                         </div>

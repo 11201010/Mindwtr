@@ -315,6 +315,46 @@ const repairTaskRecurrenceSeriesIdentity = (
     };
 };
 
+const hasSamePersistedOperationIdentity = (left: MergeableEntity, right: MergeableEntity): boolean => (
+    (left.rev ?? 0) === (right.rev ?? 0)
+    && (left.revBy ?? '') === (right.revBy ?? '')
+    && left.updatedAt === right.updatedAt
+);
+
+/** A previous-version writer strips the new cancellation field while retaining the
+ * operation's revision metadata. Preserve the marker only for that exact no-edit shape;
+ * a real reactivation or completion bumps rev/updatedAt and continues to win normally. */
+const preserveTaskCancellationFromStrippedPeer = (
+    localTask: Task,
+    incomingTask: Task,
+    winner: Task,
+): Task => {
+    if (
+        localTask.status !== 'archived'
+        || incomingTask.status !== 'archived'
+        || !hasSamePersistedOperationIdentity(localTask, incomingTask)
+    ) return winner;
+    const cancelledAt = localTask.cancelledAt || incomingTask.cancelledAt;
+    if (!cancelledAt || (localTask.cancelledAt && incomingTask.cancelledAt)) return winner;
+    if (winner.cancelledAt === cancelledAt && winner.completedAt === undefined) return winner;
+    return { ...winner, cancelledAt, completedAt: undefined };
+};
+
+const preserveProjectCancellationFromStrippedPeer = (
+    localProject: Project,
+    incomingProject: Project,
+    winner: Project,
+): Project => {
+    if (
+        localProject.status !== 'archived'
+        || incomingProject.status !== 'archived'
+        || !hasSamePersistedOperationIdentity(localProject, incomingProject)
+    ) return winner;
+    const cancelledAt = localProject.cancelledAt || incomingProject.cancelledAt;
+    if (!cancelledAt || (localProject.cancelledAt && incomingProject.cancelledAt)) return winner;
+    return winner.cancelledAt === cancelledAt ? winner : { ...winner, cancelledAt };
+};
+
 function mergeEntitiesWithStats<T extends MergeableEntity>(
     local: T[],
     incoming: T[],
@@ -1058,7 +1098,11 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
             return repairTaskRecurrenceSeriesIdentity(
                 localTask,
                 incomingTask,
-                { ...winnerWithForwardCompatibleViewSections, attachments },
+                preserveTaskCancellationFromStrippedPeer(
+                    localTask,
+                    incomingTask,
+                    { ...winnerWithForwardCompatibleViewSections, attachments },
+                ),
             );
         },
         normalizeTaskForContentComparison,
@@ -1076,7 +1120,11 @@ export function mergeAppDataWithStats(local: AppData, incoming: AppData, options
                     localProject.purgedAt ? undefined : localProject.attachments,
                     incomingProject.purgedAt ? undefined : incomingProject.attachments,
                 );
-            return { ...winner, attachments };
+            return preserveProjectCancellationFromStrippedPeer(
+                localProject,
+                incomingProject,
+                { ...winner, attachments },
+            );
         },
         normalizeProjectForContentComparison,
         'project',

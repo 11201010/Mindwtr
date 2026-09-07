@@ -76,6 +76,17 @@ describe('MCP task write-surface derivation (TASK_SYNC_FIELD_SCHEMA -> Zod tool 
     }
   });
 
+  test('cancellation timestamps round-trip and reject ambiguous or malformed values', () => {
+    const cancelledAt = '2026-09-07T16:00:00.000Z';
+    const created = addTaskSchema.parse({ title: 'Cancelled plan', cancelledAt }) as Record<string, unknown>;
+    const patched = updateTaskSchema.parse({ id: 'task-1', cancelledAt: null }) as Record<string, unknown>;
+    expect(created.cancelledAt === cancelledAt).toBe(true);
+    expect(patched.cancelledAt === null).toBe(true);
+    for (const value of ['2026-09-07', 'tomorrow', '', 123]) {
+      expect(updateTaskSchema.safeParse({ id: 'task-1', cancelledAt: value }).success).toBe(false);
+    }
+  });
+
   test('task write schemas accept positive custom time estimates', () => {
     expect(addTaskSchema.safeParse({ title: 'Task', timeEstimate: 'custom:42.5' }).success).toBe(true);
     expect(updateTaskSchema.safeParse({ id: 'task-1', timeEstimate: 'custom:0' }).success).toBe(false);

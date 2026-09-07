@@ -1,19 +1,21 @@
 import {
-    archiveSectionForProjectArchive,
-    completeTaskForProjectArchive,
+    applyProjectLifecycleTransition,
     ensureDeviceId,
     getNextDataChangeAt,
     nextRevision,
     persist,
-    restoreSectionFromProjectArchive,
-    restoreTaskFromProjectArchive,
 } from '../store-helpers';
-import { logWarn } from '../logger';
+import {
+    isProjectCancelled,
+    normalizeProjectLifecycleFields,
+    normalizeProjectUpdate,
+} from '../project-status';
+import { normalizeCancellationTimestamp } from '../task-status';
+import { logInfo, logWarn } from '../logger';
 import { clearDerivedCache } from '../store-settings';
 import { generateUUID as uuidv4 } from '../uuid';
 import { DEFAULT_PROJECT_COLOR } from '../color-constants';
 import { findSelectableProjectByTitleAndArea } from '../project-utils';
-import { isTaskFinished } from '../task-status';
 import type { Area } from '../types';
 import type { Project, ProjectCoreActions, ProjectActionContext, Task, TaskStatus } from './shared';
 import type { TaskStore } from '../store-types';
@@ -160,23 +162,37 @@ export const buildNewProject = ({
         ...initialProps,
         tagIds: initialProps?.tagIds ?? [],
     };
+    const lifecycleProject = normalizeProjectLifecycleFields({
+        ...project,
+        ...normalizeProjectUpdate(project, initialProps ?? {}),
+    });
     // Resolved from the FINAL areaId, which initialProps may have supplied.
-    const areaTitle = project.areaId
-        ? existingAreas.find((area) => area.id === project.areaId && !area.deletedAt)?.name?.trim() || undefined
+    const areaTitle = lifecycleProject.areaId
+        ? existingAreas.find((area) => area.id === lifecycleProject.areaId && !area.deletedAt)?.name?.trim() || undefined
         : undefined;
-    return areaTitle === project.areaTitle ? project : { ...project, areaTitle };
+    return areaTitle === lifecycleProject.areaTitle ? lifecycleProject : { ...lifecycleProject, areaTitle };
 };
 
 export const createProjectCoreActions = ({
     set,
     get,
     debouncedSave,
+    flushPendingSave,
 }: ProjectActionContext): ProjectCoreActions => ({
     addProject: async (title: string, color: string, initialProps?: Partial<Project>) => {
         const changeAt = Date.now();
         const trimmedTitle = typeof title === 'string' ? title.trim() : '';
         if (!trimmedTitle) {
             set({ error: 'Project title is required' });
+            return null;
+        }
+        if (
+            initialProps
+            && Object.prototype.hasOwnProperty.call(initialProps, 'cancelledAt')
+            && initialProps.cancelledAt != null
+            && normalizeCancellationTimestamp(initialProps.cancelledAt) === undefined
+        ) {
+            set({ error: 'Cancellation timestamp must be an ISO datetime with timezone' });
             return null;
         }
         const targetAreaId = typeof initialProps?.areaId === 'string' ? initialProps.areaId : undefined;
@@ -218,10 +234,63 @@ export const createProjectCoreActions = ({
         return createdProject;
     },
 
+    cancelProject: async (id: string) => {
+        const project = get()._projectsById.get(id);
+        if (!project || project.deletedAt || project.purgedAt) {
+            const message = 'Project not found';
+            set({ error: message });
+            return actionFail(message);
+        }
+        const alreadyCancelled = isProjectCancelled(project);
+        const retryingFailedCancellation = alreadyCancelled && Boolean(get().persistenceFailure);
+        if (!alreadyCancelled) {
+            const result = await get().updateProject(id, {
+                status: 'archived',
+                cancelledAt: new Date().toISOString(),
+            });
+            if (!result.success) return result;
+        } else if (retryingFailedCancellation) {
+            // A terminal flush dequeues its exhausted snapshot. The in-memory
+            // cancellation still needs a fresh durable retry on the next user
+            // acknowledgement attempt, without changing its revision or time.
+            await get().persistSnapshot();
+        }
+        try {
+            await flushPendingSave();
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const message = `Failed to save project cancellation: ${detail}`;
+            set({ error: message });
+            return actionFail(message);
+        }
+        if (!alreadyCancelled || retryingFailedCancellation) {
+            logInfo('Commitment cancellation saved', {
+                scope: 'store',
+                category: 'storage',
+                context: {
+                    releaseCheck: 'v1.2.9/commitment-cancelled',
+                    kind: 'project',
+                    outcome: 'cancelled',
+                    count: 1,
+                },
+            });
+        }
+        return actionOk({ id });
+    },
+
     updateProject: async (id: string, updates: Partial<Project>) => {
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let missingProject = false;
+        if (
+            Object.prototype.hasOwnProperty.call(updates, 'cancelledAt')
+            && updates.cancelledAt != null
+            && normalizeCancellationTimestamp(updates.cancelledAt) === undefined
+        ) {
+            const message = 'Cancellation timestamp must be an ISO datetime with timezone';
+            set({ error: message });
+            return actionFail(message);
+        }
         set((state) => {
             const allProjects = state._allProjects;
             const oldProject = allProjects.find(p => p.id === id);
@@ -231,39 +300,18 @@ export const createProjectCoreActions = ({
             }
             const deviceState = ensureDeviceId(state.settings);
 
-            const incomingStatus = updates.status ?? oldProject.status;
+            const lifecycle = applyProjectLifecycleTransition(
+                oldProject,
+                updates,
+                state._allTasks,
+                state._allSections,
+                now,
+                deviceState.deviceId,
+            );
+            const newAllTasks = lifecycle.tasks;
+            const newAllSections = lifecycle.sections;
+            const incomingStatus = lifecycle.projectUpdates.status ?? oldProject.status;
             const statusChanged = incomingStatus !== oldProject.status;
-
-            let newAllTasks = state._allTasks;
-            let newAllSections = state._allSections;
-
-            if (statusChanged && incomingStatus === 'archived') {
-                newAllTasks = newAllTasks.map(task => {
-                    if (
-                        task.projectId === id &&
-                        !task.deletedAt &&
-                        !isTaskFinished(task)
-                    ) {
-                        return completeTaskForProjectArchive(task, now, deviceState.deviceId);
-                    }
-                    return task;
-                });
-                newAllSections = newAllSections.map((section) => {
-                    if (section.projectId === id && !section.deletedAt) {
-                        return archiveSectionForProjectArchive(section, now, deviceState.deviceId);
-                    }
-                    return section;
-                });
-            } else if (statusChanged && oldProject.status === 'archived' && incomingStatus !== 'archived') {
-                newAllTasks = newAllTasks.map((task) => {
-                    if (task.projectId !== id || !task.projectArchivedAt) return task;
-                    return restoreTaskFromProjectArchive(task, now, deviceState.deviceId);
-                });
-                newAllSections = newAllSections.map((section) => {
-                    if (section.projectId !== id || !section.projectArchivedAt) return section;
-                    return restoreSectionFromProjectArchive(section, now, deviceState.deviceId);
-                });
-            }
 
             let adjustedOrder = updates.order;
             const nextAreaId = updates.areaId ?? oldProject.areaId;
@@ -276,7 +324,7 @@ export const createProjectCoreActions = ({
             }
 
             const finalProjectUpdates: Partial<Project> = {
-                ...updates,
+                ...lifecycle.projectUpdates,
                 ...(Number.isFinite(adjustedOrder) ? { order: adjustedOrder } : {}),
                 ...(statusChanged && incomingStatus !== 'active'
                     ? { isFocused: false }
@@ -286,11 +334,13 @@ export const createProjectCoreActions = ({
             const newAllProjects = allProjects.map(project =>
                 project.id === id
                     ? {
-                        ...project,
-                        ...finalProjectUpdates,
-                        updatedAt: now,
-                        rev: nextRevision(project.rev),
-                        revBy: deviceState.deviceId,
+                        ...normalizeProjectLifecycleFields({
+                            ...project,
+                            ...finalProjectUpdates,
+                            updatedAt: now,
+                            rev: nextRevision(project.rev),
+                            revBy: deviceState.deviceId,
+                        }),
                     }
                     : project
             );
@@ -670,6 +720,7 @@ export const createProjectCoreActions = ({
                 title: `${sourceProject.title} (Copy)`,
                 order: baseOrder,
                 isFocused: false,
+                cancelledAt: undefined,
                 attachments: projectAttachments.length > 0 ? projectAttachments : undefined,
                 createdAt: now,
                 updatedAt: now,
@@ -721,6 +772,7 @@ export const createProjectCoreActions = ({
                     dueDate: undefined,
                     reviewAt: undefined,
                     completedAt: undefined,
+                    cancelledAt: undefined,
                     isFocusedToday: false,
                     pushCount: 0,
                     checklist,

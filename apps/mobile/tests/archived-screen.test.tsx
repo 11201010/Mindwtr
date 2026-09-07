@@ -216,6 +216,11 @@ describe('ArchivedScreen', () => {
   };
   const hasText = (tree: renderer.ReactTestRenderer, text: string) =>
     tree.root.findAll((node) => flattenText(node.props?.children).includes(text)).length > 0;
+  const flattenStyle = (style: unknown): Record<string, unknown> => (
+    (Array.isArray(style) ? style : [style])
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+      .reduce((merged, entry) => ({ ...merged, ...entry }), {})
+  );
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -275,6 +280,33 @@ describe('ArchivedScreen', () => {
     expect(mocks.updateTask).toHaveBeenCalledWith('task-1', { description: 'Updated archived details' });
     modal = tree.root.findByType(taskEditModalType);
     expect(modal.props.visible).toBe(false);
+  });
+
+  it('keeps cancelled task and project titles unstruck', () => {
+    mocks.storeState._allTasks = [{
+      ...mocks.storeState._allTasks[0],
+      id: 'cancelled-task',
+      title: 'Cancelled task',
+      completedAt: undefined,
+      cancelledAt: '2026-05-12T08:30:00.000Z',
+    }];
+    mocks.storeState.projects = [{
+      ...archivedProject,
+      id: 'cancelled-project',
+      title: 'Cancelled project',
+      cancelledAt: '2026-05-11T08:30:00.000Z',
+    }];
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<ArchivedScreen />);
+    });
+
+    const taskTitle = tree.root.find((node) => node.props.children === 'Cancelled task');
+    expect(flattenStyle(taskTitle.props.style).textDecorationLine).toBeUndefined();
+
+    switchToProjects(tree);
+    const projectTitle = tree.root.find((node) => node.props.children === 'Cancelled project');
+    expect(flattenStyle(projectTitle.props.style).textDecorationLine).toBeUndefined();
   });
 
   it('moves an archived task to Trash instead of purging it', () => {

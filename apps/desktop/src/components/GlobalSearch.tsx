@@ -14,6 +14,8 @@ import { shallow,
     formatI18nTemplate,
     hasTimeComponent,
     isTaskFinished,
+    isTaskCancelled,
+    isTaskCompleted,
     safeFormatDate,
     TaskStatus,
     areaFilterSelectionToFilters,
@@ -312,7 +314,16 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     const renderResultDate = (result: SearchTaskResult) => {
         const task = taskById.get(result.id);
         if (!task) return null;
-        if (isTaskFinished(task)) {
+        if (isTaskCancelled(task)) {
+            return (
+                <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                    {formatI18nTemplate(t('search.cancelledDate'), {
+                        date: safeFormatDate(task.cancelledAt!, hasTimeComponent(task.cancelledAt) ? 'Pp' : 'P'),
+                    })}
+                </span>
+            );
+        }
+        if (isTaskCompleted(task)) {
             if (!task.completedAt) return null;
             return (
                 <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">

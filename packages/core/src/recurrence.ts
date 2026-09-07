@@ -1880,6 +1880,8 @@ export function createNextRecurringTask(
         sectionId: task.sectionId,
         areaId: task.areaId,
         isFocusedToday: false,
+        completedAt: undefined,
+        cancelledAt: undefined,
         timeEstimate: task.timeEstimate,
         reviewAt: nextReviewAt,
         createdAt: completedAtIso,

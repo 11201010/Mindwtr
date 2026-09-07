@@ -26,7 +26,12 @@ import {
     type ProjectOrderReserver,
 } from './store-helpers';
 import { logInfo, logWarn } from './logger';
-import { isTaskFinished } from './task-status';
+import {
+    isTaskCancelled,
+    isTaskFinished,
+    normalizeCancellationTimestamp,
+    normalizeTaskLifecycleFields,
+} from './task-status';
 import { beginNotifyProfile, endNotifyProfile, type NotifyProfile } from './store-notify-profiler';
 import { generateUUID as uuidv4 } from './uuid';
 import { normalizeRecurrenceForLoad } from './recurrence';
@@ -166,6 +171,7 @@ type TaskActions = Pick<
     | 'addTask'
     | 'addTasks'
     | 'updateTask'
+    | 'cancelTask'
     | 'deleteTask'
     | 'restoreTask'
     | 'restoreTasks'
@@ -190,6 +196,7 @@ type TaskActionContext = {
     get: () => TaskStore;
     getStorage: () => StorageAdapter;
     debouncedSave: (data: AppData, onError?: (msg: string) => void) => void;
+    flushPendingSave: () => Promise<void>;
     trackImmediateSave: (save: Promise<void>, retrySnapshot?: AppData) => Promise<void>;
     hasQueuedSnapshotSave: () => boolean;
 };
@@ -344,7 +351,7 @@ const prepareTaskUpdatesForStore = ({
     };
 };
 
-export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackImmediateSave, hasQueuedSnapshotSave }: TaskActionContext): TaskActions => ({
+export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave }: TaskActionContext): TaskActions => ({
     /**
      * Add a new task to the store and persist to storage.
      * @param title Task title
@@ -372,6 +379,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
             initialProps: item.initialProps ?? {},
         })).filter((item) => item.title.length > 0);
         if (normalizedItems.length === 0) return actionOk({ ids: [] });
+        const hasInvalidCancellationTimestamp = normalizedItems.some(({ initialProps }) => (
+            hasOwnField(initialProps, 'cancelledAt')
+            && initialProps.cancelledAt != null
+            && normalizeCancellationTimestamp(initialProps.cancelledAt) === undefined
+        ));
+        if (hasInvalidCancellationTimestamp) {
+            const message = 'Cancellation timestamp must be an ISO datetime with timezone';
+            set({ error: message });
+            return actionFail(message);
+        }
 
         const currentState = get();
         const deviceState = ensureDeviceId(currentState.settings);
@@ -409,7 +426,10 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
             // Unlike the star creation path below there is no focus cap or
             // eligibility gate here: nothing is being starred. See
             // resolveCaptureStatusForStart for the shared promotion rule.
-            const effectiveStatus: TaskStatus = resolveCaptureStatusForStart(initialTaskProps, resolvedStatus);
+            const cancellationTimestamp = normalizeCancellationTimestamp(initialTaskProps.cancelledAt);
+            const effectiveStatus: TaskStatus = cancellationTimestamp && !hasOwnField(initialTaskProps, 'status')
+                ? 'archived'
+                : resolveCaptureStatusForStart(initialTaskProps, resolvedStatus);
             const hasTaskOrder = hasOwnField(initialTaskProps, 'order') || hasOwnField(initialTaskProps, 'orderNum');
             const resolvedProjectId = containerResolution.projectId;
             const resolvedSectionId = containerResolution.sectionId;
@@ -421,7 +441,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
             const resolvedOrder = !hasTaskOrder && resolvedProjectId
                 ? projectOrderReserver(resolvedProjectId)
                 : explicitOrder;
-            const newTask: Task = {
+            let newTask: Task = {
                 ...initialTaskProps,
                 id: uuidv4(),
                 title: item.title,
@@ -467,6 +487,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
                 }
             }
 
+            newTask = normalizeTaskLifecycleFields(newTask);
+
             newTasks.push(newTask);
             nextAllTasks.push(newTask);
         }
@@ -504,6 +526,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
                 category: 'validation',
                 context: { id },
             });
+            set({ error: message });
+            return actionFail(message);
+        }
+        if (
+            hasOwnField(updates, 'cancelledAt')
+            && updates.cancelledAt != null
+            && normalizeCancellationTimestamp(updates.cancelledAt) === undefined
+        ) {
+            const message = 'Cancellation timestamp must be an ISO datetime with timezone';
             set({ error: message });
             return actionFail(message);
         }
@@ -661,6 +692,51 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
             });
         }
         return actionOk();
+    },
+
+    /** Archive a task as cancelled without completing or advancing recurrence. */
+    cancelTask: async (id: string) => {
+        const task = get()._tasksById.get(id);
+        if (!task || task.deletedAt || task.purgedAt) {
+            const message = 'Task not found';
+            set({ error: message });
+            return actionFail(message);
+        }
+        const alreadyCancelled = isTaskCancelled(task);
+        const retryingFailedCancellation = alreadyCancelled && Boolean(get().persistenceFailure);
+        if (!alreadyCancelled) {
+            const result = await get().updateTask(id, {
+                status: 'archived',
+                cancelledAt: new Date().toISOString(),
+            });
+            if (!result.success) return result;
+        } else if (retryingFailedCancellation) {
+            // A terminal flush dequeues its exhausted snapshot. The in-memory
+            // cancellation still needs a fresh durable retry on the next user
+            // acknowledgement attempt, without changing its revision or time.
+            await get().persistSnapshot();
+        }
+        try {
+            await flushPendingSave();
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const message = `Failed to save task cancellation: ${detail}`;
+            set({ error: message });
+            return actionFail(message);
+        }
+        if (!alreadyCancelled || retryingFailedCancellation) {
+            logInfo('Commitment cancellation saved', {
+                scope: 'store',
+                category: 'storage',
+                context: {
+                    releaseCheck: 'v1.2.9/commitment-cancelled',
+                    kind: 'task',
+                    outcome: 'cancelled',
+                    count: 1,
+                },
+            });
+        }
+        return actionOk({ id });
     },
 
     /**
@@ -846,6 +922,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
                 checklist: duplicatedChecklist.length > 0 ? duplicatedChecklist : undefined,
                 attachments: duplicatedAttachments.length > 0 ? duplicatedAttachments : undefined,
                 completedAt: undefined,
+                cancelledAt: undefined,
                 isFocusedToday: false,
                 // A copy is not in Today's Focus and was never archived with a
                 // project, so neither the focus position nor the restore
@@ -1166,6 +1243,16 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, trackIm
      */
     batchUpdateTasks: async (updatesList: Array<{ id: string; updates: Partial<Task> }>) => {
         if (updatesList.length === 0) return actionOk();
+        const hasInvalidCancellationTimestamp = updatesList.some(({ updates }) => (
+            hasOwnField(updates, 'cancelledAt')
+            && updates.cancelledAt != null
+            && normalizeCancellationTimestamp(updates.cancelledAt) === undefined
+        ));
+        if (hasInvalidCancellationTimestamp) {
+            const message = 'Cancellation timestamp must be an ISO datetime with timezone';
+            set({ error: message });
+            return actionFail(message);
+        }
         const state = get();
         const seenIds = new Set<string>();
         const duplicateIds = new Set<string>();

@@ -85,6 +85,7 @@ export type TaskGeneratedCreateFields = Pick<CoreTask,
   | 'suppressMindwtrReminders'
   | 'repeatReminderMinutes'
   | 'reviewAt'
+  | 'cancelledAt'
 >;
 
 export type TaskGeneratedPatchFields = TaskGeneratedCreateFields & Pick<CoreTask, 'order' | 'boardOrder' | 'focusOrder'>;

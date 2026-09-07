@@ -136,6 +136,7 @@ export const normalizeTaskForContentComparison = (task: Task): Record<string, un
         repeatReminderMinutes: task.repeatReminderMinutes ? task.repeatReminderMinutes : undefined,
         reviewAt: task.reviewAt,
         completedAt: task.completedAt,
+        cancelledAt: task.cancelledAt,
         deletedAt: task.deletedAt,
     } satisfies Record<Exclude<keyof Task, TaskContentComparisonExcludedKey>, unknown>;
     return comparable;

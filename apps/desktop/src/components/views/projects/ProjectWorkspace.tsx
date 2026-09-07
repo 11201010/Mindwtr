@@ -7,6 +7,7 @@ import { Attachment,
     getProjectSectionsForView,
     getSequentialProjectTaskCues,
     isTaskFinished,
+    isTaskCompleted,
     type BulkOrganizeTaskUpdateInput,
     type Project,
     type ProjectSequenceTaskCue,
@@ -418,6 +419,7 @@ export function ProjectWorkspace({
         reorderSections,
         reorderProjectTasks,
         updateProject,
+        cancelProject,
         deleteProject,
         restoreProject,
         updateTask,
@@ -1503,7 +1505,7 @@ export function ProjectWorkspace({
     const projectProgress = (() => {
         if (!selectedProjectId) return null;
         if (isArchivedProject) {
-            const completedCount = projectAllTasks.filter((task) => isTaskFinished(task)).length;
+            const completedCount = projectAllTasks.filter((task) => isTaskCompleted(task)).length;
             return {
                 doneCount: completedCount,
                 remainingCount: 0,
@@ -1552,6 +1554,32 @@ export function ProjectWorkspace({
         } catch (error) {
             reportError('Failed to archive project', error);
             showToast(tFallback(t, 'projects.archiveFailed', 'Failed to archive project'), 'error');
+        }
+    };
+
+    const handleCancelProject = async () => {
+        const current = getMutableSelectedProject();
+        if (!current) return;
+        const projectId = current.id;
+        const confirmed = await requestConfirmation({
+            title: tFallback(t, 'projects.cancelConfirmTitle', 'Cancel project?'),
+            description: tFallback(
+                t,
+                'projects.cancelConfirmBody',
+                'Cancel this project and its unfinished tasks? Completed work and project history will be kept.',
+            ),
+            confirmLabel: tFallback(t, 'projects.cancel', 'Cancel project'),
+            cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
+        });
+        if (!confirmed || getMutableSelectedProject()?.id !== projectId) return;
+        try {
+            const result = await cancelProject(projectId);
+            if (!result.success) {
+                showToast(result.error || tFallback(t, 'projects.cancelFailed', 'Failed to cancel project'), 'error');
+            }
+        } catch (error) {
+            reportError('Failed to cancel project', error);
+            showToast(tFallback(t, 'projects.cancelFailed', 'Failed to cancel project'), 'error');
         }
     };
 
@@ -1762,6 +1790,7 @@ export function ProjectWorkspace({
                                 onToggleDetails={() => setProjectDetailsExpanded((prev) => !prev)}
                                 onDuplicate={() => onDuplicateProject(selectedProject.id)}
                                 onArchive={handleArchiveProject}
+                                onCancel={handleCancelProject}
                                 onReactivate={() => {
                                     Promise.resolve(updateProject(selectedProject.id, { status: 'active' })).catch((error) => {
                                         reportError('Failed to reactivate project', error);
@@ -1772,7 +1801,7 @@ export function ProjectWorkspace({
                                 isDeleting={isProjectDeleting}
                                 readOnly={isArchivedProject}
                                 readOnlyHint={archivedReadOnlyHint}
-                                projectProgress={projectProgress}
+                                projectProgress={selectedProject.cancelledAt ? null : projectProgress}
                                 t={t}
                             />
 

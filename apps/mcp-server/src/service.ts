@@ -284,6 +284,7 @@ export type AddProjectInput = {
   title: string;
   color?: string;
   status?: CoreProject['status'];
+  cancelledAt?: string | null;
   areaId?: string | null;
   isSequential?: boolean;
   isFocused?: boolean;
@@ -299,6 +300,7 @@ export type UpdateProjectInput = {
   title?: string;
   color?: string | null;
   status?: CoreProject['status'];
+  cancelledAt?: string | null;
   areaId?: string | null;
   isSequential?: boolean;
   isFocused?: boolean;
@@ -600,6 +602,7 @@ export const createService = (
           color: input.color ?? DEFAULT_PROJECT_COLOR,
           props: filterUndefined({
             status: parseProjectStatus(input.status),
+            cancelledAt: input.cancelledAt ?? undefined,
             areaId: input.areaId ?? undefined,
             isSequential: input.isSequential,
             isFocused: input.isFocused,
@@ -618,6 +621,7 @@ export const createService = (
         if (input.title !== undefined) updates.title = validateProjectTitle(input.title);
         if (input.color !== undefined) updates.color = input.color ?? undefined;
         if (input.status !== undefined) updates.status = parseProjectStatus(input.status);
+        if (input.cancelledAt !== undefined) updates.cancelledAt = input.cancelledAt ?? undefined;
         if (input.areaId !== undefined) updates.areaId = input.areaId ?? undefined;
         if (input.isSequential !== undefined) updates.isSequential = input.isSequential;
         if (input.isFocused !== undefined) updates.isFocused = input.isFocused;
