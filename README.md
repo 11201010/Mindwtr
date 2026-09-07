@@ -113,6 +113,8 @@ Your head is for having ideas, not for holding them (David Allen, who wrote the 
 
 If you know GTD: that is Capture, Clarify, Organize, Engage, and Reflect, end to end. If you don't, no problem: Mindwtr walks you through each step, and [GTD in 15 minutes](https://hamberg.no/gtd) is a friendly introduction whenever you're curious.
 
+[Explore the interactive GTD flowchart](https://docs.mindwtr.app/assets/diagrams/gtd-workflow)
+
 ## Philosophy
 
 **Don't show me a cockpit when I just want to ride a bike.**
