@@ -74,8 +74,8 @@
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d" controls playsinline width="900" aria-label="试试 Mindwtr — 0:55"></video>
-  <p><b>试试 Mindwtr — 0:55</b></p>
+  <video src="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
+  <p><b>试试 Mindwtr</b></p>
 
   <p>
     <i>桌面与移动端的本地优先 GTD</i>
@@ -99,9 +99,9 @@
 ## 怎么用
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa" controls playsinline width="900" aria-label="用 Mindwtr 实践 GTD — 2:41"></video>
+  <video src="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa" controls playsinline width="900" aria-label="用 Mindwtr 实践 GTD"></video>
   <br>
-  <b>用 Mindwtr 实践 GTD — 2:41</b>
+  <b>用 Mindwtr 实践 GTD</b>
 </p>
 
 大脑是用来产生想法的，不是用来存放它们的（David Allen 说的，GTD 这本书就是他写的）。存放的活儿，交给 Mindwtr：
