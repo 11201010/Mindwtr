@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const PbxFile = require('xcode/lib/pbxFile');
 const {
   withInfoPlist,
   withPlugins,
@@ -192,14 +193,58 @@ const addProductEmbedPhase = (project, parentTargetUuid, productFile, {
 };
 
 const addTargetGroup = (project, name, files) => {
-  const group = project.addPbxGroup(files, name, name);
+  const groupUuid = project.generateUuid();
+  const group = {
+    isa: 'PBXGroup',
+    children: [],
+    name,
+    path: name,
+    sourceTree: '"<group>"',
+  };
+  const fileReferences = new Map();
+  const groupSection = ensureSection(project, 'PBXGroup');
+
+  for (const fileName of files) {
+    // xcode's addPbxGroup and addBuildPhase helpers de-duplicate by path across
+    // the whole project. The Watch app and widget intentionally have shared
+    // filenames, so each target needs its own file reference beneath its own
+    // group instead of reusing the other target's object.
+    const file = new PbxFile(fileName);
+    file.fileRef = project.generateUuid();
+    project.addToPbxFileReferenceSection(file);
+    group.children.push({ value: file.fileRef, comment: file.basename });
+    fileReferences.set(fileName, file);
+  }
+
+  groupSection[groupUuid] = group;
+  groupSection[`${groupUuid}${COMMENT_SUFFIX}`] = name;
   const firstProject = project.getFirstProject();
   const rootGroupUuid = firstProject.firstProject.mainGroup;
-  const rootGroup = ensureSection(project, 'PBXGroup')[rootGroupUuid];
-  if (rootGroup && !rootGroup.children.some((child) => child.value === group.uuid)) {
-    rootGroup.children.push({ value: group.uuid, comment: name });
+  const rootGroup = groupSection[rootGroupUuid];
+  if (rootGroup && !rootGroup.children.some((child) => child.value === groupUuid)) {
+    rootGroup.children.push({ value: groupUuid, comment: name });
   }
-  return group.uuid;
+  return { groupUuid, fileReferences };
+};
+
+const addTargetFileBuildPhase = (project, targetUuid, phaseType, phaseName, files) => {
+  const phase = project.addBuildPhase([], phaseType, phaseName, targetUuid, undefined, '""');
+  for (const file of files) {
+    // A PBXBuildFile belongs to exactly one build phase. Reusing it between
+    // Sources phases makes Ruby xcodeproj reject the graph during CocoaPods.
+    const buildFile = {
+      uuid: project.generateUuid(),
+      fileRef: file.fileRef,
+      basename: file.basename,
+      group: phaseName,
+    };
+    project.addToPbxBuildFileSection(buildFile);
+    phase.buildPhase.files.push({
+      value: buildFile.uuid,
+      comment: `${file.basename} in ${phaseName}`,
+    });
+  }
+  return phase;
 };
 
 const addTargetBuildPhases = (project, targetUuid, targetNameValue, directory) => {
@@ -212,15 +257,28 @@ const addTargetBuildPhases = (project, targetUuid, targetNameValue, directory) =
     .map((entry) => entry.name)
     .sort();
 
-  project.addBuildPhase(swiftFiles, 'PBXSourcesBuildPhase', 'Sources', targetUuid, undefined, '""');
-  project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', targetUuid, undefined, '""');
-  project.addBuildPhase(resourceFiles, 'PBXResourcesBuildPhase', 'Resources', targetUuid, undefined, '""');
-  addTargetGroup(project, targetNameValue, [
+  const groupedFiles = [
     ...swiftFiles,
     ...resourceFiles,
     'Info.plist',
     `${targetNameValue}.entitlements`,
-  ]);
+  ];
+  const { fileReferences } = addTargetGroup(project, targetNameValue, groupedFiles);
+  addTargetFileBuildPhase(
+    project,
+    targetUuid,
+    'PBXSourcesBuildPhase',
+    'Sources',
+    swiftFiles.map((name) => fileReferences.get(name)),
+  );
+  project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', targetUuid, undefined, '""');
+  addTargetFileBuildPhase(
+    project,
+    targetUuid,
+    'PBXResourcesBuildPhase',
+    'Resources',
+    resourceFiles.map((name) => fileReferences.get(name)),
+  );
 };
 
 const deleteKeys = (section, keys) => {

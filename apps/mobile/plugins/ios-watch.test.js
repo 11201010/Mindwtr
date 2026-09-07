@@ -176,6 +176,24 @@ const sourceNamesForTarget = (project, target) => {
   });
 };
 
+const buildFileUseCounts = (project) => {
+  const counts = new Map();
+  for (const phaseType of ['PBXCopyFilesBuildPhase', 'PBXSourcesBuildPhase', 'PBXResourcesBuildPhase', 'PBXFrameworksBuildPhase']) {
+    for (const [, phase] of nonCommentEntries(project.hash.project.objects[phaseType] ?? {})) {
+      for (const file of phase.files ?? []) counts.set(file.value, (counts.get(file.value) ?? 0) + 1);
+    }
+  }
+  return counts;
+};
+
+const groupParentCounts = (project) => {
+  const counts = new Map();
+  for (const [, group] of nonCommentEntries(project.hash.project.objects.PBXGroup ?? {})) {
+    for (const child of group.children ?? []) counts.set(child.value, (counts.get(child.value) ?? 0) + 1);
+  }
+  return counts;
+};
+
 const createGeneratedSources = () => {
   const platformProjectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mindwtr-watch-plugin-'));
   temporaryDirectories.push(platformProjectRoot);
@@ -256,6 +274,23 @@ describe('ios-watch', () => {
     expect(widgetSources).not.toContain('MindwtrWatchApp.swift');
     expect(watchSources.filter((name) => name === 'WatchProtocol.swift')).toHaveLength(1);
     expect(widgetSources.filter((name) => name === 'WatchProtocol.swift')).toHaveLength(1);
+
+    const buildFiles = nonCommentEntries(project.pbxBuildFileSection());
+    const buildFileUses = buildFileUseCounts(project);
+    expect(buildFiles.every(([uuid]) => buildFileUses.get(uuid) === 1)).toBe(true);
+    const fileReferences = project.pbxFileReferenceSection();
+    const fileReferenceParents = groupParentCounts(project);
+    expect(buildFiles.every(([, buildFile]) => fileReferenceParents.get(buildFile.fileRef) === 1)).toBe(true);
+
+    const sharedSourceRefs = buildFiles
+      .filter(([, buildFile]) => buildFile.fileRef_comment === 'WatchSnapshotStore.swift')
+      .map(([, buildFile]) => buildFile.fileRef);
+    expect(sharedSourceRefs).toHaveLength(2);
+    expect(new Set(sharedSourceRefs)).toHaveLength(2);
+    expect(sharedSourceRefs.map((uuid) => fileReferences[uuid].path)).toEqual([
+      '"WatchSnapshotStore.swift"',
+      '"WatchSnapshotStore.swift"',
+    ]);
 
     expect(phaseForTarget(project, hostTarget, 'PBXCopyFilesBuildPhase', 'Embed Watch Content').files).toHaveLength(1);
     expect(phaseForTarget(project, watchTarget, 'PBXCopyFilesBuildPhase', 'Embed App Extensions').files).toHaveLength(1);

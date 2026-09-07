@@ -58,6 +58,12 @@ on:
       - "package.json"
       - "bun.lock"
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native platform to validate
+        type: choice
+        default: all
+        options: [all, ios, android, macos, windows]
 
 permissions:
   contents: read
@@ -90,13 +96,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.sha }}
+          DISPATCH_PLATFORM: ${{ inputs.platform || 'all' }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "android=true" >> "$GITHUB_OUTPUT"
-            echo "ios=true" >> "$GITHUB_OUTPUT"
-            echo "macos=true" >> "$GITHUB_OUTPUT"
-            echo "windows=true" >> "$GITHUB_OUTPUT"
+            for platform in android ios macos windows; do
+              enabled=false
+              if [ "$DISPATCH_PLATFORM" = "all" ] || [ "$DISPATCH_PLATFORM" = "$platform" ]; then
+                enabled=true
+              fi
+              echo "$platform=$enabled" >> "$GITHUB_OUTPUT"
+            done
             exit 0
           fi
 
@@ -448,6 +458,21 @@ jobs:
             --clean \
             --platform ios \
             --no-install
+
+      - name: Validate generated Watch Xcode project
+        run: |
+          ruby -rxcodeproj - apps/mobile/ios/Mindwtr.xcodeproj <<'RUBY'
+          project = Xcodeproj::Project.open(ARGV.fetch(0))
+          %w[MindwtrWatch MindwtrWatchWidgets].each do |name|
+            target = project.targets.find { |candidate| candidate.name == name }
+            abort("Missing Watch target: #{name}") unless target
+            target.source_build_phase.files.each do |file|
+              abort("Missing source for #{name}: #{file.display_name}") unless file.file_ref&.real_path&.file?
+            end
+          end
+          project.save
+          puts 'Watch targets and source references survive Xcodeproj serialization'
+          RUBY
 
       - name: Install CocoaPods dependencies
         working-directory: apps/mobile/ios
