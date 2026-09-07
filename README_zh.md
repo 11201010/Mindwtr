@@ -278,6 +278,18 @@ Mindwtr 的发展离不开用户与贡献者的支持，感谢大家一起把它
 8. **认领并实现：** 欢迎社区成员从任何开放 issue 中认领条目并提交 PR。
 9. **赞助项目：** 可通过 [GitHub Sponsors](https://github.com/sponsors/dongdongbh) 或 [Ko-fi](https://ko-fi.com/D1D01T20WK) 支持持续开发。
 
+## 更多视频
+
+上方已嵌入应用介绍和 GTD 演示。更多带英文字幕的视频，可以在网站或 YouTube 上观看：
+
+| 视频 | 网站 | YouTube |
+| --- | --- | --- |
+| 功能导览 | [观看](https://mindwtr.app/features#features-video) | [观看](https://youtu.be/oDU8vZXfSoM) |
+| 桌面端快速导览 | [观看](https://docs.mindwtr.app/start/videos#desktop) | [观看](https://youtu.be/pSLajUzSZ2Q) |
+| 移动端快速导览 | [观看](https://docs.mindwtr.app/start/videos#mobile) | [观看](https://youtu.be/l-aBufpt0c0) |
+
+[网站上的全部视频](https://docs.mindwtr.app/start/videos) · [Mindwtr Intro 播放列表](https://www.youtube.com/playlist?list=PLHqy3tAh5WlE) · [Mindwtr App Demos 播放列表](https://www.youtube.com/playlist?list=PLLwV6zeTfB_k)
+
 ## 文档
 
 - 📚 [官方文档](https://docs.mindwtr.app/)
