@@ -74,9 +74,10 @@
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/40dd65b9-96cb-44e4-98d9-4dc08f329b45" width="60%" autoplay loop muted playsinline></video>
-  
-  <video src="https://github.com/user-attachments/assets/8bd97267-4455-483a-961e-f77ef854a6ce" width="25%" autoplay loop muted playsinline></video>
+  <a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d">
+    <img src="docs/assets/videos/try-mindwtr.jpg" alt="试试 Mindwtr — 0:55" width="900" />
+  </a>
+  <p><a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d"><b>▶ 试试 Mindwtr — 0:55</b></a></p>
 
   <p>
     <i>桌面与移动端的本地优先 GTD</i>
@@ -98,6 +99,14 @@
 - **周日晚上，感觉一切都失控了。** 跟着每周回顾走一遍，重新掌控局面。
 
 ## 怎么用
+
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa">
+    <img src="docs/assets/videos/gtd-in-mindwtr.jpg" alt="用 Mindwtr 实践 GTD — 2:41" width="900" />
+  </a>
+  <br>
+  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa"><b>▶ 用 Mindwtr 实践 GTD — 2:41</b></a>
+</p>
 
 大脑是用来产生想法的，不是用来存放它们的（David Allen 说的，GTD 这本书就是他写的）。存放的活儿，交给 Mindwtr：
 

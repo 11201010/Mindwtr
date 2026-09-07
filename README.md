@@ -74,9 +74,10 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/40dd65b9-96cb-44e4-98d9-4dc08f329b45" width="60%" autoplay loop muted playsinline></video>
-  
-  <video src="https://github.com/user-attachments/assets/8bd97267-4455-483a-961e-f77ef854a6ce" width="25%" autoplay loop muted playsinline></video>
+  <a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d">
+    <img src="docs/assets/videos/try-mindwtr.jpg" alt="Try Mindwtr — 0:55" width="900" />
+  </a>
+  <p><a href="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d"><b>▶ Try Mindwtr — 0:55</b></a></p>
 
   <p>
     <i>Local-First GTD on desktop & mobile</i>
@@ -98,6 +99,14 @@ _Mindwtr = "mind like water": the calm you get when nothing is rattling around i
 - **Sunday night, everything feels out of control.** A guided weekly review puts you back in charge.
 
 ## How it works
+
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa">
+    <img src="docs/assets/videos/gtd-in-mindwtr.jpg" alt="GTD in Mindwtr — 2:41" width="900" />
+  </a>
+  <br>
+  <a href="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa"><b>▶ GTD in Mindwtr — 2:41</b></a>
+</p>
 
 Your head is for having ideas, not for holding them (David Allen, who wrote the book on this). Mindwtr holds them for you:
 
