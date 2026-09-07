@@ -452,15 +452,17 @@ export async function ingestPendingCaptures({
                 continue;
             }
             ingested += 1;
-            const isWatch = capture.source === 'apple-watch';
-            void logInfo(isWatch ? 'Watch command ingested' : 'Widget check-off ingested', {
-                scope: 'capture',
-                extra: {
-                    releaseCheck: isWatch ? WATCH_COMMAND_RELEASE_CHECK : ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK,
-                    ...(isWatch ? { kind: 'complete' } : {}),
-                    outcome,
-                },
-            });
+            if (capture.source === 'apple-watch') {
+                void logInfo('Watch command ingested', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_COMMAND_RELEASE_CHECK, kind: 'complete', outcome },
+                });
+            } else {
+                void logInfo('Widget check-off ingested', {
+                    scope: 'capture',
+                    extra: { releaseCheck: ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK, outcome },
+                });
+            }
             continue;
         }
 
