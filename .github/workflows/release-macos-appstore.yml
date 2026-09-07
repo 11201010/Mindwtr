@@ -545,6 +545,11 @@ jobs:
             echo "::error::Widget appex is missing Contents/embedded.provisionprofile; App Store Connect rejects nested bundles without their own profile."
             exit 1
           fi
+          WIDGET_DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APPEX_PATH/Contents/Info.plist" 2>/dev/null || true)"
+          if [ -z "$WIDGET_DISPLAY_NAME" ]; then
+            echo "::error::Widget appex Info.plist is missing CFBundleDisplayName; App Store Connect rejects the package."
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=4 "$APP_PATH"
           APP_GROUP="${APPLE_TEAM_ID}.tech.dongdongbh.mindwtr"
           HOST_ENTITLEMENTS_PATH="$RUNNER_TEMP/mas-host-entitlements.plist"
@@ -566,7 +571,7 @@ jobs:
           expect_entitlement "$APPEX_ENTITLEMENTS_PATH" "Widget appex" "<string>${APP_GROUP}</string>"
           expect_entitlement "$APPEX_ENTITLEMENTS_PATH" "Widget appex" "<key>com.apple.security.app-sandbox</key>"
           expect_entitlement "$APPEX_ENTITLEMENTS_PATH" "Widget appex" "<string>${APPLE_TEAM_ID}.tech.dongdongbh.mindwtr.MindwtrWidgets</string>"
-          echo "Verified widget appex is present, provisioned, and signed in $APP_PATH."
+          echo "Verified widget appex is named, present, provisioned, and signed in $APP_PATH."
 
       - name: Build signed installer package
         timeout-minutes: 8

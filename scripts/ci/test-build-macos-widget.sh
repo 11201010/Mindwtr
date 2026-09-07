@@ -126,6 +126,8 @@ run_case() {
     grep -q 'Set :CFBundleShortVersionString 1.2.5' "$log_path"
     grep -q 'Set :CFBundleVersion 125' "$log_path"
     grep -q 'Set :CFBundleIdentifier tech.dongdongbh.mindwtr.MindwtrWidgets' "$log_path"
+    grep -qF '<key>CFBundleDisplayName</key>' "$appex/Contents/Info.plist"
+    grep -qF '<string>Mindwtr Widgets</string>' "$appex/Contents/Info.plist"
     grep -qF 'TEAM123.tech.dongdongbh.mindwtr' "$appex/Contents/Info.plist"
     ! grep -q '__MINDWTR_MACOS_APP_GROUP__' "$appex/Contents/Info.plist"
     grep -qF '<string>TEAM123.tech.dongdongbh.mindwtr</string>' "$case_dir/widget-entitlements.plist"

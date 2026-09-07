@@ -147,6 +147,8 @@ test("App Store: the widget is verified in the signed app before the installer i
   );
   expect(verifyStep.run).toContain("Contents/MacOS/MindwtrWidgets");
   expect(verifyStep.run).toContain("Contents/embedded.provisionprofile");
+  expect(verifyStep.run).toContain("Print :CFBundleDisplayName");
+  expect(verifyStep.run).toContain("Info.plist is missing CFBundleDisplayName");
   expect(verifyStep.run).toContain("codesign --verify --deep --strict --verbose=4");
   expect(verifyStep.run).toContain("codesign -d --entitlements :-");
   expect(verifyStep.run).toContain('"Host app" "<string>${APP_GROUP}</string>"');
