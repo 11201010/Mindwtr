@@ -74,7 +74,7 @@
 </div>
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/50661fd1-fb1c-4b50-96a0-2712b05f313d" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
+  <video src="https://github.com/user-attachments/assets/083fea6e-0daa-4df1-9e1a-f8c521bed523" controls playsinline width="900" aria-label="试试 Mindwtr"></video>
   <p><b>试试 Mindwtr</b></p>
 
   <p>
@@ -99,7 +99,7 @@
 ## 怎么用
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/76fa11bc-574b-49f5-a703-b2523dac91fa" controls playsinline width="900" aria-label="用 Mindwtr 实践 GTD"></video>
+  <video src="https://github.com/user-attachments/assets/1c685f99-87a5-44c1-9fdd-d228a66de67c" controls playsinline width="900" aria-label="用 Mindwtr 实践 GTD"></video>
   <br>
   <b>用 Mindwtr 实践 GTD</b>
 </p>
