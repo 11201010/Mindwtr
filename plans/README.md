@@ -142,3 +142,20 @@ All executed in the 1.2.5-rc → 1.2.6 window; each plan file records its own ou
 - `insertColumns` dead cache in queries.ts: one-line deletion, fold into any 027 commit touching the file.
 - Wholesale task-utils.ts split; big React-surface splits; SETTINGS_X_VALUES helper; wiki/Home.md link parity; CI caching: all re-confirmed not worth doing (see 08-13 rationale).
 - allTokens memoization (ListView.tsx:292): consumers re-render regardless; buys nothing.
+
+
+## 2026-09-07 improve audit (v1.2.7 review loop)
+
+Planned against `77137ce0d` / `a68aeeb6f`. All reviews use GPT-6 Astra; implementation is delegated to GPT-5.6 Sol, with root handling ordinary docs. Selection is automatic under the review-improve-loop: all five exact-evidence findings are selected. Each finding gets one scoped implementation commit per repository. Prior plans and deferred decisions remain as recorded above.
+
+| # | Plan | Priority | Effort | Status |
+|---|------|----------|--------|--------|
+| 077 | sqlite-final-tombstone-expiry | P2 | M | TODO |
+| 078 | cloud-focus-write-parity | P2 | M | TODO |
+| 079 | mcp-auth-throttle-docs | P3 | S | TODO |
+| 080 | inbox-project-reuse-eligibility | P2 | S | TODO |
+| 081 | dialog-autofocus-return | P2 | S | TODO |
+
+No logical dependencies; isolated implementations may run in parallel. Diagnostics ledger and field-test additions are integrated by root, preserving all entries. Public docs plan079 also receives one scoped mindwtr-web commit.
+
+Considered and rejected: no fresh evidence reopens the snapshot-sync ADRs, MCP per-process multi-database state (one configured database is the supported host), cloud revision ceiling without a production trigger, or a suspected calendar duplicate-submit path without reproduction. Existing image-size/quick-xml/rkyv advisory deferrals remain; fresh shipped npm lock audits are clean except the exact documented Metro chain. No additional dependency or CI restructuring plan is warranted. No new roadmap feature was selected.
