@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const PbxFile = require('xcode/lib/pbxFile');
+const { generateImageAsync } = require('@expo/image-utils');
 const {
   withInfoPlist,
   withPlugins,
@@ -48,7 +49,7 @@ const copyFiles = (source, destination, predicate = () => true) => {
   }
 };
 
-const copyWatchSources = ({ projectRoot, platformProjectRoot }) => {
+const copyWatchSources = async ({ projectRoot, platformProjectRoot }) => {
   const sourceRoot = path.join(projectRoot, WATCH_SOURCE_FOLDER);
   if (!fs.existsSync(sourceRoot)) {
     throw new Error(`[ios-watch] Missing Watch source folder: ${sourceRoot}`);
@@ -83,10 +84,18 @@ const copyWatchSources = ({ projectRoot, platformProjectRoot }) => {
     path.join(assetsDirectory, 'Contents.json'),
     `${JSON.stringify({ info: { author: 'xcode', version: 1 } }, null, 2)}\n`,
   );
-  fs.copyFileSync(
-    path.join(projectRoot, 'assets', 'images', 'icon.png'),
-    path.join(appIconDirectory, 'AppIcon.png'),
+  const { source: icon } = await generateImageAsync(
+    { projectRoot, cacheType: 'watch-app-icon' },
+    {
+      src: path.join(projectRoot, 'assets', 'images', 'icon.png'),
+      width: 1024,
+      height: 1024,
+      resizeMode: 'cover',
+      backgroundColor: '#ffffff',
+      removeTransparency: true,
+    },
   );
+  fs.writeFileSync(path.join(appIconDirectory, 'AppIcon.png'), icon);
 
   return { watchDirectory, widgetDirectory };
 };
@@ -546,11 +555,11 @@ const withWatchInfoPlist = (enabled) => (config) => withInfoPlist(config, (cfg) 
   return cfg;
 });
 
-const withWatchTargets = (enabled) => (config) => withXcodeProject(config, (cfg) => {
+const withWatchTargets = (enabled) => (config) => withXcodeProject(config, async (cfg) => {
   const projectRoot = cfg.modRequest.projectRoot;
   const platformProjectRoot = cfg.modRequest.platformProjectRoot;
   let directories = {};
-  if (enabled) directories = copyWatchSources({ projectRoot, platformProjectRoot });
+  if (enabled) directories = await copyWatchSources({ projectRoot, platformProjectRoot });
   else removeGeneratedWatchDirectories(platformProjectRoot);
 
   reconcileWatchProject(cfg.modResults, {

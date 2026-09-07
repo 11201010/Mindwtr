@@ -194,12 +194,12 @@ const groupParentCounts = (project) => {
   return counts;
 };
 
-const createGeneratedSources = () => {
+const createGeneratedSources = async () => {
   const platformProjectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mindwtr-watch-plugin-'));
   temporaryDirectories.push(platformProjectRoot);
   return {
     platformProjectRoot,
-    ...copyWatchSources({
+    ...await copyWatchSources({
       projectRoot: path.resolve(testDirectory, '..'),
       platformProjectRoot,
     }),
@@ -216,8 +216,8 @@ const enabledOptions = (directories) => ({
 });
 
 describe('ios-watch', () => {
-  it('copies separated Watch app/widget sources and the existing brand icon', () => {
-    const directories = createGeneratedSources();
+  it('copies separated Watch app/widget sources and the existing brand icon', async () => {
+    const directories = await createGeneratedSources();
 
     expect(fs.existsSync(path.join(directories.watchDirectory, 'MindwtrWatchApp.swift'))).toBe(true);
     expect(fs.existsSync(path.join(directories.watchDirectory, 'MindwtrWatchWidgets.swift'))).toBe(false);
@@ -229,18 +229,20 @@ describe('ios-watch', () => {
     expect(fs.readFileSync(path.join(directories.watchDirectory, 'PrivacyInfo.xcprivacy'), 'utf8')).toContain('1C8F.1');
     expect(fs.existsSync(path.join(directories.watchDirectory, 'Localizable.xcstrings'))).toBe(true);
 
-    const generatedIcon = fs.statSync(path.join(
+    const generatedIcon = fs.readFileSync(path.join(
       directories.watchDirectory,
       'Assets.xcassets',
       'AppIcon.appiconset',
       'AppIcon.png',
     ));
-    const brandIcon = fs.statSync(path.resolve(testDirectory, '..', 'assets', 'images', 'icon.png'));
-    expect(generatedIcon.size).toBe(brandIcon.size);
+    expect(generatedIcon.readUInt32BE(16)).toBe(1024);
+    expect(generatedIcon.readUInt32BE(20)).toBe(1024);
+    // PNG IHDR color type2 is RGB, without an alpha channel.
+    expect(generatedIcon[25]).toBe(2);
   });
 
-  it('builds the generated Xcode graph with companion IDs, embeds, dependencies and isolated @main sources', () => {
-    const directories = createGeneratedSources();
+  it('builds the generated Xcode graph with companion IDs, embeds, dependencies and isolated @main sources', async () => {
+    const directories = await createGeneratedSources();
     const project = createFixtureProject();
     reconcileWatchProject(project, enabledOptions(directories));
 
@@ -300,8 +302,8 @@ describe('ios-watch', () => {
     expect(project.buildPhaseObject('PBXCopyFilesBuildPhase', 'Embed App Extensions', 'HOST_TARGET')).toBeNull();
   });
 
-  it('does not let a later extension reuse the Watch privacy resource build file', () => {
-    const directories = createGeneratedSources();
+  it('does not let a later extension reuse the Watch privacy resource build file', async () => {
+    const directories = await createGeneratedSources();
     const project = createFixtureProject();
     reconcileWatchProject(project, enabledOptions(directories));
 
@@ -316,8 +318,8 @@ describe('ios-watch', () => {
     expect(remainingPrivacy).toHaveLength(1);
   });
 
-  it('is idempotent and removes every owned graph reference and generated directory when disabled', () => {
-    const directories = createGeneratedSources();
+  it('is idempotent and removes every owned graph reference and generated directory when disabled', async () => {
+    const directories = await createGeneratedSources();
     const project = createFixtureProject();
     const options = enabledOptions(directories);
 
