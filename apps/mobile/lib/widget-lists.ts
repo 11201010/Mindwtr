@@ -1,11 +1,14 @@
 import {
+    applyFilter,
     compareProjectsByOrder,
     getProjectAccentColor,
     getProjectSectionsForView,
     isTaskActionable,
     sortTasksBy,
+    sortTasksBySavedPreference,
     type AppData,
     type Project,
+    type SavedFilter,
     type Task,
     type TaskSortBy,
 } from '@mindwtr/core';
@@ -20,7 +23,9 @@ import { compareSomedayTasks, compareWaitingTasks } from './list-order';
 export const WIDGET_FIXED_LIST_IDS = ['focus', 'inbox', 'next', 'waiting', 'someday'] as const;
 export type WidgetFixedListId = (typeof WIDGET_FIXED_LIST_IDS)[number];
 export const WIDGET_PROJECT_LIST_PREFIX = 'project:';
+export const WIDGET_SAVED_FILTER_LIST_PREFIX = 'filter:';
 export const WIDGET_PROJECT_OPTION_CAP = 50;
+export const WIDGET_SAVED_FILTER_OPTION_CAP = 50;
 
 const LIST_TITLE_KEYS: Record<WidgetFixedListId, [string, string]> = {
     focus: ['nav.agenda', 'Focus'],
@@ -30,13 +35,15 @@ const LIST_TITLE_KEYS: Record<WidgetFixedListId, [string, string]> = {
     someday: ['nav.someday', 'Someday/Maybe'],
 };
 
-// The fixed list titles plus the "Projects" group label for the picker.
-export function widgetListTitles(tr: Record<string, string>): Record<WidgetFixedListId | 'projects', string> {
+// The fixed list titles plus the group labels the picker puts above its
+// project and saved-filter rows.
+export function widgetListTitles(tr: Record<string, string>): Record<WidgetFixedListId | 'projects' | 'savedFilters', string> {
     return {
         ...(Object.fromEntries(
             WIDGET_FIXED_LIST_IDS.map((id) => [id, tr[LIST_TITLE_KEYS[id][0]] ?? LIST_TITLE_KEYS[id][1]]),
         ) as Record<WidgetFixedListId, string>),
         projects: tr['nav.projects'] ?? 'Projects',
+        savedFilters: tr['settings.syncPreferenceSavedFilters'] ?? 'Saved filters',
     };
 }
 
@@ -59,6 +66,7 @@ export interface WidgetListContext {
     activeTasks: Task[];
     focusLists: FocusTaskLists;
     sortBy: TaskSortBy;
+    prioritiesEnabled: boolean;
     tr: Record<string, string>;
 }
 
@@ -72,7 +80,40 @@ export function buildWidgetProjectOptions(data: AppData): { id: string; title: s
         .map((project) => ({ id: project.id, title: project.title, identityColor: getProjectAccentColor(project, areaById) ?? null }));
 }
 
-/** Null when the id names no list (an unknown or deleted project). */
+/** Saved filters the configuration screen offers, in the order the app lists them. */
+export function buildWidgetSavedFilterOptions(data: AppData): { id: string; name: string }[] {
+    return (data.settings?.savedFilters ?? [])
+        .filter((filter) => !filter.deletedAt)
+        .slice(0, WIDGET_SAVED_FILTER_OPTION_CAP)
+        .map((filter) => ({ id: filter.id, name: filter.name }));
+}
+
+// A saved filter is written against one view, and the app only ever applies it
+// on that view's list, so the widget narrows the pool the same way before
+// matching. Every other view filters the full actionable pool.
+const savedFilterStatus: Partial<Record<SavedFilter['view'], Task['status']>> = {
+    next: 'next',
+    waiting: 'waiting',
+    someday: 'someday',
+};
+
+function buildSavedFilterList(filter: SavedFilter, context: WidgetListContext): WidgetTaskList {
+    const { data, activeTasks, sortBy, prioritiesEnabled } = context;
+    const status = savedFilterStatus[filter.view];
+    const pool = status ? activeTasks.filter((task) => task.status === status) : activeTasks;
+    const projects = data.projects || [];
+    const matched = applyFilter(pool, filter.criteria, { projects, tokenMatchMode: 'all' });
+    const tasks = filter.sortBy && filter.sortBy !== 'default'
+        ? sortTasksBySavedPreference(matched, filter.sortBy, {
+            projects,
+            prioritizeByPriority: prioritiesEnabled,
+            sortOrder: filter.sortOrder,
+        })
+        : sortTasksBy(matched, sortBy);
+    return { title: filter.name, tasks };
+}
+
+/** Null when the id names no list (an unknown or deleted project or saved filter). */
 export function buildWidgetTaskList(listId: string, context: WidgetListContext): WidgetTaskList | null {
     const { data, activeTasks, focusLists, sortBy, tr } = context;
     const titles = widgetListTitles(tr);
@@ -89,6 +130,11 @@ export function buildWidgetTaskList(listId: string, context: WidgetListContext):
             return { title: titles.someday, tasks: activeTasks.filter((task) => task.status === 'someday').sort(compareSomedayTasks) };
         default:
             break;
+    }
+    if (listId.startsWith(WIDGET_SAVED_FILTER_LIST_PREFIX)) {
+        const filterId = listId.slice(WIDGET_SAVED_FILTER_LIST_PREFIX.length);
+        const filter = (data.settings?.savedFilters ?? []).find((candidate) => candidate.id === filterId && !candidate.deletedAt);
+        return filter ? buildSavedFilterList(filter, context) : null;
     }
     if (!listId.startsWith(WIDGET_PROJECT_LIST_PREFIX)) return null;
     const projectId = listId.slice(WIDGET_PROJECT_LIST_PREFIX.length);

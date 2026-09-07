@@ -1,4 +1,5 @@
 import {
+    applyFilter,
     computeTodayFocusTasks,
     getAccentTint,
     getTaskAccentColor,
@@ -10,12 +11,15 @@ import {
     getTranslator,
     isTaskActionable,
     isTaskInActiveProject,
+    isTaskVisibleInArea,
     loadTranslations,
+    resolveAreaFilterSelection,
     resolveI18nText,
     resolveTaskSortByForFeatures,
     resolveThemeColorScheme,
     safeParseDueDate,
     sortTasksBy,
+    sortTasksBySavedPreference,
     SUPPORTED_LANGUAGES,
     type AppData,
     type AppTheme,
@@ -25,9 +29,11 @@ import {
     TASK_PRIORITY_COLORS,
 } from '@mindwtr/core';
 import { THEME_PRESETS, type ThemePresetName } from '../constants/theme-presets';
-import { buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists } from './focus-sections';
+import { buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
+import { NO_FOCUS_WIDGET_FILTER, type FocusWidgetFilter } from './focus-widget-filter';
 import {
     buildWidgetProjectOptions,
+    buildWidgetSavedFilterOptions,
     buildWidgetTaskList,
     widgetListTitles,
     type WidgetTaskListSection,
@@ -123,6 +129,11 @@ export interface WidgetProjectOption {
     identityColor: string | null;
 }
 
+export interface WidgetSavedFilterOption {
+    id: string;
+    name: string;
+}
+
 export interface TasksWidgetPayload {
     headerTitle: string;
     // Today's date for the widget header band, localized ("Saturday, Sep 6").
@@ -142,6 +153,8 @@ export interface TasksWidgetPayload {
     listTitles: Record<string, string>;
     // Projects the configuration screen offers.
     projects: WidgetProjectOption[];
+    // Saved filters the configuration screen offers.
+    savedFilters: WidgetSavedFilterOption[];
     emptyMessage: string;
     captureLabel: string;
     focusUri: string;
@@ -352,7 +365,13 @@ const isDarkPreset = (preset: { bg: string }): boolean => {
 export function buildWidgetPayload(
     data: AppData,
     language: Language,
-    options?: { systemColorScheme?: WidgetSystemColorScheme; maxItems?: number; listIds?: readonly string[] }
+    options?: {
+        systemColorScheme?: WidgetSystemColorScheme;
+        maxItems?: number;
+        listIds?: readonly string[];
+        /** What the Focus screen is filtering and sorting by right now (#1173). */
+        focusFilter?: FocusWidgetFilter;
+    }
 ): TasksWidgetPayload {
     void loadTranslations(language);
     const tr = getTranslationsSync(language);
@@ -367,11 +386,24 @@ export function buildWidgetPayload(
         options?.systemColorScheme,
     );
 
+    // The device's area selection hides tasks on every screen of the app, so it
+    // hides them in every widget list too (#1173) — it is a stored setting, not
+    // transient screen state, so the widget can read it directly.
+    const sortedAreas = (data.areas || [])
+        .filter((area) => !area.deletedAt)
+        .sort((left, right) => (left.order !== right.order ? left.order - right.order : left.name.localeCompare(right.name)));
+    const areaById = new Map(sortedAreas.map((area) => [area.id, area]));
+    const areaVisibility = {
+        areaById,
+        projectById,
+        resolvedAreaFilter: resolveAreaFilterSelection(data.settings?.filters, sortedAreas),
+    };
+
     const activeTasks = tasks.filter((task) => {
         if (task.deletedAt) return false;
         if (!isTaskActionable(task)) return false;
         if (!isTaskInActiveProject(task, projectById)) return false;
-        return true;
+        return isTaskVisibleInArea(task, areaVisibility);
     });
 
     const widgetSort = resolveWidgetTaskSort(data);
@@ -387,7 +419,6 @@ export function buildWidgetPayload(
         ? Math.max(1, Math.floor(options?.maxItems as number))
         : 3;
 
-    const areaById = new Map((data.areas || []).map((area) => [area.id, area]));
     const prioritiesEnabled = resolveFeatureFlags(data.settings).priorities;
     const toItem = (task: Task): WidgetTaskItem => {
         const project = task.projectId ? projectById.get(task.projectId) : undefined;
@@ -406,25 +437,40 @@ export function buildWidgetPayload(
     const items = listSource.slice(0, maxItems).map(toItem);
     const hiddenTaskCount = Math.max(listSource.length - items.length, 0);
 
-    // The Focus screen's own pools, minus its user filters and area filter
-    // (the widget has neither), through the shared derivation (#1173).
+    // The Focus screen's own pools through the shared derivation (#1173),
+    // narrowed by exactly what the screen is filtering and sorting by. Today's
+    // Focus keeps drawing from every starred task, as it does on the screen:
+    // area visibility and start times must never eat one of its slots.
+    const focusFilter = options?.focusFilter ?? NO_FOCUS_WIDGET_FILTER;
+    const filterOptions = { projects, tokenMatchMode: 'all' } as const;
+    const matchingFocusCriteria = <T extends Task>(pool: T[]): T[] => applyFilter(pool, focusFilter.criteria, filterOptions);
     const sequentialProjects = projects.filter((project) => project.isSequential && !project.deletedAt);
     const lists = deriveFocusTaskLists({
         now,
-        focusedPool: tasks.filter((task) => !task.deletedAt && isTaskActionable(task) && task.isFocusedToday === true),
-        filteredActiveTasks: activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
-        scheduleCandidates: activeTasks.filter((task) => shouldShowTaskForStart(task, { now })),
-        upcomingCandidates: getUpcomingDeferredTasks(activeTasks.filter((task) => !task.isFocusedToday), { now })
-            .map((entry) => entry.task),
+        focusedPool: matchingFocusCriteria(
+            tasks.filter((task) => !task.deletedAt && isTaskActionable(task) && task.isFocusedToday === true),
+        ),
+        filteredActiveTasks: matchingFocusCriteria(
+            activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
+        ),
+        scheduleCandidates: matchingFocusCriteria(activeTasks.filter((task) => shouldShowTaskForStart(task, { now }))),
+        upcomingCandidates: getUpcomingDeferredTasks(
+            matchingFocusCriteria(activeTasks.filter((task) => !task.isFocusedToday)),
+            { now },
+        ).map((entry) => entry.task),
         baseActiveTasks: activeTasks,
         projects,
         sequentialProjectIds: new Set(sequentialProjects.map((project) => project.id)),
         sequentialWithinSectionProjectIds: new Set(
             sequentialProjects.filter((project) => project.sequentialScope === 'section').map((project) => project.id),
         ),
-        sortBy: DEFAULT_FOCUS_SORT_BY,
+        sortBy: focusFilter.sortBy,
         prioritiesEnabled,
-        sortBySavedPerspective: (list) => list,
+        sortBySavedPerspective: (list) => sortTasksBySavedPreference(list, focusFilter.sortBy, {
+            projects,
+            prioritizeByPriority: prioritiesEnabled,
+            sortOrder: focusFilter.sortOrder,
+        }),
     });
     let remaining = maxItems;
     const sections: WidgetTaskSection[] = [];
@@ -448,7 +494,7 @@ export function buildWidgetPayload(
     }
 
     const dateLabel = formatDateLabel(now, language, 'long');
-    const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, tr };
+    const listContext = { data, activeTasks, focusLists: lists, sortBy: widgetSort, prioritiesEnabled, tr };
     const capSections = (source: WidgetTaskListSection[]): WidgetTaskSection[] => {
         let left = maxItems;
         const out: WidgetTaskSection[] = [];
@@ -502,6 +548,7 @@ export function buildWidgetPayload(
         lists: listPayloads,
         listTitles: widgetListTitles(tr),
         projects: buildWidgetProjectOptions(data),
+        savedFilters: buildWidgetSavedFilterOptions(data),
         emptyMessage: tr['agenda.allClear'] ?? 'All clear',
         captureLabel: tr['widget.capture'] ?? 'Quick capture',
         focusUri: WIDGET_FOCUS_URI,

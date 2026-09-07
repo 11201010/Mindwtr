@@ -25,6 +25,7 @@ import {
     WIDGET_LANGUAGE_KEY,
 } from './widget-data';
 import { WIDGET_FIXED_LIST_IDS } from './widget-lists';
+import { focusWidgetFilterKey, getFocusWidgetFilter } from './focus-widget-filter';
 import { logError, logInfo, logWarn } from './app-log';
 import { getLocalDayKey } from '@/hooks/use-local-day-key';
 import { getSystemColorSchemeForWidget } from './system-color-scheme';
@@ -93,6 +94,9 @@ function buildPayloadFromData(
     return buildWidgetPayload(data, language, {
         systemColorScheme: getSystemColorSchemeForWidget(),
         maxItems,
+        // The widget's Focus list shows what the Focus screen shows, so it
+        // rides the screen's current filter and sort (#1173).
+        focusFilter: getFocusWidgetFilter(),
         // Only the lists placed Android widgets asked for are built (#1173);
         // folding them in here also puts them in the render fingerprint.
         ...(Platform.OS === 'android' && AndroidWidget.isSupported() ? { listIds: androidWidgetListIds() } : {}),
@@ -284,6 +288,7 @@ type WidgetRenderContext = {
     language: Language;
     localDayKey: string;
     systemColorScheme: ReturnType<typeof getSystemColorSchemeForWidget>;
+    focusFilterKey: string;
 };
 let lastRenderContext: WidgetRenderContext | null = null;
 
@@ -367,12 +372,16 @@ export async function updateMobileWidgetFromStore(): Promise<boolean> {
     const language = await resolvePayloadLanguage(data);
     const localDayKey = getLocalDayKey();
     const systemColorScheme = getSystemColorSchemeForWidget();
+    // Changing a filter on the Focus screen moves no task data, so without this
+    // the gate below would skip the republish that shows the new selection.
+    const currentFocusFilterKey = focusWidgetFilterKey(getFocusWidgetFilter());
     if (
         lastRenderContext
         && lastRenderContext.lastDataChangeAt === lastDataChangeAt
         && lastRenderContext.language === language
         && lastRenderContext.localDayKey === localDayKey
         && lastRenderContext.systemColorScheme === systemColorScheme
+        && lastRenderContext.focusFilterKey === currentFocusFilterKey
     ) {
         return true;
     }
@@ -382,7 +391,7 @@ export async function updateMobileWidgetFromStore(): Promise<boolean> {
     // (native call threw, iOS widget API unavailable) must not disable the
     // callers' retry (immediate + 800ms) via gate 0 (correction #1, blocking).
     if (result) {
-        lastRenderContext = { lastDataChangeAt, language, localDayKey, systemColorScheme };
+        lastRenderContext = { lastDataChangeAt, language, localDayKey, systemColorScheme, focusFilterKey: currentFocusFilterKey };
     }
     return result;
 }

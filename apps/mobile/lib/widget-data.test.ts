@@ -98,6 +98,82 @@ describe('widget-data', () => {
         expect(payload.lists.focus.sections).toBe(payload.sections);
     });
 
+    it('mirrors the Focus screen\'s own filter and sort in the widget\'s Focus list (#1173)', () => {
+        const task = (id: string, title: string, contexts: string[], createdAt: string) => ({
+            id, title, status: 'next' as const, contexts, tags: [], createdAt, updatedAt: createdAt,
+        });
+        const data: AppData = {
+            ...baseData,
+            tasks: [
+                task('1', 'Zebra at the office', ['@office'], '2026-01-01T00:00:00.000Z'),
+                task('2', 'Alpha at the office', ['@office'], '2026-02-01T00:00:00.000Z'),
+                task('3', 'At home', ['@home'], '2026-03-01T00:00:00.000Z'),
+            ],
+        };
+        const nextActions = (payload: ReturnType<typeof buildWidgetPayload>) => (
+            payload.lists.focus.sections?.at(-1)?.items.map((item) => item.title)
+        );
+
+        expect(nextActions(buildWidgetPayload(data, 'en', { maxItems: 5 })))
+            .toEqual(['Zebra at the office', 'Alpha at the office', 'At home']);
+
+        // A context filter on the screen removes the rows it hides there.
+        expect(nextActions(buildWidgetPayload(data, 'en', {
+            maxItems: 5,
+            focusFilter: { criteria: { contexts: ['@office'] }, sortBy: 'default' },
+        }))).toEqual(['Zebra at the office', 'Alpha at the office']);
+
+        // The screen's sort is the widget's sort: by title, not the default order.
+        expect(nextActions(buildWidgetPayload(data, 'en', {
+            maxItems: 5,
+            focusFilter: { criteria: { contexts: ['@office'] }, sortBy: 'title' },
+        }))).toEqual(['Alpha at the office', 'Zebra at the office']);
+    });
+
+    it('hides tasks the device\'s area selection hides in the app (#1173)', () => {
+        const now = new Date().toISOString();
+        const data: AppData = {
+            ...baseData,
+            areas: [
+                { id: 'area-1', name: 'Work', order: 0, createdAt: now, updatedAt: now },
+                { id: 'area-2', name: 'Home', order: 1, createdAt: now, updatedAt: now },
+            ],
+            settings: { filters: { areaIds: ['area-1'] } } as AppData['settings'],
+            tasks: [
+                { id: '1', title: 'Work task', status: 'inbox', areaId: 'area-1', tags: [], contexts: [], createdAt: now, updatedAt: now },
+                { id: '2', title: 'Home task', status: 'inbox', areaId: 'area-2', tags: [], contexts: [], createdAt: now, updatedAt: now },
+            ],
+        };
+
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 5, listIds: ['inbox'] });
+        expect(payload.lists.inbox.items.map((item) => item.title)).toEqual(['Work task']);
+        expect(payload.inboxCount).toBe(1);
+    });
+
+    it('builds a saved-filter list with the app\'s own predicate and offers it to the chooser (#1173)', () => {
+        const now = new Date().toISOString();
+        const savedFilters = [
+            { id: 'f1', name: 'Errands', view: 'focus' as const, criteria: { contexts: ['@errand'] }, sortBy: 'title' as const, createdAt: now, updatedAt: now },
+            { id: 'f2', name: 'Deleted', view: 'focus' as const, criteria: {}, createdAt: now, updatedAt: now, deletedAt: now },
+        ];
+        const data: AppData = {
+            ...baseData,
+            settings: { savedFilters } as AppData['settings'],
+            tasks: [
+                { id: '1', title: 'Zebra errand', status: 'next', contexts: ['@errand'], tags: [], createdAt: now, updatedAt: now },
+                { id: '2', title: 'Alpha errand', status: 'next', contexts: ['@errand'], tags: [], createdAt: now, updatedAt: now },
+                { id: '3', title: 'Not an errand', status: 'next', contexts: [], tags: [], createdAt: now, updatedAt: now },
+            ],
+        };
+
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 5, listIds: ['filter:f1', 'filter:gone'] });
+        expect(payload.savedFilters).toEqual([{ id: 'f1', name: 'Errands' }]);
+        expect(payload.lists['filter:f1'].title).toBe('Errands');
+        expect(payload.lists['filter:f1'].items.map((item) => item.title)).toEqual(['Alpha errand', 'Zebra errand']);
+        // A filter that no longer exists builds no list; the widget falls back to Focus.
+        expect(payload.lists['filter:gone']).toBeUndefined();
+    });
+
     it('carries the Focus screen sections with the shared cap, priority colour and project or area (#1173)', () => {
         const now = new Date().toISOString();
         const today = new Date(); today.setHours(23, 0, 0, 0);

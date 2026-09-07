@@ -9,6 +9,7 @@ object WidgetListStore {
   const val PREFS_NAME = "mindwtr_widget_lists"
   const val DEFAULT_LIST = "focus"
   const val PROJECT_PREFIX = "project:"
+  const val FILTER_PREFIX = "filter:"
 
   fun read(context: Context, appWidgetId: Int): String =
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(appWidgetId.toString(), null) ?: DEFAULT_LIST

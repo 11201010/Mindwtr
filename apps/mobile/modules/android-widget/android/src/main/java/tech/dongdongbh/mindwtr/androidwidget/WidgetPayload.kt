@@ -21,6 +21,7 @@ data class WidgetPayload(
   val lists: Map<String, ListPayload>,
   val listTitles: Map<String, String>,
   val projects: List<ProjectOption>,
+  val savedFilters: List<SavedFilterOption>,
   val emptyMessage: String,
   val focusUri: String,
   val themeMode: String,
@@ -48,6 +49,8 @@ data class WidgetPayload(
   data class ListPayload(val title: String, val dateLabel: String?, val sections: List<Section>, val items: List<Item>)
 
   data class ProjectOption(val id: String, val title: String, val identityColor: Int?)
+
+  data class SavedFilterOption(val id: String, val name: String)
 
   data class Palette(
     val background: Int,
@@ -92,6 +95,7 @@ data class WidgetPayload(
     lists[listId]?.title
       ?: listTitles[listId]
       ?: projects.firstOrNull { listId == WidgetListStore.PROJECT_PREFIX + it.id }?.title
+      ?: savedFilters.firstOrNull { listId == WidgetListStore.FILTER_PREFIX + it.id }?.name
 
   /**
    * The list a widget should draw. A selection the app has not published yet
@@ -119,6 +123,7 @@ data class WidgetPayload(
       lists = emptyMap(),
       listTitles = emptyMap(),
       projects = emptyList(),
+      savedFilters = emptyList(),
       emptyMessage = "All clear",
       focusUri = DEFAULT_FOCUS_URI,
       themeMode = "system",
@@ -164,6 +169,16 @@ data class WidgetPayload(
           projects.add(ProjectOption(id, project.stringOr("title", id), parseHexColor(project.optString("identityColor"))))
         }
       }
+      val savedFilters = ArrayList<SavedFilterOption>()
+      root.optJSONArray("savedFilters")?.let { list ->
+        for (index in 0 until list.length()) {
+          val filter = list.optJSONObject(index) ?: continue
+          val id = filter.optString("id").trim()
+          val name = filter.optString("name").trim()
+          if (id.isEmpty() || name.isEmpty()) continue
+          savedFilters.add(SavedFilterOption(id, name))
+        }
+      }
       // Only the app's own routes may be launched from a tap.
       val focusUri = appUriOrNull(root.optString("focusUri")) ?: DEFAULT_FOCUS_URI
       val labels = root.optJSONObject("quickCapture")
@@ -184,6 +199,7 @@ data class WidgetPayload(
         lists = lists,
         listTitles = listTitles,
         projects = projects,
+        savedFilters = savedFilters,
         emptyMessage = root.stringOr("emptyMessage", defaults.emptyMessage),
         focusUri = focusUri,
         themeMode = root.stringOr("themeMode", "system"),

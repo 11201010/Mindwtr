@@ -70,6 +70,7 @@ import { useLanguage } from '../../../contexts/language-context';
 import { useToast } from '../../../contexts/toast-context';
 import { addHardwareBackPressListener } from '@/lib/hardware-back';
 import { buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists } from '@/lib/focus-sections';
+import { setFocusWidgetFilter } from '@/lib/focus-widget-filter';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import type { TaskEditTab } from '@/components/task-edit/use-task-edit-state';
 import { useFutureStartRevealTick, useLocalDayKey } from '@/hooks/use-local-day-key';
@@ -819,6 +820,20 @@ export default function FocusScreen() {
       sortOrder: activeSavedFilter?.sortOrder,
     });
   }, [activeSavedFilter?.sortOrder, effectiveFocusSortBy, prioritiesEnabled, projects]);
+
+  // The home-screen widget's Focus list shows what this screen shows, so hand
+  // it the current selection and republish when it changes (#1173). Task edits
+  // republish on their own; only a filter or sort change moves nothing else.
+  useEffect(() => {
+    if (!setFocusWidgetFilter({
+      criteria: selections.criteria,
+      sortBy: effectiveFocusSortBy,
+      sortOrder: activeSavedFilter?.sortOrder,
+    })) return;
+    // Imported here rather than at the top: the widget service pulls in the
+    // native widget bridges, which this screen must not need to render.
+    void import('@/lib/widget-service').then((widgets) => widgets.updateMobileWidgetFromStore()).catch(() => {});
+  }, [activeSavedFilter?.sortOrder, effectiveFocusSortBy, selections.criteria]);
 
   const { focusedTasks, schedule, nextActions, upcoming, reviewDue, projectDeadlineBoosts } = useMemo(() => {
     void localDayKey;
