@@ -115,9 +115,9 @@ Flags (all have `MINDWTR_MCP_HTTP*` env var equivalents):
 - `--http-host <host>` / `MINDWTR_MCP_HTTP_HOST` — bind address, default `127.0.0.1`.
 - `--http-port <port>` / `MINDWTR_MCP_HTTP_PORT` — bind port, default `8722`.
 
-The MCP endpoint is `POST /mcp` and requires `Authorization: Bearer <token>` on every request; `GET /healthz` returns `200 ok` without auth for reverse-proxy health checks. Requests without a valid token get `401`; bodies over 1 MiB get `413`. When HTTP mode is on, the server does not also connect a stdio transport — it stays alive as long as the HTTP server is listening, not stdin.
+The MCP endpoint is `POST /mcp` and requires `Authorization: Bearer <token>` on every request; `GET /healthz` returns `200 ok` without auth for reverse-proxy health checks. Requests without a valid token get `401`; repeated authentication failures get `429` with a `Retry-After` header. Bodies over 1 MiB get `413`. When HTTP mode is on, the server does not also connect a stdio transport — it stays alive as long as the HTTP server is listening, not stdin.
 
-There is no built-in TLS termination or rate limiting. If you're exposing this beyond localhost, put a reverse proxy (e.g. Caddy, nginx) in front for TLS and put the resulting `https://` URL (plus your token) into the remote MCP client.
+There is no built-in TLS termination or rate limiting for authenticated requests. If you're exposing this beyond localhost, put a reverse proxy (e.g. Caddy, nginx) in front for TLS and put the resulting `https://` URL (plus your token) into the remote MCP client.
 
 ### Run directly from the repo
 

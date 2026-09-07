@@ -152,7 +152,7 @@ Planned against `77137ce0d` / `a68aeeb6f`. All reviews use GPT-6 Astra; implemen
 |---|------|----------|--------|--------|
 | 077 | sqlite-final-tombstone-expiry | P2 | M | TODO |
 | 078 | cloud-focus-write-parity | P2 | M | TODO |
-| 079 | mcp-auth-throttle-docs | P3 | S | TODO |
+| 079 | mcp-auth-throttle-docs | P3 | S | DONE (app README and all six public locales; web check passed) |
 | 080 | inbox-project-reuse-eligibility | P2 | S | TODO |
 | 081 | dialog-autofocus-return | P2 | S | TODO |
 
