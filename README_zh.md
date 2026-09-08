@@ -230,6 +230,8 @@ Mindwtr 适合想在一个应用里用上完整 GTD 方法、并且数据完全�
 - iOS：App Store 或 TestFlight 测试版。
 - Web / 自托管：[云端部署](https://docs.mindwtr.app/data-sync/cloud-deployment)或 [Docker 指南](docker/README.md)。
 
+中国大陆 Android 用户：由于厂商应用商店的主体认证、备案及资质审核等流程需要额外预算和维护精力，Mindwtr 暂未上架小米、OPPO、vivo 等国内应用商店。你仍可在支持的 Android 设备上下载并安装[官方 APK](https://github.com/dongdongbh/Mindwtr/releases)。详情见[中文安装指南](https://docs.mindwtr.app/zh-Hans/start/mobile-installation#android)；也欢迎[捐赠支持项目](https://mindwtr.app/zh-Hans/donate)，帮助我们在需求和资源允许时评估这些渠道。
+
 Windows 版本：代码签名由 [SignPath.io](https://signpath.io/) 免费提供，证书由 [SignPath Foundation](https://signpath.org/) 颁发 —— 申请已通过，证书待签发。详见[代码签名政策](https://mindwtr.app/signing)。
 
 <details>
