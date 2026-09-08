@@ -44,6 +44,12 @@ mkdir -p "$(dirname "$output")"
 : > "$output"
 STUB
 
+cat > "$STUB_BIN/nm" <<'STUB'
+#!/usr/bin/env bash
+printf 'nm %s\n' "$*" >> "$WIDGET_TEST_LOG"
+printf '                 U _NSExtensionMain\n'
+STUB
+
 cat > "$STUB_BIN/PlistBuddy" <<'STUB'
 #!/usr/bin/env bash
 printf 'PlistBuddy %s\n' "$*" >> "$WIDGET_TEST_LOG"
@@ -176,6 +182,8 @@ expect_swift_targets() {
     for arch in "$@"; do
         grep -q -- "-target ${arch}-apple-macos14.0" "$log_path"
     done
+    test "$(grep -c '^swiftc .* -Xlinker -e -Xlinker _NSExtensionMain ' "$log_path")" -eq "$#"
+    test "$(grep -c '^nm ' "$log_path")" -eq "$#"
 }
 
 run_case aarch64-apple-darwin arm64

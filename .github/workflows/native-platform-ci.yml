@@ -178,16 +178,22 @@ jobs:
       - name: Run macOS native library tests
         run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
 
-      - name: Swift compile check for macOS widget sources
+      - name: Link macOS widget with the app-extension entry point
         run: |
           set -euo pipefail
+          WIDGET_BINARY="$RUNNER_TEMP/MindwtrWidgets-link-check"
           xcrun swiftc \
-            -typecheck \
+            -O \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
             -target "$(uname -m)-apple-macos14.0" \
             -parse-as-library \
             -application-extension \
+            -emit-executable \
+            -Xlinker -e \
+            -Xlinker _NSExtensionMain \
+            -o "$WIDGET_BINARY" \
             apps/desktop/widgets-macos/*.swift
+          nm "$WIDGET_BINARY" | grep -q '[[:space:]]_NSExtensionMain$'
 
       - name: Exercise macOS widget packaging and signing order
         run: bash scripts/ci/test-build-macos-widget.sh
