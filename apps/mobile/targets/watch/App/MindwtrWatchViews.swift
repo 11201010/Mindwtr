@@ -55,10 +55,21 @@ private struct MindwtrCaptureView: View {
                 Text("Capture")
                     .font(.headline)
 
-                TextFieldLink(prompt: Text("What’s on your mind?")) {
-                    Label("Speak", systemImage: "mic.fill")
-                } onSubmit: { model.capture(text: $0) }
+                Button {
+                    audioRecorder.toggle(using: model)
+                } label: {
+                    Label(
+                        audioRecorder.isRecording ? "Send recording" : "Speak to Capture",
+                        systemImage: audioRecorder.isRecording ? "stop.circle.fill" : "mic.fill"
+                    )
+                }
                 .buttonStyle(.borderedProminent)
+                .tint(audioRecorder.isRecording ? .red : .cyan)
+
+                TextFieldLink(prompt: Text("What’s on your mind?")) {
+                    Label("Type", systemImage: "keyboard")
+                } onSubmit: { model.capture(text: $0) }
+                .buttonStyle(.bordered)
 
                 if model.rejectedCaptureDraft != nil {
                     TextField(
@@ -74,16 +85,6 @@ private struct MindwtrCaptureView: View {
                     }
                     .font(.caption)
                 }
-
-                Button {
-                    audioRecorder.toggle(using: model)
-                } label: {
-                    Label(
-                        audioRecorder.isRecording ? "Send recording" : "Record audio",
-                        systemImage: audioRecorder.isRecording ? "stop.circle.fill" : "waveform.circle.fill"
-                    )
-                }
-                .tint(audioRecorder.isRecording ? .red : .secondary)
 
                 if let message = audioRecorder.errorMessage ?? model.statusMessage {
                     Text(message)
