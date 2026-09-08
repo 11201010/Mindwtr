@@ -197,6 +197,7 @@ Desktop builds can start the local REST API from **Settings -> Advanced** on `12
 - 🖥️ **Desktop** - Tauri v2 (macOS, Linux, Windows)
 - 📱 **Mobile** - React Native/Expo (iOS via App Store/TestFlight, Android) with in-app tips for gestures and app shortcuts
 - 📲 **Android Widget** - Home screen focus/next widget
+- ⌚ **Apple Watch Companion (TestFlight)** - Speak or record Inbox captures, complete or defer Focus tasks, and control a linked Pomodoro timer from your wrist
 - ⌨️ **Keyboard Shortcuts** - Standard (Gmail-style), Vim, and Emacs presets
 - 🎨 **Themes** - Light, Dark, OLED, Nord, Catppuccin Macchiato, Dracula, Sepia, E-ink, and Material 3
 - 🌍 **i18n** - English, Vietnamese, Chinese (Simplified), Chinese (Traditional), Spanish, Hindi, Arabic, German, Russian, Japanese, French, Portuguese (Brazil), Polish, Korean, Czech, Italian, Turkish, Dutch, Persian, Swedish
