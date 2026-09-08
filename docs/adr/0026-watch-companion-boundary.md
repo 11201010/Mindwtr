@@ -9,8 +9,8 @@ Status: Accepted
 
 ## Decision
 
-- Ship a native SwiftUI companion target inside the iOS build. `MINDWTR_WATCH_ENABLED` controls prebuild inclusion: development/preview and Watch TestFlight builds enable it; production App Store builds omit it until graduation. Incremental prebuild must remove previously generated Watch targets when disabled.
-- Release workflows choose the explicit `watch_testflight` input. RCs ship the Watch-enabled iPhone build through TestFlight. Stable releases submit a Watch-free iPhone build, then produce a separate Watch-enabled TestFlight build with a higher build number. The Watch variant uses only the TestFlight upload API and rejects App Store review submission or forced App Store upload. Its artifacts have separate names, and its upload does not modify the production App Store version.
+- Ship a native SwiftUI companion target inside the iOS build. `MINDWTR_WATCH_ENABLED` controls prebuild inclusion: release workflows enable it for both RC and stable iOS archives, while ordinary development and preview builds may leave it disabled. Incremental prebuild must remove previously generated Watch targets when disabled.
+- Release workflows choose Watch inclusion with `include_watch` independently from distribution routing with `testflight_only`. RCs use a Watch-enabled, TestFlight-only archive that cannot submit for App Store review. Stable releases use one Watch-enabled archive for both App Store review and TestFlight distribution, so the reviewed binary and tester binary contain the same Watch app.
 - Send text captures with `transferUserInfo`, audio with `transferFile`, and task/timer commands with reachable `sendMessage` plus `transferUserInfo` fallback using the same UUID. Publish the bounded latest Focus/timer snapshot with `updateApplicationContext`.
 - Keep a durable Watch outbox until the iPhone acknowledges its queue write. A successful WatchConnectivity transfer alone does not acknowledge application persistence. The iPhone returns a content-free receipt containing protocol version, UUID, `kind: receipt`, and `accepted: true`.
 - The iPhone native receiver validates transport input and publishes one JSON file per capture/command under `Documents/pending-captures`. It never writes task storage. Legacy Shortcuts text and Android widget completion items remain valid.
@@ -25,9 +25,9 @@ The Watch can capture while the phone is unreachable, but task creation and comm
 
 Linux checks cover protocol logic, prebuild generation, channel exclusion, and TypeScript behavior. The macOS native CI job supplies compile checks; paired physical devices are required to validate background WatchConnectivity delivery, audio conversion, notifications, and haptics.
 
-## TestFlight signing setup
+## Watch signing setup
 
-The release workflow requires two additional App Store distribution profiles for Watch TestFlight builds from either release train:
+Every Watch-enabled release archive requires two additional App Store distribution profiles:
 
 | App ID | GitHub Actions secret |
 | --- | --- |

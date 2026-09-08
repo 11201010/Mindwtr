@@ -7,8 +7,13 @@ on:
         description: Resolved iOS build number, including an upload that is still processing
         value: ${{ jobs.ios-appstore.outputs.app_build_number }}
     inputs:
-      watch_testflight:
-        description: Include Apple Watch and upload only to TestFlight, never App Store review
+      include_watch:
+        description: Include the Apple Watch app and complications in the iOS archive
+        required: false
+        type: boolean
+        default: false
+      testflight_only:
+        description: Upload through TestFlight without editing or submitting the App Store version
         required: false
         type: boolean
         default: false
@@ -53,8 +58,13 @@ on:
         default: false
   workflow_dispatch:
     inputs:
-      watch_testflight:
-        description: Include Apple Watch and upload only to TestFlight, never App Store review
+      include_watch:
+        description: Include the Apple Watch app and complications in the iOS archive
+        required: false
+        type: boolean
+        default: false
+      testflight_only:
+        description: Upload through TestFlight without editing or submitting the App Store version
         required: false
         type: boolean
         default: false
@@ -126,21 +136,21 @@ jobs:
       DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
       FEEDBACK_ENDPOINT_URL: ${{ vars.FEEDBACK_ENDPOINT_URL || vars.VITE_FEEDBACK_ENDPOINT_URL || 'https://feedback.mindwtr.app' }}
       DONATION_PROMPT_ENABLED: "true"
-      # Explicit distribution mode: a stable tag may also produce a separate Watch beta.
-      MINDWTR_WATCH_ENABLED: ${{ inputs.watch_testflight && 'true' || 'false' }}
-      IOS_ARTIFACT_VARIANT: ${{ inputs.watch_testflight && 'watch-testflight' || 'appstore' }}
+      MINDWTR_WATCH_ENABLED: ${{ inputs.include_watch && 'true' || 'false' }}
+      IOS_ARTIFACT_VARIANT: ${{ inputs.testflight_only && 'watch-testflight' || 'appstore' }}
       EXPECTED_WATCH_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp
       EXPECTED_WATCH_WIDGET_BUNDLE_ID: tech.dongdongbh.mindwtr.watchkitapp.widgets
       EXPECTED_WATCH_APP_GROUP: group.tech.dongdongbh.mindwtr.watch
     steps:
-      - name: Validate Apple Watch distribution mode
+      - name: Validate iOS distribution mode
         env:
+          TESTFLIGHT_ONLY: ${{ inputs.testflight_only && 'true' || 'false' }}
           REQUESTED_SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review && 'true' || 'false' }}
           FORCE_APPSTORE_UPLOAD: ${{ inputs.force_appstore_upload && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          if [ "$MINDWTR_WATCH_ENABLED" = "true" ] && { [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ] || [ "$FORCE_APPSTORE_UPLOAD" = "true" ]; }; then
-            echo "::error::Apple Watch is TestFlight-only. Disable App Store review submission and forced App Store upload."
+          if [ "$TESTFLIGHT_ONLY" = "true" ] && { [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ] || [ "$FORCE_APPSTORE_UPLOAD" = "true" ]; }; then
+            echo "::error::A TestFlight-only upload cannot submit for App Store review or force an App Store upload."
             exit 1
           fi
 
@@ -250,7 +260,7 @@ jobs:
           if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
             for profile in IOS_WATCH_PROVISIONING_PROFILE IOS_WATCH_WIDGET_PROVISIONING_PROFILE; do
               if [ -z "${!profile:-}" ]; then
-                echo "::error::Watch beta requires $profile."
+                echo "::error::A Watch-enabled archive requires $profile."
                 missing=1
               fi
             done
@@ -352,7 +362,7 @@ jobs:
           fi
 
           if [ "$MINDWTR_WATCH_ENABLED" = "true" ] && [ "$REQUESTED_UPLOAD" = "true" ] && [ "$REMOTE_LOOKUP_STATUS" != "ok" ]; then
-            echo "::error::Watch TestFlight upload requires a successful remote build-number lookup."
+            echo "::error::A Watch-enabled upload requires a successful remote build-number lookup."
             exit 1
           fi
           if ! [[ "$PREVIOUS_BUILD_NUMBER" =~ ^[0-9]{1,9}$ ]]; then
@@ -547,7 +557,7 @@ jobs:
           echo "SHARE_EXTENSION_PROFILE_UUID=$SHARE_EXTENSION_PROFILE_UUID" >> "$GITHUB_ENV"
           echo "SHARE_EXTENSION_PROFILE_NAME=$SHARE_EXTENSION_PROFILE_NAME" >> "$GITHUB_ENV"
 
-      - name: Install Watch beta provisioning profiles
+      - name: Install Watch provisioning profiles
         if: env.MINDWTR_WATCH_ENABLED == 'true'
         env:
           IOS_WATCH_PROVISIONING_PROFILE: ${{ secrets.IOS_WATCH_PROVISIONING_PROFILE }}
@@ -1013,7 +1023,7 @@ jobs:
           retention-days: 28
 
       - name: Prepare Fastlane metadata
-        if: ${{ inputs.upload && !inputs.watch_testflight }}
+        if: ${{ inputs.upload && !inputs.testflight_only }}
         env:
           RELEASE_BODY: ${{ github.event.release.body || '' }}
           APP_SUPPORT_URL: "https://mindwtr.app/support"
@@ -1025,7 +1035,7 @@ jobs:
           echo "FASTLANE_METADATA_PATH=$FASTLANE_METADATA_DIR" >> "$GITHUB_ENV"
 
       - name: Prepare Fastlane screenshots
-        if: ${{ inputs.upload && !inputs.watch_testflight && !inputs.skip_screenshots }}
+        if: ${{ inputs.upload && !inputs.testflight_only && !inputs.skip_screenshots }}
         run: |
           set -euo pipefail
           SHOULD_UPLOAD_SCREENSHOTS="$(scripts/ci/should-upload-fastlane-screenshots.sh apps/mobile/screenshots)"
@@ -1063,14 +1073,15 @@ jobs:
           REQUESTED_SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review && 'true' || 'false' }}
           REQUESTED_DISTRIBUTE_TESTFLIGHT: ${{ inputs.distribute_testflight && 'true' || 'false' }}
           FORCE_APPSTORE_UPLOAD: ${{ inputs.force_appstore_upload && 'true' || 'false' }}
+          TESTFLIGHT_ONLY: ${{ inputs.testflight_only && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
-          if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+          if [ "$TESTFLIGHT_ONLY" = "true" ]; then
             echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
             echo "SKIP_APPSTORE_UPLOAD=true" >> "$GITHUB_ENV"
             echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=${REQUESTED_DISTRIBUTE_TESTFLIGHT:-false}" >> "$GITHUB_ENV"
-            echo "Watch beta uses TestFlight upload only; production App Store version state is unchanged."
+            echo "This build uses TestFlight upload only; production App Store version state is unchanged."
             exit 0
           fi
 
@@ -1210,7 +1221,7 @@ jobs:
           fi
 
       - name: Upload IPA to App Store Connect
-        if: ${{ inputs.upload && !inputs.watch_testflight && env.SKIP_APPSTORE_UPLOAD != 'true' }}
+        if: ${{ inputs.upload && !inputs.testflight_only && env.SKIP_APPSTORE_UPLOAD != 'true' }}
         timeout-minutes: 30
         env:
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
@@ -1276,8 +1287,8 @@ jobs:
           ASC_KEY_PATH="$ASC_KEY_PATH" \
           bundle exec fastlane ios upload_app_store
 
-      - name: Upload Watch beta to TestFlight
-        if: ${{ inputs.upload && inputs.watch_testflight }}
+      - name: Upload TestFlight-only IPA
+        if: ${{ inputs.upload && inputs.testflight_only }}
         timeout-minutes: 30
         env:
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
@@ -1297,7 +1308,7 @@ jobs:
           default_platform(:ios)
 
           platform :ios do
-            lane :upload_watch_beta do
+            lane :upload_testflight_only do
               api_key = app_store_connect_api_key(
                 key_id: ENV.fetch("IOS_ASC_KEY_ID").strip,
                 issuer_id: ENV.fetch("IOS_ASC_ISSUER_ID").strip,
@@ -1317,7 +1328,7 @@ jobs:
             end
           end
           EOF
-          ASC_KEY_PATH="$ASC_KEY_PATH" bundle exec fastlane ios upload_watch_beta
+          ASC_KEY_PATH="$ASC_KEY_PATH" bundle exec fastlane ios upload_testflight_only
 
       - name: Distribute upload to TestFlight external group
         if: ${{ inputs.upload }}
@@ -1352,7 +1363,7 @@ jobs:
             WHAT_TO_TEST="$DEFAULT_WHAT_TO_TEST"
           fi
           if [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
-            WHAT_TO_TEST="Apple Watch support is available in the TestFlight beta. On a paired iPhone and Apple Watch, try dictation and audio capture, capture while disconnected then reconnect, complete or defer a Focus task, and check the linked Pomodoro timer. Open Mindwtr on the iPhone to process queued captures.
+            WHAT_TO_TEST="Apple Watch support is included in this build. On a paired iPhone and Apple Watch, try text and audio capture, capture while disconnected then reconnect, complete or defer a Focus task, and check the linked Pomodoro timer. Open Mindwtr on the iPhone to process queued captures.
 
           $WHAT_TO_TEST"
           fi

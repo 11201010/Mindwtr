@@ -310,7 +310,8 @@ jobs:
       tag: ${{ needs.validate.outputs.tag }}
       upload: true
       submit_for_review: false
-      watch_testflight: true
+      include_watch: true
+      testflight_only: true
       distribute_testflight: true
       testflight_group: ${{ github.event_name == 'workflow_dispatch' && inputs.testflight_group || 'external_testing' }}
       skip_screenshots: true

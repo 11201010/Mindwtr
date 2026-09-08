@@ -21,10 +21,10 @@ def validate(app_path, enabled):
             raise ValueError('Stable iOS package enables the Watch receiver')
         return
     if host.get('MindwtrWatchEnabled') is not True:
-        raise ValueError('Watch beta must enable the iPhone receiver')
+        raise ValueError('A Watch-enabled archive must enable the iPhone receiver')
     watch_path = app_path / 'Watch/MindwtrWatch.app'
     if watch_apps != [watch_path]:
-        raise ValueError('Watch beta must contain exactly MindwtrWatch.app')
+        raise ValueError('A Watch-enabled archive must contain exactly MindwtrWatch.app')
     watch = read_plist(watch_path)
     widget = read_plist(watch_path / 'PlugIns/MindwtrWatchWidgets.appex')
     host_id = host['CFBundleIdentifier']
