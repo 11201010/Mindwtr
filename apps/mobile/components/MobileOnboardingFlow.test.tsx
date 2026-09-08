@@ -47,6 +47,18 @@ const props = () => ({
 });
 
 describe('MobileOnboardingFlow', () => {
+  it('puts the first useful action before optional sync and import', () => {
+    const callbacks = props();
+    let tree!: renderer.ReactTestRenderer;
+    act(() => { tree = renderer.create(<MobileOnboardingFlow {...callbacks} />); });
+    const actions = tree.root.findAllByType(TouchableOpacity);
+    expect(actions.slice(0, 3).map((action) => action.props.onPress)).toEqual([
+      callbacks.onStartFresh, callbacks.onOpenSync, callbacks.onOpenImport,
+    ]);
+    act(() => actions[0].props.onPress());
+    expect(callbacks.onStartFresh).toHaveBeenCalledOnce();
+    act(() => tree.unmount());
+  });
   it('ignores Android Back while seeding and exposes busy accessibility state', () => {
     const callbacks = props();
     let tree!: renderer.ReactTestRenderer;

@@ -25,6 +25,7 @@ import { CollapsibleSection } from './CollapsibleSection';
 import { FieldHeading } from './FieldHeading';
 import type { CopilotPart } from './use-task-edit-copilot';
 import { SomedaySectionPicker } from '../someday-section-picker';
+import { ContextualHelp } from '../ContextualHelp';
 
 type TaskEditFormTabProps = {
     t: (key: string) => string;
@@ -527,6 +528,7 @@ function TaskEditFormTabComponent({
                             badge={schedulingFilledCount}
                             defaultExpanded={sectionOpenDefaults.scheduling || schedulingFilledCount > 0}
                         >
+                            <ContextualHelp topic="scheduling" t={t} tc={tc} />
                             {schedulingFields.map((fieldId) => (
                                 <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
                             ))}
@@ -553,6 +555,7 @@ function TaskEditFormTabComponent({
                             badge={detailsFilledCount}
                             defaultExpanded={sectionOpenDefaults.details || detailsFilledCount > 0}
                         >
+                            <ContextualHelp topic="details" t={t} tc={tc} autoReveal={false} />
                             {detailsFields.map((fieldId) => (
                                 <React.Fragment key={fieldId}>{renderField(fieldId)}</React.Fragment>
                             ))}

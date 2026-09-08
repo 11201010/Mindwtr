@@ -213,7 +213,7 @@ describe('TaskItemEditor', () => {
 
         expect(getByRole('button', { name: /Scheduling/i })).toHaveAttribute('aria-expanded', 'false');
         expect(getByRole('button', { name: /Organization/i })).toHaveAttribute('aria-expanded', 'false');
-        expect(getByRole('button', { name: /Details/i })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /^Details/i })).toHaveAttribute('aria-expanded', 'false');
 
         expect(queryByText('field:recurrence')).not.toBeInTheDocument();
         expect(queryByText('field:contexts')).not.toBeInTheDocument();

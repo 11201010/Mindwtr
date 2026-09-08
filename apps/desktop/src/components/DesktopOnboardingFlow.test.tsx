@@ -21,7 +21,9 @@ describe('DesktopOnboardingFlow', () => {
         expect(getByRole('heading', { name: 'Welcome to Mindwtr' })).toBeInTheDocument();
         expect(getByRole('button', { name: /set up sync/i })).toBeInTheDocument();
         expect(getByRole('button', { name: /import tasks/i })).toBeInTheDocument();
-        expect(getByRole('button', { name: /start fresh/i })).toBeInTheDocument();
+        const start = getByRole('button', { name: /start using mindwtr/i });
+        expect(start).toBeInTheDocument();
+        expect(start.compareDocumentPosition(getByRole('button', { name: /set up sync/i })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('routes each choice to its callback', () => {
@@ -30,7 +32,7 @@ describe('DesktopOnboardingFlow', () => {
 
         fireEvent.click(getByRole('button', { name: /set up sync/i }));
         fireEvent.click(getByRole('button', { name: /import tasks/i }));
-        fireEvent.click(getByRole('button', { name: /start fresh/i }));
+        fireEvent.click(getByRole('button', { name: /start using mindwtr/i }));
         fireEvent.click(getByRole('button', { name: /skip for now/i }));
 
         expect(props.onOpenSync).toHaveBeenCalledTimes(1);

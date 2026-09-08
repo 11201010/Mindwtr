@@ -120,6 +120,13 @@ const getStarterProjectTitles = (): Set<string> => {
     return titles;
 };
 
+/** Recognition only: mirrors seed compatibility without repairing or writing data. */
+export function isGettingStartedProject(project: Project, tasks: readonly Task[]): boolean {
+    return !project.deletedAt && project.status !== 'archived' && !project.cancelledAt
+        && getStarterProjectTitles().has(normalizeStarterTaskTitle(project.title))
+        && tasks.some((task) => task.projectId === project.id && !task.deletedAt && getStarterTaskKey(task) !== null);
+}
+
 let sampleTaskKeyByTitleCache: Map<string, string> | null = null;
 const getSampleTaskKeyByTitle = (): Map<string, string> => {
     if (sampleTaskKeyByTitleCache) return sampleTaskKeyByTitleCache;

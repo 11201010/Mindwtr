@@ -59,6 +59,25 @@ export function DesktopOnboardingFlow({
             <DialogBody className="grid gap-3 p-6">
                 <button
                     type="button"
+                    onClick={onStartFresh}
+                    disabled={busy}
+                    aria-busy={busy}
+                    className="group flex items-center gap-4 rounded-lg border border-primary/40 bg-primary px-4 py-4 text-left text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/15">
+                        <Database className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold">
+                            {busy ? t('onboarding.startFreshBusy') : t('onboarding.startFreshTitle')}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-primary-foreground">
+                            {t('onboarding.startFreshDesc')}
+                        </span>
+                    </span>
+                </button>
+                <button
+                    type="button"
                     onClick={onOpenSync}
                     disabled={busy}
                     className="group flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-4 text-left transition-colors hover:border-primary/50 hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
@@ -91,24 +110,6 @@ export function DesktopOnboardingFlow({
                     </span>
                 </button>
 
-                <button
-                    type="button"
-                    onClick={onStartFresh}
-                    disabled={busy}
-                    className="group flex items-center gap-4 rounded-lg border border-primary/40 bg-primary px-4 py-4 text-left text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/15">
-                        <Database className="h-5 w-5" aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold">
-                            {busy ? t('onboarding.startFreshBusy') : t('onboarding.startFreshTitle')}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-primary-foreground/80">
-                            {t('onboarding.startFreshDesc')}
-                        </span>
-                    </span>
-                </button>
                 {error ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                         {error}
@@ -116,7 +117,7 @@ export function DesktopOnboardingFlow({
                 ) : null}
             </DialogBody>
 
-            <DialogFooter className="flex items-center justify-between gap-4 border-t border-border bg-muted/20 px-6 py-4">
+            <DialogFooter className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-muted/20 px-6 py-4">
                 <p className="text-xs text-muted-foreground">
                     {t('onboarding.footer')}
                 </p>
@@ -124,7 +125,7 @@ export function DesktopOnboardingFlow({
                     type="button"
                     onClick={onSkip}
                     disabled={busy}
-                    className="rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-9 shrink-0 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {t('onboarding.skipForNow')}
                 </button>

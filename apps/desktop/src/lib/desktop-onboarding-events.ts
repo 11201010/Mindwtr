@@ -1,4 +1,4 @@
-import type { SyncBackend } from '@mindwtr/core';
+import type { OnboardingTopic, SyncBackend } from '@mindwtr/core';
 
 export const MINDWTR_DESKTOP_ONBOARDING_EVENT = 'mindwtr:desktop-onboarding';
 const DESKTOP_ONBOARDING_HANDOFF_HINT_KEY_PREFIX = 'mindwtr:desktop:onboarding-handoff-hint:v1:';
@@ -10,7 +10,7 @@ export type DesktopOnboardingHandoffPage = 'sync' | 'data';
  * are handoff targets from the first-run modal; 'inbox-project' is the Inbox
  * tip that points at the multi-step decision inside Process Inbox (#592).
  */
-export type DesktopOnboardingHint = DesktopOnboardingHandoffPage | 'inbox-project';
+export type DesktopOnboardingHint = DesktopOnboardingHandoffPage | OnboardingTopic;
 
 type DesktopFirstRunOnboardingState = {
     hasHydratedSettings: boolean;
@@ -63,11 +63,11 @@ export function isDesktopOnboardingHintDismissed(hint: DesktopOnboardingHint): b
 }
 
 /**
- * The Inbox tip retires itself once the user has a project: by then they have
- * found the multi-step decision, and a hint that keeps showing is nagging.
+ * Seeded and imported projects do not demonstrate that someone used processing.
+ * Retire the tip on an explicit dismissal or entering the processing flow.
  */
-export function shouldShowInboxProjectHint(dismissed: boolean, projectCount: number): boolean {
-    return !dismissed && projectCount === 0;
+export function shouldShowInboxProjectHint(dismissed: boolean): boolean {
+    return !dismissed;
 }
 
 export function dismissDesktopOnboardingHint(hint: DesktopOnboardingHint): void {
