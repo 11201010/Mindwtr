@@ -193,7 +193,8 @@ jobs:
             -Xlinker _NSExtensionMain \
             -o "$WIDGET_BINARY" \
             apps/desktop/widgets-macos/*.swift
-          nm "$WIDGET_BINARY" | grep -q '[[:space:]]_NSExtensionMain$'
+          NM_OUTPUT="$(nm "$WIDGET_BINARY")"
+          grep -q '[[:space:]]_NSExtensionMain$' <<< "$NM_OUTPUT"
 
       - name: Exercise macOS widget packaging and signing order
         run: bash scripts/ci/test-build-macos-widget.sh

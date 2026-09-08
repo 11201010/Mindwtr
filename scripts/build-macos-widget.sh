@@ -132,7 +132,8 @@ for SWIFT_ARCH in $SWIFT_ARCHS; do
         -Xlinker _NSExtensionMain \
         -o "$SLICE" \
         "$WIDGET_SRC_DIR"/*.swift
-    if ! nm "$SLICE" | grep -q '[[:space:]]_NSExtensionMain$'; then
+    NM_OUTPUT="$(nm "$SLICE")"
+    if ! grep -q '[[:space:]]_NSExtensionMain$' <<< "$NM_OUTPUT"; then
         echo "::error::${WIDGET_EXECUTABLE_NAME}: linked binary does not reference the required _NSExtensionMain app-extension entry point."
         exit 1
     fi

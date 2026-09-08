@@ -550,7 +550,8 @@ jobs:
             echo "::error::Widget appex Info.plist is missing CFBundleDisplayName; App Store Connect rejects the package."
             exit 1
           fi
-          if ! nm "$APPEX_PATH/Contents/MacOS/MindwtrWidgets" | grep -q '[[:space:]]_NSExtensionMain$'; then
+          NM_OUTPUT="$(nm "$APPEX_PATH/Contents/MacOS/MindwtrWidgets")"
+          if ! grep -q '[[:space:]]_NSExtensionMain$' <<< "$NM_OUTPUT"; then
             echo "::error::Widget appex does not reference the required _NSExtensionMain app-extension entry point; App Store Connect rejects the package."
             exit 1
           fi
