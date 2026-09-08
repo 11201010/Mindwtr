@@ -14,7 +14,7 @@ React Native mobile app for the Mindwtr productivity system.
 - **Auto-Archive** - Automatically archive completed tasks
 - **Android Widget** - Home screen focus/next widget (adaptive, 2x2 default)
 - **iOS Widget** - Home screen focus/next widget with quick capture
-- **Apple Watch Companion (TestFlight)** - Voice and audio capture, Focus task actions, and linked Pomodoro controls
+- **Apple Watch Companion** - Audio and text capture, Focus task actions, and linked Pomodoro controls; included starting with the next stable iOS release
 - **iOS Quick Actions** - Long-press app icon shortcuts for Add task, Focus, Calendar
 - **AI Assistant (Optional)** - Clarify, break down, and review with BYOK AI
 - **Copilot Suggestions** - Context/tag/time hints while typing
