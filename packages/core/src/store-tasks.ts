@@ -204,6 +204,7 @@ type TaskActionContext = {
 const actionOk = (extra?: Omit<StoreActionResult, 'success'>): StoreActionResult => ({ success: true, ...extra });
 const actionFail = (error: string): StoreActionResult => ({ success: false, error });
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
+const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 // `tasks` and `_tasksById` are derived from `_allTasks` by
 // prepareStoreStateUpdate (store.ts) on every write, so producers below only
@@ -357,14 +358,22 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
      * @param title Task title
      * @param initialProps Optional initial properties
      */
-    addTask: async (title: string, initialProps?: Partial<Task>) => {
+    addTask: async (
+        title: string,
+        initialProps?: Partial<Task>,
+        options?: { captureId: string },
+    ) => {
         const trimmedTitle = typeof title === 'string' ? title.trim() : '';
         if (!trimmedTitle) {
             const message = 'Task title is required';
             set({ error: message });
             return actionFail(message);
         }
-        const result = await get().addTasks([{ title: trimmedTitle, initialProps }]);
+        const result = await get().addTasks([{
+            title: trimmedTitle,
+            initialProps,
+            ...(options ? { captureId: options.captureId } : {}),
+        }]);
         if (!result.success) return result;
         return actionOk({ id: result.ids?.[0] });
     },
@@ -372,36 +381,69 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     /**
      * Add multiple tasks in one store update and persistence snapshot.
      */
-    addTasks: async (items: Array<{ title: string; initialProps?: Partial<Task> }>) => {
+    addTasks: async (items: Array<{
+        title: string;
+        initialProps?: Partial<Task>;
+        captureId?: string;
+    }>) => {
         const changeAt = Date.now();
+        const hasInvalidCaptureId = items.some(({ captureId }) => (
+            captureId !== undefined
+            && (typeof captureId !== 'string' || !CAPTURE_ID_PATTERN.test(captureId))
+        ));
+        if (hasInvalidCaptureId) {
+            return actionFail('Capture ID must be a UUID');
+        }
         const normalizedItems = items.map((item) => ({
             title: typeof item.title === 'string' ? item.title.trim() : '',
             initialProps: item.initialProps ?? {},
+            captureId: item.captureId?.toLowerCase(),
         })).filter((item) => item.title.length > 0);
         if (normalizedItems.length === 0) return actionOk({ ids: [] });
-        const hasInvalidCancellationTimestamp = normalizedItems.some(({ initialProps }) => (
-            hasOwnField(initialProps, 'cancelledAt')
-            && initialProps.cancelledAt != null
-            && normalizeCancellationTimestamp(initialProps.cancelledAt) === undefined
-        ));
+
+        const currentState = get();
+        const plannedTaskIds = new Set(currentState._allTasks.map((task) => task.id));
+        const hasInvalidCancellationTimestamp = normalizedItems.some((item) => {
+            const isReplay = item.captureId !== undefined && plannedTaskIds.has(item.captureId);
+            if (item.captureId !== undefined) plannedTaskIds.add(item.captureId);
+            if (isReplay) return false;
+            const { initialProps } = item;
+            return hasOwnField(initialProps, 'cancelledAt')
+                && initialProps.cancelledAt != null
+                && normalizeCancellationTimestamp(initialProps.cancelledAt) === undefined;
+        });
         if (hasInvalidCancellationTimestamp) {
             const message = 'Cancellation timestamp must be an ISO datetime with timezone';
             set({ error: message });
             return actionFail(message);
         }
-
-        const currentState = get();
-        const deviceState = ensureDeviceId(currentState.settings);
-        const deviceId = deviceState.deviceId;
         const now = new Date().toISOString();
-        const projectOrderReserver = createProjectOrderReserver(currentState._allTasks);
-        const focusTaskLimit = normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit);
-        let focusedCount = currentState.getFocusedCount();
         const nextAllTasks = [...currentState._allTasks];
+        const knownTaskIds = new Set(currentState._allTasks.map((task) => task.id));
         const newTasks: Task[] = [];
+        const resultIds: string[] = [];
+        let creationContext: {
+            deviceState: ReturnType<typeof ensureDeviceId>;
+            focusTaskLimit: number;
+            focusedCount: number;
+            projectOrderReserver: ProjectOrderReserver;
+        } | null = null;
 
         for (const item of normalizedItems) {
+            if (item.captureId && knownTaskIds.has(item.captureId)) {
+                resultIds.push(item.captureId);
+                continue;
+            }
+
             const initialTaskProps = item.initialProps;
+            if (!creationContext) {
+                creationContext = {
+                    deviceState: ensureDeviceId(currentState.settings),
+                    focusTaskLimit: normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit),
+                    focusedCount: currentState.getFocusedCount(),
+                    projectOrderReserver: createProjectOrderReserver(currentState._allTasks),
+                };
+            }
             const hasExplicitAreaId = hasOwnField(initialTaskProps, 'areaId');
             const shouldApplyDefaultArea = !hasExplicitAreaId
                 && !normalizeOptionalContainerId(initialTaskProps.projectId)
@@ -439,11 +481,11 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 : {};
             const explicitOrder = getTaskOrder(initialTaskProps);
             const resolvedOrder = !hasTaskOrder && resolvedProjectId
-                ? projectOrderReserver(resolvedProjectId)
+                ? creationContext.projectOrderReserver(resolvedProjectId)
                 : explicitOrder;
             let newTask: Task = {
                 ...initialTaskProps,
-                id: uuidv4(),
+                id: item.captureId ?? uuidv4(),
                 title: item.title,
                 status: effectiveStatus,
                 taskMode: initialTaskProps.taskMode ?? 'task',
@@ -453,7 +495,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 recurrence: normalizeRecurrenceForLoad(initialTaskProps.recurrence),
                 repeatReminderMinutes: normalizeRepeatReminderMinutes(initialTaskProps.repeatReminderMinutes),
                 rev: 1,
-                revBy: deviceId,
+                revBy: creationContext.deviceState.deviceId,
                 createdAt: now,
                 updatedAt: now,
                 deletedAt: undefined,
@@ -478,13 +520,13 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     tasks: nextAllTasks,
                     projects: currentState._allProjects,
                     sections: currentState._allSections,
-                    focusedCount,
-                    focusTaskLimit,
+                    focusedCount: creationContext.focusedCount,
+                    focusTaskLimit: creationContext.focusTaskLimit,
                 });
                 newTask.status = focusDecision.status;
                 newTask.isFocusedToday = focusDecision.isFocusedToday;
                 if (focusDecision.outcome === 'focused') {
-                    focusedCount += 1;
+                    creationContext.focusedCount += 1;
                 }
             }
 
@@ -492,21 +534,35 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
             newTasks.push(newTask);
             nextAllTasks.push(newTask);
+            knownTaskIds.add(newTask.id);
+            resultIds.push(newTask.id);
+        }
+
+        if (newTasks.length === 0) {
+            return actionOk({ id: resultIds[0], ids: resultIds });
+        }
+        const completedCreationContext = creationContext;
+        if (!completedCreationContext) {
+            return actionFail('Failed to initialize task creation');
         }
 
         set((state) => {
             persist(set, debouncedSave, state, {
                 tasks: nextAllTasks,
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                ...(completedCreationContext.deviceState.updated
+                    ? { settings: completedCreationContext.deviceState.settings }
+                    : {}),
             });
             return {
                 _allTasks: nextAllTasks,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
-                ...(deviceState.updated ? { settings: deviceState.settings } : {}),
+                ...(completedCreationContext.deviceState.updated
+                    ? { settings: completedCreationContext.deviceState.settings }
+                    : {}),
             };
         });
 
-        return actionOk({ id: newTasks[0]?.id, ids: newTasks.map((task) => task.id) });
+        return actionOk({ id: resultIds[0], ids: resultIds });
     },
 
     /**

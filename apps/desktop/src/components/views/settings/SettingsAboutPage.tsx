@@ -170,7 +170,7 @@ export function SettingsAboutPage({
                         onClick={() => onOpenLink('https://mindwtr.app/privacy')}
                         className="text-primary hover:underline flex items-center gap-1"
                     >
-                        mindwtr.app/privacy
+                        {t.privacy}
                         <ExternalLink className="w-3 h-3" />
                     </button>
                 </div>

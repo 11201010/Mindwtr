@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { withAndroidManifest, withDangerousMod } = require('@expo/config-plugins');
+const { buildWidgetPreviewXml } = require('./android-widget-preview');
+const { compactWidgetLocales, compactWidgetValuesDirectory } = require('./android-widget-locales');
 
 // Registers the native home-screen widget and the quick-capture dialog that
 // live in modules/android-widget (Kotlin). The module's own manifest carries no
@@ -20,7 +22,6 @@ const LEGACY_TASKS_RECEIVER_CLASS_SUFFIX = '.widget.TasksWidget';
 const LEGACY_TASKS_INFO_RESOURCE = 'mindwtr_legacy_tasks_widget_info';
 const WIDGET_STRINGS_FILE_NAME = 'mindwtr_widget_strings.xml';
 const WIDGET_STYLES_FILE_NAME = 'mindwtr_widget_styles.xml';
-const WIDGET_PREVIEW_FILE_NAME = 'mindwtr_widget_preview.png';
 const QUICK_CAPTURE_THEME = 'Theme.Mindwtr.QuickCapture';
 
 const DEFAULT_PROPS = {
@@ -33,7 +34,7 @@ const DEFAULT_PROPS = {
   targetCellWidth: 3,
   targetCellHeight: 2,
   resizeMode: 'horizontal|vertical',
-  previewImage: './assets/images/widget-preview.png',
+  previewImage: './assets/images/widget-tasks-preview.png',
 };
 
 const resolveProps = (props) => ({ ...DEFAULT_PROPS, ...(props ?? {}) });
@@ -63,6 +64,24 @@ const buildWidgetKinds = (props) => [
     widgetFeatures: 'reconfigurable|configuration_optional',
   },
   {
+    kind: 'Compact',
+    receiver: `${MODULE_PACKAGE}.CompactWidgetProvider`,
+    infoResource: 'mindwtr_compact_widget_info',
+    label: `${props.label} ${compactWidgetLocales.en[0]}`,
+    labelResource: 'mindwtr_compact_widget_label',
+    description: compactWidgetLocales.en[1],
+    descriptionResource: 'mindwtr_compact_widget_description',
+    layout: 'mindwtr_compact_widget',
+    minWidth: '120dp',
+    minHeight: '120dp',
+    minResizeWidth: '120dp',
+    minResizeHeight: '120dp',
+    targetCellWidth: 2,
+    targetCellHeight: 2,
+    resizeMode: 'horizontal|vertical',
+    previewImage: './assets/images/widget-compact-preview.png',
+  },
+  {
     kind: 'QuickCapture',
     receiver: `${MODULE_PACKAGE}.QuickCaptureWidgetProvider`,
     infoResource: 'mindwtr_quick_capture_widget_info',
@@ -77,7 +96,7 @@ const buildWidgetKinds = (props) => [
     targetCellWidth: 1,
     targetCellHeight: 1,
     resizeMode: 'none',
-    previewImage: null,
+    previewImage: './assets/images/widget-quick-capture-preview.png',
   },
 ];
 
@@ -108,7 +127,8 @@ const buildWidgetInfoXml = (kind) => `<?xml version="1.0" encoding="utf-8"?>
     android:targetCellHeight="${kind.targetCellHeight}"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/${kind.layout}"${kind.previewImage ? `
-    android:previewImage="@drawable/${WIDGET_PREVIEW_FILE_NAME.replace(/\.png$/, '')}"` : ''}
+    android:previewImage="@drawable/${kind.layout}_preview"` : ''}
+    android:previewLayout="@layout/${kind.layout}_preview"
     android:resizeMode="${kind.resizeMode}"${kind.configure ? `
     android:configure="${kind.configure}"` : ''}${kind.widgetFeatures ? `
     android:widgetFeatures="${kind.widgetFeatures}"` : ''}
@@ -118,9 +138,19 @@ const buildWidgetInfoXml = (kind) => `<?xml version="1.0" encoding="utf-8"?>
 
 const buildWidgetStringsXml = (kinds) => `<?xml version="1.0" encoding="utf-8"?>
 <resources>
-${kinds.map((kind) => `  <string name="${kind.descriptionResource}" translatable="false">${escapeXml(kind.description)}</string>`).join('\n')}
+${kinds.filter((kind) => kind.kind !== 'Compact').map((kind) => `  <string name="${kind.descriptionResource}" translatable="false">${escapeXml(kind.description)}</string>`).join('\n')}
 </resources>
 `;
+
+const buildCompactWidgetStringsXml = (label, locale = 'en') => {
+  const [name, description] = compactWidgetLocales[locale];
+  return `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="mindwtr_compact_widget_label">${escapeXml(`${label} ${name}`)}</string>
+  <string name="mindwtr_compact_widget_description">${escapeXml(description)}</string>
+</resources>
+`;
+};
 
 // The dialog inherits AppCompat's DayNight dialog so it follows the system
 // theme; every label inside it comes from the stored widget payload.
@@ -157,7 +187,7 @@ const ensureWidgetReceiver = (application, kind) => {
   // the intent filter admits nothing else.
   receiver.$ = {
     'android:name': kind.receiver,
-    'android:label': kind.label,
+    'android:label': kind.labelResource ? `@string/${kind.labelResource}` : kind.label,
     'android:exported': 'true',
   };
   receiver['intent-filter'] = [{ action: [{ $: { 'android:name': WIDGET_UPDATE_ACTION } }] }];
@@ -328,9 +358,11 @@ module.exports = function withAndroidWidget(config, props = {}) {
       const xmlDir = path.join(mainRoot, 'res', 'xml');
       const valuesDir = path.join(mainRoot, 'res', 'values');
       const drawableDir = path.join(mainRoot, 'res', 'drawable');
+      const layoutDir = path.join(mainRoot, 'res', 'layout');
       await fs.promises.mkdir(xmlDir, { recursive: true });
       await fs.promises.mkdir(valuesDir, { recursive: true });
       await fs.promises.mkdir(drawableDir, { recursive: true });
+      await fs.promises.mkdir(layoutDir, { recursive: true });
       const kinds = buildWidgetKinds(resolved);
       const androidPackage = cfg.android?.package;
       const resourceKinds = androidPackage
@@ -339,12 +371,24 @@ module.exports = function withAndroidWidget(config, props = {}) {
       for (const kind of resourceKinds) {
         await fs.promises.writeFile(path.join(xmlDir, `${kind.infoResource}.xml`), buildWidgetInfoXml(kind), 'utf8');
       }
+      const nativeLayoutDir = path.join(cfg.modRequest.projectRoot, 'modules/android-widget/android/src/main/res/layout');
+      for (const kind of kinds) {
+        const xml = buildWidgetPreviewXml(kind, (name) => fs.readFileSync(path.join(nativeLayoutDir, `${name}.xml`), 'utf8'));
+        await fs.promises.writeFile(path.join(layoutDir, `${kind.layout}_preview.xml`), xml, 'utf8');
+      }
       await fs.promises.writeFile(path.join(valuesDir, WIDGET_STRINGS_FILE_NAME), buildWidgetStringsXml(kinds), 'utf8');
+      for (const locale of Object.keys(compactWidgetLocales)) {
+        const directory = locale === 'en' ? valuesDir : path.join(mainRoot, 'res', compactWidgetValuesDirectory(locale));
+        await fs.promises.mkdir(directory, { recursive: true });
+        await fs.promises.writeFile(path.join(directory, 'mindwtr_compact_widget_strings.xml'), buildCompactWidgetStringsXml(resolved.label, locale), 'utf8');
+      }
       await fs.promises.writeFile(path.join(valuesDir, WIDGET_STYLES_FILE_NAME), buildWidgetStylesXml(), 'utf8');
-      await fs.promises.copyFile(
-        path.resolve(cfg.modRequest.projectRoot, resolved.previewImage),
-        path.join(drawableDir, WIDGET_PREVIEW_FILE_NAME),
-      );
+      for (const kind of kinds) {
+        await fs.promises.copyFile(
+          path.resolve(cfg.modRequest.projectRoot, kind.previewImage),
+          path.join(drawableDir, `${kind.layout}_preview.png`),
+        );
+      }
       if (androidPackage) await writeLegacyTasksWidgetSource(mainRoot, androidPackage);
       return cfg;
     },
@@ -352,6 +396,7 @@ module.exports = function withAndroidWidget(config, props = {}) {
 };
 
 module.exports.__testables = {
+  buildCompactWidgetStringsXml,
   ACTIVITY_NAME,
   CAPTURE_ACTION,
   CAPTURE_RECEIVER_NAME,

@@ -43,7 +43,11 @@ class TasksWidgetFactory(
 
   private fun reload() {
     payload = WidgetPayloadStore.read(context)
-    rows = if (kind == WidgetKind.TASKS) buildRows(payload.listFor(WidgetListStore.read(context, appWidgetId))) else emptyList()
+    rows = when (kind) {
+      WidgetKind.TASKS -> buildRows(payload.listFor(WidgetListStore.read(context, appWidgetId)))
+      WidgetKind.COMPACT -> buildRows(payload.listFor(WidgetListStore.DEFAULT_LIST), compact = true)
+      WidgetKind.QUICK_CAPTURE -> emptyList()
+    }
   }
 
   override fun onDestroy() {}
@@ -68,6 +72,7 @@ class TasksWidgetFactory(
   }
 
   private fun taskRow(item: WidgetPayload.Item, palette: WidgetPayload.Palette?): RemoteViews {
+    if (kind == WidgetKind.COMPACT) return compactTaskRow(item, palette)
     val views = RemoteViews(context.packageName, R.layout.mindwtr_widget_item)
     val mutedText = palette?.mutedText ?: context.getColor(R.color.mindwtr_widget_muted_text)
     val struck = item.id.isNotEmpty() && CheckoffStore.isStruck(context, item.id)
@@ -115,6 +120,15 @@ class TasksWidgetFactory(
     return views
   }
 
+  private fun compactTaskRow(item: WidgetPayload.Item, palette: WidgetPayload.Palette?): RemoteViews =
+    RemoteViews(context.packageName, R.layout.mindwtr_compact_widget_item).apply {
+      val title = "• ${item.title}"
+      setTextViewText(R.id.mindwtr_widget_item_title, if (CheckoffStore.isStruck(context, item.id)) struck(title) else title)
+      palette?.let { setTextColor(R.id.mindwtr_widget_item_title, it.text) }
+      val uri = if (item.id.isNotEmpty()) WidgetTapActivity.peekUri(item.id) else payload.focusUri
+      setOnClickFillInIntent(R.id.mindwtr_widget_item, Intent().setData(Uri.parse(uri)))
+    }
+
   private fun struck(title: String): CharSequence = SpannableString(title).apply {
     setSpan(StrikethroughSpan(), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
   }
@@ -129,10 +143,10 @@ class TasksWidgetFactory(
 
   companion object {
     /** Sectioned rows when the list carries sections, else the flat list. */
-    fun buildRows(list: WidgetPayload.ListPayload): List<Row> {
+    fun buildRows(list: WidgetPayload.ListPayload, compact: Boolean = false): List<Row> {
       if (list.sections.isEmpty()) return list.items.map { Row.Task(it) }
       return list.sections.flatMap { section ->
-        listOf<Row>(Row.Header(section.title, section.detail)) + section.items.map { Row.Task(it) }
+        (if (compact) emptyList() else listOf<Row>(Row.Header(section.title, section.detail))) + section.items.map { Row.Task(it) }
       }
     }
   }

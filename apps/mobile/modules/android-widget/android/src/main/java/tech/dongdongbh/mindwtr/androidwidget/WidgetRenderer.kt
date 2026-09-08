@@ -12,6 +12,7 @@ import android.widget.RemoteViews
 
 /** Draws every widget kind from the payload in [WidgetPayloadStore]. */
 object WidgetRenderer {
+  data class RefreshResult(val legacyWidgetCount: Int = 0, val compactWidgetCount: Int = 0)
   const val EXTRA_KIND = "tech.dongdongbh.mindwtr.androidwidget.kind"
   private const val REQUEST_FOCUS = 4611
   private const val REQUEST_CAPTURE = 4612
@@ -21,8 +22,8 @@ object WidgetRenderer {
   // enough that it can never land on one of the fixed codes above.
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
 
-  fun refreshAll(context: Context): Int {
-    val manager = AppWidgetManager.getInstance(context) ?: return 0
+  fun refreshAll(context: Context): RefreshResult {
+    val manager = AppWidgetManager.getInstance(context) ?: return RefreshResult()
     return refreshProviders(
       context.packageName,
       idsForProvider = { className ->
@@ -36,25 +37,27 @@ object WidgetRenderer {
     applicationPackage: String,
     idsForProvider: (String) -> IntArray,
     renderProvider: (IntArray, WidgetKind) -> Unit,
-  ): Int {
+  ): RefreshResult {
     var legacyWidgetCount = 0
+    var compactWidgetCount = 0
     for (placed in WidgetProviderRegistry.placed(applicationPackage, idsForProvider)) {
       renderProvider(placed.ids, placed.identity.kind)
       if (placed.identity.isLegacy) legacyWidgetCount += placed.ids.size
+      if (placed.identity.kind == WidgetKind.COMPACT) compactWidgetCount += placed.ids.size
     }
-    return legacyWidgetCount
+    return RefreshResult(legacyWidgetCount, compactWidgetCount)
   }
 
   fun render(context: Context, manager: AppWidgetManager, ids: IntArray, kind: WidgetKind) {
     // Commit check-offs whose undo window elapsed while nothing else ran.
-    if (kind == WidgetKind.TASKS) CheckoffStore.sweep(context)
+    if (kind.hasTaskList) CheckoffStore.sweep(context)
     val payload = WidgetPayloadStore.read(context)
     // A committed check-off stays struck until the app republishes without it.
-    if (kind == WidgetKind.TASKS) CheckoffStore.prune(context, payload.allTaskIds())
+    if (kind.hasTaskList) CheckoffStore.prune(context, payload.allTaskIds())
     for (id in ids) {
       manager.updateAppWidget(id, buildViews(context, id, kind, payload))
     }
-    if (kind == WidgetKind.TASKS) {
+    if (kind.hasTaskList) {
       manager.notifyAppWidgetViewDataChanged(ids, R.id.mindwtr_widget_list)
     }
   }
@@ -72,6 +75,7 @@ object WidgetRenderer {
 
     when (kind) {
       WidgetKind.TASKS -> bindTasks(context, views, appWidgetId, payload, palette)
+      WidgetKind.COMPACT -> bindCompact(context, views, appWidgetId, payload, palette)
       WidgetKind.QUICK_CAPTURE -> {
         views.setTextViewText(R.id.mindwtr_widget_title, payload.quickCapture.title)
         palette?.let {
@@ -82,6 +86,33 @@ object WidgetRenderer {
       }
     }
     return views
+  }
+
+  private fun bindCompact(
+    context: Context,
+    views: RemoteViews,
+    appWidgetId: Int,
+    payload: WidgetPayload,
+    palette: WidgetPayload.Palette?,
+  ) {
+    // The simple style always shows Focus, like v1.2.8. Its full-width stacked
+    // labels leave small widgets room for task titles, without a chooser.
+    views.setTextViewText(R.id.mindwtr_widget_title, payload.headerTitle)
+    views.setTextViewText(R.id.mindwtr_widget_subtitle, payload.subtitle)
+    views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
+    views.setTextViewText(R.id.mindwtr_widget_capture_label, payload.quickCapture.title)
+    val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, appIntent(context, payload.focusUri), immutableFlags())
+    views.setOnClickPendingIntent(R.id.mindwtr_widget_title_target, focus)
+    views.setOnClickPendingIntent(R.id.mindwtr_widget_empty, focus)
+    bindCollection(context, views, appWidgetId, WidgetKind.COMPACT)
+    palette?.let {
+      views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
+      views.setTextColor(R.id.mindwtr_widget_title, it.text)
+      views.setTextColor(R.id.mindwtr_widget_subtitle, it.mutedText)
+      views.setTextColor(R.id.mindwtr_widget_empty, it.mutedText)
+      views.setInt(R.id.mindwtr_widget_capture_background, "setColorFilter", it.accent)
+      views.setTextColor(R.id.mindwtr_widget_capture_label, it.onAccent)
+    }
   }
 
   private fun bindTasks(
@@ -114,13 +145,7 @@ object WidgetRenderer {
     views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
     views.setViewVisibility(R.id.mindwtr_widget_empty, if (list.items.isEmpty() && list.sections.isEmpty()) View.VISIBLE else View.GONE)
 
-    val adapterIntent = Intent(context, TasksWidgetService::class.java).apply {
-      putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-      putExtra(EXTRA_KIND, WidgetKind.TASKS.name)
-      data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
-    }
-    views.setRemoteAdapter(R.id.mindwtr_widget_list, adapterIntent)
-    views.setEmptyView(R.id.mindwtr_widget_list, R.id.mindwtr_widget_empty)
+    bindCollection(context, views, appWidgetId, WidgetKind.TASKS)
 
     val focusIntent = appIntent(context, payload.focusUri)
     val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, focusIntent, immutableFlags())
@@ -134,6 +159,27 @@ object WidgetRenderer {
       R.id.mindwtr_widget_title_target,
       PendingIntent.getActivity(context, REQUEST_CHOOSER_BASE + appWidgetId, chooser, immutableFlags()),
     )
+    // Header = a low-alpha accent wash over the card with a hairline under it
+    // (dd: some contrast, not the solid band); the accent itself only on "+".
+    palette?.let {
+      views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
+      views.setInt(R.id.mindwtr_widget_band, "setColorFilter", it.headerWash)
+      views.setTextColor(R.id.mindwtr_widget_title, it.text)
+      views.setTextColor(R.id.mindwtr_widget_subtitle, it.mutedText)
+      views.setTextColor(R.id.mindwtr_widget_capture, it.accent)
+      views.setInt(R.id.mindwtr_widget_header_divider, "setBackgroundColor", it.border)
+      views.setTextColor(R.id.mindwtr_widget_empty, it.mutedText)
+    }
+  }
+
+  private fun bindCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind) {
+    val adapterIntent = Intent(context, TasksWidgetService::class.java).apply {
+      putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+      putExtra(EXTRA_KIND, kind.name)
+      data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+    }
+    views.setRemoteAdapter(R.id.mindwtr_widget_list, adapterIntent)
+    views.setEmptyView(R.id.mindwtr_widget_list, R.id.mindwtr_widget_empty)
     // Collection rows deliver clicks through a fill-in intent, which the
     // platform can only merge into a mutable template. The template fixes the
     // component (the invisible WidgetTapActivity) and leaves the data unset,
@@ -146,18 +192,6 @@ object WidgetRenderer {
       R.id.mindwtr_widget_list,
       PendingIntent.getActivity(context, REQUEST_ROW, rowTemplate, mutable),
     )
-
-    // Header = a low-alpha accent wash over the card with a hairline under it
-    // (dd: some contrast, not the solid band); the accent itself only on "+".
-    palette?.let {
-      views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
-      views.setInt(R.id.mindwtr_widget_band, "setColorFilter", it.headerWash)
-      views.setTextColor(R.id.mindwtr_widget_title, it.text)
-      views.setTextColor(R.id.mindwtr_widget_subtitle, it.mutedText)
-      views.setTextColor(R.id.mindwtr_widget_capture, it.accent)
-      views.setInt(R.id.mindwtr_widget_header_divider, "setBackgroundColor", it.border)
-      views.setTextColor(R.id.mindwtr_widget_empty, it.mutedText)
-    }
   }
 
   fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)

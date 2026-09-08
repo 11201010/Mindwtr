@@ -144,7 +144,7 @@ const MOBILE_ROW_EXTRA_KEYS: Record<SettingsMenuRowId, readonly string[]> = {
         // row; mobile renders them on the Calendar screen under Advanced.
         'settings.calendar', 'settings.calendarMobile.icsSubscriptions', 'settings.externalCalendars',
     ],
-    about: ['settings.changelog', 'settings.checkForUpdates', 'settings.documentation'],
+    about: ['settings.changelog', 'settings.checkForUpdates', 'settings.documentation', 'settings.officialWebsite'],
 };
 
 export const SETTINGS_MENU_KEYWORD_KEYS: Record<SettingsMenuRowId, readonly string[]> = {

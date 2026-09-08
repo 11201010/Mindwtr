@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mindwtr_widget_item"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="28dp"
+    android:paddingTop="3dp"
+    android:paddingBottom="3dp">
+    <TextView
+        android:id="@+id/mindwtr_widget_item_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:ellipsize="end"
+        android:singleLine="true"
+        android:textColor="@color/mindwtr_widget_text"
+        android:textSize="12sp" />
+</FrameLayout>

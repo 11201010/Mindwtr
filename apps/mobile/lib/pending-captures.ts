@@ -18,9 +18,9 @@ import { deleteAsync, documentDirectory, getInfoAsync, readAsStringAsync, readDi
 
 // Background Shortcuts captures (#845) and the Android quick-capture dialog
 // (#1169, modules/android-widget PendingCaptureWriter.kt): native code only
-// appends JSON files to this directory; every task write happens here, through
-// the normal store path, so revisions, save tracking, and sync merge behavior
-// stay intact.
+// appends JSON files to this directory (with audio bytes in a sibling owned
+// directory); every task write happens here, through the normal store path, so
+// revisions, save tracking, and sync merge behavior stay intact.
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const ANDROID_QUICK_CAPTURE_SOURCE = 'android-quick-capture';
 export const ANDROID_CAPTURE_INTENT_SOURCE = 'android-capture-intent';
@@ -58,6 +58,7 @@ export type PendingAudioCapture = {
     kind: 'audio';
     id: string;
     audioPath: string;
+    title?: string;
     createdAt?: string;
     source?: string;
 };
@@ -139,7 +140,15 @@ export function parsePendingCapture(raw: string): PendingQueueItem | null {
     if (record.kind === 'audio') {
         const audioPath = trimOrUndefined(record.audioPath);
         if (!audioPath) return null;
-        return { kind: 'audio', id, audioPath, ...(createdAt ? { createdAt } : {}), ...(source ? { source } : {}) };
+        const title = trimOrUndefined(record.title);
+        return {
+            kind: 'audio',
+            id,
+            audioPath,
+            ...(title ? { title } : {}),
+            ...(createdAt ? { createdAt } : {}),
+            ...(source ? { source } : {}),
+        };
     }
     if (record.kind === 'defer') {
         const taskId = trimOrUndefined(record.taskId);
@@ -210,7 +219,11 @@ export function buildPendingCaptureTaskProps(capture: PendingCapture, projects: 
 }
 
 type IngestDeps = {
-    addTask: (title: string, initialProps?: Partial<Task>) => Promise<unknown>;
+    addTask: (
+        title: string,
+        initialProps?: Partial<Task>,
+        options?: { captureId: string },
+    ) => Promise<unknown>;
     // Completes a widget check-off the way the task list's status change does.
     updateTask: (id: string, updates: Partial<Task>) => Promise<unknown>;
     addProject: (title: string, color: string, initialProps?: Partial<Project>) => Promise<Project | null>;
@@ -221,7 +234,7 @@ type IngestDeps = {
     tasks: Task[];
     people: Person[];
     settings: AppData['settings'];
-    /** Fresh state for each queued command; one drain may mutate the same task twice. */
+    /** Fresh all-task state, including tombstones, for commands and capture replay checks. */
     getTasks?: () => Task[];
     flushPendingSave?: () => Promise<void>;
     transcribeAudio?: (audioPath: string, settings: AppData['settings']) => Promise<string | null>;
@@ -231,6 +244,23 @@ type IngestDeps = {
 const WATCH_CAPTURE_RELEASE_CHECK = 'v1.3.0/watch-capture';
 const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.3.0/watch-audio-ready';
 const WATCH_COMMAND_RELEASE_CHECK = 'v1.3.0/watch-command';
+const ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK = 'v1.3.0/android-quick-capture-audio';
+const APPLE_WATCH_SOURCE = 'apple-watch';
+const QUICK_CAPTURE_AUDIO_DIRECTORY = 'quick-capture-audio';
+const UUID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
+
+function hasRawDotSegment(fileUri: string): boolean {
+    if (!/^file:/i.test(fileUri)) return false;
+    const rawPath = fileUri.slice('file:'.length).split(/[?#]/, 1)[0];
+    return rawPath.split('/').some((segment) => {
+        try {
+            const decoded = decodeURIComponent(segment);
+            return decoded === '.' || decoded === '..';
+        } catch {
+            return true;
+        }
+    });
+}
 
 function isValidDateOnly(value: string): boolean {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -243,7 +273,7 @@ function isValidDateOnly(value: string): boolean {
 }
 
 export function resolveSafeWatchAudioPath(audioPath: string, id: string): string | null {
-    if (!documentDirectory || !/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i.test(id)) return null;
+    if (!documentDirectory || !UUID_PATTERN.test(id)) return null;
     try {
         const candidate = new URL(audioPath);
         if (
@@ -269,9 +299,58 @@ export function isSafeWatchAudioPath(audioPath: string, id: string): boolean {
     return resolveSafeWatchAudioPath(audioPath, id) !== null;
 }
 
+/**
+ * Android's recorder and React Native share the current app files directory,
+ * so unlike Watch delivery there is no container relocation to repair. Accept
+ * only the canonical, current owned WAV URI for this capture UUID.
+ */
+export function resolveSafeAndroidQuickCaptureAudioPath(audioPath: string, id: string): string | null {
+    if (!documentDirectory || !UUID_PATTERN.test(id) || hasRawDotSegment(audioPath)) return null;
+    try {
+        const currentDocuments = documentDirectory.endsWith('/') ? documentDirectory : `${documentDirectory}/`;
+        const expected = new URL(`${QUICK_CAPTURE_AUDIO_DIRECTORY}/${id}.wav`, currentDocuments);
+        const candidate = new URL(audioPath);
+        if (
+            candidate.protocol !== 'file:'
+            || candidate.host !== ''
+            // React Native's URL implementation omits these optional fields
+            // for file URLs. Host and exact URI checks still reject authority.
+            || Boolean(candidate.username)
+            || Boolean(candidate.password)
+            || candidate.search !== ''
+            || candidate.hash !== ''
+            || candidate.href !== expected.href
+        ) return null;
+        return expected.href;
+    } catch {
+        return null;
+    }
+}
+
+export function isSafeAndroidQuickCaptureAudioPath(audioPath: string, id: string): boolean {
+    return resolveSafeAndroidQuickCaptureAudioPath(audioPath, id) !== null;
+}
+
+function resolveSafePendingAudioPath(capture: PendingAudioCapture): string | null {
+    if (capture.source === ANDROID_QUICK_CAPTURE_SOURCE) {
+        return resolveSafeAndroidQuickCaptureAudioPath(capture.audioPath, capture.id);
+    }
+    // Watch payloads predating the source field remain valid and keep their
+    // existing container-relocation behavior.
+    if (!capture.source || capture.source === APPLE_WATCH_SOURCE) {
+        return resolveSafeWatchAudioPath(capture.audioPath, capture.id);
+    }
+    return null;
+}
+
 const isFailedResult = (result: unknown): boolean => (
     typeof result === 'object' && result !== null && (result as { success?: unknown }).success === false
 );
+
+const resultId = (result: unknown): string | undefined => {
+    if (typeof result !== 'object' || result === null) return undefined;
+    return trimOrUndefined((result as { id?: unknown }).id);
+};
 
 // Parse a capture's title with the same quick-add grammar and options as the
 // in-app capture sheet (quick-capture-sheet.tsx ~line 428), so a background
@@ -504,64 +583,162 @@ export async function ingestPendingCaptures({
         }
 
         if (capture.kind === 'audio') {
-            const resolvedAudioPath = resolveSafeWatchAudioPath(capture.audioPath, capture.id);
+            const isAndroidQuickCapture = capture.source === ANDROID_QUICK_CAPTURE_SOURCE;
+            const normalizedCaptureId = capture.id.toLowerCase();
+            const hasCanonicalAndroidQueueName = !isAndroidQuickCapture || name === `${capture.id}.json`;
+            const resolvedAudioPath = hasCanonicalAndroidQueueName
+                ? resolveSafePendingAudioPath(capture)
+                : null;
             if (!resolvedAudioPath) {
-                void logWarn('Discarding Watch audio capture with invalid path', {
-                    scope: 'capture',
-                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'invalid-path' },
-                });
+                if (isAndroidQuickCapture) {
+                    void logWarn('Discarding Android quick capture audio with invalid contract', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'invalid-path' },
+                    });
+                } else {
+                    void logWarn('Discarding Watch audio capture with invalid path', {
+                        scope: 'capture',
+                        extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'invalid-path' },
+                    });
+                }
                 await deleteAsync(fileUri, { idempotent: true }).catch(() => undefined);
                 continue;
             }
-            void logInfo('Watch audio ready for transcription', {
-                scope: 'capture',
-                extra: { releaseCheck: WATCH_AUDIO_READY_RELEASE_CHECK, outcome: 'validated' },
-            });
+
+            const currentTasks = getTasks?.() ?? tasks;
+            if (isAndroidQuickCapture && currentTasks.some((task) => task.id.toLowerCase() === normalizedCaptureId)) {
+                // A prior attempt may have durably created the task but crashed
+                // before queue cleanup. Tombstones count too: deleting the task
+                // must not make the same native capture reappear.
+                try {
+                    await flushPendingSave?.();
+                    await deleteAsync(fileUri, { idempotent: true });
+                } catch {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'cleanup-failed' },
+                    });
+                    continue;
+                }
+                await deleteAsync(resolvedAudioPath, { idempotent: true }).catch(() => undefined);
+                ingested += 1;
+                void logInfo('Android quick capture audio ingested', {
+                    scope: 'capture',
+                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'already-created' },
+                });
+                continue;
+            }
+
+            if (isAndroidQuickCapture) {
+                void logInfo('Android quick capture audio ready for transcription', {
+                    scope: 'capture',
+                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'validated' },
+                });
+            } else {
+                void logInfo('Watch audio ready for transcription', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_AUDIO_READY_RELEASE_CHECK, outcome: 'validated' },
+                });
+            }
             if (!transcribeAudio) continue;
             let transcript: string | null = null;
             try {
                 transcript = await transcribeAudio(resolvedAudioPath, settings);
             } catch {
-                void logWarn('Watch audio capture retained for retry', {
-                    scope: 'capture',
-                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-failed' },
-                });
+                if (isAndroidQuickCapture) {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-failed' },
+                    });
+                } else {
+                    void logWarn('Watch audio capture retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-failed' },
+                    });
+                }
                 continue;
             }
             if (!transcript) {
-                void logWarn('Watch audio capture retained for retry', {
-                    scope: 'capture',
-                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-unavailable' },
-                });
+                if (isAndroidQuickCapture) {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-unavailable' },
+                    });
+                } else {
+                    void logWarn('Watch audio capture retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-unavailable' },
+                    });
+                }
                 continue;
             }
             const textCapture: PendingCapture = {
                 kind: 'text',
                 id: capture.id,
-                title: transcript,
+                title: capture.title ? `${capture.title} ${transcript}` : transcript,
                 tags: [],
                 createdAt: capture.createdAt,
                 source: capture.source,
             };
-            const assembled = await assembleCaptureTask(textCapture, { addProject, projects, areas, tasks: getTasks?.() ?? tasks, people, settings });
-            const result = assembled
-                ? await addTask(assembled.title, assembled.props)
-                : await addTask(textCapture.title, buildPendingCaptureTaskProps(textCapture, projects));
-            if (isFailedResult(result)) continue;
+            const activeTasks = currentTasks.filter((task) => !task.deletedAt && !task.purgedAt);
+            const assembled = await assembleCaptureTask(textCapture, { addProject, projects, areas, tasks: activeTasks, people, settings });
+            const title = assembled?.title ?? textCapture.title;
+            const props = assembled?.props ?? buildPendingCaptureTaskProps(textCapture, projects);
+            let result: unknown;
+            if (isAndroidQuickCapture) {
+                try {
+                    result = await addTask(title, props, { captureId: normalizedCaptureId });
+                } catch {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                    });
+                    continue;
+                }
+            } else {
+                // Preserve the existing Watch failure behavior; Android catches
+                // locally so later text captures cannot be stranded behind it.
+                result = await addTask(title, props);
+            }
+            if (
+                isFailedResult(result)
+                || (isAndroidQuickCapture && resultId(result)?.toLowerCase() !== normalizedCaptureId)
+            ) {
+                if (isAndroidQuickCapture) {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                    });
+                }
+                continue;
+            }
             try {
                 await flushPendingSave?.();
                 await deleteAsync(fileUri, { idempotent: true });
             } catch {
+                if (isAndroidQuickCapture) {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'cleanup-failed' },
+                    });
+                }
                 continue;
             }
             // The queue must be gone before its WAV: otherwise a failed queue
             // delete can replay an item whose audio was already removed.
             await deleteAsync(resolvedAudioPath, { idempotent: true }).catch(() => undefined);
             ingested += 1;
-            void logInfo('Watch capture ingested', {
-                scope: 'capture',
-                extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'created' },
-            });
+            if (isAndroidQuickCapture) {
+                void logInfo('Android quick capture audio ingested', {
+                    scope: 'capture',
+                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'created' },
+                });
+            } else {
+                void logInfo('Watch capture ingested', {
+                    scope: 'capture',
+                    extra: { releaseCheck: WATCH_CAPTURE_RELEASE_CHECK, kind: 'audio', outcome: 'created' },
+                });
+            }
             continue;
         }
 

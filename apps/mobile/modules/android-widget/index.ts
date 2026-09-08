@@ -3,10 +3,15 @@ import { Platform } from 'react-native';
 
 type AndroidWidgetModule = {
   setPayload(json: string): void;
-  updateWidgets(): number | undefined;
+  updateWidgets(): WidgetRefreshResult | number | undefined;
   getWidgetListSelections(): string[];
   getCaptureIntentConfig(): Promise<CaptureIntentConfig>;
   setCaptureIntentEnabled(enabled: boolean): Promise<CaptureIntentConfig>;
+};
+
+type WidgetRefreshResult = {
+  legacyWidgetCount: number;
+  compactWidgetCount: number;
 };
 
 export type CaptureIntentConfig = {
@@ -29,7 +34,7 @@ export function setPayload(json: string): void {
 }
 
 /** Redraw every placed home-screen widget from the stored payload. */
-export function updateWidgets(): number | undefined {
+export function updateWidgets(): WidgetRefreshResult | number | undefined {
   return nativeModule?.updateWidgets();
 }
 

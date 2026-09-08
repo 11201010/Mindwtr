@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple v1.2.8-style card: stacked labels, flat list, native capture footer. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <ImageView
+        android:id="@+id/mindwtr_widget_surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:src="@drawable/mindwtr_widget_surface" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="10dp">
+        <LinearLayout
+            android:id="@+id/mindwtr_widget_title_target"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="36dp"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/mindwtr_widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="Mindwtr"
+                android:textColor="@color/mindwtr_widget_text"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/mindwtr_widget_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:textColor="@color/mindwtr_widget_muted_text"
+                android:textSize="10sp" />
+        </LinearLayout>
+        <!-- Reserve the footer even for an empty list. -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <ListView
+                android:id="@+id/mindwtr_widget_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:divider="@null"
+                android:dividerHeight="0dp"
+                android:scrollbars="none" />
+            <TextView
+                android:id="@+id/mindwtr_widget_empty"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="@color/mindwtr_widget_muted_text"
+                android:textSize="11sp" />
+        </FrameLayout>
+        <FrameLayout
+            android:id="@+id/mindwtr_widget_capture"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:layout_marginTop="4dp">
+            <ImageView
+                android:id="@+id/mindwtr_widget_capture_background"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no"
+                android:scaleType="fitXY"
+                android:src="@drawable/mindwtr_dialog_pill" />
+            <TextView
+                android:id="@+id/mindwtr_widget_capture_label"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="+"
+                android:textColor="@color/mindwtr_widget_on_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>

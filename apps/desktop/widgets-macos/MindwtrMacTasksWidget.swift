@@ -1,21 +1,102 @@
+import AppIntents
+import AppKit
 import SwiftUI
 import WidgetKit
 
 // Mirrors the visual shape of apps/mobile/widgets-ios/MindwtrTasksWidget.swift
-// for the desktop app's macOS widget (#1054). Two deliberate differences from
-// the iOS widget, both tracking decisions made for #1054:
-//  - No `Link(destination:)` tap targets or capture button. The desktop app
-//    registers no `mindwtr://` URL scheme, so the whole widget relies on
-//    WidgetKit's default "tap opens the containing app" behavior.
-//  - One generous item list (see macos-widget-data.ts) rather than five
+// for the desktop app's macOS widget (#1054). One deliberate difference from
+// the iOS widget remains: one generous item list (see macos-widget-data.ts)
+// rather than five
 //    per-size UserDefaults payloads; `familyTaskCap` below crops further.
 private let mindwtrMacWidgetKind = "MindwtrMacTasksWidget"
 private let mindwtrMacWidgetPayloadFileName = "widget-payload.json"
 private let mindwtrMacWidgetRefreshMinutes = 15
+private let mindwtrMacWidgetCaptureNotification = Notification.Name(
+    "tech.dongdongbh.mindwtr.widget.quick-capture"
+)
+private let mindwtrMacWidgetHostBundleIdentifier = "tech.dongdongbh.mindwtr"
+private let mindwtrMacWidgetQuickAddArgument = "--quick-add"
+private let mindwtrMacWidgetCaptureArgument = "--widget-quick-add"
 // Placeholder for local/unsigned builds -- must match build.rs's own
 // DEVTEAM fallback so an unsigned dev build's widget (if ever force-installed)
 // fails the same way the Rust write command does: no container, no crash.
 private let mindwtrMacWidgetDevAppGroup = "DEVTEAM.tech.dongdongbh.mindwtr"
+
+private func mindwtrMacWidgetAppGroupIdentifier() -> String {
+    Bundle.main.object(forInfoDictionaryKey: "MindwtrAppGroupIdentifier") as? String
+        ?? mindwtrMacWidgetDevAppGroup
+}
+
+private enum MindwtrMacWidgetCaptureError: LocalizedError {
+    case containingApplicationUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .containingApplicationUnavailable:
+            return "Mindwtr could not be opened from this widget."
+        }
+    }
+}
+
+@available(macOSApplicationExtension 14.0, *)
+struct MindwtrMacQuickCaptureIntent: AppIntent {
+    static let title: LocalizedStringResource = "Quick Capture"
+    static let description = IntentDescription("Opens Mindwtr's quick capture panel.")
+    static var isDiscoverable: Bool { false }
+    static var openAppWhenRun: Bool { false }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        let applicationURL = try containingApplicationURL()
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.createsNewApplicationInstance = false
+        configuration.arguments = [
+            mindwtrMacWidgetQuickAddArgument,
+            mindwtrMacWidgetCaptureArgument,
+        ]
+
+        _ = try await NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration
+        )
+
+        // Arguments cover a cold launch. An already-running application may
+        // ignore them, so notify its native listener after launch completion.
+        // Keep the message payload-free: the host opens its existing panel and
+        // the normal single-writer store remains the only persistence path.
+        DistributedNotificationCenter.default().postNotificationName(
+            mindwtrMacWidgetCaptureNotification,
+            object: mindwtrMacWidgetAppGroupIdentifier(),
+            userInfo: nil,
+            deliverImmediately: true
+        )
+
+        return .result()
+    }
+
+    private func containingApplicationURL() throws -> URL {
+        let extensionURL = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+        let plugInsURL = extensionURL.deletingLastPathComponent()
+        let contentsURL = plugInsURL.deletingLastPathComponent()
+        let applicationURL = contentsURL.deletingLastPathComponent()
+
+        guard
+            extensionURL.pathExtension.lowercased() == "appex",
+            plugInsURL.lastPathComponent == "PlugIns",
+            contentsURL.lastPathComponent == "Contents",
+            applicationURL.pathExtension.lowercased() == "app",
+            let applicationBundle = Bundle(url: applicationURL),
+            applicationBundle.bundleIdentifier == mindwtrMacWidgetHostBundleIdentifier,
+            let executableURL = applicationBundle.executableURL,
+            FileManager.default.isExecutableFile(atPath: executableURL.path)
+        else {
+            throw MindwtrMacWidgetCaptureError.containingApplicationUnavailable
+        }
+
+        return applicationURL
+    }
+}
 
 struct MindwtrMacWidgetTaskItem: Decodable {
     let id: String
@@ -106,7 +187,7 @@ struct MindwtrMacTasksWidgetProvider: TimelineProvider {
     }
 
     private var appGroupIdentifier: String {
-        Bundle.main.object(forInfoDictionaryKey: "MindwtrAppGroupIdentifier") as? String ?? mindwtrMacWidgetDevAppGroup
+        mindwtrMacWidgetAppGroupIdentifier()
     }
 
     private func loadPayload() -> MindwtrMacTasksWidgetPayload {
@@ -150,9 +231,9 @@ private struct MindwtrMacTasksWidgetView: View {
     // account for -- unlike the iOS widget's iPad-only two-column layout.
     private var familyTaskCap: Int {
         switch widgetFamily {
-        case .systemLarge: return 10
-        case .systemMedium: return 5
-        default: return 3
+        case .systemLarge: return 9
+        case .systemMedium: return 3
+        default: return 2
         }
     }
 
@@ -192,6 +273,29 @@ private struct MindwtrMacTasksWidgetView: View {
             }
 
             Spacer(minLength: 0)
+
+            if #available(macOSApplicationExtension 14.0, *) {
+                Button(intent: MindwtrMacQuickCaptureIntent()) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                            .accessibilityHidden(true)
+                        Text(payload.captureLabel)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .font(.system(size: metrics.subtitleSize, weight: .semibold))
+                    .foregroundColor(hexColor(palette.onAccent))
+                    .padding(.vertical, widgetFamily == .systemSmall ? 5 : 6)
+                    .padding(.horizontal, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(hexColor(palette.accent))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(payload.captureLabel))
+            }
         }
         .padding(metrics.padding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

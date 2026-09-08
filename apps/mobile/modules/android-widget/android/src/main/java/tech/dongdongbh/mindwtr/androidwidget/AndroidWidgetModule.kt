@@ -13,7 +13,8 @@ class AndroidWidgetModule : Module() {
     }
 
     Function("updateWidgets") {
-      appContext.reactContext?.let { WidgetRenderer.refreshAll(it) } ?: 0
+      val result = appContext.reactContext?.let { WidgetRenderer.refreshAll(it) } ?: WidgetRenderer.RefreshResult()
+      mapOf("legacyWidgetCount" to result.legacyWidgetCount, "compactWidgetCount" to result.compactWidgetCount)
     }
 
     Function("getWidgetListSelections") {

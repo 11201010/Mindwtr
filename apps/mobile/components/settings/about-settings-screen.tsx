@@ -440,10 +440,10 @@ export function AboutSettingsScreen({
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                        onPress={() => openLink('https://docs.mindwtr.app')}
+                        onPress={() => openLink('https://mindwtr.app')}
                     >
-                        <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.documentation')}</Text>
-                        <Text style={styles.linkText}>{tr('settings.documentationLinkValue')}</Text>
+                        <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.officialWebsite')}</Text>
+                        <Text style={styles.linkText}>Mindwtr</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
@@ -457,14 +457,7 @@ export function AboutSettingsScreen({
                         onPress={() => openLink('https://mindwtr.app/privacy')}
                     >
                         <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.privacy')}</Text>
-                        <Text style={styles.linkText}>mindwtr.app/privacy</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}
-                        onPress={() => openLink('https://github.com/dongdongbh/Mindwtr')}
-                    >
-                        <Text style={[styles.settingLabel, { color: tc.text }]}>GitHub</Text>
-                        <Text style={styles.linkText}>Mindwtr</Text>
+                        <Text style={styles.linkText}>{t('settings.privacy')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}

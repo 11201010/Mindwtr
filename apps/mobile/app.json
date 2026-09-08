@@ -105,7 +105,7 @@
           "targetCellWidth": 3,
           "targetCellHeight": 2,
           "resizeMode": "horizontal|vertical",
-          "previewImage": "./assets/images/widget-preview.png"
+          "previewImage": "./assets/images/widget-tasks-preview.png"
         }
       ],
       [

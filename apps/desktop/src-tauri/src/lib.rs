@@ -141,8 +141,8 @@ use ui::{
     acknowledge_close_request, apply_global_quick_add_shortcut, consume_quick_add_pending,
     create_quick_add_window, get_system_theme_preference, hide_quick_add_window,
     hide_quick_add_window_for_app, notify_ui_ready, quit_app, reveal_main_window_after_timeout,
-    set_global_quick_add_shortcut, set_tray_tooltip, set_tray_visible, show_main,
-    show_quick_add_window, MainWindowReveal,
+    set_global_quick_add_shortcut, set_tray_tooltip, set_tray_visible,
+    show_macos_widget_quick_add_window, show_main, show_quick_add_window, MainWindowReveal,
 };
 
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
@@ -189,6 +189,7 @@ const DROPBOX_OAUTH_TIMEOUT_SECS: u64 = 180;
 const DROPBOX_TOKEN_REFRESH_SKEW_MS: i64 = 60_000;
 const DROPBOX_DEFAULT_TOKEN_LIFETIME_SECS: i64 = 4 * 60 * 60;
 const QUICK_ADD_CLI_FLAG: &str = "--quick-add";
+const WIDGET_QUICK_ADD_CLI_FLAG: &str = "--widget-quick-add";
 // Written into the autostart entry's own command line (see the autostart
 // plugin builder in `run()`) so a launch caused by that entry can be told
 // apart from a manual double-click (#928).
@@ -718,6 +719,15 @@ where
         .any(|arg| arg.as_ref().eq_ignore_ascii_case(QUICK_ADD_CLI_FLAG))
 }
 
+fn launch_requests_widget_quick_add<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref().eq_ignore_ascii_case(WIDGET_QUICK_ADD_CLI_FLAG))
+}
+
 fn launch_requests_startup<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -725,6 +735,13 @@ where
 {
     args.into_iter()
         .any(|arg| arg.as_ref().eq_ignore_ascii_case(STARTUP_LAUNCH_CLI_FLAG))
+}
+
+fn should_suppress_initial_main_reveal(
+    start_hidden: bool,
+    initial_launch_requests_quick_add: bool,
+) -> bool {
+    start_hidden || initial_launch_requests_quick_add
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -1228,14 +1245,19 @@ pub fn run() {
     configure_linux_webkit_renderer(disable_hardware_acceleration);
 
     let launch_args = env::args().collect::<Vec<_>>();
-    let initial_launch_requests_quick_add = launch_requests_quick_add(launch_args.iter());
+    let initial_launch_requests_widget_quick_add =
+        launch_requests_widget_quick_add(launch_args.iter());
+    let initial_launch_requests_quick_add =
+        initial_launch_requests_widget_quick_add || launch_requests_quick_add(launch_args.iter());
     let initial_launch_requests_startup = launch_requests_startup(launch_args.iter());
     #[cfg(target_os = "linux")]
     let flatpak_instance_listener = prepare_flatpak_instance_listener(&launch_args);
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if launch_requests_quick_add(args.iter()) {
+            if launch_requests_widget_quick_add(args.iter()) {
+                show_macos_widget_quick_add_window(app);
+            } else if launch_requests_quick_add(args.iter()) {
                 show_quick_add_window(app);
             } else {
                 show_main(app);
@@ -1435,7 +1457,10 @@ pub fn run() {
             let tray_icon_available = resolve_tray_icon(&app.handle()).is_some();
             let start_hidden =
                 should_start_hidden(initial_launch_requests_startup, tray_icon_available);
-            if start_hidden || initial_launch_requests_quick_add {
+            if should_suppress_initial_main_reveal(
+                start_hidden,
+                initial_launch_requests_quick_add,
+            ) {
                 // Nothing to reveal: the autostart entry launched us with "start
                 // in tray" on and a tray icon to recover through (#928), or the
                 // global hotkey wants only the quick-add window. If tray
@@ -1560,6 +1585,7 @@ pub fn run() {
             if let Err(error) = create_quick_add_window(&handle) {
                 log::warn!("{error}");
             }
+            macos_widget::install_macos_widget_capture_listener(&handle);
             let tray_init_result: tauri::Result<()> = (|| {
                 let quick_add_item =
                     MenuItem::with_id(handle, "quick_add", "Quick Add", true, None::<&str>)?;
@@ -1670,7 +1696,11 @@ pub fn run() {
                     let _ = window.set_skip_taskbar(true);
                     let _ = window.hide();
                 }
-                show_quick_add_window(&handle);
+                if initial_launch_requests_widget_quick_add {
+                    show_macos_widget_quick_add_window(&handle);
+                } else {
+                    show_quick_add_window(&handle);
+                }
             }
 
             {
@@ -1993,6 +2023,37 @@ arch=x86_64
         assert!(launch_requests_quick_add(["mindwtr", "--QUICK-ADD"]));
         assert!(!launch_requests_quick_add(["mindwtr"]));
         assert!(!launch_requests_quick_add(["mindwtr", "--foo"]));
+    }
+
+    #[test]
+    fn launch_requests_widget_quick_add_matches_only_the_widget_marker() {
+        assert!(launch_requests_widget_quick_add([
+            "mindwtr",
+            "--quick-add",
+            "--widget-quick-add"
+        ]));
+        assert!(launch_requests_widget_quick_add([
+            "mindwtr",
+            "--WIDGET-QUICK-ADD"
+        ]));
+        assert!(!launch_requests_widget_quick_add([
+            "mindwtr",
+            "--quick-add"
+        ]));
+    }
+
+    #[test]
+    fn widget_quick_add_launch_suppresses_the_initial_main_window() {
+        let args = ["mindwtr", "--quick-add", "--widget-quick-add"];
+        let widget_requested = launch_requests_widget_quick_add(args);
+        let quick_add_requested = widget_requested || launch_requests_quick_add(args);
+        assert!(widget_requested);
+        assert!(quick_add_requested);
+        assert!(should_suppress_initial_main_reveal(
+            false,
+            quick_add_requested
+        ));
+        assert!(!should_suppress_initial_main_reveal(false, false));
     }
 
     #[test]

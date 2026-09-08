@@ -8,7 +8,6 @@ import {
     getTaskDateCoherenceIssues,
     hasTimeComponent,
     parseRRuleString,
-    RECURRENCE_INTERVAL_MAX,
     REPEAT_REMINDER_INTERVAL_OPTIONS,
     safeFormatDate,
     safeParseDate,
@@ -30,6 +29,7 @@ import {
 import { QuickDateChips } from '../QuickDateChips';
 import { CompactText } from '@/components/compact-text';
 import { FieldHeading } from './FieldHeading';
+import { RecurrenceIntervalInput } from './RecurrenceIntervalInput';
 import { buildRecurrenceValue } from './recurrence-utils';
 import type {
     ShowDatePickerMode,
@@ -41,12 +41,6 @@ type ScheduleFieldId = 'recurrence' | 'startTime' | 'dueDate' | 'reviewAt';
 type TaskEditScheduleFieldProps = TaskEditFieldRendererProps & {
     fieldId: ScheduleFieldId;
 };
-
-const normalizeRecurrenceIntervalInput = (value: number): number => (
-    Number.isFinite(value) && value > 0
-        ? Math.min(Math.round(value), RECURRENCE_INTERVAL_MAX)
-        : 1
-);
 
 const isSubDayRelativeStartUnit = (unit: NonNullable<Task['relativeStartOffset']>['unit']): boolean => (
     unit === 'minute' || unit === 'hour'
@@ -468,18 +462,15 @@ export function TaskEditScheduleField({
                         <>
                             <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
-                                <TextInput
-                                    value={String(Math.max(parsedRecurrenceRRule.interval ?? 1, 1))}
-                                    onChangeText={(value) => {
-                                        const parsed = Number.parseInt(value, 10);
-                                        const interval = normalizeRecurrenceIntervalInput(parsed);
+                                <RecurrenceIntervalInput
+                                    interval={parsedRecurrenceRRule.interval ?? 1}
+                                    onIntervalChange={(interval) => {
                                         applyRecurrence(buildEditedRecurrence('weekly', {
                                             ...(customWeekdays.length > 0 ? { byDay: customWeekdays } : {}),
                                             byMonthDay: undefined,
                                             interval,
                                         }));
                                     }}
-                                    keyboardType="number-pad"
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                     accessibilityLabel={t('recurrence.repeatEvery')}
                                     accessibilityHint={t('recurrence.weekUnit')}
@@ -520,18 +511,15 @@ export function TaskEditScheduleField({
                     {recurrenceRuleValue === 'daily' && (
                         <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                             <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
-                            <TextInput
-                                value={String(dailyInterval)}
-                                onChangeText={(value) => {
-                                    const parsed = Number.parseInt(value, 10);
-                                    const interval = normalizeRecurrenceIntervalInput(parsed);
+                            <RecurrenceIntervalInput
+                                interval={dailyInterval}
+                                onIntervalChange={(interval) => {
                                     applyRecurrence(buildEditedRecurrence('daily', {
                                         byDay: undefined,
                                         byMonthDay: undefined,
                                         interval,
                                     }));
                                 }}
-                                keyboardType="number-pad"
                                 style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                 accessibilityLabel={t('recurrence.repeatEvery')}
                                 accessibilityHint={t('recurrence.dayUnit')}
@@ -543,14 +531,11 @@ export function TaskEditScheduleField({
                         <>
                             <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                                 <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
-                                <TextInput
-                                    value={String(monthlyInterval)}
-                                    onChangeText={(value) => {
-                                        const parsed = Number.parseInt(value, 10);
-                                        const interval = normalizeRecurrenceIntervalInput(parsed);
+                                <RecurrenceIntervalInput
+                                    interval={monthlyInterval}
+                                    onIntervalChange={(interval) => {
                                         applyRecurrence(buildEditedRecurrence('monthly', { interval }));
                                     }}
-                                    keyboardType="number-pad"
                                     style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                     accessibilityLabel={t('recurrence.repeatEvery')}
                                     accessibilityHint={t('recurrence.monthUnit')}
@@ -585,18 +570,15 @@ export function TaskEditScheduleField({
                     {recurrenceRuleValue === 'yearly' && (
                         <View style={[styles.customRow, { marginTop: 8, borderColor: tc.border }]}>
                             <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
-                            <TextInput
-                                value={String(Math.max(parsedRecurrenceRRule.interval ?? 1, 1))}
-                                onChangeText={(value) => {
-                                    const parsed = Number.parseInt(value, 10);
-                                    const interval = normalizeRecurrenceIntervalInput(parsed);
+                            <RecurrenceIntervalInput
+                                interval={parsedRecurrenceRRule.interval ?? 1}
+                                onIntervalChange={(interval) => {
                                     applyRecurrence(buildEditedRecurrence('yearly', {
                                         byDay: undefined,
                                         byMonthDay: undefined,
                                         interval,
                                     }));
                                 }}
-                                keyboardType="number-pad"
                                 style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                                 accessibilityLabel={t('recurrence.repeatEvery')}
                                 accessibilityHint={t('recurrence.yearUnit')}

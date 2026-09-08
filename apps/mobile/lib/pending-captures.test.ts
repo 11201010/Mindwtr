@@ -22,8 +22,10 @@ vi.mock('./app-log', () => appLogMocks);
 import {
     buildPendingCaptureTaskProps,
     ingestPendingCaptures,
+    isSafeAndroidQuickCaptureAudioPath,
     isSafeWatchAudioPath,
     parsePendingCapture,
+    resolveSafeAndroidQuickCaptureAudioPath,
     resolveSafeWatchAudioPath,
     type PendingCapture,
 } from './pending-captures';
@@ -31,6 +33,7 @@ import {
 // The capture-shaped tests read capture fields; narrow once here.
 const parseCapture = (raw: string) => parsePendingCapture(raw) as PendingCapture | null;
 const WATCH_AUDIO_ID = '11111111-1111-4111-8111-111111111111';
+const ANDROID_AUDIO_ID = '22222222-2222-4abc-8def-222222222222';
 
 const project = (props: Partial<Project>): Project => ({
     id: 'p1',
@@ -79,10 +82,24 @@ describe('parsePendingCapture', () => {
         expect(parsePendingCapture(JSON.stringify({ kind: 'pomodoro', id: 'p1', action: 'toggle' }))).toBeNull();
     });
 
+    it('trims the optional typed prefix on an audio capture', () => {
+        expect(parsePendingCapture(JSON.stringify({
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+            title: '  Plan launch  ',
+        }))).toMatchObject({ kind: 'audio', title: 'Plan launch' });
+    });
+
     it('confines Watch audio deletion to the exact queue id under Documents/watch-audio', () => {
         const id = WATCH_AUDIO_ID;
         expect(resolveSafeWatchAudioPath(
             `file:///old/container/Documents/watch-audio/${id}.wav`,
+            id,
+        )).toBe(`file:///data/Documents/watch-audio/${id}.wav`);
+        expect(resolveSafeWatchAudioPath(
+            `FILE:///old/container/Documents/watch-audio/${id}.wav`,
             id,
         )).toBe(`file:///data/Documents/watch-audio/${id}.wav`);
         expect(isSafeWatchAudioPath(`file:///data/Documents/watch-audio/${id}.wav`, id)).toBe(true);
@@ -92,6 +109,108 @@ describe('parsePendingCapture', () => {
         expect(isSafeWatchAudioPath(`file:///data/Documents/watch-audio/${id}.wav?alternate=1`, id)).toBe(false);
         expect(isSafeWatchAudioPath(`file://host/data/Documents/watch-audio/${id}.wav`, id)).toBe(false);
         expect(isSafeWatchAudioPath('file:///data/Documents/watch-audio/audio-1.wav', 'audio-1')).toBe(false);
+    });
+
+    it('accepts Android audio only at the current canonical owned path for the same UUID', () => {
+        const expected = `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`;
+        expect(resolveSafeAndroidQuickCaptureAudioPath(expected, ANDROID_AUDIO_ID)).toBe(expected);
+        expect(resolveSafeAndroidQuickCaptureAudioPath(
+            `file:/data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(expected);
+        expect(isSafeAndroidQuickCaptureAudioPath(expected, ANDROID_AUDIO_ID)).toBe(true);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///old/container/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/watch-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/${WATCH_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/../${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/sub/../${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/sub/%2e%2e/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `FILE:/data/Documents/staging/../quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `FiLe:/data/Documents/staging/%2e%2e/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(`${expected}?retry=1`, ANDROID_AUDIO_ID)).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(`${expected}#fragment`, ANDROID_AUDIO_ID)).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file://host/data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(expected, 'not-a-uuid')).toBe(false);
+        expect(isSafeWatchAudioPath(expected, ANDROID_AUDIO_ID)).toBe(false);
+    });
+
+    it('accepts the React Native URL shape with absent credential fields', () => {
+        const NativeUrl = URL;
+        vi.stubGlobal('URL', class extends NativeUrl {
+            constructor(input: string | URL, base?: string | URL) {
+                super(input, base);
+                Object.defineProperties(this, {
+                    username: { value: undefined },
+                    password: { value: undefined },
+                });
+            }
+        });
+        try {
+            const expected = `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`;
+            expect(resolveSafeAndroidQuickCaptureAudioPath(expected, ANDROID_AUDIO_ID)).toBe(expected);
+            expect(resolveSafeAndroidQuickCaptureAudioPath(
+                `file://foreign/data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+                ANDROID_AUDIO_ID,
+            )).toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('accepts Android audio only at the exact current owned URI for the matching UUID', () => {
+        const currentPath = `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`;
+        expect(resolveSafeAndroidQuickCaptureAudioPath(currentPath, ANDROID_AUDIO_ID)).toBe(currentPath);
+        expect(isSafeAndroidQuickCaptureAudioPath(currentPath, ANDROID_AUDIO_ID)).toBe(true);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///old/container/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/watch-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/${WATCH_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file:///data/Documents/quick-capture-audio/../${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(`${currentPath}?copy=1`, ANDROID_AUDIO_ID)).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(`${currentPath}#fragment`, ANDROID_AUDIO_ID)).toBe(false);
+        expect(isSafeAndroidQuickCaptureAudioPath(
+            `file://host/data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            ANDROID_AUDIO_ID,
+        )).toBe(false);
+        expect(isSafeWatchAudioPath(currentPath, ANDROID_AUDIO_ID)).toBe(false);
     });
 
     it('rejects payloads without id or title', () => {
@@ -350,6 +469,274 @@ describe('ingestPendingCaptures', () => {
 
         expect(applyPomodoroCommand.mock.calls.map(([command]) => command.action)).toEqual(['reset', 'start']);
         expect(fileSystemMocks.deleteAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it('prefixes Android audio with typed text, creates by capture UUID, and cleans JSON before WAV after flush', async () => {
+        oneFile(`${ANDROID_AUDIO_ID}.json`, {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            createdAt: '2026-09-06T10:00:00.000Z',
+            source: 'android-quick-capture',
+            title: 'Plan launch',
+        });
+        const addTask = vi.fn(async () => ({ success: true, id: ANDROID_AUDIO_ID }));
+        const flushPendingSave = vi.fn(async () => undefined);
+        const transcribeAudio = vi.fn(async () => 'Buy milk /due:tomorrow');
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave,
+            transcribeAudio,
+        })).toBe(1);
+
+        expect(transcribeAudio).toHaveBeenCalledWith(
+            `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            emptySettings,
+        );
+        expect(addTask).toHaveBeenCalledWith(
+            'Plan launch Buy milk',
+            expect.objectContaining({ status: 'inbox', dueDate: '2026-09-07' }),
+            { captureId: ANDROID_AUDIO_ID },
+        );
+        expect(flushPendingSave).toHaveBeenCalledOnce();
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+            1,
+            `file:///data/Documents/pending-captures/${ANDROID_AUDIO_ID}.json`,
+            { idempotent: true },
+        );
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+            2,
+            `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            { idempotent: true },
+        );
+        expect(flushPendingSave.mock.invocationCallOrder[0])
+            .toBeLessThan(fileSystemMocks.deleteAsync.mock.invocationCallOrder[0]);
+        expect(fileSystemMocks.deleteAsync.mock.invocationCallOrder[0])
+            .toBeLessThan(fileSystemMocks.deleteAsync.mock.invocationCallOrder[1]);
+        expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(1, 'Android quick capture audio ready for transcription', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'validated' },
+        });
+        expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(2, 'Android quick capture audio ingested', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'created' },
+        });
+    });
+
+    it('skips Android retranscription when its capture UUID already exists, including as a tombstone', async () => {
+        oneFile(`${ANDROID_AUDIO_ID}.json`, {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+        });
+        const addTask = vi.fn();
+        const transcribeAudio = vi.fn();
+        const flushPendingSave = vi.fn(async () => undefined);
+        const tombstone = {
+            id: ANDROID_AUDIO_ID,
+            title: 'Previously captured',
+            status: 'inbox',
+            deletedAt: '2026-09-06T11:00:00.000Z',
+        } as Task;
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            getTasks: () => [tombstone],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave,
+            transcribeAudio,
+        })).toBe(1);
+
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(addTask).not.toHaveBeenCalled();
+        expect(flushPendingSave).toHaveBeenCalledOnce();
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+            1,
+            `file:///data/Documents/pending-captures/${ANDROID_AUDIO_ID}.json`,
+            { idempotent: true },
+        );
+        expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+            2,
+            `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            { idempotent: true },
+        );
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Android quick capture audio ingested', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'already-created' },
+        });
+    });
+
+    it('normalizes an Android capture UUID before using it as the task idempotency key', async () => {
+        const upperId = ANDROID_AUDIO_ID.toUpperCase();
+        oneFile(`${upperId}.json`, {
+            kind: 'audio',
+            id: upperId,
+            audioPath: `file:///data/Documents/quick-capture-audio/${upperId}.wav`,
+            source: 'android-quick-capture',
+        });
+        const addTask = vi.fn(async () => ({ success: true, id: ANDROID_AUDIO_ID }));
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            transcribeAudio: vi.fn(async () => 'Captured thought'),
+        })).toBe(1);
+
+        expect(addTask).toHaveBeenCalledWith(
+            'Captured thought',
+            { status: 'inbox' },
+            { captureId: ANDROID_AUDIO_ID },
+        );
+    });
+
+    it('retains Android audio when transcription is unavailable or task creation fails', async () => {
+        oneFile(`${ANDROID_AUDIO_ID}.json`, {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+        });
+        const base = {
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+        };
+
+        expect(await ingestPendingCaptures({
+            ...base,
+            addTask: addTaskMock(),
+            transcribeAudio: vi.fn(async () => null),
+        })).toBe(0);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+
+        expect(await ingestPendingCaptures({
+            ...base,
+            addTask: vi.fn(async () => { throw new Error('store unavailable'); }),
+            transcribeAudio: vi.fn(async () => 'Captured thought'),
+        })).toBe(0);
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+        expect(appLogMocks.logWarn).toHaveBeenCalledWith('Android quick capture audio retained for retry', {
+            scope: 'capture',
+            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'task-save-failed' },
+        });
+    });
+
+    it('retains Android JSON and WAV when the capture task is not durably saved', async () => {
+        oneFile(`${ANDROID_AUDIO_ID}.json`, {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask: vi.fn(async () => ({ success: true, id: ANDROID_AUDIO_ID })),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            flushPendingSave: vi.fn(async () => { throw new Error('disk full'); }),
+            transcribeAudio: vi.fn(async () => 'Captured thought'),
+        })).toBe(0);
+
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+    });
+
+    it('keeps draining text captures after Android audio task creation rejects', async () => {
+        fileSystemMocks.readDirectoryAsync.mockResolvedValue([`${ANDROID_AUDIO_ID}.json`, 'z-text.json']);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
+            uri.endsWith(`${ANDROID_AUDIO_ID}.json`)
+                ? {
+                    kind: 'audio',
+                    id: ANDROID_AUDIO_ID,
+                    audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+                    source: 'android-quick-capture',
+                }
+                : { id: 'text-1', title: 'Later text capture' },
+        ));
+        const addTask = vi.fn(async (_title: string, _props?: Partial<Task>, options?: { captureId: string }) => {
+            if (options) throw new Error('audio write failed');
+            return { success: true, id: 'text-task' };
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            transcribeAudio: vi.fn(async () => 'Audio capture'),
+        })).toBe(1);
+
+        expect(addTask).toHaveBeenCalledTimes(2);
+        expect(addTask).toHaveBeenNthCalledWith(2, 'Later text capture', { status: 'inbox' });
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledOnce();
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledWith(
+            'file:///data/Documents/pending-captures/z-text.json',
+            { idempotent: true },
+        );
+    });
+
+    it('rejects Android audio whose queue filename does not match its UUID without deleting the WAV', async () => {
+        oneFile('mismatched.json', {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+        });
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(),
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            people: [],
+            settings: emptySettings,
+            transcribeAudio: vi.fn(async () => 'Should not run'),
+        })).toBe(0);
+
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledOnce();
+        expect(fileSystemMocks.deleteAsync).toHaveBeenCalledWith(
+            'file:///data/Documents/pending-captures/mismatched.json',
+            { idempotent: true },
+        );
+        expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalledWith(
+            `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            expect.anything(),
+        );
     });
 
     it('flushes a Watch audio task before deleting its queue file, then deletes its confined WAV', async () => {

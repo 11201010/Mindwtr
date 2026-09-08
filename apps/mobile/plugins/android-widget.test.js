@@ -4,6 +4,8 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const plugin = require('./android-widget');
+const { buildWidgetPreviewXml } = require('./android-widget-preview');
+const { compactWidgetLocales, compactWidgetValuesDirectory } = require('./android-widget-locales');
 
 const {
   ACTIVITY_NAME,
@@ -13,6 +15,7 @@ const {
   SERVICE_NAME,
   TAP_ACTIVITY_NAME,
   buildWidgetInfoXml,
+  buildCompactWidgetStringsXml,
   buildWidgetKinds,
   buildLegacyTasksWidgetKind,
   buildLegacyTasksWidgetSource,
@@ -30,15 +33,50 @@ const appJsonProps = () => {
 };
 
 describe('android-widget', () => {
+  it('localizes the Compact picker label and description for every app language', () => {
+    const locales = fs.readdirSync(path.resolve(__dirname, '../../..', 'packages/core/src/i18n/locales'))
+      .filter((name) => name.endsWith('.ts')).map((name) => name.slice(0, -3)).sort();
+    expect(Object.keys(compactWidgetLocales).sort()).toEqual(locales);
+    for (const locale of locales) {
+      const xml = buildCompactWidgetStringsXml('Mindwtr Dev', locale);
+      expect(xml).toContain('name="mindwtr_compact_widget_label">Mindwtr Dev ');
+      expect(xml).toContain('name="mindwtr_compact_widget_description"');
+      expect(xml).not.toContain('translatable="false"');
+    }
+    expect(buildCompactWidgetStringsXml('Mindwtr Dev', 'zh-Hans')).toContain('Mindwtr Dev 简洁');
+    expect(compactWidgetValuesDirectory('zh-Hant')).toBe('values-b+zh+Hant');
+    expect(compactWidgetValuesDirectory('de')).toBe('values-de');
+  });
+
+  it('builds each picker preview from its native layout with sample content', () => {
+    const readLayout = (name) => fs.readFileSync(path.join(__dirname, '../modules/android-widget/android/src/main/res/layout', `${name}.xml`), 'utf8');
+    const previews = buildWidgetKinds(resolveProps()).map((kind) => buildWidgetPreviewXml(kind, readLayout));
+    expect(previews[0]).toContain('mindwtr_widget_item_ring_target');
+    expect(previews[0]).toContain('android:text="Plan the week"');
+    expect(previews[0]).toContain('android:text="Work"');
+    expect(previews[1]).toContain('android:text="• Plan the week"');
+    expect(previews[1]).toContain('android:textSize="12sp"');
+    expect(previews[1]).not.toContain('mindwtr_widget_item_ring_target');
+    expect(previews[1]).not.toContain('mindwtr_widget_section_title');
+    expect(previews[2]).toContain('android:text="Quick capture"');
+    expect(previews[2]).not.toContain('Plan the week');
+    for (const preview of previews) expect(preview).not.toContain('<ListView');
+  });
+
   it('carries the previous widget sizing and preview over from app.json', () => {
     const props = resolveProps(appJsonProps());
     expect(props.label).toBe('Mindwtr');
     expect(props.minWidth).toBe('120dp');
     expect(props.minResizeHeight).toBe('120dp');
     expect(props.resizeMode).toBe('horizontal|vertical');
-    expect(props.previewImage).toBe('./assets/images/widget-preview.png');
+    expect(props.previewImage).toBe('./assets/images/widget-tasks-preview.png');
 
-    const [tasks, quickCapture] = buildWidgetKinds(props);
+    const [tasks, compact, quickCapture] = buildWidgetKinds(props);
+    expect(new Set([tasks, compact, quickCapture].map((kind) => kind.previewImage)).size).toBe(3);
+    for (const kind of [tasks, compact, quickCapture]) {
+      expect(fs.existsSync(path.resolve(__dirname, '..', kind.previewImage))).toBe(true);
+      expect(buildWidgetInfoXml(kind)).toContain(`android:previewLayout="@layout/${kind.layout}_preview"`);
+    }
     expect(tasks.kind).toBe('Tasks');
     expect(tasks.receiver).toBe('tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider');
     const xml = buildWidgetInfoXml(tasks);
@@ -67,9 +105,16 @@ describe('android-widget', () => {
     expect(captureXml).toContain('android:targetCellHeight="1"');
     expect(captureXml).toContain('android:resizeMode="none"');
     expect(captureXml).toContain('android:initialLayout="@layout/mindwtr_quick_capture_widget"');
-    expect(captureXml).not.toContain('previewImage');
+    expect(captureXml).toContain('android:previewImage="@drawable/mindwtr_quick_capture_widget_preview"');
     expect(captureXml).not.toContain('android:configure');
-    expect(buildWidgetKinds(resolveProps({ label: 'Mindwtr Dev' })).map((kind) => kind.label)).toEqual(['Mindwtr Dev', 'Mindwtr Dev quick capture']);
+    expect(buildWidgetKinds(resolveProps({ label: 'Mindwtr Dev' })).map((kind) => kind.label)).toEqual(['Mindwtr Dev', 'Mindwtr Dev Compact', 'Mindwtr Dev quick capture']);
+    const compactXml = buildWidgetInfoXml(compact);
+    expect(compactXml).toContain('android:targetCellWidth="2"');
+    expect(compactXml).toContain('android:targetCellHeight="2"');
+    expect(compactXml).toContain('android:initialLayout="@layout/mindwtr_compact_widget"');
+    expect(compactXml).toContain('android:previewImage="@drawable/mindwtr_compact_widget_preview"');
+    expect(compactXml).not.toContain('android:configure');
+    expect(compactXml).not.toContain('reconfigurable');
   });
 
   it('derives the dialog theme from the AppCompat DayNight dialog without a title', () => {
@@ -94,6 +139,10 @@ describe('android-widget', () => {
       $: { 'android:name': 'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'android:label': 'Mindwtr Dev', 'android:exported': 'true' },
       'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
       'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/mindwtr_tasks_widget_info' } }],
+    }, {
+      $: { 'android:name': 'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'android:label': '@string/mindwtr_compact_widget_label', 'android:exported': 'true' },
+      'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],
+      'meta-data': [{ $: { 'android:name': 'android.appwidget.provider', 'android:resource': '@xml/mindwtr_compact_widget_info' } }],
     }, {
       $: { 'android:name': 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider', 'android:label': 'Mindwtr Dev quick capture', 'android:exported': 'true' },
       'intent-filter': [{ action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }] }],

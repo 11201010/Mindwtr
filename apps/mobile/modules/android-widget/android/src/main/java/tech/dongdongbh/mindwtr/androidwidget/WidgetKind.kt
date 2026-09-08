@@ -9,7 +9,10 @@ package tech.dongdongbh.mindwtr.androidwidget
  */
 enum class WidgetKind(val layoutRes: Int, val providerClass: Class<out MindwtrWidgetProvider>) {
   TASKS(R.layout.mindwtr_widget, TasksWidgetProvider::class.java),
+  COMPACT(R.layout.mindwtr_compact_widget, CompactWidgetProvider::class.java),
   QUICK_CAPTURE(R.layout.mindwtr_quick_capture_widget, QuickCaptureWidgetProvider::class.java);
+
+  val hasTaskList: Boolean get() = this != QUICK_CAPTURE
 
   companion object {
     fun fromName(name: String?): WidgetKind = entries.firstOrNull { it.name == name } ?: TASKS
@@ -77,3 +80,5 @@ open class TasksWidgetProvider : MindwtrWidgetProvider(WidgetKind.TASKS) {
 }
 
 class QuickCaptureWidgetProvider : MindwtrWidgetProvider(WidgetKind.QUICK_CAPTURE)
+
+class CompactWidgetProvider : MindwtrWidgetProvider(WidgetKind.COMPACT)

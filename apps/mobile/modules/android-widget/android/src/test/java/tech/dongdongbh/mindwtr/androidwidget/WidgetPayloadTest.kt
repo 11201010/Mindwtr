@@ -87,6 +87,17 @@ class WidgetPayloadTest {
   }
 
   @Test
+  fun compactRowsKeepSectionOrderWithoutHeadingsOrDuplicatingTheFlatItems() {
+    val payload = WidgetPayload.parse(sample)!!
+    val list = WidgetPayload.ListPayload("Focus", null, payload.sections, payload.items)
+    val rows = TasksWidgetFactory.buildRows(list, compact = true)
+    assertEquals(listOf("a", "b"), rows.map { (it as TasksWidgetFactory.Row.Task).item.id })
+    assertEquals(4, TasksWidgetFactory.buildRows(list).size)
+    assertEquals(2, TasksWidgetFactory.buildRows(list.copy(sections = emptyList()), compact = true).size)
+    assertTrue(TasksWidgetFactory.buildRows(list.copy(sections = emptyList(), items = emptyList()), compact = true).isEmpty())
+  }
+
+  @Test
   fun flatItemsBackTheRowsWhenAPayloadCarriesNoSections() {
     val payload = WidgetPayload.parse(JSONObject(sample).apply { remove("sections"); remove("lists") }.toString())!!
 

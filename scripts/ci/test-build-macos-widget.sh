@@ -11,22 +11,51 @@ mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/xcrun" <<'STUB'
 #!/usr/bin/env bash
 printf 'xcrun %s\n' "$*" >> "$WIDGET_TEST_LOG"
-printf '/tmp/fake-macos-sdk\n'
+case "$*" in
+    '--sdk macosx --show-sdk-path') printf '/tmp/fake-macos-sdk\n' ;;
+    '--find swiftc') command -v swiftc ;;
+    '--find appintentsmetadataprocessor') command -v appintentsmetadataprocessor ;;
+    *) exit 1 ;;
+esac
 STUB
 
 cat > "$STUB_BIN/swiftc" <<'STUB'
 #!/usr/bin/env bash
 printf 'swiftc %s\n' "$*" >> "$WIDGET_TEST_LOG"
 output=""
+const_values=""
 while [ "$#" -gt 0 ]; do
-    if [ "$1" = "-o" ]; then
-        output="$2"
-        break
-    fi
+    case "$1" in
+        -o) output="$2" ;;
+        -emit-const-values-path) const_values="$2" ;;
+    esac
     shift
 done
 mkdir -p "$(dirname "$output")"
 : > "$output"
+if [ -n "$const_values" ]; then
+    mkdir -p "$(dirname "$const_values")"
+    printf '{"type":"AppIntent"}\n' > "$const_values"
+fi
+STUB
+
+cat > "$STUB_BIN/appintentsmetadataprocessor" <<'STUB'
+#!/usr/bin/env bash
+printf 'appintentsmetadataprocessor %s\n' "$*" >> "$WIDGET_TEST_LOG"
+output=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--output" ]; then
+        output="$2"
+    fi
+    shift
+done
+mkdir -p "$output/Metadata.appintents"
+printf '{"actions":["MindwtrMacQuickCaptureIntent"]}\n' > "$output/Metadata.appintents/extract.actionsdata"
+STUB
+
+cat > "$STUB_BIN/xcodebuild" <<'STUB'
+#!/usr/bin/env bash
+printf 'Xcode 16.4\nBuild version 16F6\n'
 STUB
 
 cat > "$STUB_BIN/lipo" <<'STUB'
@@ -129,6 +158,7 @@ run_case() {
     local appex="$app_path/Contents/PlugIns/MindwtrWidgets.appex"
     test -d "$appex"
     test -f "$appex/Contents/MacOS/MindwtrWidgets"
+    test -s "$appex/Contents/Resources/Metadata.appintents/extract.actionsdata"
     grep -q 'Set :CFBundleShortVersionString 1.2.5' "$log_path"
     grep -q 'Set :CFBundleVersion 125' "$log_path"
     grep -q 'Set :CFBundleIdentifier tech.dongdongbh.mindwtr.MindwtrWidgets' "$log_path"
@@ -141,6 +171,10 @@ run_case() {
     ! grep -q '__MINDWTR_MACOS_' "$case_dir/widget-entitlements.plist"
     grep -qF '<string>TEAM123.tech.dongdongbh.mindwtr</string>' "$case_dir/host-entitlements.plist"
     ! grep -q '__MINDWTR_MACOS_' "$case_dir/host-entitlements.plist"
+    grep -q '^appintentsmetadataprocessor .*--module-name MindwtrWidgets ' "$log_path"
+    grep -q -- '--bundle-identifier tech.dongdongbh.mindwtr.MindwtrWidgets' "$log_path"
+    grep -q -- '--compile-time-extraction' "$log_path"
+    grep -q -- '--swift-const-vals-list' "$log_path"
 
     local appex_sign_line
     local app_sign_line

@@ -8,10 +8,11 @@ import {
 } from './speech-to-text';
 
 /**
- * Runs a Watch WAV through the same configured phone transcription service as
- * Quick Capture. A null result is retryable: the queue and WAV must stay put.
+ * Runs a native pending WAV through the same configured phone transcription
+ * service as Quick Capture. A null result is retryable: the queue and WAV must
+ * stay put.
  */
-export async function transcribePendingWatchAudio(
+export async function transcribePendingAudio(
   audioPath: string,
   settings: AppData['settings'],
 ): Promise<string | null> {
@@ -42,5 +43,11 @@ export async function transcribePendingWatchAudio(
     timeZone,
   } satisfies SpeechToTextConfig);
   const transcript = result.transcript?.trim();
+  // Whisper can return this control marker for silence. It is not task text;
+  // leave the queued capture untouched just as for an empty transcript.
+  if (runtime.provider === 'whisper' && transcript === '[BLANK_AUDIO]') return null;
   return transcript || null;
 }
+
+// Backward-compatible name for callers outside the mobile root hook.
+export const transcribePendingWatchAudio = transcribePendingAudio;

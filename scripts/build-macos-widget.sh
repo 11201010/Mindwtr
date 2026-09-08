@@ -49,6 +49,8 @@ WIDGET_SRC_DIR="apps/desktop/widgets-macos"
 HOST_EXECUTABLE_NAME="mindwtr"
 WIDGET_BUNDLE_ID="tech.dongdongbh.mindwtr.MindwtrWidgets"
 WIDGET_EXECUTABLE_NAME="MindwtrWidgets"
+WIDGET_MODULE_NAME="MindwtrWidgets"
+APP_INTENTS_PROTOCOLS_FILE="$WIDGET_SRC_DIR/AppIntentsProtocols.json"
 APP_GROUP_PLACEHOLDER="__MINDWTR_MACOS_APP_GROUP__"
 TEAM_ID_PLACEHOLDER="__MINDWTR_MACOS_TEAM_ID__"
 PLIST_BUDDY="${PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
@@ -118,16 +120,23 @@ WIDGET_BINARY="$APPEX_DIR/Contents/MacOS/${WIDGET_EXECUTABLE_NAME}"
 
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SLICES=()
+APP_INTENTS_CONST_VALUES=""
+APP_INTENTS_TARGET_TRIPLE=""
 for SWIFT_ARCH in $SWIFT_ARCHS; do
     SLICE="$WORKDIR/${WIDGET_EXECUTABLE_NAME}-${SWIFT_ARCH}"
+    CONST_VALUES="$WORKDIR/${WIDGET_MODULE_NAME}-${SWIFT_ARCH}.swiftconstvalues"
     echo "Compiling macOS widget Swift sources for ${SWIFT_ARCH} (from ${RUST_TARGET})..."
     swiftc \
         -O \
         -sdk "$SDK_PATH" \
         -target "${SWIFT_ARCH}-apple-macos14.0" \
+        -module-name "$WIDGET_MODULE_NAME" \
         -parse-as-library \
         -application-extension \
         -emit-executable \
+        -emit-const-values-path "$CONST_VALUES" \
+        -Xfrontend -const-gather-protocols-file \
+        -Xfrontend "$APP_INTENTS_PROTOCOLS_FILE" \
         -Xlinker -e \
         -Xlinker _NSExtensionMain \
         -o "$SLICE" \
@@ -138,6 +147,10 @@ for SWIFT_ARCH in $SWIFT_ARCHS; do
         exit 1
     fi
     SLICES+=("$SLICE")
+    if [ -z "$APP_INTENTS_CONST_VALUES" ]; then
+        APP_INTENTS_CONST_VALUES="$CONST_VALUES"
+        APP_INTENTS_TARGET_TRIPLE="${SWIFT_ARCH}-apple-macos14.0"
+    fi
 done
 
 if [ "${#SLICES[@]}" -eq 1 ]; then
@@ -162,6 +175,50 @@ APP_BUILD="$($PLIST_BUDDY -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.p
 $PLIST_BUDDY -c "Set :CFBundleShortVersionString ${APP_VERSION}" "$APPEX_DIR/Contents/Info.plist"
 $PLIST_BUDDY -c "Set :CFBundleVersion ${APP_BUILD}" "$APPEX_DIR/Contents/Info.plist"
 $PLIST_BUDDY -c "Set :CFBundleIdentifier ${WIDGET_BUNDLE_ID}" "$APPEX_DIR/Contents/Info.plist"
+
+# A hand-built Swift appex does not get Xcode's Extract App Intents Metadata
+# phase automatically. WidgetKit can still link Button(intent:) without that
+# phase, but macOS cannot register or execute the action. Reproduce the public
+# toolchain phase explicitly and fail closed if it produces no metadata.
+APP_INTENTS_PROCESSOR="$(xcrun --find appintentsmetadataprocessor)"
+SWIFTC_PATH="$(xcrun --find swiftc)"
+TOOLCHAIN_DIR="$(dirname "$(dirname "$(dirname "$SWIFTC_PATH")")")"
+XCODE_BUILD_VERSION="$(xcodebuild -version | awk '/Build version/{print $3; exit}')"
+APP_INTENTS_SOURCE_LIST="$WORKDIR/${WIDGET_MODULE_NAME}.SwiftFileList"
+APP_INTENTS_CONST_VALUES_LIST="$WORKDIR/${WIDGET_MODULE_NAME}.SwiftConstValuesFileList"
+APP_INTENTS_RESOURCES="$APPEX_DIR/Contents/Resources"
+
+find "$WIDGET_SRC_DIR" -maxdepth 1 -type f -name '*.swift' -print | sort > "$APP_INTENTS_SOURCE_LIST"
+printf '%s\n' "$APP_INTENTS_CONST_VALUES" > "$APP_INTENTS_CONST_VALUES_LIST"
+mkdir -p "$APP_INTENTS_RESOURCES"
+
+echo "Extracting macOS widget App Intents metadata..."
+"$APP_INTENTS_PROCESSOR" \
+    --toolchain-dir "$TOOLCHAIN_DIR" \
+    --module-name "$WIDGET_MODULE_NAME" \
+    --output "$APP_INTENTS_RESOURCES" \
+    --sdk-root "$SDK_PATH" \
+    --xcode-version "$XCODE_BUILD_VERSION" \
+    --platform-family macOS \
+    --deployment-target 14.0 \
+    --bundle-identifier "$WIDGET_BUNDLE_ID" \
+    --target-triple "$APP_INTENTS_TARGET_TRIPLE" \
+    --binary-file "$WIDGET_BINARY" \
+    --source-file-list "$APP_INTENTS_SOURCE_LIST" \
+    --swift-const-vals-list "$APP_INTENTS_CONST_VALUES_LIST" \
+    --compile-time-extraction \
+    --deployment-aware-processing \
+    --no-app-shortcuts-localization
+
+APP_INTENTS_METADATA="$APP_INTENTS_RESOURCES/Metadata.appintents"
+if [ ! -d "$APP_INTENTS_METADATA" ] || ! find "$APP_INTENTS_METADATA" -type f -size +0c -print -quit | grep -q .; then
+    echo "::error::${WIDGET_EXECUTABLE_NAME}: App Intents metadata extraction produced no usable Metadata.appintents bundle."
+    exit 1
+fi
+if ! grep -R -Fq 'MindwtrMacQuickCaptureIntent' "$APP_INTENTS_METADATA"; then
+    echo "::error::${WIDGET_EXECUTABLE_NAME}: Metadata.appintents does not register MindwtrMacQuickCaptureIntent."
+    exit 1
+fi
 
 if [ "$DISTRIBUTION" = "appstore" ]; then
     # Must land before signing: the profile is part of the sealed bundle, and

@@ -143,6 +143,7 @@ describe('settings menu search index', () => {
         expect(visibleRowIds('areas')).toEqual(['manage']);
         // AI provider indexed on the Advanced row.
         expect(visibleRowIds('anthropic')).toEqual(['advanced']);
+        expect(visibleRowIds('official website')).toEqual(['about']);
     });
 
     // The three settings this task found genuinely missing from mobile search

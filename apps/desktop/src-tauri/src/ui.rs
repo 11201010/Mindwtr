@@ -751,7 +751,21 @@ pub(crate) fn hide_quick_add_window(app: tauri::AppHandle) -> Result<(), String>
     hide_quick_add_window_for_app(&app)
 }
 
-pub(crate) fn show_quick_add_window(app: &tauri::AppHandle) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuickAddRequestSource {
+    Standard,
+    MacosWidget,
+}
+
+fn quick_add_unavailable_reveals_main(source: QuickAddRequestSource) -> bool {
+    source == QuickAddRequestSource::Standard
+}
+
+fn quick_add_requires_nonactivating_panel(source: QuickAddRequestSource, os: &str) -> bool {
+    source == QuickAddRequestSource::MacosWidget && os == "macos"
+}
+
+fn show_quick_add_window_for_source(app: &tauri::AppHandle, source: QuickAddRequestSource) {
     if let Ok(mut pending_target) = app.state::<QuickAddPending>().0.lock() {
         *pending_target = Some(QUICK_ADD_TARGET_WINDOW.to_string());
     }
@@ -763,6 +777,15 @@ pub(crate) fn show_quick_add_window(app: &tauri::AppHandle) {
         center_quick_add_window(app, &window);
         let _ = window.show();
         let panel_presented = present_quick_add_panel(&window);
+        if quick_add_requires_nonactivating_panel(source, std::env::consts::OS) && !panel_presented
+        {
+            let _ = window.hide();
+            log::warn!(
+                "macOS widget capture could not present the non-activating quick add panel; \
+                 keeping the main window hidden"
+            );
+            return;
+        }
         if quick_add_show_needs_focus_call(std::env::consts::OS, panel_presented) {
             let _ = window.set_focus();
         }
@@ -773,8 +796,22 @@ pub(crate) fn show_quick_add_window(app: &tauri::AppHandle) {
         return;
     }
 
-    log::warn!("Quick add window unavailable; falling back to the main window.");
-    show_main_and_emit(app);
+    if quick_add_unavailable_reveals_main(source) {
+        log::warn!("Quick add window unavailable; falling back to the main window.");
+        show_main_and_emit(app);
+    } else {
+        log::warn!(
+            "macOS widget capture could not find the quick add panel; keeping the main window hidden"
+        );
+    }
+}
+
+pub(crate) fn show_quick_add_window(app: &tauri::AppHandle) {
+    show_quick_add_window_for_source(app, QuickAddRequestSource::Standard);
+}
+
+pub(crate) fn show_macos_widget_quick_add_window(app: &tauri::AppHandle) {
+    show_quick_add_window_for_source(app, QuickAddRequestSource::MacosWidget);
 }
 
 #[cfg(test)]
@@ -917,6 +954,20 @@ mod tests {
         // Conversion failed: better a focused main window than a popup that
         // swallows every keystroke.
         assert!(quick_add_show_needs_focus_call("macos", false));
+    }
+
+    #[test]
+    fn macos_widget_capture_requires_panel_and_never_reveals_main() {
+        assert!(quick_add_requires_nonactivating_panel(
+            QuickAddRequestSource::MacosWidget,
+            "macos"
+        ));
+        assert!(!quick_add_unavailable_reveals_main(
+            QuickAddRequestSource::MacosWidget
+        ));
+        assert!(quick_add_unavailable_reveals_main(
+            QuickAddRequestSource::Standard
+        ));
     }
 
     #[test]

@@ -1,7 +1,8 @@
 import React from 'react';
-import { Modal, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { useAndroidKeyboardInset } from '../../lib/use-android-keyboard-inset';
+import { RecurrenceIntervalInput } from './RecurrenceIntervalInput';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
 
@@ -91,13 +92,10 @@ export function TaskEditCustomRecurrenceModal({
                     <Text style={[styles.modalTitle, { color: tc.text }]}>{t('recurrence.customTitle')}</Text>
                     <View style={[styles.customRow, { borderColor: tc.border }]}>
                         <Text style={[styles.modalLabel, { color: tc.secondaryText }]}>{t('recurrence.repeatEvery')}</Text>
-                        <TextInput
-                            value={String(customInterval)}
-                            onChangeText={(value) => {
-                                const parsed = Number.parseInt(value, 10);
-                                setCustomInterval(Number.isFinite(parsed) && parsed > 0 ? parsed : 1);
-                            }}
-                            keyboardType="number-pad"
+                        <RecurrenceIntervalInput
+                            key={visible ? 'visible' : 'hidden'}
+                            interval={customInterval}
+                            onIntervalChange={setCustomInterval}
                             style={[styles.customInput, { backgroundColor: tc.inputBg, borderColor: tc.border, color: tc.text }]}
                             accessibilityLabel={t('recurrence.repeatEvery')}
                             accessibilityHint={t('recurrence.monthUnit')}

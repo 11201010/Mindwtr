@@ -70,9 +70,17 @@ export interface TaskStore {
     /** Add the shared Getting Started project/tasks when missing, localized to the given app language. */
     seedGettingStarted: (options?: { language?: string }) => Promise<StoreActionResult>;
     /** Add a new task */
-    addTask: (title: string, initialProps?: Partial<Task>) => Promise<StoreActionResult>;
+    addTask: (
+        title: string,
+        initialProps?: Partial<Task>,
+        options?: { captureId: string },
+    ) => Promise<StoreActionResult>;
     /** Add multiple new tasks in a single store update */
-    addTasks: (items: Array<{ title: string; initialProps?: Partial<Task> }>) => Promise<StoreActionResult>;
+    addTasks: (items: Array<{
+        title: string;
+        initialProps?: Partial<Task>;
+        captureId?: string;
+    }>) => Promise<StoreActionResult>;
     /** Update an existing task */
     updateTask: (id: string, updates: Partial<Task>) => Promise<StoreActionResult>;
     /** Archive a task as cancelled without completing it */
