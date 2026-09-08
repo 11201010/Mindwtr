@@ -56,7 +56,7 @@ private struct MindwtrCaptureView: View {
                     .font(.headline)
 
                 TextFieldLink(prompt: Text("What’s on your mind?")) {
-                    Label("Dictate", systemImage: "quote.bubble.fill")
+                    Label("Speak", systemImage: "mic.fill")
                 } onSubmit: { model.capture(text: $0) }
                 .buttonStyle(.borderedProminent)
 

@@ -64,7 +64,7 @@ struct MindwtrWatchShortcuts: AppShortcutsProvider {
                 "Open \(.applicationName) capture",
             ],
             shortTitle: "Capture",
-            systemImageName: "quote.bubble.fill"
+            systemImageName: "mic.fill"
         )
         AppShortcut(
             intent: MindwtrStartWatchPomodoroIntent(),
