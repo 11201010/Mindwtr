@@ -89,6 +89,8 @@ export const deOverrides: Record<string, string> = {
         'quickAdd.audioRecord': 'Aufnahme starten',
         'quickAdd.audioStop': 'Aufnahme anhalten',
         'quickAdd.audioRecording': 'Aufnehmen…',
+        'quickAdd.audioReady': 'Aufnahme bereit zum Speichern.',
+        'quickAdd.audioQueued': 'Gespeichert. Die Aufnahme wird beim Öffnen von Mindwtr transkribiert.',
         'quickAdd.audioProcessing': 'Verarbeite Sprachaufnahme…',
         'quickAdd.audioSavingSpeechToText': 'Aufnahme wird gespeichert und Sprache in Text umgewandelt.',
         'quickAdd.audioNoteTitle': 'Sprachnotiz',

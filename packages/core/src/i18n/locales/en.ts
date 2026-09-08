@@ -71,6 +71,8 @@ export const en: Record<string, string> = {
         'quickAdd.audioRecord': 'Start recording',
         'quickAdd.audioStop': 'Stop recording',
         'quickAdd.audioRecording': 'Recording...',
+        'quickAdd.audioReady': 'Recording ready to save.',
+        'quickAdd.audioQueued': 'Saved. Audio will be transcribed when you open Mindwtr.',
         'quickAdd.audioProcessing': 'Processing audio capture...',
         'quickAdd.audioSavingSpeechToText': 'Saving the recording and applying speech-to-text.',
         'quickAdd.audioNoteTitle': 'Audio Note',

@@ -132,6 +132,8 @@ export const koOverrides: Record<string, string> = {
         'quickAdd.audioRecord': '녹음 시작',
         'quickAdd.audioStop': '녹음 중지',
         'quickAdd.audioRecording': '녹음 중...',
+        'quickAdd.audioReady': '녹음을 저장할 수 있습니다.',
+        'quickAdd.audioQueued': '저장했습니다. Mindwtr를 열면 녹음이 텍스트로 변환됩니다.',
         'quickAdd.audioProcessing': '음성 입력 처리 중...',
         'quickAdd.audioSavingSpeechToText': '녹음을 저장하고 음성을 텍스트로 변환하는 중입니다.',
         'quickAdd.audioNoteTitle': '음성 메모',

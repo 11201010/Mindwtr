@@ -175,6 +175,14 @@ export interface AndroidQuickCaptureLabels {
     save: string;
     cancel: string;
     added: string;
+    audioEnabled: boolean;
+    audioRecord: string;
+    audioStop: string;
+    audioRecording: string;
+    audioReady: string;
+    audioSaved: string;
+    audioError: string;
+    audioPermissionDenied: string;
 }
 
 // Labels for the native Android task sheet a widget row opens (#1173).
@@ -193,7 +201,7 @@ export interface AndroidTasksWidgetPayload extends TasksWidgetPayload {
 
 // Core's translator owns the locale-then-English chain; a second raw dictionary
 // read in this module would be the hand-rolled fallback the i18n ratchet forbids.
-export function buildAndroidQuickCaptureLabels(language: Language): AndroidQuickCaptureLabels {
+export function buildAndroidQuickCaptureLabels(language: Language, audioEnabled = false): AndroidQuickCaptureLabels {
     void loadTranslations(language);
     const t = getTranslator(language);
     return {
@@ -202,6 +210,14 @@ export function buildAndroidQuickCaptureLabels(language: Language): AndroidQuick
         save: resolveI18nText(t, 'common.save', { fallback: 'Save' }),
         cancel: resolveI18nText(t, 'common.cancel', { fallback: 'Cancel' }),
         added: resolveI18nText(t, 'obsidian.bringIntoMindwtrSuccess', { fallback: 'Task added to Mindwtr.' }),
+        audioEnabled,
+        audioRecord: t('quickAdd.audioRecord'),
+        audioStop: t('quickAdd.audioStop'),
+        audioRecording: t('quickAdd.audioRecording'),
+        audioReady: t('quickAdd.audioReady'),
+        audioSaved: t('quickAdd.audioQueued'),
+        audioError: t('quickAdd.audioErrorBody'),
+        audioPermissionDenied: t('quickAdd.audioPermissionBody'),
     };
 }
 

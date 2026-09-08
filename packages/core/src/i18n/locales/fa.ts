@@ -67,6 +67,8 @@ export const faOverrides: Record<string, string> = {
         'quickAdd.audioRecord': 'شروع ضبط',
         'quickAdd.audioStop': 'توقف ضبط',
         'quickAdd.audioRecording': 'در حال ضبط...',
+        'quickAdd.audioReady': 'ضبط آمادهٔ ذخیره است.',
+        'quickAdd.audioQueued': 'ذخیره شد. با باز کردن Mindwtr، صدا به متن تبدیل می‌شود.',
         'quickAdd.audioProcessing': 'در حال پردازش ضبط صوتی...',
         'quickAdd.audioSavingSpeechToText': 'در حال ذخیره ضبط و تبدیل گفتار به متن.',
         'quickAdd.audioNoteTitle': 'یادداشت صوتی',

@@ -133,7 +133,7 @@ function capWidgetSections(
 // below still detects changes in chooser lists, but reusing its 50-row payload
 // here would make the published subtitle claim that no rows were hidden after
 // this path sliced the native payload to 20.
-async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, language: Language): Promise<boolean> {
+async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, language: Language, audioEnabled: boolean): Promise<boolean> {
     if (Platform.OS !== 'android') return false;
     // Expo Go does not link modules/android-widget. Say so once, then stay quiet.
     if (!AndroidWidget.isSupported()) {
@@ -154,7 +154,7 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
                 items: list.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
                 ...(list.sections ? { sections: capWidgetSections(list.sections, ANDROID_WIDGET_MAX_ITEMS) } : {}),
             }])),
-            quickCapture: buildAndroidQuickCaptureLabels(language),
+            quickCapture: buildAndroidQuickCaptureLabels(language, audioEnabled),
             taskPeek: buildAndroidTaskPeekLabels(language),
         };
         AndroidWidget.setPayload(JSON.stringify(payload));
@@ -352,13 +352,18 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
     // this is the #766 skip and must not fire on changes the widget doesn't
     // show.
     const fingerprintPayload = buildPayloadFromData(data, language, WIDGET_FINGERPRINT_MAX_ITEMS);
-    const widgetFingerprint = `${WIDGET_RENDER_APP_VERSION}:${language}:${JSON.stringify(fingerprintPayload)}`;
+    // Native capture reads only availability, never provider credentials or model paths.
+    // Include it in the fingerprint so a setting-only change refreshes the dialog.
+    const audioEnabled = data.settings.ai?.speechToText?.enabled === true;
+    const nativeCaptureFingerprint = Platform.OS === 'android' ? `:audio=${audioEnabled}` : '';
+    const widgetFingerprint = `${WIDGET_RENDER_APP_VERSION}:${language}:${JSON.stringify(fingerprintPayload)}${nativeCaptureFingerprint}`;
     let widgetUpdated = true;
     if (widgetFingerprint !== lastRenderedWidgetFingerprint) {
         widgetUpdated = Platform.OS === 'android'
             ? await updateAndroidWidgetsFromData(
                 buildPayloadFromData(data, language, ANDROID_WIDGET_MAX_ITEMS),
                 language,
+                audioEnabled,
             )
             : await updateIosWidgetPayloadsFromData(data, language);
         if (widgetUpdated) {

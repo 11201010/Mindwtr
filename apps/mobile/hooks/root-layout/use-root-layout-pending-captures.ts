@@ -6,7 +6,7 @@ import { flushPendingSave, useTaskStore } from '@mindwtr/core';
 import { logError } from '@/lib/app-log';
 import { ingestPendingCaptures } from '@/lib/pending-captures';
 import { mobilePomodoroController } from '@/lib/pomodoro-controller';
-import { transcribePendingWatchAudio } from '@/lib/watch-audio';
+import { transcribePendingAudio } from '@/lib/watch-audio';
 
 // Drains background Shortcuts captures (#845) into the store on startup and
 // on every return to the foreground; the queue directory is empty on every
@@ -32,9 +32,9 @@ export function useRootLayoutPendingCaptures({ dataReady }: { dataReady: boolean
                     tasks,
                     people,
                     settings,
-                    getTasks: () => useTaskStore.getState().tasks,
+                    getTasks: () => useTaskStore.getState()._allTasks,
                     flushPendingSave,
-                    transcribeAudio: transcribePendingWatchAudio,
+                    transcribeAudio: transcribePendingAudio,
                     applyPomodoroCommand: (command) => {
                         const pomodoroSettings = useTaskStore.getState().settings.gtd?.pomodoro;
                         return mobilePomodoroController.applyWatchCommand(command, {

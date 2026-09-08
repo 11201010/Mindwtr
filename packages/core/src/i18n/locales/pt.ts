@@ -55,6 +55,8 @@ export const ptOverrides: Record<string, string> = {
         'quickAdd.audioRecord': 'Comece a gravar',
         'quickAdd.audioStop': 'Pare de gravar',
         'quickAdd.audioRecording': 'Gravação...',
+        'quickAdd.audioReady': 'Gravação pronta para salvar.',
+        'quickAdd.audioQueued': 'Salvo. O áudio será transcrito quando você abrir o Mindwtr.',
         'quickAdd.audioProcessing': 'Processando captura de áudio...',
         'quickAdd.audioSavingSpeechToText': 'Salvando a gravação e aplicando fala para texto.',
         'quickAdd.audioNoteTitle': 'Nota de áudio',

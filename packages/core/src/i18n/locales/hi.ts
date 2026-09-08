@@ -77,6 +77,8 @@ export const hiOverrides: Record<string, string> = {
         'quickAdd.audioRecord': 'रिकॉर्डिंग प्रारंभ करें',
         'quickAdd.audioStop': 'रिकॉर्डिंग बंद करें',
         'quickAdd.audioRecording': 'रिकॉर्डिंग...',
+        'quickAdd.audioReady': 'रिकॉर्डिंग सहेजने के लिए तैयार है।',
+        'quickAdd.audioQueued': 'सहेज दिया गया। Mindwtr खोलने पर ऑडियो को टेक्स्ट में बदला जाएगा।',
         'quickAdd.audioProcessing': 'ऑडियो कैप्चर संसाधित हो रहा है...',
         'quickAdd.audioSavingSpeechToText': 'रिकॉर्डिंग सहेजी जा रही है और वाणी को पाठ में बदला जा रहा है.',
         'quickAdd.audioNoteTitle': 'ऑडियो नोट',

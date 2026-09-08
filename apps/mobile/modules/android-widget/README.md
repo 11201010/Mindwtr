@@ -35,6 +35,28 @@ through `PendingCaptureWriter` (temp file + rename), then bumps the stored
 payload's `inboxCount` and redraws every widget. The tile, app shortcut,
 capture notification and both widgets launch it by explicit class name.
 
+When speech-to-text is enabled in the app, the dialog also shows a microphone
+button. Recording uses the existing microphone permission only while the native
+dialog is visible, with a five-minute limit. It writes a 16 kHz mono PCM16 WAV
+under `<filesDir>/quick-capture-audio/`, then atomically queues an `audio` JSON
+item with the same UUID. No main activity, background microphone service, or
+database write is involved. Save confirms the recording is queued, not that a
+task has already been transcribed. The app's startup/foreground drain uses the
+configured transcription provider (local Whisper on F-Droid), retains failed
+captures for retry, and removes the queue item and WAV only after durable task
+creation. Replaying a capture after an exhausted storage retry must persist the
+existing task before acknowledging it, without creating a duplicate or changing
+its revision. Explicit Cancel discards the unsaved draft; leaving during
+recording stops the microphone and queues the usable recording.
+
+Recordings already in the pending queue do not expire. Unqueued temporary or
+orphan WAV files left by an interrupted process are removed on a later native
+capture open only after seven days; active drafts and queued files are excluded.
+The native writer preserves the `Context.filesDir` URI spelling used by Expo
+while separately validating canonical file ownership. The JavaScript resolver
+also supports React Native's URL implementation, which omits credential fields
+for file URLs.
+
 ## Automation capture intent (#1149)
 
 `CaptureIntentReceiver` accepts the explicit action

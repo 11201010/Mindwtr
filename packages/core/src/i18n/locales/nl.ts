@@ -111,6 +111,8 @@ export const nlOverrides: Record<string, string> = {
         'quickAdd.audioRecord': 'Opnemen',
         'quickAdd.audioStop': 'Stop',
         'quickAdd.audioRecording': 'Opnemen...',
+        'quickAdd.audioReady': 'Opname klaar om op te slaan.',
+        'quickAdd.audioQueued': 'Opgeslagen. De audio wordt uitgeschreven wanneer je Mindwtr opent.',
         'quickAdd.audioProcessing': 'Spraakopname verwerken...',
         'quickAdd.audioSavingSpeechToText': 'Opname opslaan en spraak naar tekst omzetten.',
         'quickAdd.audioNoteTitle': 'Spraaknotitie',

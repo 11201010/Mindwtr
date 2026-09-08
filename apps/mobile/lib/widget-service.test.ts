@@ -158,6 +158,29 @@ describe('widget-service', () => {
         expect(mockAndroidWidgetUpdateWidgets).not.toHaveBeenCalled();
     });
 
+    it('republishes native audio availability when only the speech setting changes (#1184)', async () => {
+        const data = buildData(3);
+        await updateMobileWidgetFromData(data);
+        expect(JSON.parse(mockAndroidWidgetSetPayload.mock.calls.at(-1)![0]).quickCapture.audioEnabled).toBe(false);
+
+        const enabled: AppData = {
+            ...data,
+            settings: { ai: { speechToText: { enabled: true, provider: 'whisper' } } },
+        };
+        await updateMobileWidgetFromData(enabled);
+        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
+        expect(JSON.parse(mockAndroidWidgetSetPayload.mock.calls.at(-1)![0]).quickCapture).toMatchObject({
+            audioEnabled: true,
+            audioRecord: 'Start recording',
+            audioStop: 'Stop recording',
+            audioSaved: 'Saved. Audio will be transcribed when you open Mindwtr.',
+        });
+
+        await updateMobileWidgetFromData(data);
+        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(3);
+        expect(JSON.parse(mockAndroidWidgetSetPayload.mock.calls.at(-1)![0]).quickCapture.audioEnabled).toBe(false);
+    });
+
     it('skips the native render when nothing any widget shows changed (#766)', async () => {
         const data = buildData(3);
         expect(await updateMobileWidgetFromData(data)).toBe(true);
@@ -206,7 +229,7 @@ describe('widget-service', () => {
         expect(payload.inboxCount).toBe(0);
         expect(payload.focusUri).toBe('mindwtr:///focus');
         expect(payload.palette.background).toMatch(/^#/);
-        expect(payload.quickCapture).toEqual({
+        expect(payload.quickCapture).toMatchObject({
             title: 'Quick capture',
             placeholder: 'Add task to inbox...',
             save: 'Save',

@@ -81,6 +81,8 @@ export const jaOverrides: Record<string, string> = {
         'quickAdd.audioRecord': '録音を開始',
         'quickAdd.audioStop': '録音を停止',
         'quickAdd.audioRecording': '録音中…',
+        'quickAdd.audioReady': '録音を保存できます。',
+        'quickAdd.audioQueued': '保存しました。Mindwtr を開くと録音が文字起こしされます。',
         'quickAdd.audioProcessing': '録音を処理しています…',
         'quickAdd.audioSavingSpeechToText': '録音を保存して、文字起こしを実行しています。',
         'quickAdd.audioNoteTitle': '音声メモ',

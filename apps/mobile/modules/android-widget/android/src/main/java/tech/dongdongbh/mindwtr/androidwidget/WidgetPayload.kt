@@ -83,6 +83,14 @@ data class WidgetPayload(
     val save: String,
     val cancel: String,
     val added: String,
+    val audioEnabled: Boolean = false,
+    val audioRecord: String,
+    val audioStop: String,
+    val audioRecording: String,
+    val audioReady: String,
+    val audioSaved: String,
+    val audioError: String,
+    val audioPermissionDenied: String,
   )
 
   /** True when the launcher's own day/night resources should color the widget. */
@@ -156,6 +164,14 @@ data class WidgetPayload(
         save = "Save",
         cancel = "Cancel",
         added = "Task added to Mindwtr.",
+        audioEnabled = false,
+        audioRecord = "Record audio",
+        audioStop = "Stop recording",
+        audioRecording = "Recording...",
+        audioReady = "Recording ready to save.",
+        audioSaved = "Saved. Audio will be transcribed when you open Mindwtr.",
+        audioError = "We could not record audio. Please try again.",
+        audioPermissionDenied = "Enable microphone access to record audio captures.",
       ),
       taskPeek = TaskPeekLabels(
         complete = "Complete",
@@ -208,6 +224,14 @@ data class WidgetPayload(
         save = labels.stringOr("save", defaults.quickCapture.save),
         cancel = labels.stringOr("cancel", defaults.quickCapture.cancel),
         added = labels.stringOr("added", defaults.quickCapture.added),
+        audioEnabled = labels?.optBoolean("audioEnabled", false) ?: false,
+        audioRecord = labels.stringOr("audioRecord", defaults.quickCapture.audioRecord),
+        audioStop = labels.stringOr("audioStop", defaults.quickCapture.audioStop),
+        audioRecording = labels.stringOr("audioRecording", defaults.quickCapture.audioRecording),
+        audioReady = labels.stringOr("audioReady", defaults.quickCapture.audioReady),
+        audioSaved = labels.stringOr("audioSaved", defaults.quickCapture.audioSaved),
+        audioError = labels.stringOr("audioError", defaults.quickCapture.audioError),
+        audioPermissionDenied = labels.stringOr("audioPermissionDenied", defaults.quickCapture.audioPermissionDenied),
       )
       val peek = root.optJSONObject("taskPeek")
       val taskPeek = TaskPeekLabels(
