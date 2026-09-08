@@ -831,7 +831,7 @@ jobs:
   update-aur-beta-bin:
     needs: [validate, release]
     if: ${{ always() && needs.validate.result == 'success' && !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') && ((startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' && needs.release.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.run_update_aur && (needs.release.result == 'success' || needs.release.result == 'skipped'))) }}
-    name: Update AUR Beta identities
+    name: Update AUR Beta
     uses: ./.github/workflows/update-aur-beta.yml
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}

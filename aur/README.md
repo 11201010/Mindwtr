@@ -6,7 +6,6 @@ Mindwtr recognizes these AUR package identities:
 | ------------------------------------------------------------------------- | ------- | ----------------------------- | ------------------------------------------------------- |
 | [`mindwtr-bin`](https://aur.archlinux.org/packages/mindwtr-bin)           | Stable  | GitHub release `.deb`         | Maintainer `dongdongbh`                                 |
 | [`mindwtr-beta-bin`](https://aur.archlinux.org/packages/mindwtr-beta-bin) | RC/beta | GitHub prerelease `.deb`      | Maintainer `dongdongbh`                                 |
-| [`mindwtr-bin-beta`](https://aur.archlinux.org/packages/mindwtr-bin-beta) | RC/beta | Legacy compatibility identity | Maintainer `dongdongbh`                                 |
 
 The source-built `mindwtr` package on the AUR is community maintained; the Mindwtr project does not publish, audit, or support it.
 
@@ -29,7 +28,7 @@ The source URLs must resolve to `https://github.com/dongdongbh/Mindwtr`, executa
 
 ### Beta package rename
 
-`mindwtr-beta-bin` is the current beta package name. `mindwtr-bin-beta` remains updated from the same signed release artifacts during the transition, so existing installations continue receiving RC and stable updates. AUR helpers do not reliably migrate package identities from `replaces` metadata alone.
+`mindwtr-beta-bin` is the current beta package name. The maintainer [requested deletion of the legacy `mindwtr-bin-beta` package](https://lists.archlinux.org/archives/list/aur-requests@lists.archlinux.org/thread/H76IUDZWQTMVL7J4NLMZASCNMG6VYWU5/) on August 31, 2026, after publishing its replacement. AUR accepted that request on September 6, 2026, so the legacy identity no longer receives updates.
 
 To move explicitly, review the new package and then replace the legacy identity:
 
@@ -38,7 +37,7 @@ sudo pacman -R mindwtr-bin-beta
 paru -S mindwtr-beta-bin
 ```
 
-Removing the package does not remove Mindwtr's user data. The legacy identity will remain published through at least two stable releases after v1.2.5 and for at least 60 days. After both gates pass, announce the retirement before stopping legacy updates or requesting an AUR merge.
+Removing the package does not remove Mindwtr's user data. Existing `mindwtr-bin-beta` users must migrate manually because AUR helpers do not reliably migrate package identities from `replaces` metadata alone.
 
 ## Release trust anchor
 

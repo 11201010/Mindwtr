@@ -4,8 +4,8 @@
 
 ## Status
 
-- Priority P2; effort M; risk MED; category release compatibility.
-- Present in the requested `v1.2.5-rc.2..HEAD` review range.
+- Superseded on September 6, 2026, when AUR accepted the maintainer's [deletion request for `mindwtr-bin-beta`](https://lists.archlinux.org/archives/list/aur-requests@lists.archlinux.org/thread/H76IUDZWQTMVL7J4NLMZASCNMG6VYWU5/).
+- `mindwtr-beta-bin` is now the only published beta identity.
 
 ## Why
 
@@ -13,11 +13,11 @@ Renaming the beta package to `mindwtr-beta-bin` stopped updates and trust audits
 
 ## Design
 
-1. Generate, validate, audit, and publish both existing beta identities from each RC and stable release.
-2. Keep the new identity canonical and mark the old recipe as a documented compatibility identity.
-3. Retire the old identity only after the stated release and time gates, with explicit user notice.
+1. Generate, validate, audit, and publish `mindwtr-beta-bin` from each RC and stable release.
+2. Keep `provides`, `conflicts`, and `replaces` metadata for the deleted legacy identity.
+3. Tell remaining `mindwtr-bin-beta` users to migrate manually.
 
 ## Verification and stop conditions
 
 - AUR workflow/governance tests, live ownership audit, actionlint, and the authoritative drift check.
-- Stop if either existing package is untrusted, initialized over missing history, or published without validation. Make one commit only.
+- Stop if the canonical package is untrusted, initialized over missing history, or published without validation. Make one commit only.

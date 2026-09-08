@@ -52,16 +52,15 @@ test("accepts a pinned Mindwtr release asset", () => {
   ).not.toThrow();
 });
 
-test("accepts both trusted beta package identities during the transition", () => {
-  for (const packageName of ["mindwtr-beta-bin", "mindwtr-bin-beta"]) {
-    expect(() =>
-      validatePackageDir({
-        packageDir: fixture({ packageName }),
-        packageName,
-        policyPath,
-      }),
-    ).not.toThrow();
-  }
+test("accepts the trusted beta package identity", () => {
+  const packageName = "mindwtr-beta-bin";
+  expect(() =>
+    validatePackageDir({
+      packageDir: fixture({ packageName }),
+      packageName,
+      policyPath,
+    }),
+  ).not.toThrow();
 });
 
 test("rejects SKIP for a release asset", () => {

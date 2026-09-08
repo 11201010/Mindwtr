@@ -771,12 +771,11 @@ test("update-aur and update-aur-beta publish directly with a pre-push ownership 
   expect(beta.on.workflow_dispatch.inputs.tag.required).toBe(true);
   expect(beta.jobs["update-aur-beta"].environment).toBeUndefined();
   expect(betaText).toContain("mindwtr-beta-bin");
-  expect(betaText).toContain("mindwtr-bin-beta");
   expect(
     beta.jobs["update-aur-beta"].strategy.matrix.include.map(
       (entry) => entry.package,
     ),
-  ).toEqual(["mindwtr-beta-bin", "mindwtr-bin-beta"]);
+  ).toEqual(["mindwtr-beta-bin"]);
   const betaSteps = beta.jobs["update-aur-beta"].steps;
   const betaClone = betaSteps.find(
     (step) => step.name === "Clone existing AUR beta repo",
@@ -800,21 +799,14 @@ test("update-aur and update-aur-beta publish directly with a pre-push ownership 
     "aur/PKGBUILD-beta-bin.template",
     "utf8",
   );
-  const legacyTemplate = readFileSync(
-    "aur/PKGBUILD-bin-beta-legacy.template",
-    "utf8",
-  );
   expect(canonicalTemplate).toContain("pkgname=mindwtr-beta-bin");
   expect(canonicalTemplate).toContain("replaces=('mindwtr-bin-beta')");
-  expect(legacyTemplate).toContain("pkgname=mindwtr-bin-beta");
-  expect(legacyTemplate).toContain("migrate manually to mindwtr-beta-bin");
-  expect(legacyTemplate).not.toContain("replaces=");
 
   const trustedPackages = JSON.parse(
     readFileSync("aur/trusted-packages.json", "utf8"),
   ).packages;
   expect(trustedPackages["mindwtr-beta-bin"]).toBeDefined();
-  expect(trustedPackages["mindwtr-bin-beta"]).toBeDefined();
+  expect(trustedPackages["mindwtr-bin-beta"]).toBeUndefined();
 
   const aurDocs = readFileSync("aur/README.md", "utf8");
   expect(aurDocs).toContain("pacman -R mindwtr-bin-beta");
