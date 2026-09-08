@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Dimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Dimensions, Platform } from 'react-native';
+import type { GettingStartedAction } from '@/components/GettingStartedActions';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AREA_PRESET_COLORS, Attachment, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, shallow, Task, type Section, type TaskSortBy, useTaskStore } from '@mindwtr/core';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
@@ -352,6 +353,7 @@ export default function ProjectsScreen() {
   }, [projects, selectedProject, updateProject]);
 
   const reopenProjectIdAfterCaptureRef = useRef<string | null>(null);
+  const pendingGettingStartedAction = useRef<GettingStartedAction | null>(null);
 
   useEffect(() => {
     if (!projectId || typeof projectId !== 'string') return;
@@ -712,7 +714,7 @@ export default function ProjectsScreen() {
     }, [])
   );
 
-  const closeProjectDetail = () => {
+  const closeProjectDetail = (navigateBack = true) => {
     commitSelectedProjectNotes();
     persistSelectedProjectEdits(selectedProject);
     setSelectedProject(null);
@@ -720,9 +722,29 @@ export default function ProjectsScreen() {
     resetProjectAttachmentUi();
     setShowAreaPicker(false);
     setShowTagPicker(false);
-    if (projectId && router.canGoBack()) {
+    if (navigateBack && projectId && router.canGoBack()) {
       router.back();
     }
+  };
+
+  const finishGettingStartedAction = () => {
+    const action = pendingGettingStartedAction.current;
+    pendingGettingStartedAction.current = null;
+    if (action === 'capture') {
+      openQuickCapture({ initialProps: { status: 'inbox' } });
+    } else if (action === 'inbox') {
+      router.navigate('/(drawer)/(tabs)/inbox');
+    } else if (action === 'focus') {
+      router.navigate('/(drawer)/(tabs)/focus');
+    }
+  };
+
+  const openGettingStartedAction = (action: GettingStartedAction) => {
+    pendingGettingStartedAction.current = action;
+    closeProjectDetail(false);
+    // UIKit must finish dismissing the project sheet before presenting capture.
+    // Android does not expose Modal.onDismiss, so it follows the normal route path.
+    if (Platform.OS !== 'ios') finishGettingStartedAction();
   };
 
   const openAreaPicker = () => {
@@ -969,7 +991,9 @@ export default function ProjectsScreen() {
         areaName={selectedProjectAreaName}
         attachments={attachments}
         notes={notesEditor}
-        onClose={closeProjectDetail}
+        onClose={() => closeProjectDetail()}
+        onGettingStartedAction={openGettingStartedAction}
+        onDismiss={finishGettingStartedAction}
         onDeleteProject={handleDeleteProject}
         onDuplicateProject={handleDuplicateProject}
         onOpenAreaPicker={openAreaPicker}

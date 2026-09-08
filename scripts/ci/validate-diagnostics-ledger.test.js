@@ -36,6 +36,15 @@ function collectCodeSlugs({ file, source }) {
     const slug = match[2] ?? constants.get(match[3]);
     if (slug !== undefined) sites.push({ file, slug });
   }
+  // Native Rust diagnostics put the field inside a log message rather than
+  // a JavaScript object. Only count log macros, not unused string constants.
+  if (file.endsWith(".rs")) {
+    for (const message of source.matchAll(/\blog::(?:info|warn)!\(\s*"((?:\\[\s\S]|[^"\\])*)"/g)) {
+      for (const match of message[1].matchAll(/\bextra\.releaseCheck=([\w./-]+)/g)) {
+        sites.push({ file, slug: match[1] });
+      }
+    }
+  }
   return sites;
 }
 
@@ -97,6 +106,19 @@ describe("release diagnostics ledger", () => {
     expect(findUnemittedSlugs([slug], [{
       ...sources[0], source: sources[0].source + "logInfo('accepted', { releaseCheck: CHECK });",
     }].flatMap(collectCodeSlugs))).toEqual([]);
+  });
+
+  it("resolves native Rust diagnostic fields only inside log macros", () => {
+    const file = "apps/desktop/src-tauri/src/example.rs";
+    expect(collectCodeSlugs({ file, source: `
+      const UNUSED: &str = "extra.releaseCheck=v1.3.0/unused-native";
+      log::info!("Capture delivered \\
+        extra.releaseCheck=v1.3.0/native-capture");
+      log::warn!("Capture retained extra.releaseCheck=v1.3.0/native-retry");
+    ` })).toEqual([
+      { file, slug: "v1.3.0/native-capture" },
+      { file, slug: "v1.3.0/native-retry" },
+    ]);
   });
 
   it("uses version-prefixed slugs at every code site", () => {

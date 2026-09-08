@@ -42,16 +42,18 @@ class QuickCaptureActivity : AppCompatActivity() {
   private var observerToken: Any? = null
   private var visible = false
   private var rendering = false
+  private val microphonePermissionOwner = QuickCapturePermissionOwner()
 
   private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val requestId = microphonePermissionOwner.consumeResult() ?: return@registerForActivityResult
     if (audioSession.snapshot.state != QuickCaptureAudioSession.State.PERMISSION || isFinishing || isDestroyed) {
       return@registerForActivityResult
     }
     if (granted && visible) {
       hideKeyboard()
-      audioSession.permissionGranted()
+      audioSession.permissionGranted(requestId)
     } else {
-      audioSession.permissionDenied()
+      audioSession.permissionDenied(requestId)
     }
   }
 
@@ -61,6 +63,10 @@ class QuickCaptureActivity : AppCompatActivity() {
     val payload = WidgetPayloadStore.read(this)
     labels = payload.quickCapture
     audioSession = obtainAudioSession()
+    // ActivityResultRegistry may redeliver a permission result after a config
+    // recreation. The ViewModel/session survives, so restore its request token
+    // before this Activity reaches STARTED and callbacks can run.
+    microphonePermissionOwner.restore(audioSession.permissionRequestId)
 
     val title = findViewById<TextView>(R.id.mindwtr_quick_capture_title)
     title.text = labels.title
@@ -113,12 +119,16 @@ class QuickCaptureActivity : AppCompatActivity() {
   }
 
   override fun onStart() {
-    super.onStart()
+    // ActivityResultRegistry may deliver a pending permission result from
+    // super.onStart(); mark this recreated owner ready before that dispatch.
     visible = true
+    microphonePermissionOwner.onStarting()
+    super.onStart()
   }
 
   override fun onStop() {
     visible = false
+    microphonePermissionOwner.onStopped()
     audioSession.updateTitle(input.text?.toString().orEmpty())
     audioSession.onHostStopped()
     super.onStop()
@@ -192,7 +202,8 @@ class QuickCaptureActivity : AppCompatActivity() {
       hideKeyboard()
       audioSession.beginRecording()
     } else {
-      audioSession.awaitPermission()
+      val requestId = audioSession.awaitPermission() ?: return
+      microphonePermissionOwner.launched(requestId)
       microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
     }
   }

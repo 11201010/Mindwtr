@@ -54,20 +54,6 @@ export function MobileOnboardingFlow({
               </View>
             </View>
             <View style={styles.body}>
-            <OnboardingOption
-              disabled={busy}
-              description={t('onboarding.syncDesc')}
-              icon={<RefreshCw color={tc.tint} size={22} strokeWidth={2.2} />}
-              onPress={onOpenSync}
-              title={t('onboarding.syncTitle')}
-            />
-            <OnboardingOption
-              disabled={busy}
-              description={t('onboarding.importDescMobile')}
-              icon={<Download color={tc.tint} size={22} strokeWidth={2.2} />}
-              onPress={onOpenImport}
-              title={t('onboarding.importTitle')}
-            />
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityState={{ busy, disabled: busy }}
@@ -94,6 +80,20 @@ export function MobileOnboardingFlow({
                 </Text>
               </View>
             </TouchableOpacity>
+            <OnboardingOption
+              disabled={busy}
+              description={t('onboarding.syncDesc')}
+              icon={<RefreshCw color={tc.tint} size={22} strokeWidth={2.2} />}
+              onPress={onOpenSync}
+              title={t('onboarding.syncTitle')}
+            />
+            <OnboardingOption
+              disabled={busy}
+              description={t('onboarding.importDescMobile')}
+              icon={<Download color={tc.tint} size={22} strokeWidth={2.2} />}
+              onPress={onOpenImport}
+              title={t('onboarding.importTitle')}
+            />
             {error ? (
               <View style={[styles.errorBox, { borderColor: tc.danger, backgroundColor: `${tc.danger}18` }]}>
                 <Text style={[styles.errorText, { color: tc.danger }]}>{error}</Text>

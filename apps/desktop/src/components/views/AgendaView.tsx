@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ContextualHelp } from '../ContextualHelp';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     DndContext,
@@ -1111,7 +1112,7 @@ export function AgendaView() {
                 showListDetails={showListDetails}
                 t={t}
             />
-
+            <ContextualHelp topic="focus" t={t} />
             {savedFocusFilters.length > 0 && (
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
                     <button

@@ -40,6 +40,8 @@ internal class QuickCaptureAudioSession(
   private var keepTextAfterCancel = false
   private var savedConsumed = false
   private var ownerCleared = false
+  private var nextPermissionRequestId = 0L
+  private var activePermissionRequestId: Long? = null
   private var observerToken: Any? = null
   private var observer: ((Snapshot) -> Unit)? = null
 
@@ -47,6 +49,9 @@ internal class QuickCaptureAudioSession(
 
   val activeIds: Set<String>
     get() = listOfNotNull(recorder?.id, draft?.id).toSet()
+
+  val permissionRequestId: Long?
+    get() = activePermissionRequestId
 
   fun attach(nextObserver: (Snapshot) -> Unit): Any {
     ownerCleared = false
@@ -68,21 +73,26 @@ internal class QuickCaptureAudioSession(
     notifyChanged()
   }
 
-  fun awaitPermission() {
-    if (state != State.IDLE) return
+  fun awaitPermission(): Long? {
+    if (state != State.IDLE) return null
+    nextPermissionRequestId += 1
+    activePermissionRequestId = nextPermissionRequestId
     state = State.PERMISSION
     notifyChanged()
+    return activePermissionRequestId
   }
 
-  fun permissionDenied() {
-    if (state != State.PERMISSION) return
+  fun permissionDenied(requestId: Long) {
+    if (state != State.PERMISSION || activePermissionRequestId != requestId) return
+    activePermissionRequestId = null
     state = State.IDLE
     status = Status.PERMISSION_DENIED
     notifyChanged()
   }
 
-  fun permissionGranted() {
-    if (state != State.PERMISSION) return
+  fun permissionGranted(requestId: Long) {
+    if (state != State.PERMISSION || activePermissionRequestId != requestId) return
+    activePermissionRequestId = null
     state = State.IDLE
     beginRecording()
   }
@@ -198,6 +208,11 @@ internal class QuickCaptureAudioSession(
     // interruption, not explicit Cancel: let the retained callbacks finish the
     // same stop/publish sequence even though no UI owner remains.
     when (state) {
+      State.PERMISSION -> {
+        activePermissionRequestId = null
+        state = State.IDLE
+        status = Status.RECORD
+      }
       State.RECORDING -> {
         saveWhenReady = true
         stopRecording()
@@ -264,6 +279,35 @@ internal class QuickCaptureAudioSession(
 
   private fun notifyChanged() {
     observer?.invoke(snapshot)
+  }
+}
+
+/** Activity-local permission delivery state with an explicit STARTED gate. */
+internal class QuickCapturePermissionOwner {
+  private var requestId: Long? = null
+  private var started = false
+
+  fun restore(requestId: Long?) {
+    this.requestId = requestId
+  }
+
+  fun launched(requestId: Long) {
+    this.requestId = requestId
+  }
+
+  fun onStarting() {
+    started = true
+  }
+
+  fun onStopped() {
+    started = false
+  }
+
+  fun consumeResult(): Long? {
+    if (!started) return null
+    val current = requestId ?: return null
+    requestId = null
+    return current
   }
 }
 

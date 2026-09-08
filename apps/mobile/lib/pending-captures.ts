@@ -606,10 +606,37 @@ export async function ingestPendingCaptures({
             }
 
             const currentTasks = getTasks?.() ?? tasks;
-            if (isAndroidQuickCapture && currentTasks.some((task) => task.id.toLowerCase() === normalizedCaptureId)) {
+            const existingCaptureTask = isAndroidQuickCapture
+                ? currentTasks.find((task) => task.id.toLowerCase() === normalizedCaptureId)
+                : undefined;
+            if (existingCaptureTask) {
                 // A prior attempt may have durably created the task but crashed
                 // before queue cleanup. Tombstones count too: deleting the task
                 // must not make the same native capture reappear.
+                let replayResult: unknown;
+                try {
+                    replayResult = await addTask(
+                        existingCaptureTask.title?.trim() || capture.title || 'Audio capture',
+                        undefined,
+                        { captureId: normalizedCaptureId },
+                    );
+                } catch {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                    });
+                    continue;
+                }
+                if (
+                    isFailedResult(replayResult)
+                    || resultId(replayResult)?.toLowerCase() !== normalizedCaptureId
+                ) {
+                    void logWarn('Android quick capture audio retained for retry', {
+                        scope: 'capture',
+                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                    });
+                    continue;
+                }
                 try {
                     await flushPendingSave?.();
                     await deleteAsync(fileUri, { idempotent: true });

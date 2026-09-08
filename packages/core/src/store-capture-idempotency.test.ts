@@ -175,6 +175,82 @@ describe('capture task idempotency', () => {
         expect(storage.saveData).toHaveBeenCalledTimes(1);
     });
 
+    it('durably retries an unchanged optimistic capture after a terminal save failure, then reloads it', async () => {
+        const emptyData = {
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+            people: [],
+            settings: { deviceId: 'device-capture' },
+        };
+        let persisted = structuredClone(emptyData) as Parameters<StorageAdapter['saveData']>[0];
+        let failSaves = true;
+        let successfulSaves = 0;
+        storage = {
+            getData: vi.fn(async () => structuredClone(persisted)),
+            saveData: vi.fn(async (data) => {
+                if (failSaves) throw new Error('disk unavailable');
+                successfulSaves += 1;
+                persisted = structuredClone(data);
+            }),
+        };
+        setStorageAdapter(storage);
+        useTaskStore.setState({
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+            people: [],
+            settings: emptyData.settings,
+            persistenceFailure: null,
+            _allTasks: [],
+            _allProjects: [],
+            _allSections: [],
+            _allAreas: [],
+            _allPeople: [],
+        });
+
+        await expect(useTaskStore.getState().addTask(
+            'Retained recording',
+            { status: 'inbox' },
+            { captureId: CAPTURE_ID },
+        )).resolves.toMatchObject({ success: true, id: CAPTURE_ID });
+        const firstFlush = expect(flushPendingSave()).rejects.toThrow('disk unavailable');
+        await vi.advanceTimersByTimeAsync(10_000);
+        await firstFlush;
+        expect(storage.saveData).toHaveBeenCalledTimes(5);
+        expect(persisted.tasks).toEqual([]);
+        expect(useTaskStore.getState().persistenceFailure?.message).toContain('disk unavailable');
+        const optimisticTask = structuredClone(useTaskStore.getState()._allTasks[0]);
+
+        failSaves = false;
+        const retry = useTaskStore.getState().addTask(
+            'Replay payload must not replace the task',
+            { status: 'next', description: 'ignored' },
+            { captureId: CAPTURE_ID },
+        );
+        await vi.runAllTimersAsync();
+        await expect(retry).resolves.toMatchObject({ success: true, id: CAPTURE_ID });
+
+        expect(successfulSaves).toBe(1);
+        expect(useTaskStore.getState().persistenceFailure).toBeNull();
+        expect(useTaskStore.getState()._allTasks).toEqual([optimisticTask]);
+        expect(persisted.tasks).toEqual([optimisticTask]);
+
+        useTaskStore.setState({
+            settings: {},
+            persistenceFailure: null,
+            _allTasks: [],
+            _allProjects: [],
+            _allSections: [],
+            _allAreas: [],
+            _allPeople: [],
+        });
+        await useTaskStore.getState().fetchData({ silent: true });
+        expect(useTaskStore.getState()._allTasks).toEqual([optimisticTask]);
+    }, 15_000);
+
     it('returns ids in input order when a capture repeats within one batch', async () => {
         const result = await useTaskStore.getState().addTasks([
             { title: 'First item wins', captureId: SECOND_CAPTURE_ID.toUpperCase() },

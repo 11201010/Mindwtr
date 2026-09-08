@@ -66,11 +66,13 @@ dialog is visible, with a five-minute limit. It writes a 16 kHz mono PCM16 WAV
 under `<filesDir>/quick-capture-audio/`, then atomically queues an `audio` JSON
 item with the same UUID. No main activity, background microphone service, or
 database write is involved. Save confirms the recording is queued, not that a
-task has already been transcribed. The normal app startup/foreground drain uses
-the configured transcription provider (local Whisper on F-Droid), retains failed
+task has already been transcribed. The app's startup/foreground drain uses the
+configured transcription provider (local Whisper on F-Droid), retains failed
 captures for retry, and removes the queue item and WAV only after durable task
-creation. Explicit Cancel discards the unsaved draft; leaving during recording
-stops the microphone and queues the usable recording.
+creation. Replaying a capture after an exhausted storage retry must persist the
+existing task before acknowledging it, without creating a duplicate or changing
+its revision. Explicit Cancel discards the unsaved draft; leaving during
+recording stops the microphone and queues the usable recording.
 
 Recordings already in the pending queue do not expire. Unqueued temporary or
 orphan WAV files left by an interrupted process are removed on a later native

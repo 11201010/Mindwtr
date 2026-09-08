@@ -15,6 +15,8 @@ import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { CompactText } from '@/components/compact-text';
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { useQuickCapture } from '../../../contexts/quick-capture-context';
+import { ContextualHelp } from '@/components/ContextualHelp';
+import { dismissMobileHint } from '@/lib/onboarding-hints';
 
 export default function InboxScreen() {
   const settings = useTaskStore((state) => state.settings);
@@ -80,11 +82,18 @@ export default function InboxScreen() {
   // Full-width primary action below the controls: Process Inbox when there is
   // something to clarify, otherwise the promoted Mind Sweep entry point.
   const primaryActionRow = (
+    <>
+    {hasInboxTasks && !showProcessing && <View style={{ paddingHorizontal: 16 }}>
+      <ContextualHelp topic="inbox-project" t={t} tc={tc} />
+    </View>}
     <View style={styles.actionRow}>
       {hasInboxTasks ? (
         <TouchableOpacity
           style={[styles.processButton, { backgroundColor: processButtonBg, borderColor: processButtonBorder }]}
-          onPress={() => setShowProcessing(true)}
+          onPress={() => {
+            void dismissMobileHint('inbox-project');
+            setShowProcessing(true);
+          }}
           accessibilityRole="button"
           accessibilityLabel={`${t('inbox.processButton')} (${inboxTasks.length})`}
         >
@@ -113,6 +122,7 @@ export default function InboxScreen() {
         </TouchableOpacity>
       )}
     </View>
+    </>
   );
 
   return (

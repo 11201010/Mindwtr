@@ -120,6 +120,84 @@ class QuickCaptureAudioSessionTest {
   }
 
   @Test
+  fun ownerClearReleasesPermissionWaitWithoutLettingItsLateCallbackStartTheNextRequest() {
+    var recorderStarts = 0
+    val recorder = FakeRecordingControl("01234567-89ab-cdef-0123-456789abcdef")
+    val session = QuickCaptureAudioSession(
+      startRecorder = {
+        recorderStarts += 1
+        recorder
+      },
+      publishAudio = { _, _, _ -> error("Unused") },
+      discardAudio = {},
+    )
+    val firstOwner = QuickCaptureAudioSessionStore.acquire { session }
+    firstOwner.attach {}
+    firstOwner.updateTitle("Keep this title")
+    val staleRequest = firstOwner.awaitPermission()!!
+
+    firstOwner.onOwnerCleared()
+    assertEquals(QuickCaptureAudioSession.State.IDLE, firstOwner.snapshot.state)
+    assertEquals("Keep this title", firstOwner.snapshot.title)
+    assertTrue(firstOwner.snapshot.canSaveText)
+
+    val secondOwner = QuickCaptureAudioSessionStore.acquire { error("Session was not retained") }
+    assertSame(firstOwner, secondOwner)
+    secondOwner.attach {}
+    val currentRequest = secondOwner.awaitPermission()!!
+    assertTrue(currentRequest != staleRequest)
+
+    firstOwner.permissionGranted(staleRequest)
+    assertEquals(QuickCaptureAudioSession.State.PERMISSION, secondOwner.snapshot.state)
+    assertEquals(0, recorderStarts)
+
+    secondOwner.permissionGranted(currentRequest)
+    assertEquals(QuickCaptureAudioSession.State.RECORDING, secondOwner.snapshot.state)
+    assertEquals(1, recorderStarts)
+  }
+
+  @Test
+  fun configRecreationCanRestoreTheActivePermissionRequestForResultRedelivery() {
+    var recorderStarts = 0
+    val recorder = FakeRecordingControl("01234567-89ab-cdef-0123-456789abcdef")
+    val session = QuickCaptureAudioSession(
+      startRecorder = {
+        recorderStarts += 1
+        recorder
+      },
+      publishAudio = { _, _, _ -> error("Unused") },
+      discardAudio = {},
+    )
+    val oldHost = session.attach {}
+    session.updateTitle("Rotation title")
+    val requestId = session.awaitPermission()!!
+    val oldPermissionOwner = QuickCapturePermissionOwner().apply {
+      launched(requestId)
+      onStarting()
+      onStopped()
+    }
+    assertEquals(null, oldPermissionOwner.consumeResult())
+
+    session.detach(oldHost)
+    var recreated: QuickCaptureAudioSession.Snapshot? = null
+    session.attach { recreated = it }
+    val recreatedPermissionOwner = QuickCapturePermissionOwner().apply {
+      restore(session.permissionRequestId)
+      // QuickCaptureActivity calls this before super.onStart(), which is where
+      // ActivityResultRegistry may synchronously redeliver the pending result.
+      onStarting()
+    }
+    val restoredRequestId = recreatedPermissionOwner.consumeResult()
+
+    assertEquals(requestId, restoredRequestId)
+    assertEquals(QuickCaptureAudioSession.State.PERMISSION, recreated!!.state)
+    assertEquals("Rotation title", recreated!!.title)
+    session.permissionGranted(restoredRequestId!!)
+    assertEquals(QuickCaptureAudioSession.State.RECORDING, session.snapshot.state)
+    assertEquals(1, recorderStarts)
+  }
+
+  @Test
   fun failedPublishAfterOwnerClearIsRetainedForNewOwnerRetry() {
     val recorder = FakeRecordingControl("01234567-89ab-cdef-0123-456789abcdef")
     lateinit var deliver: (QuickCaptureAudioRecorder.Outcome) -> Unit

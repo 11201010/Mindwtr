@@ -66,9 +66,8 @@ describe('desktop onboarding events', () => {
         expect(isDesktopOnboardingHintDismissed('sync')).toBe(false);
     });
 
-    it('shows the inbox project hint only until it is dismissed or a project exists', () => {
-        expect(shouldShowInboxProjectHint(false, 0)).toBe(true);
-        expect(shouldShowInboxProjectHint(true, 0)).toBe(false);
-        expect(shouldShowInboxProjectHint(false, 1)).toBe(false);
+    it('uses explicit learning or dismissal, not the existence of seeded or imported projects', () => {
+        expect(shouldShowInboxProjectHint(false)).toBe(true);
+        expect(shouldShowInboxProjectHint(true)).toBe(false);
     });
 });

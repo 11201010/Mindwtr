@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import { ContextualHelp } from '../ContextualHelp';
 import { Check, ChevronDown, ChevronRight, Folder, HelpCircle, Layers, MapPin, Trash2 } from 'lucide-react';
 import {
     filterProjectsBySelectedArea,
@@ -462,6 +463,9 @@ export function TaskItemEditor({
                 </div>
             )}
             <div className="space-y-3">
+                {(schedulingFields.length > 0 || detailsFields.length > 0) && (
+                    <ContextualHelp topic={schedulingOpen && schedulingFields.length > 0 ? 'scheduling' : 'details'} t={t} />
+                )}
                 {schedulingFields.length > 0 && (
                     <div className="border-t border-border pt-3">
                         <button

@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect, type Key, type ReactNode, type RefObject } from 'react';
+import { isGettingStartedProject } from '@mindwtr/core';
+import { GettingStartedActions } from '../../GettingStartedActions';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Attachment,
     Task,
@@ -1804,6 +1806,7 @@ export function ProjectWorkspace({
                                 projectProgress={selectedProject.cancelledAt ? null : projectProgress}
                                 t={t}
                             />
+                            {isGettingStartedProject(selectedProject, allTasks) && <GettingStartedActions t={t} />}
 
                             {projectDetailsExpanded && (
                                 <>

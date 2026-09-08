@@ -1,4 +1,6 @@
 import React from 'react';
+import { isGettingStartedProject } from '@mindwtr/core';
+import { GettingStartedActions, type GettingStartedAction } from '../GettingStartedActions';
 import {
     Alert,
     type FlatList,
@@ -61,6 +63,8 @@ const PROJECT_SHOW_COMPLETED_STORAGE_KEY = 'mindwtr:view:project-detail:show-com
 type ProjectDetailPresentationStyle = 'pageSheet' | 'fullScreen';
 
 type ProjectDetailModalProps = {
+    onGettingStartedAction?: (action: GettingStartedAction) => void;
+    onDismiss?: () => void;
     areaName: string;
     attachments: ReturnType<typeof useProjectAttachments>;
     notes: ReturnType<typeof useProjectNotesEditor>;
@@ -513,6 +517,8 @@ function ProjectOptionRow({
 }
 
 export function ProjectDetailModal({
+    onGettingStartedAction,
+    onDismiss,
     areaName,
     attachments,
     notes,
@@ -1062,6 +1068,9 @@ export function ProjectDetailModal({
     // normal mode; stays pinned above the self-scrolling reorder list in reorder mode.
     const projectDetailListHeader = selectedProject ? (
         <>
+            {onGettingStartedAction && isGettingStartedProject(selectedProject, selectedProjectTasks ?? []) && (
+                <GettingStartedActions onAction={onGettingStartedAction} />
+            )}
                                 <TouchableOpacity
                                     style={[styles.detailsToggle, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                                     onPress={() => setShowProjectMeta((prev) => !prev)}
@@ -1650,6 +1659,7 @@ export function ProjectDetailModal({
             transparent={false}
             allowSwipeDismissal
             onRequestClose={onClose}
+            onDismiss={onDismiss}
         >
             {/* Android Modal content needs its own gesture root; the screen root does not cover Modal.
                 https://docs.swmansion.com/react-native-gesture-handler/docs/fundamentals/installation/#android */}

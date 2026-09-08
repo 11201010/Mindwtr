@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppData, Person, Project, Task } from '@mindwtr/core';
+import {
+    flushPendingSave as flushCorePendingSave,
+    resetForTests as resetCoreForTests,
+    setStorageAdapter,
+    useTaskStore,
+} from '@mindwtr/core';
+import type { AppData, Person, Project, StorageAdapter, Task } from '@mindwtr/core';
 
 const fileSystemMocks = vi.hoisted(() => ({
     documentDirectory: 'file:///data/Documents/',
@@ -538,7 +544,7 @@ describe('ingestPendingCaptures', () => {
             audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
             source: 'android-quick-capture',
         });
-        const addTask = vi.fn();
+        const addTask = vi.fn(async () => ({ success: true, id: ANDROID_AUDIO_ID }));
         const transcribeAudio = vi.fn();
         const flushPendingSave = vi.fn(async () => undefined);
         const tombstone = {
@@ -563,7 +569,11 @@ describe('ingestPendingCaptures', () => {
         })).toBe(1);
 
         expect(transcribeAudio).not.toHaveBeenCalled();
-        expect(addTask).not.toHaveBeenCalled();
+        expect(addTask).toHaveBeenCalledWith(
+            'Previously captured',
+            undefined,
+            { captureId: ANDROID_AUDIO_ID },
+        );
         expect(flushPendingSave).toHaveBeenCalledOnce();
         expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
             1,
@@ -669,6 +679,108 @@ describe('ingestPendingCaptures', () => {
 
         expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
     });
+
+    it('retries a failed real-store capture before deleting its native queue and survives reload', async () => {
+        vi.useFakeTimers();
+        const emptyData: AppData = {
+            tasks: [],
+            projects: [],
+            sections: [],
+            areas: [],
+            people: [],
+            settings: { deviceId: 'device-capture' },
+        };
+        let persisted = structuredClone(emptyData);
+        let failSaves = true;
+        let successfulSaves = 0;
+        const storage: StorageAdapter = {
+            getData: vi.fn(async () => structuredClone(persisted)),
+            saveData: vi.fn(async (data) => {
+                if (failSaves) throw new Error('disk unavailable');
+                successfulSaves += 1;
+                persisted = structuredClone(data);
+            }),
+        };
+        setStorageAdapter(storage);
+        useTaskStore.setState({
+            settings: emptyData.settings,
+            persistenceFailure: null,
+            _allTasks: [],
+            _allProjects: [],
+            _allSections: [],
+            _allAreas: [],
+            _allPeople: [],
+        });
+        oneFile(`${ANDROID_AUDIO_ID}.json`, {
+            kind: 'audio',
+            id: ANDROID_AUDIO_ID,
+            audioPath: `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+            source: 'android-quick-capture',
+        });
+        const transcribeAudio = vi.fn(async () => 'Retained recording');
+        const deps = {
+            addTask: useTaskStore.getState().addTask,
+            updateTask,
+            addProject,
+            projects: [],
+            areas: [],
+            tasks: [],
+            getTasks: () => useTaskStore.getState()._allTasks,
+            people: [],
+            settings: emptyData.settings,
+            flushPendingSave: flushCorePendingSave,
+            transcribeAudio,
+        };
+
+        try {
+            const firstIngest = ingestPendingCaptures(deps);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await expect(firstIngest).resolves.toBe(0);
+            expect(storage.saveData).toHaveBeenCalledTimes(5);
+            expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
+            expect(useTaskStore.getState().persistenceFailure?.message).toContain('disk unavailable');
+            const optimisticTask = structuredClone(useTaskStore.getState()._allTasks[0]);
+
+            failSaves = false;
+            const retryIngest = ingestPendingCaptures({
+                ...deps,
+                addTask: useTaskStore.getState().addTask,
+            });
+            await vi.runAllTimersAsync();
+            await expect(retryIngest).resolves.toBe(1);
+
+            expect(transcribeAudio).toHaveBeenCalledTimes(1);
+            expect(successfulSaves).toBe(1);
+            expect(persisted.tasks).toEqual([optimisticTask]);
+            expect(vi.mocked(storage.saveData).mock.invocationCallOrder.at(-1))
+                .toBeLessThan(fileSystemMocks.deleteAsync.mock.invocationCallOrder[0]);
+            expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+                1,
+                `file:///data/Documents/pending-captures/${ANDROID_AUDIO_ID}.json`,
+                { idempotent: true },
+            );
+            expect(fileSystemMocks.deleteAsync).toHaveBeenNthCalledWith(
+                2,
+                `file:///data/Documents/quick-capture-audio/${ANDROID_AUDIO_ID}.wav`,
+                { idempotent: true },
+            );
+
+            useTaskStore.setState({
+                settings: {},
+                persistenceFailure: null,
+                _allTasks: [],
+                _allProjects: [],
+                _allSections: [],
+                _allAreas: [],
+                _allPeople: [],
+            });
+            await useTaskStore.getState().fetchData({ silent: true });
+            expect(useTaskStore.getState()._allTasks).toEqual([optimisticTask]);
+        } finally {
+            resetCoreForTests();
+            vi.useRealTimers();
+        }
+    }, 15_000);
 
     it('keeps draining text captures after Android audio task creation rejects', async () => {
         fileSystemMocks.readDirectoryAsync.mockResolvedValue([`${ANDROID_AUDIO_ID}.json`, 'z-text.json']);
