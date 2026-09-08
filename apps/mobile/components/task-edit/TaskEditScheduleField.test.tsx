@@ -514,6 +514,113 @@ describe('TaskEditScheduleField', () => {
         expect(picker.props.textColor).toBe(tc.text);
     });
 
+    it('lets a daily recurrence interval be cleared before entering a new digit', () => {
+        const setDraftField = vi.fn();
+        const dailyProps = {
+            customWeekdays: [],
+            dailyInterval: 1,
+            draft: makeDraft({}),
+            fieldId: 'recurrence',
+            formatDate: (value?: string) => value ?? '',
+            formatDueDate: (value?: string) => value ?? '',
+            getSafePickerDateValue: () => new Date('2026-04-01T00:00:00.000Z'),
+            monthlyPattern: 'date',
+            onDateChange: vi.fn(),
+            openCustomRecurrence: vi.fn(),
+            pendingDueDate: null,
+            pendingStartDate: null,
+            recurrenceOptions: [
+                { value: '', label: 'None' },
+                { value: 'daily', label: 'Daily' },
+            ],
+            recurrenceRRuleValue: 'FREQ=DAILY',
+            recurrenceRuleValue: 'daily',
+            recurrenceStrategyValue: 'strict',
+            recurrenceWeekdayButtons: [],
+            setCustomWeekdays: vi.fn(),
+            setDraftField,
+            setShowDatePicker: vi.fn(),
+            showDatePicker: null,
+            styles,
+            t,
+            task: null,
+            tc,
+        } as any;
+
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <TaskEditScheduleField {...dailyProps} />
+            );
+        });
+
+        const findIntervalInput = () => tree.root
+            .findAllByType(TextInput)
+            .find((node) => node.props.accessibilityHint === 'recurrence.dayUnit');
+
+        act(() => {
+            findIntervalInput()?.props.onChangeText('');
+        });
+        expect(findIntervalInput()?.props.value).toBe('');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY');
+
+        act(() => {
+            findIntervalInput()?.props.onChangeText('3');
+        });
+        expect(findIntervalInput()?.props.value).toBe('3');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY;INTERVAL=3');
+
+        setDraftField.mockClear();
+        act(() => {
+            findIntervalInput()?.props.onChangeText('');
+        });
+        expect(findIntervalInput()?.props.value).toBe('');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY');
+
+        act(() => {
+            findIntervalInput()?.props.onBlur();
+        });
+        expect(findIntervalInput()?.props.value).toBe('1');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY');
+
+        setDraftField.mockClear();
+        act(() => {
+            findIntervalInput()?.props.onChangeText('0');
+        });
+        expect(findIntervalInput()?.props.value).toBe('0');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY');
+
+        act(() => {
+            findIntervalInput()?.props.onBlur();
+        });
+        expect(findIntervalInput()?.props.value).toBe('1');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=DAILY');
+
+        act(() => {
+            findIntervalInput()?.props.onChangeText('');
+            tree.update(
+                <TaskEditScheduleField
+                    {...dailyProps}
+                    dailyInterval={4}
+                    recurrenceRRuleValue="FREQ=DAILY;INTERVAL=4"
+                />
+            );
+        });
+        expect(findIntervalInput()?.props.value).toBe('4');
+
+        act(() => {
+            tree.unmount();
+            tree = renderer.create(
+                <TaskEditScheduleField
+                    {...dailyProps}
+                    dailyInterval={4}
+                    recurrenceRRuleValue="FREQ=DAILY;INTERVAL=4"
+                />
+            );
+        });
+        expect(findIntervalInput()?.props.value).toBe('4');
+    });
+
     it('updates monthly recurrence intervals without changing the monthly pattern', () => {
         const setDraftField = vi.fn();
 
@@ -559,8 +666,19 @@ describe('TaskEditScheduleField', () => {
             .find((node) => node.props.accessibilityHint === 'month(s)');
 
         act(() => {
+            intervalInput?.props.onChangeText('');
+        });
+        expect(intervalInput?.props.value).toBe('');
+        expect(setDraftField).toHaveBeenCalledWith(
+            'recurrenceRRule',
+            'FREQ=MONTHLY;BYMONTHDAY=15',
+        );
+
+        act(() => {
             intervalInput?.props.onChangeText('3');
         });
+
+        expect(intervalInput?.props.value).toBe('3');
 
         expect(setDraftField).toHaveBeenCalledWith('recurrence', 'monthly');
         expect(setDraftField).toHaveBeenCalledWith('recurrenceStrategy', 'strict');
@@ -584,7 +702,7 @@ describe('TaskEditScheduleField', () => {
                             rule: 'weekly',
                             strategy: 'strict',
                             byDay: ['TU'],
-                            rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
+                            rrule: 'FREQ=WEEKLY;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
                         },
                     }),
                     fieldId: 'recurrence',
@@ -600,7 +718,7 @@ describe('TaskEditScheduleField', () => {
                         { value: '', label: 'None' },
                         { value: 'weekly', label: 'Weekly' },
                     ],
-                    recurrenceRRuleValue: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
+                    recurrenceRRuleValue: 'FREQ=WEEKLY;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
                     recurrenceRuleValue: 'weekly',
                     recurrenceStrategyValue: 'strict',
                     recurrenceWeekdayButtons: [{ key: 'TU', label: 'T' }],
@@ -621,7 +739,25 @@ describe('TaskEditScheduleField', () => {
             .findAllByType(TextInput)
             .find((node) => node.props.accessibilityHint === 'week(s)');
 
-        expect(intervalInput?.props.value).toBe('2');
+        expect(intervalInput?.props.value).toBe('1');
+
+        act(() => {
+            intervalInput?.props.onChangeText('');
+        });
+        expect(intervalInput?.props.value).toBe('');
+        expect(setDraftField).toHaveBeenCalledWith(
+            'recurrenceRRule',
+            'FREQ=WEEKLY;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
+        );
+
+        act(() => {
+            intervalInput?.props.onChangeText('3');
+        });
+        expect(intervalInput?.props.value).toBe('3');
+        expect(setDraftField).toHaveBeenCalledWith(
+            'recurrenceRRule',
+            'FREQ=WEEKLY;INTERVAL=3;BYDAY=TU;WKST=SU;X-CUSTOM=keep',
+        );
 
         act(() => {
             intervalInput?.props.onChangeText('78');
@@ -754,9 +890,16 @@ describe('TaskEditScheduleField', () => {
         expect(intervalInput?.props.value).toBe('1');
 
         act(() => {
+            intervalInput?.props.onChangeText('');
+        });
+        expect(intervalInput?.props.value).toBe('');
+        expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=YEARLY');
+
+        act(() => {
             intervalInput?.props.onChangeText('2');
         });
 
+        expect(intervalInput?.props.value).toBe('2');
         expect(setDraftField).toHaveBeenCalledWith('recurrence', 'yearly');
         expect(setDraftField).toHaveBeenCalledWith('recurrenceStrategy', 'strict');
         expect(setDraftField).toHaveBeenCalledWith('recurrenceRRule', 'FREQ=YEARLY;INTERVAL=2');
