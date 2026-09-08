@@ -9,14 +9,17 @@ import type { StorageAdapter, TaskQueryOptions } from './storage';
 import { taskMatchesQuery } from './task-query';
 import type { StoreActionResult, TaskStore } from './store-types';
 import {
+    applyTaskProjectReactivationTransition,
     applyTaskUpdates,
     buildSaveSnapshot,
     createProjectOrderReserver,
     ensureDeviceId,
+    findTaskProjectReactivationTarget,
     getNextDataChangeAt,
     getNextProjectOrder,
     getTaskOrder,
     getReferenceTaskFieldClears,
+    isRestorableProjectArchiveSection,
     nextRevision,
     normalizeTaskUpdate,
     persist,
@@ -27,6 +30,7 @@ import {
 } from './store-helpers';
 import { logInfo, logWarn } from './logger';
 import {
+    isTaskActionable,
     isTaskCancelled,
     isTaskFinished,
     normalizeCancellationTimestamp,
@@ -205,6 +209,49 @@ const actionOk = (extra?: Omit<StoreActionResult, 'success'>): StoreActionResult
 const actionFail = (error: string): StoreActionResult => ({ success: false, error });
 const hasOwnField = (value: object, field: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value, field);
 
+const taskPatchIsUnchanged = (task: Task, updates: Partial<Task>): boolean => (
+    Object.entries(updates).every(([field, value]) => Object.is(task[field as keyof Task], value))
+);
+
+const collectOptimisticReactivationRetryProjectIds = (
+    requests: readonly { task: Task; updates: Partial<Task> }[],
+    state: TaskStore,
+): string[] => {
+    if (!state.persistenceFailure || requests.length === 0) return [];
+    if (!requests.every(({ task, updates }) => taskPatchIsUnchanged(task, updates))) return [];
+
+    const projectIds = new Set<string>();
+    for (const { task, updates } of requests) {
+        if (
+            task.deletedAt
+            || task.purgedAt
+            || !hasOwnField(updates, 'status')
+            || !updates.status
+            || !isTaskActionable(updates.status)
+            || !task.projectId
+        ) {
+            continue;
+        }
+        const project = state._projectsById.get(task.projectId);
+        if (project?.status === 'active' && !project.deletedAt && !project.purgedAt) {
+            projectIds.add(project.id);
+        }
+    }
+    return Array.from(projectIds);
+};
+
+const logTaskProjectReactivationSaved = (count: number): void => {
+    logInfo('Task project reactivation saved', {
+        scope: 'store',
+        category: 'storage',
+        context: {
+            releaseCheck: 'v1.3.0/reopen-project-task',
+            outcome: 'reactivated',
+            count,
+        },
+    });
+};
+
 // `tasks` and `_tasksById` are derived from `_allTasks` by
 // prepareStoreStateUpdate (store.ts) on every write, so producers below only
 // ever write `_allTasks`.
@@ -326,11 +373,19 @@ const prepareTaskUpdatesForStore = ({
     reserveProjectOrder?: boolean;
     projectOrderReserver?: ProjectOrderReserver;
 }): { ok: true; updates: Partial<Task> } | { ok: false; error: string } => {
+    const projectReactivationTarget = findTaskProjectReactivationTarget(task, updates, allProjects);
+    const containerValidationSections = projectReactivationTarget
+        ? allSections.map((section) => (
+            section.projectId === projectReactivationTarget.id && isRestorableProjectArchiveSection(section)
+                ? { ...section, deletedAt: undefined }
+                : section
+        ))
+        : allSections;
     const containerPatch = buildTaskContainerMovePatch({
         task,
         updates,
         allProjects,
-        allSections,
+        allSections: containerValidationSections,
         allAreas,
         reserveProjectOrder,
         projectOrderReserver,
@@ -539,6 +594,22 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             set({ error: message });
             return actionFail(message);
         }
+        const optimisticRetryProjectIds = collectOptimisticReactivationRetryProjectIds(
+            [{ task: existingTask, updates }],
+            currentState,
+        );
+        if (optimisticRetryProjectIds.length > 0) {
+            try {
+                await get().persistSnapshot();
+                await flushPendingSave();
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                const message = `Failed to save task and project reactivation: ${detail}`;
+                set({ error: message });
+                return actionFail(message);
+            }
+            return actionOk();
+        }
         const preparedUpdates = prepareTaskUpdatesForStore({
             task: existingTask,
             updates,
@@ -563,9 +634,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         }
         const prepareMs = Date.now() - updateStartedAt;
         let snapshot: AppData | null = null;
-        const incrementalPersistence: { task?: Task; hasRecurringFollowUp: boolean; mintedDeviceId: boolean } = {
+        const incrementalPersistence: {
+            task?: Task;
+            hasRecurringFollowUp: boolean;
+            mintedDeviceId: boolean;
+            reactivatedProjectIds: string[];
+        } = {
             hasRecurringFollowUp: false,
             mintedDeviceId: false,
+            reactivatedProjectIds: [],
         };
         let setProducerMs = 0;
         let notifyProfile: NotifyProfile | null = null;
@@ -611,13 +688,26 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 const updatedAllTasks = recurringFollowUpTask
                     ? [...updatedAllTasksBase, recurringFollowUpTask]
                     : updatedAllTasksBase;
+                const projectReactivation = applyTaskProjectReactivationTransition(
+                    [{ task: oldTask, updates: preparedUpdates.updates }],
+                    updatedAllTasks,
+                    state._allProjects,
+                    state._allSections,
+                    now,
+                    deviceState.deviceId,
+                );
+                incrementalPersistence.reactivatedProjectIds = projectReactivation.reactivatedProjectIds;
                 snapshot = buildSaveSnapshot(state, {
-                    tasks: updatedAllTasks,
+                    tasks: projectReactivation.tasks,
+                    projects: projectReactivation.projects,
+                    sections: projectReactivation.sections,
                     ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                 });
                 setProducerMs = Date.now() - producerStartedAt;
                 return {
-                    _allTasks: updatedAllTasks,
+                    _allTasks: projectReactivation.tasks,
+                    _allProjects: projectReactivation.projects,
+                    _allSections: projectReactivation.sections,
                     lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
                     ...(deviceState.updated ? { settings: deviceState.settings } : {}),
                 };
@@ -643,6 +733,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             incrementalPersistence.task
             && !incrementalPersistence.hasRecurringFollowUp
             && !incrementalPersistence.mintedDeviceId
+            && incrementalPersistence.reactivatedProjectIds.length === 0
             && storage.saveTask
             && !hasQueuedSnapshotSave()
         ) {
@@ -691,6 +782,17 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     } : {}),
                 },
             });
+        }
+        if (incrementalPersistence.reactivatedProjectIds.length > 0) {
+            try {
+                await flushPendingSave();
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                const message = `Failed to save task and project reactivation: ${detail}`;
+                set({ error: message });
+                return actionFail(message);
+            }
+            logTaskProjectReactivationSaved(incrementalPersistence.reactivatedProjectIds.length);
         }
         return actionOk();
     },
@@ -1279,6 +1381,25 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             set({ error: message });
             return actionFail(message);
         }
+        const optimisticRetryProjectIds = collectOptimisticReactivationRetryProjectIds(
+            updatesList.flatMap(({ id, updates }) => {
+                const task = state._tasksById.get(id);
+                return task ? [{ task, updates }] : [];
+            }),
+            state,
+        );
+        if (optimisticRetryProjectIds.length > 0) {
+            try {
+                await get().persistSnapshot();
+                await flushPendingSave();
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                const message = `Failed to save tasks and project reactivation: ${detail}`;
+                set({ error: message });
+                return actionFail(message);
+            }
+            return actionOk();
+        }
         const preparedUpdatesById = new Map<string, Partial<Task>>();
         for (const { id, updates } of updatesList) {
             const task = state._tasksById.get(id);
@@ -1300,11 +1421,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         }
         const changeAt = Date.now();
         const now = new Date().toISOString();
+        let reactivatedProjectCount = 0;
 
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
             const nextRecurringTasks: Task[] = [];
-            const changedTasks: Task[] = [];
+            const reactivationRequests: Array<{ task: Task; updates: Partial<Task> }> = [];
             const newAllTasksBase = [...state._allTasks];
             const projectOrderReserver = createProjectOrderReserver(newAllTasksBase);
             for (let index = 0; index < state._allTasks.length; index += 1) {
@@ -1316,6 +1438,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     updates: preparedUpdates,
                     projectOrderReserver,
                 }) as Partial<Task>;
+                reactivationRequests.push({ task, updates: adjustedUpdates });
                 const { updatedTask, nextRecurringTask } = applyTaskUpdates(
                     task,
                     {
@@ -1345,25 +1468,48 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     }
                 }
                 newAllTasksBase[index] = updatedTask;
-                changedTasks.push(updatedTask);
             }
 
             const newAllTasks = nextRecurringTasks.length > 0
                 ? [...newAllTasksBase, ...nextRecurringTasks]
                 : newAllTasksBase;
+            const projectReactivation = applyTaskProjectReactivationTransition(
+                reactivationRequests,
+                newAllTasks,
+                state._allProjects,
+                state._allSections,
+                now,
+                deviceState.deviceId,
+            );
+            reactivatedProjectCount = projectReactivation.reactivatedProjectIds.length;
 
             persist(set, debouncedSave, state, {
-                tasks: newAllTasks,
+                tasks: projectReactivation.tasks,
+                projects: projectReactivation.projects,
+                sections: projectReactivation.sections,
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             });
 
             return {
-                _allTasks: newAllTasks,
+                _allTasks: projectReactivation.tasks,
+                _allProjects: projectReactivation.projects,
+                _allSections: projectReactivation.sections,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, changeAt),
                 ...(deviceState.updated ? { settings: deviceState.settings } : {}),
             };
         });
 
+        if (reactivatedProjectCount > 0) {
+            try {
+                await flushPendingSave();
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                const message = `Failed to save tasks and project reactivation: ${detail}`;
+                set({ error: message });
+                return actionFail(message);
+            }
+            logTaskProjectReactivationSaved(reactivatedProjectCount);
+        }
         return actionOk();
     },
 
