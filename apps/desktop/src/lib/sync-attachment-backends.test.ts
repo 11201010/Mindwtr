@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import desktopCapability from '../../src-tauri/capabilities/default.json';
 import {
     globalProgressTracker,
     MAX_DOWNLOAD_BYTES,
@@ -735,6 +736,89 @@ describe('desktop sync attachment backends', () => {
         );
         expect(result).toBe(false);
         expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+    });
+
+    it.each(['upload', 'download'] as const)('allows File Sync %s through the shipped streaming permissions', async (direction) => {
+        // In the locked fs 2.4.4 ACL, allow-write-file also grants open/write,
+        // but neither fs:default nor allow-read-file grants handle reads.
+        // Upload retries verify an existing immutable generation with read().
+        // Unrestricted fs mocks hid that denial despite local readFile working.
+        const openFile = fsMocks.open.getMockImplementation()!;
+        const commands: string[] = [];
+        const requireCommand = (command: string) => {
+            commands.push(command);
+            const allowed = desktopCapability.permissions.includes(`fs:allow-${command}`)
+                || (['open', 'write'].includes(command)
+                    && desktopCapability.permissions.includes('fs:allow-write-file'));
+            if (!allowed) {
+                throw new Error(`fs.${command} not allowed. Permissions associated with this command: fs:allow-${command}`);
+            }
+        };
+        fsMocks.open.mockImplementation(async (...args) => {
+            requireCommand('open');
+            const file = await openFile(...args);
+            return {
+                ...file,
+                read: async (buffer: Uint8Array) => {
+                    requireCommand('read');
+                    return file.read!(buffer);
+                },
+                write: async (bytes: Uint8Array) => {
+                    requireCommand('write');
+                    return file.write!(bytes);
+                },
+            };
+        });
+        const appData = direction === 'upload' ? createCandidateAttachmentData() : createDownloadData('file');
+        if (direction === 'upload') appData.tasks[0].attachments![0].cloudKey = undefined;
+        const deps: AttachmentBackendDeps = {
+            getTauriFetch: vi.fn(),
+            isTauriRuntimeEnv: () => true,
+            logSyncInfo: vi.fn(),
+            logSyncWarning: vi.fn(),
+            resolveWebdavPassword: vi.fn(),
+        };
+        syncFsMocks.exists.mockResolvedValue(true);
+        fsMocks.readFile.mockResolvedValue(DOWNLOAD_BYTES);
+
+        const result = expectFoldedData(await syncFileAttachments(appData, '/candidate-sync', deps));
+
+        expect(result.tasks[0].attachments![0].localStatus).toBe('available');
+        expect(result.tasks[0].attachments![0].cloudKey).toBeTruthy();
+        expect(commands).toContain('read');
+        expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+        expect(deps.logSyncWarning).not.toHaveBeenCalled();
+        expect(deps.logSyncInfo).toHaveBeenCalledWith('File Sync attachment transfer completed', {
+            releaseCheck: 'v1.3.0/file-sync-streaming-permissions',
+            operation: direction,
+        });
+    });
+
+    it.each(['open', 'read', 'write'])('names denied fs %s commands without exposing private paths', async (command) => {
+        const appData = createCandidateAttachmentData();
+        appData.tasks[0].attachments![0].cloudKey = undefined;
+        const deps: AttachmentBackendDeps = {
+            getTauriFetch: vi.fn(),
+            isTauriRuntimeEnv: () => true,
+            logSyncInfo: vi.fn(),
+            logSyncWarning: vi.fn(),
+            resolveWebdavPassword: vi.fn(),
+        };
+        syncFsMocks.exists.mockResolvedValue(false);
+        fsMocks.readFile.mockResolvedValue(DOWNLOAD_BYTES);
+        // Tauri IPC rejects with strings, not necessarily Error instances.
+        fsMocks.open.mockRejectedValue(`fs.${command} not allowed. Private C:\\Documents\\personal.pdf`);
+
+        expect(await syncFileAttachments(appData, '/candidate-sync', deps)).toBe(false);
+
+        expect(deps.logSyncWarning).toHaveBeenCalledWith(
+            'Failed to copy attachment attachment-1 to sync folder',
+            expect.objectContaining({ message: `Attachment sync operation failed (fs:${command} permission denied)` }),
+        );
+        expect(JSON.stringify(vi.mocked(deps.logSyncWarning).mock.calls)).not.toContain('personal.pdf');
+        expect(syncFsMocks.publishAttachmentGeneration).not.toHaveBeenCalled();
+        expect(deps.logSyncInfo).not.toHaveBeenCalledWith('File Sync attachment transfer completed', expect.anything());
+        expect(appData.tasks[0].attachments![0].cloudKey).toBeUndefined();
     });
 
     it('copies a candidate-cleared local attachment during a file activation probe', async () => {

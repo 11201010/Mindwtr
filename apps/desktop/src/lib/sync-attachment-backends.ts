@@ -190,6 +190,12 @@ const describeAttachmentErrorForLog = (error: unknown): Error => {
     // (leading-dot stage names were refused on Unix until requireLiteralLeadingDot
     // was disabled in tauri.conf.json).
     const message = error instanceof Error ? error.message : String(error ?? '');
+    // Name only a fixed command, never the original error: native messages may
+    // include private paths. Whole-file reads do not grant handle reads.
+    const deniedCommand = /^fs\.(open|read|write) not allowed\b/i.exec(message)?.[1]?.toLowerCase();
+    if (deniedCommand) {
+        return new Error(`Attachment sync operation failed (fs:${deniedCommand} permission denied)`);
+    }
     if (/forbidden path|not allowed on the configured scope/i.test(message)) {
         return new Error('Attachment sync operation failed (path refused by fs scope)');
     }
@@ -1902,6 +1908,10 @@ export async function syncFileAttachments(
             );
             attachment.cloudKey = cloudKey;
             attachment.localStatus = 'available';
+            deps.logSyncInfo('File Sync attachment transfer completed', {
+                releaseCheck: 'v1.3.0/file-sync-streaming-permissions',
+                operation: 'upload',
+            });
             return true;
         },
         onUploadError: (attachment, error) => {
@@ -1940,6 +1950,10 @@ export async function syncFileAttachments(
             attachment.uri = targetPath;
             attachment.localStatus = 'available';
             attachment.fileHash = expectedDownloadSha256;
+            deps.logSyncInfo('File Sync attachment transfer completed', {
+                releaseCheck: 'v1.3.0/file-sync-streaming-permissions',
+                operation: 'download',
+            });
             return true;
         },
         onDownloadError: (attachment, error) => {
