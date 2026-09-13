@@ -1232,6 +1232,8 @@ describe('TaskEditModal', () => {
     );
     const formTab = tree!.root.findAll((node) => typeof node.props.renderField === 'function')[0];
 
+    // A nested form button must receive the first tap while its input owns the keyboard.
+    expect(findPager().props.keyboardShouldPersistTaps).toBe('handled');
     expect(findPager().props.scrollEnabled).toBe(true);
 
     await act(async () => {

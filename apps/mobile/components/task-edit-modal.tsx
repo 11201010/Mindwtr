@@ -1195,6 +1195,7 @@ function TaskEditModalInner({
                             ref={scrollRef}
                             horizontal
                             pagingEnabled
+                            keyboardShouldPersistTaps="handled"
                             scrollEnabled={!isMarkdownOverlayOpen && !isTaskFormTextInputFocused}
                             scrollEventThrottle={16}
                             showsHorizontalScrollIndicator={false}

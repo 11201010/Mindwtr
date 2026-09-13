@@ -69,6 +69,30 @@ completed successfully at `e1af4d85a`. The later Windows Store-routing correctio
 `cde9cd61a` passed [CI 34774178496](https://github.com/dongdongbh/Mindwtr/actions/runs/34774178496).
 These statuses do not certify a later navigation commit.
 
+## September 13 checklist and sync settings continuation
+
+The task-to-Reference fix now exposes retained checklist data as an editable plain
+list on desktop and mobile, preserving item identity, order and saved completion
+flags for conversion back. It is committed as `a5524db52` in its isolated
+worktree and merged into local main as `3034a6e1c`; check remote publication
+separately. Browser round-trip tests passed all five cases, and independent
+review corrections protect hidden completion flags during multiline paste and
+include retained list text in mobile accessibility labels.
+
+The connected Android Dev app reproduced the separate cold-start checklist
+keyboard bug. See [checklist insertion focus](android-checklist-focus-2026-09-13.md)
+for the first-layout-plus-frame fix, native evidence, retained invalid run,
+review, and remaining device cleanup/verification. This does not supersede the
+separate capture-modal focus experiment or its rejected alternatives below.
+
+The user also chose one automatic background-sync schedule for all mobile
+devices, including previously saved Off. Implementation/review is isolated in
+`/home/dd/worktrees/Mindwtr/automatic-background-sync-20260913`; preserve its
+work. Migration must occur in the foreground, never cancel a running background
+job, and keep actual sync work with its existing serialization owner. The picker
+and obsolete search entry are removed. Use the final report and exact commit/CI
+before treating this track as published or physically verified.
+
 ## Start here
 
 1. Read this handoff, then the relevant investigation linked below. Historical

@@ -1,13 +1,14 @@
 import React from 'react';
 import { Platform, Text, TextInput, View } from 'react-native';
 import { act, create } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useTaskStore } from '@mindwtr/core';
 
 import { TaskEditContentField } from './TaskEditContentField';
 
 const mockFindNodeHandle = vi.hoisted(() => vi.fn(() => 314));
+const logInfoMock = vi.hoisted(() => vi.fn(() => Promise.resolve(null)));
 
 vi.mock('react-native', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-native')>();
@@ -24,6 +25,52 @@ vi.mock('../markdown-reference-autocomplete', () => ({
 vi.mock('../markdown-text', () => ({
   MarkdownText: (props: any) => React.createElement('MarkdownText', props),
 }));
+
+vi.mock('../../lib/app-log', () => ({ logInfo: logInfoMock }));
+
+const installAnimationFrameHarness = () => {
+  let nextFrame = 1;
+  const callbacks = new Map<number, (timestamp: number) => void>();
+  const request = vi.fn((callback: (timestamp: number) => void) => {
+    const frame = nextFrame++;
+    callbacks.set(frame, callback);
+    return frame;
+  });
+  const cancel = vi.fn((frame: number) => {
+    callbacks.delete(frame);
+  });
+  vi.stubGlobal('requestAnimationFrame', request);
+  vi.stubGlobal('cancelAnimationFrame', cancel);
+  return {
+    cancel,
+    request,
+    runNext: () => {
+      const next = callbacks.entries().next().value as [number, (timestamp: number) => void] | undefined;
+      if (!next) return;
+      callbacks.delete(next[0]);
+      next[1](0);
+    },
+    runAll: () => {
+      for (const [frame, callback] of [...callbacks]) {
+        callbacks.delete(frame);
+        callback(0);
+      }
+    },
+  };
+};
+
+const createChecklistInputNodes = () => {
+  const nodes: { focus: ReturnType<typeof vi.fn> }[] = [];
+  return {
+    nodes,
+    createNodeMock: (element: any) => {
+      if (!String(element.props?.accessibilityLabel ?? '').startsWith('taskEdit.checklist')) return {};
+      const node = { focus: vi.fn() };
+      nodes.push(node);
+      return node;
+    },
+  };
+};
 
 const withPlatform = (os: typeof Platform.OS, run: () => void) => {
   const originalPlatformOs = Platform.OS;
@@ -208,8 +255,14 @@ const createChecklistState = (checklist = [{ id: 'check-1', title: 'Item 1', isC
 };
 
 describe('TaskEditContentField', () => {
+  beforeEach(() => {
+    logInfoMock.mockReset();
+    logInfoMock.mockResolvedValue(null);
+  });
+
   afterEach(() => {
     useTaskStore.setState({ settings: {} });
+    vi.unstubAllGlobals();
   });
 
   it('exposes checklist state and uses semantic colors for a completed item', () => {
@@ -772,9 +825,10 @@ describe('TaskEditContentField', () => {
     });
   });
 
-  it('focuses a newly added checklist row from its first layout, not the mount commit', () => {
+  it('defers Android Add Item focus by one frame after layout and requests it exactly once', () => {
     const { getState, applyChecklistUpdate } = createChecklistState();
-    const focus = vi.fn();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
     let tree!: ReturnType<typeof create>;
 
     const renderField = () => (
@@ -786,33 +840,252 @@ describe('TaskEditContentField', () => {
       />
     );
 
-    act(() => {
-      tree = create(renderField(), { createNodeMock: () => ({ focus }) });
-    });
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField());
+      });
 
-    const addItem = tree.root.findByProps({ testID: 'mobile-checklist-add-item' });
-    act(() => {
-      addItem.props.onPress();
-    });
-    act(() => {
-      tree.update(renderField());
-    });
+      const insertedNode = inputNodes.nodes[1];
+      expect(insertedNode.focus).not.toHaveBeenCalled();
+      const newInput = tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' });
+      act(() => {
+        newInput.props.onLayout();
+        newInput.props.onLayout();
+      });
+      expect(frames.request).toHaveBeenCalledTimes(1);
+      expect(insertedNode.focus).not.toHaveBeenCalled();
 
-    // Focusing before the row has a native layout makes Android's ScrollView
-    // jump to the top of the checklist, so the mount commit must not focus.
-    expect(focus).not.toHaveBeenCalled();
+      act(() => frames.runNext());
+      expect(insertedNode.focus).toHaveBeenCalledTimes(1);
+      expect(logInfoMock).toHaveBeenCalledWith('Checklist insertion focus requested after layout', {
+        scope: 'task-edit',
+        extra: {
+          releaseCheck: 'v1.3.0/checklist-insert-focus',
+          stage: 'layout-ready',
+        },
+      });
 
-    const newInput = tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' });
-    act(() => {
-      newInput.props.onLayout();
+      act(() => newInput.props.onLayout());
+      expect(frames.request).toHaveBeenCalledTimes(1);
+      expect(insertedNode.focus).toHaveBeenCalledTimes(1);
     });
-    expect(focus).toHaveBeenCalledTimes(1);
+  });
 
-    // Later relayouts of the same row must not steal focus again.
-    act(() => {
-      newInput.props.onLayout();
+  it('uses the same one-frame Android focus path for Enter insertion', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = () => (
+      <TaskEditContentField
+        {...baseProps}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 1' }).props.onSubmitEditing();
+        tree.update(renderField());
+      });
+
+      const insertedNode = inputNodes.nodes[1];
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' }).props.onLayout());
+      expect(insertedNode.focus).not.toHaveBeenCalled();
+      act(() => frames.runNext());
+      expect(insertedNode.focus).toHaveBeenCalledTimes(1);
+      expect(logInfoMock).toHaveBeenCalledTimes(1);
     });
-    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps iOS insertion focus immediate on first layout', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = () => (
+      <TaskEditContentField
+        {...baseProps}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('ios', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField());
+      });
+      const insertedNode = inputNodes.nodes[1];
+      const newInput = tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' });
+      act(() => newInput.props.onLayout());
+      expect(insertedNode.focus).toHaveBeenCalledTimes(1);
+      expect(frames.request).not.toHaveBeenCalled();
+      expect(logInfoMock).not.toHaveBeenCalled();
+      act(() => newInput.props.onLayout());
+      expect(insertedNode.focus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('cancels queued Android insertion focus on unmount', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = () => (
+      <TaskEditContentField
+        {...baseProps}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField());
+      });
+      const insertedNode = inputNodes.nodes[1];
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' }).props.onLayout());
+      expect(frames.request).toHaveBeenCalledTimes(1);
+
+      act(() => tree.unmount());
+      expect(frames.cancel).toHaveBeenCalledTimes(1);
+      act(() => frames.runAll());
+      expect(insertedNode.focus).not.toHaveBeenCalled();
+      expect(logInfoMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('cancels queued Android insertion focus when the task changes', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = (taskId: string) => (
+      <TaskEditContentField
+        {...baseProps}
+        task={{ id: taskId, status: 'next' } as any}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField('task-1'), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField('task-1'));
+      });
+      const insertedNode = inputNodes.nodes[1];
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' }).props.onLayout());
+      act(() => tree.update(renderField('task-2')));
+
+      expect(frames.cancel).toHaveBeenCalledTimes(1);
+      act(() => frames.runAll());
+      expect(insertedNode.focus).not.toHaveBeenCalled();
+      expect(logInfoMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('cancels queued Android insertion focus when the pending row is removed', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState();
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = () => (
+      <TaskEditContentField
+        {...baseProps}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField());
+      });
+      const insertedNode = inputNodes.nodes[1];
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' }).props.onLayout());
+      act(() => {
+        applyChecklistUpdate(getState().checklist.slice(0, 1));
+        tree.update(renderField());
+      });
+
+      expect(frames.cancel).toHaveBeenCalledTimes(1);
+      act(() => frames.runAll());
+      expect(insertedNode.focus).not.toHaveBeenCalled();
+      expect(logInfoMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('cancels a superseded Android insertion and focuses only the latest row', () => {
+    const { getState, applyChecklistUpdate } = createChecklistState([
+      { id: 'check-1', title: 'Item 1', isCompleted: false },
+      { id: 'check-2', title: 'Item 2', isCompleted: false },
+    ]);
+    const frames = installAnimationFrameHarness();
+    const inputNodes = createChecklistInputNodes();
+    const renderField = () => (
+      <TaskEditContentField
+        {...baseProps}
+        fieldId="checklist"
+        checklist={getState().checklist}
+        applyChecklistUpdate={applyChecklistUpdate}
+      />
+    );
+    let tree!: ReturnType<typeof create>;
+
+    withPlatform('android', () => {
+      act(() => {
+        tree = create(renderField(), { createNodeMock: inputNodes.createNodeMock });
+      });
+      act(() => {
+        tree.root.findByProps({ testID: 'mobile-checklist-add-item' }).props.onPress();
+        tree.update(renderField());
+      });
+      const firstInsertedNode = inputNodes.nodes[2];
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 3' }).props.onLayout());
+
+      act(() => {
+        tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 1' }).props.onSubmitEditing();
+        tree.update(renderField());
+      });
+      const latestInsertedNode = inputNodes.nodes[3];
+      expect(frames.cancel).toHaveBeenCalledTimes(1);
+      act(() => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 2' }).props.onLayout());
+      expect(frames.request).toHaveBeenCalledTimes(2);
+
+      act(() => frames.runAll());
+      expect(firstInsertedNode.focus).not.toHaveBeenCalled();
+      expect(latestInsertedNode.focus).toHaveBeenCalledTimes(1);
+      expect(logInfoMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('does not add another blank checklist item while one is already empty', () => {
