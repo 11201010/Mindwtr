@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
+import { Text } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TaskEditViewTab } from './TaskEditViewTab';
@@ -590,11 +591,13 @@ describe('TaskEditViewTab', () => {
       'taskEdit.recurrenceLabel': 'Recurrence',
       'taskEdit.descriptionLabel': 'Description',
       'taskEdit.checklist': 'Checklist',
+      'taskEdit.tab.list': 'List',
       'attachments.title': 'Attachments',
       'status.reference': 'Reference',
       'priority.high': 'High',
       'energyLevel.low': 'Low',
     };
+    const applyChecklistUpdate = vi.fn();
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
       tree = renderer.create(
@@ -623,7 +626,10 @@ describe('TaskEditViewTab', () => {
             dueDate: '2026-09-13T09:00:00.000Z',
             reviewAt: '2026-09-14T09:00:00.000Z',
             recurrence: { rule: 'daily' },
-            checklist: [{ id: 'step-1', title: 'Hidden checklist item', isCompleted: false }],
+            checklist: [
+              { id: 'step-1', title: 'Completed **source**', isCompleted: true },
+              { id: 'step-2', title: '[Pending link](https://example.com)\nwrapped detail', isCompleted: false },
+            ],
             createdAt: '2026-04-01T00:00:00.000Z',
             updatedAt: '2026-04-01T00:00:00.000Z',
           }}
@@ -647,7 +653,7 @@ describe('TaskEditViewTab', () => {
           formatDueDate={(value) => value}
           getRecurrenceRuleValue={() => 'daily'}
           getRecurrenceStrategyValue={() => 'strict'}
-          applyChecklistUpdate={vi.fn()}
+          applyChecklistUpdate={applyChecklistUpdate}
           visibleAttachments={[{
             id: 'link-1', kind: 'link', title: 'Source link', uri: 'https://example.com',
             createdAt: '2026-04-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z',
@@ -662,10 +668,19 @@ describe('TaskEditViewTab', () => {
       );
     });
 
-    ['Launch research', 'Assigned To', 'Alex', 'Finished launch', 'Sources', 'Area', 'Work', 'Tags', '#research', 'Description', 'Attachments', 'Source link']
+    ['Launch research', 'Assigned To', 'Alex', 'Finished launch', 'Sources', 'Area', 'Work', 'Tags', '#research', 'Description', 'List', 'Attachments', 'Source link']
       .forEach((text) => expect(tree.root.findAllByProps({ children: text }).length).toBeGreaterThan(0));
     expect(tree.root.find((node) => node.props.markdown === 'Reference body')).toBeTruthy();
-    ['Status', 'Priority', 'Energy', 'Start', 'Due', 'Review', 'Estimate', 'Contexts', '@private', 'Location', 'Archive room', 'Recurrence', 'Checklist', 'Hidden checklist item']
+    expect(tree.root.findAll((node) => String(node.type) === 'MarkdownInlineText').map((node) => node.props.markdown)).toEqual([
+      'Completed **source**',
+      '[Pending link](https://example.com)\nwrapped detail',
+    ]);
+    expect(tree.root.findAllByType(Text).filter((node) => node.props.children === '•')).toHaveLength(2);
+    expect(tree.root.findAll((node) => node.props.accessibilityRole === 'checkbox')).toHaveLength(0);
+    expect(tree.root.findAll((node) => node.props.accessibilityState?.checked !== undefined)).toHaveLength(0);
+    expect(tree.root.findAll((node) => node.props.accessibilityLabel === 'taskEdit.addItem')).toHaveLength(0);
+    expect(applyChecklistUpdate).not.toHaveBeenCalled();
+    ['Status', 'Priority', 'Energy', 'Start', 'Due', 'Review', 'Estimate', 'Contexts', '@private', 'Location', 'Archive room', 'Recurrence', 'Checklist']
       .forEach((text) => expect(tree.root.findAllByProps({ children: text })).toHaveLength(0));
     expect(tree.root.findAllByType(MockTaskStatusBadge)).toHaveLength(0);
   });

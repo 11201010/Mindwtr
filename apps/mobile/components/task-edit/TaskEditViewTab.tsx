@@ -259,14 +259,23 @@ function TaskEditViewTabComponent({
           </View>
         </View>
       ) : null}
-      {!isReference && checklist.length ? (
+      {checklist.length ? (
         <View style={styles.viewSection}>
-          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>{t('taskEdit.checklist')}</Text>
+          <Text style={[styles.viewLabel, { color: tc.secondaryText }]}>
+            {t(isReference ? 'taskEdit.tab.list' : 'taskEdit.checklist')}
+          </Text>
           <View style={styles.viewChecklist}>
             {checklist.map((item) => {
               const content = (
                 <>
-                {item.isCompleted ? (
+                {isReference ? (
+                  <Text
+                    style={{ color: tc.secondaryText, fontSize: 18, lineHeight: 20 }}
+                    accessible={false}
+                  >
+                    •
+                  </Text>
+                ) : item.isCompleted ? (
                   <CheckSquare size={18} color={tc.tint} strokeWidth={2} />
                 ) : (
                   <Square size={18} color={tc.secondaryText} strokeWidth={2} />
@@ -279,12 +288,14 @@ function TaskEditViewTabComponent({
                 />
                 </>
               );
-              if (readOnly) {
+              if (readOnly || isReference) {
                 return (
                   <View
                     key={item.id}
-                    style={styles.viewChecklistItem}
-                    accessibilityLabel={`${item.title}. ${item.isCompleted ? t('common.done') : t('status.active')}`}
+                    style={[styles.viewChecklistItem, isReference ? { alignItems: 'flex-start' } : null]}
+                    accessibilityLabel={isReference
+                      ? undefined
+                      : `${item.title}. ${item.isCompleted ? t('common.done') : t('status.active')}`}
                   >
                     {content}
                   </View>
@@ -308,7 +319,7 @@ function TaskEditViewTabComponent({
                 </TouchableOpacity>
               );
             })}
-            {!readOnly ? <TextInput
+            {!readOnly && !isReference ? <TextInput
               ref={checklistDraftRef}
               value={checklistDraft}
               onChangeText={setChecklistDraft}
