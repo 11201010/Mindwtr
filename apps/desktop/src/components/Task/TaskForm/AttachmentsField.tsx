@@ -56,12 +56,12 @@ export function AttachmentsField({
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
                 <TaskEditorFieldLabel icon={Paperclip}>
                     {t('attachments.title')}
                     <QuickAddTokenBadge t={t} token={QUICK_ADD_FIELD_TOKENS.link} />
                 </TaskEditorFieldLabel>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         onClick={addFileAttachment}
@@ -167,7 +167,7 @@ export function AttachmentsField({
                         const isPointer = attachment.kind === 'link' || isBareFileReference(attachment);
                         const fullTitle = isPointer ? attachment.uri : attachment.title;
                         return (
-                            <div key={attachment.id} className="-mx-1.5 flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted/40">
+                            <div key={attachment.id} className="flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted/40">
                                 <div className="flex min-w-0 items-center gap-1.5">
                                     {isPointer
                                         ? <Link2 className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden="true" />

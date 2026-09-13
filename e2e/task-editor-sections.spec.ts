@@ -83,3 +83,46 @@ for (const presentation of ['inline', 'modal']) {
         });
     }
 }
+
+for (const presentation of ['inline', 'modal']) {
+    test(`${presentation} populated attachments stay within the editor scroll area`, async ({ page }) => {
+        await page.setViewportSize({ width: 800, height: 700 });
+        await dismissOnboarding(page);
+        await seedAppData(page, {
+            tasks: [{
+                id: 'attachment-task', title: 'Read the garden plan', status: 'inbox',
+                attachments: [
+                    { id: 'plan-link', kind: 'link', title: 'Garden plan', uri: 'https://example.invalid/garden', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+                    { id: 'plan-file', kind: 'file', title: 'Garden notes.txt', uri: '/synthetic/garden-notes.txt', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+                ],
+            }],
+            settings: { gtd: { taskEditor: { presentation } } },
+        });
+        await page.goto('/');
+        await page.locator('[data-sidebar-item][data-view="inbox"]').click();
+        await page.getByText('Read the garden plan', { exact: true }).dblclick();
+        const editor = page.locator('form').filter({ has: page.getByRole('combobox', { name: 'Title', exact: true }) });
+        const details = editor.getByRole('button', { name: /^Details/ });
+        await expect(details).toHaveAttribute('aria-expanded', 'true');
+        await expect(editor.getByRole('button', { name: 'Garden plan', exact: true })).toBeVisible();
+        await expect(editor.getByRole('button', { name: 'Garden notes.txt', exact: true })).toBeVisible();
+
+        const horizontalOverflow = () => editor.evaluate((form) => (
+            [...form.querySelectorAll<HTMLElement>('*')]
+                .filter((element) => /(auto|scroll)/.test(getComputedStyle(element).overflowX))
+                .map((element) => element.scrollWidth - element.clientWidth)
+                .filter((overflow) => overflow > 0)
+        ));
+        for (const width of [800, 1280, 400]) {
+            await page.setViewportSize({ width, height: 700 });
+            await expect.poll(horizontalOverflow).toEqual([]);
+            await expect(editor.getByRole('button', { name: 'Add file', exact: true })).toBeVisible();
+            await expect(editor.getByRole('button', { name: 'Add link', exact: true })).toBeVisible();
+        }
+        await details.click();
+        await expect(details).toHaveAttribute('aria-expanded', 'false');
+        await details.click();
+        await expect.poll(horizontalOverflow).toEqual([]);
+        await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+    });
+}

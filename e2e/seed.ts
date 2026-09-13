@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import type { Attachment } from '@mindwtr/core';
 
 // The web build keeps the whole document under one localStorage key
 // (apps/desktop/src/lib/storage-adapter-web.ts), so a fixture is one init
@@ -19,6 +20,7 @@ export type SeedTask = {
     reviewAt?: string;
     isFocusedToday?: boolean;
     projectId?: string;
+    attachments?: Attachment[];
 };
 
 export type SeedProject = {
@@ -81,6 +83,7 @@ export const seedAppData = async (page: Page, data: SeedData): Promise<void> => 
             ...(task.reviewAt ? { reviewAt: task.reviewAt } : {}),
             ...(task.isFocusedToday ? { isFocusedToday: true } : {}),
             ...(task.projectId ? { projectId: task.projectId } : {}),
+            ...(task.attachments ? { attachments: task.attachments } : {}),
         })),
         projects: (data.projects ?? []).map((project) => ({
             ...project,
