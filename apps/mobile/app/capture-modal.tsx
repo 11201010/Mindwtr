@@ -46,6 +46,7 @@ import { useToast } from '@/contexts/toast-context';
 import { useLanguage } from '../contexts/language-context';
 import { buildCopilotConfig, isAIKeyRequired, loadAIKey } from '../lib/ai-config';
 import { logError, logInfo } from '../lib/app-log';
+import { logIosShareDiagnostic } from '../lib/share-intent-diagnostics';
 import { addHardwareBackPressListener, returnToPreviousApp } from '@/lib/hardware-back';
 import { showInvalidDateCommandToast } from '@/lib/quick-add-toast';
 import { ThemedAlertHost } from '@/components/themed-alert';
@@ -446,6 +447,12 @@ export default function CaptureScreen() {
   const placeholderColor = tc.secondaryText;
 
   const launchedFromSystem = firstSearchParam(params.origin) === 'system';
+  const launchedFromShare = firstSearchParam(params.origin) === 'share';
+
+  useEffect(() => {
+    if (!launchedFromShare) return;
+    logIosShareDiagnostic({ stage: 'form-mounted' });
+  }, [launchedFromShare]);
 
   const closeCapture = React.useCallback(() => {
     if (!screenMountedRef.current) return;
@@ -483,6 +490,7 @@ export default function CaptureScreen() {
 
   const handleCancel = () => {
     if (submissionInFlightRef.current) return;
+    if (launchedFromShare) logIosShareDiagnostic({ stage: 'cancel', type: 'single' });
     finishCapture();
   };
 
@@ -602,10 +610,18 @@ export default function CaptureScreen() {
     try {
       request = await buildCaptureRequestFromInput(inputValue);
     } catch {
+      if (launchedFromShare) {
+        logIosShareDiagnostic({ stage: 'submit-rejected', type: 'single', outcome: 'prepare-failed' });
+      }
       showCaptureFailure();
       return false;
     }
-    if (!request) return false;
+    if (!request) {
+      if (launchedFromShare) {
+        logIosShareDiagnostic({ stage: 'submit-rejected', type: 'single', outcome: 'validation-rejected' });
+      }
+      return false;
+    }
     let result: Awaited<ReturnType<typeof executeCaptureTransaction>>;
     try {
       result = await executeCaptureTransaction(
@@ -614,11 +630,21 @@ export default function CaptureScreen() {
         request.options,
       );
     } catch {
+      if (launchedFromShare) {
+        logIosShareDiagnostic({ stage: 'submit-rejected', type: 'single', outcome: 'transaction-threw' });
+      }
       showCaptureFailure();
       return false;
     }
-    if (!screenMountedRef.current) return false;
     if (!result.success) {
+      if (launchedFromShare) {
+        logIosShareDiagnostic({
+          stage: 'submit-rejected',
+          type: 'single',
+          outcome: result.reason === 'invalid-date-command' ? 'validation-rejected' : 'transaction-rejected',
+        });
+      }
+      if (!screenMountedRef.current) return false;
       if (result.reason === 'invalid-date-command') {
         showInvalidDateCommandToast(showToast, t, result.invalidDateCommands);
       } else {
@@ -626,6 +652,10 @@ export default function CaptureScreen() {
       }
       return false;
     }
+    if (launchedFromShare) {
+      logIosShareDiagnostic({ stage: 'transaction-returned', type: 'single', outcome: 'success', count: 1 });
+    }
+    if (!screenMountedRef.current) return false;
     const createdTaskId = result.createdTaskId;
     if (openAfterSave && createdTaskId) {
       // Leave this route, don't push over it: the capture screen must not
@@ -650,17 +680,28 @@ export default function CaptureScreen() {
   };
 
   const createBulkTasks = async (lines: string[]) => {
+    let thrownOutcome: 'prepare-failed' | 'transaction-threw' = 'prepare-failed';
     try {
       const taskInputs: Array<{ title: string; initialProps: Partial<Task> }> = [];
       let currentProjects = projects;
       for (const line of lines) {
         const request = await buildCaptureRequestFromInput(line, currentProjects);
         if (!request) {
+          if (launchedFromShare) {
+            logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: 'validation-rejected' });
+          }
           showCaptureFailure();
           return;
         }
         const prepared = await prepareCaptureTask(request.input, { addProject }, request.options);
         if (!prepared.success) {
+          if (launchedFromShare) {
+            logIosShareDiagnostic({
+              stage: 'submit-rejected',
+              type: 'bulk',
+              outcome: prepared.reason === 'invalid-date-command' ? 'validation-rejected' : 'prepare-failed',
+            });
+          }
           if (screenMountedRef.current && prepared.reason === 'invalid-date-command') {
             showInvalidDateCommandToast(showToast, t, prepared.invalidDateCommands);
           } else {
@@ -676,15 +717,26 @@ export default function CaptureScreen() {
       taskInputs.forEach((taskInput, index) => {
         if (index > 0) delete taskInput.initialProps.attachments;
       });
+      thrownOutcome = 'transaction-threw';
       const result = await addTasks(taskInputs);
-      if (!screenMountedRef.current) return;
       if (result && typeof result === 'object' && result.success === false) {
+        if (launchedFromShare) {
+          logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: 'transaction-rejected' });
+        }
+        if (!screenMountedRef.current) return;
         showCaptureFailure();
         return;
       }
+      if (launchedFromShare) {
+        logIosShareDiagnostic({ stage: 'transaction-returned', type: 'bulk', outcome: 'success', count: taskInputs.length });
+      }
+      if (!screenMountedRef.current) return;
       allowCaptureRemovalRef.current = true;
       finishCapture();
     } catch {
+      if (launchedFromShare) {
+        logIosShareDiagnostic({ stage: 'submit-rejected', type: 'bulk', outcome: thrownOutcome });
+      }
       showCaptureFailure();
     }
   };
@@ -701,6 +753,9 @@ export default function CaptureScreen() {
       return;
     }
     if (!beginSubmission()) return;
+    if (launchedFromShare) {
+      logIosShareDiagnostic({ stage: 'submit-started', type: 'single', count: 1 });
+    }
     try {
       const shouldClose = await createTaskFromInput(value, { openAfterSave });
       if (shouldClose && screenMountedRef.current) {
@@ -716,11 +771,17 @@ export default function CaptureScreen() {
     const subscription = addHardwareBackPressListener(() => {
       if (submissionInFlightRef.current) return true;
       if (!pendingBulkLines) return false;
+      if (launchedFromShare) logIosShareDiagnostic({ stage: 'cancel', type: 'bulk' });
       setPendingBulkLines(null);
       return true;
     });
     return () => subscription.remove();
-  }, [pendingBulkLines]);
+  }, [launchedFromShare, pendingBulkLines]);
+
+  const cancelBulkCapture = () => {
+    if (launchedFromShare) logIosShareDiagnostic({ stage: 'cancel', type: 'bulk' });
+    setPendingBulkLines(null);
+  };
 
   return (
     <KeyboardAvoidingView
@@ -891,7 +952,7 @@ export default function CaptureScreen() {
         >
           <Pressable
             style={styles.bulkConfirmBackdrop}
-            onPress={() => setPendingBulkLines(null)}
+            onPress={cancelBulkCapture}
             disabled={isSubmitting}
             accessibilityRole="button"
             accessibilityLabel={t('common.cancel')}
@@ -905,7 +966,7 @@ export default function CaptureScreen() {
             </Text>
             <View style={styles.bulkConfirmActions}>
               <TouchableOpacity
-                onPress={() => setPendingBulkLines(null)}
+                onPress={cancelBulkCapture}
                 disabled={isSubmitting}
                 style={styles.bulkConfirmButton}
                 accessibilityRole="button"
@@ -919,6 +980,10 @@ export default function CaptureScreen() {
                   if (!beginSubmission()) return;
                   const lines = pendingBulkLines;
                   setPendingBulkLines(null);
+                  if (launchedFromShare) {
+                    logIosShareDiagnostic({ stage: 'bulk-confirmed', count: lines.length });
+                    logIosShareDiagnostic({ stage: 'submit-started', type: 'bulk', count: lines.length });
+                  }
                   void createBulkTasks(lines).finally(endSubmission);
                 }}
                 disabled={isSubmitting}

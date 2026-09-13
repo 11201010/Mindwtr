@@ -1,9 +1,11 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { useRootLayoutExternalCapture } from '@/hooks/root-layout/use-root-layout-external-capture';
 import { redirectSystemPath } from '@/app/+native-intent';
+import { logError, logInfo, logWarn } from '@/lib/app-log';
 
 vi.mock('@/lib/app-log', () => ({
   logError: vi.fn(),
@@ -57,22 +59,30 @@ type SharedFile = {
 };
 
 function TestHarness({
+  dataReady = true,
+  disabled = false,
   hasShareIntent = false,
   incomingUrl,
   incomingUrlKey = incomingUrl ? 1 : 0,
+  providerReady = true,
   resetShareIntent = vi.fn(),
   router,
+  shareError = null,
   shareFiles = null,
   shareSubject = null,
   shareText = null,
   shareWebUrl = null,
   showToast,
 }: {
+  dataReady?: boolean;
+  disabled?: boolean;
   hasShareIntent?: boolean;
   incomingUrl: string | null;
   incomingUrlKey?: number;
+  providerReady?: boolean;
   resetShareIntent?: () => void;
   router: RouterMock;
+  shareError?: string | null;
   shareFiles?: SharedFile[] | null;
   shareSubject?: string | null;
   shareText?: string | null;
@@ -80,13 +90,16 @@ function TestHarness({
   showToast: ShowToast;
 }) {
   useRootLayoutExternalCapture({
-    dataReady: true,
+    dataReady,
+    disabled,
     hasShareIntent,
     incomingUrl,
     incomingUrlKey,
+    providerReady,
     resolveText: (_key: string, fallback: string) => fallback,
     resetShareIntent,
     router,
+    shareError,
     shareFiles,
     shareSubject,
     shareText,
@@ -102,6 +115,10 @@ describe('useRootLayoutExternalCapture', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(logError).mockReset();
+    vi.mocked(logInfo).mockReset();
+    vi.mocked(logWarn).mockReset();
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
     storeTasksById.clear();
     storeProjectsById.clear();
     storeAreasById.clear();
@@ -210,6 +227,246 @@ describe('useRootLayoutExternalCapture', () => {
     });
   });
 
+  it('traces cold and warm iOS host receipt once per delivery without recording the URL', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    const url = 'mindwtr://dataUrl=/private/secret-file#weburl';
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<TestHarness incomingUrl={url} incomingUrlKey={1} router={router} showToast={showToast} />);
+    });
+    act(() => {
+      tree.update(<TestHarness incomingUrl={url} incomingUrlKey={1} router={router} showToast={vi.fn()} />);
+      tree.update(<TestHarness incomingUrl={url} incomingUrlKey={2} router={router} showToast={showToast} />);
+    });
+
+    const receipts = vi.mocked(logInfo).mock.calls.filter(([, context]) => context?.extra?.stage === 'host-url-received');
+    expect(receipts).toHaveLength(2);
+    expect(receipts[0]?.[1]?.extra).toMatchObject({ type: 'weburl', providerReady: true });
+    expect(JSON.stringify(receipts)).not.toContain('secret-file');
+  });
+
+  it('traces data readiness deferral then navigates and resets once without rerender duplicates', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    const resetShareIntent = vi.fn();
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(
+        <TestHarness
+          dataReady={false}
+          hasShareIntent
+          incomingUrl={null}
+          providerReady={false}
+          resetShareIntent={resetShareIntent}
+          router={router}
+          shareText="private selected text"
+          showToast={showToast}
+        />
+      );
+    });
+    expect(router.replace).not.toHaveBeenCalled();
+    act(() => {
+      tree.update(
+        <TestHarness
+          dataReady
+          hasShareIntent
+          incomingUrl={null}
+          providerReady
+          resetShareIntent={resetShareIntent}
+          router={router}
+          shareText="private selected text"
+          showToast={showToast}
+        />
+      );
+    });
+
+    const stages = vi.mocked(logInfo).mock.calls.map(([, context]) => context?.extra?.stage);
+    const providerStatuses = vi.mocked(logInfo).mock.calls
+      .filter(([, context]) => context?.extra?.stage === 'provider-status')
+      .map(([, context]) => context?.extra?.providerReady);
+    expect(providerStatuses).toEqual([false, true]);
+    expect(stages.filter((stage) => stage === 'payload-seen')).toHaveLength(1);
+    expect(stages).toEqual(expect.arrayContaining([
+      'waiting',
+      'processing-started',
+      'navigation-requested',
+      'navigation-returned',
+      'reset-requested',
+      'reset-returned',
+    ]));
+    expect(router.replace).toHaveBeenCalledWith({
+      pathname: '/capture-modal',
+      params: { initialValue: 'private%20selected%20text', origin: 'share' },
+    });
+    expect(resetShareIntent).toHaveBeenCalledOnce();
+    expect(JSON.stringify([...vi.mocked(logInfo).mock.calls, ...vi.mocked(logWarn).mock.calls])).not.toContain('private selected text');
+  });
+
+  it('observes an iOS payload while capture handling is disabled without processing it', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    act(() => {
+      create(
+        <TestHarness
+          disabled
+          hasShareIntent
+          incomingUrl={null}
+          providerReady
+          router={router}
+          shareText="private disabled share"
+          showToast={showToast}
+        />
+      );
+    });
+
+    const events = vi.mocked(logInfo).mock.calls.map(([, context]) => context?.extra);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'payload-seen', disabled: true }),
+      expect.objectContaining({ stage: 'waiting', outcome: 'disabled' }),
+    ]));
+    expect(events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'processing-started' }),
+    ]));
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('traces an empty payload and an iOS native error without retaining sensitive error text', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    const resetShareIntent = vi.fn();
+    act(() => {
+      create(
+        <TestHarness
+          hasShareIntent
+          incomingUrl={null}
+          resetShareIntent={resetShareIntent}
+          router={router}
+          shareError="Cannot read https://private.example/token"
+          shareText="   "
+          showToast={showToast}
+        />
+      );
+    });
+
+    const warnings = vi.mocked(logWarn).mock.calls;
+    expect(warnings.map(([, context]) => context?.extra?.stage)).toEqual(expect.arrayContaining(['native-error', 'payload-missing']));
+    expect(JSON.stringify(warnings)).not.toContain('private.example');
+    expect(logError).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('private.example') }),
+      expect.anything(),
+    );
+    expect(resetShareIntent).toHaveBeenCalledOnce();
+  });
+
+  it('logs the same iOS native error for a later share delivery while preserving toast deduplication', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    const error = 'Cannot read https://private.example/repeated-token';
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(
+        <TestHarness
+          incomingUrl="mindwtr://dataUrl=/private/first#weburl"
+          incomingUrlKey={1}
+          router={router}
+          shareError={error}
+          showToast={showToast}
+        />
+      );
+    });
+    act(() => {
+      tree.update(
+        <TestHarness
+          incomingUrl="mindwtr:///capture-quick?mode=text"
+          incomingUrlKey={2}
+          router={router}
+          shareError={error}
+          showToast={showToast}
+        />
+      );
+    });
+    expect(vi.mocked(logWarn).mock.calls.filter(([, context]) => context?.extra?.stage === 'native-error')).toHaveLength(1);
+
+    act(() => {
+      tree.update(
+        <TestHarness
+          incomingUrl="mindwtr:///capture-quick?mode=text"
+          incomingUrlKey={2}
+          router={router}
+          shareError={null}
+          showToast={showToast}
+        />
+      );
+      tree.update(
+        <TestHarness
+          incomingUrl="mindwtr://dataUrl=/private/second#weburl"
+          incomingUrlKey={3}
+          router={router}
+          shareError={error}
+          showToast={showToast}
+        />
+      );
+    });
+
+    const nativeErrors = vi.mocked(logWarn).mock.calls.filter(([, context]) => context?.extra?.stage === 'native-error');
+    expect(nativeErrors).toHaveLength(2);
+    expect(showToast).toHaveBeenCalledOnce();
+    expect(JSON.stringify(nativeErrors)).not.toContain('private.example');
+
+    // Commit the cleared error separately so React does not batch it away.
+    // A repeated error without another URL delivery must still be observable.
+    act(() => {
+      tree.update(
+        <TestHarness
+          incomingUrl="mindwtr://dataUrl=/private/second#weburl"
+          incomingUrlKey={3}
+          router={router}
+          shareError={null}
+          showToast={showToast}
+        />
+      );
+    });
+    act(() => {
+      tree.update(
+        <TestHarness
+          incomingUrl="mindwtr://dataUrl=/private/second#weburl"
+          incomingUrlKey={3}
+          router={router}
+          shareError={error}
+          showToast={showToast}
+        />
+      );
+    });
+    expect(vi.mocked(logWarn).mock.calls.filter(([, context]) => context?.extra?.stage === 'native-error')).toHaveLength(3);
+    expect(showToast).toHaveBeenCalledOnce();
+  });
+
+  it('keeps routing when the diagnostic logger throws and does not log on Android without a share', () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    vi.mocked(logInfo).mockImplementation(() => { throw new Error('logger unavailable'); });
+    expect(() => {
+      act(() => {
+        create(
+          <TestHarness
+            hasShareIntent
+            incomingUrl={null}
+            router={router}
+            shareText="still routes"
+            showToast={showToast}
+          />
+        );
+      });
+    }).not.toThrow();
+    expect(router.replace).toHaveBeenCalledOnce();
+
+    vi.clearAllMocks();
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    act(() => {
+      create(<TestHarness incomingUrl={null} router={router} showToast={showToast} />);
+    });
+    expect(logInfo).not.toHaveBeenCalled();
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
   it('uses the email subject as the title and the body as the description', () => {
     act(() => {
       create(
@@ -272,6 +529,7 @@ describe('useRootLayoutExternalCapture', () => {
   });
 
   it('copies a shared file into attachments and opens capture with it attached', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
     const resetShareIntent = vi.fn();
     persistAttachmentLocallyDetailed.mockImplementation(async (attachment: { uri: string }) => ({
       attachment: { ...attachment, uri: 'file:///data/mindwtr/attachments/copied.pdf' },
@@ -311,6 +569,17 @@ describe('useRootLayoutExternalCapture', () => {
     });
     expect(showToast).not.toHaveBeenCalled();
     expect(resetShareIntent).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logInfo).mock.calls).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({
+        extra: expect.objectContaining({
+          stage: 'files-prepared',
+          candidateCount: 1,
+          attachedCount: 1,
+          skippedCount: 0,
+        }),
+      }),
+    ]);
   });
 
   it('prefers the email subject as the title over the filename for file shares', async () => {

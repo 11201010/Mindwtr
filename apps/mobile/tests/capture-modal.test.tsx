@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAIProvider } from '@mindwtr/core';
 
 import CaptureScreen, { sanitizeCaptureReturnToParam } from '@/app/capture-modal';
-import { logInfo } from '@/lib/app-log';
+import { logInfo, logWarn } from '@/lib/app-log';
 
 const { hardwareBack, navigationGuard, openTaskScreen, parseQuickAdd, returnToPreviousApp, routerMocks, routeParams, stashPendingCaptureTaskOpen, storeState } = vi.hoisted(() => {
   const parseQuickAdd = vi.fn<(value: string) => any>((value: string) => ({ title: value, props: {}, invalidDateCommands: [] }));
@@ -185,6 +185,7 @@ vi.mock('@/lib/ai-config', () => ({
 vi.mock('@/lib/app-log', () => ({
   logError: vi.fn(),
   logInfo: vi.fn(),
+  logWarn: vi.fn(),
 }));
 
 vi.mock('@/lib/hardware-back', () => ({
@@ -282,6 +283,198 @@ describe('CaptureScreen', () => {
   afterEach(() => {
     vi.useRealTimers();
     setPlatform('web');
+  });
+
+  it('traces an iOS share form mount, submission, and returned single transaction without content', async () => {
+    setPlatform('ios');
+    routeParams.current = {
+      origin: 'share',
+      initialValue: encodeURIComponent('Private Safari article title'),
+    };
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    await act(async () => {
+      await findTouchableByText(tree, 'Save').props.onPress();
+    });
+
+    const events = vi.mocked(logInfo).mock.calls
+      .filter(([, context]) => context?.extra?.releaseCheck === 'v1.3.0/ios-share-capture');
+    expect(events.map(([, context]) => context?.extra?.stage)).toEqual([
+      'form-mounted',
+      'submit-started',
+      'transaction-returned',
+    ]);
+    expect(storeState.addTask).toHaveBeenCalledWith('Private Safari article title', { status: 'inbox' });
+    expect(JSON.stringify(events)).not.toContain('Private Safari article title');
+  });
+
+  it('traces a rejected iOS share transaction without recording its error', async () => {
+    setPlatform('ios');
+    routeParams.current = { origin: 'share', initialValue: encodeURIComponent('Private title') };
+    storeState.addTask.mockResolvedValueOnce({ success: false, error: 'storage failed for private title' });
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    await act(async () => {
+      await findTouchableByText(tree, 'Save').props.onPress();
+    });
+
+    const warnings = vi.mocked(logWarn).mock.calls;
+    expect(warnings).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({
+        extra: expect.objectContaining({
+          stage: 'submit-rejected',
+          type: 'single',
+          outcome: 'transaction-rejected',
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain('storage failed');
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it('traces bulk share confirmation and the returned bulk transaction', async () => {
+    setPlatform('ios');
+    routeParams.current = {
+      origin: 'share',
+      initialValue: encodeURIComponent('Private first task\nPrivate second task'),
+    };
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    await act(async () => {
+      findTouchableByText(tree, 'Save').props.onPress();
+    });
+    await act(async () => {
+      findTouchableByText(tree, 'Create tasks').props.onPress();
+    });
+
+    const stages = vi.mocked(logInfo).mock.calls.map(([, context]) => context?.extra?.stage);
+    expect(stages).toEqual(expect.arrayContaining([
+      'form-mounted',
+      'bulk-confirmed',
+      'submit-started',
+      'transaction-returned',
+    ]));
+    expect(vi.mocked(logInfo).mock.calls).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({
+        extra: expect.objectContaining({ stage: 'transaction-returned', type: 'bulk', count: 2 }),
+      }),
+    ]);
+    expect(JSON.stringify(vi.mocked(logInfo).mock.calls)).not.toContain('Private first task');
+  });
+
+  it('traces cancellation only for an iOS share-origin form', () => {
+    setPlatform('ios');
+    routeParams.current = { origin: 'share', initialValue: encodeURIComponent('Private title') };
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    act(() => {
+      findTouchableByText(tree, 'Cancel').props.onPress();
+    });
+
+    expect(vi.mocked(logInfo).mock.calls).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({ extra: expect.objectContaining({ stage: 'cancel', type: 'single' }) }),
+    ]);
+
+    vi.clearAllMocks();
+    routeParams.current = { initialValue: encodeURIComponent('Regular capture') };
+    act(() => {
+      create(<CaptureScreen />);
+    });
+    expect(logInfo).not.toHaveBeenCalled();
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ success: true, id: 'task-created' }, 'transaction-returned', 'success'],
+    [{ success: false, error: 'private rejected write' }, 'submit-rejected', 'transaction-rejected'],
+  ] as const)('traces a returned single result after the share form unmounts (%s)', async (result, stage, outcome) => {
+    setPlatform('ios');
+    routeParams.current = { origin: 'share', initialValue: encodeURIComponent('Private title') };
+    const write = deferred<typeof result>();
+    storeState.addTask.mockReturnValue(write.promise);
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    await act(async () => {
+      findTouchableByText(tree, 'Save').props.onPress();
+      await Promise.resolve();
+    });
+    act(() => tree.unmount());
+    await act(async () => {
+      write.resolve(result);
+      await write.promise;
+    });
+
+    const calls = stage === 'transaction-returned' ? vi.mocked(logInfo).mock.calls : vi.mocked(logWarn).mock.calls;
+    expect(calls).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({
+        extra: expect.objectContaining({ stage, type: 'single', outcome }),
+      }),
+    ]);
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+    expect(routerMocks.back).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ success: true }, 'transaction-returned', 'success'],
+    [{ success: false, error: 'private rejected bulk write' }, 'submit-rejected', 'transaction-rejected'],
+  ] as const)('traces a returned bulk result after the share form unmounts (%s)', async (result, stage, outcome) => {
+    setPlatform('ios');
+    routeParams.current = {
+      origin: 'share',
+      initialValue: encodeURIComponent('Private first task\nPrivate second task'),
+    };
+    const write = deferred<typeof result>();
+    storeState.addTasks.mockReturnValue(write.promise);
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CaptureScreen />);
+    });
+    await act(async () => {
+      findTouchableByText(tree, 'Save').props.onPress();
+    });
+    await act(async () => {
+      findTouchableByText(tree, 'Create tasks').props.onPress();
+      await Promise.resolve();
+    });
+    act(() => tree.unmount());
+    await act(async () => {
+      write.resolve(result);
+      await write.promise;
+    });
+
+    const calls = stage === 'transaction-returned' ? vi.mocked(logInfo).mock.calls : vi.mocked(logWarn).mock.calls;
+    expect(calls).toContainEqual([
+      'iOS incoming share diagnostic',
+      expect.objectContaining({
+        extra: expect.objectContaining({
+          stage,
+          type: 'bulk',
+          outcome,
+          ...(stage === 'transaction-returned' ? { count: 2 } : {}),
+        }),
+      }),
+    ]);
+    expect(routerMocks.replace).not.toHaveBeenCalled();
+    expect(routerMocks.back).not.toHaveBeenCalled();
   });
 
   it('announces a settled single-save failure once on Android without a second live-region speech path', async () => {

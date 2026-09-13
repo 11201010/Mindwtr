@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as FileSystem from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import { generateUUID, useTaskStore, validateAttachmentForUpload, type Attachment, type Task } from '@mindwtr/core';
 
@@ -7,6 +8,11 @@ import type { ToastOptions } from '@/contexts/toast-context';
 import { logError, logInfo, logWarn } from '@/lib/app-log';
 import { syncAppSearchIndexingWithPreference } from '@/lib/app-search-service';
 import { persistAttachmentLocallyDetailed } from '@/lib/attachment-sync';
+import {
+    classifyIosShareHandoffUrl,
+    logIosShareDiagnostic,
+    type IosSharePayloadType,
+} from '@/lib/share-intent-diagnostics';
 import {
     isEntityOpenUrl,
     isOpenFeatureUrl,
@@ -41,6 +47,7 @@ type UseRootLayoutExternalCaptureParams = {
     hasShareIntent: boolean;
     incomingUrl: string | null;
     incomingUrlKey: number;
+    providerReady: boolean;
     resolveText: ResolveText;
     resetShareIntent: () => void;
     router: RouterLike;
@@ -55,6 +62,27 @@ type UseRootLayoutExternalCaptureParams = {
 const trimSharedValue = (value: string | null | undefined): string => (
     typeof value === 'string' ? value.trim() : ''
 );
+
+const inferSharePayloadType = ({
+    shareFiles,
+    shareText,
+    shareWebUrl,
+}: {
+    shareFiles?: SharedIntentFile[] | null;
+    shareText?: string | null;
+    shareWebUrl?: string | null;
+}): IosSharePayloadType => {
+    if ((shareFiles ?? []).some((file) => typeof file?.path === 'string' && file.path.trim().length > 0)) {
+        const files = shareFiles ?? [];
+        return files.length > 0 && files.every((file) => (
+            typeof file?.mimeType === 'string'
+            && (file.mimeType.startsWith('image/') || file.mimeType.startsWith('video/'))
+        )) ? 'media' : 'file';
+    }
+    if (trimSharedValue(shareWebUrl)) return 'weburl';
+    if (trimSharedValue(shareText)) return 'text';
+    return 'unknown';
+};
 
 const SHARE_INTENT_MAX_FILES = 6;
 
@@ -238,6 +266,7 @@ export function useRootLayoutExternalCapture({
     hasShareIntent,
     incomingUrl,
     incomingUrlKey,
+    providerReady,
     resolveText,
     resetShareIntent,
     router,
@@ -255,6 +284,73 @@ export function useRootLayoutExternalCapture({
     // mid-copy (language load swaps resolveText, for instance) must not start
     // a second copy of the same share.
     const shareHandlingRef = useRef(false);
+    const lastProviderReadyRef = useRef<boolean | null>(null);
+    const lastObservedShareUrlKeyRef = useRef<number | null>(null);
+    const shareDiagnosticActiveRef = useRef(false);
+    const shareDiagnosticStagesRef = useRef(new Set<string>());
+
+    useEffect(() => {
+        if (Platform.OS !== 'ios' || lastProviderReadyRef.current === providerReady) return;
+        lastProviderReadyRef.current = providerReady;
+        logIosShareDiagnostic({
+            stage: 'provider-status',
+            providerReady,
+            dataReady,
+            disabled,
+        });
+    }, [dataReady, disabled, providerReady]);
+
+    useEffect(() => {
+        if (Platform.OS !== 'ios') return;
+        const type = classifyIosShareHandoffUrl(incomingUrl);
+        if (!type || lastObservedShareUrlKeyRef.current === incomingUrlKey) return;
+        lastObservedShareUrlKeyRef.current = incomingUrlKey;
+        logIosShareDiagnostic({
+            stage: 'host-url-received',
+            type,
+            providerReady,
+            dataReady,
+            disabled,
+        });
+    }, [dataReady, disabled, incomingUrl, incomingUrlKey, providerReady]);
+
+    useEffect(() => {
+        if (Platform.OS !== 'ios') return;
+        if (!hasShareIntent) {
+            if (!shareHandlingRef.current) {
+                shareDiagnosticActiveRef.current = false;
+                shareDiagnosticStagesRef.current.clear();
+            }
+            return;
+        }
+
+        if (!shareDiagnosticActiveRef.current) {
+            shareDiagnosticActiveRef.current = true;
+            shareDiagnosticStagesRef.current.clear();
+        }
+        const stages = shareDiagnosticStagesRef.current;
+        const type = inferSharePayloadType({ shareFiles, shareText, shareWebUrl });
+        if (!stages.has('payload-seen')) {
+            stages.add('payload-seen');
+            logIosShareDiagnostic({
+                stage: 'payload-seen',
+                type,
+                providerReady,
+                dataReady,
+                disabled,
+                fileCount: shareFiles?.length ?? 0,
+            });
+        }
+        const waitingOutcome = disabled ? 'disabled' : (!dataReady ? 'data-not-ready' : null);
+        if (waitingOutcome && !stages.has(`waiting:${waitingOutcome}`)) {
+            stages.add(`waiting:${waitingOutcome}`);
+            logIosShareDiagnostic({
+                stage: 'waiting',
+                outcome: waitingOutcome,
+                providerReady,
+            });
+        }
+    }, [dataReady, disabled, hasShareIntent, providerReady, shareFiles, shareText, shareWebUrl]);
 
     // Arms the AppSearch index (#1017) once per app start if the device-local
     // preference is on. This hook already owns every other OS-level entry
@@ -301,17 +397,38 @@ export function useRootLayoutExternalCapture({
     // with no sheet and no clue (#1117). Surface it so a broken share is at
     // least visible and diagnosable from the log.
     const lastShareErrorRef = useRef<string | null>(null);
+    const lastShareDiagnosticErrorRef = useRef<{ error: string; shareUrlKey: number | null } | null>(null);
     useEffect(() => {
+        if (!shareError) {
+            lastShareDiagnosticErrorRef.current = null;
+            return;
+        }
         if (disabled) return;
-        if (!shareError || lastShareErrorRef.current === shareError) return;
+        if (Platform.OS === 'ios') {
+            const shareUrlKey = classifyIosShareHandoffUrl(incomingUrl) ? incomingUrlKey : null;
+            const previous = lastShareDiagnosticErrorRef.current;
+            if (!previous || previous.error !== shareError || (shareUrlKey !== null && previous.shareUrlKey !== shareUrlKey)) {
+                lastShareDiagnosticErrorRef.current = { error: shareError, shareUrlKey };
+                logIosShareDiagnostic({
+                    stage: 'native-error',
+                    outcome: 'present',
+                    providerReady,
+                    dataReady,
+                    disabled,
+                });
+            }
+        }
+        if (lastShareErrorRef.current === shareError) return;
         lastShareErrorRef.current = shareError;
-        void logError(new Error(`Share intent failed: ${shareError}`), { scope: 'share-intent' });
+        if (Platform.OS !== 'ios') {
+            void logError(new Error(`Share intent failed: ${shareError}`), { scope: 'share-intent' });
+        }
         showToast({
             title: resolveText('share.unavailable', 'Share unavailable'),
             message: resolveText('share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.'),
             tone: 'warning',
         });
-    }, [disabled, resolveText, shareError, showToast]);
+    }, [dataReady, disabled, incomingUrl, incomingUrlKey, providerReady, resolveText, shareError, showToast]);
 
     useEffect(() => {
         if (disabled) return;
@@ -323,14 +440,28 @@ export function useRootLayoutExternalCapture({
         if (!dataReady) return;
         if (shareHandlingRef.current) return;
         shareHandlingRef.current = true;
+        const payloadType = inferSharePayloadType({ shareFiles, shareText, shareWebUrl });
+        if (!shareDiagnosticStagesRef.current.has('processing-started')) {
+            shareDiagnosticStagesRef.current.add('processing-started');
+            logIosShareDiagnostic({
+                stage: 'processing-started',
+                type: payloadType,
+                fileCount: shareFiles?.length ?? 0,
+            });
+        }
         const finish = (params: Record<string, string> | null) => {
             if (params) {
+                logIosShareDiagnostic({ stage: 'navigation-requested', type: payloadType });
                 router.replace({
                     pathname: '/capture-modal',
-                    params,
+                    params: { ...params, ...(Platform.OS === 'ios' ? { origin: 'share' } : {}) },
                 });
+                logIosShareDiagnostic({ stage: 'navigation-returned', type: payloadType });
             } else {
-                void logError(new Error('Share intent payload missing text and files'), { scope: 'share-intent' });
+                logIosShareDiagnostic({ stage: 'payload-missing', type: payloadType });
+                if (Platform.OS !== 'ios') {
+                    void logError(new Error('Share intent payload missing text and files'), { scope: 'share-intent' });
+                }
                 showToast({
                     title: resolveText('share.unavailable', 'Share unavailable'),
                     message: resolveText('share.readFailed', 'Mindwtr could not read text, a URL, or a file from the shared item.'),
@@ -343,13 +474,21 @@ export function useRootLayoutExternalCapture({
             // Text/URL shares stay synchronous; only file shares need the
             // async copy into the managed attachments dir.
             finish(buildShareIntentCaptureParams({ shareSubject, shareText, shareWebUrl }));
+            logIosShareDiagnostic({ stage: 'reset-requested' });
             resetShareIntent();
+            logIosShareDiagnostic({ stage: 'reset-returned' });
             shareHandlingRef.current = false;
             return;
         }
         void buildShareIntentFileCaptureParams({ files: shareFiles, shareSubject, shareText })
             .then((result) => {
                 const skippedCount = result.candidateCount - result.attachedCount;
+                logIosShareDiagnostic({
+                    stage: 'files-prepared',
+                    candidateCount: result.candidateCount,
+                    attachedCount: result.attachedCount,
+                    skippedCount,
+                });
                 if (skippedCount > 0) {
                     showToast({
                         title: resolveText('common.notice', 'Notice'),
@@ -362,10 +501,12 @@ export function useRootLayoutExternalCapture({
                 }
                 const params = result.params ?? buildShareIntentCaptureParams({ shareSubject, shareText, shareWebUrl });
                 if (params) {
+                    logIosShareDiagnostic({ stage: 'navigation-requested', type: payloadType });
                     router.replace({
                         pathname: '/capture-modal',
-                        params,
+                        params: { ...params, ...(Platform.OS === 'ios' ? { origin: 'share' } : {}) },
                     });
+                    logIosShareDiagnostic({ stage: 'navigation-returned', type: payloadType });
                 } else if (skippedCount === 0) {
                     // Nothing readable at all; when files were skipped the
                     // toast above already explains why nothing arrived.
@@ -373,7 +514,9 @@ export function useRootLayoutExternalCapture({
                 }
             })
             .finally(() => {
+                logIosShareDiagnostic({ stage: 'reset-requested' });
                 resetShareIntent();
+                logIosShareDiagnostic({ stage: 'reset-returned' });
                 shareHandlingRef.current = false;
             });
     }, [dataReady, disabled, hasShareIntent, resolveText, resetShareIntent, router, shareFiles, shareSubject, shareText, shareWebUrl, showToast]);

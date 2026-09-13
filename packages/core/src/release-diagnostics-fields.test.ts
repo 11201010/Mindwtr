@@ -63,6 +63,9 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'action', 'focusCount', 'timerPhase', 'timerRunning',
     // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)
     'operation',
+    // ios-share-capture (mobile incoming share host and capture form)
+    'stage', 'type', 'providerReady', 'dataReady', 'disabled',
+    'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',
 ];
 
 describe('release diagnostics field names', () => {

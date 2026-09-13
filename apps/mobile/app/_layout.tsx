@@ -366,7 +366,13 @@ function RootLayoutContentInner() {
   const tc = useThemeColors();
   const { language, setLanguage, isReady: languageReady, t } = useLanguage();
   const { showToast } = useToast();
-  const { hasShareIntent, shareIntent, resetShareIntent, error: shareIntentError } = useShareIntentContext();
+  const {
+    hasShareIntent,
+    shareIntent,
+    resetShareIntent,
+    error: shareIntentError,
+    isReady: shareIntentReady,
+  } = useShareIntentContext();
   const extraConfig = Constants.expoConfig?.extra as MobileExtraConfig | undefined;
   const isFossBuild = parseBool(extraConfig?.isFossBuild);
   const analyticsHeartbeatUrl = String(extraConfig?.analyticsHeartbeatUrl || '').trim();
@@ -569,6 +575,7 @@ function RootLayoutContentInner() {
     hasShareIntent,
     incomingUrl,
     incomingUrlKey,
+    providerReady: shareIntentReady,
     resolveText,
     resetShareIntent,
     router,
