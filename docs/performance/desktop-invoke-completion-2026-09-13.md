@@ -216,6 +216,7 @@ no Benchmark window, owned benchmark process or `tauri-driver` left running
 (`final-lab-state.json`). Android and normal app profiles were not accessed.
 The preceding published Android fix remains on `main` with all jobs in
 [CI 34742804799](https://github.com/dongdongbh/Mindwtr/actions/runs/34742804799)
-successful. This desktop continuation is local on
-`perf/desktop-save-serialization-20260913`; that remote CI does not certify these
-new instrumentation changes.
+successful. This desktop continuation was validated on
+`perf/desktop-save-serialization-20260913` before source commit `e282fa6e1`.
+The preceding Android CI does not certify these instrumentation changes; check
+the CI run for the current pushed `main` revision for integration status.

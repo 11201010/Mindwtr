@@ -35,10 +35,12 @@ the source is now committed, merged and pushed as
 `fc6b606c4554cb6d58792cce044f04cf958ca1cc`. All jobs in
 [CI 34742804799](https://github.com/dongdongbh/Mindwtr/actions/runs/34742804799)
 passed, with local/remote main SHA parity verified. The subsequent desktop
-completion-probe improvement is locally validated on
+completion-probe improvement is committed as `e282fa6e1`. It was validated on
 `perf/desktop-save-serialization-20260913` in the existing
 `/home/dd/worktrees/Mindwtr/desktop-stability-20260912` worktree.
-That CI run covers the published Android fix, not this desktop continuation.
+The dated report retains its pre-commit native build and runner identities.
+CI `34742804799` covers the Android fix; use the CI run for the current pushed
+`main` revision to establish integration status for the desktop continuation.
 
 ## Start here
 
