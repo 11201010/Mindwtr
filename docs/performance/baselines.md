@@ -219,6 +219,31 @@ label if both flags are enabled). Compare only matching diagnostic cohorts, neve
 these samples against uninstrumented baselines. The probe is runner-injected,
 never bundled into the application, and only observes synthetic benchmark tasks.
 
+To separate synchronous invoke dispatch from promise completion, add
+`NATIVE_INVOKE_PROBE=1` with `NATIVE_RENDER_PROBE=1` and `SAVE_QUEUE_MODE=idle`.
+This requires a fresh `VITE_STARTUP_PROFILING=1` Benchmark containing the versioned
+Mindwtr invoke transport; older archived binaries fail explicitly. Ordinary
+builds compile out that transport. The runner wraps the Mindwtr transport around
+the public Tauri API; it does not modify Tauri's protected internal functions.
+
+The probe uses the same page `performance.now()` clock as Enter, DOM appearance
+and frame opportunity. Each record contains only an allowlisted command
+(`save_data`, `save_task`, `get_data`), sequence, entry/return/settlement clocks and
+outcome. Entry-to-return measures synchronous public-invoke dispatch;
+return-to-settlement includes native work, response handling and callback delivery.
+Neither interval isolates SQL, recovery-file writing or hardware durability.
+The probe preserves the original operation and promise, installs after canonical
+fixture verification, and stops after the capture save-idle gate, before reload.
+Overflow beyond 64 calls, pending or failed observations, transport ownership
+loss or malformed evidence invalidates the sample. Exact capture readback and
+reload checks still apply.
+
+Reports add the independent `native-invoke-completion-v1` profiling label and
+retain the raw clocks. Compare only matching diagnostic cohorts; the existing
+`NATIVE_DIAGNOSTICS=1` fetch-header probe remains a different boundary. See
+[the native completion validation](desktop-invoke-completion-2026-09-13.md) for
+build identity, attribution and limits.
+
 Add `NATIVE_JSC_PROFILE=1` to that diagnostic command to retain JavaScriptCore
 stack samples from the isolated Linux WebView. It requires the render probe and
 labels reports additionally with `jsc-capture-1000us`. Only the child benchmark

@@ -3,7 +3,10 @@
 Updated September 13, 2026. Engineering handoff for future desktop and mobile
 sessions, not a claim that the performance audit is complete.
 
-Latest desktop control: `80dede27c78a4737d144bb4b81052cdc9b9a6406` on `main`.
+Latest desktop continuation base: published `fc6b606c4` on `main`. Its app/core
+sources match the verified archived timestamp-candidate control; see the
+[September 13 invoke investigation](desktop-invoke-completion-2026-09-13.md).
+The September 12 original control was `80dede27c78a4737d144bb4b81052cdc9b9a6406`.
 The accepted desktop commits are exact native capture readback (`0d6c2929a`)
 and shared token timestamp reuse (`992934a56`), now merged and pushed to `main`.
 The portability follow-up is `e22327cc2`; the dated reports retain the pre-commit
@@ -28,7 +31,14 @@ passed, and local/remote main SHA parity was verified. The subsequent Android
 document-provider write fix was validated on `perf/android-capture-cost-20260913`
 in `/home/dd/worktrees/Mindwtr/android-stability-20260913` before publication.
 Its dated report retains the pre-commit build identities and local/native checks;
-consult the source commit and its exact CI run for integration status.
+the source is now committed, merged and pushed as
+`fc6b606c4554cb6d58792cce044f04cf958ca1cc`. All jobs in
+[CI 34742804799](https://github.com/dongdongbh/Mindwtr/actions/runs/34742804799)
+passed, with local/remote main SHA parity verified. The subsequent desktop
+completion-probe improvement is locally validated on
+`perf/desktop-save-serialization-20260913` in the existing
+`/home/dd/worktrees/Mindwtr/desktop-stability-20260912` worktree.
+That CI run covers the published Android fix, not this desktop continuation.
 
 ## Start here
 
@@ -47,6 +57,20 @@ consult the source commit and its exact CI run for integration status.
    before merging/pushing; this handoff is not ongoing publication permission.
 
 ## Completed changes and strength of evidence
+
+September 13 desktop continuation: the opt-in completion probe separates public
+invoke entry, synchronous return and promise settlement in the capture's page
+clock. The ordinary bundle excludes its profiling transport. After two review
+corrections, 102 performance-tool tests, desktop checks and independent review
+passed. Ten fresh native cases passed with exact capture, SQLite readback,
+save-idle and reload checks. In five sampled captures, dispatch took 35–37ms and
+settlement followed 991–1091ms later. Dispatch occurred before DOM appearance in
+the two slower cases and afterward in the three faster cases. This establishes
+stronger attribution, not an app speedup or isolated SQL cost. See
+[native invoke completion](desktop-invoke-completion-2026-09-13.md) for exact
+builds/maps/runner identities, retained failures, clock limits and the clean
+control replacement. The lab ended unlocked with unchanged display outputs and
+no Benchmark processes; Android and normal app profiles were not accessed.
 
 September 13 next Android pass: two matched control batches set Newest before
 each preflight, passed 40/40 visible-IME checks and retained ten measured traces.
@@ -133,6 +157,10 @@ hashes, fixture sizes, safety tests, and limitations.
   opt-in JSC sampling locates pre-frame work. See
   [append visibility follow-up](native-append-capture-2026-09.md#capture-visibility-follow-up)
   and [native capture sampling](native-capture-sampling-2026-09.md).
+- `NATIVE_INVOKE_PROBE=1` adds bounded, allowlisted command completion records
+  through a profiling-only Mindwtr transport. It requires render/idle mode,
+  preserves Tauri internals and operation identity, and rejects lost ownership
+  or incomplete observations. [Completion validation](desktop-invoke-completion-2026-09-13.md).
 - On this dual-monitor niri workstation, `NATIVE_VIEWPORT=1200x800@2` targets
   only the verified Benchmark executable's window. Requested/actual dimensions,
   scale, and transient resizes are checked; other windows/display settings are
@@ -167,9 +195,11 @@ hashes, fixture sizes, safety tests, and limitations.
   batches do not establish an overall speedup or regression.
 - **Desktop capture:** deterministic preparation costs are reduced, but rare
   long Enter-to-DOM samples and roughly one-second automation-inclusive durable
-  readback at 10k tasks remain. September 12 fresh JSC sampling reproduced a
-  277 ms capture with save-serialization frames; the timestamp change did not
-  establish an overall speedup. Continue separating those save phases. Earlier
+  readback at 10k tasks remain. September 13 reproduced 256/303ms captures with
+  save preparation and synchronous public invoke dispatch before DOM appearance.
+  The roughly one-second post-return promise wait extends beyond DOM appearance
+  and is not synchronous JS blocking or isolated SQL time. No scheduling change
+  or overall speedup is established. Continue separating those save phases. Earlier
   large visibility differences did not consistently reproduce. Do not attribute
   all readback time to SQL or assume all rendering delays are fixed.
 - **Scrolling and Settings on Android:** 1k-task native baselines exist, with
@@ -210,11 +240,15 @@ Distinguish event handling, DOM/paint opportunity, preparation, IPC, native
 transaction, recovery JSON, and independent readback. Change only the dominant
 reproducible cost; extend the existing differential tests before touching writes.
 
-September 12 completed the fresh schema-2 control and timestamp A/B/B/A pass;
-start from its retained slow sample and matching maps. The next bounded hypothesis
-is save serialization overlapping capture rendering, with IPC/transaction/recovery
-timing still to separate. Do not repeat the completed token-timestamp experiment
-as if its native speedup had been established.
+September 13 completed fresh sampled control attribution and the native invoke
+completion boundary. Start from those retained profiles and matching maps rather
+than repeating the completed control or token-timestamp experiment. The next
+bounded hypothesis is reducing synchronous save preparation or payload serialization
+with deterministic output-equivalence and write-safety regressions. The two slow
+captures also leave 31–68ms between invoke return and DOM appearance to attribute.
+Native transaction, recovery-copy and response-handling costs remain separate
+open boundaries; do not infer a scheduling design or revive the rejected deferred
+watcher cache from the observed overlap alone.
 
 Acceptance: complete comparable reports, no input/keyboard regression, exact-once
 creation, durable readback and reload survival, and no weakened correctness gates.
