@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: "Release tag (e.g., v0.2.3)"
+        description: "Existing tag to build (push it to this repository first; this does not create a tag)"
         required: false
         type: string
       run_msstore:
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g., v0.2.3)"
+        description: "Existing tag to build (push it to this repository first; this does not create a tag)"
         required: false
         type: string
       run_msstore:
