@@ -88,10 +88,14 @@ const createMergeStats = (conflictIds: string[] = []): MergeStats => {
     };
 };
 
-const renderLayout = (currentView = 'inbox', onViewChange = vi.fn()) => render(
+const renderLayout = (
+    currentView = 'inbox',
+    onViewChange = vi.fn(),
+    contentView?: string,
+) => render(
     <LanguageProvider>
         <KeybindingProvider currentView={currentView} onNavigate={onNavigate}>
-            <Layout currentView={currentView} onViewChange={onViewChange}>
+            <Layout currentView={currentView} contentView={contentView} onViewChange={onViewChange}>
                 <div>Main content</div>
             </Layout>
         </KeybindingProvider>
@@ -169,6 +173,39 @@ afterEach(() => {
 });
 
 describe('Layout content width', () => {
+    it('sizes rendered content independently from the requested sidebar view', () => {
+        const { container, getByRole } = renderLayout('settings', vi.fn(), 'calendar');
+        const content = container.querySelector('[data-main-content] > div');
+
+        expect(getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+        expect(content).toHaveClass('w-full', 'max-w-screen-2xl');
+        expect(content).not.toHaveClass('max-w-none');
+    });
+
+    it.each([
+        ['savedSearch:one', 'max-w-4xl'],
+        ['next', 'max-w-6xl'],
+        ['calendar', 'max-w-screen-2xl'],
+        ['settings', 'max-w-none'],
+    ])('uses the %s rendered-view width class', (contentView, expectedClass) => {
+        const { container } = renderLayout('inbox', vi.fn(), contentView);
+        const content = container.querySelector('[data-main-content] > div');
+
+        expect(content).toHaveClass(expectedClass);
+    });
+
+    it('keeps focus mode narrower than the rendered view geometry', () => {
+        act(() => {
+            useUiStore.setState((state) => ({ ...state, isFocusMode: true }));
+        });
+
+        const { container } = renderLayout('settings', vi.fn(), 'calendar');
+        const content = container.querySelector('[data-main-content] > div');
+
+        expect(content).toHaveClass('max-w-[800px]');
+        expect(content).not.toHaveClass('max-w-screen-2xl', 'max-w-none');
+    });
+
     // This width has flipped between list-width, edge-to-edge, and back once already
     // (#966). jsdom cannot measure it, so pin both halves: wider than a list view,
     // still capped so the grid keeps its side margins.

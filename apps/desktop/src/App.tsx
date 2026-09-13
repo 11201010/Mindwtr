@@ -1189,16 +1189,19 @@ function App() {
         return () => idleCancel(id);
     }, [sandboxMode]);
 
+    // Geometry follows the route that is actually committed inside Suspense.
+    // Sidebar selection remains urgent through currentView while a lazy route loads.
+    const renderedView = activeView === 'timeline' && !timelineEnabled ? DEFAULT_DESKTOP_VIEW : activeView;
+
     const renderView = () => {
-        if (activeView.startsWith('savedSearch:')) {
-            const savedSearchId = activeView.replace('savedSearch:', '');
+        if (renderedView.startsWith('savedSearch:')) {
+            const savedSearchId = renderedView.replace('savedSearch:', '');
             return <SearchView savedSearchId={savedSearchId} />;
         }
         // Timeline is opt-in (#1111). The hydration-gated effect below
         // canonicalizes route state; this local guard keeps the transition safe
         // while loaded settings and the state update settle.
-        const view = activeView === 'timeline' && !timelineEnabled ? DEFAULT_DESKTOP_VIEW : activeView;
-        switch (view) {
+        switch (renderedView) {
             case 'inbox':
                 return <ListView title={t('list.inbox')} statusFilter="inbox" />;
             case 'agenda':
@@ -1656,7 +1659,12 @@ function App() {
     return (
         <ErrorBoundary>
             <KeybindingProvider currentView={currentView} onNavigate={handleViewChange}>
-                <Layout currentView={currentView} onViewChange={handleViewChange} onOpenSyncSettings={openSyncSettings}>
+                <Layout
+                    currentView={currentView}
+                    contentView={renderedView}
+                    onViewChange={handleViewChange}
+                    onOpenSyncSettings={openSyncSettings}
+                >
                     <PersistenceFailureBanner />
                     <Suspense
                         fallback={(

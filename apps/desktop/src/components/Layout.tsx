@@ -45,6 +45,7 @@ import { getWorkspaceCache } from '../lib/workspace-cache';
 interface LayoutProps {
     children: React.ReactNode;
     currentView: string;
+    contentView?: string;
     onViewChange: (view: string) => void;
     onOpenSyncSettings?: () => void;
 }
@@ -110,7 +111,13 @@ function saveCollapsedSections(keys: Set<string>) {
     }
 }
 
-export function Layout({ children, currentView, onViewChange, onOpenSyncSettings }: LayoutProps) {
+export function Layout({
+    children,
+    currentView,
+    contentView = currentView,
+    onViewChange,
+    onOpenSyncSettings,
+}: LayoutProps) {
     const sandboxMode = isSandboxMode();
     const { tasks, projects, areas, settings, updateSettings, error, setError } = useTaskStore((state) => ({
         tasks: state.tasks,
@@ -317,7 +324,7 @@ export function Layout({ children, currentView, onViewChange, onOpenSyncSettings
         'agenda',
         'obsidian',
     ]);
-    const isWideView = wideViews.has(currentView);
+    const isWideView = wideViews.has(contentView);
     const fullWidthViews = new Set([
         'board',
         'projects',
@@ -325,7 +332,7 @@ export function Layout({ children, currentView, onViewChange, onOpenSyncSettings
         'obsidian',
         'settings',
     ]);
-    const isFullWidthView = fullWidthViews.has(currentView);
+    const isFullWidthView = fullWidthViews.has(contentView);
 
     const navSections = useMemo<NavSection[]>(() => ([
         {
@@ -1073,7 +1080,7 @@ export function Layout({ children, currentView, onViewChange, onOpenSyncSettings
                             // The week/month grids want more room than a list does, but going
                             // edge-to-edge looks wrong, so the calendar keeps its side margins (#966).
                             // The timeline is the same shape of chart and takes the same box (#1111).
-                            : currentView === 'calendar' || currentView === 'timeline'
+                            : contentView === 'calendar' || contentView === 'timeline'
                             ? "w-full max-w-screen-2xl"
                             : isWideView
                             ? "w-full max-w-6xl"

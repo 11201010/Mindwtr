@@ -42,6 +42,33 @@ The dated report retains its pre-commit native build and runner identities.
 CI `34742804799` covers the Android fix; use the CI run for the current pushed
 `main` revision to establish integration status for the desktop continuation.
 
+## September 13 sidebar transition correction
+
+The desktop navigation flash reported in a private recording is corrected at the
+shared App/Layout boundary. Page geometry now follows the rendered route while
+the sidebar selects the destination immediately. See the
+[navigation geometry report](desktop-navigation-layout-2026-09-13.md) for exact
+frame intervals, source/build identities, and retained failed runs.
+
+Production Chromium reproduced 11 failures in 17 control cases; the candidate
+passed 21 cases across 800/1280/1920-pixel windows. Actual Linux Benchmark
+WebKitGTK navigation passed all 15 destinations; an older native control
+reproduced eight failures. Focused tests, desktop render budgets, Settings browser
+regressions, both builds, and independent review passed. This is a visual-stability
+fix, not a route-speed or completed performance-audit claim. Windows/macOS native
+confirmation remains open. Test windows were closed and personal/Android data
+were untouched. Use the exact pushed revision's CI for publication status.
+
+Separately, the unchanged performance job in
+[CI 34773346431](https://github.com/dongdongbh/Mindwtr/actions/runs/34773346431)
+passed on retry after a fingerprint growth result of 8.0439× exceeded the 8× gate.
+The isolated unchanged test passed, and the hosted retry measured 4.8729×.
+Both attempts remain in local evidence; no budget was weakened. The full run and
+[Native Platform CI 34773346441](https://github.com/dongdongbh/Mindwtr/actions/runs/34773346441)
+completed successfully at `e1af4d85a`. The later Windows Store-routing correction
+`cde9cd61a` passed [CI 34774178496](https://github.com/dongdongbh/Mindwtr/actions/runs/34774178496).
+These statuses do not certify a later navigation commit.
+
 ## Start here
 
 1. Read this handoff, then the relevant investigation linked below. Historical
