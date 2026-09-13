@@ -73,9 +73,8 @@ These statuses do not certify a later navigation commit.
 
 The task-to-Reference fix now exposes retained checklist data as an editable plain
 list on desktop and mobile, preserving item identity, order and saved completion
-flags for conversion back. It is committed as `a5524db52` in its isolated
-worktree and merged into local main as `3034a6e1c`; check remote publication
-separately. Browser round-trip tests passed all five cases, and independent
+flags for conversion back. It is published on main as `a5524db52` (also merged
+into local main as `3034a6e1c`). Browser round-trip tests passed all five cases, and independent
 review corrections protect hidden completion flags during multiline paste and
 include retained list text in mobile accessibility labels.
 
@@ -99,6 +98,24 @@ physical iOS scheduling remain unverified. Public docs for both changes are
 published at `303af072a5113cf57f0fcc802625eddb50511db6`; their
 [Build and SEO checks](https://github.com/dongdongbh/mindwtr-web/actions/runs/34789593322)
 passed. No release was initiated. Use the final app revision's CI separately.
+
+All three app fixes are published through `dbfce7b0f`: Reference lists
+(`a5524db52`), checklist focus (`bb1e30a7a`), and automatic scheduling
+(`09d0925ce`). [Native Platform CI 34789891497](https://github.com/dongdongbh/Mindwtr/actions/runs/34789891497)
+passed. [CI 34789891478](https://github.com/dongdongbh/Mindwtr/actions/runs/34789891478)
+passed all other jobs but hit the unchanged navigation-layout test's five-second
+timeout in the desktop coverage suite. The follow-up replaces incidental Calendar
+grid rendering with a heading fixture, scopes content queries, and reuses the
+clicked sidebar buttons for their selection assertions; the real
+App/Layout boundary, deferred route promises, geometry assertions, and timeout
+remain intact. The final candidate passed with coverage (1.50-second test body),
+typecheck and lint. An earlier rerun timed out during a separate full repository
+suite; that failed run remains in local evidence. Temporarily restoring the
+premature `contentView={currentView}` behavior failed the expected wide-layout
+assertion, proving that the regression remains detectable; App.tsx was restored
+byte for byte. Independent review passed. This is test-fixture hardening, not an
+app performance claim. Check the follow-up revision's CI for final integration
+status. Unrelated local release preparation remains unpublished.
 
 ## Start here
 
