@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const nativeBackgroundTaskState = vi.hoisted(() => ({ registered: false }));
+
 const backgroundTaskMock = vi.hoisted(() => ({
   BackgroundTaskResult: {
     Success: 1,
@@ -84,12 +86,17 @@ describe('mobile background sync task', () => {
     vi.clearAllMocks();
     taskManagerMock.state.executor = null;
     reactNativeMock.AppState.currentState = 'active';
+    nativeBackgroundTaskState.registered = false;
     taskManagerMock.isTaskDefined.mockReturnValue(false);
     taskManagerMock.isAvailableAsync.mockResolvedValue(true);
-    taskManagerMock.isTaskRegisteredAsync.mockResolvedValue(false);
+    taskManagerMock.isTaskRegisteredAsync.mockImplementation(async () => nativeBackgroundTaskState.registered);
     backgroundTaskMock.getStatusAsync.mockResolvedValue(backgroundTaskMock.BackgroundTaskStatus.Available);
-    backgroundTaskMock.registerTaskAsync.mockResolvedValue(undefined);
-    backgroundTaskMock.unregisterTaskAsync.mockResolvedValue(undefined);
+    backgroundTaskMock.registerTaskAsync.mockImplementation(async () => {
+      nativeBackgroundTaskState.registered = true;
+    });
+    backgroundTaskMock.unregisterTaskAsync.mockImplementation(async () => {
+      nativeBackgroundTaskState.registered = false;
+    });
     coreMock.flushPendingSave.mockResolvedValue(undefined);
     syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'off', configured: false });
     syncServiceMock.performMobileSync.mockResolvedValue({ success: true });
@@ -340,98 +347,217 @@ describe('mobile background sync task', () => {
     expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(2);
   });
 
-  describe('background sync interval setting', () => {
-    it('registers with the stored 1h interval as 60 minutes', async () => {
+  describe('automatic background sync schedule', () => {
+    it.each(['off', '15m', '1h', '6h', 'invalid'])('ignores the legacy saved %s choice and registers the fixed schedule', async (legacyChoice) => {
       syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'cloud', configured: true });
+      asyncStorageMock.store.set('@mindwtr_background_sync_interval', legacyChoice);
 
       const module = await loadModule();
-      await module.setMobileBackgroundSyncInterval('1h');
       const result = await module.syncMobileBackgroundSyncRegistration();
 
       expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME, {
-        minimumInterval: 60,
+        minimumInterval: module.MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES,
       });
-      expect(result).toMatchObject({ action: 'registered', interval: '1h' });
+      expect(result).toMatchObject({ action: 'registered', interval: '15m', registered: true });
     });
 
-    it('registers with the stored 6h interval as 360 minutes', async () => {
-      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'cloudkit', configured: true });
-
-      const module = await loadModule();
-      await module.setMobileBackgroundSyncInterval('6h');
-      const result = await module.syncMobileBackgroundSyncRegistration();
-
-      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME, {
-        minimumInterval: 360,
-      });
-      expect(result).toMatchObject({ action: 'registered', interval: '6h' });
-    });
-
-    it('unregisters when the interval is off even though the backend supports scheduled sync', async () => {
-      taskManagerMock.isTaskRegisteredAsync.mockResolvedValue(true);
+    it('leaves an existing fixed registration unchanged and logs readiness once', async () => {
       syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      nativeBackgroundTaskState.registered = true;
+      const { BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY } = await import('./sync-constants');
+      asyncStorageMock.store.set(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, '15m');
 
       const module = await loadModule();
-      await module.setMobileBackgroundSyncInterval('off');
-      const result = await module.syncMobileBackgroundSyncRegistration();
-
-      expect(backgroundTaskMock.registerTaskAsync).not.toHaveBeenCalled();
-      expect(backgroundTaskMock.unregisterTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME);
-      expect(result).toMatchObject({ action: 'unregistered', interval: 'off', registered: false });
-    });
-
-    it('never registers a File Sync backend regardless of the configured interval', async () => {
-      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'file', configured: true });
-
-      const module = await loadModule();
-      for (const interval of ['15m', '1h', '6h'] as const) {
-        await module.setMobileBackgroundSyncInterval(interval);
-        const result = await module.syncMobileBackgroundSyncRegistration();
-        expect(result.registered).toBe(false);
-      }
-      expect(backgroundTaskMock.registerTaskAsync).not.toHaveBeenCalled();
-    });
-
-    it('re-registers (unregister then register) when the interval changes from 15m to 1h', async () => {
-      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
-      // Not yet registered on the first reconcile; registered from then on, like a
-      // real device after BackgroundTask.registerTaskAsync has actually taken.
-      taskManagerMock.isTaskRegisteredAsync.mockResolvedValueOnce(false).mockResolvedValue(true);
-
-      const module = await loadModule();
-      await module.setMobileBackgroundSyncInterval('15m');
       const first = await module.syncMobileBackgroundSyncRegistration();
-      expect(first).toMatchObject({ action: 'registered', interval: '15m' });
-      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenLastCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME, {
-        minimumInterval: 15,
-      });
-
-      backgroundTaskMock.registerTaskAsync.mockClear();
-      backgroundTaskMock.unregisterTaskAsync.mockClear();
-      await module.setMobileBackgroundSyncInterval('1h');
-      const second = await module.syncMobileBackgroundSyncRegistration();
-
-      expect(backgroundTaskMock.unregisterTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME);
-      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME, {
-        minimumInterval: 60,
-      });
-      expect(second).toMatchObject({ action: 'registered', interval: '1h' });
-    });
-
-    it('does not unregister-then-register again when reconciling with an unchanged interval', async () => {
-      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
-      taskManagerMock.isTaskRegisteredAsync.mockResolvedValueOnce(false).mockResolvedValue(true);
-
-      const module = await loadModule();
-      await module.setMobileBackgroundSyncInterval('15m');
-      await module.syncMobileBackgroundSyncRegistration();
-
-      backgroundTaskMock.registerTaskAsync.mockClear();
-      backgroundTaskMock.unregisterTaskAsync.mockClear();
       const second = await module.syncMobileBackgroundSyncRegistration();
 
       expect(backgroundTaskMock.unregisterTaskAsync).not.toHaveBeenCalled();
-      expect(second).toMatchObject({ action: 'unchanged', interval: '15m' });
+      expect(backgroundTaskMock.registerTaskAsync).not.toHaveBeenCalled();
+      expect(first).toMatchObject({ action: 'unchanged', interval: '15m', registered: true });
+      expect(second).toMatchObject({ action: 'unchanged', interval: '15m', registered: true });
+      expect(appLogMock.logInfo).toHaveBeenCalledWith('Automatic mobile background sync schedule ready', {
+        scope: 'sync',
+        extra: {
+          releaseCheck: 'v1.3.0/automatic-background-sync',
+          interval: '15m',
+          outcome: 'unchanged',
+        },
+      });
+      expect(appLogMock.logInfo.mock.calls.filter(([message]) => (
+        message === 'Automatic mobile background sync schedule ready'
+      ))).toHaveLength(1);
+    });
+
+    it.each(['off', '1h', '6h', 'invalid'])('migrates an existing legacy %s registration once in the foreground', async (legacyInterval) => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'cloudkit', configured: true });
+      nativeBackgroundTaskState.registered = true;
+      const { BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY } = await import('./sync-constants');
+      asyncStorageMock.store.set(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, legacyInterval);
+
+      const module = await loadModule();
+      const result = await module.syncMobileBackgroundSyncRegistration();
+
+      expect(backgroundTaskMock.unregisterTaskAsync).toHaveBeenCalledTimes(1);
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledTimes(1);
+      expect(backgroundTaskMock.unregisterTaskAsync.mock.invocationCallOrder[0])
+        .toBeLessThan(backgroundTaskMock.registerTaskAsync.mock.invocationCallOrder[0]);
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledWith(module.MOBILE_BACKGROUND_SYNC_TASK_NAME, {
+        minimumInterval: 15,
+      });
+      expect(asyncStorageMock.store.get(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY)).toBe('15m');
+      expect(result).toMatchObject({ action: 'registered', interval: '15m', registered: true });
+    });
+
+    it.each(['background', 'inactive'])('defers every native mutation while the app is %s', async (appState) => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      nativeBackgroundTaskState.registered = true;
+      const { BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY } = await import('./sync-constants');
+      asyncStorageMock.store.set(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, '1h');
+      reactNativeMock.AppState.currentState = appState;
+
+      const module = await loadModule();
+      const result = await module.syncMobileBackgroundSyncRegistration();
+
+      expect(backgroundTaskMock.unregisterTaskAsync).not.toHaveBeenCalled();
+      expect(backgroundTaskMock.registerTaskAsync).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ action: 'unchanged', interval: '15m', registered: true });
+      expect(appLogMock.logInfo).not.toHaveBeenCalledWith(
+        'Automatic mobile background sync schedule ready',
+        expect.anything(),
+      );
+    });
+
+    it('serializes overlapping reads so a later caller applies changed configuration', async () => {
+      const firstConfigReadStarted = createDeferred<void>();
+      const firstConfigRead = createDeferred<{ backend: 'off'; configured: false }>();
+      syncServiceMock.getMobileSyncConfigurationStatus
+        .mockImplementationOnce(() => {
+          firstConfigReadStarted.resolve();
+          return firstConfigRead.promise;
+        })
+        .mockResolvedValue({ backend: 'webdav', configured: true });
+
+      const module = await loadModule();
+      const first = module.syncMobileBackgroundSyncRegistration();
+      const second = module.syncMobileBackgroundSyncRegistration();
+      await firstConfigReadStarted.promise;
+      expect(syncServiceMock.getMobileSyncConfigurationStatus).toHaveBeenCalledTimes(1);
+
+      firstConfigRead.resolve({ backend: 'off', configured: false });
+      await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledTimes(1);
+      expect(backgroundTaskMock.unregisterTaskAsync).not.toHaveBeenCalled();
+    });
+
+    it('re-reads changed configuration after a slow native mutation and leaves the current policy applied', async () => {
+      let configuration: { backend: 'webdav' | 'off'; configured: boolean } = {
+        backend: 'webdav',
+        configured: true,
+      };
+      syncServiceMock.getMobileSyncConfigurationStatus.mockImplementation(async () => ({ ...configuration }));
+      const registrationStarted = createDeferred<void>();
+      const registrationFinished = createDeferred<void>();
+      backgroundTaskMock.registerTaskAsync.mockImplementationOnce(async () => {
+        registrationStarted.resolve();
+        await registrationFinished.promise;
+        nativeBackgroundTaskState.registered = true;
+      });
+
+      const module = await loadModule();
+      const first = module.syncMobileBackgroundSyncRegistration();
+      await registrationStarted.promise;
+      configuration = { backend: 'off', configured: false };
+      const second = module.syncMobileBackgroundSyncRegistration();
+      registrationFinished.resolve();
+
+      await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledTimes(1);
+      expect(backgroundTaskMock.unregisterTaskAsync).toHaveBeenCalledTimes(1);
+      expect(nativeBackgroundTaskState.registered).toBe(false);
+      expect(appLogMock.logInfo).not.toHaveBeenCalledWith(
+        'Automatic mobile background sync schedule ready',
+        expect.anything(),
+      );
+    });
+
+    it('recovers the reconciliation queue after registration fails', async () => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      backgroundTaskMock.registerTaskAsync.mockRejectedValueOnce(new Error('native registration failed'));
+
+      const module = await loadModule();
+      await expect(module.syncMobileBackgroundSyncRegistration()).rejects.toThrow('native registration failed');
+      const retry = await module.syncMobileBackgroundSyncRegistration();
+
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledTimes(2);
+      expect(retry).toMatchObject({ action: 'registered', interval: '15m', registered: true });
+    });
+
+    it('waits for active background work before replacing a legacy worker', async () => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      nativeBackgroundTaskState.registered = true;
+      const { BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY } = await import('./sync-constants');
+      asyncStorageMock.store.set(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, '1h');
+      const syncStarted = createDeferred<void>();
+      const syncFinished = createDeferred<{ success: boolean }>();
+      const waitingLogged = createDeferred<void>();
+      syncServiceMock.performMobileSync.mockImplementationOnce(() => {
+        syncStarted.resolve();
+        return syncFinished.promise;
+      });
+      appLogMock.logInfo.mockImplementation((message, context) => {
+        if (
+          message === 'Mobile background sync registration checked'
+          && context?.extra?.decision === 'waiting-for-background-run'
+        ) {
+          waitingLogged.resolve();
+        }
+      });
+
+      const module = await loadModule();
+      const executor = taskManagerMock.state.executor;
+      if (!executor) throw new Error('Expected the background sync task to be defined');
+      const activeRun = executor();
+      await syncStarted.promise;
+      const reconciliation = module.syncMobileBackgroundSyncRegistration();
+      await waitingLogged.promise;
+      expect(backgroundTaskMock.unregisterTaskAsync).not.toHaveBeenCalled();
+
+      syncFinished.resolve({ success: true });
+      await activeRun;
+      const result = await reconciliation;
+
+      expect(backgroundTaskMock.unregisterTaskAsync).toHaveBeenCalledTimes(1);
+      expect(backgroundTaskMock.registerTaskAsync).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ action: 'registered', registered: true });
+    });
+
+    it('does not cancel an executing worker when reconciliation runs headlessly', async () => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      nativeBackgroundTaskState.registered = true;
+      const { BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY } = await import('./sync-constants');
+      asyncStorageMock.store.set(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, '6h');
+      const syncStarted = createDeferred<void>();
+      const syncFinished = createDeferred<{ success: boolean }>();
+      syncServiceMock.performMobileSync.mockImplementationOnce(() => {
+        syncStarted.resolve();
+        return syncFinished.promise;
+      });
+
+      const module = await loadModule();
+      const executor = taskManagerMock.state.executor;
+      if (!executor) throw new Error('Expected the background sync task to be defined');
+      const activeRun = executor();
+      await syncStarted.promise;
+      reactNativeMock.AppState.currentState = 'background';
+
+      const result = await module.syncMobileBackgroundSyncRegistration();
+      expect(result.action).toBe('unchanged');
+      expect(backgroundTaskMock.unregisterTaskAsync).not.toHaveBeenCalled();
+      expect(backgroundTaskMock.registerTaskAsync).not.toHaveBeenCalled();
+
+      syncFinished.resolve({ success: true });
+      await activeRun;
     });
   });
 });

@@ -44,10 +44,7 @@ import {
     MobileSyncConfigurationTransactionError,
 } from '@/lib/sync-configuration-transaction';
 import {
-    getMobileBackgroundSyncInterval,
-    setMobileBackgroundSyncInterval,
     syncMobileBackgroundSyncRegistration,
-    type BackgroundSyncInterval,
 } from '@/lib/background-sync-task';
 import { getMobileCloudRequestOptions, getMobileWebDavRequestOptions } from '@/lib/webdav-request-options';
 import { rememberWebdavCapabilityProof } from '@/lib/webdav-capability-proof';
@@ -180,7 +177,6 @@ export function useSyncSettingsTransportActions({
     supportsNativeICloudSync,
     t,
 }: UseSyncSettingsTransportActionsParams) {
-    const [backgroundSyncInterval, setBackgroundSyncIntervalState] = useState<BackgroundSyncInterval>('15m');
     const [syncPath, setSyncPath] = useState<string | null>(null);
     const [syncPathBookmark, setSyncPathBookmark] = useState<string | null>(null);
     const [syncBackend, setSyncBackend] = useState<SyncBackend>('off');
@@ -305,11 +301,8 @@ export function useSyncSettingsTransportActions({
             ]),
             getSecureConfigValue(WEBDAV_PASSWORD_KEY),
             getSecureConfigValue(CLOUD_TOKEN_KEY),
-            getMobileBackgroundSyncInterval(),
-        ]).then(([entries, storedWebDavPassword, storedCloudToken, storedBackgroundSyncInterval]) => {
+        ]).then(([entries, storedWebDavPassword, storedCloudToken]) => {
             if (cancelled) return;
-
-            setBackgroundSyncIntervalState(storedBackgroundSyncInterval);
 
             const entryMap = new Map(entries);
             const path = entryMap.get(SYNC_PATH_KEY);
@@ -413,13 +406,6 @@ export function useSyncSettingsTransportActions({
             cancelled = true;
         };
     }, [dropboxConfigured]);
-
-    const handleSetBackgroundSyncInterval = useCallback((interval: BackgroundSyncInterval) => {
-        setBackgroundSyncIntervalState(interval);
-        setMobileBackgroundSyncInterval(interval)
-            .then(reconcileBackgroundSyncRegistration)
-            .catch(logSettingsError);
-    }, []);
 
     // Choosing a backend or provider whose target is already complete (a saved
     // WebDAV/self-hosted server, a connected Dropbox, a picked folder) activates
@@ -1389,7 +1375,6 @@ export function useSyncSettingsTransportActions({
     ]);
 
     return {
-        backgroundSyncInterval,
         cloudKitAccountStatus,
         cloudAllowInsecureHttp,
         cloudProvider,
@@ -1403,7 +1388,6 @@ export function useSyncSettingsTransportActions({
         handleSaveWebDavSettings,
         handleSelectCloudProvider,
         handleSelectSyncBackend,
-        handleSetBackgroundSyncInterval,
         handleSetSyncPath,
         handleSync,
         handleTestConnection,

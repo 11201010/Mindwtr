@@ -5,8 +5,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { translateWithFallback } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
-import { CompactText } from '@/components/compact-text';
-import { MOBILE_BACKGROUND_SYNC_INTERVAL_OPTIONS, type BackgroundSyncInterval } from '@/lib/sync-constants';
 import {
   getSyncEncryptionDiagnosticsLines,
   logSyncEncryptionDiagnosticsBlock,
@@ -99,78 +97,6 @@ export function SyncLastStatusCard({
           )}
           {historyContent}
         </View>
-      </View>
-    </View>
-  );
-}
-
-const BACKGROUND_SYNC_INTERVAL_LABEL_KEYS: Record<BackgroundSyncInterval, string> = {
-  off: 'settings.syncMobile.backgroundSyncIntervalOff',
-  '15m': 'settings.syncMobile.backgroundSyncIntervalEvery15Minutes',
-  '1h': 'settings.syncMobile.backgroundSyncIntervalEveryHour',
-  '6h': 'settings.syncMobile.backgroundSyncIntervalEvery6Hours',
-};
-
-type BackgroundSyncInfoCardProps = {
-  interval: BackgroundSyncInterval;
-  isRemoteBackend: boolean;
-  onSelectInterval: (interval: BackgroundSyncInterval) => void;
-  tr: SettingsTranslator;
-  tc: ThemeColors;
-};
-
-export function BackgroundSyncInfoCard({
-  interval,
-  isRemoteBackend,
-  onSelectInterval,
-  tr,
-  tc,
-}: BackgroundSyncInfoCardProps) {
-  return (
-    <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 16 }]}>
-      <View style={styles.settingRowColumn}>
-        <View>
-          <Text style={[styles.settingLabel, { color: tc.text }]}>
-            {tr('settings.syncMobile.backgroundSync')}
-          </Text>
-          <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
-            {isRemoteBackend
-              ? tr('settings.syncMobile.backgroundSyncIntervalDescription')
-              : tr('settings.syncMobile.scheduledBackgroundSyncIsAvailableForWebdavSelfHostedCloud')}
-          </Text>
-        </View>
-        {isRemoteBackend && (
-          <>
-            <Text style={[styles.settingLabel, { color: tc.text, marginTop: 12 }]}>
-              {tr('settings.syncMobile.backgroundSyncInterval')}
-            </Text>
-            <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border, marginTop: 8 }]}>
-              {MOBILE_BACKGROUND_SYNC_INTERVAL_OPTIONS.map((option) => {
-                const selected = interval === option;
-                return (
-                  <TouchableOpacity
-                    key={option}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    style={[
-                      styles.gtdSegmentedOption,
-                      { backgroundColor: selected ? tc.filterBg : 'transparent' },
-                    ]}
-                    onPress={() => onSelectInterval(option)}
-                    activeOpacity={0.8}
-                  >
-                    <CompactText
-                      style={[styles.gtdSegmentedOptionText, { color: selected ? tc.tint : tc.secondaryText }]}
-                      numberOfLines={2}
-                    >
-                      {tr(BACKGROUND_SYNC_INTERVAL_LABEL_KEYS[option])}
-                    </CompactText>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </>
-        )}
       </View>
     </View>
   );

@@ -116,7 +116,7 @@ describe('settings menu search index', () => {
     // — a different key, the same text — see settings.constants.ts's
     // MOBILE_SEARCH_KEY_OVERRIDES). A key silently dropped here means a real
     // setting becomes unfindable through mobile search.
-    it('every non-excluded desktop settings-search key is discoverable somewhere on mobile', () => {
+    it('every available desktop settings-search key is discoverable somewhere on mobile', () => {
         const mobileTexts = new Set(
             Object.values(SETTINGS_MENU_KEYWORD_KEYS)
                 .flat()
@@ -126,6 +126,9 @@ describe('settings menu search index', () => {
         const missing: string[] = [];
         for (const entry of SETTINGS_SEARCH_INDEX) {
             if (entry.key in SETTINGS_SEARCH_MOBILE_EXCLUSIONS) continue;
+            // Mobile has no background-sync control; scheduling follows the
+            // automatic platform policy and must not lead to a dead result.
+            if (entry.key === 'backgroundSync') continue;
             const text = getEnglishI18nValue(resolveSettingsSearchI18nKey(entry.key));
             if (text && !mobileTexts.has(text)) missing.push(`${entry.key} -> "${text}"`);
         }
@@ -146,18 +149,20 @@ describe('settings menu search index', () => {
         expect(visibleRowIds('official website')).toEqual(['about']);
     });
 
-    // The three settings this task found genuinely missing from mobile search
-    // despite existing (with a working i18n key) on mobile's own screens:
-    // gtd-settings-screen.tsx renders quickAddAutoClean/markdownEditorAssist,
-    // sync-settings-sections.tsx renders backgroundSync — none were indexed.
+    // The mobile-only settings this task found genuinely missing from search
+    // despite existing (with working i18n keys) on their own screens.
     it('finds the settings this task discovered were missing from the mobile index', () => {
         expect(visibleRowIds('clean up quick add')).toEqual(['gtd']);
         expect(visibleRowIds('editor typing help')).toEqual(['gtd']);
-        expect(visibleRowIds('background sync')).toEqual(['sync']);
         // Android-only, so it is absent from desktop's roster and no derived
         // key covers it — general-settings-screen renders it behind
         // isAppSearchSupported().
         expect(visibleRowIds('expose to system search')).toEqual(['general']);
+    });
+
+    it('does not navigate to the removed mobile background-sync interval card', () => {
+        expect(visibleRowIds('background sync')).toEqual([]);
+        expect(visibleRowIds('sync history')).toEqual(['sync']);
     });
 
     it('shows every row for an empty or whitespace query', () => {
