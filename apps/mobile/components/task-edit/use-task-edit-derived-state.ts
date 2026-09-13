@@ -270,6 +270,7 @@ export function useTaskEditDerivedState({
     ]);
     const isFieldVisible = useCallback(
         (fieldId: TaskEditorFieldId) => {
+            if (isReference && fieldId === 'checklist') return hasValue(fieldId);
             if (isReference && REFERENCE_HIDDEN_FIELDS.has(fieldId)) return false;
             if (fieldId === 'section') return showSectionField;
             if (fieldId === 'assignedTo' && editStatus === 'waiting' && !isAssignedToExplicitlyHidden) return true;

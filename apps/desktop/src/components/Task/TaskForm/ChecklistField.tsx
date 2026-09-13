@@ -39,6 +39,7 @@ type ChecklistFieldProps = {
     t: (key: string) => string;
     taskId: string;
     checklist: Task['checklist'];
+    plainList?: boolean;
     updateTask: (taskId: string, updates: Partial<Task>) => void;
     resetTaskChecklist: (taskId: string) => void;
 };
@@ -149,6 +150,7 @@ export function ChecklistField({
     t,
     taskId,
     checklist,
+    plainList = false,
     updateTask,
     resetTaskChecklist,
 }: ChecklistFieldProps) {
@@ -314,7 +316,9 @@ export function ChecklistField({
             ? {
                 ...current,
                 title: firstParsed?.title ?? '',
-                isCompleted: current.isCompleted || (firstParsed?.isCompleted ?? false),
+                isCompleted: plainList
+                    ? current.isCompleted
+                    : current.isCompleted || (firstParsed?.isCompleted ?? false),
             }
             : {
                 ...current,
@@ -326,14 +330,14 @@ export function ChecklistField({
         const inserted = restItems.map((item) => ({
             id: generateUUID(),
             title: item.title,
-            isCompleted: item.isCompleted,
+            isCompleted: plainList ? false : item.isCompleted,
         }));
         const nextList = [...list.slice(0, index), updatedCurrent, ...inserted, ...list.slice(index + 1)];
         setChecklistDraft(nextList);
         checklistDraftRef.current = nextList;
         checklistDirtyRef.current = false;
         commitChecklistUpdate(nextList);
-    }, [commitChecklistUpdate, getInputSelection]);
+    }, [commitChecklistUpdate, getInputSelection, plainList]);
 
     const handleChecklistDragEnd = useCallback((event: DragEndEvent) => {
         const { active, over } = event;
@@ -365,7 +369,9 @@ export function ChecklistField({
                 }
             }}
         >
-            <TaskEditorFieldLabel icon={ListChecks}>{t('taskEdit.checklist')}</TaskEditorFieldLabel>
+            <TaskEditorFieldLabel icon={ListChecks}>
+                {t(plainList ? 'taskEdit.tab.list' : 'taskEdit.checklist')}
+            </TaskEditorFieldLabel>
             <div className="space-y-2 pr-3">
                 {/* Keep late-mounted drag announcements from adding a gap before the Add button. */}
                 <div className="space-y-2">
@@ -381,27 +387,36 @@ export function ChecklistField({
                                     {({ handle }) => (
                                         <>
                                             {handle}
-                                            <button
-                                                type="button"
-                                                aria-label={`${t('taskEdit.checklist')} ${index + 1}`}
-                                                onClick={() => {
-                                                    const newList = checklistItems.map((entry, i) =>
-                                                        i === index ? { ...entry, isCompleted: !entry.isCompleted } : entry
-                                                    );
-                                                    setChecklistDraft(newList);
-                                                    checklistDraftRef.current = newList;
-                                                    checklistDirtyRef.current = false;
-                                                    commitChecklistUpdate(newList);
-                                                }}
-                                                className={cn(
-                                                    'w-4 h-4 shrink-0 border rounded flex items-center justify-center transition-colors',
-                                                    item.isCompleted
-                                                        ? 'bg-primary border-primary text-primary-foreground'
-                                                        : 'border-muted-foreground hover:border-primary'
-                                                )}
-                                            >
-                                                {item.isCompleted && <Check className="w-3 h-3" />}
-                                            </button>
+                                            {plainList ? (
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="w-4 shrink-0 text-center text-sm text-muted-foreground"
+                                                >
+                                                    •
+                                                </span>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    aria-label={`${t('taskEdit.checklist')} ${index + 1}`}
+                                                    onClick={() => {
+                                                        const newList = checklistItems.map((entry, i) =>
+                                                            i === index ? { ...entry, isCompleted: !entry.isCompleted } : entry
+                                                        );
+                                                        setChecklistDraft(newList);
+                                                        checklistDraftRef.current = newList;
+                                                        checklistDirtyRef.current = false;
+                                                        commitChecklistUpdate(newList);
+                                                    }}
+                                                    className={cn(
+                                                        'w-4 h-4 shrink-0 border rounded flex items-center justify-center transition-colors',
+                                                        item.isCompleted
+                                                            ? 'bg-primary border-primary text-primary-foreground'
+                                                            : 'border-muted-foreground hover:border-primary'
+                                                    )}
+                                                >
+                                                    {item.isCompleted && <Check className="w-3 h-3" />}
+                                                </button>
+                                            )}
                                             <input
                                                 type="text"
                                                 value={item.title}
@@ -510,7 +525,7 @@ export function ChecklistField({
                                                 }}
                                                 className={cn(
                                                     'flex-1 bg-transparent text-sm focus:outline-none border-b border-transparent focus:border-primary/50 px-1',
-                                                    item.isCompleted && 'text-muted-foreground line-through'
+                                                    !plainList && item.isCompleted && 'text-muted-foreground line-through'
                                                 )}
                                                 placeholder={t('taskEdit.itemNamePlaceholder')}
                                             />
@@ -570,7 +585,7 @@ export function ChecklistField({
                     <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                     {t('taskEdit.addItem')}
                 </button>
-                {(checklistDraft || []).length > 0 && (
+                {!plainList && (checklistDraft || []).length > 0 && (
                     <div className="flex items-center gap-2">
                         <button
                             type="button"

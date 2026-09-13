@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer from 'react-test-renderer';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
 
 import { SwipeableTaskItem, readTaskRowRenderCount, type TaskRowActions } from './swipeable-task-item';
 
@@ -84,6 +84,7 @@ const translate = vi.hoisted(() => {
     'task.select': 'Select task',
     'task.deselect': 'Deselect task',
     'taskEdit.statusLabel': 'Status',
+    'taskEdit.tab.list': 'List',
     'taskEdit.projectLabel': 'Project',
     'taskEdit.areaLabel': 'Area',
     'taskEdit.assignedTo': 'Assigned To',
@@ -2278,7 +2279,10 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       id: 'task-1',
       title: 'Reference checklist',
       status: 'reference',
-      checklist: [{ id: 'item-1', title: 'Book van', isCompleted: false }],
+      checklist: [
+        { id: 'item-1', title: 'Read **source**', isCompleted: true },
+        { id: 'item-2', title: '[Pending link](https://example.com)\nwrapped detail', isCompleted: false },
+      ],
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     } as any;
@@ -2310,7 +2314,52 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     });
 
     expect(() => tree.root.find((node) => node.props.accessibilityLabel === 'checklist.progress')).toThrow();
-    expect(() => tree.root.find((node) => node.props.accessibilityLabel === 'Book van')).toThrow();
+    expect(tree.root.findAll((node) => node.props.markdown).map((node) => node.props.markdown)).toEqual([
+      'Read **source**',
+      '[Pending link](https://example.com)\nwrapped detail',
+    ]);
+    expect(tree.root.findAllByType(Text).filter((node) => node.props.children === '•')).toHaveLength(2);
+    expect(tree.root.findAll((node) => node.props.accessibilityState?.checked !== undefined)).toHaveLength(0);
+    expect(tree.root.findAll((node) => node.props.placeholder === '+ taskEdit.addItem')).toHaveLength(0);
+    expect(updateTask).not.toHaveBeenCalled();
+    const expandedRow = tree.root.find((node) => (
+      node.props.accessibilityRole === 'button'
+      && String(node.props.accessibilityLabel ?? '').startsWith('Reference checklist')
+    ));
+    expect(expandedRow.props.accessibilityLabel).toContain('List: Read source. Pending link wrapped detail');
+    expect(expandedRow.props.accessibilityLabel).not.toContain('**');
+    expect(expandedRow.props.accessibilityLabel).not.toContain('https://example.com');
+    expect(expandedRow.props.accessibilityState?.checked).toBeUndefined();
+
+    renderer.act(() => {
+      tree.update(
+        <SwipeableTaskItem
+          task={task}
+          isDark={false}
+          tc={{
+            taskItemBg: '#111111',
+            border: '#222222',
+            text: '#ffffff',
+            secondaryText: '#999999',
+            tint: '#3b82f6',
+            warning: '#f59e0b',
+          } as any}
+          onPress={vi.fn()}
+          onStatusChange={vi.fn()}
+          onDelete={vi.fn()}
+          hideDetails
+        />
+      );
+    });
+
+    expect(tree.root.findAll((node) => node.props.markdown === 'Read **source**')).toHaveLength(0);
+    expect(tree.root.findAllByType(Text).filter((node) => node.props.children === '•')).toHaveLength(0);
+    const compactRow = tree.root.find((node) => (
+      node.props.accessibilityRole === 'button'
+      && String(node.props.accessibilityLabel ?? '').startsWith('Reference checklist')
+    ));
+    expect(compactRow.props.accessibilityLabel).not.toContain('Read source');
+    expect(compactRow.props.accessibilityLabel).not.toContain('Pending link');
   });
 
   it('renders references as memo rows with useful metadata and no task-only chrome', () => {
@@ -2347,7 +2396,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
             recurrence: { rule: 'daily' },
             timeEstimate: '1hr',
             timeSpentMinutes: 15,
-            checklist: [{ id: 'step-1', title: 'Hidden checklist item', isCompleted: false }],
+            checklist: [{ id: 'step-1', title: 'Visible reference item', isCompleted: false }],
             attachments: [
               { id: 'file-1', kind: 'file', title: 'brief.pdf', uri: 'file:///brief.pdf', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' },
               { id: 'link-1', kind: 'link', title: 'Source', uri: 'https://example.com', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' },
@@ -2382,7 +2431,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(tree.root.findAllByProps({ testID: 'task-priority-strip' })).toHaveLength(0);
     expect(tree.root.findAll((node) => String(node.props.accessibilityLabel ?? '').startsWith('Change status.'))).toHaveLength(0);
     expect(hasText(tree, '@hidden-context')).toBe(false);
-    expect(hasText(tree, 'Hidden checklist item')).toBe(false);
+    expect(tree.root.find((node) => node.props.markdown === 'Visible reference item')).toBeTruthy();
     expect(hasText(tree, 'Daily')).toBe(false);
     expect(hasText(tree, '1h')).toBe(false);
     expect(tree.root.findByProps({ accessibilityLabel: 'Next action' })).toBeTruthy();

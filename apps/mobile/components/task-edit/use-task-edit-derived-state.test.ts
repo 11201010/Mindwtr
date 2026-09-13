@@ -438,11 +438,55 @@ describe('useTaskEditDerivedState', () => {
             ...(derived?.detailsFields ?? []),
         ];
         expect(visibleFields).toEqual(expect.arrayContaining([
-            'description', 'project', 'area', 'assignedTo', 'tags', 'attachments',
+            'description', 'project', 'area', 'assignedTo', 'tags', 'attachments', 'checklist',
         ]));
         REFERENCE_HIDDEN_TASK_FIELDS.forEach((fieldId) => {
             expect(visibleFields).not.toContain(fieldId);
         });
         expect(derived?.showStatusField).toBe(false);
+    });
+
+    it('uses draft Reference status and reveals only a contentful list', () => {
+        let derived: ReturnType<typeof useTaskEditDerivedState> | undefined;
+        let checklist: Task['checklist'] = [
+            { id: 'step-1', title: 'Keep source order', isCompleted: true },
+            { id: 'step-2', title: 'Keep pending state', isCompleted: false },
+        ];
+        const draft = setTaskDraftField(createTaskDraft(baseTask), 'status', 'reference');
+
+        function Probe() {
+            derived = useTaskEditDerivedState({
+                task: baseTask,
+                checklist,
+                draft,
+                settings: { gtd: { taskEditor: { hidden: [...DEFAULT_TASK_EDITOR_ORDER] } } },
+                projects: [],
+                sections: [],
+                prioritiesEnabled: true,
+                timeEstimatesEnabled: true,
+                contextInputDraft: '',
+                descriptionDraft: '',
+                tagInputDraft: '',
+                visibleAttachmentsLength: 0,
+                t: (key) => key,
+            });
+            return null;
+        }
+
+        let view!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            view = renderer.create(React.createElement(Probe));
+        });
+
+        expect(baseTask.status).toBe('next');
+        expect(derived?.detailsFields).toContain('checklist');
+
+        checklist = [];
+        renderer.act(() => {
+            view.update(React.createElement(Probe));
+        });
+
+        expect(derived?.detailsFields).not.toContain('checklist');
+        renderer.act(() => view.unmount());
     });
 });

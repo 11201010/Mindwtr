@@ -77,6 +77,7 @@ const t = (key: string) => {
         'taskEdit.suppressMindwtrRemindersHint': 'Skip start and due reminders for this task.',
         'taskEdit.suppressMindwtrRemindersViewValue': 'Mindwtr reminders off',
         'taskEdit.checklist': 'Checklist',
+        'taskEdit.tab.list': 'List',
         'attachments.title': 'Attachments',
         'recurrence.none': 'None',
         'recurrence.daily': 'Daily',
@@ -319,6 +320,24 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
 
         expect(getByText(label)).toHaveClass('text-xs', 'font-semibold');
         expect(getByText(label)).not.toHaveClass('font-medium');
+    });
+
+    it('uses the effective draft status to edit a retained reference checklist as a plain list', () => {
+        const task: Task = {
+            ...baseTask,
+            status: 'next',
+            checklist: [{ id: 'item-1', title: 'Retained item', isCompleted: true }],
+        };
+        const { getByText, queryByRole, queryByText } = render(
+            <TaskItemFieldRenderer
+                fieldId="checklist"
+                {...createProps({ task, draft: { status: 'reference' } })}
+            />
+        );
+
+        expect(getByText('List')).toBeInTheDocument();
+        expect(queryByRole('button', { name: 'Checklist 1' })).not.toBeInTheDocument();
+        expect(queryByText('taskEdit.resetChecklist')).not.toBeInTheDocument();
     });
 
     it('shows a date-coherence note on conflicting start and due date fields', () => {

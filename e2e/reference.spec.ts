@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { dismissOnboarding, seedTheme } from './seed';
 
+const retainedChecklist = [
+    { id: 'read-guide', title: '**Read** the [guide](https://example.invalid/guide)', isCompleted: true },
+    { id: 'keep-notes', title: 'Keep the garden notes', isCompleted: false },
+];
+
 async function seedReferences(page: Page, large = false) {
     const stamp = '2026-09-01T00:00:00.000Z';
     const task = (id: string, title: string, extra = {}) => ({
@@ -16,7 +21,10 @@ async function seedReferences(page: Page, large = false) {
             task('archived-reference', 'Historical reference', { description: 'Previous project notes', projectId: 'Archived project' }),
             task('deleted-project-reference', 'Deleted project reference', { projectId: 'Deleted project', deletedAt: stamp }),
             task('deleted-reference', 'Deleted reference', { deletedAt: stamp }),
-            task('normal-action', 'Ordinary action', { status: 'next', dueDate: '2026-10-01' }),
+            task('normal-action', 'Ordinary action', {
+                status: 'next', dueDate: '2026-10-01',
+                description: 'Keep these original notes.', checklist: retainedChecklist,
+            }),
             ...(large ? Array.from({ length: 300 }, (_, i) => task(`bulk-${i}`, `Library entry ${String(i).padStart(3, '0')}`)) : []),
         ],
         projects: [project('Active project', 'active'), project('Archived project', 'archived'), project('Deleted project', 'active', { deletedAt: stamp })],
@@ -91,6 +99,62 @@ test('Reference editing preserves retained metadata and exposes a secondary conv
     expect(await readTask(page, 'normal-action')).toMatchObject({
         title: 'Ordinary action', status: 'next', contexts: ['@retained'], dueDate: '2026-10-01',
     });
+});
+
+test('converting an action to Reference keeps an editable plain list and restores checked states', async ({ page }, testInfo) => {
+    await seedReferences(page);
+    await page.goto('/?view=next');
+    await row(page, 'normal-action').getByText('Ordinary action', { exact: true }).dblclick();
+    const editor = page.locator('form').filter({ has: page.getByRole('combobox', { name: 'Title', exact: true }) });
+    const listItems = editor.getByPlaceholder('Item name');
+    await expect(listItems).toHaveCount(2);
+    await expect(listItems.nth(0)).toHaveValue(retainedChecklist[0].title);
+    await expect(listItems.nth(1)).toHaveValue(retainedChecklist[1].title);
+    await expect(editor.getByRole('button', { name: 'Checklist 1', exact: true })).toBeVisible();
+
+    // Change status while an item has an uncommitted edit.
+    const updatedTitle = 'Keep all the garden notes';
+    await listItems.nth(1).fill(updatedTitle);
+    await editor.getByRole('button', { name: 'Reference', exact: true }).click();
+    await expect(editor.getByText('List', { exact: true })).toBeVisible();
+    await expect(listItems.nth(1)).toHaveValue(updatedTitle);
+    await expect(editor.getByRole('button', { name: /^Checklist \d+$/ })).toHaveCount(0);
+    await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    const expectedChecklist = [retainedChecklist[0], { ...retainedChecklist[1], title: updatedTitle }];
+    await expect.poll(async () => (await readTask(page, 'normal-action')).status).toBe('reference');
+    expect(await readTask(page, 'normal-action')).toMatchObject({
+        description: 'Keep these original notes.', checklist: expectedChecklist,
+    });
+
+    await page.locator('[data-sidebar-item][data-view="reference"]').click();
+    await page.reload();
+    const reference = row(page, 'normal-action');
+    await reference.getByText('Ordinary action', { exact: true }).click();
+    await expect(reference.getByRole('listitem')).toHaveText(['Read the guide', updatedTitle]);
+    await expect(reference.getByRole('link', { name: 'guide', exact: true })).toHaveAttribute('title', 'https://example.invalid/guide');
+    await expect(reference.getByText('Keep these original notes.', { exact: true })).toBeVisible();
+    await expect(reference.getByRole('button', { name: retainedChecklist[0].title, exact: true })).toHaveCount(0);
+    await reference.getByRole('listitem').nth(1).click();
+    expect((await readTask(page, 'normal-action')).checklist).toEqual(expectedChecklist);
+    await page.screenshot({ path: testInfo.outputPath('reference-preserved-list.png') });
+
+    await reference.getByText('Ordinary action', { exact: true }).dblclick();
+    await expect(listItems).toHaveCount(2);
+    await expect(listItems.nth(0)).toHaveValue(expectedChecklist[0].title);
+    await expect(listItems.nth(1)).toHaveValue(expectedChecklist[1].title);
+    await listItems.nth(1).fill('Filed garden notes');
+    await editor.getByRole('button', { name: 'Convert to action', exact: true }).click();
+    await expect(editor.getByRole('button', { name: 'Checklist 1', exact: true })).toBeVisible();
+    await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(async () => (await readTask(page, 'normal-action')).status).toBe('next');
+    expect(await readTask(page, 'normal-action')).toMatchObject({
+        description: 'Keep these original notes.',
+        checklist: [retainedChecklist[0], { ...retainedChecklist[1], title: 'Filed garden notes' }],
+    });
+    await page.goto('/?view=next');
+    await row(page, 'normal-action').getByText('Ordinary action', { exact: true }).click();
+    await expect(row(page, 'normal-action').getByRole('button', { name: retainedChecklist[0].title, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(row(page, 'normal-action').getByRole('button', { name: 'Filed garden notes', exact: true })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('large Reference collections retain windowed rows and search the full collection', async ({ page }) => {

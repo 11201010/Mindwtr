@@ -1372,15 +1372,21 @@ describe('TaskItemDisplay', () => {
         expect(openAttachment).toHaveBeenCalledWith(imageAttachment);
     });
 
-    it('keeps preserved reference checklists hidden from row progress and toggles', () => {
+    it('renders preserved reference checklists as ordered plain lists without completion behavior', () => {
+        const onToggleChecklistItem = vi.fn();
+        const openSpy = vi.spyOn(window, 'open').mockReturnValue({} as Window);
         const referenceTask: Task = {
             ...baseTask,
             title: 'Reference checklist',
             status: 'reference',
-            checklist: [{ id: 'item-1', title: 'Reference step', isCompleted: false }],
+            description: 'Existing description',
+            checklist: [
+                { id: 'item-1', title: '**Finished** [source](https://example.com)', isCompleted: true },
+                { id: 'item-2', title: 'First line\nsecond line', isCompleted: false },
+            ],
         };
 
-        const { queryByText } = render(
+        const { container, getByRole, getByText, queryByText } = render(
             <LanguageProvider>
                 <TaskItemDisplay
                     task={referenceTask}
@@ -1394,7 +1400,7 @@ describe('TaskItemDisplay', () => {
                         onDuplicate: vi.fn(),
                         onStatusChange: vi.fn(),
                         openAttachment: vi.fn(),
-                        onToggleChecklistItem: vi.fn(),
+                        onToggleChecklistItem,
                     }}
                     visibleAttachments={[]}
                     recurrenceRule=""
@@ -1409,8 +1415,21 @@ describe('TaskItemDisplay', () => {
             </LanguageProvider>
         );
 
-        expect(queryByText('0/1')).not.toBeInTheDocument();
-        expect(queryByText('Reference step')).not.toBeInTheDocument();
+        const list = getByRole('list');
+        const items = Array.from(list.querySelectorAll('li'));
+        expect(queryByText('1/2')).not.toBeInTheDocument();
+        expect(getByText('Existing description')).toBeInTheDocument();
+        expect(items).toHaveLength(2);
+        expect(items.map((item) => item.textContent)).toEqual(['Finished source', 'First line\nsecond line']);
+        const sourceLink = getByRole('link', { name: 'source' });
+        expect(sourceLink).toBeInTheDocument();
+        expect(container.querySelector('[aria-pressed]')).not.toBeInTheDocument();
+        expect(items[0]).not.toHaveClass('line-through');
+
+        fireEvent.click(sourceLink);
+        expect(openSpy).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer');
+        fireEvent.click(items[0]);
+        expect(onToggleChecklistItem).not.toHaveBeenCalled();
     });
 
     it('renders Reference as a memo summary without task-only metadata or controls', () => {

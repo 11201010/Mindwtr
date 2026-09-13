@@ -15,9 +15,11 @@ const initialChecklist: NonNullable<Task['checklist']> = [
 function ChecklistHarness({
     initial = initialChecklist,
     onUpdateTask,
+    plainList = false,
 }: {
     initial?: Task['checklist'];
     onUpdateTask?: (updates: Partial<Task>) => void;
+    plainList?: boolean;
 }) {
     const [checklist, setChecklist] = useState<Task['checklist']>(initial);
     return (
@@ -25,6 +27,7 @@ function ChecklistHarness({
             t={(key) => key}
             taskId="task-1"
             checklist={checklist}
+            plainList={plainList}
             updateTask={(_taskId, updates) => {
                 onUpdateTask?.(updates);
                 setChecklist(updates.checklist ?? []);
@@ -69,6 +72,52 @@ describe('ChecklistField', () => {
                 { id: '3', title: 'Item 3', isCompleted: false },
             ],
         });
+    });
+
+    it('edits a reference list without completion controls and preserves item metadata', () => {
+        const updates: Partial<Task>[] = [];
+        const resetTaskChecklist = vi.fn();
+        const referenceItems: NonNullable<Task['checklist']> = [
+            { id: 'done', title: 'Completed source item', isCompleted: true },
+            { id: 'pending', title: 'Pending source item', isCompleted: false },
+        ];
+        const props = {
+            t: (key: string) => key,
+            taskId: 'task-1',
+            checklist: referenceItems,
+            updateTask: (_taskId: string, update: Partial<Task>) => updates.push(update),
+            resetTaskChecklist,
+        };
+        const { getAllByRole, getByRole, getByText, queryByRole, queryByText, rerender } = render(
+            <div>
+                <ChecklistField {...props} />
+                <button type="button">outside</button>
+            </div>
+        );
+
+        fireEvent.change(getAllByRole('textbox')[0], { target: { value: 'Edited source item' } });
+        rerender(
+            <div>
+                <ChecklistField {...props} plainList />
+                <button type="button">outside</button>
+            </div>
+        );
+
+        expect(getByText('taskEdit.tab.list')).toBeInTheDocument();
+        expect((getAllByRole('textbox')[0] as HTMLInputElement).value).toBe('Edited source item');
+        expect(queryByRole('button', { name: 'taskEdit.checklist 1' })).not.toBeInTheDocument();
+        expect(queryByText('taskEdit.resetChecklist')).not.toBeInTheDocument();
+        expect(getAllByRole('textbox')[0]).not.toHaveClass('line-through');
+
+        fireEvent.blur(getAllByRole('textbox')[0], { relatedTarget: getByRole('button', { name: 'outside' }) });
+
+        expect(updates).toEqual([{
+            checklist: [
+                { id: 'done', title: 'Edited source item', isCompleted: true },
+                { id: 'pending', title: 'Pending source item', isCompleted: false },
+            ],
+        }]);
+        expect(resetTaskChecklist).not.toHaveBeenCalled();
     });
 
     it('renders desktop drag handles only when checklist order can change', () => {
@@ -306,6 +355,46 @@ describe('ChecklistField', () => {
         expect(committed?.map((item) => item.title)).toEqual(['buy milk', 'buy bread', 'call mom', 'Item 2', 'Item 3']);
         expect(committed?.[0]?.id).toBe('1');
         expect(committed?.[2]?.isCompleted).toBe(true);
+    });
+
+    it('strips pasted checklist markers in a reference list without changing hidden completion state', () => {
+        const updates: Partial<Task>[] = [];
+        const initial: NonNullable<Task['checklist']> = [
+            { id: 'existing-open', title: 'Replace me', isCompleted: false },
+            { id: 'existing-done', title: 'Keep completed', isCompleted: true },
+        ];
+        const renderField = (plainList: boolean) => (
+            <ChecklistHarness
+                initial={initial}
+                plainList={plainList}
+                onUpdateTask={(next) => updates.push(next)}
+            />
+        );
+        const { getAllByRole, queryByRole, rerender } = render(renderField(true));
+
+        const input = getAllByRole('textbox')[0] as HTMLInputElement;
+        input.setSelectionRange(0, input.value.length);
+        fireEvent.paste(input, {
+            clipboardData: {
+                getData: () => '- [x] Imported checked\n- [ ] Imported open\n[x] Also checked',
+            },
+        });
+
+        const committed = updates[updates.length - 1]?.checklist;
+        expect(committed?.map((item) => item.title)).toEqual([
+            'Imported checked',
+            'Imported open',
+            'Also checked',
+            'Keep completed',
+        ]);
+        expect(committed?.map((item) => item.isCompleted)).toEqual([false, false, false, true]);
+        expect(committed?.[0]?.id).toBe('existing-open');
+
+        rerender(renderField(false));
+        expect(getAllByRole('button', { name: /^taskEdit\.checklist \d$/ })).toHaveLength(4);
+        rerender(renderField(true));
+        expect(queryByRole('button', { name: /^taskEdit\.checklist \d$/ })).not.toBeInTheDocument();
+        expect(updates).toHaveLength(1);
     });
 
     it('inserts pasted lines at the cursor position within the current item title', () => {

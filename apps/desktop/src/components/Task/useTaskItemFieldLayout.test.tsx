@@ -230,8 +230,24 @@ describe('useTaskItemFieldLayout', () => {
         expect(result.current.organizationFields).not.toContain('timeEstimate');
         expect(result.current.detailsFields).toContain('description');
         expect(result.current.detailsFields).toContain('attachments');
-        expect(result.current.detailsFields).not.toContain('checklist');
+        expect(result.current.detailsFields).toContain('checklist');
         expect(result.current.detailsFields).not.toContain('location');
+    });
+
+    it('keeps an empty reference list hidden even when checklist is enabled in the editor layout', () => {
+        const { result } = renderHook(() => useTaskItemFieldLayout(buildParams({
+            settings: {
+                gtd: {
+                    taskEditor: {
+                        hidden: [],
+                    },
+                },
+            },
+            task: baseTask,
+            draft: { status: 'reference' },
+        })));
+
+        expect(result.current.detailsFields).not.toContain('checklist');
     });
 
     it('uses the draft status rather than the persisted task status for field visibility', () => {
