@@ -463,7 +463,6 @@ export async function acquireSyncRemoteMutationFence(
                         scope: 'sync',
                         category: 'sync',
                         context: {
-                            releaseCheck: 'v1.2.8/fence-mutation-horizon',
                             horizonMs: minRemainingMs,
                             remainingMs,
                         },

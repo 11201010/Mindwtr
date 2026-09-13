@@ -295,7 +295,6 @@ describe('remote sync mutation fence', () => {
             scope: 'sync',
             category: 'sync',
             context: {
-                releaseCheck: 'v1.2.8/fence-mutation-horizon',
                 horizonMs: 35_000,
                 remainingMs: expect.any(Number),
             },

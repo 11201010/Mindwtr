@@ -351,7 +351,6 @@ describe('Windows packaged notification path (#1146)', () => {
             'Desktop notification send failed',
             expect.objectContaining({
                 extra: expect.objectContaining({
-                    releaseCheck: 'v1.2.8/desktop-notification-path',
                     path: 'windows-packaged',
                 }),
             }),
@@ -403,7 +402,6 @@ describe('fired reminders are logged (#1146)', () => {
         expect(fired).toHaveLength(1);
         const extra = fired[0][1]?.extra as Record<string, unknown>;
         expect(extra).toMatchObject({
-            releaseCheck: 'v1.2.8/desktop-reminder-fired',
             kind: 'task',
             entity: 'task',
             fireAt: fixedNow.toISOString(),

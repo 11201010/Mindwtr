@@ -408,7 +408,6 @@ export const createSettingsActions = ({
                     scope: 'store',
                     category: 'storage',
                     context: {
-                        releaseCheck: 'v1.2.8/attachment-only-task-replace',
                         entity: 'task',
                         count: attachmentOnlyTasksReplaced,
                     },

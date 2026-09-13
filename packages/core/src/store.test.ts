@@ -810,28 +810,10 @@ describe('TaskStore', () => {
         vi.mocked(mockStorage.saveData).mockClear();
         const listener = vi.fn();
         const unsubscribe = useTaskStore.subscribe(listener);
-        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         try {
             const result = await convertTaskToSection(addResult.id!);
             expect(result.success).toBe(true);
             expect(listener).toHaveBeenCalledTimes(1);
-            const conversionLog = infoSpy.mock.calls.find(
-                ([message]) => message === 'Task converted to section with canonical child tasks'
-            );
-            expect(conversionLog).toBeTruthy();
-            const [, conversionMeta] = conversionLog ?? [];
-            expect(conversionMeta).toEqual(
-                expect.objectContaining({
-                    scope: 'store',
-                    category: 'storage',
-                    context: expect.any(String),
-                })
-            );
-            expect(parseLoggedContext(conversionMeta?.context)).toEqual({
-                releaseCheck: 'v1.2.8/section-conversion-canonical',
-                count: 2,
-            });
-
             const state = useTaskStore.getState();
             const section = state._allSections.find((candidate) => candidate.id === result.id);
             expect(section).toMatchObject({
@@ -887,7 +869,6 @@ describe('TaskStore', () => {
             expect(mockStorage.saveData).toHaveBeenCalledTimes(1);
         } finally {
             unsubscribe();
-            infoSpy.mockRestore();
         }
     });
 

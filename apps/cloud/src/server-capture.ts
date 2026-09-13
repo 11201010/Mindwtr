@@ -380,7 +380,6 @@ export async function handleCaptureRequest(
         // ever arrived (03e9cb9eb added the route without one). No transcription
         // text or token — only shape and size.
         logInfo('Capture webhook request accepted', {
-            releaseCheck: 'v1.2.8/cloud-capture-accepted',
             hasAudio: audio ? 'true' : 'false',
             bodyKind: isMultipart ? 'multipart' : contentType === 'application/json' ? 'json' : 'text',
             bytes: bytes.byteLength,

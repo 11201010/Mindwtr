@@ -179,53 +179,6 @@ describe('mobile storage adapter', () => {
     }
   }, 30_000);
 
-  it('logs the archive metadata release proof only after a successful SQLite load', async () => {
-    const now = '2026-09-05T12:00:00.000Z';
-    const sqliteData: AppData = {
-      tasks: [makeWidgetTask('task-sqlite-proof')],
-      projects: [{
-        id: 'project-sqlite-proof',
-        title: 'SQLite project',
-        status: 'active',
-        color: '#6B7280',
-        order: 0,
-        tagIds: [],
-        createdAt: now,
-        updatedAt: now,
-      }],
-      sections: [{
-        id: 'section-sqlite-proof',
-        projectId: 'project-sqlite-proof',
-        title: 'SQLite section',
-        order: 0,
-        isCollapsed: false,
-        createdAt: now,
-        updatedAt: now,
-      }],
-      areas: [],
-      people: [],
-      settings: {},
-    };
-    const { mobileStorage, __mobileStorageTestUtils } = await import('./storage-adapter');
-    __mobileStorageTestUtils.setSqliteStateForTests({
-      adapter: { getData: vi.fn().mockResolvedValue(sqliteData), saveTask: vi.fn() },
-      client: {},
-    });
-
-    await expect(mobileStorage.getData()).resolves.toBe(sqliteData);
-
-    expect(logInfoMock).toHaveBeenCalledWith(
-      'SQLite project archive metadata loaded in canonical form',
-      {
-        scope: 'storage',
-        extra: {
-          releaseCheck: 'v1.2.8/archive-metadata-canonical',
-          count: '2',
-        },
-      },
-    );
-  });
-
   it('coalesces a burst of calendar SQLite calls when the native module is unavailable', async () => {
     const nativeModuleError = new Error('Base module not found. Did you do a pod install/clear the gradle cache?');
     const initializeSqlite = vi.fn().mockRejectedValue(nativeModuleError);

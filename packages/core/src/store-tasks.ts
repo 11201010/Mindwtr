@@ -1144,7 +1144,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         const now = new Date().toISOString();
         let errorMessage: string | undefined;
         let convertedSectionId: string | undefined;
-        let convertedTaskCount = 0;
         set((state) => {
             const sourceTask = state._tasksById.get(id);
             if (!sourceTask || sourceTask.deletedAt) {
@@ -1235,7 +1234,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 ...checklistTasks,
             ];
             convertedSectionId = section.id;
-            convertedTaskCount = checklistTasks.length;
             persist(set, debouncedSave, state, {
                 tasks: nextAllTasks,
                 sections: nextAllSections,
@@ -1251,14 +1249,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
 
         if (errorMessage) return actionFail(errorMessage);
         if (!convertedSectionId) return actionFail('Task not found');
-        logInfo('Task converted to section with canonical child tasks', {
-            scope: 'store',
-            category: 'storage',
-            context: {
-                releaseCheck: 'v1.2.8/section-conversion-canonical',
-                count: convertedTaskCount,
-            },
-        });
         return actionOk({ id: convertedSectionId });
     },
 

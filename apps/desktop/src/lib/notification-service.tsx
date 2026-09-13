@@ -168,14 +168,11 @@ export async function sendDesktopImmediateNotification(title: string, body?: str
     await sendNotification(title, body);
 }
 
-const NOTIFICATION_PATH_CHECK = 'v1.2.8/desktop-notification-path';
-const REMINDER_FIRED_CHECK = 'v1.2.8/desktop-reminder-fired';
-
 /** Never carries the title or body: a reminder's text is the user's own task content. */
 function logNotificationSent(path: string): void {
     void logInfo('Desktop notification sent', {
         scope: 'notification',
-        extra: { releaseCheck: NOTIFICATION_PATH_CHECK, path },
+        extra: { path },
     });
 }
 
@@ -183,7 +180,6 @@ function logNotificationFailed(path: string, error: unknown): void {
     void logWarn('Desktop notification send failed', {
         scope: 'notification',
         extra: {
-            releaseCheck: NOTIFICATION_PATH_CHECK,
             path,
             error: error instanceof Error ? error.message : String(error),
         },
@@ -268,7 +264,6 @@ function logReminderFired(kind: 'due-repeat' | 'task' | 'project', fireAt: strin
     void logInfo('Desktop reminder fired', {
         scope: 'notification',
         extra: {
-            releaseCheck: REMINDER_FIRED_CHECK,
             kind,
             entity: kind === 'project' ? 'project' : 'task',
             fireAt,
