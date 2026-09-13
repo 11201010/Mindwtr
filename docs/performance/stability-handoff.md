@@ -69,6 +69,37 @@ completed successfully at `e1af4d85a`. The later Windows Store-routing correctio
 `cde9cd61a` passed [CI 34774178496](https://github.com/dongdongbh/Mindwtr/actions/runs/34774178496).
 These statuses do not certify a later navigation commit.
 
+## September 13 checklist and sync settings continuation
+
+The task-to-Reference fix now exposes retained checklist data as an editable plain
+list on desktop and mobile, preserving item identity, order and saved completion
+flags for conversion back. It is committed as `a5524db52` in its isolated
+worktree and merged into local main as `3034a6e1c`; check remote publication
+separately. Browser round-trip tests passed all five cases, and independent
+review corrections protect hidden completion flags during multiline paste and
+include retained list text in mobile accessibility labels.
+
+The connected Android Dev app reproduced the separate cold-start checklist
+keyboard bug. See [checklist insertion focus](android-checklist-focus-2026-09-13.md)
+for the first-layout-plus-frame fix, native evidence, retained invalid run,
+review, successful warm-tap and saved SQLite readback checks, and completed
+Dev fixture cleanup. This does not supersede the
+separate capture-modal focus experiment or its rejected alternatives below.
+
+The user chose one automatic background-sync schedule for all mobile devices,
+including previously saved Off. The picker and obsolete search entry are
+removed. Registration reconciliation is serialized, remains foreground-only,
+and waits for active background work before migration. Existing actual sync
+serialization remains intact. See [automatic background scheduling](automatic-background-sync-2026-09-13.md)
+for 103 passing tests, independent review and physical Android evidence: old Off
+registered one 15-minute-minimum job, an inactive pass deferred mutation, and a
+forced background invocation settled with one scheduled successor. Original Dev
+settings were restored and the test job was removed. Cold headless startup and
+physical iOS scheduling remain unverified. Public docs for both changes are
+published at `303af072a5113cf57f0fcc802625eddb50511db6`; their
+[Build and SEO checks](https://github.com/dongdongbh/mindwtr-web/actions/runs/34789593322)
+passed. No release was initiated. Use the final app revision's CI separately.
+
 ## Start here
 
 1. Read this handoff, then the relevant investigation linked below. Historical

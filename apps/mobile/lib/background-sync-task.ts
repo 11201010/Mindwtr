@@ -10,15 +10,13 @@ import { areJsTimersPaused } from './js-timers';
 import { quiesceMobileStorage } from './storage-adapter';
 import { abortMobileSync, getMobileSyncConfigurationStatus, performMobileSync, setMobileSyncRequestDeadline } from './sync-service';
 import {
-  BACKGROUND_SYNC_INTERVAL_KEY,
   BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY,
-  type BackgroundSyncInterval,
+  type LegacyBackgroundSyncInterval,
 } from './sync-constants';
-
-export type { BackgroundSyncInterval };
 
 export const MOBILE_BACKGROUND_SYNC_TASK_NAME = 'mindwtr-background-sync';
 export const MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES = 15;
+export const MOBILE_BACKGROUND_SYNC_INTERVAL = '15m' as const;
 // JobScheduler stops a WorkManager job that is still running after its
 // allowance (10 minutes normally, 20 in the ACTIVE standby bucket), counts a
 // "timeout" against the app, and defers the next run by about 40 minutes. On
@@ -39,18 +37,12 @@ export const MOBILE_BACKGROUND_SYNC_SLOW_RUN_MS = 60 * 1000;
 
 type MobileBackgroundSyncRegistrationAction = 'registered' | 'unregistered' | 'unchanged';
 
-const MOBILE_BACKGROUND_SYNC_INTERVAL_MINUTES: Record<Exclude<BackgroundSyncInterval, 'off'>, number> = {
-  '15m': MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES,
-  '1h': MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES * 4,
-  '6h': MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES * 24,
-};
-
 export type MobileBackgroundSyncRegistrationResult = {
   action: MobileBackgroundSyncRegistrationAction;
   available: boolean;
   backend: SyncBackend;
   configured: boolean;
-  interval: BackgroundSyncInterval;
+  interval: typeof MOBILE_BACKGROUND_SYNC_INTERVAL;
   registered: boolean;
   status: BackgroundTask.BackgroundTaskStatus | null;
 };
@@ -91,40 +83,26 @@ const isTaskManagerAvailable = async (): Promise<boolean> => {
   }
 };
 
-const isBackgroundSyncInterval = (value: unknown): value is BackgroundSyncInterval => (
+const isLegacyBackgroundSyncInterval = (value: unknown): value is LegacyBackgroundSyncInterval => (
   value === 'off' || value === '15m' || value === '1h' || value === '6h'
 );
-
-export const getMobileBackgroundSyncInterval = async (): Promise<BackgroundSyncInterval> => {
-  try {
-    const stored = await AsyncStorage.getItem(BACKGROUND_SYNC_INTERVAL_KEY);
-    return isBackgroundSyncInterval(stored) ? stored : '15m';
-  } catch (error) {
-    logBackgroundSyncWarning('Failed to read mobile background sync interval setting', error);
-    return '15m';
-  }
-};
-
-export const setMobileBackgroundSyncInterval = async (interval: BackgroundSyncInterval): Promise<void> => {
-  await AsyncStorage.setItem(BACKGROUND_SYNC_INTERVAL_KEY, interval);
-};
 
 // expo-background-task keeps the previously registered interval on a repeat
 // registerTaskAsync call, so the registration loop needs its own record of
 // what interval is actually live to know when it must unregister first.
-const getLastRegisteredBackgroundSyncInterval = async (): Promise<BackgroundSyncInterval | null> => {
+const getLastRegisteredBackgroundSyncInterval = async (): Promise<LegacyBackgroundSyncInterval | null> => {
   try {
     const stored = await AsyncStorage.getItem(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY);
-    return isBackgroundSyncInterval(stored) ? stored : null;
+    return isLegacyBackgroundSyncInterval(stored) ? stored : null;
   } catch (error) {
     logBackgroundSyncWarning('Failed to read the last registered background sync interval', error);
     return null;
   }
 };
 
-const setLastRegisteredBackgroundSyncInterval = async (interval: BackgroundSyncInterval): Promise<void> => {
+const setLastRegisteredBackgroundSyncInterval = async (): Promise<void> => {
   try {
-    await AsyncStorage.setItem(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, interval);
+    await AsyncStorage.setItem(BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY, MOBILE_BACKGROUND_SYNC_INTERVAL);
   } catch (error) {
     logBackgroundSyncWarning('Failed to persist the last registered background sync interval', error);
   }
@@ -240,111 +218,192 @@ const defineMobileBackgroundSyncTask = () => {
 
 defineMobileBackgroundSyncTask();
 
-export async function syncMobileBackgroundSyncRegistration(): Promise<MobileBackgroundSyncRegistrationResult> {
-  const [configuration, status, taskManagerAvailable, registered, interval, lastRegisteredInterval] = await Promise.all([
+type MobileBackgroundSyncRegistrationSnapshot = {
+  configuration: Awaited<ReturnType<typeof getMobileSyncConfigurationStatus>>;
+  lastRegisteredInterval: LegacyBackgroundSyncInterval | null;
+  registered: boolean;
+  status: BackgroundTask.BackgroundTaskStatus | null;
+  taskManagerAvailable: boolean;
+};
+
+const readMobileBackgroundSyncRegistrationSnapshot = async (): Promise<MobileBackgroundSyncRegistrationSnapshot> => {
+  const [configuration, status, taskManagerAvailable, registered, lastRegisteredInterval] = await Promise.all([
     getMobileSyncConfigurationStatus(),
     getBackgroundTaskStatus(),
     isTaskManagerAvailable(),
     isBackgroundTaskRegistered(),
-    getMobileBackgroundSyncInterval(),
     getLastRegisteredBackgroundSyncInterval(),
   ]);
-  const available = taskManagerAvailable && status === BackgroundTask.BackgroundTaskStatus.Available;
-  const shouldRegister = available
-    && configuration.configured
-    && supportsMobileScheduledBackgroundSync(configuration.backend)
-    && interval !== 'off';
-  const appState = AppState.currentState;
-  const logDecision = (decision: string) => {
-    void logInfo('Mobile background sync registration checked', {
-      scope: 'sync',
-      extra: {
-        decision,
-        registered: String(registered),
-        storedInterval: lastRegisteredInterval ?? 'none',
-        interval,
-        appState: String(appState),
-      },
-    });
-  };
 
-  // On a headless cold start TaskManager restores its persisted registrations
-  // asynchronously, so isTaskRegisteredAsync can answer false while our own
-  // record says a registration is live. Re-registering there makes
-  // expo-background-task cancel the very worker that woke the app (device
-  // test 2026-09-02: job released after 0.76 s, sync frozen mid-cycle). Trust
-  // the record until the app is on screen, where a re-registration is harmless.
-  if (shouldRegister && !registered && lastRegisteredInterval !== null && appState !== 'active') {
-    logDecision('deferred-until-foreground');
-    return {
-      action: 'unchanged',
-      available,
-      backend: configuration.backend,
-      configured: configuration.configured,
-      interval,
-      registered: true,
-      status,
-    };
-  }
+  return { configuration, lastRegisteredInterval, registered, status, taskManagerAvailable };
+};
 
-  if (shouldRegister) {
-    const minimumInterval = MOBILE_BACKGROUND_SYNC_INTERVAL_MINUTES[interval];
-    const intervalChanged = registered && lastRegisteredInterval !== interval;
-    logDecision(!registered ? 'register' : intervalChanged ? 're-register' : 'unchanged');
-    // Every registerTaskAsync call makes expo-background-task cancel its
-    // current WorkManager worker and enqueue a fresh one with a full delay.
-    // On a cold start woken by that very worker, re-registering cancelled the
-    // run that woke the app, so a task that is already live is left alone.
-    if (!registered || intervalChanged) {
-      if (intervalChanged) {
-        // expo-background-task ignores a changed minimumInterval on a plain
-        // re-registration; only unregister-then-register actually applies it.
-        await BackgroundTask.unregisterTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME);
-      }
-      await BackgroundTask.registerTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME, { minimumInterval });
-      await setLastRegisteredBackgroundSyncInterval(interval);
-      void logInfo('Mobile background sync registered', {
-        scope: 'sync',
-        extra: { backend: configuration.backend, interval },
-      });
+const shouldUseAutomaticMobileBackgroundSync = (snapshot: MobileBackgroundSyncRegistrationSnapshot): boolean => (
+  snapshot.taskManagerAvailable
+  && snapshot.status === BackgroundTask.BackgroundTaskStatus.Available
+  && snapshot.configuration.configured
+  && supportsMobileScheduledBackgroundSync(snapshot.configuration.backend)
+);
+
+const registrationResult = (
+  snapshot: MobileBackgroundSyncRegistrationSnapshot,
+  action: MobileBackgroundSyncRegistrationAction,
+  registered = snapshot.registered,
+): MobileBackgroundSyncRegistrationResult => ({
+  action,
+  available: snapshot.taskManagerAvailable
+    && snapshot.status === BackgroundTask.BackgroundTaskStatus.Available,
+  backend: snapshot.configuration.backend,
+  configured: snapshot.configuration.configured,
+  interval: MOBILE_BACKGROUND_SYNC_INTERVAL,
+  registered,
+  status: snapshot.status,
+});
+
+const logRegistrationDecision = (
+  snapshot: MobileBackgroundSyncRegistrationSnapshot,
+  decision: string,
+) => {
+  void logInfo('Mobile background sync registration checked', {
+    scope: 'sync',
+    extra: {
+      appState: String(AppState.currentState),
+      decision,
+      interval: MOBILE_BACKGROUND_SYNC_INTERVAL,
+      registered: String(snapshot.registered),
+      storedInterval: snapshot.lastRegisteredInterval ?? 'none',
+    },
+  });
+};
+
+let automaticScheduleReadyLogged = false;
+
+const logAutomaticScheduleReady = (outcome: 'registered' | 'unchanged') => {
+  if (automaticScheduleReadyLogged) return;
+  automaticScheduleReadyLogged = true;
+  void logInfo('Automatic mobile background sync schedule ready', {
+    scope: 'sync',
+    extra: {
+      releaseCheck: 'v1.3.0/automatic-background-sync',
+      interval: MOBILE_BACKGROUND_SYNC_INTERVAL,
+      outcome,
+    },
+  });
+};
+
+const reconcileAutomaticMobileBackgroundSyncRegistration = async (): Promise<MobileBackgroundSyncRegistrationResult> => {
+  let previousAction: MobileBackgroundSyncRegistrationAction = 'unchanged';
+
+  while (true) {
+    const snapshot = await readMobileBackgroundSyncRegistrationSnapshot();
+    const shouldRegister = shouldUseAutomaticMobileBackgroundSync(snapshot);
+
+    // Registration calls replace or cancel Expo's one shared native worker. A
+    // headless wake can report an inactive app and a transient false negative
+    // registration, so every native mutation waits for a foreground pass.
+    if (AppState.currentState !== 'active') {
+      logRegistrationDecision(snapshot, 'deferred-until-foreground');
+      return registrationResult(
+        snapshot,
+        previousAction,
+        snapshot.registered || snapshot.lastRegisteredInterval !== null,
+      );
     }
-    return {
-      action: (!registered || intervalChanged) ? 'registered' : 'unchanged',
-      available,
-      backend: configuration.backend,
-      configured: configuration.configured,
-      interval,
-      registered: true,
-      status,
-    };
-  }
 
-  if (registered) {
-    logDecision('unregister');
-    await BackgroundTask.unregisterTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME);
-    await clearLastRegisteredBackgroundSyncInterval();
-    void logInfo('Mobile background sync unregistered', {
-      scope: 'sync',
-      extra: { backend: configuration.backend, available: String(available), configured: String(configuration.configured), interval },
-    });
-    return {
-      action: 'unregistered',
-      available,
-      backend: configuration.backend,
-      configured: configuration.configured,
-      interval,
-      registered: false,
-      status,
-    };
-  }
+    const needsNativeMutation = shouldRegister
+      ? !snapshot.registered || snapshot.lastRegisteredInterval !== MOBILE_BACKGROUND_SYNC_INTERVAL
+      : snapshot.registered;
+    if (needsNativeMutation && inFlightBackgroundSync) {
+      logRegistrationDecision(snapshot, 'waiting-for-background-run');
+      await inFlightBackgroundSync.catch(() => undefined);
+      // The app state, backend configuration, native registration, and legacy
+      // record may all have changed while the run settled. Read them again.
+      continue;
+    }
 
-  return {
-    action: 'unchanged',
-    available,
-    backend: configuration.backend,
-    configured: configuration.configured,
-    interval,
-    registered: false,
-    status,
-  };
+    if (shouldRegister) {
+      if (snapshot.registered && snapshot.lastRegisteredInterval !== MOBILE_BACKGROUND_SYNC_INTERVAL) {
+        automaticScheduleReadyLogged = false;
+        logRegistrationDecision(snapshot, 're-register');
+        // Expo ignores an interval change on a repeat register call. Remove the
+        // legacy worker first, then loop so configuration and app state are
+        // re-read before the replacement native mutation.
+        await BackgroundTask.unregisterTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME);
+        await clearLastRegisteredBackgroundSyncInterval();
+        previousAction = 'unregistered';
+        continue;
+      }
+
+      if (!snapshot.registered) {
+        logRegistrationDecision(snapshot, 'register');
+        await BackgroundTask.registerTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME, {
+          minimumInterval: MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES,
+        });
+        await setLastRegisteredBackgroundSyncInterval();
+
+        // A backend switch can finish while the native call is in flight. Do
+        // not claim readiness for a schedule that is already stale; the queued
+        // reconciliation for that switch will re-read and clean it up.
+        const latestConfiguration = await getMobileSyncConfigurationStatus();
+        if (
+          AppState.currentState === 'active'
+          && latestConfiguration.configured
+          && supportsMobileScheduledBackgroundSync(latestConfiguration.backend)
+        ) {
+          logAutomaticScheduleReady('registered');
+        }
+        void logInfo('Mobile background sync registered', {
+          scope: 'sync',
+          extra: { backend: latestConfiguration.backend, interval: MOBILE_BACKGROUND_SYNC_INTERVAL },
+        });
+        return registrationResult(
+          { ...snapshot, configuration: latestConfiguration },
+          'registered',
+          true,
+        );
+      }
+
+      logRegistrationDecision(snapshot, 'unchanged');
+      logAutomaticScheduleReady('unchanged');
+      return registrationResult(snapshot, previousAction === 'unregistered' ? 'registered' : 'unchanged', true);
+    }
+
+    automaticScheduleReadyLogged = false;
+    if (snapshot.registered) {
+      logRegistrationDecision(snapshot, 'unregister');
+      await BackgroundTask.unregisterTaskAsync(MOBILE_BACKGROUND_SYNC_TASK_NAME);
+      await clearLastRegisteredBackgroundSyncInterval();
+      void logInfo('Mobile background sync unregistered', {
+        scope: 'sync',
+        extra: {
+          available: String(snapshot.taskManagerAvailable
+            && snapshot.status === BackgroundTask.BackgroundTaskStatus.Available),
+          backend: snapshot.configuration.backend,
+          configured: String(snapshot.configuration.configured),
+          interval: MOBILE_BACKGROUND_SYNC_INTERVAL,
+        },
+      });
+      return registrationResult(snapshot, 'unregistered', false);
+    }
+
+    if (snapshot.lastRegisteredInterval !== null) {
+      await clearLastRegisteredBackgroundSyncInterval();
+    }
+    return registrationResult(snapshot, previousAction, false);
+  }
+};
+
+// Queue callers rather than sharing the current promise: a settings callback
+// arriving after a backend change must run its own fresh native/config read.
+let registrationReconciliationTail: Promise<void> = Promise.resolve();
+
+export function syncMobileBackgroundSyncRegistration(): Promise<MobileBackgroundSyncRegistrationResult> {
+  const reconciliation = registrationReconciliationTail.then(
+    reconcileAutomaticMobileBackgroundSyncRegistration,
+  );
+  registrationReconciliationTail = reconciliation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return reconciliation;
 }

@@ -48,7 +48,6 @@ import { SyncDropboxBackendPanel } from './sync-settings-dropbox-panel';
 import { SyncEncryptionCard } from './sync-settings-encryption-card';
 import { SyncFileBackendPanel } from './sync-settings-file-panel';
 import {
-    BackgroundSyncInfoCard,
     RecoverySnapshotsCard,
     SyncBackupSection,
     SyncDiagnosticsCard,
@@ -467,7 +466,6 @@ function SyncSettingsView({
         updateSettings,
     });
     const {
-        backgroundSyncInterval,
         cloudKitAccountStatus,
         cloudAllowInsecureHttp,
         cloudProvider,
@@ -480,7 +478,6 @@ function SyncSettingsView({
         handleSaveSelfHostedSettings,
         handleSelectCloudProvider,
         handleSelectSyncBackend,
-        handleSetBackgroundSyncInterval,
         handleSaveWebDavSettings,
         handleSetSyncPath,
         handleSync,
@@ -530,7 +527,6 @@ function SyncSettingsView({
         () => ({ tasks, projects, sections, areas, settings }),
         [areas, projects, sections, settings, tasks],
     );
-    const isScheduledBackgroundSyncBackend = syncBackend === 'webdav' || syncBackend === 'cloud' || syncBackend === 'cloudkit';
     const cloudKitStatusDetails = getCloudKitStatusDetails(cloudKitAccountStatus);
     const isCloudSyncSelected = syncBackend === 'cloud' || syncBackend === 'cloudkit';
     const isSelfHostedSyncSelected = syncBackend === 'cloud' && (cloudProvider === 'selfhosted' || isFossBuild);
@@ -882,14 +878,6 @@ function SyncSettingsView({
                             tc={tc}
                             toggleSyncOptionsOpen={() => setSyncOptionsOpen((prev) => !prev)}
                             updateSyncPreferences={updateSyncPreferences}
-                        />
-
-                        <BackgroundSyncInfoCard
-                            interval={backgroundSyncInterval}
-                            isRemoteBackend={isScheduledBackgroundSyncBackend}
-                            onSelectInterval={handleSetBackgroundSyncInterval}
-                            tr={tr}
-                            tc={tc}
                         />
 
                         <RecoverySnapshotsCard

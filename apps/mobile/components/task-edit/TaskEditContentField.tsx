@@ -31,6 +31,7 @@ import {
 
 import { MarkdownReferenceAutocomplete } from '../markdown-reference-autocomplete';
 import { MarkdownText } from '../markdown-text';
+import { logInfo } from '../../lib/app-log';
 import { FieldHeading } from './FieldHeading';
 import { getControlledTextInputSelection } from '../text-input-selection';
 import {
@@ -128,12 +129,41 @@ export function TaskEditContentField({
         textAlign: resolvedDirection === 'rtl' ? 'right' : 'left',
     } as const;
     const checklistInputRefs = React.useRef<Record<string, TextInput | null>>({});
+    const checklistInputRefCallbacks = React.useRef<Record<string, (node: TextInput | null) => void>>({});
     const checklistTitleRefs = React.useRef<Record<string, string>>({});
     const checklistSelectionRefs = React.useRef<Record<string, MarkdownSelection>>({});
     const lastChecklistRangeRefs = React.useRef<Record<string, MarkdownSelection | null>>({});
     const ignoredNativePairChangeRefs = React.useRef<Record<string, IgnoredNativePairChange>>({});
     const pendingChecklistSelectionRefs = React.useRef<Record<string, MarkdownSelection | null>>({});
     const [checklistSelectionRestorePending, setChecklistSelectionRestorePending] = React.useState<Record<string, boolean>>({});
+    const pendingChecklistFocusKeyRef = React.useRef<string | null>(null);
+    const checklistFocusFrameRef = React.useRef<number | null>(null);
+    const checklistFocusTargetRef = React.useRef<TextInput | null>(null);
+    const cancelPendingChecklistFocus = React.useCallback(() => {
+        if (checklistFocusFrameRef.current !== null) {
+            cancelAnimationFrame(checklistFocusFrameRef.current);
+            checklistFocusFrameRef.current = null;
+        }
+        checklistFocusTargetRef.current = null;
+        pendingChecklistFocusKeyRef.current = null;
+    }, []);
+    const requestChecklistInsertionFocus = React.useCallback((key: string) => {
+        cancelPendingChecklistFocus();
+        pendingChecklistFocusKeyRef.current = key;
+    }, [cancelPendingChecklistFocus]);
+    const getChecklistInputRef = React.useCallback((key: string) => {
+        checklistInputRefCallbacks.current[key] ??= (node: TextInput | null) => {
+            checklistInputRefs.current[key] = node;
+            if (
+                pendingChecklistFocusKeyRef.current === key
+                && checklistFocusTargetRef.current
+                && node !== checklistFocusTargetRef.current
+            ) {
+                cancelPendingChecklistFocus();
+            }
+        };
+        return checklistInputRefCallbacks.current[key];
+    }, [cancelPendingChecklistFocus]);
     const checklistLength = checklist?.length ?? 0;
     React.useEffect(() => {
         if (fieldId !== 'checklist' || checklistLength < 2) {
@@ -156,17 +186,58 @@ export function TaskEditContentField({
             delete lastChecklistRangeRefs.current[key];
             delete ignoredNativePairChangeRefs.current[key];
             delete pendingChecklistSelectionRefs.current[key];
+            delete checklistInputRefCallbacks.current[key];
         }
-    }, [checklist]);
+        const pendingFocusKey = pendingChecklistFocusKeyRef.current;
+        if (pendingFocusKey && !activeKeys.has(pendingFocusKey)) {
+            cancelPendingChecklistFocus();
+        }
+    }, [cancelPendingChecklistFocus, checklist]);
 
-    const pendingChecklistFocusKeyRef = React.useRef<string | null>(null);
+    React.useEffect(
+        () => cancelPendingChecklistFocus,
+        [cancelPendingChecklistFocus, fieldId, task?.id],
+    );
+
     // A just-added row is focused from its first onLayout, not the mount commit:
     // focusing before native layout makes Android's ScrollView scroll-to-focused-
     // child measure the unpositioned row and jump to the top of the checklist.
     const handleChecklistRowLayout = React.useCallback((key: string) => {
         if (pendingChecklistFocusKeyRef.current !== key) return;
-        pendingChecklistFocusKeyRef.current = null;
-        checklistInputRefs.current[key]?.focus();
+        const target = checklistInputRefs.current[key];
+        if (!target) return;
+        if (Platform.OS !== 'android') {
+            pendingChecklistFocusKeyRef.current = null;
+            target.focus();
+            return;
+        }
+        if (checklistFocusFrameRef.current !== null) return;
+
+        checklistFocusTargetRef.current = target;
+        const frame = requestAnimationFrame(() => {
+            if (checklistFocusFrameRef.current !== frame) return;
+            checklistFocusFrameRef.current = null;
+            if (
+                pendingChecklistFocusKeyRef.current !== key
+                || checklistInputRefs.current[key] !== target
+            ) {
+                checklistFocusTargetRef.current = null;
+                pendingChecklistFocusKeyRef.current = null;
+                return;
+            }
+
+            checklistFocusTargetRef.current = null;
+            pendingChecklistFocusKeyRef.current = null;
+            target.focus();
+            void logInfo('Checklist insertion focus requested after layout', {
+                scope: 'task-edit',
+                extra: {
+                    releaseCheck: 'v1.3.0/checklist-insert-focus',
+                    stage: 'layout-ready',
+                },
+            });
+        });
+        checklistFocusFrameRef.current = frame;
     }, []);
 
     const getChecklistSelection = React.useCallback((key: string, value: string): MarkdownSelection => (
@@ -228,9 +299,9 @@ export function TaskEditContentField({
             title: '',
             isCompleted: false,
         };
-        pendingChecklistFocusKeyRef.current = nextItem.id;
+        requestChecklistInsertionFocus(nextItem.id);
         applyChecklistUpdate([...list.slice(0, index + 1), nextItem, ...list.slice(index + 1)]);
-    }, [applyChecklistUpdate, checklist]);
+    }, [applyChecklistUpdate, checklist, requestChecklistInsertionFocus]);
 
     const updateChecklistTitle = React.useCallback((index: number, key: string, title: string) => {
         checklistTitleRefs.current[key] = title;
@@ -749,9 +820,7 @@ export function TaskEditContentField({
                                                 </TouchableOpacity>
                                             )}
                                             <TextInput
-                                                ref={(node) => {
-                                                    checklistInputRefs.current[checklistItemKey] = node;
-                                                }}
+                                                ref={getChecklistInputRef(checklistItemKey)}
                                                 onLayout={() => handleChecklistRowLayout(checklistItemKey)}
                                                 style={[
                                                     styles.checklistInput,
@@ -806,7 +875,7 @@ export function TaskEditContentField({
                                             title: '',
                                             isCompleted: false,
                                         };
-                                        pendingChecklistFocusKeyRef.current = nextItem.id;
+                                        requestChecklistInsertionFocus(nextItem.id);
                                 applyChecklistUpdate([...(checklist || []), nextItem]);
                                     }}
                                     testID="mobile-checklist-add-item"

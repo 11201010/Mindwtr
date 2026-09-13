@@ -89,7 +89,6 @@ const DESKTOP_PAGES_FOR_ROW: Record<SettingsMenuRowId, readonly SettingsSearchPa
 const MOBILE_SEARCH_KEY_OVERRIDES: Partial<Record<string, string>> = {
     showTaskAge: 'settings.mobile.showTaskAge',
     defaultScheduleTime: 'settings.gtdMobile.defaultScheduleTime',
-    backgroundSync: 'settings.syncMobile.backgroundSync',
     restoreBackup: 'settings.syncMobile.restoreBackup',
     importTodoist: 'settings.syncMobile.importFromTodoist',
     importTickTick: 'settings.syncMobile.importFromTicktick',
@@ -104,7 +103,7 @@ function mobileI18nKey(key: string): string {
 function derivedRowKeys(row: SettingsMenuRowId): string[] {
     return DESKTOP_PAGES_FOR_ROW[row].flatMap((pageId) =>
         getSettingsSearchEntryKeys(pageId)
-            .filter((key) => !(key in SETTINGS_SEARCH_MOBILE_EXCLUSIONS))
+            .filter((key) => key !== 'backgroundSync' && !(key in SETTINGS_SEARCH_MOBILE_EXCLUSIONS))
             .map(mobileI18nKey),
     );
 }
