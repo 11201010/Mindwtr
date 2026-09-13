@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTaskStore } from '@mindwtr/core';
@@ -24,6 +24,13 @@ const lazyViews = vi.hoisted(() => {
         resolveReview: (module: ReviewModule) => resolveReview(module),
     };
 });
+
+// This regression exercises the real App/Layout transition boundary. Keep the
+// initial page small so unrelated calendar-grid rendering and role queries do
+// not consume the test's timeout under CI coverage instrumentation.
+vi.mock('./components/views/CalendarView', () => ({
+    CalendarView: () => React.createElement('h1', null, 'Calendar'),
+}));
 
 vi.mock('./components/views/SettingsView', () => lazyViews.settings);
 vi.mock('./components/views/ReviewView', () => lazyViews.review);
@@ -70,23 +77,27 @@ describe('App deferred navigation layout', () => {
     });
 
     it('keeps rendered geometry during suspended navigation and commits only the latest view', async () => {
-        const { container, getByRole, queryByRole } = renderApp();
+        const { container, getByRole } = renderApp();
         const content = () => getContentWrapper(container);
+        const getContentHeading = (name: string) => within(content() as HTMLElement).getByRole('heading', { name });
+        const queryContentHeading = (name: string) => within(content() as HTMLElement).queryByRole('heading', { name });
 
-        expect(getByRole('heading', { name: 'Calendar' })).toBeInTheDocument();
+        expect(getContentHeading('Calendar')).toBeInTheDocument();
         expect(content()).toHaveClass('max-w-screen-2xl');
 
-        fireEvent.click(getByRole('button', { name: 'Settings' }));
+        const settingsButton = getByRole('button', { name: 'Settings' });
+        fireEvent.click(settingsButton);
 
-        expect(getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
-        expect(getByRole('heading', { name: 'Calendar' })).toBeInTheDocument();
+        expect(settingsButton).toHaveAttribute('aria-current', 'page');
+        expect(getContentHeading('Calendar')).toBeInTheDocument();
         expect(content()).toHaveClass('max-w-screen-2xl');
         expect(content()).not.toHaveClass('max-w-none');
 
-        fireEvent.click(getByRole('button', { name: 'Review' }));
+        const reviewButton = getByRole('button', { name: 'Review' });
+        fireEvent.click(reviewButton);
 
-        expect(getByRole('button', { name: 'Review' })).toHaveAttribute('aria-current', 'page');
-        expect(getByRole('heading', { name: 'Calendar' })).toBeInTheDocument();
+        expect(reviewButton).toHaveAttribute('aria-current', 'page');
+        expect(getContentHeading('Calendar')).toBeInTheDocument();
         expect(content()).toHaveClass('max-w-screen-2xl');
 
         await act(async () => {
@@ -96,8 +107,8 @@ describe('App deferred navigation layout', () => {
             await lazyViews.settings;
         });
 
-        expect(queryByRole('heading', { name: 'Deferred Settings' })).not.toBeInTheDocument();
-        expect(getByRole('heading', { name: 'Calendar' })).toBeInTheDocument();
+        expect(queryContentHeading('Deferred Settings')).not.toBeInTheDocument();
+        expect(getContentHeading('Calendar')).toBeInTheDocument();
         expect(content()).toHaveClass('max-w-screen-2xl');
 
         await act(async () => {
@@ -108,7 +119,7 @@ describe('App deferred navigation layout', () => {
         });
 
         await waitFor(() => {
-            expect(getByRole('heading', { name: 'Deferred Review' })).toBeInTheDocument();
+            expect(getContentHeading('Deferred Review')).toBeInTheDocument();
             expect(content()).toHaveClass('max-w-6xl');
             expect(content()).not.toHaveClass('max-w-screen-2xl');
         });
