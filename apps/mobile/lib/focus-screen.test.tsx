@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, AppState, Modal, SectionList, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Modal, ScrollView, SectionList, Text, TextInput, View } from 'react-native';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppData, AppSettings, Project, StorageAdapter, Task } from '@mindwtr/core';
@@ -1929,18 +1929,29 @@ describe('FocusScreen', () => {
     appStateSpy.mockRestore();
   });
 
-  it('applies and clears saved Focus filters from the chip row', () => {
+  it('applies, toggles, switches, and clears saved Focus filters from the chip row', () => {
+    const alertSpy = vi.spyOn(Alert, 'alert');
     storeState.settings = {
       appearance: {},
       features: {},
-      savedFilters: [{
-        id: 'filter-desk',
-        name: 'Desk',
-        view: 'focus',
-        criteria: { contexts: ['@desk'] },
-        createdAt: '2026-04-01T00:00:00.000Z',
-        updatedAt: '2026-04-01T00:00:00.000Z',
-      }],
+      savedFilters: [
+        {
+          id: 'filter-desk',
+          name: 'Desk',
+          view: 'focus',
+          criteria: { contexts: ['@desk'] },
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+        {
+          id: 'filter-phone',
+          name: 'Phone',
+          view: 'focus',
+          criteria: { contexts: ['@phone'] },
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
     } as any;
     storeState.tasks = [
       makeTask('desk-task', { title: 'Desk task', contexts: ['@desk'] }),
@@ -1960,6 +1971,33 @@ describe('FocusScreen', () => {
     expect(
       tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
     ).toEqual(['desk-task']);
+    expect(findButtonByText(tree, 'Desk').props.accessibilityState.selected).toBe(true);
+    expect(() => findButtonByLabel(tree, 'Delete saved filter Desk')).toThrow();
+    expect(tree.root.findAllByType(ScrollView).filter((node) => (
+      node.props.horizontal && textContent(node).includes('@desk')
+    ))).toHaveLength(0);
+
+    act(() => {
+      findButtonByText(tree, 'Desk').props.onPress();
+    });
+
+    expect(
+      tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
+    ).toEqual(['desk-task', 'phone-task']);
+    expect(findButtonByText(tree, 'All').props.accessibilityState.selected).toBe(true);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      findButtonByText(tree, 'Desk').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'Phone').props.onPress();
+    });
+
+    expect(
+      tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
+    ).toEqual(['phone-task']);
 
     act(() => {
       findButtonByText(tree, 'All').props.onPress();
@@ -1968,6 +2006,8 @@ describe('FocusScreen', () => {
     expect(
       tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
     ).toEqual(['desk-task', 'phone-task']);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('treats a hidden Priority sort as All/default after Priorities is disabled', () => {
@@ -2045,10 +2085,91 @@ describe('FocusScreen', () => {
     ).toEqual(['desk-phone-task', 'desk-task', 'phone-task']);
   });
 
-  it('deletes the active saved Focus filter from the chip row', async () => {
-    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
-      buttons?.find((button) => button.style === 'destructive')?.onPress?.();
+  it('confirms long-press deletion without changing the selected saved Focus filter', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    storeState.updateSettings.mockResolvedValue(undefined);
+    storeState.settings = {
+      appearance: {},
+      features: {},
+      savedFilters: [
+        {
+          id: 'filter-desk',
+          name: 'Desk',
+          view: 'focus',
+          criteria: { contexts: ['@desk'] },
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+        {
+          id: 'filter-phone',
+          name: 'Phone',
+          view: 'focus',
+          criteria: { contexts: ['@phone'] },
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+    } as any;
+    storeState.tasks = [
+      makeTask('desk-task', { title: 'Desk task', contexts: ['@desk'] }),
+      makeTask('phone-task', { title: 'Phone task', contexts: ['@phone'] }),
+    ];
+
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
     });
+
+    act(() => {
+      findButtonByText(tree, 'Desk').props.onLongPress();
+    });
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    expect(
+      tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
+    ).toEqual(['desk-task', 'phone-task']);
+
+    const cancelButton = alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'cancel');
+    await act(async () => {
+      cancelButton?.onPress?.();
+    });
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+
+    act(() => {
+      findButtonByText(tree, 'Desk').props.onPress();
+    });
+    alertSpy.mockClear();
+    act(() => {
+      findButtonByText(tree, 'Desk').props.onLongPress();
+    });
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    expect(
+      tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
+    ).toEqual(['desk-task']);
+
+    const deleteButton = alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive');
+    await act(async () => {
+      deleteButton?.onPress?.();
+    });
+
+    expect(storeState.updateSettings).toHaveBeenCalledWith({
+      savedFilters: [
+        expect.objectContaining({
+          id: 'filter-desk',
+          deletedAt: expect.any(String),
+        }),
+        expect.objectContaining({ id: 'filter-phone' }),
+      ],
+    });
+    expect(storeState.updateSettings.mock.calls[0]?.[0]?.savedFilters[1]).not.toHaveProperty('deletedAt');
+  });
+
+  it('offers the same saved-filter deletion confirmation as an accessibility action', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     storeState.updateSettings.mockResolvedValue(undefined);
     storeState.settings = {
       appearance: {},
@@ -2062,34 +2183,33 @@ describe('FocusScreen', () => {
         updatedAt: '2026-04-01T00:00:00.000Z',
       }],
     } as any;
-    storeState.tasks = [
-      makeTask('desk-task', { title: 'Desk task', contexts: ['@desk'] }),
-    ];
 
     let tree!: ReturnType<typeof create>;
-
     act(() => {
       tree = create(<FocusScreen />);
     });
 
+    const deskChip = findButtonByText(tree, 'Desk');
+    expect(deskChip.props.accessibilityActions).toEqual([
+      { name: 'delete', label: 'Delete saved filter Desk' },
+    ]);
     act(() => {
-      findButtonByText(tree, 'Desk').props.onPress();
+      deskChip.props.onAccessibilityAction({ nativeEvent: { actionName: 'delete' } });
     });
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+
+    const deleteButton = alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive');
     await act(async () => {
-      findButtonByLabel(tree, 'Delete saved filter Desk').props.onPress();
+      deleteButton?.onPress?.();
     });
-
-    expect(alertSpy).toHaveBeenCalled();
     expect(storeState.updateSettings).toHaveBeenCalledWith({
-      savedFilters: [
-        expect.objectContaining({
-          id: 'filter-desk',
-          deletedAt: expect.any(String),
-        }),
-      ],
+      savedFilters: [expect.objectContaining({
+        id: 'filter-desk',
+        deletedAt: expect.any(String),
+      })],
     });
-
-    alertSpy.mockRestore();
   });
 
   it('removes advanced synced criteria from the active saved Focus filter', async () => {
@@ -2126,6 +2246,12 @@ describe('FocusScreen', () => {
     act(() => {
       findButtonByText(tree, 'Desk').props.onPress();
     });
+    expect(tree.root.findAllByType(ScrollView).filter((node) => (
+      node.props.horizontal && textContent(node).includes('Due Date: This week')
+    ))).toHaveLength(0);
+    act(() => {
+      findButtonByLabel(tree, 'Filters').props.onPress();
+    });
     await act(async () => {
       findButtonByLabel(tree, 'Delete Due Date: This week').props.onPress();
     });
@@ -2142,7 +2268,28 @@ describe('FocusScreen', () => {
       })],
     });
 
-    alertSpy.mockRestore();
+  });
+
+  it('keeps the active criteria row for an ad-hoc Focus filter', () => {
+    storeState.tasks = [
+      makeTask('desk-task', { title: 'Desk task', contexts: ['@desk'] }),
+      makeTask('phone-task', { title: 'Phone task', contexts: ['@phone'] }),
+    ];
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+    act(() => {
+      findButtonByLabel(tree, 'Filters').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, '@desk').props.onPress();
+    });
+
+    expect(tree.root.findAllByType(ScrollView).filter((node) => (
+      node.props.horizontal && textContent(node).includes('@desk')
+    ))).toHaveLength(1);
   });
 
   it('saves the current Focus filter from the existing filter sheet', async () => {
