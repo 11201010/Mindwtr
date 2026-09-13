@@ -1,4 +1,5 @@
-- Notizen lassen sich direkt aus dem Eingang mit Projekt- und Bereichsauswahl sowie über das Statusmenü jeder Aufgabe als Referenz ablegen.
-- Der Sync wiederholt sich nicht mehr alle paar Sekunden, nachdem ein anderes Gerät Anhänge gelöscht hat; ein Abbruch gibt die Sperre frei, ein unprüfbarer Sync-Ort nennt Datei und Grund.
-- iCloud-Sync funktioniert wieder bei Projekten mit Startdatum und nennt die echte Ursache einer Ablehnung.
-- Wochenansicht mit fünf Tagen, Übersetzungen korrigiert.
+- Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.
+- iPhone- und iPad-Widgets folgen Fokus und Filtern und erledigen Aufgaben interaktiv.
+- Apple Watch bietet Text- und Audioerfassung, Fokusaktionen und Pomodoro-Steuerung.
+- Kurzbefehle, Teilen, Fokus, Review, Referenz, Projekterstellung und Bearbeitung wurden erweitert.
+- iCloud, WebDAV, Dropbox, Anhänge, Suche und Speicher sind zuverlässiger.

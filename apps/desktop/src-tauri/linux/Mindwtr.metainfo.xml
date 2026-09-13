@@ -88,37 +88,20 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
-    <release version="1.3.0-rc.2" date="2026-09-10">
-      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.0-rc.2</url>
+    <release version="1.3.0" date="2026-09-13">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.0</url>
       <description>
-        <p>Mindwtr 1.3.0-rc.2 improves task editing, capture, archived-project recovery, and sync performance.</p>
-        <p xml:lang="de">Mindwtr 1.3.0-rc.2 verbessert Aufgabenbearbeitung, Erfassung, Wiederherstellung archivierter Projekte und Sync-Leistung.</p>
+        <p>Mindwtr 1.3.0 expands capture and widgets, makes project outcomes more precise, and strengthens sync, editing, review, and recovery.</p>
+        <p xml:lang="de">Mindwtr 1.3.0 erweitert Erfassung und Widgets und verbessert Projektergebnisse, Sync, Bearbeitung, Review und Wiederherstellung.</p>
         <ul>
-          <li>Project sections stay available in task editors, and task menus can create project destinations.</li>
-          <li xml:lang="de">Projektabschnitte bleiben in Aufgabeneditoren verfuegbar, und Aufgabenmenues koennen Projektziele erstellen.</li>
-          <li>CSV export follows bulk selection, while Today keyboard order matches the visible groups.</li>
-          <li xml:lang="de">Der CSV-Export folgt der Mehrfachauswahl, waehrend die Tastaturreihenfolge in Heute den sichtbaren Gruppen entspricht.</li>
-          <li>Archived project references and section links survive restart and reactivation.</li>
-          <li xml:lang="de">Referenzen und Abschnittsverknuepfungen archivierter Projekte bleiben nach Neustart und Reaktivierung erhalten.</li>
-          <li>WebDAV activation and full sync reduce repeated attachment and mapping work.</li>
-          <li xml:lang="de">WebDAV-Aktivierung und vollstaendiger Sync vermeiden wiederholte Anhangs- und Zuordnungsarbeit.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.3.0-rc.1" date="2026-09-07">
-      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.0-rc.1</url>
-      <description>
-        <p>Mindwtr 1.3.0-rc.1 adds cancellation, sequential-project ordering, safer sync, and more direct capture.</p>
-        <p xml:lang="de">Mindwtr 1.3.0-rc.1 bringt Abbrechen, die Reihenfolge sequenzieller Projekte, sichereren Sync und direktere Erfassung.</p>
-        <ul>
-          <li>Cancel tasks, projects, and recurring series while keeping completed and cancelled outcomes distinct in Archive.</li>
-          <li xml:lang="de">Aufgaben, Projekte und wiederkehrende Serien lassen sich abbrechen; abgeschlossene und abgebrochene Ergebnisse bleiben im Archiv unterscheidbar.</li>
-          <li>Focus and Next Actions follow the visible manual hierarchy of sequential projects.</li>
-          <li xml:lang="de">Fokus und Naechste Aktionen folgen der sichtbaren manuellen Hierarchie sequenzieller Projekte.</li>
-          <li>WebDAV works through compressing proxies, File Sync accepts attachments that have not arrived yet, and self-hosted capture keeps voice attachments intact.</li>
-          <li xml:lang="de">WebDAV funktioniert hinter komprimierenden Proxys, Dateisynchronisierung akzeptiert noch nicht eingetroffene Anhaenge, und selbst gehostete Erfassung behaelt Sprachanhaenge.</li>
-          <li>Desktop task editing, project menus, notes lists, calendar blocks, notifications, Timeline colors, and KDE Plasma launcher matching are more reliable.</li>
-          <li xml:lang="de">Aufgabenbearbeitung, Projektmenues, Notizlisten, Kalenderbloecke, Benachrichtigungen, Zeitleistenfarben und die KDE-Plasma-Starterzuordnung sind zuverlaessiger.</li>
+          <li>Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.</li>
+          <li xml:lang="de">Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.</li>
+          <li>Focus and Next Actions follow sequential project order, while Review, Reference, project creation, task editing, and selected-task CSV export cover more of the workflow.</li>
+          <li xml:lang="de">Fokus und Naechste Aktionen folgen der Projektfolge; Review, Referenz, Projekterstellung, Aufgabenbearbeitung und CSV-Export decken mehr vom Ablauf ab.</li>
+          <li>WebDAV, File Sync, Dropbox, iCloud, attachments, search, and storage handle more recovery cases.</li>
+          <li xml:lang="de">WebDAV, Dateisync, Dropbox, iCloud, Anhaenge, Suche und Speicher behandeln mehr Wiederherstellungsfaelle.</li>
+          <li>Desktop packages improve calendar, notes, notifications, navigation, task menus, performance, and Microsoft Store release automation.</li>
+          <li xml:lang="de">Desktop-Pakete verbessern Kalender, Notizen, Mitteilungen, Navigation, Aufgabenmenues, Leistung und Microsoft-Store-Automatisierung.</li>
         </ul>
       </description>
     </release>

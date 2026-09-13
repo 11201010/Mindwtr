@@ -1,0 +1,35 @@
+<en-US>
+- Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.
+- Tasks, Compact, and Quick capture widgets follow Focus and saved filters and support task actions.
+- Capture from widgets, Quick Settings, shortcuts, and notifications; voice capture remains retryable.
+- Focus adds Later today and toggleable saved filters; Review can create a local share card.
+- File Sync, WebDAV, attachments, foldable layouts, TalkBack, and backups are more reliable.
+</en-US>
+<de-DE>
+- Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.
+- Aufgaben-, Kompakt- und Erfassungs-Widgets folgen Fokus und Filtern, mit Details und Erledigen.
+- Erfassung über Widgets, Schnelleinstellungen, Kurzbefehle und Mitteilungen; Audio bleibt wiederholbar.
+- Fokus bietet Später heute und umschaltbare Filter; Review erstellt lokale Teilkarten.
+- Dateisync, WebDAV, Anhänge, Faltlayouts, TalkBack und Backups sind zuverlässiger.
+</de-DE>
+<es-ES>
+- Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.
+- Los widgets nativos de Tareas, Compacto y captura siguen Enfoque y filtros, con detalles y finalización.
+- Captura desde widgets, Ajustes rápidos, atajos y notificaciones; el audio permite reintentos.
+- Enfoque añade Más tarde hoy y filtros alternables; Revisión crea tarjetas locales.
+- Archivos, WebDAV, adjuntos, plegables, TalkBack, copias, búsqueda y almacenamiento son más fiables.
+</es-ES>
+<fr-FR>
+- Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.
+- Les widgets natifs Tâches, Compact et capture suivent Focus et les filtres, avec détails et achèvement.
+- Capture depuis widgets, réglages rapides, raccourcis et notifications ; l'audio reste réessayable.
+- Focus ajoute Plus tard et des filtres alternables ; Revue crée des cartes locales.
+- Fichiers, WebDAV, pièces jointes, pliables, TalkBack, sauvegardes, recherche et stockage sont plus fiables.
+</fr-FR>
+<zh-CN>
+- 可取消任务、项目和重复系列，并在归档中区分“已取消”和“已完成”。
+- 原生任务、紧凑和快速捕捉小组件会跟随“聚焦”和已保存筛选，并支持详情与完成操作。
+- 可从小组件、快捷设置、快捷方式和通知直接捕捉；音频失败后可重试。
+- 聚焦新增“今天稍晚”和可切换筛选；回顾可生成本地分享卡片。
+- 文件同步、WebDAV、附件、折叠屏布局、TalkBack、备份、搜索和存储更加可靠。
+</zh-CN>

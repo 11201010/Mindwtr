@@ -1,4 +1,5 @@
-- Classez une note en Référence depuis la boîte de réception, avec projet et domaine, et depuis le menu d’état de toute tâche.
-- La synchronisation ne se répète plus toutes les quelques secondes après la suppression de pièces jointes ailleurs ; une interruption libère le verrou et un emplacement non vérifiable nomme le fichier.
-- iCloud synchronise à nouveau les bibliothèques avec une date de début de projet et nomme la vraie cause d’un refus.
-- Vue Semaine sur cinq jours, traductions corrigées.
+- Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.
+- Les widgets iPhone et iPad suivent Focus et les filtres enregistrés, avec achèvement interactif.
+- Apple Watch ajoute la capture texte et audio, des actions et les commandes Pomodoro.
+- Raccourcis, partage, Focus, Revue, Référence, création de projets et édition sont enrichis.
+- iCloud, WebDAV, Dropbox, pièces jointes, recherche et stockage sont plus fiables.

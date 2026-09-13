@@ -1,0 +1,5 @@
+- Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.
+- Aufgaben-, Kompakt- und Erfassungs-Widgets folgen Fokus und Filtern, mit Details und Erledigen.
+- Erfassung über Widgets, Schnelleinstellungen, Kurzbefehle und Mitteilungen; Audio bleibt wiederholbar.
+- Fokus bietet Später heute und umschaltbare Filter; Review erstellt lokale Teilkarten.
+- Dateisync, WebDAV, Anhänge, Faltlayouts, TalkBack und Backups sind zuverlässiger.

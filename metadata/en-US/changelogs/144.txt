@@ -1,0 +1,5 @@
+- Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.
+- Tasks, Compact, and Quick capture widgets follow Focus and saved filters and support task actions.
+- Capture from widgets, Quick Settings, shortcuts, and notifications; voice capture remains retryable.
+- Focus adds Later today and toggleable saved filters; Review can create a local share card.
+- File Sync, WebDAV, attachments, foldable layouts, TalkBack, and backups are more reliable.

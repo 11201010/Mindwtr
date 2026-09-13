@@ -1,0 +1,5 @@
+- Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.
+- Les widgets natifs Tâches, Compact et capture suivent Focus et les filtres, avec détails et achèvement.
+- Capture depuis widgets, réglages rapides, raccourcis et notifications ; l'audio reste réessayable.
+- Focus ajoute Plus tard et des filtres alternables ; Revue crée des cartes locales.
+- Fichiers, WebDAV, pièces jointes, pliables, TalkBack, sauvegardes, recherche et stockage sont plus fiables.

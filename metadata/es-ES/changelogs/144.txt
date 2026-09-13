@@ -1,0 +1,5 @@
+- Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.
+- Los widgets nativos de Tareas, Compacto y captura siguen Enfoque y filtros, con detalles y finalización.
+- Captura desde widgets, Ajustes rápidos, atajos y notificaciones; el audio permite reintentos.
+- Enfoque añade Más tarde hoy y filtros alternables; Revisión crea tarjetas locales.
+- Archivos, WebDAV, adjuntos, plegables, TalkBack, copias, búsqueda y almacenamiento son más fiables.

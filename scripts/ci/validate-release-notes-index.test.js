@@ -18,7 +18,7 @@ describe("release notes index", () => {
     expect(indexed).toEqual(filenames);
   });
 
-  it("starts unreleased notes after the latest indexed stable release", async () => {
+  it("keeps unreleased notes general instead of naming a future version", async () => {
     const index = await readFile(path.join(releaseNotesDir, "README.md"), "utf8");
     const stableVersions = Array.from(
       index.matchAll(/\]\(\.\/(\d+)\.(\d+)\.(\d+)\.md\)/g),
@@ -29,15 +29,13 @@ describe("release notes index", () => {
       }
       return 0;
     });
-    const latest = stableVersions[0];
-    expect(latest).toBeDefined();
+    expect(stableVersions[0]).toBeDefined();
 
     const unreleased = await readFile(
       path.join(releaseNotesDir, "unreleased.md"),
       "utf8",
     );
-    expect(unreleased).toContain(
-      `Changes collected after \`v${latest.join(".")}\` and before the next version tag.`,
-    );
+    expect(unreleased).toContain("Changes collected since the latest stable release.");
+    expect(unreleased).not.toMatch(/next (?:version|release)/i);
   });
 });

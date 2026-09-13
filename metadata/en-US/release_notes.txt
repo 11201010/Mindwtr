@@ -1,4 +1,5 @@
-- File a note as Reference straight from the Inbox, with project and area pickers, and from any task's status menu.
-- Sync no longer repeats every few seconds after another device deleted attachments, an interrupted sync releases its lock, and an unverifiable sync location names the file and why.
-- iCloud sync works again for libraries with a project start date, and a refused save names the real cause.
-- Week view opens on five days, widgets match the app, and translations are corrected.
+- Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.
+- iPhone and iPad widgets follow Focus and saved filters, with interactive task completion.
+- Apple Watch adds text and audio capture, Focus actions, and Pomodoro controls.
+- Shortcut and share capture, Focus, Review, Reference, project creation, and task editing are expanded.
+- iCloud, WebDAV, Dropbox, attachments, search, and storage are more reliable.

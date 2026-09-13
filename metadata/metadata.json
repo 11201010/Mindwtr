@@ -30,7 +30,7 @@
           "列表、日历与看板视图，支持提醒与重复任务",
           "免费开源、无广告"
         ],
-        "ReleaseNotes": "• 可直接在收件箱中把笔记归为“参考”并选择项目和领域，也可在任意任务的状态菜单中选择“参考”。\n• 项目标题栏改为单行并带“...”菜单，时间线更易读且打开时以今天为中心，鼠标悬停显示的行按钮恢复正常，每日回顾会显示它统计的所有任务。\n• 其他设备删除附件后，同步不再每隔几秒重复；同步中断后会释放同步锁；同步位置无法验证时会指出具体文件和原因。\n• 商店版本在应用驻留托盘时可再次显示提醒通知。\n• MCP 工具支持链接附件，并修正翻译。",
+        "ReleaseNotes": "• 可取消任务、项目和重复系列，并在归档中区分“已取消”和“已完成”。\n• 顺序项目会按照可见的分区与任务顺序显示下一步行动。\n• 扩展了聚焦、回顾、参考资料、项目创建、任务编辑和所选任务 CSV 导出。\n• WebDAV、文件同步、Dropbox、附件、搜索和存储更加可靠。\n• 改进了日历、项目笔记、通知、导航和性能。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "List, calendar, and kanban views with reminders and repeating tasks",
           "Free and open source, no ads"
         ],
-        "ReleaseNotes": "• File a note as Reference straight from the Inbox, with project and area pickers, and from any task's status menu.\n• The project header is a single row with a \"...\" menu, Timeline is easier to read and opens centered on today, hover-revealed row buttons are back, and the Daily Review shows every task it counts.\n• Sync no longer repeats every few seconds after another device deleted attachments, an interrupted sync releases its lock, and a sync location that cannot be verified says which file and why.\n• Store installs show reminder notifications again while the app runs in the tray.\n• MCP tools accept link attachments, and translations are corrected.",
+        "ReleaseNotes": "• Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.\n• Sequential projects follow their visible section and task order.\n• Focus, Review, Reference, project creation, task editing, and selected-task CSV export are expanded.\n• WebDAV, File Sync, Dropbox, attachments, search, and storage are more reliable.\n• Calendar, project notes, notifications, navigation, and performance are improved.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -131,7 +131,7 @@
           "Listen-, Kalender- und Kanban-Ansichten mit Erinnerungen und Wiederholungen",
           "Kostenlos und Open Source, ohne Werbung"
         ],
-        "ReleaseNotes": "• Legen Sie eine Notiz direkt aus dem Eingang als Referenz ab, mit Projekt- und Bereichsauswahl, sowie über das Statusmenü jeder Aufgabe.\n• Die Projektkopfzeile ist eine einzelne Zeile mit „…“-Menü, die Zeitleiste ist besser lesbar und öffnet zentriert auf heute, die beim Überfahren eingeblendeten Zeilenschaltflächen sind zurück, und die tägliche Revision zeigt jede gezählte Aufgabe.\n• Der Sync wiederholt sich nicht mehr alle paar Sekunden, nachdem ein anderes Gerät Anhänge gelöscht hat; ein abgebrochener Sync gibt seine Sperre frei, und ein nicht prüfbarer Sync-Ort nennt die Datei und den Grund.\n• Store-Installationen zeigen wieder Erinnerungsbenachrichtigungen, während die App im Infobereich läuft.\n• MCP-Werkzeuge akzeptieren Link-Anhänge, Übersetzungen sind korrigiert.",
+        "ReleaseNotes": "• Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.\n• Sequenzielle Projekte folgen der sichtbaren Abschnitts- und Aufgabenfolge.\n• Fokus, Review, Referenz, Projekterstellung, Aufgabenbearbeitung und CSV-Export wurden erweitert.\n• WebDAV, Dateisync, Dropbox, Anhänge, Suche und Speicher sind zuverlässiger.\n• Kalender, Projektnotizen, Mitteilungen, Navigation und Leistung wurden verbessert.",
         "Images": [],
         "RecommendedHardware": [],
         "MinimumHardware": [],
@@ -161,7 +161,7 @@
           "Vues liste, calendrier et kanban, rappels et tâches répétées",
           "Gratuit et open source, sans publicité"
         ],
-        "ReleaseNotes": "• Classez une note en Référence directement depuis la boîte de réception, avec les sélecteurs de projet et de domaine, et depuis le menu d’état de toute tâche.\n• L’en-tête de projet tient sur une ligne avec un menu « … », la chronologie est plus lisible et s’ouvre centrée sur aujourd’hui, les boutons de ligne affichés au survol sont de retour et la revue quotidienne affiche toutes les tâches qu’elle compte.\n• La synchronisation ne se répète plus toutes les quelques secondes après qu’un autre appareil a supprimé des pièces jointes ; une synchronisation interrompue libère son verrou et un emplacement impossible à vérifier indique le fichier et la raison.\n• Les installations depuis la boutique affichent à nouveau les notifications de rappel pendant que l’app tourne dans la zone de notification.\n• Les outils MCP acceptent les pièces jointes de type lien et des traductions sont corrigées.",
+        "ReleaseNotes": "• Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.\n• Les projets séquentiels suivent l’ordre visible des sections et des tâches.\n• Focus, Revue, Référence, création de projets, édition et export CSV sont enrichis.\n• WebDAV, synchro de fichiers, Dropbox, pièces jointes, recherche et stockage sont plus fiables.\n• Calendrier, notes de projet, notifications, navigation et performances sont améliorés.",
         "Images": [],
         "RecommendedHardware": [],
         "MinimumHardware": [],
@@ -190,7 +190,7 @@
           "Vistas de lista, calendario y kanban, con recordatorios y tareas repetidas",
           "Gratis y de código abierto, sin anuncios"
         ],
-        "ReleaseNotes": "• Archiva una nota como Referencia directamente desde la Bandeja de entrada, con selectores de proyecto y área, y desde el menú de estado de cualquier tarea.\n• La cabecera del proyecto ocupa una sola fila con un menú «...», la cronología se lee mejor y abre centrada en hoy, vuelven los botones que aparecen al pasar el cursor por una fila y la revisión diaria muestra todas las tareas que cuenta.\n• La sincronización ya no se repite cada pocos segundos después de que otro dispositivo borre adjuntos, una sincronización interrumpida libera su bloqueo y una ubicación que no se puede verificar indica el archivo y el motivo.\n• Las instalaciones de la tienda vuelven a mostrar notificaciones de recordatorio mientras la app se ejecuta en la bandeja del sistema.\n• Las herramientas MCP aceptan adjuntos de enlace y se corrigen traducciones.",
+        "ReleaseNotes": "• Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.\n• Los proyectos secuenciales siguen el orden visible de secciones y tareas.\n• Se amplían Enfoque, Revisión, Referencia, creación de proyectos, edición y exportación CSV.\n• WebDAV, sincronización de archivos, Dropbox, adjuntos, búsqueda y almacenamiento son más fiables.\n• Mejoras en calendario, notas de proyecto, notificaciones, navegación y rendimiento.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

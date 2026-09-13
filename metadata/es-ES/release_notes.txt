@@ -1,4 +1,5 @@
-- Archiva una nota como Referencia desde la Bandeja de entrada, con selectores de proyecto y área, y desde el menú de estado de cualquier tarea.
-- La sincronización ya no se repite cada pocos segundos tras borrar adjuntos en otro dispositivo; una interrupción libera el bloqueo y una ubicación no verificable indica el archivo.
-- iCloud vuelve a sincronizar bibliotecas con fecha de inicio de proyecto e indica la causa real de un rechazo.
-- Vista de semana con cinco días y traducciones corregidas.
+- Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.
+- Los widgets de iPhone y iPad siguen Enfoque y los filtros guardados, con finalización interactiva.
+- Apple Watch añade captura de texto y audio, acciones y controles Pomodoro.
+- Se amplían atajos, compartir, Enfoque, Revisión, Referencia, creación de proyectos y edición.
+- iCloud, WebDAV, Dropbox, adjuntos, búsqueda y almacenamiento son más fiables.
