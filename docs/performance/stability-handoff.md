@@ -82,16 +82,23 @@ include retained list text in mobile accessibility labels.
 The connected Android Dev app reproduced the separate cold-start checklist
 keyboard bug. See [checklist insertion focus](android-checklist-focus-2026-09-13.md)
 for the first-layout-plus-frame fix, native evidence, retained invalid run,
-review, and remaining device cleanup/verification. This does not supersede the
+review, successful warm-tap and saved SQLite readback checks, and completed
+Dev fixture cleanup. This does not supersede the
 separate capture-modal focus experiment or its rejected alternatives below.
 
-The user also chose one automatic background-sync schedule for all mobile
-devices, including previously saved Off. Implementation/review is isolated in
-`/home/dd/worktrees/Mindwtr/automatic-background-sync-20260913`; preserve its
-work. Migration must occur in the foreground, never cancel a running background
-job, and keep actual sync work with its existing serialization owner. The picker
-and obsolete search entry are removed. Use the final report and exact commit/CI
-before treating this track as published or physically verified.
+The user chose one automatic background-sync schedule for all mobile devices,
+including previously saved Off. The picker and obsolete search entry are
+removed. Registration reconciliation is serialized, remains foreground-only,
+and waits for active background work before migration. Existing actual sync
+serialization remains intact. See [automatic background scheduling](automatic-background-sync-2026-09-13.md)
+for 103 passing tests, independent review and physical Android evidence: old Off
+registered one 15-minute-minimum job, an inactive pass deferred mutation, and a
+forced background invocation settled with one scheduled successor. Original Dev
+settings were restored and the test job was removed. Cold headless startup and
+physical iOS scheduling remain unverified. Public docs for both changes are
+published at `303af072a5113cf57f0fcc802625eddb50511db6`; their
+[Build and SEO checks](https://github.com/dongdongbh/mindwtr-web/actions/runs/34789593322)
+passed. No release was initiated. Use the final app revision's CI separately.
 
 ## Start here
 
