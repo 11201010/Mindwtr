@@ -142,30 +142,57 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   expect(steps.find(step => step.name === 'Submit Microsoft Store beta flight').if).toBe('inputs.run_msstore_flight');
 });
 
-test('Windows PowerShell routes resolved RC tags away from public Store publication', () => {
+test('Windows PowerShell validates Store versions only for selected Store routes', () => {
   const windows = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
   const script = windows.jobs.standalone.steps.find(step => step.id === 'version').run;
-  const tail = script.slice(script.indexOf('$msixVersion = node'));
-  const run = ({ tag = 'v1.3.0-rc.2', ref = 'refs/tags/v1.3.0-rc.2', stable = false, flight = true, id = flightId } = {}) => {
+  const routingStart = script.indexOf("$tag = (($lines | Where-Object { $_ -like 'tag=*' })");
+  expect(routingStart).toBeGreaterThan(-1);
+  const routing = script.slice(routingStart);
+  const run = ({ tag = 'v1.3.0-rc.2', version = tag.replace(/^v/, ''), event = 'workflow_dispatch', ref = 'refs/heads/main', stable = false, flight = true, id = flightId } = {}) => {
     const directory = mkdtempSync(join(tmpdir(), 'msstore-routing-'));
     try {
       const output = join(directory, 'output');
-      const command = `$ErrorActionPreference = 'Stop'\n$tag = '${tag}'\n${tail}`;
+      const command = `$ErrorActionPreference = 'Stop'\n$lines = @("tag=$env:TEST_RELEASE_TAG", "version=$env:TEST_RELEASE_VERSION")\n${routing}`;
       execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], {
-        env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_REF: ref, RUN_MSSTORE: String(stable), RUN_MSSTORE_FLIGHT: String(flight), MSSTORE_FLIGHT_ID: id },
+        env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_EVENT_NAME: event, GITHUB_REF: ref, RUN_MSSTORE: String(stable), RUN_MSSTORE_FLIGHT: String(flight), MSSTORE_FLIGHT_ID: id, TEST_RELEASE_TAG: tag, TEST_RELEASE_VERSION: version },
         stdio: 'pipe',
       });
-      return readFileSync(output, 'utf8');
+      return readFileSync(output, 'utf8').trim().split(/\r?\n/);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   };
+
   expect(run()).toContain('store_stable=false');
   expect(run()).toContain('store_package=true');
-  expect(run({ flight: false })).toContain('store_package=false');
-  expect(run({ ref: 'refs/heads/main' })).toContain('store_stable=false');
+  for (const disabled of [
+    { tag: 'v1.3.0-rc.2a', ref: 'refs/tags/v1.3.0-rc.2a' },
+    { tag: 'v1.2.6-a', ref: 'refs/heads/main' },
+    { tag: 'v1.3.0', ref: 'refs/tags/v1.3.0' },
+    { tag: 'v1.3.0', ref: 'refs/heads/main' },
+  ]) {
+    const output = run({ ...disabled, flight: false });
+    expect(output).toContain('store_stable=false');
+    expect(output).toContain('store_package=false');
+    expect(output.some(line => line.startsWith('msix_version='))).toBe(false);
+  }
+
   expect(() => run({ stable: true })).toThrow();
   expect(() => run({ id: '' })).toThrow();
-  expect(run({ tag: 'v1.3.0', ref: 'refs/tags/v1.3.0' })).toContain('store_stable=true');
-  expect(run({ tag: 'v1.3.0', ref: 'refs/heads/main', stable: true })).toContain('store_stable=true');
+  expect(() => run({ tag: 'v1.3.0-rc.2a' })).toThrow();
+
+  const stablePush = run({ tag: 'v1.3.0', event: 'push', ref: 'refs/tags/v1.3.0', flight: false });
+  expect(stablePush).toContain('store_stable=true');
+  expect(stablePush).toContain('store_package=true');
+  expect(stablePush).toContain('msix_version=1.3.99.0');
+
+  const explicitStable = run({ tag: 'v1.3.0', stable: true, flight: false });
+  expect(explicitStable).toContain('store_stable=true');
+  expect(explicitStable).toContain('store_package=true');
+  expect(explicitStable).toContain('msix_version=1.3.99.0');
+
+  const branchPush = run({ tag: 'v1.3.0', event: 'push', ref: 'refs/heads/main', flight: false });
+  expect(branchPush).toContain('store_stable=false');
+  expect(branchPush).toContain('store_package=false');
+  expect(branchPush.some(line => line.startsWith('msix_version='))).toBe(false);
 }, 30_000);

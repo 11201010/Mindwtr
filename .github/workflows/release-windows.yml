@@ -120,20 +120,22 @@ jobs:
           }
           $tag = (($lines | Where-Object { $_ -like 'tag=*' }) -replace '^tag=', '')
           $version = (($lines | Where-Object { $_ -like 'version=*' }) -replace '^version=', '')
-          $msixVersion = node scripts/ci/msstore-version.mjs $tag
-          if ($LASTEXITCODE -ne 0) { throw "Invalid Microsoft Store package version" }
-          echo "msix_version=$msixVersion" >> $env:GITHUB_OUTPUT
           $isRc = $tag -match '-rc\.'
           if ($isRc -and $env:RUN_MSSTORE -eq 'true') {
             throw "RC packages must use run_msstore_flight, never run_msstore (public Store)."
           }
-          $stable = -not $isRc -and ($env:GITHUB_REF.StartsWith('refs/tags/') -or $env:RUN_MSSTORE -eq 'true')
+          $stable = -not $isRc -and (($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF.StartsWith('refs/tags/')) -or $env:RUN_MSSTORE -eq 'true')
           $flight = $env:RUN_MSSTORE_FLIGHT -eq 'true'
           if ($flight -and $env:MSSTORE_FLIGHT_ID -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
             throw "Set repository variable MSSTORE_FLIGHT_ID to the Mindwtr Beta flight UUID."
           }
           "store_stable=$($stable.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "store_package=$(($stable -or $flight).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          if ($stable -or $flight) {
+            $msixVersion = node scripts/ci/msstore-version.mjs $tag
+            if ($LASTEXITCODE -ne 0) { throw "Invalid Microsoft Store package version" }
+            "msix_version=$msixVersion" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Build Tauri app
         timeout-minutes: 30
