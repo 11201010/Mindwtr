@@ -3,10 +3,13 @@ import {
     areRemoteSyncDocumentsEqual,
     computeRemoteSyncDocumentFingerprint,
     computeSyncPayloadFingerprint,
+    generateDeterministicUUID,
+    mergeAppData,
     parseSyncDocument,
     toRemoteSyncDocument,
 } from './index';
-import type { AppData } from './types';
+import { consoleLogger, setLogger, type LogPayload } from './logger';
+import type { AppData, Attachment, Project, Task } from './types';
 
 const NOW = '2026-08-01T12:00:00.000Z';
 
@@ -71,6 +74,298 @@ describe('Sync document lifecycle', () => {
                 ok: false,
                 errors: [`remote payload field "${surface}[0].id" must be a non-empty string`],
             });
+        }
+    });
+
+    it('recovers legacy task and project URL attachment strings deterministically', () => {
+        const taskUri = 'https://example.test/issue/1';
+        const projectUri = 'http://example.test/project/1';
+        const input = createData();
+        input.tasks[0] = {
+            ...input.tasks[0],
+            dueDate: '',
+            attachments: `  ${taskUri}  `,
+        } as unknown as Task;
+        input.tasks.push({
+            ...input.tasks[0],
+            id: 'task-2',
+            attachments: taskUri,
+        } as unknown as Task);
+        input.projects = [{
+            id: 'project-1',
+            title: 'Project',
+            status: 'active',
+            color: '#000000',
+            order: 0,
+            tagIds: [],
+            dueDate: '2026-08-03',
+            createdAt: '2026-07-01T10:00:00.000Z',
+            updatedAt: '2026-07-02T11:00:00.000Z',
+            attachments: projectUri,
+        } as unknown as Project];
+        const original = structuredClone(input);
+
+        const first = parseSyncDocument(input, 'remote');
+        const second = parseSyncDocument(structuredClone(input), 'remote');
+        expect(first.ok).toBe(true);
+        expect(second.ok).toBe(true);
+        if (!first.ok || !second.ok) throw new Error('Expected legacy URLs to be accepted');
+
+        expect(first.legacyAttachmentsChanged).toBe(true);
+        expect(second.legacyAttachmentsChanged).toBe(true);
+        expect(input).toEqual(original);
+        expect(first.data.tasks[0].dueDate).toBe('');
+        expect(first.data.projects[0].dueDate).toBe('2026-08-03');
+        expect(first.data.tasks[0].attachments).toEqual([{
+            id: generateDeterministicUUID(JSON.stringify([
+                'legacy-attachment-link',
+                'task',
+                'task-1',
+                taskUri,
+            ])),
+            kind: 'link',
+            title: taskUri,
+            uri: taskUri,
+            createdAt: NOW,
+            updatedAt: NOW,
+        }]);
+        expect(first.data.projects[0].attachments).toEqual([{
+            id: generateDeterministicUUID(JSON.stringify([
+                'legacy-attachment-link',
+                'project',
+                'project-1',
+                projectUri,
+            ])),
+            kind: 'link',
+            title: projectUri,
+            uri: projectUri,
+            createdAt: '2026-07-01T10:00:00.000Z',
+            updatedAt: '2026-07-02T11:00:00.000Z',
+        }]);
+        expect(first.data.tasks[0].attachments).toEqual(second.data.tasks[0].attachments);
+        expect(first.data.projects[0].attachments).toEqual(second.data.projects[0].attachments);
+        const attachmentIds = [
+            first.data.tasks[0].attachments?.[0]?.id,
+            first.data.tasks[1].attachments?.[0]?.id,
+            first.data.projects[0].attachments?.[0]?.id,
+        ];
+        expect(new Set(attachmentIds).size).toBe(attachmentIds.length);
+        expect(() => toRemoteSyncDocument(first.data)).not.toThrow();
+        const merged = mergeAppData(first.data, second.data, { nowIso: NOW });
+        expect(merged).toEqual(mergeAppData(second.data, first.data, { nowIso: NOW }));
+        expect(mergeAppData(merged, second.data, { nowIso: NOW })).toEqual(merged);
+    });
+
+    it('uses deterministic owner timestamps or the epoch for recovered links', () => {
+        const input = createData();
+        input.tasks[0] = {
+            ...input.tasks[0],
+            createdAt: 'invalid',
+            updatedAt: 'invalid',
+            attachments: 'https://example.test/epoch',
+        } as unknown as Task;
+
+        const parsed = parseSyncDocument(input, 'local');
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error('Expected the legacy URL to be accepted');
+
+        expect(parsed.data.tasks[0].attachments?.[0]).toMatchObject({
+            createdAt: '1970-01-01T00:00:00.000Z',
+            updatedAt: '1970-01-01T00:00:00.000Z',
+        });
+    });
+
+    it('retains valid attachment arrays and tombstones by identity', () => {
+        const input = createData();
+        const attachments: Attachment[] = [{
+            id: 'file-1',
+            kind: 'file',
+            title: 'notes.txt',
+            uri: '',
+            cloudKey: 'attachments/file-1.txt',
+            createdAt: NOW,
+            updatedAt: NOW,
+        }, {
+            id: 'link-1',
+            kind: 'link',
+            title: 'Deleted reference',
+            uri: 'https://example.test/deleted',
+            createdAt: NOW,
+            updatedAt: NOW,
+            deletedAt: NOW,
+        }];
+        input.tasks[0].attachments = attachments;
+
+        const parsed = parseSyncDocument(input, 'remote');
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error('Expected valid attachments to be accepted');
+
+        expect(parsed.data.tasks).toBe(input.tasks);
+        expect(parsed.data.tasks[0]).toBe(input.tasks[0]);
+        expect(parsed.data.tasks[0].attachments).toBe(attachments);
+        expect(parsed.data.tasks[0].attachments?.[1]).toBe(attachments[1]);
+        expect(parsed).not.toHaveProperty('legacyAttachmentsChanged');
+    });
+
+    it('accepts nullable attachment clearing without marking a legacy repair', () => {
+        const input = createData();
+        input.tasks[0] = { ...input.tasks[0], attachments: null } as unknown as Task;
+
+        const parsed = parseSyncDocument(input, 'remote');
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error('Expected nullable attachment clearing to be accepted');
+
+        expect(parsed.data.tasks[0].attachments).toBeNull();
+        expect(parsed).not.toHaveProperty('legacyAttachmentsChanged');
+    });
+
+    it.each([
+        [
+            'unsupported string',
+            'ftp://example.test/file',
+            'remote payload field "tasks[0].attachments" must be an array or an absolute HTTP(S) URL string when present',
+        ],
+        [
+            'object field',
+            {},
+            'remote payload field "tasks[0].attachments" must be an array or an absolute HTTP(S) URL string when present',
+        ],
+        ['null entry', [null], 'remote payload field "tasks[0].attachments[0]" must be an object'],
+        ['number entry', [42], 'remote payload field "tasks[0].attachments[0]" must be an object'],
+        ['malformed object entry', [{}], 'remote payload field "tasks[0].attachments[0].id" must be a non-empty string'],
+        [
+            'unknown attachment kind',
+            [{ id: 'attachment-1', kind: 'bookmark' }],
+            'remote payload field "tasks[0].attachments[0].kind" must be "file" or "link"',
+        ],
+    ])('rejects a malformed attachment %s with a field-path error', (_label, attachments, expectedError) => {
+        const input = createData();
+        input.tasks[0] = { ...input.tasks[0], attachments } as unknown as Task;
+
+        expect(() => parseSyncDocument(input, 'remote')).not.toThrow();
+        const parsed = parseSyncDocument(input, 'remote');
+        expect(parsed.ok).toBe(false);
+        if (parsed.ok) throw new Error('Expected malformed attachments to be rejected');
+        expect(parsed.errors).toContain(expectedError);
+    });
+
+    it('rejects id/kind-valid records with missing or malformed required fields', () => {
+        const validAttachment = {
+            id: 'attachment-valid',
+            kind: 'link',
+            title: '',
+            uri: '',
+            createdAt: NOW,
+            updatedAt: NOW,
+        };
+        const malformedAttachments = [
+            { ...validAttachment, id: 'missing-title', title: undefined },
+            { ...validAttachment, id: 'wrong-title', title: 42 },
+            { ...validAttachment, id: 'missing-uri', uri: undefined },
+            { ...validAttachment, id: 'wrong-uri', uri: {} },
+            { ...validAttachment, id: 'missing-created', createdAt: undefined },
+            { ...validAttachment, id: 'invalid-created', createdAt: 'not-a-date' },
+            { ...validAttachment, id: 'missing-updated', updatedAt: undefined },
+            { ...validAttachment, id: 'wrong-updated', updatedAt: 42 },
+        ];
+        const input = createData();
+        input.projects = [{
+            id: 'project-malformed',
+            title: 'Project',
+            status: 'active',
+            color: '#000000',
+            order: 0,
+            tagIds: [],
+            createdAt: NOW,
+            updatedAt: NOW,
+            attachments: malformedAttachments,
+        } as unknown as Project];
+        const original = structuredClone(input);
+
+        const parsed = parseSyncDocument(input, 'remote');
+
+        expect(parsed).toEqual({
+            ok: false,
+            errors: [
+                'remote payload field "projects[0].attachments[0].title" must be a string',
+                'remote payload field "projects[0].attachments[1].title" must be a string',
+                'remote payload field "projects[0].attachments[2].uri" must be a string',
+                'remote payload field "projects[0].attachments[3].uri" must be a string',
+                'remote payload field "projects[0].attachments[4].createdAt" must be a valid ISO timestamp',
+                'remote payload field "projects[0].attachments[5].createdAt" must be a valid ISO timestamp',
+                'remote payload field "projects[0].attachments[6].updatedAt" must be a valid ISO timestamp',
+                'remote payload field "projects[0].attachments[7].updatedAt" must be a valid ISO timestamp',
+            ],
+        });
+        expect(input).toEqual(original);
+    });
+
+    it('does not recreate an attachment payload on a purged owner', () => {
+        const input = createData();
+        input.tasks[0] = {
+            ...input.tasks[0],
+            deletedAt: NOW,
+            purgedAt: NOW,
+            attachments: 'https://example.test/purged',
+        } as unknown as Task;
+
+        const parsed = parseSyncDocument(input, 'remote');
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error('Expected the purged owner to parse');
+        expect(parsed.legacyAttachmentsChanged).toBe(true);
+        expect(parsed.data.tasks[0].attachments).toBeUndefined();
+        expect(toRemoteSyncDocument(parsed.data).tasks[0].attachments).toBeUndefined();
+    });
+
+    it('logs only accepted repairs without attachment or owner data', () => {
+        const logs: LogPayload[] = [];
+        setLogger((payload) => logs.push(payload));
+        try {
+            const rejected = createData();
+            rejected.tasks[0] = {
+                ...rejected.tasks[0],
+                attachments: 'https://example.test/private-task',
+            } as unknown as Task;
+            rejected.projects = [{
+                id: 'project-private',
+                title: 'Private project',
+                status: 'active',
+                color: '#000000',
+                order: 0,
+                tagIds: [],
+                createdAt: NOW,
+                updatedAt: NOW,
+                attachments: [null],
+            } as unknown as Project];
+            expect(parseSyncDocument(rejected, 'remote').ok).toBe(false);
+            expect(logs).toHaveLength(0);
+
+            const accepted = createData();
+            accepted.tasks[0] = {
+                ...accepted.tasks[0],
+                attachments: 'https://example.test/private-task',
+            } as unknown as Task;
+            const parsed = parseSyncDocument(accepted, 'remote');
+            expect(parsed.ok).toBe(true);
+            if (!parsed.ok) throw new Error('Expected the legacy URL to be accepted');
+            expect(logs).toEqual([{
+                level: 'info',
+                message: 'Legacy attachment URL normalized for sync',
+                scope: 'sync',
+                context: {
+                    releaseCheck: 'v1.3.0/legacy-attachment-link',
+                    count: 1,
+                },
+            }]);
+            expect(JSON.stringify(logs)).not.toContain('example.test');
+            expect(JSON.stringify(logs)).not.toContain('task-1');
+
+            const repeated = parseSyncDocument(parsed.data, 'remote');
+            expect(repeated.ok).toBe(true);
+            expect(repeated).not.toHaveProperty('legacyAttachmentsChanged');
+            expect(logs).toHaveLength(1);
+        } finally {
+            setLogger(consoleLogger);
         }
     });
 

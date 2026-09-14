@@ -115,6 +115,9 @@ type SharedSyncRunState = {
     preSyncedLocalData: AppData | null;
     wroteLocal: boolean;
     remoteDataForCompare: AppData | null;
+    /** The authoritative remote read repaired a legacy attachment shape and
+     *  must be rewritten even when its repaired view equals the merge output. */
+    remoteLegacyAttachmentsChanged: boolean;
     readCheckRemoteData: AppData | undefined;
     /** Set by `tryArmLocalOnlyUploadFastPath` once the remote is proven
      *  unchanged since this device's last cycle: the document read is then
@@ -574,6 +577,7 @@ class SharedSyncRunMachine {
         preSyncedLocalData: null,
         wroteLocal: false,
         remoteDataForCompare: null,
+        remoteLegacyAttachmentsChanged: false,
         readCheckRemoteData: undefined,
         localOnlyUploadFingerprint: null,
         lastRemoteWriteFingerprint: null,
@@ -722,6 +726,7 @@ class SharedSyncRunMachine {
         this.remoteMutationFence = lease;
         this.state.readCheckRemoteData = undefined;
         this.state.remoteDataForCompare = null;
+        this.state.remoteLegacyAttachmentsChanged = false;
     }
 
     private async acquireAndAssertRemoteMutationFence(minRemainingMs?: number): Promise<void> {
@@ -986,6 +991,7 @@ class SharedSyncRunMachine {
             // stays null so the write's unchanged-guard cannot skip the upload
             // this cycle exists for. See `tryArmLocalOnlyUploadFastPath`.
             this.state.remoteDataForCompare = null;
+            this.state.remoteLegacyAttachmentsChanged = false;
             return null;
         }
         await this.ensureNetwork();
@@ -995,6 +1001,8 @@ class SharedSyncRunMachine {
             // otherwise enters through the shared validation/normalization
             // seam before code that assumes all AppData arrays are present.
             const parsed = raw == null ? null : parseSyncDocument(raw, 'remote');
+            this.state.remoteLegacyAttachmentsChanged = parsed?.ok === true
+                && parsed.legacyAttachmentsChanged === true;
             if (parsed && !parsed.ok) {
                 throw new Error(`Invalid remote sync payload: ${parsed.errors.slice(0, 3).join('; ')}`);
             }
@@ -1008,6 +1016,7 @@ class SharedSyncRunMachine {
             if (this.backend === 'webdav' && isWebdavInvalidJsonError(error)) {
                 this.state.webdavRemoteCorrupted = true;
                 this.state.remoteDataForCompare = null;
+                this.state.remoteLegacyAttachmentsChanged = false;
                 this.notifier.logWarning('WebDAV remote data.json appears corrupted; treating as missing for repair write', error);
                 return null;
             }
@@ -1085,6 +1094,7 @@ class SharedSyncRunMachine {
         if (!this.options.activationProbe
             && previousRemoteDocument
             && !remoteNeedsTombstoneCompaction
+            && !state.remoteLegacyAttachmentsChanged
             && this.requireIo().requiresRemoteRepair?.() !== true
             && areRemoteSyncDocumentsEqual(previousRemoteDocument, remoteDocument)) {
             if (this.backend !== 'cloudkit') {
@@ -1123,6 +1133,7 @@ class SharedSyncRunMachine {
         } else {
             state.remoteDataForCompare = remoteDocument;
         }
+        state.remoteLegacyAttachmentsChanged = false;
         if (this.backend === 'webdav') {
             state.webdavRemoteCorrupted = false;
             this.notifier.tracePayload?.('remote-write-completed', remoteDocument, {
@@ -1302,6 +1313,7 @@ class SharedSyncRunMachine {
         this.ensureLocalSnapshotFresh();
         if (!remoteData) return null;
         this.state.readCheckRemoteData = remoteData;
+        if (this.state.remoteLegacyAttachmentsChanged) return null;
         if (hasUncompactedPurgedTombstones(remoteData)) return null;
 
         // Fingerprints, not two stable-serialized documents: the same digest

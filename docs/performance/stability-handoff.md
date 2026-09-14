@@ -117,6 +117,15 @@ byte for byte. Independent review passed. This is test-fixture hardening, not an
 app performance claim. Check the follow-up revision's CI for final integration
 status. Unrelated local release preparation remains unpublished.
 
+The navigation test follow-up is published as `4f679be0c`;
+[CI 34791009323](https://github.com/dongdongbh/Mindwtr/actions/runs/34791009323)
+completed successfully. The next scoped continuation handles Cloud automation
+attachment-shape recovery (#1205) and Inbox context wording (#1204). See
+[Cloud attachment shape recovery](cloud-attachment-shape-2026-09-13.md) for the
+no-loss migration, API input validation, diagnostic markers, local HTTP evidence,
+and the Quick/Guided explanation for #1206. Use that continuation's published
+revision and CI separately; no release is authorized by this handoff.
+
 ## Start here
 
 1. Read this handoff, then the relevant investigation linked below. Historical

@@ -23,6 +23,7 @@ import {
     normalizeFocusTaskLimit,
     buildQuickAddParseOptions,
     parseQuickAdd,
+    parseSyncDocument,
     repairMergedSyncReferences,
     resolveCaptureStatusForStart,
     resolveTaskFocusCreation,
@@ -216,11 +217,12 @@ const normalizeStoredAppData = (data: AppData): AppData => ({
 const validateStoredAppData = (
     filePath: string,
     rawData: unknown,
-): AppData | { error: Response } => {
+): { data: AppData; legacyAttachmentsChanged?: true } | { error: Response } => {
     if (isTrustedValidatedDataFile(filePath)) {
-        return normalizeStoredAppData(rawData as AppData);
+        return { data: normalizeStoredAppData(rawData as AppData) };
     }
-    const validated = validateAppData(rawData);
+    const parsed = parseSyncDocument(rawData, 'local');
+    const validated = parsed.ok ? validateAppData(parsed.data) : parsed;
     if (!validated.ok) {
         logFailureWarn('Stored cloud data failed validation', {
             failureClass: 'validation',
@@ -228,8 +230,14 @@ const validateStoredAppData = (
         });
         return { error: errorResponse('Stored data failed validation', 500) };
     }
-    rememberValidatedDataFile(filePath);
-    return normalizeStoredAppData(validated.data);
+    const legacyAttachmentsChanged = parsed.ok && parsed.legacyAttachmentsChanged;
+    // Repaired in-memory records do not prove that the bytes on disk are safe
+    // to serve. A failed/aborted later write must leave the old inode untrusted.
+    if (!legacyAttachmentsChanged) rememberValidatedDataFile(filePath);
+    return {
+        data: normalizeStoredAppData(validated.data),
+        ...(legacyAttachmentsChanged ? { legacyAttachmentsChanged: true as const } : {}),
+    };
 };
 
 const loadExistingDataForMerge = (filePath: string): AppData | { error: Response } => {
@@ -242,7 +250,8 @@ const loadExistingDataForMerge = (filePath: string): AppData | { error: Response
         });
         return { error: errorResponse('Stored data failed validation', 500) };
     }
-    return validateStoredAppData(filePath, rawData);
+    const validated = validateStoredAppData(filePath, rawData);
+    return 'error' in validated ? validated : validated.data;
 };
 
 type BunServer = {
@@ -1519,7 +1528,9 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                             }
                             let rawData: Uint8Array;
                             try {
+                                assertStorageRoot();
                                 rawData = readFileSync(filePath);
+                                assertStorageRoot();
                             } catch {
                                 return errorResponse('Failed to read data', 500);
                             }
@@ -1535,6 +1546,21 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                             }
                             const validated = validateStoredAppData(filePath, data);
                             if ('error' in validated) return validated.error;
+                            if (validated.legacyAttachmentsChanged) {
+                                // This GET already owns the namespace write lock.
+                                // Publish through the same atomic path as a sync
+                                // write, then serve the exact new file bytes.
+                                throwIfRequestAborted(requestAbortController.signal);
+                                assertStorageRoot();
+                                writeCloudData(filePath, validated.data, { assertStorageRoot });
+                                logInfo('Legacy Cloud attachment data repaired', {
+                                    releaseCheck: 'v1.3.0/cloud-legacy-attachment-link',
+                                    outcome: 'persisted',
+                                });
+                                assertStorageRoot();
+                                rawData = readFileSync(filePath);
+                                assertStorageRoot();
+                            }
                             return jsonFileResponse(rawData);
                         });
                     }

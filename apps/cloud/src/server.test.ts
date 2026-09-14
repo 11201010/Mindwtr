@@ -686,6 +686,74 @@ describe('cloud server utils', () => {
         }
     });
 
+    test('validates task and project attachment arrays without rejecting tombstones or extra fields', () => {
+        const iso = '2026-09-13T12:00:00.000Z';
+        const linkAttachment = {
+            id: 'link-1',
+            kind: 'link',
+            title: 'Issue link',
+            uri: 'https://example.test/issue/1',
+            createdAt: iso,
+            updatedAt: iso,
+            providerMetadata: { issueKey: 'JIRA-1' },
+        };
+        const fileTombstone = {
+            id: 'file-1',
+            kind: 'file',
+            title: '',
+            uri: '',
+            createdAt: iso,
+            updatedAt: iso,
+            deletedAt: iso,
+        };
+
+        for (const kind of ['task', 'project'] as const) {
+            for (const mode of ['create', 'patch'] as const) {
+                expect(validateEntityProps(kind, mode, { attachments: [linkAttachment, fileTombstone] }).ok).toBe(true);
+                expect(validateEntityProps(kind, mode, { attachments: [] }).ok).toBe(true);
+                expect(validateEntityProps(kind, mode, { attachments: null }).ok).toBe(true);
+                expect(validateEntityProps(kind, mode, { attachments: 'https://example.test/issue/1' }).ok).toBe(false);
+                expect(validateEntityProps(kind, mode, { attachments: [null] }).ok).toBe(false);
+                expect(validateEntityProps(kind, mode, {
+                    attachments: [{ ...linkAttachment, kind: 'bookmark' }],
+                }).ok).toBe(false);
+                expect(validateEntityProps(kind, mode, {
+                    attachments: [{ ...linkAttachment, updatedAt: undefined }],
+                }).ok).toBe(false);
+                expect(validateEntityProps(kind, mode, {
+                    attachments: [{ ...linkAttachment, size: 'large' }],
+                }).ok).toBe(false);
+                expect(validateEntityProps(kind, mode, {
+                    attachments: [{ ...linkAttachment, localStatus: 'remote-only' }],
+                }).ok).toBe(false);
+            }
+        }
+
+        const baseTask = makeTestTask({ id: 'task-with-link', title: 'Task with link' });
+        const baseProject = {
+            id: 'project-with-file',
+            title: 'Project with file tombstone',
+            status: 'active' as const,
+            color: '#6B7280',
+            order: 0,
+            tagIds: [],
+            createdAt: iso,
+            updatedAt: iso,
+        };
+        expect(validateAppData({
+            tasks: [{ ...baseTask, attachments: [linkAttachment] }],
+            projects: [{ ...baseProject, attachments: [fileTombstone] }],
+        }).ok).toBe(true);
+        expect(validateAppData({
+            tasks: [{ ...baseTask, attachments: 'https://example.test/issue/1' }],
+            projects: [baseProject],
+        }).ok).toBe(false);
+        expect(validateAppData({
+            tasks: [baseTask],
+            projects: [{ ...baseProject, attachments: 'https://example.test/issue/1' }],
+        }).ok).toBe(false);
+    });
+
     test('rejects reserved task creation props', () => {
         expect(validateEntityProps('task', 'create', {
             status: 'next',
@@ -3338,6 +3406,107 @@ describe('cloud server api', () => {
         const createdJson = await createResponse.json();
         expect(createdJson.task.status).toBe('inbox');
         expect(createdJson.task.startTime).toBe('2026-08-01');
+    });
+
+    test('rejects malformed REST attachment values without mutation and round-trips link arrays', async () => {
+        const createProjectResponse = await fetch(`${baseUrl}/v1/projects`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'JIRA project' }),
+        });
+        expect(createProjectResponse.status).toBe(201);
+        const projectId = (await createProjectResponse.json()).project.id as string;
+
+        for (const dueDate of ['', '2026-09-14']) {
+            const invalidCreateResponse = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    title: `Invalid attachment ${dueDate || 'blank due date'}`,
+                    props: {
+                        attachments: 'https://example.test/issue/1',
+                        dueDate,
+                        projectId,
+                        status: 'next',
+                    },
+                }),
+            });
+            expect(invalidCreateResponse.status).toBe(400);
+            expect((await invalidCreateResponse.json()).error).toContain('attachments: expected an array');
+        }
+
+        const emptyListResponse = await fetch(`${baseUrl}/v1/tasks?all=1`, { headers: authHeaders });
+        expect(emptyListResponse.status).toBe(200);
+        expect((await emptyListResponse.json()).total).toBe(0);
+
+        const iso = '2026-09-13T12:00:00.000Z';
+        const linkAttachment = {
+            id: 'jira-link',
+            kind: 'link',
+            title: 'JIRA-1',
+            uri: 'https://example.test/issue/1',
+            createdAt: iso,
+            updatedAt: iso,
+        };
+        const createdTasks: Task[] = [];
+        for (const dueDate of ['', undefined]) {
+            const expectedAttachment = {
+                ...linkAttachment,
+                id: `jira-link-${createdTasks.length + 1}`,
+            };
+            const validCreateResponse = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    title: `Valid attachment ${dueDate === '' ? 'blank' : 'absent'} due date`,
+                    props: {
+                        attachments: [expectedAttachment],
+                        dueDate,
+                        projectId,
+                        status: 'next',
+                    },
+                }),
+            });
+            expect(validCreateResponse.status).toBe(201);
+            const createdTask = (await validCreateResponse.json()).task as Task;
+            expect(createdTask.attachments).toEqual([expectedAttachment]);
+            expect(createdTask.dueDate).toBe(dueDate);
+            expect(createdTask.projectId).toBe(projectId);
+            expect(createdTask.status).toBe('next');
+            createdTasks.push(createdTask);
+        }
+
+        const taskUrl = `${baseUrl}/v1/tasks/${encodeURIComponent(createdTasks[0]!.id)}`;
+        const beforePatchResponse = await fetch(taskUrl, { headers: authHeaders });
+        expect(beforePatchResponse.status).toBe(200);
+        const beforePatch = await beforePatchResponse.json();
+        const invalidPatchResponse = await fetch(taskUrl, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ attachments: 'https://example.test/issue/2' }),
+        });
+        expect(invalidPatchResponse.status).toBe(400);
+        expect((await invalidPatchResponse.json()).error).toContain('attachments: expected an array');
+        expect(await (await fetch(taskUrl, { headers: authHeaders })).json()).toEqual(beforePatch);
+
+        const beforePutResponse = await fetch(`${baseUrl}/v1/data`, { headers: authHeaders });
+        expect(beforePutResponse.status).toBe(200);
+        const beforePut = await beforePutResponse.json() as AppData;
+        const invalidPutResponse = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                ...beforePut,
+                tasks: beforePut.tasks.map((task, index) => (
+                    index === 0
+                        ? { ...task, attachments: 'https://example.test/issue/3' }
+                        : task
+                )),
+            }),
+        });
+        expect(invalidPutResponse.status).toBe(400);
+        expect((await invalidPutResponse.json()).error).toContain('attachments: expected an array');
+        expect(await (await fetch(`${baseUrl}/v1/data`, { headers: authHeaders })).json()).toEqual(beforePut);
     });
 
     test('finalizes task REST writes before storing data', async () => {
