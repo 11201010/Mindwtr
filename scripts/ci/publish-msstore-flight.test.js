@@ -36,7 +36,7 @@ test('Store versions order previous stable, RCs, stable, and next patch while re
   const versions = ['1.2.8.0', ...['v1.3.0-rc.1', tag, 'v1.3.0-rc.98', 'v1.3.0', 'v1.3.1-rc.1', 'v1.3.1', 'v1.4.0-rc.1'].map(msstoreVersion)];
   for (let i = 1; i < versions.length; i++) expect(compareVersions(versions[i], versions[i - 1])).toBe(1);
   expect(msstoreVersion(tag)).toBe('1.3.2.0');
-  expect(msstoreVersion('v1.3.0')).toBe('1.3.99.0');
+  expect(msstoreVersion('v1.3.0')).toBe('1.3.100.0');
   expect(compareVersions('1.3.2.0', '1.3.2.7')).toBe(0);
   for (const invalid of ['v1.3.0-rc.0', 'v1.3.0-rc.99', 'v0.3.0', 'v1.3.655', 'v1.65536.0', 'v1.3.0-beta.1']) {
     expect(() => msstoreVersion(invalid)).toThrow();
@@ -197,12 +197,12 @@ test('Windows PowerShell validates Store versions only for selected Store routes
   const stablePush = run({ tag: 'v1.3.0', event: 'push', ref: 'refs/tags/v1.3.0', flight: false });
   expect(stablePush).toContain('store_stable=true');
   expect(stablePush).toContain('store_package=true');
-  expect(stablePush).toContain('msix_version=1.3.99.0');
+  expect(stablePush).toContain('msix_version=1.3.100.0');
 
   const explicitStable = run({ tag: 'v1.3.0', stable: true, flight: false });
   expect(explicitStable).toContain('store_stable=true');
   expect(explicitStable).toContain('store_package=true');
-  expect(explicitStable).toContain('msix_version=1.3.99.0');
+  expect(explicitStable).toContain('msix_version=1.3.100.0');
 
   const branchPush = run({ tag: 'v1.3.0', event: 'push', ref: 'refs/heads/main', flight: false });
   expect(branchPush).toContain('store_stable=false');
