@@ -38,7 +38,7 @@ describe('desktop feedback diagnostics', () => {
         expect(diagnostics).toContain('Sync failed');
         expect(diagnostics).toContain('Sync requested');
         expect(diagnostics).not.toContain('private-secret');
-        expect(diagnostics).toContain('v1.3.1/feedback-diagnostics');
+        expect(diagnostics).toContain('v1.3.0/feedback-diagnostics');
         expect(mocks.writeTextFile).not.toHaveBeenCalled();
         await clearLog();
         expect(await collectFeedbackDiagnostics()).not.toContain('Sync failed');

@@ -212,7 +212,7 @@ describe('app-log', () => {
     expect(diagnostics).toContain('Request failed');
     expect(diagnostics).toContain('File picker requested');
     expect(diagnostics).not.toContain('private-secret');
-    expect(diagnostics).toContain('v1.3.1/feedback-diagnostics');
+        expect(diagnostics).toContain('v1.3.0/feedback-diagnostics');
     expect(backend.appendLogLine).not.toHaveBeenCalled();
     await clearLog();
     expect(await collectFeedbackDiagnostics()).not.toContain('Request failed');

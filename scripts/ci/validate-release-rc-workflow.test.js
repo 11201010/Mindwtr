@@ -711,6 +711,7 @@ test("Windows release retries a failed Bun install with isolated package caches"
 
   expect(install).toBeDefined();
   expect(install.shell).toBe("pwsh");
+  expect(install.run).toContain("node scripts/ci/prepare-windows-bun-install.js");
   expect(install.run.match(/bun install --frozen-lockfile/g)).toHaveLength(2);
   expect(install.run).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'");
   expect(install.run).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'");

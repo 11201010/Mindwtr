@@ -455,7 +455,7 @@ export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS
     message: 'Feedback diagnostics snapshot',
     context: sanitizeLogContext({
       debugLoggingEnabled: isLoggingEnabled(),
-      releaseCheck: 'v1.3.1/feedback-diagnostics',
+        releaseCheck: 'v1.3.0/feedback-diagnostics',
       captureMode: 'recent-session-and-saved-log',
       breadcrumbCount: breadcrumbs.length,
       breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs.join(';') : 'none',

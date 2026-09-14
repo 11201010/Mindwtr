@@ -135,6 +135,7 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   for (const trigger of ['workflow_call', 'workflow_dispatch']) expect(windows.on[trigger].inputs.run_msstore_flight.default).toBe(false);
   const steps = windows.jobs.standalone.steps;
   const install = steps.find(step => step.name === 'Install dependencies').run;
+  expect(install).toContain('node scripts/ci/prepare-windows-bun-install.js');
   expect(install).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'");
   expect(install).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'");
   expect(install).toContain('--cache-dir "$cacheDir" --backend copyfile');
