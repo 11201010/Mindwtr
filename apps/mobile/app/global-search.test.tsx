@@ -190,6 +190,33 @@ describe('SearchScreen task results', () => {
         }));
     });
 
+    it('highlights every nonadjacent query term in a result title', () => {
+        routeParams.q = 'checklist LAUNCH';
+        let tree!: ReturnType<typeof create>;
+        act(() => {
+            tree = trackTree(create(<SearchScreen />));
+        });
+
+        const resultList = tree.root.findByType(FlatList);
+        const resultRow = resultList.props.renderItem({
+            item: resultList.props.data[0],
+            index: 0,
+        });
+        let rowTree!: ReturnType<typeof create>;
+        act(() => {
+            rowTree = trackTree(create(resultRow));
+        });
+
+        const title = rowTree.root.findAllByType(Text).find(
+            (node) => node.props.accessibilityLabel === 'Launch checklist'
+        );
+        expect(title).toBeDefined();
+        expect(title!.findAllByType(Text)
+            .filter((node) => node !== title && node.props.style?.fontWeight === '600')
+            .map((node) => node.props.children))
+            .toEqual(['Launch', 'checklist']);
+    });
+
     it('completes a task from the search row check icon with an undo toast', async () => {
         // #1051: the check icon is a real completion toggle, not decoration.
         updateTaskMock.mockResolvedValue({ success: true });

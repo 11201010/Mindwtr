@@ -192,6 +192,31 @@ describe('GlobalSearch', () => {
         expect(screen.getByText((_, element) => element?.textContent === 'Home needle task')).toBeInTheDocument();
     });
 
+    it('highlights every nonadjacent query term in a result title', async () => {
+        render(
+            <LanguageProvider>
+                <GlobalSearch onNavigate={vi.fn()} />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            window.dispatchEvent(new Event('mindwtr:open-search'));
+            await vi.advanceTimersByTimeAsync(50);
+        });
+        await act(async () => {
+            fireEvent.change(screen.getByRole('textbox'), {
+                target: { value: 'needle HOME' },
+            });
+            await vi.advanceTimersByTimeAsync(200);
+            await Promise.resolve();
+        });
+
+        const title = document.querySelector<HTMLElement>('[data-search-index="0"] .font-medium');
+        expect(title?.textContent).toBe('Home needle task');
+        expect(Array.from(title!.querySelectorAll('.text-primary.font-semibold')).map((node) => node.textContent))
+            .toEqual(['Home', 'needle']);
+    });
+
     it('refreshes hidden-future results at midnight and at an explicit start time', async () => {
         vi.setSystemTime(new Date('2026-04-16T23:59:30'));
         useTaskStore.setState({

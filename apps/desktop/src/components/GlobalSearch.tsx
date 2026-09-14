@@ -23,6 +23,7 @@ import { shallow,
     resolveAreaFilterSelection,
     taskMatchesAreaFilterSelection,
     projectMatchesAreaFilterSelection, tFallback,
+    createSearchHighlighter,
     type DerivedState, } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import { cn } from '../lib/utils';
@@ -177,12 +178,7 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     }, [isOpen]);
 
     const trimmedQuery = searchQuery.trim();
-    const highlightQuery = trimmedQuery && !/\b\w+:/i.test(trimmedQuery) ? trimmedQuery : '';
-    const highlightRegex = useMemo(() => {
-        if (!highlightQuery) return null;
-        const escaped = highlightQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`(${escaped})`, 'ig');
-    }, [highlightQuery]);
+    const highlightText = useMemo(() => createSearchHighlighter(searchQuery), [searchQuery]);
     useEffect(() => {
         const timer = window.setTimeout(() => {
             setDebouncedQuery(trimmedQuery);
@@ -297,12 +293,10 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     }, [isOpen, selectedIndex, results.length]);
 
     const renderHighlighted = (text: string) => {
-        if (!highlightRegex) return text;
-        const parts = text.split(highlightRegex);
-        return parts.map((part, index) => (
-            index % 2 === 1
-                ? <span key={`${part}-${index}`} className="text-primary font-semibold">{part}</span>
-                : <span key={`${part}-${index}`}>{part}</span>
+        return highlightText(text).map((segment, index) => (
+            segment.highlighted
+                ? <span key={index} className="text-primary font-semibold">{segment.text}</span>
+                : segment.text
         ));
     };
 

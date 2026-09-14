@@ -34,7 +34,8 @@ import { useTaskStore,
     shallow,
     undoTaskCompletion,
     formatTaskMarkedDoneMessage,
-    translateWithFallback, tFallback, } from '@mindwtr/core';
+    translateWithFallback, tFallback,
+    createSearchHighlighter, } from '@mindwtr/core';
 import {
     computeGlobalSearchResults,
     getGlobalSearchFilterPresentation,
@@ -121,6 +122,7 @@ export default function SearchScreen() {
     const placeholderColor = tc.secondaryText;
 
   const trimmedQuery = query.trim();
+  const highlightText = useMemo(() => createSearchHighlighter(query), [query]);
   const shouldUseFts = debouncedQuery.length > 0 && !/\b\w+:/i.test(debouncedQuery);
 
   useEffect(() => {
@@ -767,7 +769,18 @@ export default function SearchScreen() {
                                 </TouchableOpacity>
                             )}
                             <View style={styles.resultText}>
-                                <Text style={[styles.resultTitle, { color: tc.text }]}>{item.item.title}</Text>
+                                <Text
+                                    style={[styles.resultTitle, { color: tc.text }]}
+                                    accessibilityLabel={item.item.title}
+                                >
+                                    {highlightText(item.item.title).map((segment, index) => (
+                                        segment.highlighted ? (
+                                            <Text key={index} style={{ color: tc.tint, fontWeight: '600' }}>
+                                                {segment.text}
+                                            </Text>
+                                        ) : segment.text
+                                    ))}
+                                </Text>
                                 <Text style={[styles.resultSubtitle, { color: tc.secondaryText }]}>
                                     {item.type === 'project'
                                         ? t('search.resultProject')
