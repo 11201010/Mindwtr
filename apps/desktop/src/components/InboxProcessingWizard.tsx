@@ -352,7 +352,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
         projectcheck: t('process.moreThanOneStep'),
         twomin: t('process.twoMin'),
         decide: t('process.nextStep'),
-        context: t('process.context'),
+        context: t('taskEdit.contextsLabel'),
         reference: t('process.reference'),
         someday: t('process.someday'),
         project: t('process.project'),

@@ -6,8 +6,9 @@ const TASK_TITLE = 'E2E Clarify Task';
 
 /** Each guided step is identified by its own label before its choice is made. */
 const chooseAtStep = async (page: Page, step: string, choice: string) => {
-    await expect(page.getByText(step, { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: choice, exact: true }).click();
+    const main = page.getByRole('main');
+    await expect(main.getByText(step, { exact: true })).toBeVisible();
+    await main.getByRole('button', { name: choice, exact: true }).click();
 };
 
 test('clarifies an inbox capture into a project next action', async ({ page }) => {
@@ -31,7 +32,7 @@ test('clarifies an inbox capture into a project next action', async ({ page }) =
     await chooseAtStep(page, 'More than one step?', 'No, single action');
     await chooseAtStep(page, '⏱️ Will it take less than 2 minutes?', 'Takes longer');
     await chooseAtStep(page, "What's next?", "📋 I'll do it");
-    await chooseAtStep(page, 'Where will you do this?', 'Next (No context)');
+    await chooseAtStep(page, 'Contexts', 'Next (No context)');
     await chooseAtStep(page, 'Assign to a project?', PROJECT_TITLE);
 
     // Clarifying the last capture ends the session and empties the Inbox.

@@ -16,7 +16,7 @@ import {
 } from 'fs';
 import { createHash, randomBytes } from 'crypto';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
-import { sleep, type AppData } from '@mindwtr/core';
+import { parseSyncDocument, sleep, type AppData } from '@mindwtr/core';
 import {
     ATTACHMENT_PATH_ALLOWLIST,
     ATTACHMENT_PATH_MAX_LENGTH,
@@ -788,7 +788,13 @@ export function loadAppDataForWriteUncached(filePath: string): AppDataForWriteRe
     if (!existsSync(filePath)) return { state: 'ok', data: createDefaultData() };
     const raw = readData(filePath);
     if (!raw) return { state: 'unreadable' };
-    return { state: 'ok', data: normalizeLoadedAreas(raw) };
+    // Decode older API-created link strings before REST/attachment code reads
+    // the records. Invalid stored data remains unreadable, never an empty app.
+    // The parsed-data cache is separate from the trusted raw-file cache: only
+    // a subsequent successful write may establish trust in repaired bytes.
+    const parsed = parseSyncDocument(raw, 'local');
+    if (!parsed.ok) return { state: 'unreadable' };
+    return { state: 'ok', data: normalizeLoadedAreas(parsed.data) };
 }
 
 // Raw, uncached disk read. server-data-cache.ts wraps this as the process-local-cached
