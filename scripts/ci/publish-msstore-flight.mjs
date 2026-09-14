@@ -55,12 +55,19 @@ export async function publishFlight({ appId, flightId, tag, fileName, archive, r
     ownedDraft = true;
   } else if (flight.lastPublishedFlightSubmission?.id) {
     const published = await request('GET', `${root}/submissions/${encodeURIComponent(flight.lastPublishedFlightSubmission.id)}`);
-    if (published.notesForCertification === marker && assertStatus(published) === 'Published') {
+    const publishedStatus = assertStatus(published);
+    if (published.notesForCertification === marker && publishedStatus === 'Published') {
       log(`Flight submission ${published.id} already published (${version}).`);
       return { submissionId: published.id, version, status: 'Published' };
     }
     for (const pkg of published.flightPackages || []) {
-      if (pkg.fileStatus !== 'PendingDelete' && compareVersions(version, pkg.version) <= 0) {
+      if (pkg.fileStatus === 'PendingDelete') continue;
+      const comparison = compareVersions(version, pkg.version);
+      if (comparison === 0 && pkg.fileName === fileName && publishedStatus === 'Published') {
+        log(`Flight already exposes ${fileName} (${version}) through published submission ${published.id}.`);
+        return { submissionId: published.id, version, status: 'Published' };
+      }
+      if (comparison <= 0) {
         throw new Error(`Flight already contains MSIX ${pkg.version}; new package ${version} must be higher.`);
       }
     }

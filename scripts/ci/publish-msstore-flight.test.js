@@ -98,11 +98,20 @@ test('exact pending archive resumes, while committed submissions are only polled
   expect(committing.calls.every(call => call.method === 'GET')).toBe(true);
 });
 
-test('a published exact archive is idempotent and equal or older versions fail before mutation', async () => {
+test('published owned or Store-inherited exact packages are idempotent and older versions fail before mutation', async () => {
   const flight = { lastPublishedFlightSubmission: { id: 'old' } };
   const exact = fixture({ flight, published: { id: 'old', status: 'Published', notesForCertification: marker } });
   expect((await exact.run()).status).toBe('Published');
   expect(exact.calls.every(call => call.method === 'GET')).toBe(true);
+
+  const inherited = fixture({ flight, published: {
+    id: 'old',
+    status: 'Published',
+    flightPackages: [{ fileName: 'mindwtr_1.3.0-rc.2_x64.msix', version: '1.3.2.7' }],
+  } });
+  expect(await inherited.run()).toEqual({ submissionId: 'old', version: '1.3.2.0', status: 'Published' });
+  expect(inherited.calls.every(call => call.method === 'GET')).toBe(true);
+
   for (const version of ['1.3.2.7', '1.3.99.0']) {
     const older = fixture({ flight, published: { flightPackages: [{ version }] } });
     await expect(older.run()).rejects.toThrow('must be higher');
