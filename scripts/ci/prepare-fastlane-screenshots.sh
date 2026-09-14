@@ -71,6 +71,17 @@ resolve_target_dimensions() {
         echo "2064 2752"
       fi
       ;;
+    ios:AppleWatch)
+      case "${source_width}x${source_height}" in
+        422x514|410x502|416x496|396x484|368x448|312x390)
+          echo "${source_width} ${source_height}"
+          ;;
+        *)
+          echo "Unsupported Apple Watch screenshot size: ${source_width}x${source_height}" >&2
+          exit 1
+          ;;
+      esac
+      ;;
     macos:macOS)
       echo "1440 900"
       ;;
@@ -151,6 +162,7 @@ prepare_ios_locale() {
   mkdir -p "${dest_dir}"
   copy_group "${SOURCE_ROOT}/iphone" "iphone" "${dest_dir}" "iPhone"
   copy_group "${SOURCE_ROOT}/ipad" "ipad" "${dest_dir}" "iPad"
+  copy_group "${SOURCE_ROOT}/watch" "watch" "${dest_dir}" "AppleWatch"
 }
 
 prepare_macos_locale() {

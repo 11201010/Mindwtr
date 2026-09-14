@@ -71,6 +71,44 @@ test('stable Watch release keeps the existing iOS recovery selection gate', () =
   }
 });
 
+test('Watch-enabled App Review waits for a required Watch screenshot', () => {
+  const steps = readIosRelease().jobs['ios-appstore'].steps;
+  const route = steps.find((step) => step.name === 'Resolve App Store review submission flag');
+  const screenshots = steps.find((step) => step.name === 'Prepare Fastlane screenshots');
+  const preparation = readFileSync('scripts/ci/prepare-fastlane-screenshots.sh', 'utf8');
+  expect(route.run).toContain('apps/mobile/screenshots/watch');
+  expect(route.run).toContain('Apple requires an Apple Watch screenshot');
+  expect(route.run).toContain('EFFECTIVE_SUBMIT_FOR_REVIEW="false"');
+  expect(screenshots.run).toContain('{iphone,ipad,watch}');
+  expect(preparation).toContain('ios:AppleWatch)');
+  expect(preparation).toContain('copy_group "${SOURCE_ROOT}/watch" "watch"');
+  for (const size of ['422x514', '410x502', '416x496', '396x484', '368x448', '312x390']) {
+    expect(preparation).toContain(size);
+  }
+
+  const temp = mkdtempSync(join(tmpdir(), 'mindwtr-watch-review-routing-'));
+  try {
+    const output = join(temp, 'env');
+    const log = execFileSync('bash', ['-c', route.run], {
+      env: {
+        PATH: process.env.PATH,
+        GITHUB_ENV: output,
+        RUNNER_TEMP: temp,
+        MINDWTR_WATCH_ENABLED: 'true',
+        TESTFLIGHT_ONLY: 'false',
+        REQUESTED_SUBMIT_FOR_REVIEW: 'true',
+        REQUESTED_DISTRIBUTE_TESTFLIGHT: 'true',
+        FORCE_APPSTORE_UPLOAD: 'false',
+      },
+      encoding: 'utf8',
+    });
+    expect(log).toContain('Apple requires an Apple Watch screenshot');
+    expect(readFileSync(output, 'utf8')).toContain('EFFECTIVE_SUBMIT_FOR_REVIEW=false');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test('TestFlight-only builds reject production submission and forced App Store upload', () => {
   const steps = readIosRelease().jobs['ios-appstore'].steps;
   const gate = steps.find((step) => step.name === 'Validate iOS distribution mode');

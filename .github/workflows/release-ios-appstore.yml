@@ -1052,7 +1052,7 @@ jobs:
             echo "FASTLANE_SCREENSHOTS_PATH=$FASTLANE_SCREENSHOTS_DIR" >> "$GITHUB_ENV"
             echo "SKIP_SCREENSHOTS_FOR_UPLOAD=false" >> "$GITHUB_ENV"
           else
-            echo "::warning::No iOS App Store screenshots found under apps/mobile/screenshots/{iphone,ipad}; skipping screenshot upload."
+            echo "::warning::No iOS App Store screenshots found under apps/mobile/screenshots/{iphone,ipad,watch}; skipping screenshot upload."
             echo "FASTLANE_SCREENSHOTS_PATH=" >> "$GITHUB_ENV"
             echo "SKIP_SCREENSHOTS_FOR_UPLOAD=true" >> "$GITHUB_ENV"
           fi
@@ -1104,6 +1104,16 @@ jobs:
             echo "ENABLE_TESTFLIGHT_EXTERNAL_RELEASE=false" >> "$GITHUB_ENV"
           fi
           echo "SKIP_APPSTORE_UPLOAD=false" >> "$GITHUB_ENV"
+
+          if [ "$REQUESTED_SUBMIT_FOR_REVIEW" = "true" ] && [ "$MINDWTR_WATCH_ENABLED" = "true" ]; then
+            WATCH_SCREENSHOT="$(find apps/mobile/screenshots/watch -mindepth 1 -maxdepth 1 -type f \
+              \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) -print -quit 2>/dev/null || true)"
+            if [ -z "$WATCH_SCREENSHOT" ]; then
+              echo "::warning::Apple requires an Apple Watch screenshot before this Watch-enabled version can enter App Review. The IPA and TestFlight release will continue, but App Review submission is disabled until apps/mobile/screenshots/watch contains a supported screenshot."
+              REQUESTED_SUBMIT_FOR_REVIEW="false"
+              EFFECTIVE_SUBMIT_FOR_REVIEW="false"
+            fi
+          fi
 
           if [ -z "${IOS_ASC_KEY_ID:-}" ] || [ -z "${IOS_ASC_ISSUER_ID:-}" ] || [ -z "${IOS_ASC_PRIVATE_KEY:-}" ]; then
             echo "::warning::App Store Connect API secrets are missing. Disabling review submission and TestFlight external routing."

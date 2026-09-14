@@ -453,23 +453,6 @@ jobs:
           if-no-files-found: error
           retention-days: 28
 
-      - name: Submit Microsoft Store beta flight
-        if: inputs.run_msstore_flight
-        timeout-minutes: 40
-        shell: pwsh
-        env:
-          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
-          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
-          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
-          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
-          MSSTORE_FLIGHT_ID: ${{ vars.MSSTORE_FLIGHT_ID }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          MSIX_FILE_NAME: mindwtr_${{ steps.version.outputs.version }}_x64.msix
-          MSIX_ZIP_PATH: ${{ runner.temp }}/msstore-flight.zip
-        run: |
-          node scripts/ci/publish-msstore-flight.mjs
-          if ($LASTEXITCODE -ne 0) { throw "Microsoft Store flight submission failed" }
-
       - name: Validate Microsoft Store secrets
         if: steps.version.outputs.store_package == 'true'
         shell: pwsh
@@ -1183,3 +1166,21 @@ jobs:
             }
           }
           Write-Host "Microsoft Store publish completed."
+
+      - name: Submit Microsoft Store beta flight
+        if: inputs.run_msstore_flight
+        continue-on-error: true
+        timeout-minutes: 40
+        shell: pwsh
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
+          MSSTORE_FLIGHT_ID: ${{ vars.MSSTORE_FLIGHT_ID }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          MSIX_FILE_NAME: mindwtr_${{ steps.version.outputs.version }}_x64.msix
+          MSIX_ZIP_PATH: ${{ runner.temp }}/msstore-flight.zip
+        run: |
+          node scripts/ci/publish-msstore-flight.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Microsoft Store flight submission failed" }

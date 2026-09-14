@@ -139,7 +139,12 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   }
   expect(steps.find(step => step.name === 'Check Microsoft Store submission status').if).toBe("steps.version.outputs.store_stable == 'true'");
   expect(steps.find(step => step.name === 'Publish to Microsoft Store (metadata + package)').if).toContain("steps.version.outputs.store_stable == 'true'");
-  expect(steps.find(step => step.name === 'Submit Microsoft Store beta flight').if).toBe('inputs.run_msstore_flight');
+  const publishIndex = steps.findIndex(step => step.name === 'Publish to Microsoft Store (metadata + package)');
+  const flightIndex = steps.findIndex(step => step.name === 'Submit Microsoft Store beta flight');
+  const flightStep = steps[flightIndex];
+  expect(flightStep.if).toBe('inputs.run_msstore_flight');
+  expect(flightStep['continue-on-error']).toBe(true);
+  expect(flightIndex).toBeGreaterThan(publishIndex);
 });
 
 test('Windows PowerShell validates Store versions only for selected Store routes', () => {
