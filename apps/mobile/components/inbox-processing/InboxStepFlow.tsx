@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Platform, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
   BookOpen,
@@ -50,51 +50,39 @@ const STEP_TRANSITION_MS = 200;
 const STEP_TRANSITION_OFFSET = 24;
 const DATED_QUICK_DATE_PRESETS = QUICK_DATE_PRESETS.filter((preset) => preset !== 'no_date');
 
-function PrimaryButton({
-  label,
-  background,
-  foreground,
-  onPress,
-}: {
-  label: string;
-  background: string;
-  foreground: string;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={[styles.stepPrimaryButton, { backgroundColor: background }]}
-      onPress={onPress}
-    >
-      <Text style={[styles.stepPrimaryText, { color: foreground }]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function SecondaryButton({
+function ChoiceButton({
   label,
   icon: Icon,
   tc,
+  compact = false,
   onPress,
 }: {
   label: string;
   icon?: LucideIcon;
   tc: ThemeColors;
+  compact?: boolean;
   onPress: () => void;
 }) {
-  return (
+  const { fontScale } = useWindowDimensions();
+  const button = (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[styles.stepSecondaryButton, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
+      style={[
+        styles.stepChoiceButton,
+        compact && styles.stepChoiceButtonCompact,
+        { backgroundColor: tc.cardBg, borderColor: tc.border },
+      ]}
       onPress={onPress}
     >
       {Icon ? <Icon size={18} color={tc.text} strokeWidth={2} /> : null}
-      <Text style={[styles.stepSecondaryText, { color: tc.text }]} numberOfLines={2}>{label}</Text>
+      <Text style={[styles.stepChoiceButtonText, { color: tc.text }]}>{label}</Text>
     </TouchableOpacity>
   );
+
+  return compact ? (
+    <View style={[styles.stepChoiceCell, fontScale >= 1.3 && styles.stepChoiceCellLargeText]}>{button}</View>
+  ) : button;
 }
 
 /**
@@ -419,15 +407,16 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
       case 'decisions':
         return (
           <View>
-            <PrimaryButton
-              label={t('inbox.illDoIt')}
-              background={filledButton.backgroundColor}
-              foreground={primaryForeground}
-              onPress={() => { void commit('next', () => finalizeNextAction(controller.selectedProjectId)); }}
-            />
-            <View style={styles.stepSecondaryRow}>
+            <View style={styles.stepChoiceGrid}>
+              <ChoiceButton
+                compact
+                tc={tc}
+                label={t('inbox.illDoIt')}
+                onPress={() => { void commit('next', () => finalizeNextAction(controller.selectedProjectId)); }}
+              />
               {twoMinuteEnabled && (
-                <SecondaryButton
+                <ChoiceButton
+                  compact
                   icon={CheckCircle2}
                   tc={tc}
                   label={t('inbox.doneIt')}
@@ -435,38 +424,44 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
                 />
               )}
               {showProjectField && (
-                <SecondaryButton
+                <ChoiceButton
+                  compact
                   icon={Folder}
                   tc={tc}
                   label={t('taskEdit.projectLabel')}
                   onPress={() => chooseQuick('project')}
                 />
               )}
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={Clock3}
                 tc={tc}
                 label={tFallback(t, 'process.later', 'Start later')}
                 onPress={() => chooseQuick('later')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={UserRound}
                 tc={tc}
                 label={t('inbox.delegate')}
                 onPress={() => chooseQuick('delegate')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={Cloud}
                 tc={tc}
                 label={t('inbox.someday')}
                 onPress={() => setActionabilityChoice('someday')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={Hourglass}
                 tc={tc}
                 label={tFallback(t, 'process.incubate', 'Incubate')}
                 onPress={() => setActionabilityChoice('incubate')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={BookOpen}
                 tc={tc}
                 label={t('nav.reference')}
@@ -490,32 +485,36 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
           <View>
             <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.isActionable')}</Text>
             <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('inbox.actionableHint')}</Text>
-            <PrimaryButton
-              label={t('inbox.yes')}
-              background={filledButton.backgroundColor}
-              foreground={primaryForeground}
-              onPress={() => setActionabilityChoice('actionable')}
-            />
-            <View style={styles.stepSecondaryRow}>
-              <SecondaryButton
+            <View style={styles.stepChoiceGrid}>
+              <ChoiceButton
+                compact
+                tc={tc}
+                label={t('inbox.yes')}
+                onPress={() => setActionabilityChoice('actionable')}
+              />
+              <ChoiceButton
+                compact
                 icon={Clock3}
                 tc={tc}
                 label={tFallback(t, 'process.later', 'Start later')}
                 onPress={() => setActionabilityChoice('later')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={Cloud}
                 tc={tc}
                 label={t('inbox.someday')}
                 onPress={() => setActionabilityChoice('someday')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={Hourglass}
                 tc={tc}
                 label={tFallback(t, 'process.incubate', 'Incubate')}
                 onPress={() => setActionabilityChoice('incubate')}
               />
-              <SecondaryButton
+              <ChoiceButton
+                compact
                 icon={BookOpen}
                 tc={tc}
                 label={t('nav.reference')}
@@ -539,14 +538,9 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
           <View>
             <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.twoMinRule')}</Text>
             <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('inbox.twoMinHint')}</Text>
-            <PrimaryButton
-              label={t('inbox.doneIt')}
-              background={filledButton.backgroundColor}
-              foreground={primaryForeground}
-              onPress={() => { void commit('done', handleTwoMinYes); }}
-            />
-            <View style={styles.stepSecondaryRow}>
-              <SecondaryButton tc={tc} label={t('inbox.takesLonger')} onPress={() => setTwoMinuteChoice('no')} />
+            <View style={styles.stepChoiceColumn}>
+              <ChoiceButton tc={tc} label={t('inbox.doneIt')} onPress={() => { void commit('done', handleTwoMinYes); }} />
+              <ChoiceButton tc={tc} label={t('inbox.takesLonger')} onPress={() => setTwoMinuteChoice('no')} />
             </View>
           </View>
         );
@@ -555,14 +549,9 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
         return (
           <View>
             <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('inbox.whoShouldDoIt')}</Text>
-            <PrimaryButton
-              label={t('inbox.illDoIt')}
-              background={filledButton.backgroundColor}
-              foreground={primaryForeground}
-              onPress={() => setExecutionChoice('defer')}
-            />
-            <View style={styles.stepSecondaryRow}>
-              <SecondaryButton
+            <View style={styles.stepChoiceColumn}>
+              <ChoiceButton tc={tc} label={t('inbox.illDoIt')} onPress={() => setExecutionChoice('defer')} />
+              <ChoiceButton
                 icon={UserRound}
                 tc={tc}
                 label={t('inbox.delegate')}
@@ -577,14 +566,13 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
           <View>
             <Text style={[styles.stepQuestion, { color: tc.text }]}>{t('process.moreThanOneStep')}</Text>
             <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{t('process.moreThanOneStepDesc')}</Text>
-            <PrimaryButton
-              label={t('process.moreThanOneStepNo')}
-              background={filledButton.backgroundColor}
-              foreground={primaryForeground}
-              onPress={() => { handleProjectConversionCancel(); setOneActionAnswered(true); }}
-            />
-            <View style={styles.stepSecondaryRow}>
-              <SecondaryButton
+            <View style={styles.stepChoiceColumn}>
+              <ChoiceButton
+                tc={tc}
+                label={t('process.moreThanOneStepNo')}
+                onPress={() => { handleProjectConversionCancel(); setOneActionAnswered(true); }}
+              />
+              <ChoiceButton
                 tc={tc}
                 label={t('process.moreThanOneStepYes')}
                 onPress={() => { handleProjectConversionStart(); setOneActionAnswered(true); }}

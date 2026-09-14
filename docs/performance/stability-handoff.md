@@ -42,9 +42,21 @@ The dated report retains its pre-commit native build and runner identities.
 CI `34742804799` covers the Android fix; use the CI run for the current pushed
 `main` revision to establish integration status for the desktop continuation.
 
+## September 13 neutral Inbox choices
+
+Inbox clarification choices now have equal neutral visual emphasis on mobile
+and desktop. The [neutral choices report](inbox-neutral-choices-2026-09-13.md)
+records the #1208 product decision, 109 focused component tests, both platform
+typechecks, six browser theme/window cases, independent closure review, and
+physical Android Dev checks including large text. Confirmations, destructive
+warnings and actual selection states retain their styling. Original phone
+font scale, theme, processing mode and switches were restored; the Dev app,
+task-owned Metro and ADB reverse were stopped. Public docs need no change and
+no release/tag was created. Verify CI against the final pushed main revision.
+
 ## September 13 Dropbox callback continuation
 
-Android Dropbox authorization callbacks now return Router navigation to Sync
+Published as `1efb5655d`, Android Dropbox callbacks now return Router navigation to Sync
 settings while AuthSession keeps ownership of the original state/PKCE flow.
 See the [callback routing report](dropbox-callback-routing-2026-09-13.md) for the
 strict raw matching fix, independent review, targeted checks, and physical Dev
