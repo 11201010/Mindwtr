@@ -99,7 +99,7 @@
 
 - **完整的 GTD 流程。** 从收件箱整理、项目规划到每周回顾，全程有引导，让你既能安排眼前的行动，也能定期检查长期计划。
 - **数据由你掌握。** 任务保存在设备上，断网也能用，还可以导出备份。同步是可选的，存哪儿由你选择：[iCloud、Dropbox、共享文件夹、WebDAV 或自己的服务器](https://docs.mindwtr.app/data-sync/)。
-- **电脑和手机都能用。** Windows、macOS、Linux、iPhone、iPad 和 Android 都支持完整的 GTD 流程，并提供 20 种语言选项。
+- **电脑和手机都能用。** Windows、macOS、Linux、iPhone、iPad 和 Android 都支持完整的 GTD 流程，并提供 21 种语言选项。
 - **带着现有任务搬过来。** 从 Todoist、TickTick、OmniFocus 等应用[导入任务](https://docs.mindwtr.app/import/)，省去重新录入。
 - **按需要添加工具。** 用日历安排时间，用重复任务处理日常事务，用备注和附件保存相关资料。AI 助手默认关闭，需要时再开启。
 
