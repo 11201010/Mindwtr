@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Published RC tag whose Windows binary will be packaged (vX.Y.Z-rc.N)'
+        description: 'Published stable or RC tag whose Windows binary will be packaged'
         required: true
         type: string
       submit:
@@ -33,20 +33,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate and download existing RC binary
+      - name: Validate and download existing release binary
         id: release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$') { throw 'Expected a published RC tag' }
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$') { throw 'Expected a published stable or RC tag' }
+          $isRc = $env:RELEASE_TAG -match '-rc\.'
           $msixVersion = node scripts/ci/msstore-version.mjs $env:RELEASE_TAG
           if ($LASTEXITCODE -ne 0) { throw 'Invalid Store version' }
           $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG"
           if ($LASTEXITCODE -ne 0) { throw 'Cannot read existing release' }
           $release = $releaseJson | ConvertFrom-Json
-          if ($release.draft -or -not $release.prerelease -or $release.tag_name -ne $env:RELEASE_TAG) { throw 'Expected a published prerelease' }
+          if ($release.draft -or [bool]$release.prerelease -ne $isRc -or $release.tag_name -ne $env:RELEASE_TAG) { throw 'Expected a published release whose prerelease state matches the tag' }
           $version = $env:RELEASE_TAG.Substring(1)
           $assetName = "mindwtr_${version}_windows_x64_portable.zip"
           $assets = @($release.assets | Where-Object { $_.name -eq $assetName })
@@ -83,7 +84,7 @@ jobs:
           if ((Get-FileHash msix-staging/mindwtr.exe).Hash -ne $original) { throw 'Store binary differs from the released binary' }
           $zipPath = Join-Path $env:RUNNER_TEMP 'msstore-flight.zip'
           Compress-Archive -Path $env:MSIX_FILE_NAME -DestinationPath $zipPath
-          "MSIX version: $env:MSIX_VERSION. The executable is unchanged from the published RC." >> $env:GITHUB_STEP_SUMMARY
+          "MSIX version: $env:MSIX_VERSION. The executable is unchanged from the published release." >> $env:GITHUB_STEP_SUMMARY
 
       - name: Preserve Store upload files
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

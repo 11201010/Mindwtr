@@ -174,6 +174,12 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   expect(flightStep.if).toBe('inputs.run_msstore_flight');
   expect(flightStep['continue-on-error']).toBe(true);
   expect(flightIndex).toBeGreaterThan(publishIndex);
+
+  const recovery = parse(readFileSync('.github/workflows/release-msstore-flight.yml', 'utf8'));
+  const download = recovery.jobs['package-flight'].steps.find(step => step.id === 'release').run;
+  expect(recovery.on.workflow_dispatch.inputs.tag.description).toContain('stable or RC');
+  expect(download).toContain("(-rc\\.[1-9][0-9]*)?$");
+  expect(download).toContain('[bool]$release.prerelease -ne $isRc');
 });
 
 test('Windows PowerShell validates Store versions only for selected Store routes', () => {
