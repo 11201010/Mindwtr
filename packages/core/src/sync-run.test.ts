@@ -15,7 +15,7 @@ import { SyncRemoteWriteConflict } from './sync-run-ports';
 import { clearIdleSyncCycleSnapshot, normalizeRemoteWriteResult, runSharedSyncCycle } from './sync-run';
 import { normalizeAppData } from './sync-normalization';
 import { cloneAppData } from './sync-runtime-utils';
-import { toRemoteSyncDocument } from './sync-document';
+import { parseSyncDocument, toRemoteSyncDocument } from './sync-document';
 import { toStableSyncJson } from './sync-helpers';
 import type { FastSyncState } from './sync-fast-sync';
 import {
@@ -274,6 +274,40 @@ describe('runSharedSyncCycle', () => {
         const result = await run();
 
         expect(result.success).toBe(true);
+        expect(io.writeRemote).toHaveBeenCalledTimes(1);
+    });
+
+    it('rewrites a repaired legacy attachment remote once before treating it as unchanged', async () => {
+        const legacyUri = 'https://example.test/issue/1';
+        const legacyRemote = createData([{
+            ...createTask('legacy-task', 'Legacy task'),
+            attachments: legacyUri,
+        } as unknown as Task]);
+        const parsedLocal = parseSyncDocument(legacyRemote, 'local');
+        if (!parsedLocal.ok) throw new Error('Expected the legacy fixture to parse');
+        const local = parsedLocal.data;
+        const fence = createFenceLease();
+        const { harness, io, run } = createHarness({
+            local,
+            remote: legacyRemote,
+            fastSyncScope: null,
+            policy: { enableReadCheckSkip: true },
+            io: { acquireRemoteMutationFence: vi.fn(async () => fence) },
+        });
+
+        const first = await run();
+
+        expect(first.success).toBe(true);
+        expect(first.skipped).toBeUndefined();
+        expect(io.writeRemote).toHaveBeenCalledTimes(1);
+        expect(harness.remote?.tasks[0].attachments).toEqual(local.tasks[0].attachments);
+        expect(io.acquireRemoteMutationFence).toHaveBeenCalledTimes(1);
+        expect(fence.assertHeld).toHaveBeenCalled();
+        expect(fence.release).toHaveBeenCalledTimes(1);
+
+        const second = await run();
+
+        expect(second).toMatchObject({ success: true, skipped: 'unchanged' });
         expect(io.writeRemote).toHaveBeenCalledTimes(1);
     });
 

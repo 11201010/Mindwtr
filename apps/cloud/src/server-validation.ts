@@ -45,6 +45,7 @@ const hasOwnField = (value: object, field: PropertyKey): boolean => (
 );
 
 const CLOUD_RECURRENCE_ALLOWED_KEYS = new Set(TASK_RECURRENCE_FIELD_KEYS);
+const ATTACHMENT_LOCAL_STATUS_VALUES = new Set(['available', 'missing', 'uploading', 'downloading']);
 
 function validateTaskRepeatReminderMinutes(value: Record<string, unknown>): string | null {
     if (!hasOwnField(value, 'repeatReminderMinutes')) return null;
@@ -116,8 +117,61 @@ function validateCancellationTimestamp(value: Record<string, unknown>, entity: '
         : `Invalid ${entity} cancelledAt: expected an ISO timestamp with timezone`;
 }
 
+function validateAttachments(value: Record<string, unknown>, entity: 'task' | 'project'): string | null {
+    if (!hasOwnField(value, 'attachments')) return null;
+    const attachments = value.attachments;
+    if (attachments === undefined || attachments === null) return null;
+    if (!Array.isArray(attachments)) {
+        return `Invalid ${entity} attachments: expected an array`;
+    }
+    for (const attachment of attachments) {
+        if (!isRecord(attachment)) {
+            return `Invalid ${entity} attachments: each entry must be an object`;
+        }
+        if (typeof attachment.id !== 'string' || attachment.id.trim().length === 0) {
+            return `Invalid ${entity} attachment id`;
+        }
+        if (attachment.kind !== 'file' && attachment.kind !== 'link') {
+            return `Invalid ${entity} attachment kind`;
+        }
+        if (typeof attachment.title !== 'string') {
+            return `Invalid ${entity} attachment title`;
+        }
+        if (typeof attachment.uri !== 'string') {
+            return `Invalid ${entity} attachment uri`;
+        }
+        if (!isValidIsoTimestamp(attachment.createdAt) || !isValidIsoTimestamp(attachment.updatedAt)) {
+            return `Invalid ${entity} attachment createdAt/updatedAt`;
+        }
+        if (attachment.deletedAt != null && !isValidIsoTimestamp(attachment.deletedAt)) {
+            return `Invalid ${entity} attachment deletedAt`;
+        }
+        for (const field of ['mimeType', 'cloudKey', 'fileHash'] as const) {
+            if (attachment[field] != null && typeof attachment[field] !== 'string') {
+                return `Invalid ${entity} attachment ${field}`;
+            }
+        }
+        for (const field of ['size', 'contentRev', 'contentMtimeMs', 'contentSize'] as const) {
+            if (attachment[field] != null
+                && (typeof attachment[field] !== 'number' || !Number.isFinite(attachment[field]))) {
+                return `Invalid ${entity} attachment ${field}`;
+            }
+        }
+        if (attachment.pendingContentUpload != null && typeof attachment.pendingContentUpload !== 'boolean') {
+            return `Invalid ${entity} attachment pendingContentUpload`;
+        }
+        if (attachment.localStatus != null
+            && (typeof attachment.localStatus !== 'string'
+                || !ATTACHMENT_LOCAL_STATUS_VALUES.has(attachment.localStatus))) {
+            return `Invalid ${entity} attachment localStatus`;
+        }
+    }
+    return null;
+}
+
 function validateTaskPropValues(value: Record<string, unknown>): string | null {
     return validateCancellationTimestamp(value, 'task')
+        ?? validateAttachments(value, 'task')
         ?? validateTaskRepeatReminderMinutes(value)
         ?? validateTaskTimeSpentMinutes(value)
         ?? validateTaskRelativeStartOffset(value)
@@ -128,6 +182,8 @@ function validateTaskPropValues(value: Record<string, unknown>): string | null {
 function validateProjectPropValues(value: Record<string, unknown>): string | null {
     const cancellationError = validateCancellationTimestamp(value, 'project');
     if (cancellationError) return cancellationError;
+    const attachmentsError = validateAttachments(value, 'project');
+    if (attachmentsError) return attachmentsError;
     if (!hasOwnField(value, 'taskSortBy')) return null;
     const taskSortBy = value.taskSortBy;
     if (taskSortBy === undefined || taskSortBy === null) return null;

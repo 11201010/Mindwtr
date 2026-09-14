@@ -286,7 +286,7 @@ const person = (id: string, overrides: Partial<Person> = {}): Person => ({
 const fileAttachment = (id: string, overrides: Partial<Attachment> = {}): Attachment => ({
     id,
     kind: 'file',
-    name: `${id}.pdf`,
+    title: `${id}.pdf`,
     uri: `/home/dd/files/${id}.pdf`,
     mimeType: 'application/pdf',
     createdAt: BASE_ISO,
