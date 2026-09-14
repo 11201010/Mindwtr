@@ -15,7 +15,7 @@ export const hiOverrides: Record<string, string> = {
     'sandbox.unavailable': "सैंडबॉक्स में उपलब्ध नहीं",
     'sandbox.switching': "कार्यस्थान बदला जा रहा है…",
     'sandbox.switchFailed': "कार्यस्थान बदला नहीं जा सका। आपका वर्तमान कार्यस्थान अपरिवर्तित है।",
-        'settings.feedbackGitHubDesc': "फ़ीडबैक के लिए GitHub का सुझाव दिया जाता है। पोस्ट सार्वजनिक होती हैं।",
+        'settings.feedbackGitHubDesc': "फ़ॉलो-अप के लिए सुझाया गया",
         'settings.feedbackOpenGitHubDiscussion': "GitHub पर चर्चा शुरू करें",
         'settings.aiAdvanced': "उन्नत",
         'settings.aiRequestTimeout': "अनुरोध की समय सीमा",

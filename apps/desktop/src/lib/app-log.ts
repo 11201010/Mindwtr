@@ -1,6 +1,9 @@
 import { mkdir, readTextFile, remove, writeTextFile } from '@tauri-apps/plugin-fs';
 import { join } from '@tauri-apps/api/path';
 import {
+    buildFeedbackDiagnostics,
+    createFeedbackDiagnosticsBuffer,
+    FEEDBACK_DIAGNOSTICS_SOURCE_CHARS,
     getBreadcrumbs,
     sanitizeForLog,
     sanitizeLogContext,
@@ -15,6 +18,7 @@ import { getManagedPath } from './managed-paths';
 const LOG_DIR_NAME = 'logs';
 const LOG_FILE_NAME = 'mindwtr.log';
 const RECENT_LOG_MAX_CHARS = 20_000;
+const feedbackDiagnosticsBuffer = createFeedbackDiagnosticsBuffer();
 
 type LogEntry = {
     ts: string;
@@ -54,6 +58,7 @@ export function isDiagnosticsEnabled(): boolean {
 }
 
 async function appendLogLine(entry: LogEntry, options?: AppendLogOptions): Promise<string | null> {
+    feedbackDiagnosticsBuffer.record(entry);
     if (!options?.force && !isLoggingEnabled()) return null;
     if (!isTauriRuntime()) return null;
     try {
@@ -92,6 +97,7 @@ export async function getLogPath(): Promise<string | null> {
 }
 
 export async function clearLog(): Promise<void> {
+    feedbackDiagnosticsBuffer.clear();
     if (!isTauriRuntime()) return;
     try {
         await invokeNative('clear_log_file');
@@ -108,7 +114,8 @@ export async function clearLog(): Promise<void> {
 export async function readRecentLogText(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
     if (!isTauriRuntime()) return null;
     try {
-        const logFile = await getManagedPath(LOG_DIR_NAME, LOG_FILE_NAME);
+        const logFile = await getLogPath();
+        if (!logFile) return null;
         const raw = await readTextFile(logFile);
         const trimmed = raw.trim();
         if (!trimmed) return null;
@@ -130,12 +137,14 @@ export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS
         message: 'Feedback diagnostics snapshot',
         context: sanitizeLogContext({
             debugLoggingEnabled: isLoggingEnabled(),
+            releaseCheck: 'v1.3.1/feedback-diagnostics',
+            captureMode: 'recent-session-and-saved-log',
             breadcrumbCount: breadcrumbs.length,
             breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs.join(';') : 'none',
         }),
     });
-    const recentLogs = await readRecentLogText(maxChars);
-    return `${recentLogs ? `${recentLogs}\n` : ''}${snapshot}`.slice(-Math.max(1, maxChars));
+    const recentLogs = await readRecentLogText(FEEDBACK_DIAGNOSTICS_SOURCE_CHARS);
+    return buildFeedbackDiagnostics([recentLogs, feedbackDiagnosticsBuffer.read()], snapshot, maxChars);
 }
 
 export async function logError(

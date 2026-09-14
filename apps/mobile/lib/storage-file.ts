@@ -462,12 +462,18 @@ export type PickSyncFolderOptions = {
 
 const pickAndParseIosSyncFolder = async (options?: PickSyncFolderOptions): Promise<PickResult | null> => {
     const pickFolderFromExistingFile = async (): Promise<PickResult | null> => {
+        void logInfo('iOS sync file fallback requested', { scope: 'sync' });
         if (options?.confirmFileFallback && !(await options.confirmFileFallback())) {
+            void logInfo('iOS sync file fallback declined', { scope: 'sync' });
             return null;
         }
+        void logInfo('iOS sync file picker requested', { scope: 'sync' });
         const result = await DocumentPicker.getDocumentAsync({
             type: 'application/json',
             copyToCacheDirectory: false,
+        });
+        void logInfo('iOS sync file picker returned', {
+            scope: 'sync', extra: { outcome: result.canceled ? 'cancelled' : 'selected' },
         });
         if (result.canceled) return null;
         const pickedFileUri = result.assets[0]?.uri;
@@ -499,6 +505,7 @@ const pickAndParseIosSyncFolder = async (options?: PickSyncFolderOptions): Promi
     };
 
     try {
+        void logInfo('iOS sync folder picker requested', { scope: 'sync' });
         const directory = await ExpoDirectory.pickDirectoryAsync();
         const directoryUri = directory?.uri;
         if (!directoryUri) {

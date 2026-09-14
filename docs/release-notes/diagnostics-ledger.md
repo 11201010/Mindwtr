@@ -17,6 +17,12 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 - `Remote sync mutation fence renewed for mutation horizon` (`sync-remote-fence.ts`), with the requested horizon and conservative remaining authority. This remains useful when a provider mutation later loses its fence.
 - `Capture webhook request accepted` (`server-capture.ts`), with request shape, size, audio presence, and token scope but no content, identifier, or secret. This remains the server-side proof that a capture-only client reached the webhook.
 
+## v1.3.1
+
+- **`v1.3.1/feedback-diagnostics`** — mobile and desktop `lib/app-log.ts`, in the opt-in `Feedback diagnostics snapshot`. Fields: `releaseCheck`, `captureMode` (`recent-session-and-saved-log`), `debugLoggingEnabled`, and the existing breadcrumb fields. With debug logging off, reproduce a warning/error, then include diagnostics in feedback within 30 minutes without restarting. The attachment must retain the sanitized event and this marker as complete JSON lines. Routine traffic must not displace errors; Clear log also clears the volatile buffer. The buffer retains at most 160 entries / 64,000 characters in memory and does not enable persistent logging or automatic uploads. This proves collection, not that the app recorded the reported operation or that feedback delivery succeeded.
+
+  For the iOS file-picker report, `apps/mobile/lib/storage-file.ts` records folder picker requested, file fallback requested/declined, and file picker requested/returned (`outcome`: `cancelled` or `selected`). These content-free events locate the last reached step; `requested` does not prove that iOS displayed the picker. Reproduce and submit on the affected device. Failures before the app starts, uninstrumented operations, or failures on another device are still outside this capture.
+
 ## v1.3.0 (add before tagging, trim in the release after)
 
 - **`v1.3.0/project-lifecycle-sync`** — `packages/core/src/sync-normalization.ts`, when sync canonicalization clears an archived project's Focus flag or repairs cancellation/status coherence using the same rule as load. Message: `Project lifecycle normalized for sync`. Fields: `releaseCheck`, `count` (`1`). A tester syncing a legacy affected project must see this marker, then no repeated project conflict after the canonical document is saved on both sides. The marker proves normalization, not persistence or a successful full sync. No project text, identifiers, or timestamps are logged.

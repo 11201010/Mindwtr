@@ -206,9 +206,10 @@ export function FeedbackSettingsModal({
                                 {...androidScrollViewFocusProps}
                             >
                                 {onOpenGitHub ? (
-                                    <View style={[styles.feedbackGitHubOption, { borderBottomColor: tc.border }]}>
+                                    <View style={styles.feedbackGitHubOption}>
                                         <TouchableOpacity
                                             accessibilityRole="link"
+                                            accessibilityHint={tr('settings.feedbackGitHubDesc')}
                                             onPress={() => onOpenGitHub(category)}
                                             style={styles.feedbackNoticeLink}
                                         >
@@ -216,7 +217,7 @@ export function FeedbackSettingsModal({
                                                 {tr(category === 'other' ? 'settings.feedbackOpenGitHubDiscussion' : 'settings.feedbackOpenGitHubIssue')}
                                             </Text>
                                         </TouchableOpacity>
-                                        <Text style={[styles.feedbackNoticeDescription, { color: tc.secondaryText }]}>
+                                        <Text style={[styles.feedbackGitHubHint, { color: tc.secondaryText }]}>
                                             {tr('settings.feedbackGitHubDesc')}
                                         </Text>
                                     </View>
@@ -246,7 +247,6 @@ export function FeedbackSettingsModal({
                                                         styles.feedbackCategoryText,
                                                         { color: selected ? tc.tint : tc.secondaryText },
                                                     ]}
-                                                    numberOfLines={1}
                                                 >
                                                     {categoryLabels[item]}
                                                 </Text>
@@ -361,10 +361,6 @@ export function FeedbackSettingsModal({
                                         />
                                     </View>
                                 ) : null}
-
-                                <Text style={[styles.feedbackPrivacyText, { color: tc.secondaryText, backgroundColor: tc.bg }]}>
-                                    {tr('settings.feedbackPrivacy')}
-                                </Text>
 
                                 {!isConfigured ? (
                                     <View style={[styles.feedbackNotice, { backgroundColor: `${tc.danger}18`, borderColor: `${tc.danger}55` }]}>

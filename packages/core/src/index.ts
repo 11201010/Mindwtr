@@ -31,6 +31,7 @@ export * from './process-inbox-plan';
 export * from './speech-to-task';
 export * from './data-transfer-transaction';
 export * from './feedback';
+export * from './feedback-diagnostics';
 export * from './sandbox';
 export * from './sandbox-data';
 export * from './store';

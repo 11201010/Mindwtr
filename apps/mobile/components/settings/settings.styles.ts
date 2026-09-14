@@ -558,8 +558,16 @@ export const styles = StyleSheet.create({
         marginTop: 4,
     },
     feedbackGitHubOption: {
-        borderBottomWidth: 1,
-        paddingBottom: 12,
+        marginVertical: -4,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        columnGap: 8,
+    },
+    feedbackGitHubHint: {
+        fontSize: 12,
+        lineHeight: 18,
+        flexShrink: 1,
     },
     feedbackNoticeLink: {
         alignSelf: 'flex-start',

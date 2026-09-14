@@ -1,5 +1,7 @@
-import { getBreadcrumbs, sanitizeForLog, sanitizeLogContext, sanitizeUrl, useTaskStore } from '@mindwtr/core';
+import { buildFeedbackDiagnostics, createFeedbackDiagnosticsBuffer, FEEDBACK_DIAGNOSTICS_SOURCE_CHARS, getBreadcrumbs, sanitizeForLog, sanitizeLogContext, sanitizeUrl, useTaskStore } from '@mindwtr/core';
 import * as ExpoLegacyFileSystem from 'expo-file-system/legacy';
+
+const feedbackDiagnosticsBuffer = createFeedbackDiagnosticsBuffer();
 
 type ExpoDirectory = {
   exists: boolean;
@@ -296,6 +298,7 @@ function appendWithFileHandle(line: string): boolean {
 }
 
 async function appendLogLine(entry: LogEntry, options?: { force?: boolean }): Promise<string | null> {
+  feedbackDiagnosticsBuffer.record(entry);
   // Dev builds mirror every entry to the Metro console, gate or not: an Expo Go
   // tester has no way to hand over the log file, but can paste the terminal.
   logEntryToDevConsole(entry);
@@ -378,6 +381,7 @@ export async function ensureLogFilePath(): Promise<string | null> {
 }
 
 export async function clearLog(): Promise<void> {
+  feedbackDiagnosticsBuffer.clear();
   await logWriteQueue;
   if (customLogBackend?.clearLog) {
     await customLogBackend.clearLog();
@@ -451,12 +455,14 @@ export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS
     message: 'Feedback diagnostics snapshot',
     context: sanitizeLogContext({
       debugLoggingEnabled: isLoggingEnabled(),
+      releaseCheck: 'v1.3.1/feedback-diagnostics',
+      captureMode: 'recent-session-and-saved-log',
       breadcrumbCount: breadcrumbs.length,
       breadcrumbs: breadcrumbs.length > 0 ? breadcrumbs.join(';') : 'none',
     }),
   });
-  const recentLogs = await readRecentLogText(maxChars);
-  return `${recentLogs ? `${recentLogs}\n` : ''}${snapshot}`.slice(-Math.max(1, maxChars));
+  const recentLogs = await readRecentLogText(FEEDBACK_DIAGNOSTICS_SOURCE_CHARS);
+  return buildFeedbackDiagnostics([recentLogs, feedbackDiagnosticsBuffer.read()], snapshot, maxChars);
 }
 
 export async function logError(

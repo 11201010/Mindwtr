@@ -49,7 +49,7 @@ const tr = (key: string) => ({
   'settings.feedbackCategoryFeature': 'Feature request',
   'settings.feedbackCategoryOther': 'Other',
   'settings.feedbackDesc': 'Report a bug or suggest a feature. No account needed.',
-  'settings.feedbackEmail': 'Reply email (optional)',
+  'settings.feedbackEmail': 'Reply email (optional, recommended)',
   'settings.feedbackEmailPlaceholder': 'you@example.com',
   'settings.feedbackFailed': 'Feedback failed',
   'settings.feedbackIncludeDiagnostics': 'Include recent diagnostics',
@@ -80,7 +80,7 @@ const tr = (key: string) => ({
   'settings.feedbackUnavailableDesc': 'Use GitHub issue templates instead.',
   'settings.feedbackOpenGitHubIssue': 'Open GitHub issue',
   'settings.feedbackOpenGitHubDiscussion': 'Open GitHub discussion',
-  'settings.feedbackGitHubDesc': 'GitHub is recommended for feedback. Posts are public.',
+  'settings.feedbackGitHubDesc': 'Recommended for follow-up',
 }[key] ?? key);
 
 const findTouchableByText = (tree: ReturnType<typeof create>, label: string) => {
@@ -183,6 +183,8 @@ describe('FeedbackSettingsModal', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       category: 'bug',
       message: 'Where: Sync\n\nCloudKit sync failed',
+      email: undefined,
+      includeDiagnostics: false,
     }));
   });
 
@@ -214,6 +216,10 @@ describe('FeedbackSettingsModal', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
     expect(tree.root.findAllByType(TextInput)[0].props.value).toBe('Keep this draft');
+    const text = tree.root.findAllByType(Text).map((node) => node.props.children);
+    expect(text).toContain('Recommended for follow-up');
+    expect(text).toContain('Reply email (optional, recommended)');
+    expect(text).not.toContain(tr('settings.feedbackPrivacy'));
   });
 
   it('routes unconfigured builds to GitHub issues', () => {

@@ -85,6 +85,7 @@ import {
   ensureLogFilePath,
   getLogPath,
   logInfo,
+  logError,
   readRecentLogText,
   setLogBackend,
   type LogBackend,
@@ -98,7 +99,8 @@ describe('app-log', () => {
     clearLog: vi.fn(async () => undefined),
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await clearLog();
     vi.stubGlobal('__DEV__', true);
     vi.clearAllMocks();
     legacyFileSystemMocks.reset();
@@ -199,6 +201,21 @@ describe('app-log', () => {
     expect(diagnostics).toContain('"debugLoggingEnabled":"false"');
     expect(diagnostics).toContain('123:view:calendar');
     await expect(readRecentLogText()).resolves.toBeNull();
+  });
+
+  it('retains sanitized session errors without enabling disk logging', async () => {
+    storeState.settings.diagnostics.loggingEnabled = false;
+    await logError(new Error('Request failed token=private-secret'), { scope: 'sync' });
+    await logInfo('File picker requested', { scope: 'sync' });
+    expect(backend.appendLogLine).not.toHaveBeenCalled();
+    const diagnostics = await collectFeedbackDiagnostics();
+    expect(diagnostics).toContain('Request failed');
+    expect(diagnostics).toContain('File picker requested');
+    expect(diagnostics).not.toContain('private-secret');
+    expect(diagnostics).toContain('v1.3.1/feedback-diagnostics');
+    expect(backend.appendLogLine).not.toHaveBeenCalled();
+    await clearLog();
+    expect(await collectFeedbackDiagnostics()).not.toContain('Request failed');
   });
 
   it('delegates log file helpers to the injected backend', async () => {

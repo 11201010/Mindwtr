@@ -47,6 +47,8 @@ describe('SettingsFeedbackModal', () => {
             expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
                 category: 'bug',
                 message: 'Where: Sync\n\nCloudKit sync failed',
+                email: undefined,
+                includeDiagnostics: false,
             }));
         });
     });
@@ -65,6 +67,8 @@ describe('SettingsFeedbackModal', () => {
 
         fireEvent.click(screen.getByRole('button', { name: categoryLabel }));
         expect(screen.getByText(t.feedbackGitHubDesc)).toBeInTheDocument();
+        expect(screen.queryByText(t.feedbackPrivacy)).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: t.feedbackEmail })).not.toBeRequired();
         fireEvent.click(screen.getByRole('button', { name: linkLabel }));
 
         expect(onOpenGitHub).toHaveBeenCalledExactlyOnceWith(category);

@@ -226,16 +226,17 @@ export function SettingsFeedbackModal({
             ) : (
                 <DialogBody className="space-y-4 p-4">
                     {onOpenGitHub && (
-                        <div className="border-b border-border pb-3">
+                        <div className="flex flex-wrap items-center gap-x-2">
                             <button
                                 type="button"
                                 className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline underline-offset-4 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 onClick={() => onOpenGitHub(category)}
+                                title={t.feedbackGitHubDesc}
                             >
                                 {category === 'other' ? t.feedbackOpenGitHubDiscussion : t.feedbackOpenGitHubIssue}
                                 <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
                             </button>
-                            <p className="text-xs leading-5 text-muted-foreground">{t.feedbackGitHubDesc}</p>
+                            <span className="text-xs text-muted-foreground">{t.feedbackGitHubDesc}</span>
                         </div>
                     )}
                     <div className="space-y-2">
@@ -342,10 +343,6 @@ export function SettingsFeedbackModal({
                             />
                         </div>
                     )}
-
-                    <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                        {t.feedbackPrivacy}
-                    </p>
 
                     {!isConfigured && (
                         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

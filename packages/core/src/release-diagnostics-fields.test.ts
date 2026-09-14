@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // feedback-diagnostics: opt-in snapshot of bounded session and saved logs.
+    'captureMode', 'diagnosticTruncated', 'debugLoggingEnabled', 'breadcrumbCount', 'breadcrumbs',
     // share-card-export (local PNG export adapters)
     'cardKind', 'exportMethod', 'failureStage', 'errorType', 'nativeCode',
     // sandbox-workspace (desktop/mobile entry drain and immutable workspace bootstrap)
