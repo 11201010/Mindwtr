@@ -108,6 +108,7 @@ export type InboxProcessingWizardProps = {
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 const ENERGY_LEVEL_OPTIONS: Array<NonNullable<Task['energyLevel']>> = ['low', 'medium', 'high'];
+const DECISION_CHOICE_BUTTON_CLASS = 'flex min-h-12 min-w-0 flex-1 basis-36 items-center justify-center gap-2 whitespace-normal rounded-lg border border-border bg-card px-3 py-3 text-center font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 export const InboxProcessingWizard = memo(function InboxProcessingWizard({
     t,
@@ -581,17 +582,17 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                     </p>
                     {actionableChoice === 'initial' && (
                         <div className="space-y-3">
-                            <div className="flex gap-3">
+                            <div className="flex flex-wrap gap-3">
                                 <button
                                     onClick={handleActionable}
-                                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-3 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                                    className={DECISION_CHOICE_BUTTON_CLASS}
                                 >
-                                    {t('process.yesActionable')} <CheckCircle className="h-4 w-4" />
+                                    {t('process.yesActionable')} <CheckCircle className="h-4 w-4 shrink-0" />
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setActionableChoice('not-actionable')}
-                                    className="flex flex-1 items-center justify-center rounded-lg border border-border bg-card py-3 font-medium text-foreground transition-colors hover:bg-muted"
+                                    className={DECISION_CHOICE_BUTTON_CLASS}
                                 >
                                     {t('inbox.no')}
                                 </button>
@@ -716,16 +717,16 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.moreThanOneStepDesc')}
                     </p>
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                         <button
                             onClick={handleProjectCheckYes}
-                            className="flex-1 bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:bg-primary/90"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
                             {t('process.moreThanOneStepYes')}
                         </button>
                         <button
                             onClick={handleProjectCheckNo}
-                            className="flex-1 bg-muted py-3 rounded-lg font-medium hover:bg-muted/80"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
                             {t('process.moreThanOneStepNo')}
                         </button>
@@ -738,16 +739,16 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                     <p className="text-center text-sm text-muted-foreground">
                         {t('process.twoMinDesc')}
                     </p>
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                         <button
                             onClick={handleTwoMinDone}
-                            className="flex-1 flex items-center justify-center gap-2 bg-success text-success-foreground py-3 rounded-lg font-medium hover:bg-success/90"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
-                            <CheckCircle className="w-4 h-4" /> {t('process.doneIt')}
+                            <CheckCircle className="h-4 w-4 shrink-0" /> {t('process.doneIt')}
                         </button>
                         <button
                             onClick={handleTwoMinNo}
-                            className="flex-1 bg-muted py-3 rounded-lg font-medium hover:bg-muted/80"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
                             {t('process.takesLonger')}
                         </button>
@@ -768,16 +769,16 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                             variant="guided"
                         />
                     )}
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                         <button
                             onClick={handleDelegate}
-                            className="flex-1 flex items-center justify-center gap-2 bg-warning text-warning-foreground py-3 rounded-lg font-medium hover:bg-warning/90"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
-                            <User className="w-4 h-4" /> {t('process.delegate')}
+                            <User className="h-4 w-4 shrink-0" /> {t('process.delegate')}
                         </button>
                         <button
                             onClick={handleDefer}
-                            className="flex-1 bg-primary text-primary-foreground py-3 rounded-lg font-medium hover:bg-primary/90"
+                            className={DECISION_CHOICE_BUTTON_CLASS}
                         >
                             {t('process.doIt')}
                         </button>

@@ -570,18 +570,6 @@ export const styles = StyleSheet.create({
   stepBody: {
     marginBottom: 8,
   },
-  stepPrimaryButton: {
-    minHeight: 56,
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepPrimaryText: {
-    fontSize: 17,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
   stepSecondaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -608,6 +596,48 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     flexShrink: 1,
+  },
+  stepChoiceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 10,
+    marginTop: 12,
+    marginHorizontal: -5,
+  },
+  stepChoiceCell: {
+    width: '50%',
+    paddingHorizontal: 5,
+  },
+  stepChoiceCellLargeText: {
+    width: '100%',
+  },
+  stepChoiceColumn: {
+    gap: 10,
+    marginTop: 12,
+  },
+  stepChoiceButton: {
+    width: '100%',
+    minHeight: 52,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  stepChoiceButtonCompact: {
+    flexGrow: 1,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  stepChoiceButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    flexShrink: 1,
+    textAlign: 'center',
   },
   stepTertiaryButton: {
     marginTop: 16,

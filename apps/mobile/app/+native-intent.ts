@@ -1,4 +1,22 @@
 import { isEntityOpenUrl, isOpenFeatureUrl, isShortcutCaptureUrl, parseOpenFeatureUrl, resolveOpenFeaturePath } from '@/lib/capture-deeplink';
+import { DROPBOX_CALLBACK_SETTINGS_PATH, isDropboxAuthCallbackUrl } from '@/lib/dropbox-auth-callback';
+
+const logDropboxCallbackRouted = (): void => {
+    try {
+        void import('@/lib/app-log')
+            .then(({ logInfo }) => logInfo('Dropbox OAuth callback routed', {
+                scope: 'routing',
+                extra: {
+                    releaseCheck: 'v1.3.0/dropbox-oauth-route',
+                    stage: 'callback-routed',
+                },
+                force: true,
+            }))
+            .catch(() => undefined);
+    } catch {
+        // Diagnostics must never become part of system URL routing.
+    }
+};
 
 const isQuickCaptureUrl = (path: string): boolean => {
     const url = new URL(path);
@@ -17,6 +35,10 @@ const isQuickCaptureUrl = (path: string): boolean => {
 // ready and re-navigates.
 export function redirectSystemPath({ path }: { path: string; initial: boolean }): string {
     try {
+        if (isDropboxAuthCallbackUrl(path)) {
+            logDropboxCallbackRouted();
+            return DROPBOX_CALLBACK_SETTINGS_PATH;
+        }
         if (isOpenFeatureUrl(path)) {
             return resolveOpenFeaturePath(parseOpenFeatureUrl(path)?.feature ?? null);
         }
