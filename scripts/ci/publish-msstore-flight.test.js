@@ -134,6 +134,13 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   expect(stable.jobs.windows.with.run_msstore_flight).toBe("${{ vars.MSSTORE_FLIGHT_ID != '' }}");
   for (const trigger of ['workflow_call', 'workflow_dispatch']) expect(windows.on[trigger].inputs.run_msstore_flight.default).toBe(false);
   const steps = windows.jobs.standalone.steps;
+  const install = steps.find(step => step.name === 'Install dependencies').run;
+  expect(install).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'");
+  expect(install).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'");
+  expect(install).toContain('--cache-dir "$cacheDir" --backend copyfile');
+  expect(install).toContain('--network-concurrency 1 --concurrent-scripts 1');
+  expect(install).toContain('Remove-Item node_modules -Recurse -Force');
+  expect(install).not.toContain('bun pm cache');
   for (const name of ['Ensure MakeAppx is available', 'Build MSIX package']) {
     expect(steps.find(step => step.name === name).if).toBe("steps.version.outputs.store_package == 'true'");
   }

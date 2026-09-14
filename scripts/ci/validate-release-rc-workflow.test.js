@@ -701,7 +701,7 @@ test("Windows release signs and publishes exactly the current NSIS installer", (
 // the installer chain gates on stage-unsigned-installer, which itself only
 // stages once stage-unsigned-exe succeeded — that link is what actually
 // prevents the installer from signing/uploading when the app binary wasn't.
-test("Windows release retries a failed Bun install after clearing its package cache", () => {
+test("Windows release retries a failed Bun install with isolated package caches", () => {
   const windows = parse(
     readFileSync(".github/workflows/release-windows.yml", "utf8"),
   );
@@ -712,8 +712,12 @@ test("Windows release retries a failed Bun install after clearing its package ca
   expect(install).toBeDefined();
   expect(install.shell).toBe("pwsh");
   expect(install.run.match(/bun install --frozen-lockfile/g)).toHaveLength(2);
-  expect(install.run).toContain("bun pm cache rm");
-  expect(install.run).toContain("bun pm cache clean");
+  expect(install.run).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'");
+  expect(install.run).toContain("Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'");
+  expect(install.run).toContain('--cache-dir "$cacheDir" --backend copyfile');
+  expect(install.run).toContain("Remove-Item node_modules -Recurse -Force");
+  expect(install.run).toContain("--network-concurrency 1 --concurrent-scripts 1");
+  expect(install.run).not.toContain("bun pm cache");
   expect(install.run).toContain("exit $LASTEXITCODE");
 });
 

@@ -91,14 +91,20 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
-          bun install --frozen-lockfile
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 8
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "bun install failed, clearing cache and retrying..."
-            bun pm cache rm
-            if ($LASTEXITCODE -ne 0) {
-              bun pm cache clean
+            Write-Host "bun install failed, retrying from clean project and cache directories..."
+            if (Test-Path node_modules) {
+              Remove-Item node_modules -Recurse -Force
             }
-            bun install --frozen-lockfile
+            $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'
+            if (Test-Path $cacheDir) {
+              Remove-Item $cacheDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+            bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 1 --concurrent-scripts 1
             if ($LASTEXITCODE -ne 0) {
               exit $LASTEXITCODE
             }
