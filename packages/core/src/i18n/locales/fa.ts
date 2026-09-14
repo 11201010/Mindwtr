@@ -1892,7 +1892,7 @@ export const faOverrides: Record<string, string> = {
         'settings.feedbackUnavailable': 'بازخورد در این نسخه پیکربندی نشده است.',
         'settings.feedbackUnavailableDesc': 'همچنان می‌توانید اشکال‌ها و درخواست‌های ویژگی را با قالب‌های ایشوی GitHub گزارش دهید.',
         'settings.feedbackOpenGitHubIssue': 'باز کردن ایشوی GitHub',
-        'settings.feedbackGitHubDesc': "برای پیگیری آسان‌تر پیشنهاد می‌کنیم: {channel}.",
+        'settings.feedbackGitHubDesc': "اگر حساب GitHub دارید، برای پیگیری آسان‌تر پیشنهاد می‌کنیم: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "شروع بحث در GitHub",
         'settings.feedbackRequired': 'ابتدا یک پیام کوتاه اضافه کنید.',
         'settings.feedbackInvalidEmail': 'یک ایمیل معتبر وارد کنید یا آن را خالی بگذارید.',

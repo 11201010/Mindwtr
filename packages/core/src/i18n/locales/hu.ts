@@ -1861,7 +1861,7 @@ export const huOverrides: Record<string, string> = {
     'settings.feedbackUnavailable': 'A visszajelzés nincs beállítva ebben a buildben.',
     'settings.feedbackUnavailableDesc': 'Hibákat és funkciókéréseket továbbra is bejelenthet a GitHub issue sablonjaival.',
     'settings.feedbackOpenGitHubIssue': 'GitHub issue megnyitása',
-    'settings.feedbackGitHubDesc': "Az egyszerűbb utánkövetéshez ajánlott: {channel}.",
+    'settings.feedbackGitHubDesc': "Ha van GitHub-fiókja, az egyszerűbb utánkövetéshez ezt ajánljuk: {channel}.",
     'settings.feedbackOpenGitHubDiscussion': 'GitHub discussion megnyitása',
     'settings.feedbackRequired': 'Először adjon meg egy rövid üzenetet.',
     'settings.feedbackInvalidEmail': 'Adjon meg egy érvényes e-mail címet, vagy hagyja üresen.',

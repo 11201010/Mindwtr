@@ -80,7 +80,7 @@ const tr = (key: string) => ({
   'settings.feedbackUnavailableDesc': 'Use GitHub issue templates instead.',
   'settings.feedbackOpenGitHubIssue': 'GitHub Issues',
   'settings.feedbackOpenGitHubDiscussion': 'GitHub Discussions',
-  'settings.feedbackGitHubDesc': 'We recommend {channel} for easy follow-up.',
+  'settings.feedbackGitHubDesc': 'If you have a GitHub account, we recommend {channel} for easy follow-up.',
 }[key] ?? key);
 
 const findTouchableByText = (tree: ReturnType<typeof create>, label: string) => {
@@ -228,7 +228,7 @@ describe('FeedbackSettingsModal', () => {
     ));
     expect(subtitle).toBeDefined();
     expect(renderedText(subtitle!.props.children)).toBe(
-      `Report a bug or suggest a feature. We recommend ${linkLabel} for easy follow-up.`,
+      `If you have a GitHub account, we recommend ${linkLabel} for easy follow-up.`,
     );
     expect(subtitle!.findByProps({ accessibilityRole: 'link' }).props.children).toBe(linkLabel);
     expect(tree.root.findByType(ScrollView).findAllByProps({ accessibilityRole: 'link' })).toHaveLength(0);

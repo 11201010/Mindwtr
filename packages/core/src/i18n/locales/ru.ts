@@ -15,7 +15,7 @@ export const ruOverrides: Record<string, string> = {
     'sandbox.unavailable': "Недоступно в песочнице",
     'sandbox.switching': "Переключение рабочего пространства…",
     'sandbox.switchFailed': "Не удалось переключить рабочее пространство. Текущее пространство не изменилось.",
-        'settings.feedbackGitHubDesc': "Для дальнейшего общения рекомендуем: {channel}.",
+        'settings.feedbackGitHubDesc': "Если у вас есть аккаунт GitHub, для дальнейшего общения рекомендуем: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Начать обсуждение на GitHub",
         'settings.aiAdvanced': "Дополнительно",
         'settings.aiRequestTimeout': "Время ожидания запроса",

@@ -1926,7 +1926,7 @@ export const en: Record<string, string> = {
         'settings.feedbackUnavailable': 'Feedback is not configured in this build.',
         'settings.feedbackUnavailableDesc': 'You can still report bugs and feature requests with the GitHub issue templates.',
         'settings.feedbackOpenGitHubIssue': 'GitHub Issues',
-        'settings.feedbackGitHubDesc': "We recommend {channel} for easy follow-up.",
+        'settings.feedbackGitHubDesc': "If you have a GitHub account, we recommend {channel} for easy follow-up.",
         'settings.feedbackOpenGitHubDiscussion': 'GitHub Discussions',
         'settings.feedbackRequired': 'Add a short message first.',
         'settings.feedbackInvalidEmail': 'Enter a valid email or leave it blank.',

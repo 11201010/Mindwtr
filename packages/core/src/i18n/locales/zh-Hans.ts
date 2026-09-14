@@ -1784,7 +1784,7 @@ export const zhHans: Record<string, string> = {
         'settings.feedbackUnavailable': '此版本未配置反馈通道。',
         'settings.feedbackUnavailableDesc': '你仍可通过 GitHub issue 模板提交错误报告或功能请求。',
         'settings.feedbackOpenGitHubIssue': 'GitHub 问题反馈',
-        'settings.feedbackGitHubDesc': "推荐通过 {channel} 反馈，方便跟进。",
+        'settings.feedbackGitHubDesc': "如果你有 GitHub 账号，推荐通过 {channel} 反馈，方便跟进。",
         'settings.feedbackOpenGitHubDiscussion': 'GitHub 讨论',
         'settings.feedbackRequired': '请先填写简短内容。',
         'settings.feedbackInvalidEmail': '请输入有效邮箱，或留空。',

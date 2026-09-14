@@ -188,7 +188,7 @@ export function SettingsFeedbackModal({
         <Dialog
             onClose={onClose}
             labelledBy={titleId}
-            describedBy={descriptionId}
+            describedBy={onOpenGitHub && status !== 'sent' ? descriptionId : undefined}
             placement="top"
             overlayClassName="px-4 pt-[12vh]"
             // Capped to fit under the 12vh offset: the form is taller than a
@@ -200,22 +200,19 @@ export function SettingsFeedbackModal({
             <DialogHeader className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
                 <div>
                     <h3 id={titleId} className="text-base font-semibold">{t.feedback}</h3>
-                    <p id={descriptionId} className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {t.feedbackDesc}
-                        {onOpenGitHub && status !== 'sent' && (
-                            <>
-                                {' '}{t.feedbackGitHubDesc.split('{channel}')[0]}
-                                <button
-                                    type="button"
-                                    className="inline rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    onClick={() => onOpenGitHub(category)}
-                                >
-                                    {category === 'other' ? t.feedbackOpenGitHubDiscussion : t.feedbackOpenGitHubIssue}
-                                </button>
-                                {t.feedbackGitHubDesc.split('{channel}')[1]}
-                            </>
-                        )}
-                    </p>
+                    {onOpenGitHub && status !== 'sent' && (
+                        <p id={descriptionId} className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {t.feedbackGitHubDesc.split('{channel}')[0]}
+                            <button
+                                type="button"
+                                className="inline rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => onOpenGitHub(category)}
+                            >
+                                {category === 'other' ? t.feedbackOpenGitHubDiscussion : t.feedbackOpenGitHubIssue}
+                            </button>
+                            {t.feedbackGitHubDesc.split('{channel}')[1]}
+                        </p>
+                    )}
                 </div>
                 <button
                     type="button"

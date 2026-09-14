@@ -1672,7 +1672,7 @@ export const frOverrides: Record<string, string> = {
 'settings.feedbackUnavailable': 'Le retour utilisateur n’est pas configuré dans cette version.',
 'settings.feedbackUnavailableDesc': 'Vous pouvez toujours signaler des bugs et demander des fonctionnalités avec les modèles d’issues GitHub.',
 'settings.feedbackOpenGitHubIssue': 'Ouvrir une issue GitHub',
-        'settings.feedbackGitHubDesc': "Pour faciliter le suivi, nous recommandons : {channel}.",
+        'settings.feedbackGitHubDesc': "Si vous avez un compte GitHub, pour faciliter le suivi, nous recommandons : {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Ouvrir une discussion sur GitHub",
 'settings.feedbackRequired': 'Ajoutez d’abord un court message.',
 'settings.feedbackInvalidEmail': 'Saisissez une adresse e-mail valide ou laissez le champ vide.',

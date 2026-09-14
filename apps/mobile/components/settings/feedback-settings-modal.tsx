@@ -166,22 +166,19 @@ export function FeedbackSettingsModal({
                                 <Text style={[styles.feedbackModalTitle, { color: tc.text }]}>
                                     {tr('settings.feedback')}
                                 </Text>
-                                <Text style={[styles.feedbackModalSubtitle, { color: tc.secondaryText }]}>
-                                    {tr('settings.feedbackDesc')}
-                                    {onOpenGitHub && status !== 'sent' ? (
-                                        <>
-                                            {' '}{tr('settings.feedbackGitHubDesc').split('{channel}')[0]}
-                                            <Text
-                                                accessibilityRole="link"
-                                                onPress={() => onOpenGitHub(category)}
-                                                style={{ color: tc.tint, textDecorationLine: 'underline' }}
-                                            >
-                                                {tr(category === 'other' ? 'settings.feedbackOpenGitHubDiscussion' : 'settings.feedbackOpenGitHubIssue')}
-                                            </Text>
-                                            {tr('settings.feedbackGitHubDesc').split('{channel}')[1]}
-                                        </>
-                                    ) : null}
-                                </Text>
+                                {onOpenGitHub && status !== 'sent' ? (
+                                    <Text style={[styles.feedbackModalSubtitle, { color: tc.secondaryText }]}>
+                                        {tr('settings.feedbackGitHubDesc').split('{channel}')[0]}
+                                        <Text
+                                            accessibilityRole="link"
+                                            onPress={() => onOpenGitHub(category)}
+                                            style={{ color: tc.tint, textDecorationLine: 'underline' }}
+                                        >
+                                            {tr(category === 'other' ? 'settings.feedbackOpenGitHubDiscussion' : 'settings.feedbackOpenGitHubIssue')}
+                                        </Text>
+                                        {tr('settings.feedbackGitHubDesc').split('{channel}')[1]}
+                                    </Text>
+                                ) : null}
                             </View>
                             <TouchableOpacity
                                 accessibilityLabel={tr('common.close')}

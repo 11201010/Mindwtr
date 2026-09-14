@@ -1700,7 +1700,7 @@ export const csOverrides: Record<string, string> = {
         'settings.feedbackUnavailable': 'Zpětná vazba není v tomto buildu nakonfigurována.',
         'settings.feedbackUnavailableDesc': 'Chyby a návrhy funkcí můžete stále poslat pomocí šablon GitHub issue.',
         'settings.feedbackOpenGitHubIssue': 'Otevřít GitHub issue',
-        'settings.feedbackGitHubDesc': "Pro snazší další komunikaci doporučujeme: {channel}.",
+        'settings.feedbackGitHubDesc': "Pokud máte účet GitHub, pro snazší další komunikaci doporučujeme: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Zahájit diskusi na GitHubu",
         'settings.feedbackRequired': 'Nejprve napište krátkou zprávu.',
         'settings.feedbackInvalidEmail': 'Zadejte platný e-mail, nebo pole nechte prázdné.',

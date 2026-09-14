@@ -1918,7 +1918,7 @@ export const viOverrides: Record<string, string> = {
         'settings.feedbackUnavailable': 'Phản hồi không được cấu hình trong bản dựng này.',
         'settings.feedbackUnavailableDesc': 'Bạn vẫn có thể báo cáo lỗi và yêu cầu tính năng với các mẫu vấn đề GitHub.',
         'settings.feedbackOpenGitHubIssue': 'Mở vấn đề GitHub',
-        'settings.feedbackGitHubDesc': "Để tiện trao đổi thêm, khuyên dùng: {channel}.",
+        'settings.feedbackGitHubDesc': "Nếu có tài khoản GitHub, để tiện trao đổi thêm, bạn nên dùng: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Mở thảo luận trên GitHub",
         'settings.feedbackRequired': 'Thêm tin nhắn ngắn trước.',
         'settings.feedbackInvalidEmail': 'Nhập email hợp lệ hoặc để trống.',

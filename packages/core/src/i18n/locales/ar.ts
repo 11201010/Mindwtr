@@ -15,7 +15,7 @@ export const arOverrides: Record<string, string> = {
     'sandbox.unavailable': "غير متاح في البيئة التجريبية",
     'sandbox.switching': "جارٍ تبديل مساحة العمل…",
     'sandbox.switchFailed': "تعذّر تبديل مساحة العمل. لم تتغير مساحة العمل الحالية.",
-        'settings.feedbackGitHubDesc': "لسهولة المتابعة، نوصي بـ {channel}.",
+        'settings.feedbackGitHubDesc': "إذا كان لديك حساب GitHub، نوصي بـ {channel} لسهولة المتابعة.",
         'settings.feedbackOpenGitHubDiscussion': "بدء مناقشة على GitHub",
         'settings.aiAdvanced': "متقدم",
         'settings.aiRequestTimeout': "مهلة الطلب",

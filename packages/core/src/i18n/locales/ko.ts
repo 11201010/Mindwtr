@@ -1775,7 +1775,7 @@ export const koOverrides: Record<string, string> = {
         'settings.feedbackUnavailable': '이 빌드에서는 피드백이 구성되지 않았습니다.',
         'settings.feedbackUnavailableDesc': 'GitHub 이슈 템플릿을 사용하여 버그 및 기능 제안을 계속 보고할 수 있습니다.',
         'settings.feedbackOpenGitHubIssue': 'GitHub 이슈 열기',
-        'settings.feedbackGitHubDesc': "후속 답변을 쉽게 받으려면 {channel}를 권장합니다.",
+        'settings.feedbackGitHubDesc': "GitHub 계정이 있다면 원활한 후속 답변을 위해 {channel}를 권장합니다.",
         'settings.feedbackOpenGitHubDiscussion': "GitHub 토론 시작",
         'settings.feedbackRequired': '먼저 짧은 메시지를 추가해 주세요.',
         'settings.feedbackInvalidEmail': '올바른 이메일을 입력하거나 비워 두세요.',

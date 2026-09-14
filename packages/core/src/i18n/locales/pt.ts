@@ -15,7 +15,7 @@ export const ptOverrides: Record<string, string> = {
     'sandbox.unavailable': "Indisponível no ambiente de teste",
     'sandbox.switching': "Trocando de espaço de trabalho…",
     'sandbox.switchFailed': "Não foi possível trocar de espaço de trabalho. O espaço atual não foi alterado.",
-        'settings.feedbackGitHubDesc': "Para facilitar o acompanhamento, recomendamos: {channel}.",
+        'settings.feedbackGitHubDesc': "Se tiver uma conta no GitHub, para facilitar o acompanhamento recomendamos: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Abrir discussão no GitHub",
         'settings.aiAdvanced': "Avançado",
         'settings.aiRequestTimeout': "Tempo limite da solicitação",

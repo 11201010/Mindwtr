@@ -1861,7 +1861,7 @@ export const esOverrides: Record<string, string> = {
 'settings.feedbackUnavailable': "Los comentarios no están configurados en esta compilación.",
 'settings.feedbackUnavailableDesc': "Aún puedes informar de errores y solicitar funciones con las plantillas de problemas de GitHub.",
 'settings.feedbackOpenGitHubIssue': "Abrir problema de GitHub",
-        'settings.feedbackGitHubDesc': "Para facilitar el seguimiento, recomendamos: {channel}.",
+        'settings.feedbackGitHubDesc': "Si tienes una cuenta de GitHub, para facilitar el seguimiento recomendamos: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Abrir una discusión en GitHub",
 'settings.feedbackRequired': "Añade primero un mensaje breve.",
 'settings.feedbackInvalidEmail': "Introduce un correo válido o déjalo en blanco.",

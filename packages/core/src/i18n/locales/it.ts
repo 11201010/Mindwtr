@@ -15,7 +15,7 @@ export const itOverrides: Record<string, string> = {
     'sandbox.unavailable': "Non disponibile nella sandbox",
     'sandbox.switching': "Cambio dello spazio di lavoro…",
     'sandbox.switchFailed': "Impossibile cambiare spazio di lavoro. Lo spazio attuale è rimasto invariato.",
-        'settings.feedbackGitHubDesc': "Per facilitare il seguito, consigliamo: {channel}.",
+        'settings.feedbackGitHubDesc': "Se hai un account GitHub, per facilitare il seguito consigliamo: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Apri una discussione su GitHub",
         'settings.aiAdvanced': "Avanzate",
         'settings.aiRequestTimeout': "Tempo di attesa",
