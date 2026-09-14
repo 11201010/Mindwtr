@@ -75,6 +75,15 @@ which also covers tools and people. Existing desktop/mobile component suites
 pass 19 and 90 tests respectively; this visible copy change needs no diagnostic
 marker or separate public documentation.
 
+The initial [web CI run](https://github.com/dongdongbh/Mindwtr/actions/runs/34792870326)
+exposed one remaining old-label expectation in `e2e/clarify.spec.ts`. The follow-up
+expects **Contexts** and scopes guided-step choices to the main content, keeping
+the sidebar's identically named button separate. The complete guided flow passes
+in local Chromium, including the persisted Next status and project assignment.
+The independent [Native Platform CI run](https://github.com/dongdongbh/Mindwtr/actions/runs/34792870327)
+for application revision `1a52efe1e` passed. Check the test follow-up's exact CI
+revision for final web and desktop integration status.
+
 The screenshot in [#1206](https://github.com/dongdongbh/Mindwtr/issues/1206) is in
 Quick mode. Its list icon switches to Guided mode. Both modes intentionally
 share the final filing screen, so a switch there affects the saved mode without
