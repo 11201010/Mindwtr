@@ -22,6 +22,7 @@ on:
       - "apps/mobile/modules/ios-widget/Package.swift"
       - "apps/mobile/modules/ios-widget/tests/**"
       - "apps/mobile/modules/ios-scene-lifecycle/**"
+      - "apps/mobile/modules/ios-siri-actions/**"
       - "apps/mobile/plugins/**"
       - "apps/mobile/hooks/use-ios-scene-diagnostics.ts"
       - "apps/mobile/app/_layout.tsx"
@@ -60,6 +61,7 @@ on:
       - "apps/mobile/modules/ios-widget/Package.swift"
       - "apps/mobile/modules/ios-widget/tests/**"
       - "apps/mobile/modules/ios-scene-lifecycle/**"
+      - "apps/mobile/modules/ios-siri-actions/**"
       - "apps/mobile/plugins/**"
       - "apps/mobile/hooks/use-ios-scene-diagnostics.ts"
       - "apps/mobile/app/_layout.tsx"
@@ -156,7 +158,7 @@ jobs:
                 ;;
             esac
             case "$path" in
-              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 ios=true
                 ;;
             esac
@@ -536,6 +538,9 @@ jobs:
 
       - name: Test iOS widget durable action queue
         run: swift test --package-path apps/mobile/modules/ios-widget
+
+      - name: Test iOS Siri durable action transport
+        run: swift test --package-path apps/mobile/modules/ios-siri-actions
 
       - name: Run Watch outbox retry tests
         run: swift test --package-path apps/mobile/targets/watch

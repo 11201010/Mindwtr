@@ -85,6 +85,9 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(workflow.match(/- "apps\/mobile\/modules\/ios-widget\/Package\.swift"/g)).toHaveLength(2);
   expect(workflow.match(/- "apps\/mobile\/modules\/ios-widget\/tests\/\*\*"/g)).toHaveLength(2);
   expect(workflow.match(/- "apps\/mobile\/modules\/ios-scene-lifecycle\/\*\*"/g)).toHaveLength(2);
+  expect(workflow.match(/- "apps\/mobile\/modules\/ios-siri-actions\/\*\*"/g)).toHaveLength(2);
+  expect(workflow).toContain("apps/mobile/modules/ios-siri-actions/*|");
+  expect(iosJob).toContain("swift test --package-path apps/mobile/modules/ios-siri-actions");
   expect(workflow.match(/- "apps\/mobile\/hooks\/use-ios-scene-diagnostics\.ts"/g)).toHaveLength(2);
   expect(workflow).toContain("apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|");
   const widgetActionStore = readFileSync("apps/mobile/modules/ios-widget/ios/MindwtrWidgetActionStore.swift", "utf8");
@@ -155,9 +158,12 @@ test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence"
     "Run CloudKit attachment error classifier tests",
     "Run Watch payload and receipt recovery tests",
     "Test iOS widget durable action queue",
+    "Test iOS Siri durable action transport",
     "Run Watch outbox retry tests",
   ]) {
-    expect(job.steps.find((step) => step.name === stepName)?.if).toBeUndefined();
+    const step = job.steps.find((step) => step.name === stepName);
+    expect(step).toBeDefined();
+    expect(step.if).toBeUndefined();
   }
 
   for (const stepName of [
