@@ -347,7 +347,7 @@ describe('widget-service', () => {
         expect(payload.headerTitle).toBe('Heute');
     });
 
-    it('writes family-specific iOS payloads with per-size item budgets', async () => {
+    it('writes family-specific iOS payloads with bounded refill caches', async () => {
         mockPlatform.OS = 'ios';
         mockIosWidgetSetItem.mockResolvedValue(undefined);
         const data = buildData(30);
@@ -360,13 +360,14 @@ describe('widget-service', () => {
         const payloadByKey = new Map(
             mockIosWidgetSetItem.mock.calls.map(([key, value]) => [key, JSON.parse(value as string)])
         );
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.items).toHaveLength(3);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-medium')?.items).toHaveLength(5);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-large')?.items).toHaveLength(12);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-extra-large')?.items).toHaveLength(24);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(12);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.items).toHaveLength(11);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-medium')?.items).toHaveLength(13);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-large')?.items).toHaveLength(20);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-extra-large')?.items).toHaveLength(30);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(20);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.headerTitle).toBe('Today');
         expect(Object.keys(payloadByKey.get('mindwtr-ios-widget-payload')?.lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.lists.focus.items).toHaveLength(3);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.lists.focus.items).toHaveLength(11);
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrTasksWidget');
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrCompactWidget');
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrFocusLockWidget');
@@ -374,21 +375,33 @@ describe('widget-service', () => {
             scope: 'widget',
             extra: { releaseCheck: 'v1.3.0/widget-batch-derivation', count: 5 },
         });
+        expect(mockLogInfo).toHaveBeenCalledWith('iOS widget parity snapshot published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/ios-widget-parity',
+                count: '5',
+                totalItems: '20',
+                nextItems: '0',
+            },
+        });
         expect(JSON.stringify(mockLogInfo.mock.calls)).not.toContain('Focused 1');
 
         const listIds = ['focus', 'inbox', 'next', 'waiting', 'someday'];
         const expectedFamilies = new Map([
-            ['mindwtr-ios-widget-payload', 12],
-            ['mindwtr-ios-widget-payload-small', 3],
-            ['mindwtr-ios-widget-payload-medium', 5],
-            ['mindwtr-ios-widget-payload-large', 12],
-            ['mindwtr-ios-widget-payload-extra-large', 24],
-        ].map(([key, maxItems]) => [key, JSON.stringify(buildWidgetPayload(data, 'en', {
-            systemColorScheme: 'light',
-            maxItems: maxItems as number,
-            listIds,
-            includeSavedFilterLists: true,
-        }))]));
+            ['mindwtr-ios-widget-payload', 20],
+            ['mindwtr-ios-widget-payload-small', 11],
+            ['mindwtr-ios-widget-payload-medium', 13],
+            ['mindwtr-ios-widget-payload-large', 20],
+            ['mindwtr-ios-widget-payload-extra-large', 32],
+        ].map(([key, maxItems]) => {
+            const payload = buildWidgetPayload(data, 'en', {
+                systemColorScheme: 'light',
+                maxItems: maxItems as number,
+                listIds,
+                includeSavedFilterLists: true,
+            });
+            return [key, JSON.stringify({ ...payload, headerTitle: 'Today' })];
+        }));
         for (const [key, expected] of expectedFamilies) {
             expect(mockIosWidgetSetItem.mock.calls.find(([writtenKey]) => writtenKey === key)?.[1]).toBe(expected);
         }
@@ -502,8 +515,9 @@ describe('widget-service', () => {
         expect(await updateMobileWidgetFromData(data)).toBe(true);
         const payload = JSON.parse(mockIosWidgetSetItem.mock.calls.find(([key]) => key === 'mindwtr-ios-widget-payload-small')![1]);
         expect(payload.savedFilters).toEqual([{ id: 'focused', name: 'My list' }]);
-        expect(payload.lists['filter:focused'].items).toHaveLength(3);
+        expect(payload.lists['filter:focused'].items).toHaveLength(10);
         expect(payload.lists['filter:focused'].title).toBe('My list');
+        expect(payload.lists['filter:focused'].openUri).toBe('mindwtr:///widget-list/filter%3Afocused');
         expect(payload.lists['filter:focused'].items.every((item: { completionToken?: string }) => !!item.completionToken)).toBe(true);
     });
 

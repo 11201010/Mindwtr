@@ -69,11 +69,241 @@ final class MindwtrWidgetActionStoreTests: XCTestCase {
             try store.enqueue(taskId: "task-2", token: "revision-2", now: now)
             let pending = try store.pendingActions()
 
-            XCTAssertTrue(try store.cancel(id: pending[0].id))
-            XCTAssertFalse(try store.cancel(id: "missing-operation"))
+            XCTAssertTrue(try store.cancel(id: pending[0].id, now: now.addingTimeInterval(1)))
+            XCTAssertFalse(try store.cancel(id: "missing-operation", now: now.addingTimeInterval(1)))
 
             XCTAssertEqual(try store.pendingActions().map(\.id), [pending[1].id])
         }
+    }
+
+    func testCancelRejectsAnUnclaimedActionAtAndAfterItsDeadline() throws {
+        try withStore { store, _ in
+            let start = Date(timeIntervalSince1970: 2_500)
+            try store.enqueue(taskId: "task-1", token: "revision-1", now: start)
+            let action = try XCTUnwrap(store.pendingActions().first)
+
+            XCTAssertFalse(try store.cancel(id: action.id, now: start.addingTimeInterval(3)))
+            XCTAssertFalse(try store.cancel(id: action.id, now: start.addingTimeInterval(30)))
+            XCTAssertEqual(try store.pendingActions(), [action])
+        }
+    }
+
+    func testProjectionShowsGraceThenHidesAtTheExactExpiry() throws {
+        let start = Date(timeIntervalSince1970: 2_600)
+        let action = pendingAction(taskId: "task-1", token: "revision-1", start: start)
+        let identity = MindwtrWidgetActionIdentity(taskId: "task-1", completionToken: "revision-1")
+
+        XCTAssertEqual(
+            MindwtrWidgetActionProjection.pendingAction(
+                for: identity,
+                in: [action],
+                at: start.addingTimeInterval(2.999)
+            ),
+            action
+        )
+        XCTAssertFalse(MindwtrWidgetActionProjection.isHidden(
+            identity,
+            by: [action],
+            at: start.addingTimeInterval(2.999)
+        ))
+        XCTAssertNil(MindwtrWidgetActionProjection.pendingAction(
+            for: identity,
+            in: [action],
+            at: start.addingTimeInterval(3)
+        ))
+        XCTAssertTrue(MindwtrWidgetActionProjection.isHidden(
+            identity,
+            by: [action],
+            at: start.addingTimeInterval(3)
+        ))
+    }
+
+    func testProjectionMatchesBothTaskAndCompletionToken() {
+        let start = Date(timeIntervalSince1970: 2_700)
+        let oldOccurrence = pendingAction(taskId: "recurring", token: "occurrence-1", start: start)
+        let nextOccurrence = MindwtrWidgetActionIdentity(
+            taskId: "recurring",
+            completionToken: "occurrence-2"
+        )
+
+        XCTAssertFalse(MindwtrWidgetActionProjection.isHidden(
+            nextOccurrence,
+            by: [oldOccurrence],
+            at: start.addingTimeInterval(30)
+        ))
+        XCTAssertNil(MindwtrWidgetActionProjection.pendingAction(
+            for: nextOccurrence,
+            in: [oldOccurrence],
+            at: start.addingTimeInterval(1)
+        ))
+    }
+
+    func testProjectionKeepsFocusPrecedenceAndOnlyFallsBackForDefaultFocus() {
+        let now = Date(timeIntervalSince1970: 2_800)
+        let focus = MindwtrWidgetActionIdentity(taskId: "focus-1", completionToken: "focus-token")
+        let next = MindwtrWidgetActionIdentity(taskId: "next-1", completionToken: "next-token")
+        let lists: [String: [MindwtrWidgetActionIdentity]] = [
+            "focus": [focus],
+            "next": [next],
+            "waiting": [],
+        ]
+
+        XCTAssertEqual(MindwtrWidgetActionProjection.resolvedListId(
+            requestedListId: "focus",
+            identitiesByList: lists,
+            pendingActions: [],
+            at: now
+        ), "focus")
+
+        let expiredFocus = pendingAction(
+            taskId: "focus-1",
+            token: "focus-token",
+            start: now.addingTimeInterval(-3)
+        )
+        XCTAssertEqual(MindwtrWidgetActionProjection.resolvedListId(
+            requestedListId: "focus",
+            identitiesByList: lists,
+            pendingActions: [expiredFocus],
+            at: now
+        ), "next")
+        XCTAssertEqual(MindwtrWidgetActionProjection.resolvedListId(
+            requestedListId: "waiting",
+            identitiesByList: lists,
+            pendingActions: [expiredFocus],
+            at: now
+        ), "waiting")
+        XCTAssertEqual(MindwtrWidgetActionProjection.resolvedListId(
+            requestedListId: "focus",
+            identitiesByList: ["focus": [], "next": []],
+            pendingActions: [],
+            at: now
+        ), "next")
+    }
+
+    func testProjectionRefillsAfterSeveralExpiredCompletions() {
+        let now = Date(timeIntervalSince1970: 2_900)
+        let identities = (0..<6).map {
+            MindwtrWidgetActionIdentity(taskId: "task-\($0)", completionToken: "token-\($0)")
+        }
+        let actions = (0..<3).map {
+            pendingAction(taskId: "task-\($0)", token: "token-\($0)", start: now.addingTimeInterval(-3))
+        }
+
+        XCTAssertEqual(MindwtrWidgetActionProjection.visibleIndexes(
+            in: identities,
+            pendingActions: actions,
+            at: now
+        ), [3, 4, 5])
+    }
+
+    func testProjectionSchedulesDistinctFutureExpiryEntries() {
+        let now = Date(timeIntervalSince1970: 2_950)
+        let first = pendingAction(taskId: "task-1", token: "token-1", start: now)
+        let duplicateExpiry = pendingAction(taskId: "task-2", token: "token-2", start: now)
+        var claimed = pendingAction(taskId: "task-3", token: "token-3", start: now.addingTimeInterval(1))
+        claimed.claimed = true
+
+        XCTAssertEqual(
+            MindwtrWidgetActionProjection.timelineDates(
+                pendingActions: [first, duplicateExpiry, claimed],
+                now: now
+            ),
+            [now, now.addingTimeInterval(3)]
+        )
+    }
+
+    func testLegacyDecodedListsWithoutOpenUriUseCanonicalDestinations() throws {
+        struct LegacyList: Decodable {
+            let title: String
+            let openUri: String?
+        }
+
+        let decoded = try JSONDecoder().decode(
+            [String: LegacyList].self,
+            from: Data(#"""
+            {
+                "focus":{"title":"Focus"},
+                "inbox":{"title":"Inbox"},
+                "next":{"title":"Next Actions"},
+                "waiting":{"title":"Waiting For"},
+                "someday":{"title":"Someday/Maybe"},
+                "filter:cached":{"title":"Cached filter"}
+            }
+            """#.utf8)
+        )
+        let expected = [
+            "focus": "mindwtr:///focus",
+            "inbox": "mindwtr:///inbox",
+            "next": "mindwtr:///widget-list/next",
+            "waiting": "mindwtr:///waiting",
+            "someday": "mindwtr:///someday",
+            "filter:cached": "mindwtr:///widget-list/filter%3Acached",
+        ]
+
+        for (listId, destination) in expected {
+            XCTAssertNil(decoded[listId]?.openUri)
+            XCTAssertEqual(
+                MindwtrWidgetListNavigation.destination(
+                    for: listId,
+                    suppliedOpenUri: decoded[listId]?.openUri
+                ),
+                destination
+            )
+        }
+        XCTAssertEqual(
+            MindwtrWidgetListNavigation.destination(
+                for: "filter:missing-or-deleted",
+                suppliedOpenUri: nil
+            ),
+            "mindwtr:///widget-list/filter%3Amissing-or-deleted"
+        )
+    }
+
+    func testListNavigationRejectsMismatchedAndUnsafeSuppliedRoutes() {
+        XCTAssertEqual(
+            MindwtrWidgetListNavigation.destination(
+                for: "inbox",
+                suppliedOpenUri: "mindwtr:///waiting"
+            ),
+            "mindwtr:///inbox"
+        )
+        XCTAssertEqual(
+            MindwtrWidgetListNavigation.destination(
+                for: "filter:chosen",
+                suppliedOpenUri: "mindwtr:///widget-list/filter%3Aother"
+            ),
+            "mindwtr:///widget-list/filter%3Achosen"
+        )
+        for unsafe in [
+            "https://example.com/inbox",
+            "mindwtr://evil.example/inbox",
+            "mindwtr:///widget-list/filter%3Achosen?override=true",
+            "mindwtr:///settings",
+        ] {
+            XCTAssertEqual(
+                MindwtrWidgetListNavigation.destination(for: "filter:chosen", suppliedOpenUri: unsafe),
+                "mindwtr:///widget-list/filter%3Achosen"
+            )
+        }
+        XCTAssertEqual(
+            MindwtrWidgetListNavigation.destination(for: "project:untrusted", suppliedOpenUri: nil),
+            "mindwtr:///focus"
+        )
+        for invalidListId in [
+            "filter:",
+            "filter:   ",
+            "filter:bad\u{0000}id",
+            "filter:\(String(repeating: "x", count: 1_025))",
+        ] {
+            XCTAssertEqual(
+                MindwtrWidgetListNavigation.destination(for: invalidListId, suppliedOpenUri: nil),
+                "mindwtr:///focus"
+            )
+        }
+        XCTAssertEqual(
+            MindwtrWidgetListNavigation.destination(for: "filter:f/1 ?+", suppliedOpenUri: nil),
+            "mindwtr:///widget-list/filter%3Af%2F1%20%3F%2B"
+        )
     }
 
     func testClaimIsDurableAndReplayableUntilAcknowledged() throws {
@@ -94,6 +324,28 @@ final class MindwtrWidgetActionStoreTests: XCTestCase {
 
             try reopened.enqueue(taskId: "task-1", token: "revision-1", now: now)
             XCTAssertTrue(try reopened.pendingActions().isEmpty)
+        }
+    }
+
+    func testReadOnlyProjectionDoesNotRemoveOrClaimQueuedWorkAcrossRestart() throws {
+        try withStore { store, directory in
+            let now = Date(timeIntervalSince1970: 3_500)
+            try store.enqueue(taskId: "task-1", token: "revision-1", now: now)
+            let action = try XCTUnwrap(store.pendingActions().first)
+            let identity = MindwtrWidgetActionIdentity(
+                taskId: action.taskId,
+                completionToken: action.token
+            )
+
+            XCTAssertTrue(MindwtrWidgetActionProjection.isHidden(
+                identity,
+                by: [action],
+                at: now.addingTimeInterval(3)
+            ))
+
+            let reopened = MindwtrWidgetActionStore(directory: directory)
+            XCTAssertEqual(try reopened.pendingActions(), [action])
+            XCTAssertFalse(try XCTUnwrap(reopened.pendingActions().first).claimed)
         }
     }
 
@@ -164,7 +416,9 @@ final class MindwtrWidgetActionStoreTests: XCTestCase {
             queue.async {
                 ready.leave()
                 start.wait()
-                cancelResult.store(Result { try store.cancel(id: id) })
+                cancelResult.store(Result {
+                    try store.cancel(id: id, now: now.addingTimeInterval(2.999))
+                })
                 finished.leave()
             }
 
@@ -268,5 +522,21 @@ final class MindwtrWidgetActionStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
         try body(MindwtrWidgetActionStore(directory: directory), directory)
+    }
+
+    private func pendingAction(
+        taskId: String,
+        token: String,
+        start: Date
+    ) -> MindwtrWidgetPendingAction {
+        let createdAt = start.timeIntervalSince1970 * 1_000.0
+        return MindwtrWidgetPendingAction(
+            id: "action-\(taskId)-\(token)",
+            taskId: taskId,
+            token: token,
+            createdAt: createdAt,
+            notBefore: createdAt + MindwtrWidgetActionStore.minimumUndoDelayMilliseconds,
+            claimed: false
+        )
     }
 }

@@ -48,5 +48,14 @@ export async function ingestIosWidgetCompletions(deps: CompletionDeps): Promise<
             void logError(error, { scope: 'widget', extra: { message: 'iOS widget completion ingest failed' } });
         }
     }
+    if (count > 0) {
+        void logInfo('iOS widget parity completions ingested', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/ios-widget-parity',
+                count: String(count),
+            },
+        });
+    }
     return count;
 }

@@ -49,16 +49,15 @@ type IosWidgetApi = {
     reloadAllTimelines?: () => void;
 };
 
-// iOS widget families are fixed presets (Apple does not allow user resizing),
-// so ship an explicit item budget per size instead of guessing from a height.
-// The Swift view re-caps to what actually fits the rendered widget; these are
-// the upper bounds it draws from. extraLarge (iPad) renders two columns.
-const IOS_WIDGET_FAMILY_MAX_ITEMS = {
-    default: 12,
-    small: 3,
-    medium: 5,
-    large: 12,
-    extraLarge: 24,
+// The Swift view decides what fits from its actual geometry and Dynamic Type.
+// Each snapshot carries eight bounded refill rows beyond the old family caps,
+// so queued completions can disappear without waiting for the app to republish.
+const IOS_WIDGET_FAMILY_CACHE_ITEMS = {
+    default: 20,
+    small: 11,
+    medium: 13,
+    large: 20,
+    extraLarge: 32,
 } as const;
 
 async function getIosWidgetApi(): Promise<IosWidgetApi | null> {
@@ -118,15 +117,25 @@ function buildPayloadFromData(
         ...widgetPayloadOptions(),
         maxItems,
     });
-    // Compact combines starred and scheduled tasks under one short header.
-    // Keep this Android-only; other platforms retain their existing titles.
-    return Platform.OS === 'android'
+    // Android Compact and iOS Tasks both combine starred and scheduled rows
+    // under one short localized Today header.
+    return Platform.OS === 'android' || Platform.OS === 'ios'
         ? { ...payload, headerTitle: getTranslationsSync(language)['focus.schedule'] ?? 'Today' }
         : payload;
 }
 
 function createPayloadProjectionFromData(data: AppData, language: Language): WidgetPayloadProjection {
-    return createWidgetPayloadProjection(data, language, widgetPayloadOptions());
+    const projection = createWidgetPayloadProjection(data, language, widgetPayloadOptions());
+    return {
+        getTaskList: projection.getTaskList,
+        build: (maxItems) => {
+            const payload = projection.build(maxItems);
+            return {
+                ...payload,
+                headerTitle: getTranslationsSync(language)['focus.schedule'] ?? 'Today',
+            };
+        },
+    };
 }
 
 // The native widget's task list scrolls (RemoteViewsService), so the payload
@@ -135,6 +144,7 @@ const ANDROID_WIDGET_MAX_ITEMS = 20;
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.3.0/android-native-widget';
 const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.3.0/android-widget-provider-compat';
 const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.3.0/widget-focus-today';
+const IOS_WIDGET_PARITY_RELEASE_CHECK = 'v1.3.1/ios-widget-parity';
 let androidWidgetUnavailableLogged = false;
 
 function capWidgetSections(
@@ -258,23 +268,23 @@ async function updateIosWidgetPayloads(projection: WidgetPayloadProjection): Pro
     const payloadEntries = [
         [
             IOS_WIDGET_PAYLOAD_KEY,
-            projection.build(IOS_WIDGET_FAMILY_MAX_ITEMS.default),
+            projection.build(IOS_WIDGET_FAMILY_CACHE_ITEMS.default),
         ],
         [
             IOS_WIDGET_PAYLOAD_KEY_SMALL,
-            projection.build(IOS_WIDGET_FAMILY_MAX_ITEMS.small),
+            projection.build(IOS_WIDGET_FAMILY_CACHE_ITEMS.small),
         ],
         [
             IOS_WIDGET_PAYLOAD_KEY_MEDIUM,
-            projection.build(IOS_WIDGET_FAMILY_MAX_ITEMS.medium),
+            projection.build(IOS_WIDGET_FAMILY_CACHE_ITEMS.medium),
         ],
         [
             IOS_WIDGET_PAYLOAD_KEY_LARGE,
-            projection.build(IOS_WIDGET_FAMILY_MAX_ITEMS.large),
+            projection.build(IOS_WIDGET_FAMILY_CACHE_ITEMS.large),
         ],
         [
             IOS_WIDGET_PAYLOAD_KEY_EXTRA_LARGE,
-            projection.build(IOS_WIDGET_FAMILY_MAX_ITEMS.extraLarge),
+            projection.build(IOS_WIDGET_FAMILY_CACHE_ITEMS.extraLarge),
         ],
     ] as const satisfies readonly [string, TasksWidgetPayload][];
 
@@ -305,6 +315,15 @@ async function updateIosWidgetPayloads(projection: WidgetPayloadProjection): Pro
                 focusItems: String(payload.sections.find((section) => section.key === 'focus')?.items.length ?? 0),
                 todayItems: String(payload.sections.find((section) => section.key === 'schedule')?.items.length ?? 0),
                 totalItems: String(payload.items.length),
+            },
+        });
+        void logInfo('iOS widget parity snapshot published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: IOS_WIDGET_PARITY_RELEASE_CHECK,
+                count: String(payloadEntries.length),
+                totalItems: String(payload.items.length),
+                nextItems: String(payload.lists.next?.items.length ?? 0),
             },
         });
         return true;

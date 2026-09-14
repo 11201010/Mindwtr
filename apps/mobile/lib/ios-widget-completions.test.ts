@@ -68,6 +68,9 @@ describe('iOS widget completion ingestion', () => {
         expect(mocks.logInfo).toHaveBeenCalledWith('iOS widget completion ingested', {
             scope: 'widget', extra: { releaseCheck: 'v1.3.0/ios-widget-checkoff', outcome: 'completed' },
         });
+        expect(mocks.logInfo).toHaveBeenCalledWith('iOS widget parity completions ingested', {
+            scope: 'widget', extra: { releaseCheck: 'v1.3.1/ios-widget-parity', count: '1' },
+        });
         expect(JSON.stringify(mocks.logInfo.mock.calls)).not.toContain('Private task text');
     });
 

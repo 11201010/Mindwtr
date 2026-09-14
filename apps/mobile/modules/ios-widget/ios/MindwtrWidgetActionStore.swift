@@ -15,6 +15,200 @@ struct MindwtrWidgetPendingAction: Codable, Equatable, Sendable {
     var claimed: Bool
 }
 
+struct MindwtrWidgetActionIdentity: Equatable, Sendable {
+    let taskId: String
+    let completionToken: String?
+}
+
+// Pure read-only projection rules shared by the WidgetKit renderer and the
+// Linux-compatible Swift package tests. This never claims, removes, or
+// acknowledges an action; the app remains the only task-data writer.
+enum MindwtrWidgetActionProjection {
+    static let defaultListId = "focus"
+    static let fallbackListId = "next"
+
+    static func pendingAction(
+        for identity: MindwtrWidgetActionIdentity,
+        in actions: [MindwtrWidgetPendingAction],
+        at date: Date
+    ) -> MindwtrWidgetPendingAction? {
+        guard let token = normalized(identity.completionToken) else { return nil }
+        let now = milliseconds(for: date)
+        return actions.last { action in
+            action.taskId == identity.taskId
+                && action.token == token
+                && !action.claimed
+                && now < action.notBefore
+        }
+    }
+
+    static func isHidden(
+        _ identity: MindwtrWidgetActionIdentity,
+        by actions: [MindwtrWidgetPendingAction],
+        at date: Date
+    ) -> Bool {
+        guard let token = normalized(identity.completionToken) else { return false }
+        let now = milliseconds(for: date)
+        return actions.contains { action in
+            action.taskId == identity.taskId
+                && action.token == token
+                && (action.claimed || now >= action.notBefore)
+        }
+    }
+
+    static func visibleIndexes(
+        in identities: [MindwtrWidgetActionIdentity],
+        pendingActions: [MindwtrWidgetPendingAction],
+        at date: Date
+    ) -> [Int] {
+        identities.indices.filter { index in
+            !isHidden(identities[index], by: pendingActions, at: date)
+        }
+    }
+
+    static func resolvedListId(
+        requestedListId: String,
+        identitiesByList: [String: [MindwtrWidgetActionIdentity]],
+        pendingActions: [MindwtrWidgetPendingAction],
+        at date: Date
+    ) -> String {
+        let requested = normalized(requestedListId) ?? defaultListId
+        guard requested == defaultListId else { return requested }
+        let focusItems = identitiesByList[defaultListId] ?? []
+        return visibleIndexes(in: focusItems, pendingActions: pendingActions, at: date).isEmpty
+            ? fallbackListId
+            : defaultListId
+    }
+
+    static func timelineDates(
+        pendingActions: [MindwtrWidgetPendingAction],
+        now: Date
+    ) -> [Date] {
+        let nowMilliseconds = milliseconds(for: now)
+        let futureExpiries = Set(pendingActions.compactMap { action -> Double? in
+            guard !action.claimed,
+                  action.notBefore.isFinite,
+                  action.notBefore > nowMilliseconds
+            else {
+                return nil
+            }
+            return action.notBefore
+        })
+        return [now] + futureExpiries.sorted().map { Date(timeIntervalSince1970: $0 / 1_000.0) }
+    }
+
+    private static func milliseconds(for date: Date) -> Double {
+        date.timeIntervalSince1970 * 1_000.0
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        return trimmed
+    }
+}
+
+// Pure list-route ownership shared by the WidgetKit renderer and the
+// Linux-compatible Swift tests. Cached payloads written before list openUri
+// existed still need to open the list they display, and a supplied URI may
+// never substitute a different app route.
+enum MindwtrWidgetListNavigation {
+    static let defaultDestination = "mindwtr:///focus"
+
+    static func destination(for listId: String, suppliedOpenUri: String?) -> String {
+        guard let validListId = navigableListId(listId) else {
+            return defaultDestination
+        }
+        if let supplied = validatedDestination(suppliedOpenUri, for: validListId) {
+            return supplied
+        }
+        switch validListId {
+        case "focus":
+            return defaultDestination
+        case "inbox":
+            return "mindwtr:///inbox"
+        case "waiting":
+            return "mindwtr:///waiting"
+        case "someday":
+            return "mindwtr:///someday"
+        default:
+            guard let encoded = validListId.addingPercentEncoding(withAllowedCharacters: componentAllowed) else {
+                return defaultDestination
+            }
+            return "mindwtr:///widget-list/\(encoded)"
+        }
+    }
+
+    private static let fixedListIds: Set<String> = ["focus", "inbox", "next", "waiting", "someday"]
+    private static let componentAllowed = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()"
+    )
+    private static let listRoutePrefix = "/widget-list/"
+    private static let maximumListIdLength = 1_024
+    private static let maximumListUriLength = 12_512
+
+    private static func navigableListId(_ listId: String) -> String? {
+        if fixedListIds.contains(listId) {
+            return listId
+        }
+        guard listId.utf16.count <= maximumListIdLength,
+              listId.hasPrefix("filter:"),
+              !String(listId.dropFirst("filter:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !listId.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else {
+            return nil
+        }
+        return listId
+    }
+
+    private static func validatedDestination(_ value: String?, for listId: String) -> String? {
+        guard let candidate = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !candidate.isEmpty,
+              candidate.utf16.count <= maximumListUriLength,
+              let components = URLComponents(string: candidate),
+              components.scheme == "mindwtr",
+              (components.host ?? "").isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              components.query == nil,
+              components.fragment == nil,
+              routedListId(from: components.percentEncodedPath) == listId
+        else {
+            return nil
+        }
+        return candidate
+    }
+
+    private static func routedListId(from percentEncodedPath: String) -> String? {
+        switch percentEncodedPath {
+        case "/focus":
+            return "focus"
+        case "/inbox":
+            return "inbox"
+        case "/waiting":
+            return "waiting"
+        case "/someday":
+            return "someday"
+        default:
+            guard percentEncodedPath.hasPrefix(listRoutePrefix) else { return nil }
+            let segment = String(percentEncodedPath.dropFirst(listRoutePrefix.count))
+            guard !segment.isEmpty,
+                  !segment.contains("/"),
+                  let decoded = segment.removingPercentEncoding,
+                  decoded == "next" || decoded.hasPrefix("filter:")
+            else {
+                return nil
+            }
+            return decoded
+        }
+    }
+}
+
 enum MindwtrWidgetActionStoreError: Error, LocalizedError, Equatable {
     case appGroupUnavailable
     case invalidValue(String)
@@ -127,12 +321,26 @@ final class MindwtrWidgetActionStore: @unchecked Sendable {
 
     @discardableResult
     func cancel(id: String) throws -> Bool {
+        try cancelLocked(id: id, now: nil)
+    }
+
+    @discardableResult
+    func cancel(id: String, now: Date) throws -> Bool {
+        try cancelLocked(id: id, now: now)
+    }
+
+    private func cancelLocked(id: String, now: Date?) throws -> Bool {
         try validateInput(id, field: "action id")
         return try withLockedState { state in
+            // Resolve the production clock only after acquiring the queue
+            // lock, so an Undo that waited across its deadline cannot win late.
+            let nowMilliseconds = try milliseconds(for: now ?? Date())
             guard let index = state.pending.firstIndex(where: { $0.id == id }) else {
                 return (false, false)
             }
-            guard !state.pending[index].claimed else {
+            guard !state.pending[index].claimed,
+                  nowMilliseconds < state.pending[index].notBefore
+            else {
                 return (false, false)
             }
             state.pending.remove(at: index)

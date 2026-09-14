@@ -35,6 +35,8 @@ struct MindwtrWidgetListPayload: Decodable {
     let dateLabel: String?
     let sections: [MindwtrWidgetSection]?
     let items: [MindwtrWidgetTaskItem]?
+    // Optional so snapshots written by older app versions remain decodable.
+    let openUri: String?
 }
 
 struct MindwtrWidgetSavedFilter: Decodable {
@@ -130,22 +132,25 @@ struct MindwtrTasksWidgetPayload: Decodable {
         nonEmpty(undoLabel) ?? "Undo"
     }
 
-    func selectingList(_ listId: String) -> MindwtrTasksWidgetPayload {
+    func selectingList(
+        _ listId: String,
+        pendingActions: [MindwtrWidgetPendingAction] = [],
+        at date: Date = Date()
+    ) -> MindwtrTasksWidgetPayload {
         let normalizedId = nonEmpty(listId) ?? "focus"
-        if let list = lists?[normalizedId] {
-            return replacingRoot(
-                title: list.title,
-                dateLabel: list.dateLabel,
-                sections: list.sections ?? [],
-                items: list.items ?? []
-            )
-        }
-
-        if normalizedId != "focus", let title = title(forList: normalizedId) {
-            return replacingRoot(title: title, dateLabel: nil, sections: [], items: [])
-        }
-
-        return self
+        let focusPayload = unfilteredSelection(for: "focus")
+        let nextPayload = unfilteredSelection(for: "next")
+        let resolvedId = MindwtrWidgetActionProjection.resolvedListId(
+            requestedListId: normalizedId,
+            identitiesByList: [
+                "focus": focusPayload.sourceTaskItems.map(\.actionIdentity),
+                "next": nextPayload.sourceTaskItems.map(\.actionIdentity),
+            ],
+            pendingActions: pendingActions,
+            at: date
+        )
+        return unfilteredSelection(for: resolvedId)
+            .filteringHiddenActions(pendingActions, at: date)
     }
 
     func title(forList listId: String) -> String? {
@@ -166,16 +171,95 @@ struct MindwtrTasksWidgetPayload: Decodable {
         return result
     }
 
+    private var sourceTaskItems: [MindwtrWidgetTaskItem] {
+        if let sections, !sections.isEmpty {
+            return sections.flatMap(\.items)
+        }
+        return items
+    }
+
+    private func unfilteredSelection(for listId: String) -> MindwtrTasksWidgetPayload {
+        if let list = lists?[listId] {
+            return replacingRoot(
+                // The default is the short localized Today label published at
+                // the root. Explicit lists use their own localized title.
+                title: listId == "focus" ? headerTitle : list.title,
+                dateLabel: listId == "focus" ? (list.dateLabel ?? self.dateLabel) : list.dateLabel,
+                sections: list.sections ?? [],
+                items: list.items ?? [],
+                openUri: MindwtrWidgetListNavigation.destination(
+                    for: listId,
+                    suppliedOpenUri: list.openUri
+                )
+            )
+        }
+
+        if listId != "focus" {
+            return replacingRoot(
+                title: title(forList: listId)
+                    ?? nonEmpty(listTitles?["savedFilters"])
+                    ?? headerTitle,
+                dateLabel: nil,
+                sections: [],
+                items: [],
+                openUri: MindwtrWidgetListNavigation.destination(
+                    for: listId,
+                    suppliedOpenUri: nil
+                )
+            )
+        }
+
+        return replacingRoot(
+            title: headerTitle,
+            dateLabel: dateLabel,
+            sections: sections ?? [],
+            items: items,
+            openUri: MindwtrWidgetListNavigation.destination(
+                for: listId,
+                suppliedOpenUri: focusUri
+            )
+        )
+    }
+
+    private func filteringHiddenActions(
+        _ pendingActions: [MindwtrWidgetPendingAction],
+        at date: Date
+    ) -> MindwtrTasksWidgetPayload {
+        let visibleItems = items.filter {
+            !MindwtrWidgetActionProjection.isHidden($0.actionIdentity, by: pendingActions, at: date)
+        }
+        let visibleSections = sections?.compactMap { section -> MindwtrWidgetSection? in
+            let items = section.items.filter {
+                !MindwtrWidgetActionProjection.isHidden($0.actionIdentity, by: pendingActions, at: date)
+            }
+            guard !items.isEmpty else { return nil }
+            return MindwtrWidgetSection(
+                key: section.key,
+                title: section.title,
+                detail: section.detail,
+                items: items
+            )
+        }
+        return replacingRoot(
+            title: headerTitle,
+            dateLabel: dateLabel,
+            sections: visibleSections ?? [],
+            items: visibleItems,
+            openUri: focusUri
+        )
+    }
+
     private func replacingRoot(
         title: String,
         dateLabel: String?,
         sections: [MindwtrWidgetSection],
-        items: [MindwtrWidgetTaskItem]
+        items: [MindwtrWidgetTaskItem],
+        openUri: String?
     ) -> MindwtrTasksWidgetPayload {
         MindwtrTasksWidgetPayload(
             headerTitle: nonEmpty(title) ?? headerTitle,
             subtitle: subtitle,
-            dateLabel: nonEmpty(dateLabel) ?? self.dateLabel,
+            dateLabel: nonEmpty(dateLabel),
             focusedCount: focusedCount,
             items: items,
             sections: sections,
@@ -186,11 +270,17 @@ struct MindwtrTasksWidgetPayload: Decodable {
             captureLabel: captureLabel,
             completeLabel: completeLabel,
             undoLabel: undoLabel,
-            focusUri: focusUri,
+            focusUri: nonEmpty(openUri) ?? focusUri,
             quickCaptureUri: quickCaptureUri,
             themeMode: themeMode,
             palette: palette
         )
+    }
+}
+
+private extension MindwtrWidgetTaskItem {
+    var actionIdentity: MindwtrWidgetActionIdentity {
+        MindwtrWidgetActionIdentity(taskId: id, completionToken: completionToken)
     }
 }
 
@@ -218,9 +308,9 @@ struct MindwtrTasksWidgetProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<MindwtrTasksWidgetEntry>) -> Void) {
         let now = Date()
-        let entry = MindwtrTasksWidgetSnapshotStore.entry(for: context.family, date: now)
+        let entries = MindwtrTasksWidgetSnapshotStore.timelineEntries(for: context.family, now: now)
         let refresh = Calendar.current.date(byAdding: .minute, value: 30, to: now) ?? now.addingTimeInterval(1800)
-        completion(Timeline(entries: [entry], policy: .after(refresh)))
+        completion(Timeline(entries: entries, policy: .after(refresh)))
     }
 
 }
@@ -231,11 +321,39 @@ enum MindwtrTasksWidgetSnapshotStore {
         listId: String = "focus",
         date: Date = Date()
     ) -> MindwtrTasksWidgetEntry {
-        MindwtrTasksWidgetEntry(
+        let pendingActions = (try? MindwtrWidgetActionStore.appGroupStore().pendingActions()) ?? []
+        return MindwtrTasksWidgetEntry(
             date: date,
-            payload: loadPayload(for: family).selectingList(listId),
-            pendingActions: (try? MindwtrWidgetActionStore.appGroupStore().pendingActions()) ?? []
+            payload: loadPayload(for: family).selectingList(
+                listId,
+                pendingActions: pendingActions,
+                at: date
+            ),
+            pendingActions: pendingActions
         )
+    }
+
+    static func timelineEntries(
+        for family: WidgetFamily,
+        listId: String = "focus",
+        now: Date = Date()
+    ) -> [MindwtrTasksWidgetEntry] {
+        let payload = loadPayload(for: family)
+        let pendingActions = (try? MindwtrWidgetActionStore.appGroupStore().pendingActions()) ?? []
+        return MindwtrWidgetActionProjection.timelineDates(
+            pendingActions: pendingActions,
+            now: now
+        ).map { date in
+            MindwtrTasksWidgetEntry(
+                date: date,
+                payload: payload.selectingList(
+                    listId,
+                    pendingActions: pendingActions,
+                    at: date
+                ),
+                pendingActions: pendingActions
+            )
+        }
     }
 
     static func loadPayload(for family: WidgetFamily) -> MindwtrTasksWidgetPayload {
@@ -517,7 +635,7 @@ private struct MindwtrTasksWidgetView: View {
                     ForEach(section.items, id: \.id) { item in
                         MindwtrWidgetTaskRow(
                             item: item,
-                            pendingAction: pendingAction(for: item.id),
+                            pendingAction: pendingAction(for: item),
                             payload: payload,
                             palette: palette,
                             metrics: metrics,
@@ -530,8 +648,12 @@ private struct MindwtrTasksWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private func pendingAction(for taskId: String) -> MindwtrWidgetPendingAction? {
-        entry.pendingActions.last(where: { $0.taskId == taskId })
+    private func pendingAction(for item: MindwtrWidgetTaskItem) -> MindwtrWidgetPendingAction? {
+        MindwtrWidgetActionProjection.pendingAction(
+            for: item.actionIdentity,
+            in: entry.pendingActions,
+            at: entry.date
+        )
     }
 
     private func sourceSections(for payload: MindwtrTasksWidgetPayload) -> [MindwtrWidgetSection] {
@@ -555,12 +677,11 @@ private struct MindwtrTasksWidgetView: View {
             availableHeight - metrics.padding * 2 - metrics.headerHeight - metrics.sectionSpacing
         )
         let columnHeight = remainingHeight
-        var remainingTaskBudget = familyTaskCap
 
         for (sectionIndex, section) in sourceSections(for: payload).enumerated() {
             var itemIndex = 0
             let sectionTitle = nonEmpty(section.title)
-            while itemIndex < section.items.count, columnIndex < columns.count, remainingTaskBudget > 0 {
+            while itemIndex < section.items.count, columnIndex < columns.count {
                 let headerCost = sectionTitle == nil ? 0 : metrics.sectionHeaderHeight
                 let fittingRows = max(0, Int(floor((remainingHeight - headerCost) / metrics.rowHeight)))
                 if fittingRows <= 0 {
@@ -569,7 +690,7 @@ private struct MindwtrTasksWidgetView: View {
                     continue
                 }
 
-                let take = min(fittingRows, section.items.count - itemIndex, remainingTaskBudget)
+                let take = min(fittingRows, section.items.count - itemIndex)
                 guard take > 0 else { break }
                 let items = Array(section.items[itemIndex ..< itemIndex + take])
                 columns[columnIndex].append(
@@ -581,7 +702,6 @@ private struct MindwtrTasksWidgetView: View {
                     )
                 )
                 itemIndex += take
-                remainingTaskBudget -= take
                 remainingHeight -= headerCost + CGFloat(take) * metrics.rowHeight + metrics.sectionSpacing
 
                 if itemIndex < section.items.count {
@@ -589,23 +709,10 @@ private struct MindwtrTasksWidgetView: View {
                     remainingHeight = columnHeight
                 }
             }
-            if remainingTaskBudget == 0 || columnIndex >= columns.count { break }
+            if columnIndex >= columns.count { break }
         }
 
         return columns
-    }
-
-    private var familyTaskCap: Int {
-        switch widgetFamily {
-        case .systemExtraLarge:
-            return 24
-        case .systemLarge:
-            return 12
-        case .systemMedium:
-            return 5
-        default:
-            return 3
-        }
     }
 
     // The payload's palette is already the resolved preset/theme colors (built by
