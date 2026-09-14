@@ -98,6 +98,7 @@ test('Watch-enabled App Review waits for a required Watch screenshot', () => {
   try {
     const output = join(temp, 'env');
     const log = execFileSync('bash', ['-c', route.run], {
+      cwd: temp,
       env: {
         PATH: process.env.PATH,
         GITHUB_ENV: output,
