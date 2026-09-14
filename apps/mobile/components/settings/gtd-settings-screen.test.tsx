@@ -56,6 +56,11 @@ const storeState: MockStoreState = {
 };
 
 vi.mock('@mindwtr/core', () => ({
+  createFeedbackDiagnosticsBuffer: () => ({
+    record: vi.fn(),
+    read: () => '',
+    clear: vi.fn(),
+  }),
   DEFAULT_TASK_EDITOR_ORDER: ['status', 'project'],
   DEFAULT_TASK_EDITOR_SECTION_BY_FIELD: { status: 'basic', project: 'basic' },
   DEFAULT_TASK_EDITOR_SECTION_OPEN: { basic: true, scheduling: false, organization: false, details: false },
