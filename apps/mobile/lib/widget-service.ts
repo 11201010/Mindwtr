@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getTranslationsSync, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
+import { getTranslator, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
 import * as ReactNativeWidgetKit from 'react-native-widgetkit';
 
 import * as AndroidWidget from '../modules/android-widget';
@@ -120,7 +120,7 @@ function buildPayloadFromData(
     // Android Compact and iOS Tasks both combine starred and scheduled rows
     // under one short localized Today header.
     return Platform.OS === 'android' || Platform.OS === 'ios'
-        ? { ...payload, headerTitle: getTranslationsSync(language)['focus.schedule'] ?? 'Today' }
+        ? { ...payload, headerTitle: getTranslator(language)('focus.schedule') }
         : payload;
 }
 
@@ -132,7 +132,7 @@ function createPayloadProjectionFromData(data: AppData, language: Language): Wid
             const payload = projection.build(maxItems);
             return {
                 ...payload,
-                headerTitle: getTranslationsSync(language)['focus.schedule'] ?? 'Today',
+                headerTitle: getTranslator(language)('focus.schedule'),
             };
         },
     };
