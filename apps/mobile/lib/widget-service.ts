@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
+import { getTranslationsSync, isSandboxMode, type AppData, type Language, useTaskStore } from '@mindwtr/core';
 import * as ReactNativeWidgetKit from 'react-native-widgetkit';
 
 import * as AndroidWidget from '../modules/android-widget';
@@ -82,13 +82,13 @@ async function resolvePayloadLanguage(data: AppData): Promise<Language> {
 
 // Which lists the Android payload carries. The widget's own header chooser
 // switches lists with no app running, so it can only show a list the payload
-// already holds: once any Tasks widget is placed, all five GTD lists ride
-// along and switching between them is instant. A project list is still built
-// only when a widget asks for it, so picking one shows its name and fills in
-// on the next publish (#1173).
+// already holds. Publish all five bounded GTD lists even before placement:
+// Compact needs Next Actions as its empty-today fallback, and a new Tasks
+// widget can switch to Inbox without an extra app opening (#1211). Saved
+// filter lists are still built only when a placed widget asks for them.
 function androidWidgetListIds(): string[] {
     const selections = AndroidWidget.getWidgetListSelections();
-    return selections.length === 0 ? [] : [...WIDGET_FIXED_LIST_IDS, ...selections];
+    return [...WIDGET_FIXED_LIST_IDS, ...selections];
 }
 
 function widgetPayloadOptions(): Omit<WidgetPayloadBuildOptions, 'maxItems'> {
@@ -97,7 +97,7 @@ function widgetPayloadOptions(): Omit<WidgetPayloadBuildOptions, 'maxItems'> {
         // The widget's Focus list shows what the Focus screen shows, so it
         // rides the screen's current filter and sort (#1173).
         focusFilter: getFocusWidgetFilter(),
-        // Only the lists placed Android widgets asked for are built (#1173);
+        // Fixed lists plus the saved-filter lists placed Android widgets need;
         // folding them in here also puts them in the render fingerprint.
         ...(Platform.OS === 'android' && AndroidWidget.isSupported() ? { listIds: androidWidgetListIds() } : {}),
         // Edit Widget can switch lists while the app is not running. Carry the
@@ -114,10 +114,15 @@ function buildPayloadFromData(
     language: Language,
     maxItems?: number,
 ): TasksWidgetPayload {
-    return buildWidgetPayload(data, language, {
+    const payload = buildWidgetPayload(data, language, {
         ...widgetPayloadOptions(),
         maxItems,
     });
+    // Compact combines starred and scheduled tasks under one short header.
+    // Keep this Android-only; other platforms retain their existing titles.
+    return Platform.OS === 'android'
+        ? { ...payload, headerTitle: getTranslationsSync(language)['focus.schedule'] ?? 'Today' }
+        : payload;
 }
 
 function createPayloadProjectionFromData(data: AppData, language: Language): WidgetPayloadProjection {
@@ -202,6 +207,16 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
         void logInfo('Android widget payload published', {
             scope: 'widget',
             extra: { releaseCheck: ANDROID_WIDGET_RELEASE_CHECK, items: String(payload.items.length) },
+        });
+        void logInfo('Android widget fixed lists published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/android-widget-lists',
+                count: String(WIDGET_FIXED_LIST_IDS.length),
+                focusItems: String(payload.items.length),
+                nextItems: String(payload.lists.next?.items.length ?? 0),
+                inboxItems: String(payload.lists.inbox?.items.length ?? 0),
+            },
         });
         void logInfo('Android widget Focus and Today payload published', {
             scope: 'widget',

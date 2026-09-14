@@ -278,20 +278,46 @@ describe('widget-service', () => {
         });
     });
 
-    it('carries every GTD list once a widget is placed so the header chooser switches without the app (#1173)', async () => {
+    it('carries every GTD list before placement for Compact fallback and offline list switching (#1211)', async () => {
         const data = buildData(2);
         data.tasks.push({ id: 'w1', title: 'Waiting on Sam', status: 'waiting', tags: [], contexts: [], createdAt: data.tasks[0].createdAt, updatedAt: data.tasks[0].updatedAt });
-        // No widget placed: nothing beyond the Focus list is worth building.
+        // Compact also needs Next Actions. A newly placed Tasks widget must be
+        // able to switch to Inbox before the app next publishes.
         expect(await updateMobileWidgetFromData(data)).toBe(true);
-        expect(Object.keys(JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string).lists)).toEqual(['focus']);
+        expect(Object.keys(JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string).lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
 
         mockAndroidWidgetGetWidgetListSelections.mockReturnValue(['waiting', 'project:missing']);
         expect(await updateMobileWidgetFromData(data)).toBe(true);
-        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
-        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[1][0] as string);
+        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
+        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
         expect(Object.keys(payload.lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
         expect(payload.lists.waiting).toMatchObject({ title: 'Waiting For', items: [{ title: 'Waiting on Sam' }] });
         expect(payload.listTitles).toMatchObject({ inbox: 'Inbox', next: 'Next Actions', someday: 'Someday/Maybe' });
+        expect(payload.headerTitle).toBe('Today');
+    });
+
+    it('publishes bounded Next Actions without changing the Focus payload when today is empty (#1211)', async () => {
+        const data = buildData(25);
+        data.tasks = data.tasks.map((task) => ({ ...task, isFocusedToday: false }));
+        data.tasks.push({ ...data.tasks[0], id: 'inbox-task', status: 'inbox' });
+
+        expect(await updateMobileWidgetFromData(data)).toBe(true);
+        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
+        expect(payload.items).toEqual([]);
+        expect(payload.sections).toEqual([]);
+        expect(payload.lists.focus.items).toEqual([]);
+        expect(payload.lists.next.items).toHaveLength(20);
+        expect(payload.lists.inbox.items.map((item: { id: string }) => item.id)).toEqual(['inbox-task']);
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget fixed lists published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/android-widget-lists',
+                count: '5',
+                focusItems: '0',
+                nextItems: '20',
+                inboxItems: '1',
+            },
+        });
     });
 
     it('localizes the capture dialog labels with the widget language', async () => {
@@ -303,6 +329,7 @@ describe('widget-service', () => {
         const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
         expect(payload.quickCapture.cancel).toBe('Abbrechen');
         expect(payload.quickCapture.save).toBe('Speichern');
+        expect(payload.headerTitle).toBe('Heute');
     });
 
     it('writes family-specific iOS payloads with per-size item budgets', async () => {

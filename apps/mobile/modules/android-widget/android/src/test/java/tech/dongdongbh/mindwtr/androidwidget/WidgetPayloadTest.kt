@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -95,6 +96,85 @@ class WidgetPayloadTest {
     assertEquals(4, TasksWidgetFactory.buildRows(list).size)
     assertEquals(2, TasksWidgetFactory.buildRows(list.copy(sections = emptyList()), compact = true).size)
     assertTrue(TasksWidgetFactory.buildRows(list.copy(sections = emptyList(), items = emptyList()), compact = true).isEmpty())
+  }
+
+  @Test
+  fun compactFallsBackToTranslatedNextActionsWhenFocusIsEmpty() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload("Prochaines actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetPayload.NEXT_LIST_ID, payload.compactListId())
+    assertEquals("Prochaines actions", WidgetRenderer.compactHeaderTitle(payload))
+    assertEquals(
+      listOf("next-1"),
+      TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun compactKeepsFocusWhenItsFlatRowsArePopulated() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", items = items("focus-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, payload.compactListId())
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(payload))
+  }
+
+  @Test
+  fun compactKeepsFocusWhenTodayOnlyHasSectionRows() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", sections = sections("Today", "today-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, payload.compactListId())
+    assertEquals(
+      listOf("today-1"),
+      TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun compactPreservesLegacyEmptyFocusWhenNextIsMissingOrEmpty() {
+    val missingNext = payloadWithLists(focus = listPayload("Focus"))
+    val emptyNext = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload("Next Actions"),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, missingNext.compactListId())
+    assertEquals(WidgetListStore.DEFAULT_LIST, emptyNext.compactListId())
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(missingNext))
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(emptyNext))
+  }
+
+  @Test
+  fun compactFlattensNextSectionsInOrderWithoutChangingTasksFocusRows() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload(
+        "Next Actions",
+        items = items("flat-copy"),
+        sections = JSONArray()
+          .put(section("First", "next-1", "next-2"))
+          .put(section("Second", "next-3")),
+      ),
+    )
+
+    val compactRows = TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+    val tasksFocusRows = TasksWidgetFactory.buildRows(payload.listFor(WidgetListStore.DEFAULT_LIST))
+
+    assertEquals(
+      listOf("next-1", "next-2", "next-3"),
+      compactRows.map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+    assertTrue("Tasks widgets must keep the empty Focus list", tasksFocusRows.isEmpty())
   }
 
   @Test
@@ -216,4 +296,33 @@ class WidgetPayloadTest {
     assertEquals("Inbox: 4", bumped.getString("subtitle"))
     assertEquals("Inbox: 4", WidgetPayload.parse(bumped.toString())!!.subtitle)
   }
+
+  private fun payloadWithLists(focus: JSONObject, next: JSONObject? = null): WidgetPayload {
+    val lists = JSONObject().put(WidgetListStore.DEFAULT_LIST, focus)
+    if (next != null) lists.put(WidgetPayload.NEXT_LIST_ID, next)
+    val root = JSONObject(sample)
+      .put("items", JSONArray())
+      .put("sections", JSONArray())
+      .put("lists", lists)
+    return WidgetPayload.parse(root.toString())!!
+  }
+
+  private fun listPayload(
+    title: String,
+    items: JSONArray = JSONArray(),
+    sections: JSONArray = JSONArray(),
+  ): JSONObject = JSONObject()
+    .put("title", title)
+    .put("items", items)
+    .put("sections", sections)
+
+  private fun items(vararg ids: String): JSONArray = JSONArray().apply {
+    ids.forEach { put(JSONObject().put("id", it).put("title", it)) }
+  }
+
+  private fun sections(title: String, vararg ids: String): JSONArray = JSONArray().put(section(title, *ids))
+
+  private fun section(title: String, vararg ids: String): JSONObject = JSONObject()
+    .put("title", title)
+    .put("items", items(*ids))
 }

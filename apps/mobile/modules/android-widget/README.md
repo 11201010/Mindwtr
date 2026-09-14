@@ -32,12 +32,19 @@ to apply through the normal store; widget code never writes SQLite.
 
 The optional Compact style uses native RemoteViews with the simple v1.2.8
 layout: a 13sp title, 10sp Inbox count, flat 12sp task rows, and a capture
-button pinned below the scrollable list. It always shows the shared Focus
-projection, without list selection, section headings, metadata, or inline
-checkboxes. Task taps open the existing native detail sheet. Capture opens
+button pinned below the scrollable list. It shows the shared Focus projection
+under the localized `Today` header; when Today's Focus and Today are both empty, it shows Next Actions
+under that list's localized title. The list fills the resized widget with as
+many rows as fit, up to the available tasks. It has no list selection, section
+headings, metadata, or inline checkboxes. Task taps open the existing native detail sheet. Capture opens
 `QuickCaptureActivity` over the launcher and durably queues the new task
 without opening the main app. Both styles share the payload, theme, refresh,
 and pending-capture paths; no React Native widget rendering dependency is used.
+
+Every Android snapshot includes bounded Focus, Inbox, Next Actions, Waiting,
+and Someday lists, even before a Tasks widget is placed. After the app has
+published once, a newly placed widget can select those cached lists without
+another app opening. Saved-filter lists remain published on demand.
 
 ## Picker previews
 
