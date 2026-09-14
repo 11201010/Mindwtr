@@ -1,8 +1,84 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { redirectSystemPath } from '@/app/+native-intent';
 
+const appLogMocks = vi.hoisted(() => ({
+    logInfo: vi.fn(async () => null),
+}));
+
+vi.mock('@/lib/app-log', () => appLogMocks);
+
 describe('redirectSystemPath', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        appLogMocks.logInfo.mockResolvedValue(null);
+    });
+
+    it.each([true, false])('routes the Dropbox host callback to Sync settings without exposing OAuth data (initial=%s)', async (initial) => {
+        const path = 'mindwtr://redirect/?code=private-code&state=private-state#private-fragment';
+
+        const result = redirectSystemPath({ path, initial });
+
+        expect(result).toBe('/settings?settingsScreen=sync');
+        expect(result).not.toContain('private-code');
+        expect(result).not.toContain('private-state');
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1));
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Dropbox OAuth callback routed', {
+            scope: 'routing',
+            extra: {
+                releaseCheck: 'v1.3.0/dropbox-oauth-route',
+                stage: 'callback-routed',
+            },
+            force: true,
+        });
+        const diagnostic = JSON.stringify(appLogMocks.logInfo.mock.calls);
+        expect(diagnostic).not.toContain('private-code');
+        expect(diagnostic).not.toContain('private-state');
+        expect(diagnostic).not.toContain('private-fragment');
+        expect(diagnostic).not.toContain('mindwtr://');
+    });
+
+    it.each([
+        'mindwtr://redirect',
+        'mindwtr://redirect/',
+        'mindwtr://redirect/?error=access_denied&error_description=cancelled',
+        'mindwtr:///redirect?code=authorization-code&state=oauth-state',
+        'mindwtr:///redirect/',
+    ])('routes empty, cancelled, and path-form Dropbox callback %s to Sync settings', async (path) => {
+        expect(redirectSystemPath({ path, initial: true })).toBe('/settings?settingsScreen=sync');
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1));
+    });
+
+    it('rejects Dropbox callback lookalikes and leaves them untouched', () => {
+        for (const path of [
+            'mindwtr-dev://redirect/?code=value',
+            'https://redirect/?code=value',
+            'mindwtr://redirect.example/?code=value',
+            'mindwtr://user@redirect/?code=value',
+            'mindwtr://redirect:443/?code=value',
+            'mindwtr://redirect/extra?code=value',
+            'mindwtr://redirect/extra/..?code=value',
+            'mindwtr:///extra/../redirect?code=value',
+            'mindwtr:/redirect?code=value',
+            'mindwtr://@redirect?code=value',
+            'mindwtr://redirect:?code=value',
+            'mindwtr://redirect/%2e%2e?code=value',
+            'mindwtr:///redirect/extra?code=value',
+            'mindwtr:///Redirect?code=value',
+        ]) {
+            expect(redirectSystemPath({ path, initial: false })).toBe(path);
+        }
+        expect(appLogMocks.logInfo).not.toHaveBeenCalled();
+    });
+
+    it('keeps routing deterministic when the diagnostic logger fails', async () => {
+        appLogMocks.logInfo.mockRejectedValueOnce(new Error('logger unavailable'));
+
+        expect(redirectSystemPath({ path: 'mindwtr://redirect/?code=secret', initial: true }))
+            .toBe('/settings?settingsScreen=sync');
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1));
+    });
+
     it('rewrites host-form open-feature links to the destination route', () => {
         expect(redirectSystemPath({ path: 'mindwtr://open-feature?feature=inbox', initial: true })).toBe('/inbox');
         expect(redirectSystemPath({ path: 'mindwtr://open-feature?feature=projects', initial: false })).toBe('/projects');
