@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTaskStore } from '@mindwtr/core';
-import type { Task } from '@mindwtr/core';
+import type { Task, TaskStatus } from '@mindwtr/core';
 import { LanguageProvider } from './language-context';
 import { useTaskListScope } from '../components/views/list/task-list-scope';
 import { KeybindingProvider } from './keybinding-context';
@@ -218,6 +218,110 @@ const ListWithFocusSelected = () => {
         </div>
     );
 };
+
+type ProjectScopeSpies = {
+    selectNext: () => void;
+    selectPrev: () => void;
+    selectFirst: () => void;
+    selectLast: () => void;
+};
+
+type TaskActionSpies = {
+    editSelected: () => void;
+    openQuickActions: () => void;
+    toggleDoneSelected: () => void;
+    toggleSelectSelected: () => void;
+    toggleFocusSelected: () => void;
+    renameSelected: () => void;
+    deleteSelected: () => void;
+    setStatusSelected: (status: TaskStatus) => void;
+};
+
+const ProjectAndTaskScopes = ({
+    projectSpies,
+    taskSpies,
+}: {
+    projectSpies: ProjectScopeSpies;
+    taskSpies: TaskActionSpies;
+}) => {
+    const { registerProjectListScope, registerTaskListScope } = useKeybindings();
+
+    useEffect(() => {
+        registerProjectListScope({
+            kind: 'projectList',
+            ...projectSpies,
+            focusSelected: () => {
+                document.querySelector<HTMLElement>('[data-project-id="project-1"]')?.focus();
+                return true;
+            },
+            ownsFocus: () => {
+                const active = document.activeElement;
+                return active instanceof HTMLElement
+                    && active.closest('[data-project-navigation-item]') !== null
+                    && active.closest('[data-project-selection-ignore="true"]') === null;
+            },
+        });
+        registerTaskListScope({
+            kind: 'taskList',
+            selectNext: vi.fn(),
+            selectPrev: vi.fn(),
+            selectFirst: vi.fn(),
+            selectLast: vi.fn(),
+            editSelected: taskSpies.editSelected,
+            openQuickActions: taskSpies.openQuickActions,
+            toggleDoneSelected: taskSpies.toggleDoneSelected,
+            toggleSelectSelected: taskSpies.toggleSelectSelected,
+            toggleFocusSelected: taskSpies.toggleFocusSelected,
+            renameSelected: taskSpies.renameSelected,
+            deleteSelected: taskSpies.deleteSelected,
+            setStatusSelected: taskSpies.setStatusSelected,
+            focusSelected: () => {
+                document.querySelector<HTMLElement>('[data-task-view-toggle]')?.focus();
+                return true;
+            },
+        });
+        return () => {
+            registerProjectListScope(null);
+            registerTaskListScope(null);
+        };
+    }, [projectSpies, registerProjectListScope, registerTaskListScope, taskSpies]);
+
+    return (
+        <div>
+            <button type="button" data-sidebar-item data-view="projects">Projects</button>
+            <div data-main-content tabIndex={-1}>Main content</div>
+            <div data-project-navigation-root>
+                <div role="button" tabIndex={0} data-project-navigation-item data-project-id="project-1">
+                    Project 1
+                    <button type="button" data-project-selection-ignore="true">Drag</button>
+                </div>
+            </div>
+            <div data-project-workspace tabIndex={-1}>
+                <div data-task-id="task-1">
+                    <button type="button" data-task-view-toggle>Task 1</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const createProjectScopeSpies = (): ProjectScopeSpies => ({
+    selectNext: vi.fn(),
+    selectPrev: vi.fn(),
+    selectFirst: vi.fn(),
+    selectLast: vi.fn(),
+});
+
+const createTaskActionSpies = (): TaskActionSpies => ({
+    editSelected: vi.fn(),
+    openQuickActions: vi.fn(),
+    toggleDoneSelected: vi.fn(),
+    toggleSelectSelected: vi.fn(),
+    toggleFocusSelected: vi.fn(),
+    renameSelected: vi.fn(),
+    deleteSelected: vi.fn(),
+    setStatusSelected: vi.fn(),
+});
 
 describe('KeybindingProvider (vim)', () => {
     beforeEach(() => {
@@ -965,6 +1069,104 @@ describe('KeybindingProvider (vim)', () => {
         expect(onEdit).toHaveBeenLastCalledWith('1');
     });
 
+    it.each(['ArrowRight', 'l'])('enters the selected project after gp with %s', (entryKey) => {
+        const onNavigate = vi.fn();
+        const projectSpies = createProjectScopeSpies();
+        const taskSpies = createTaskActionSpies();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="projects" onNavigate={onNavigate}>
+                    <ProjectAndTaskScopes projectSpies={projectSpies} taskSpies={taskSpies} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        fireEvent.keyDown(window, { key: 'g' });
+        fireEvent.keyDown(window, { key: 'p' });
+        expect(onNavigate).toHaveBeenCalledWith('projects');
+
+        (document.querySelector('[data-sidebar-item]') as HTMLElement).focus();
+        fireEvent.keyDown(window, { key: entryKey });
+
+        expect(document.activeElement).toBe(document.querySelector('[data-project-id="project-1"]'));
+    });
+
+    it('routes arrows, j/k, gg, and G to a focused project list, then Right enters its task workspace', () => {
+        const projectSpies = createProjectScopeSpies();
+        const taskSpies = createTaskActionSpies();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="projects" onNavigate={vi.fn()}>
+                    <ProjectAndTaskScopes projectSpies={projectSpies} taskSpies={taskSpies} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        const projectRow = document.querySelector('[data-project-id="project-1"]') as HTMLElement;
+        projectRow.focus();
+        fireEvent.keyDown(window, { key: 'ArrowDown' });
+        fireEvent.keyDown(window, { key: 'j' });
+        fireEvent.keyDown(window, { key: 'ArrowUp' });
+        fireEvent.keyDown(window, { key: 'k' });
+        fireEvent.keyDown(window, { key: 'g' });
+        fireEvent.keyDown(window, { key: 'g' });
+        fireEvent.keyDown(window, { key: 'G', shiftKey: true });
+
+        expect(projectSpies.selectNext).toHaveBeenCalledTimes(2);
+        expect(projectSpies.selectPrev).toHaveBeenCalledTimes(2);
+        expect(projectSpies.selectFirst).toHaveBeenCalledTimes(1);
+        expect(projectSpies.selectLast).toHaveBeenCalledTimes(1);
+
+        fireEvent.keyDown(window, { key: 'ArrowRight' });
+        expect(document.activeElement).toBe(document.querySelector('[data-task-view-toggle]'));
+
+        const workspace = document.querySelector('[data-project-workspace]') as HTMLElement;
+        workspace.focus();
+        fireEvent.keyDown(window, { key: 'l' });
+        expect(document.activeElement).toBe(document.querySelector('[data-task-view-toggle]'));
+    });
+
+    it('does not leak Vim task mutations through a focused project row', () => {
+        const projectSpies = createProjectScopeSpies();
+        const taskSpies = createTaskActionSpies();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="projects" onNavigate={vi.fn()}>
+                    <ProjectAndTaskScopes projectSpies={projectSpies} taskSpies={taskSpies} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        (document.querySelector('[data-project-id="project-1"]') as HTMLElement).focus();
+        ['e', 'x', '.', 'd', 'd', 's', 'n'].forEach((key) => fireEvent.keyDown(window, { key }));
+
+        expect(taskSpies.editSelected).not.toHaveBeenCalled();
+        expect(taskSpies.openQuickActions).not.toHaveBeenCalled();
+        expect(taskSpies.toggleDoneSelected).not.toHaveBeenCalled();
+        expect(taskSpies.deleteSelected).not.toHaveBeenCalled();
+        expect(taskSpies.setStatusSelected).not.toHaveBeenCalled();
+    });
+
+    it('leaves project drag-handle keys to the nested control', () => {
+        const projectSpies = createProjectScopeSpies();
+        const taskSpies = createTaskActionSpies();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="projects" onNavigate={vi.fn()}>
+                    <ProjectAndTaskScopes projectSpies={projectSpies} taskSpies={taskSpies} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        const dragHandle = document.querySelector('[data-project-selection-ignore="true"]') as HTMLButtonElement;
+        dragHandle.focus();
+        ['ArrowDown', 'j', ' ', 'e'].forEach((key) => fireEvent.keyDown(dragHandle, { key }));
+
+        expect(projectSpies.selectNext).not.toHaveBeenCalled();
+        expect(taskSpies.editSelected).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(dragHandle);
+    });
+
     it('ArrowRight focuses the selected task title, not the list container (#890)', () => {
         render(
             <LanguageProvider>
@@ -1442,6 +1644,41 @@ describe('KeybindingProvider (standard)', () => {
         fireEvent.keyDown(window, { key: 'n' });
 
         expect(onNavigate).toHaveBeenCalledWith('next');
+    });
+
+    it('moves a focused project with standard keys without invoking task actions', () => {
+        const projectSpies = createProjectScopeSpies();
+        const taskSpies = createTaskActionSpies();
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="projects" onNavigate={vi.fn()}>
+                    <ProjectAndTaskScopes projectSpies={projectSpies} taskSpies={taskSpies} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        (document.querySelector('[data-project-id="project-1"]') as HTMLElement).focus();
+        fireEvent.keyDown(window, { key: 'ArrowDown' });
+        fireEvent.keyDown(window, { key: 'j' });
+        fireEvent.keyDown(window, { key: 'ArrowUp' });
+        fireEvent.keyDown(window, { key: 'k' });
+        fireEvent.keyDown(window, { key: 'e' });
+        fireEvent.keyDown(window, { key: 'x' });
+        fireEvent.keyDown(window, { key: 'S', shiftKey: true });
+        fireEvent.keyDown(window, { key: 'F2' });
+        fireEvent.keyDown(window, { key: '#', shiftKey: true });
+        fireEvent.keyDown(window, { key: '.' });
+        fireEvent.keyDown(window, { key: 'Enter', shiftKey: true });
+
+        expect(projectSpies.selectNext).toHaveBeenCalledTimes(2);
+        expect(projectSpies.selectPrev).toHaveBeenCalledTimes(2);
+        expect(taskSpies.toggleDoneSelected).not.toHaveBeenCalled();
+        expect(taskSpies.toggleSelectSelected).not.toHaveBeenCalled();
+        expect(taskSpies.toggleFocusSelected).not.toHaveBeenCalled();
+        expect(taskSpies.renameSelected).not.toHaveBeenCalled();
+        expect(taskSpies.deleteSelected).not.toHaveBeenCalled();
+        expect(taskSpies.openQuickActions).not.toHaveBeenCalled();
+        expect(taskSpies.editSelected).not.toHaveBeenCalled();
     });
 
     it('undoes the last complete/delete with plain z', async () => {

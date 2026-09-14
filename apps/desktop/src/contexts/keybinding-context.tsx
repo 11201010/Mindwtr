@@ -49,6 +49,17 @@ export interface TaskListScope {
     focusSelected?: () => boolean;
 }
 
+export interface ProjectListScope {
+    kind: 'projectList';
+    selectNext: () => void;
+    selectPrev: () => void;
+    selectFirst: () => void;
+    selectLast: () => void;
+    focusSelected: () => boolean;
+    activateSelected?: () => void;
+    ownsFocus: () => boolean;
+}
+
 // Status chord: `s` then a letter sets the selected task's status (#860).
 // Letters mirror the g-navigation chords (gi/gn/gw/gs/gd/ga).
 const STATUS_CHORD_MAP: Record<string, TaskStatus> = {
@@ -66,6 +77,7 @@ interface KeybindingContextType {
     quickAddShortcut: GlobalQuickAddShortcutSetting;
     setQuickAddShortcut: (shortcut: GlobalQuickAddShortcutSetting) => void;
     registerTaskListScope: (scope: TaskListScope | null) => void;
+    registerProjectListScope: (scope: ProjectListScope | null) => void;
     openHelp: () => void;
 }
 
@@ -99,6 +111,15 @@ function hasInteractiveFocus(): boolean {
 function hasTaskRowFocus(): boolean {
     const active = document.activeElement;
     return active instanceof HTMLElement && active.closest('[data-task-id]') !== null;
+}
+
+function hasProjectNestedControlFocus(target: EventTarget | null): boolean {
+    const candidate = target instanceof Element
+        ? target
+        : document.activeElement instanceof Element
+            ? document.activeElement
+            : null;
+    return candidate?.closest('[data-project-navigation-item] [data-project-selection-ignore="true"]') !== null;
 }
 
 function moveSidebarFocus(target: EventTarget | null, direction: 'next' | 'prev'): boolean {
@@ -283,6 +304,7 @@ export function KeybindingProvider({
     }, [sortedAreas, updateSettings]);
 
     const scopeRef = useRef<TaskListScope | null>(null);
+    const projectScopeRef = useRef<ProjectListScope | null>(null);
     const pendingRef = useRef<{ key: string | null; timestamp: number }>({ key: null, timestamp: 0 });
 
     useEffect(() => {
@@ -307,6 +329,10 @@ export function KeybindingProvider({
 
     const registerTaskListScope = useCallback((scope: TaskListScope | null) => {
         scopeRef.current = scope;
+    }, []);
+
+    const registerProjectListScope = useCallback((scope: ProjectListScope | null) => {
+        projectScopeRef.current = scope;
     }, []);
 
     // Every task list decision — which task is selected, what a key does to it —
@@ -334,11 +360,30 @@ export function KeybindingProvider({
     // selected task, not the scroll container — focusing the container painted
     // its focus ring around the whole list and left no task visibly selected
     // (#890). Fall back to the container only when there is no task to select.
-    const focusActiveSelection = useCallback((): boolean => {
+    const focusTaskSelection = useCallback((): boolean => {
         if (scopeRef.current?.focusSelected?.()) return true;
         if (focusFirstTaskRow()) return true;
         return focusMainContent();
     }, [focusFirstTaskRow]);
+
+    const focusActiveSelection = useCallback((): boolean => {
+        if (currentView === 'projects' && projectScopeRef.current) {
+            if (projectScopeRef.current.ownsFocus()) {
+                projectScopeRef.current.activateSelected?.();
+                return focusTaskSelection();
+            }
+            const active = document.activeElement;
+            const focusIsInProjectWorkspace = active instanceof HTMLElement
+                && (
+                    active.closest('[data-project-workspace]') !== null
+                    || active.closest('[data-task-id]') !== null
+                );
+            if (!focusIsInProjectWorkspace) {
+                return projectScopeRef.current.focusSelected();
+            }
+        }
+        return focusTaskSelection();
+    }, [currentView, focusTaskSelection]);
 
     const openHelp = useCallback(() => setIsHelpOpen(true), []);
     const toggleFullscreen = useCallback(async () => {
@@ -416,6 +461,9 @@ export function KeybindingProvider({
             if (hasModalDialogOpen()) return;
 
             const scope = scopeRef.current;
+            const projectScope = projectScopeRef.current;
+            const projectListOwnsFocus = projectScope?.ownsFocus() ?? false;
+            const navigationScope = projectListOwnsFocus ? projectScope : scope;
             const now = Date.now();
             if (pendingRef.current.key && now - pendingRef.current.timestamp > 700) {
                 pendingRef.current.key = null;
@@ -427,14 +475,14 @@ export function KeybindingProvider({
                 e.preventDefault();
                 if (pending === 'g') {
                     if (e.key === 'g') {
-                        scope?.selectFirst();
+                        navigationScope?.selectFirst();
                     } else if (vimGoMap[e.key]) {
                         onNavigate(vimGoMap[e.key]);
                     }
                 } else if (pending === 'A') {
                     applyAreaFilterShortcut(getAreaChordKey(e));
                 } else if (pending === 'd') {
-                    if (e.key === 'd') {
+                    if (!projectListOwnsFocus && e.key === 'd') {
                         scope?.deleteSelected();
                     }
                 }
@@ -449,7 +497,7 @@ export function KeybindingProvider({
                         break;
                     }
                     e.preventDefault();
-                    scope?.selectNext();
+                    navigationScope?.selectNext();
                     break;
                 case 'k':
                     if (moveSidebarFocus(e.target, 'prev')) {
@@ -457,7 +505,7 @@ export function KeybindingProvider({
                         break;
                     }
                     e.preventDefault();
-                    scope?.selectPrev();
+                    navigationScope?.selectPrev();
                     break;
                 case 'h':
                     if (focusSidebarCurrentView(currentView)) {
@@ -471,19 +519,19 @@ export function KeybindingProvider({
                     break;
                 case 'G':
                     e.preventDefault();
-                    scope?.selectLast();
+                    navigationScope?.selectLast();
                     break;
                 case 'e':
                     e.preventDefault();
-                    scope?.editSelected();
+                    if (!projectListOwnsFocus) scope?.editSelected();
                     break;
                 case '.':
                     e.preventDefault();
-                    scope?.openQuickActions?.();
+                    if (!projectListOwnsFocus) scope?.openQuickActions?.();
                     break;
                 case 'x':
                     e.preventDefault();
-                    scope?.toggleDoneSelected();
+                    if (!projectListOwnsFocus) scope?.toggleDoneSelected();
                     break;
                 case 'Enter':
                     if (hasInteractiveFocus()) break;
@@ -501,7 +549,9 @@ export function KeybindingProvider({
                 case 'g':
                 case 'd':
                     e.preventDefault();
-                    pendingRef.current = { key: e.key, timestamp: now };
+                    if (e.key !== 'd' || !projectListOwnsFocus) {
+                        pendingRef.current = { key: e.key, timestamp: now };
+                    }
                     break;
                 default:
                     break;
@@ -525,6 +575,9 @@ export function KeybindingProvider({
             if (hasModalDialogOpen()) return;
 
             const scope = scopeRef.current;
+            const projectScope = projectScopeRef.current;
+            const projectListOwnsFocus = projectScope?.ownsFocus() ?? false;
+            const navigationScope = projectListOwnsFocus ? projectScope : scope;
             const now = Date.now();
             if (pendingRef.current.key && now - pendingRef.current.timestamp > 700) {
                 pendingRef.current.key = null;
@@ -536,7 +589,7 @@ export function KeybindingProvider({
                 e.preventDefault();
                 if (pending === 'g') {
                     if (e.key === 'g') {
-                        scope?.selectFirst();
+                        navigationScope?.selectFirst();
                     } else if (vimGoMap[e.key]) {
                         onNavigate(vimGoMap[e.key]);
                     }
@@ -554,7 +607,7 @@ export function KeybindingProvider({
                         break;
                     }
                     e.preventDefault();
-                    scope?.selectNext();
+                    navigationScope?.selectNext();
                     break;
                 case 'k':
                     if (moveSidebarFocus(e.target, 'prev')) {
@@ -562,7 +615,7 @@ export function KeybindingProvider({
                         break;
                     }
                     e.preventDefault();
-                    scope?.selectPrev();
+                    navigationScope?.selectPrev();
                     break;
                 case 'h':
                     if (focusSidebarCurrentView(currentView)) {
@@ -576,27 +629,27 @@ export function KeybindingProvider({
                     break;
                 case 'G':
                     e.preventDefault();
-                    scope?.selectLast();
+                    navigationScope?.selectLast();
                     break;
                 case 'e':
                     e.preventDefault();
-                    scope?.toggleDoneSelected();
+                    if (!projectListOwnsFocus) scope?.toggleDoneSelected();
                     break;
                 case 'x':
                     e.preventDefault();
-                    scope?.toggleSelectSelected?.();
+                    if (!projectListOwnsFocus) scope?.toggleSelectSelected?.();
                     break;
                 case 'S':
                     e.preventDefault();
-                    scope?.toggleFocusSelected?.();
+                    if (!projectListOwnsFocus) scope?.toggleFocusSelected?.();
                     break;
                 case 'F2':
                     e.preventDefault();
-                    scope?.renameSelected?.();
+                    if (!projectListOwnsFocus) scope?.renameSelected?.();
                     break;
                 case '#':
                     e.preventDefault();
-                    scope?.deleteSelected();
+                    if (!projectListOwnsFocus) scope?.deleteSelected();
                     break;
                 case 'z': {
                     const undo = takeUndoableAction();
@@ -618,7 +671,7 @@ export function KeybindingProvider({
                     break;
                 case '.':
                     e.preventDefault();
-                    scope?.openQuickActions?.();
+                    if (!projectListOwnsFocus) scope?.openQuickActions?.();
                     break;
                 case '/':
                     e.preventDefault();
@@ -649,6 +702,9 @@ export function KeybindingProvider({
             if (isEditableTarget(e.target)) return;
             if (hasModalDialogOpen()) return;
             const scope = scopeRef.current;
+            const projectScope = projectScopeRef.current;
+            const projectListOwnsFocus = projectScope?.ownsFocus() ?? false;
+            const navigationScope = projectListOwnsFocus ? projectScope : scope;
 
             if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === 'Enter') {
                 if (hasInteractiveFocus()) return;
@@ -670,27 +726,27 @@ export function KeybindingProvider({
                 switch (e.key) {
                     case 'n':
                         e.preventDefault();
-                        scope?.selectNext();
+                        navigationScope?.selectNext();
                         break;
                     case 'p':
                         e.preventDefault();
-                        scope?.selectPrev();
+                        navigationScope?.selectPrev();
                         break;
                     case 'e':
                         e.preventDefault();
-                        scope?.editSelected();
+                        if (!projectListOwnsFocus) scope?.editSelected();
                         break;
                     case '.':
                         e.preventDefault();
-                        scope?.openQuickActions?.();
+                        if (!projectListOwnsFocus) scope?.openQuickActions?.();
                         break;
                     case 't':
                         e.preventDefault();
-                        scope?.toggleDoneSelected();
+                        if (!projectListOwnsFocus) scope?.toggleDoneSelected();
                         break;
                     case 'd':
                         e.preventDefault();
-                        scope?.deleteSelected();
+                        if (!projectListOwnsFocus) scope?.deleteSelected();
                         break;
                     case 's':
                         e.preventDefault();
@@ -741,6 +797,10 @@ export function KeybindingProvider({
             // Same for modal dialogs: arrows and app shortcuts must not reach
             // the list behind global search / quick add / prompts.
             if (hasModalDialogOpen()) return;
+            // Project row controls (focus toggle and dnd handle) own their
+            // keystrokes. In particular, dnd-kit uses Space/Arrow keys and
+            // must not also move or mutate a stale task selection.
+            if (hasProjectNestedControlFocus(e.target)) return;
             if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'Comma') {
                 e.preventDefault();
                 onNavigate('settings');
@@ -770,7 +830,7 @@ export function KeybindingProvider({
                 if (pendingRef.current.key === 's') {
                     e.preventDefault();
                     const status = STATUS_CHORD_MAP[e.key];
-                    if (status) {
+                    if (!(projectScopeRef.current?.ownsFocus() ?? false) && status) {
                         scopeRef.current?.setStatusSelected?.(status);
                     }
                     pendingRef.current.key = null;
@@ -790,7 +850,9 @@ export function KeybindingProvider({
                 }
                 if (!pendingRef.current.key && appShortcutKey === 's') {
                     e.preventDefault();
-                    pendingRef.current = { key: 's', timestamp: now };
+                    if (!(projectScopeRef.current?.ownsFocus() ?? false)) {
+                        pendingRef.current = { key: 's', timestamp: now };
+                    }
                     return;
                 }
                 // Bare digits switch the area filter directly (1-9, 0 clears) —
@@ -817,7 +879,11 @@ export function KeybindingProvider({
                         return;
                     }
                     e.preventDefault();
-                    scopeRef.current?.selectNext();
+                    if (projectScopeRef.current?.ownsFocus()) {
+                        projectScopeRef.current.selectNext();
+                    } else {
+                        scopeRef.current?.selectNext();
+                    }
                     return;
                 }
                 if (e.key === 'ArrowUp') {
@@ -826,7 +892,11 @@ export function KeybindingProvider({
                         return;
                     }
                     e.preventDefault();
-                    scopeRef.current?.selectPrev();
+                    if (projectScopeRef.current?.ownsFocus()) {
+                        projectScopeRef.current.selectPrev();
+                    } else {
+                        scopeRef.current?.selectPrev();
+                    }
                     return;
                 }
                 if (style !== 'emacs' && e.key === 'ArrowLeft') {
@@ -946,8 +1016,9 @@ export function KeybindingProvider({
         quickAddShortcut,
         setQuickAddShortcut,
         registerTaskListScope,
+        registerProjectListScope,
         openHelp,
-    }), [style, setStyle, quickAddShortcut, setQuickAddShortcut, registerTaskListScope, openHelp]);
+    }), [style, setStyle, quickAddShortcut, setQuickAddShortcut, registerTaskListScope, registerProjectListScope, openHelp]);
 
     return (
         <KeybindingContext.Provider value={contextValue}>

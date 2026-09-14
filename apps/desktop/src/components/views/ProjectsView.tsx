@@ -726,11 +726,13 @@ export function ProjectsView() {
                     className="relative mx-auto flex h-full w-full min-w-0 gap-5 xl:gap-6"
                     style={{ maxWidth: `${projectsLayoutMaxWidth}px` }}
                 >
-                    {projectsSidebarVisible && (
+                    {(isCompactProjectsLayout || projectsSidebarVisible) && (
                         <div
                             className={`relative min-h-0 flex-none ${
                                 isCompactProjectsLayout
-                                    ? 'absolute inset-y-0 left-0 z-20 border-r border-border bg-background pr-4 shadow-lg'
+                                    ? `absolute inset-y-0 left-0 z-20 border-r border-border bg-background pr-4 shadow-lg ${
+                                        projectsSidebarVisible ? '' : 'hidden'
+                                    }`
                                     : ''
                             }`}
                             style={{ width: `${sidebarWidth}px` }}
@@ -769,10 +771,14 @@ export function ProjectsView() {
                                     showArchivedProjects={showArchivedProjects}
                                     onToggleArchivedProjects={() => setShowArchivedProjects((prev) => !prev)}
                                     selectedProjectId={selectedProjectId}
-                                    onSelectProject={(projectId) => {
-                                        setSelectedProjectId(projectId);
+                                    onSelectProject={setSelectedProjectId}
+                                    onActivateProject={() => {
                                         if (isCompactProjectsLayout) setCompactSidebarOpen(false);
                                     }}
+                                    navigationVisible={projectsSidebarVisible}
+                                    onRequestNavigationVisible={isCompactProjectsLayout
+                                        ? () => setCompactSidebarOpen(true)
+                                        : undefined}
                                     getProjectColor={getProjectColorForTask}
                                     projectTaskSummaryById={projectTaskSummaryById}
                                     projects={projects}
@@ -817,26 +823,28 @@ export function ProjectsView() {
                         </div>
                     )}
 
-                    <ProjectWorkspace
-                        highlightTaskId={highlightTaskId}
-                        isAreaCreating={isAreaCreating}
-                        isCreatingProject={isCreatingProject}
-                        language={language}
-                        onDuplicateProject={handleDuplicateProject}
-                        onManageAreas={() => setShowAreaManager(true)}
-                        onRequestQuickArea={(projectId) => {
-                            setPendingAreaAssignProjectId(projectId);
-                            setShowQuickAreaPrompt(true);
-                        }}
-                        requestConfirmation={requestConfirmation}
-                        selectedProjectId={selectedProjectId}
-                        showCompletedTasks={showCompletedProjectTasks}
-                        t={t}
-                        projectsSidebarCollapsed={projectsSidebarEffectivelyCollapsed}
-                        onToggleProjectsSidebar={toggleProjectsSidebarCollapsed}
-                        onToggleShowCompletedTasks={() => setShowCompletedProjectTasks((prev) => !prev)}
-                        taskDragEndRef={taskDragEndRef}
-                    />
+                    <div data-project-workspace className="contents">
+                        <ProjectWorkspace
+                            highlightTaskId={highlightTaskId}
+                            isAreaCreating={isAreaCreating}
+                            isCreatingProject={isCreatingProject}
+                            language={language}
+                            onDuplicateProject={handleDuplicateProject}
+                            onManageAreas={() => setShowAreaManager(true)}
+                            onRequestQuickArea={(projectId) => {
+                                setPendingAreaAssignProjectId(projectId);
+                                setShowQuickAreaPrompt(true);
+                            }}
+                            requestConfirmation={requestConfirmation}
+                            selectedProjectId={selectedProjectId}
+                            showCompletedTasks={showCompletedProjectTasks}
+                            t={t}
+                            projectsSidebarCollapsed={projectsSidebarEffectivelyCollapsed}
+                            onToggleProjectsSidebar={toggleProjectsSidebarCollapsed}
+                            onToggleShowCompletedTasks={() => setShowCompletedProjectTasks((prev) => !prev)}
+                            taskDragEndRef={taskDragEndRef}
+                        />
+                    </div>
                 </div>
                 <DragOverlay dropAnimation={null}>
                     {draggedTask ? (
