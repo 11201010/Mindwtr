@@ -95,9 +95,9 @@ object WidgetRenderer {
     payload: WidgetPayload,
     palette: WidgetPayload.Palette?,
   ) {
-    // The simple style always shows Focus, like v1.2.8. Its full-width stacked
-    // labels leave small widgets room for task titles, without a chooser.
-    views.setTextViewText(R.id.mindwtr_widget_title, payload.headerTitle)
+    // The simple style prefers Focus, then automatically shows Next Actions
+    // when Focus has no rows. It stays chooser-free like v1.2.8.
+    views.setTextViewText(R.id.mindwtr_widget_title, compactHeaderTitle(payload))
     views.setTextViewText(R.id.mindwtr_widget_subtitle, payload.subtitle)
     views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
     views.setTextViewText(R.id.mindwtr_widget_capture_label, payload.quickCapture.title)
@@ -199,6 +199,12 @@ object WidgetRenderer {
   /** Focus alone owns the curated hidden-row count; chooser lists keep their existing count title. */
   internal fun taskSubtitle(payload: WidgetPayload, isFocus: Boolean): String? =
     payload.subtitle.takeIf { isFocus }
+
+  /** Next Actions carries its translated payload title; normal Focus keeps the compact header. */
+  internal fun compactHeaderTitle(payload: WidgetPayload): String {
+    val listId = payload.compactListId()
+    return if (listId == WidgetListStore.DEFAULT_LIST) payload.headerTitle else payload.listFor(listId).title
+  }
 
   private fun immutableFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 

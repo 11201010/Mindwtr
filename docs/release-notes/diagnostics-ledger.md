@@ -19,6 +19,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.1 (add before tagging, trim in the release after)
 
+- **`v1.3.1/android-widget-lists`** — `apps/mobile/lib/widget-service.ts` (#1211). Message: `Android widget fixed lists published`. Fields: `releaseCheck`, `count` (`5`), `focusItems`, `nextItems`, `inboxItems` (bounded row counts). After opening the app once with logging enabled, the snapshot must include standard lists even when no Tasks widget is placed. With no Focus/Today rows and a positive Next count, Compact must show Next Actions under that title; starring a task restores Focus-first display. A newly placed Tasks widget must show its cached Inbox rows without another app opening. The marker proves snapshot publication, not launcher rendering; confirm the visible widget too. No task text or identifiers are logged.
+
 - **`v1.3.1/archive-reference-recovered`** — `packages/core/src/store-load-migrations.ts` (#1198), when loading recovers references incorrectly completed by an older project-archive migration, including those subsequently auto-archived. Message: `Legacy archived project references recovered during load migration`. Fields: `releaseCheck`, `count`. The tester's log must show a positive recovery count, then Reference's **Include archived projects** filter and search must show the recovered material. A second load must not repeat recovery. This marker proves migration computation, not durable persistence or a successful sync. No content or identifiers are logged.
 
 ## v1.3.0 (add before tagging, trim in the release after)

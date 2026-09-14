@@ -45,7 +45,7 @@ class TasksWidgetFactory(
     payload = WidgetPayloadStore.read(context)
     rows = when (kind) {
       WidgetKind.TASKS -> buildRows(payload.listFor(WidgetListStore.read(context, appWidgetId)))
-      WidgetKind.COMPACT -> buildRows(payload.listFor(WidgetListStore.DEFAULT_LIST), compact = true)
+      WidgetKind.COMPACT -> buildRows(payload.listFor(payload.compactListId()), compact = true)
       WidgetKind.QUICK_CAPTURE -> emptyList()
     }
   }

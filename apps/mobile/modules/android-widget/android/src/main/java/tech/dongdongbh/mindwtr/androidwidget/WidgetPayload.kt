@@ -139,8 +139,18 @@ data class WidgetPayload(
       ?: lists[WidgetListStore.DEFAULT_LIST]
       ?: ListPayload(headerTitle, dateLabel, sections, items)
 
+  /** Compact shows Next Actions only when Focus has no flat or section rows. */
+  fun compactListId(): String {
+    val focus = listFor(WidgetListStore.DEFAULT_LIST)
+    val next = lists[NEXT_LIST_ID]
+    return if (!focus.hasRows() && next?.hasRows() == true) NEXT_LIST_ID else WidgetListStore.DEFAULT_LIST
+  }
+
+  private fun ListPayload.hasRows(): Boolean = items.isNotEmpty() || sections.any { it.items.isNotEmpty() }
+
   companion object {
     const val DEFAULT_FOCUS_URI = "mindwtr:///focus"
+    const val NEXT_LIST_ID = "next"
     const val MAX_ITEMS = 50
 
     val EMPTY = WidgetPayload(
