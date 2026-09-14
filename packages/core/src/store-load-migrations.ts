@@ -243,6 +243,48 @@ const clearDeletedTaskProjectArchiveMetadataMigration: LoadMigration = {
     },
 };
 
+const recoverLegacyProjectReferencesMigration: LoadMigration = {
+    name: 'recover-legacy-project-references',
+    run: (data, ctx) => {
+        const archivedProjectIds = new Set(data.projects
+            .filter((project) => project.status === 'archived' && !project.deletedAt && !project.purgedAt && !isProjectCancelled(project))
+            .map((project) => project.id));
+        if (archivedProjectIds.size === 0) return null;
+        let count = 0;
+        const tasks = data.tasks.map((task) => {
+            // Older load migrations completed reference children. Direct edits
+            // clear these operation markers; automatic Done -> Archive retains
+            // them, so both untouched forms can be recovered without guessing.
+            if (task.deletedAt || task.purgedAt || !task.projectId || !archivedProjectIds.has(task.projectId)
+                || task.statusBeforeProjectArchive !== 'reference' || !task.projectArchivedAt
+                || task.cancelledAt || task.completedAt !== task.projectArchivedAt
+                || (task.status !== 'done' && task.status !== 'archived')
+                || (task.status === 'done' && task.updatedAt !== task.projectArchivedAt)) return task;
+            count += 1;
+            return {
+                ...task,
+                status: 'reference' as const,
+                completedAt: task.completedAtBeforeProjectArchive ?? undefined,
+                isFocusedToday: task.isFocusedTodayBeforeProjectArchive ?? false,
+                statusBeforeProjectArchive: undefined,
+                completedAtBeforeProjectArchive: undefined,
+                isFocusedTodayBeforeProjectArchive: undefined,
+                projectArchivedAt: undefined,
+                updatedAt: ctx.nowIso,
+                rev: nextRevision(task.rev),
+                revBy: data.settings.deviceId,
+            };
+        });
+        if (count === 0) return null;
+        logInfo('Legacy archived project references recovered during load migration', {
+            scope: 'store',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.1/archive-reference-recovered', count },
+        });
+        return { ...data, tasks };
+    },
+};
+
 function shouldPromoteScheduledTask(task: Task, nowMs: number): boolean {
     if (task.deletedAt || task.purgedAt) return false;
     // Explicit Waiting should remain stable even when dated items become due.
@@ -713,6 +755,8 @@ const LOAD_MIGRATIONS: LoadMigration[] = [
     taskEditorDefaultsMigration,
     focusGroupByDefaultsMigration,
     clearDeletedTaskProjectArchiveMetadataMigration,
+    // Recover before auto-archive can change the old completion timestamp.
+    recoverLegacyProjectReferencesMigration,
     // Must run before auto-archive: promoting a due/started task to 'next'
     // changes its status, and auto-archive only scans 'done' tasks.
     promoteScheduledTasksMigration,

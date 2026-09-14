@@ -18,7 +18,12 @@ async function seedReferences(page: Page, large = false) {
     const data = {
         tasks: [
             task('active-reference', 'key1 key2 key3', { description: 'Research notes: winter garden 资料', projectId: 'Active project' }),
-            task('archived-reference', 'Historical reference', { description: 'Previous project notes', projectId: 'Archived project' }),
+            // Saved by the older load migration that completed Reference children (#1198).
+            task('archived-reference', 'Historical reference', {
+                description: 'Previous project notes', projectId: 'Archived project',
+                status: 'done', completedAt: stamp, projectArchivedAt: stamp,
+                statusBeforeProjectArchive: 'reference', rev: 5,
+            }),
             task('deleted-project-reference', 'Deleted project reference', { projectId: 'Deleted project', deletedAt: stamp }),
             task('deleted-reference', 'Deleted reference', { deletedAt: stamp }),
             task('normal-action', 'Ordinary action', {

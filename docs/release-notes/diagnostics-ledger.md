@@ -17,6 +17,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 - `Remote sync mutation fence renewed for mutation horizon` (`sync-remote-fence.ts`), with the requested horizon and conservative remaining authority. This remains useful when a provider mutation later loses its fence.
 - `Capture webhook request accepted` (`server-capture.ts`), with request shape, size, audio presence, and token scope but no content, identifier, or secret. This remains the server-side proof that a capture-only client reached the webhook.
 
+## v1.3.1 (add before tagging, trim in the release after)
+
+- **`v1.3.1/archive-reference-recovered`** — `packages/core/src/store-load-migrations.ts` (#1198), when loading recovers references incorrectly completed by an older project-archive migration, including those subsequently auto-archived. Message: `Legacy archived project references recovered during load migration`. Fields: `releaseCheck`, `count`. The tester's log must show a positive recovery count, then Reference's **Include archived projects** filter and search must show the recovered material. A second load must not repeat recovery. This marker proves migration computation, not durable persistence or a successful sync. No content or identifiers are logged.
+
 ## v1.3.0 (add before tagging, trim in the release after)
 
 - **`v1.3.0/project-lifecycle-sync`** — `packages/core/src/sync-normalization.ts`, when sync canonicalization clears an archived project's Focus flag or repairs cancellation/status coherence using the same rule as load. Message: `Project lifecycle normalized for sync`. Fields: `releaseCheck`, `count` (`1`). A tester syncing a legacy affected project must see this marker, then no repeated project conflict after the canonical document is saved on both sides. The marker proves normalization, not persistence or a successful full sync. No project text, identifiers, or timestamps are logged.
