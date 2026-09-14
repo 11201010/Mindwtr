@@ -91,6 +91,7 @@ import { SYNC_BACKEND_KEY } from '@/lib/sync-constants';
 import { coerceSupportedBackend, resolveBackend, type SyncBackend } from '@/lib/sync-service-utils';
 import { persistLastRoute, sanitizeAndroidActivityNavigationState } from '@/lib/session-restore';
 import { useAndroidActivitySession } from '@/hooks/use-android-activity-session';
+import { useIosSceneDiagnostics } from '@/hooks/use-ios-scene-diagnostics';
 
 // Blurred screens stay mounted, so every store change re-rendered every list in
 // the stack: a #766 log showed three project task lists (tab route + two pushed
@@ -357,6 +358,7 @@ function RootLayoutContent() {
 }
 
 function RootLayoutContentInner() {
+  useIosSceneDiagnostics();
   const sandboxMode = isSandboxMode();
   const router = useRouter();
   const navigationRef = useNavigationContainerRef();

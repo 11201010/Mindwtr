@@ -21,7 +21,10 @@ on:
       - "apps/mobile/modules/watch-connectivity/tests/**"
       - "apps/mobile/modules/ios-widget/Package.swift"
       - "apps/mobile/modules/ios-widget/tests/**"
+      - "apps/mobile/modules/ios-scene-lifecycle/**"
       - "apps/mobile/plugins/**"
+      - "apps/mobile/hooks/use-ios-scene-diagnostics.ts"
+      - "apps/mobile/app/_layout.tsx"
       - "apps/mobile/app.config.ts"
       - "apps/mobile/app.json"
       - "apps/mobile/package.json"
@@ -29,10 +32,15 @@ on:
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
+      - "scripts/ci/collect-ios27-environment.sh"
+      - "scripts/ci/select-ios27-simulator.sh"
+      - "scripts/ci/smoke-ios27-simulator.sh"
+      - "scripts/ci/validate-ios-scene-lifecycle.js"
+      - "scripts/ci/validate-ios-scene-lifecycle.test.js"
       - "package.json"
       - "bun.lock"
   push:
-    branches: [main, master]
+    branches: [main, master, fix/ios27-1193]
     paths:
       - ".github/workflows/native-platform-ci.yml"
       - "apps/desktop/src-tauri/**"
@@ -51,7 +59,10 @@ on:
       - "apps/mobile/modules/watch-connectivity/tests/**"
       - "apps/mobile/modules/ios-widget/Package.swift"
       - "apps/mobile/modules/ios-widget/tests/**"
+      - "apps/mobile/modules/ios-scene-lifecycle/**"
       - "apps/mobile/plugins/**"
+      - "apps/mobile/hooks/use-ios-scene-diagnostics.ts"
+      - "apps/mobile/app/_layout.tsx"
       - "apps/mobile/app.config.ts"
       - "apps/mobile/app.json"
       - "apps/mobile/package.json"
@@ -59,6 +70,11 @@ on:
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
+      - "scripts/ci/collect-ios27-environment.sh"
+      - "scripts/ci/select-ios27-simulator.sh"
+      - "scripts/ci/smoke-ios27-simulator.sh"
+      - "scripts/ci/validate-ios-scene-lifecycle.js"
+      - "scripts/ci/validate-ios-scene-lifecycle.test.js"
       - "package.json"
       - "bun.lock"
   workflow_dispatch:
@@ -140,7 +156,7 @@ jobs:
                 ;;
             esac
             case "$path" in
-              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/plugins/*|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 ios=true
                 ;;
             esac
@@ -390,9 +406,19 @@ jobs:
   ios-native:
     if: needs.changes.outputs.ios == 'true'
     needs: changes
-    runs-on: macos-15
-    name: iOS Swift compile
-    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: xcode26
+            label: Xcode 26 baseline
+            runner: macos-15
+          - lane: xcode27
+            label: Xcode 27 preview validation
+            runner: xcode-27
+    runs-on: ${{ matrix.runner }}
+    name: iOS Swift compile (${{ matrix.label }})
+    timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -424,7 +450,12 @@ jobs:
       - name: Install pinned CocoaPods
         run: gem install cocoapods --version 1.16.2 --no-document
 
+      - name: Capture and validate Xcode 27 environment
+        if: matrix.lane == 'xcode27'
+        run: bash scripts/ci/collect-ios27-environment.sh "$RUNNER_TEMP/ios27-artifacts"
+
       - name: Select Xcode (iOS 26 SDK required)
+        if: matrix.lane == 'xcode26'
         run: |
           set -euo pipefail
           XCODE_26_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
@@ -466,6 +497,7 @@ jobs:
           echo "Using iPhoneOS SDK ${IOS_SDK_VERSION}"
 
       - name: Typecheck iOS widgets at the minimum deployment target
+        if: matrix.lane == 'xcode26'
         run: |
           xcrun swiftc \
             -typecheck \
@@ -478,6 +510,7 @@ jobs:
             apps/mobile/modules/ios-widget/ios/MindwtrWidgetActionStore.swift
 
       - name: Typecheck Watch receiver against the iOS SDK
+        if: matrix.lane == 'xcode26'
         run: |
           xcrun swiftc \
             -typecheck \
@@ -492,26 +525,33 @@ jobs:
             apps/mobile/modules/watch-connectivity/ios/MindwtrWatchConnectivityReceiver.swift
 
       - name: Run attachment installer Swift recovery tests
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/attachment-file-installer/ios
 
       - name: Run File Sync stable-lock Swift tests
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/sync-file-lock/ios
 
       - name: Run CloudKit attachment error classifier tests
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/cloudkit-sync
 
       - name: Run Watch payload and receipt recovery tests
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/watch-connectivity
 
       - name: Test iOS widget durable action queue
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/ios-widget
 
       - name: Run Watch outbox retry tests
+        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/targets/watch
 
       - name: Generate iOS native project
         working-directory: apps/mobile
         env:
+          CI: "1"
           EXPO_NO_TELEMETRY: "1"
           NODE_ENV: development
           MINDWTR_WATCH_ENABLED: "true"
@@ -520,6 +560,9 @@ jobs:
             --clean \
             --platform ios \
             --no-install
+
+      - name: Validate generated iOS scene lifecycle
+        run: node scripts/ci/validate-ios-scene-lifecycle.js apps/mobile/ios
 
       - name: Validate generated Watch Xcode project
         run: |
@@ -543,7 +586,17 @@ jobs:
         working-directory: apps/mobile/ios
         run: pod install
 
+      - name: Preserve resolved iOS dependencies
+        if: matrix.lane == 'xcode27'
+        run: cp apps/mobile/ios/Podfile.lock "$RUNNER_TEMP/ios27-artifacts/Podfile.lock"
+
+      - name: Select an available iOS 27 simulator
+        if: matrix.lane == 'xcode27'
+        id: ios27_simulator
+        run: bash scripts/ci/select-ios27-simulator.sh "$RUNNER_TEMP/ios27-artifacts"
+
       - name: Compile Watch app and complications
+        if: matrix.lane == 'xcode26'
         run: |
           xcodebuild \
             -project apps/mobile/ios/Mindwtr.xcodeproj \
@@ -555,6 +608,7 @@ jobs:
             build
 
       - name: Compile iOS app and native Swift modules
+        if: matrix.lane == 'xcode26'
         run: |
           xcodebuild \
             -workspace apps/mobile/ios/Mindwtr.xcworkspace \
@@ -564,3 +618,105 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
+
+      - name: Build bundled Release app for the iOS 27 simulator
+        if: matrix.lane == 'xcode27'
+        id: ios27_release_simulator
+        env:
+          CI: "1"
+          EXPO_NO_TELEMETRY: "1"
+          NODE_ENV: production
+          RCT_NO_LAUNCH_PACKAGER: "1"
+        run: |
+          set -euo pipefail
+          ARTIFACTS_DIR="$RUNNER_TEMP/ios27-artifacts"
+          DERIVED_DATA="$RUNNER_TEMP/ios27-simulator-derived-data"
+          BUILD_LOG="$ARTIFACTS_DIR/release-simulator-build.log"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          set +e
+          xcodebuild \
+            -workspace apps/mobile/ios/Mindwtr.xcworkspace \
+            -scheme Mindwtr \
+            -configuration Release \
+            -destination 'platform=iOS Simulator,id=${{ steps.ios27_simulator.outputs.simulator_udid }}' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build > "$BUILD_LOG" 2>&1
+          BUILD_STATUS=$?
+          set -e
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            grep -E '(^| )error:|\\*\\* BUILD FAILED \\*\\*|The following build commands failed' "$BUILD_LOG" | tail -n 200 || true
+            tail -n 200 "$BUILD_LOG" || true
+            exit "$BUILD_STATUS"
+          fi
+
+          APP_PATH="$(find "$DERIVED_DATA/Build/Products/Release-iphonesimulator" -maxdepth 1 -type d -name 'Mindwtr.app' -print -quit)"
+          if [ -z "${APP_PATH:-}" ]; then
+            echo "::error::Xcode did not produce Mindwtr.app for the selected iOS 27 simulator."
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test cold and warm links on the iOS 27 simulator
+        if: matrix.lane == 'xcode27'
+        run: |
+          bash scripts/ci/smoke-ios27-simulator.sh \
+            '${{ steps.ios27_simulator.outputs.simulator_udid }}' \
+            '${{ steps.ios27_release_simulator.outputs.app_path }}' \
+            "$RUNNER_TEMP/ios27-artifacts"
+
+      - name: Create unsigned Release device archive with Xcode 27
+        if: matrix.lane == 'xcode27'
+        env:
+          CI: "1"
+          EXPO_NO_TELEMETRY: "1"
+          NODE_ENV: production
+          RCT_NO_LAUNCH_PACKAGER: "1"
+        run: |
+          set -euo pipefail
+          ARTIFACTS_DIR="$RUNNER_TEMP/ios27-artifacts"
+          ARCHIVE_PATH="$ARTIFACTS_DIR/Mindwtr-unsigned.xcarchive"
+          ARCHIVE_LOG="$ARTIFACTS_DIR/unsigned-device-archive.log"
+          mkdir -p "$ARTIFACTS_DIR"
+
+          set +e
+          xcodebuild \
+            -workspace apps/mobile/ios/Mindwtr.xcworkspace \
+            -scheme Mindwtr \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -derivedDataPath "$RUNNER_TEMP/ios27-archive-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            clean archive > "$ARCHIVE_LOG" 2>&1
+          ARCHIVE_STATUS=$?
+          set -e
+          if [ "$ARCHIVE_STATUS" -ne 0 ]; then
+            grep -E '(^| )error:|\\*\\* ARCHIVE FAILED \\*\\*|The following build commands failed|CodeSign|Provisioning' "$ARCHIVE_LOG" | tail -n 200 || true
+            tail -n 200 "$ARCHIVE_LOG" || true
+            exit "$ARCHIVE_STATUS"
+          fi
+
+          ARCHIVED_APP="$ARCHIVE_PATH/Products/Applications/Mindwtr.app"
+          if [ ! -d "$ARCHIVED_APP" ]; then
+            echo "::error::Unsigned archive did not contain Mindwtr.app."
+            exit 1
+          fi
+          if [ -d "$ARCHIVED_APP/_CodeSignature" ]; then
+            echo "::error::The validation archive's host app is signed; this lane must remain an unsigned compile/archive check."
+            exit 1
+          fi
+          echo "Created unsigned validation archive at $ARCHIVE_PATH"
+
+      - name: Upload Xcode 27 validation evidence
+        if: ${{ always() && matrix.lane == 'xcode27' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios27-native-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios27-artifacts
+          if-no-files-found: warn
+          retention-days: 14

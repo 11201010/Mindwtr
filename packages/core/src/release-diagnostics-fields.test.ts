@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // ios-scene-lifecycle: fixed native scene/delivery categories, never URLs or task content.
+    'deliveryKind',
     // feedback-diagnostics: opt-in snapshot of bounded session and saved logs.
     'captureMode', 'diagnosticTruncated', 'debugLoggingEnabled', 'breadcrumbCount', 'breadcrumbs',
     // share-card-export (local PNG export adapters)

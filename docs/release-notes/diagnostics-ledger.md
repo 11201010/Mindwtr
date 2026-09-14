@@ -19,6 +19,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.1 (add before tagging, trim in the release after)
 
+- **`v1.3.1/ios-scene-lifecycle`** — mobile `hooks/use-ios-scene-diagnostics.ts`, draining the native scene lifecycle's bounded in-memory diagnostic buffer. Message: `iOS scene lifecycle event`. Fields: `releaseCheck`, `stage`, `deliveryKind`, `count`. With Diagnostics enabled, cold-launch through a Shortcut, repeat it while warm, and background/foreground the app: the log must show scene connection/root startup and the matching cold/warm delivery stages. Each deliberate invocation remains distinct. This proves native lifecycle routing reached the JavaScript diagnostic bridge, not capture persistence, authentication, or successful navigation. Verify saved tasks separately. No task text, URLs, identifiers, or persisted native diagnostic data are recorded.
+
 - **`v1.3.1/archive-reference-recovered`** — `packages/core/src/store-load-migrations.ts` (#1198), when loading recovers references incorrectly completed by an older project-archive migration, including those subsequently auto-archived. Message: `Legacy archived project references recovered during load migration`. Fields: `releaseCheck`, `count`. The tester's log must show a positive recovery count, then Reference's **Include archived projects** filter and search must show the recovered material. A second load must not repeat recovery. This marker proves migration computation, not durable persistence or a successful sync. No content or identifiers are logged.
 
 ## v1.3.0 (add before tagging, trim in the release after)
