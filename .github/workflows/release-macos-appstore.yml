@@ -816,15 +816,20 @@ jobs:
               "https://api.appstoreconnect.apple.com/v1/apps/${APPSTORE_APP_ID_RESOLVED}/appStoreVersions"; then
               TARGET_VERSION_ID="$(jq -r '.data[0].id // empty' "$TARGET_VERSION_JSON_FILE")"
               TARGET_VERSION_STATE="$(jq -r '.data[0].attributes.appStoreState // empty' "$TARGET_VERSION_JSON_FILE")"
-              if [ -n "${TARGET_VERSION_ID}" ] && [ "${TARGET_VERSION_STATE:-}" = "PREPARE_FOR_SUBMISSION" ]; then
-                echo "::notice::Found existing macOS App Store version ${APP_VERSION} in state ${TARGET_VERSION_STATE:-unknown}. Reusing the existing version record for upload."
-                echo "SKIP_APP_VERSION_UPDATE_FOR_UPLOAD=true" >> "$GITHUB_ENV"
-              elif [ -n "${TARGET_VERSION_ID}" ]; then
-                echo "::warning::Existing macOS App Store version ${APP_VERSION} is not editable (state ${TARGET_VERSION_STATE:-unknown}). Skipping App Store Connect publish for this run."
-                echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
-                echo "SKIP_METADATA_FOR_UPLOAD=true" >> "$GITHUB_ENV"
-                echo "SKIP_APPSTORE_UPLOAD=true" >> "$GITHUB_ENV"
-                APPSTORE_UPLOAD_DISABLED="true"
+              if [ -n "${TARGET_VERSION_ID}" ]; then
+                case "${TARGET_VERSION_STATE:-}" in
+                  PREPARE_FOR_SUBMISSION|DEVELOPER_REJECTED)
+                    echo "::notice::Found reusable macOS App Store version ${APP_VERSION} in state ${TARGET_VERSION_STATE:-unknown}. Reusing the existing version record for upload."
+                    echo "SKIP_APP_VERSION_UPDATE_FOR_UPLOAD=true" >> "$GITHUB_ENV"
+                    ;;
+                  *)
+                    echo "::warning::Existing macOS App Store version ${APP_VERSION} is not editable (state ${TARGET_VERSION_STATE:-unknown}). Skipping App Store Connect publish for this run."
+                    echo "EFFECTIVE_SUBMIT_FOR_REVIEW=false" >> "$GITHUB_ENV"
+                    echo "SKIP_METADATA_FOR_UPLOAD=true" >> "$GITHUB_ENV"
+                    echo "SKIP_APPSTORE_UPLOAD=true" >> "$GITHUB_ENV"
+                    APPSTORE_UPLOAD_DISABLED="true"
+                    ;;
+                esac
               fi
             else
               echo "::warning::Target-version lookup failed. Upload will continue and may attempt to create version ${APP_VERSION}."

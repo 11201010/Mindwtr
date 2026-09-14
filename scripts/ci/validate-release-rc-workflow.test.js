@@ -13,7 +13,15 @@ import { join } from "node:path";
 import { parse } from "yaml";
 
 const readIosRelease = () => parse(readFileSync('.github/workflows/release-ios-appstore.yml', 'utf8'));
+const readMacosRelease = () => parse(readFileSync('.github/workflows/release-macos-appstore.yml', 'utf8'));
 const asNeedsList = (needs) => (Array.isArray(needs) ? needs : [needs]);
+
+test('macOS release reuses a version withdrawn by the developer', () => {
+  const steps = readMacosRelease().jobs['macos-appstore'].steps;
+  const route = steps.find((step) => step.name === 'Resolve App Store review submission flag');
+  expect(route.run).toContain('PREPARE_FOR_SUBMISSION|DEVELOPER_REJECTED');
+  expect(route.run).toContain('Reusing the existing version record for upload.');
+});
 
 test('Watch release routing embeds Watch in stable and RC archives', () => {
   const stable = parse(readFileSync('.github/workflows/release.yml', 'utf8'));
