@@ -154,7 +154,7 @@ public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
             // through a synthetic UNUserNotificationCenter delegate callback.
             // RNAlarm remains the single owner of action side effects and holds
             // the normalized payload until the normal root handler is ready.
-            RnAlarmNotification.didReceiveNotificationResponse(
+            RnAlarmNotification.didReceive(
                 response,
                 cacheForColdStart: true
             )
@@ -198,7 +198,7 @@ public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let response = connectionOptions.notificationResponse {
             // Reconnect is a live delivery. Use RNAlarm's existing non-caching
             // entrypoint so its event reaches JS once and cannot replay later.
-            RnAlarmNotification.didReceiveNotificationResponse(response)
+            RnAlarmNotification.didReceive(response)
             appDelegate.mindwtrRecordSceneDiagnostic(
                 stage: "warmDelivery",
                 deliveryKind: MindwtrSceneDeliveryKind.notification.rawValue

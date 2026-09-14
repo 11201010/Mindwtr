@@ -147,16 +147,17 @@ describe('ios-scene-lifecycle', () => {
       source.indexOf('private func prepareColdDelivery'),
       source.indexOf('private func forwardReconnectDeliveries'),
     );
-    expect(coldDelivery).toContain('RnAlarmNotification.didReceiveNotificationResponse(');
+    expect(coldDelivery).toContain('RnAlarmNotification.didReceive(');
     expect(coldDelivery).toContain('cacheForColdStart: true');
     const reconnectDelivery = source.slice(
       source.indexOf('private func forwardReconnectDeliveries'),
       source.indexOf('private func openOptions'),
     );
     expect(reconnectDelivery).toContain(
-      'RnAlarmNotification.didReceiveNotificationResponse(response)',
+      'RnAlarmNotification.didReceive(response)',
     );
     expect(reconnectDelivery).not.toContain('cacheForColdStart: true');
+    expect(source).not.toContain('RnAlarmNotification.didReceiveNotificationResponse');
   });
 
   it('forwards scene lifecycle to Expo subscribers without synthesizing app notifications', () => {
