@@ -2274,7 +2274,8 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(() => tree.root.find((node) => node.props.accessibilityLabel === 'checklist.progress')).toThrow();
   });
 
-  it('keeps reference checklists non-actionable in task rows', () => {
+  it('keeps reference lists hidden in rows and opens the entry on tap', () => {
+    const onPress = vi.fn();
     const task = {
       id: 'task-1',
       title: 'Reference checklist',
@@ -2306,7 +2307,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
             tint: '#3b82f6',
             warning: '#f59e0b',
           } as any}
-          onPress={vi.fn()}
+          onPress={onPress}
           onStatusChange={vi.fn()}
           onDelete={vi.fn()}
         />
@@ -2314,22 +2315,20 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     });
 
     expect(() => tree.root.find((node) => node.props.accessibilityLabel === 'checklist.progress')).toThrow();
-    expect(tree.root.findAll((node) => node.props.markdown).map((node) => node.props.markdown)).toEqual([
-      'Read **source**',
-      '[Pending link](https://example.com)\nwrapped detail',
-    ]);
-    expect(tree.root.findAllByType(Text).filter((node) => node.props.children === '•')).toHaveLength(2);
+    expect(tree.root.findAll((node) => node.props.markdown)).toHaveLength(0);
+    expect(tree.root.findAllByType(Text).filter((node) => node.props.children === '•')).toHaveLength(0);
     expect(tree.root.findAll((node) => node.props.accessibilityState?.checked !== undefined)).toHaveLength(0);
     expect(tree.root.findAll((node) => node.props.placeholder === '+ taskEdit.addItem')).toHaveLength(0);
     expect(updateTask).not.toHaveBeenCalled();
-    const expandedRow = tree.root.find((node) => (
+    const row = tree.root.find((node) => (
       node.props.accessibilityRole === 'button'
       && String(node.props.accessibilityLabel ?? '').startsWith('Reference checklist')
     ));
-    expect(expandedRow.props.accessibilityLabel).toContain('List: Read source. Pending link wrapped detail');
-    expect(expandedRow.props.accessibilityLabel).not.toContain('**');
-    expect(expandedRow.props.accessibilityLabel).not.toContain('https://example.com');
-    expect(expandedRow.props.accessibilityState?.checked).toBeUndefined();
+    expect(row.props.accessibilityLabel).not.toContain('Read source');
+    expect(row.props.accessibilityLabel).not.toContain('Pending link');
+    expect(row.props.accessibilityState?.checked).toBeUndefined();
+    renderer.act(() => row.props.onPress());
+    expect(onPress).toHaveBeenCalledTimes(1);
 
     renderer.act(() => {
       tree.update(
@@ -2431,7 +2430,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(tree.root.findAllByProps({ testID: 'task-priority-strip' })).toHaveLength(0);
     expect(tree.root.findAll((node) => String(node.props.accessibilityLabel ?? '').startsWith('Change status.'))).toHaveLength(0);
     expect(hasText(tree, '@hidden-context')).toBe(false);
-    expect(tree.root.find((node) => node.props.markdown === 'Visible reference item')).toBeTruthy();
+    expect(tree.root.findAll((node) => node.props.markdown === 'Visible reference item')).toHaveLength(0);
     expect(hasText(tree, 'Daily')).toBe(false);
     expect(hasText(tree, '1h')).toBe(false);
     expect(tree.root.findByProps({ accessibilityLabel: 'Next action' })).toBeTruthy();

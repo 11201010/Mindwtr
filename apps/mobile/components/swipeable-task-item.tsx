@@ -14,7 +14,6 @@ import {
     safeParseDate,
     safeParseDueDate,
     shallow,
-    stripMarkdown,
     tFallback,
     undoTaskCompletion,
     useTaskStore,
@@ -578,12 +577,6 @@ function SwipeableTaskItemInner({
     const visibleAttachmentCount = isReference
         ? (task.attachments ?? []).filter((attachment) => !attachment.deletedAt).length
         : 0;
-    const referenceChecklistLabel = isReference && !hideDetails
-        ? (task.checklist ?? [])
-            .map((item) => stripMarkdown(item.title).replace(/\s+/g, ' ').trim())
-            .filter(Boolean)
-            .join('. ')
-        : '';
     const accessibilityLabel = isReference ? [
         task.title,
         referenceProject
@@ -598,9 +591,6 @@ function SwipeableTaskItemInner({
         ...(task.tags ?? []),
         visibleAttachmentCount > 0
             ? `${tFallback(t, 'attachments.title', 'Attachments')}: ${visibleAttachmentCount}`
-            : null,
-        referenceChecklistLabel
-            ? `${t('taskEdit.tab.list')}: ${referenceChecklistLabel}`
             : null,
     ].filter(Boolean).join('. ') : [
         task.title,
@@ -775,7 +765,7 @@ function SwipeableTaskItemInner({
             sectionById={sectionById}
             selectionMode={selectionMode}
             sequenceCue={sequenceCue}
-            showChecklist={isReference ? !hideDetails : showChecklist}
+            showChecklist={!isReference && showChecklist}
             showTaskAge={showTaskAge}
             t={t}
             task={{
