@@ -64,6 +64,28 @@ object PendingCaptureWriter {
   @Throws(IOException::class)
   fun writeCompletion(filesDir: File, taskId: String, now: Date = Date()): File {
     val id = UUID.randomUUID().toString()
+    return writeCompletion(filesDir, taskId, id, now)
+  }
+
+  /**
+   * Retry-safe widget completion derived from the original tap. A process that
+   * dies between queue publication and preference reconciliation republishes
+   * the exact same file and JSON rather than creating a second command.
+   */
+  @Throws(IOException::class)
+  fun writeCompletion(filesDir: File, taskId: String, tappedAt: Long): File {
+    val id = completionId(taskId, tappedAt)
+    return writeCompletion(filesDir, taskId, id, Date(tappedAt + CheckoffStore.UNDO_WINDOW_MS))
+  }
+
+  /** Whether the exact retry-safe completion from this pending tap is already durable. */
+  fun hasQueuedCompletion(filesDir: File, taskId: String, tappedAt: Long): Boolean =
+    File(File(filesDir, DIRECTORY), "${completionId(taskId, tappedAt)}.json").isFile
+
+  private fun completionId(taskId: String, tappedAt: Long): String =
+    UUID.nameUUIDFromBytes("mindwtr-widget-checkoff:$taskId:$tappedAt".toByteArray(Charsets.UTF_8)).toString()
+
+  private fun writeCompletion(filesDir: File, taskId: String, id: String, now: Date): File {
     val json = JSONObject()
       .put("id", id)
       .put("kind", "complete")
@@ -124,18 +146,6 @@ object PendingCaptureWriter {
     val stagedDeleted = !paths.first.exists() || paths.first.delete()
     val targetDeleted = !paths.second.exists() || paths.second.delete()
     return stagedDeleted && targetDeleted
-  }
-
-  /**
-   * Removes a queued item the app has not ingested yet (a widget check-off the
-   * user undid). The name comes from our own SharedPreferences, but it still
-   * names a file path, so anything but a plain `<uuid>.json` is refused.
-   * Returns true when the queue no longer holds the file.
-   */
-  fun deleteQueued(filesDir: File, fileName: String): Boolean {
-    if (!fileName.endsWith(".json") || fileName.contains('/') || fileName.contains('\\') || fileName.contains("..")) return false
-    val file = File(File(filesDir, DIRECTORY), fileName)
-    return !file.exists() || file.delete()
   }
 
   internal fun isSafeAudioId(id: String): Boolean = AUDIO_ID.matches(id)

@@ -99,6 +99,32 @@ class WidgetPayloadTest {
   }
 
   @Test
+  fun committedRowsAreHiddenEverywhereWithoutChangingTheSourceSnapshot() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val display = payload.displaySnapshot(setOf("a"))
+
+    assertEquals(setOf("a", "b", "w", "e"), display.sourceTaskIds)
+    assertEquals(listOf("b"), display.payload.items.map { it.id })
+    assertEquals(listOf("Upcoming"), display.payload.sections.map { it.title })
+    assertEquals(listOf("b"), display.payload.sections.single().items.map { it.id })
+    assertTrue(display.payload.listFor("focus").items.isEmpty())
+    assertTrue(display.payload.listFor("focus").sections.isEmpty())
+    assertEquals(listOf("w"), display.payload.listFor("waiting").items.map { it.id })
+  }
+
+  @Test
+  fun undoWindowRowsStayVisibleUntilTheyJoinTheCommittedSet() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val duringUndo = payload.displaySnapshot(emptySet()).payload
+    val afterCommit = payload.displaySnapshot(setOf("a")).payload
+
+    assertEquals(listOf("a", "b"), duringUndo.items.map { it.id })
+    assertEquals(listOf("b"), afterCommit.items.map { it.id })
+  }
+
+  @Test
   fun compactFallsBackToTranslatedNextActionsWhenFocusIsEmpty() {
     val payload = payloadWithLists(
       focus = listPayload("Focus"),
@@ -112,6 +138,51 @@ class WidgetPayloadTest {
       TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
         .map { (it as TasksWidgetFactory.Row.Task).item.id },
     )
+  }
+
+  @Test
+  fun hidingAllTodayRowsSwitchesCompactRowsAndHeaderToNextActions() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", sections = sections("Today", "today-1")),
+      next = listPayload("Next Actions", items = items("next-1", "next-2")),
+    )
+
+    val visible = payload.displaySnapshot(setOf("today-1")).payload
+    val chrome = WidgetRenderer.compactChrome(visible)
+
+    assertEquals("Next Actions", chrome.title)
+    assertFalse(chrome.isEmpty)
+    assertEquals(
+      listOf("next-1", "next-2"),
+      TasksWidgetFactory.buildRows(visible.listFor(visible.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun hidingEveryAvailableRowShowsTheCoherentEmptyState() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", items = items("focus-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    val visible = payload.displaySnapshot(setOf("focus-1", "next-1")).payload
+    val chrome = WidgetRenderer.compactChrome(visible)
+
+    assertEquals("Today's Focus", chrome.title)
+    assertTrue(chrome.isEmpty)
+    assertTrue(TasksWidgetFactory.buildRows(visible.listFor(visible.compactListId()), compact = true).isEmpty())
+  }
+
+  @Test
+  fun hiddenChooserRowsUpdateTheDisplayedCountAndEmptyState() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val chrome = WidgetRenderer.tasksChrome(payload.displaySnapshot(setOf("w")).payload, "waiting")
+
+    assertEquals("Waiting For · 0", chrome.title)
+    assertTrue(chrome.isEmpty)
+    assertNull(chrome.subtitle)
   }
 
   @Test

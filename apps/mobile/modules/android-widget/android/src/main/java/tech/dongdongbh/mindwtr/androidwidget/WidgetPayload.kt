@@ -29,6 +29,8 @@ data class WidgetPayload(
   val quickCapture: QuickCaptureLabels,
   val taskPeek: TaskPeekLabels,
 ) {
+  data class DisplaySnapshot(val sourceTaskIds: Set<String>, val payload: WidgetPayload)
+
   data class Item(
     val id: String,
     val title: String,
@@ -107,6 +109,31 @@ data class WidgetPayload(
     }
     ids.remove("")
     return ids
+  }
+
+  /**
+   * Builds the launcher-facing snapshot without mutating the app-published
+   * payload. [sourceTaskIds] deliberately comes from the unfiltered payload so
+   * committed check-offs can still be reconciled after the app ingests them.
+   */
+  fun displaySnapshot(hiddenTaskIds: Set<String>): DisplaySnapshot {
+    if (hiddenTaskIds.isEmpty()) return DisplaySnapshot(allTaskIds(), this)
+    fun visible(items: List<Item>): List<Item> = items.filterNot { it.id in hiddenTaskIds }
+    fun visible(sections: List<Section>): List<Section> = sections.mapNotNull { section ->
+      section.copy(items = visible(section.items)).takeIf { it.items.isNotEmpty() }
+    }
+    fun visible(list: ListPayload): ListPayload = list.copy(
+      sections = visible(list.sections),
+      items = visible(list.items),
+    )
+    return DisplaySnapshot(
+      sourceTaskIds = allTaskIds(),
+      payload = copy(
+        items = visible(items),
+        sections = visible(sections),
+        lists = lists.mapValues { (_, list) -> visible(list) },
+      ),
+    )
   }
 
   /** The row a tap names, wherever the payload carries it; null when the payload has moved on. */

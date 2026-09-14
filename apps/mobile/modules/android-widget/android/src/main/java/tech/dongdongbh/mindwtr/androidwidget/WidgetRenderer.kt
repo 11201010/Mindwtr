@@ -1,6 +1,7 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
 import android.app.PendingIntent
+import android.annotation.TargetApi
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
@@ -13,6 +14,7 @@ import android.widget.RemoteViews
 /** Draws every widget kind from the payload in [WidgetPayloadStore]. */
 object WidgetRenderer {
   data class RefreshResult(val legacyWidgetCount: Int = 0, val compactWidgetCount: Int = 0)
+  data class Chrome(val title: String, val subtitle: String?, val emptyMessage: String, val isEmpty: Boolean)
   const val EXTRA_KIND = "tech.dongdongbh.mindwtr.androidwidget.kind"
   private const val REQUEST_FOCUS = 4611
   private const val REQUEST_CAPTURE = 4612
@@ -23,13 +25,14 @@ object WidgetRenderer {
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
 
   fun refreshAll(context: Context): RefreshResult {
-    val manager = AppWidgetManager.getInstance(context) ?: return RefreshResult()
+    val app = context.applicationContext
+    val manager = AppWidgetManager.getInstance(app) ?: return RefreshResult()
     return refreshProviders(
       context.packageName,
       idsForProvider = { className ->
         manager.getAppWidgetIds(ComponentName(context.packageName, className))
       },
-      renderProvider = { ids, kind -> render(context, manager, ids, kind) },
+      renderProvider = { ids, kind -> render(app, manager, ids, kind) },
     )
   }
 
@@ -48,17 +51,84 @@ object WidgetRenderer {
     return RefreshResult(legacyWidgetCount, compactWidgetCount)
   }
 
+  /**
+   * Modern widgets receive rows and chrome together without a service-backed
+   * adapter. Only pre-31 hosts need the legacy collection invalidation path.
+   */
+  internal fun refreshTaskCollections(
+    applicationPackage: String,
+    sdkInt: Int,
+    idsForProvider: (String) -> IntArray,
+    invalidateRows: (IntArray) -> Unit,
+    partiallyUpdateChrome: (Int, WidgetKind) -> Unit,
+  ): Int {
+    var widgetCount = 0
+    for (placed in WidgetProviderRegistry.placed(applicationPackage, idsForProvider)) {
+      if (!placed.identity.kind.hasTaskList) continue
+      if (!usesDirectCollections(sdkInt)) invalidateRows(placed.ids)
+      placed.ids.forEach { id -> partiallyUpdateChrome(id, placed.identity.kind) }
+      widgetCount += placed.ids.size
+    }
+    return widgetCount
+  }
+
+  /**
+   * Keeps the row PendingIntent template intact. On API 31+ the partial update
+   * carries direct rows: Android 16 can convert legacy notify calls into full
+   * asynchronous updates, so using that API here is not a row-only operation.
+   */
+  fun refreshTaskCollections(context: Context): Int {
+    val manager = AppWidgetManager.getInstance(context.applicationContext) ?: return 0
+    val rawPayload = WidgetPayloadStore.read(context)
+    CheckoffStore.prune(context, rawPayload.allTaskIds())
+    val hiddenTaskIds = CheckoffStore.committed(context)
+    if (hiddenTaskIds.isEmpty()) return 0
+    val payload = rawPayload.displaySnapshot(hiddenTaskIds).payload
+    return refreshTaskCollections(
+      context.packageName,
+      sdkInt = Build.VERSION.SDK_INT,
+      idsForProvider = { className ->
+        manager.getAppWidgetIds(ComponentName(context.packageName, className))
+      },
+      invalidateRows = { ids -> manager.notifyAppWidgetViewDataChanged(ids, R.id.mindwtr_widget_list) },
+      partiallyUpdateChrome = { id, kind ->
+        val views = buildChromeViews(context, id, kind, payload)
+        if (usesDirectCollections(Build.VERSION.SDK_INT)) bindDirectCollection(context, views, id, kind, payload)
+        manager.partiallyUpdateAppWidget(id, views)
+      },
+    )
+  }
+
   fun render(context: Context, manager: AppWidgetManager, ids: IntArray, kind: WidgetKind) {
     // Commit check-offs whose undo window elapsed while nothing else ran.
     if (kind.hasTaskList) CheckoffStore.sweep(context)
-    val payload = WidgetPayloadStore.read(context)
-    // A committed check-off stays struck until the app republishes without it.
-    if (kind.hasTaskList) CheckoffStore.prune(context, payload.allTaskIds())
+    val rawPayload = WidgetPayloadStore.read(context)
+    // Prune against the unfiltered source, then hide only committed ids in the
+    // local presentation. The queue and app-published snapshot stay intact.
+    if (kind.hasTaskList) CheckoffStore.prune(context, rawPayload.allTaskIds())
+    val payload = if (kind.hasTaskList) {
+      rawPayload.displaySnapshot(CheckoffStore.committed(context)).payload
+    } else {
+      rawPayload
+    }
     for (id in ids) {
       manager.updateAppWidget(id, buildViews(context, id, kind, payload))
     }
-    if (kind.hasTaskList) {
+    if (kind.hasTaskList && !usesDirectCollections(Build.VERSION.SDK_INT)) {
       manager.notifyAppWidgetViewDataChanged(ids, R.id.mindwtr_widget_list)
+    }
+  }
+
+  private fun buildChromeViews(
+    context: Context,
+    appWidgetId: Int,
+    kind: WidgetKind,
+    payload: WidgetPayload,
+  ): RemoteViews = RemoteViews(context.packageName, kind.layoutRes).apply {
+    when (kind) {
+      WidgetKind.TASKS -> applyTasksChrome(this, tasksChrome(payload, WidgetListStore.read(context, appWidgetId)))
+      WidgetKind.COMPACT -> applyCompactChrome(this, compactChrome(payload))
+      WidgetKind.QUICK_CAPTURE -> Unit
     }
   }
 
@@ -97,14 +167,12 @@ object WidgetRenderer {
   ) {
     // The simple style prefers Focus, then automatically shows Next Actions
     // when Focus has no rows. It stays chooser-free like v1.2.8.
-    views.setTextViewText(R.id.mindwtr_widget_title, compactHeaderTitle(payload))
-    views.setTextViewText(R.id.mindwtr_widget_subtitle, payload.subtitle)
-    views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
+    applyCompactChrome(views, compactChrome(payload))
     views.setTextViewText(R.id.mindwtr_widget_capture_label, payload.quickCapture.title)
     val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, appIntent(context, payload.focusUri), immutableFlags())
     views.setOnClickPendingIntent(R.id.mindwtr_widget_title_target, focus)
     views.setOnClickPendingIntent(R.id.mindwtr_widget_empty, focus)
-    bindCollection(context, views, appWidgetId, WidgetKind.COMPACT)
+    bindCollection(context, views, appWidgetId, WidgetKind.COMPACT, payload)
     palette?.let {
       views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
       views.setTextColor(R.id.mindwtr_widget_title, it.text)
@@ -127,25 +195,9 @@ object WidgetRenderer {
     // list picked in the chooser that the app has not published yet has no rows
     // to count, so it shows its bare title until the next publish.
     val listId = WidgetListStore.read(context, appWidgetId)
-    val list = payload.listFor(listId)
-    val isFocus = listId == WidgetListStore.DEFAULT_LIST || payload.titleFor(listId) == null
-    val counted = payload.lists[listId] != null
-    val rowCount = if (list.sections.isEmpty()) list.items.size else list.sections.sumOf { it.items.size }
-    views.setTextViewText(
-      R.id.mindwtr_widget_title,
-      when {
-        isFocus -> list.dateLabel?.ifEmpty { null } ?: list.title
-        counted -> "${list.title} · $rowCount"
-        else -> list.title
-      },
-    )
-    val subtitle = taskSubtitle(payload, isFocus)
-    views.setTextViewText(R.id.mindwtr_widget_subtitle, subtitle.orEmpty())
-    views.setViewVisibility(R.id.mindwtr_widget_subtitle, if (subtitle != null) View.VISIBLE else View.GONE)
-    views.setTextViewText(R.id.mindwtr_widget_empty, payload.emptyMessage)
-    views.setViewVisibility(R.id.mindwtr_widget_empty, if (list.items.isEmpty() && list.sections.isEmpty()) View.VISIBLE else View.GONE)
+    applyTasksChrome(views, tasksChrome(payload, listId))
 
-    bindCollection(context, views, appWidgetId, WidgetKind.TASKS)
+    bindCollection(context, views, appWidgetId, WidgetKind.TASKS, payload)
 
     val focusIntent = appIntent(context, payload.focusUri)
     val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, focusIntent, immutableFlags())
@@ -172,13 +224,32 @@ object WidgetRenderer {
     }
   }
 
-  private fun bindCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind) {
-    val adapterIntent = Intent(context, TasksWidgetService::class.java).apply {
-      putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-      putExtra(EXTRA_KIND, kind.name)
-      data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+  internal fun usesDirectCollections(sdkInt: Int): Boolean = sdkInt >= 31
+
+  @TargetApi(31)
+  private fun bindDirectCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload) {
+    val factory = TasksWidgetFactory(context, kind, appWidgetId, payload)
+    val items = RemoteViews.RemoteCollectionItems.Builder()
+      // Keep the adapter's type capacity constant when the last section vanishes.
+      .setViewTypeCount(factory.getViewTypeCount())
+      .setHasStableIds(factory.hasStableIds())
+    for (position in 0 until factory.getCount()) {
+      items.addItem(factory.getItemId(position), factory.getViewAt(position))
     }
-    views.setRemoteAdapter(R.id.mindwtr_widget_list, adapterIntent)
+    views.setRemoteAdapter(R.id.mindwtr_widget_list, items.build())
+  }
+
+  private fun bindCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload) {
+    if (usesDirectCollections(Build.VERSION.SDK_INT)) {
+      bindDirectCollection(context, views, appWidgetId, kind, payload)
+    } else {
+      val adapterIntent = Intent(context, TasksWidgetService::class.java).apply {
+        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        putExtra(EXTRA_KIND, kind.name)
+        data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+      }
+      views.setRemoteAdapter(R.id.mindwtr_widget_list, adapterIntent)
+    }
     views.setEmptyView(R.id.mindwtr_widget_list, R.id.mindwtr_widget_empty)
     // Collection rows deliver clicks through a fill-in intent, which the
     // platform can only merge into a mutable template. The template fixes the
@@ -204,6 +275,49 @@ object WidgetRenderer {
   internal fun compactHeaderTitle(payload: WidgetPayload): String {
     val listId = payload.compactListId()
     return if (listId == WidgetListStore.DEFAULT_LIST) payload.headerTitle else payload.listFor(listId).title
+  }
+
+  internal fun tasksChrome(payload: WidgetPayload, listId: String): Chrome {
+    val list = payload.listFor(listId)
+    val isFocus = listId == WidgetListStore.DEFAULT_LIST || payload.titleFor(listId) == null
+    val counted = payload.lists[listId] != null
+    val rowCount = if (list.sections.isEmpty()) list.items.size else list.sections.sumOf { it.items.size }
+    return Chrome(
+      title = when {
+        isFocus -> list.dateLabel?.ifEmpty { null } ?: list.title
+        counted -> "${list.title} · $rowCount"
+        else -> list.title
+      },
+      subtitle = taskSubtitle(payload, isFocus),
+      emptyMessage = payload.emptyMessage,
+      isEmpty = rowCount == 0,
+    )
+  }
+
+  internal fun compactChrome(payload: WidgetPayload): Chrome {
+    val list = payload.listFor(payload.compactListId())
+    val rowCount = if (list.sections.isEmpty()) list.items.size else list.sections.sumOf { it.items.size }
+    return Chrome(
+      title = compactHeaderTitle(payload),
+      subtitle = payload.subtitle,
+      emptyMessage = payload.emptyMessage,
+      isEmpty = rowCount == 0,
+    )
+  }
+
+  private fun applyTasksChrome(views: RemoteViews, chrome: Chrome) {
+    views.setTextViewText(R.id.mindwtr_widget_title, chrome.title)
+    views.setTextViewText(R.id.mindwtr_widget_subtitle, chrome.subtitle.orEmpty())
+    views.setViewVisibility(R.id.mindwtr_widget_subtitle, if (chrome.subtitle != null) View.VISIBLE else View.GONE)
+    views.setTextViewText(R.id.mindwtr_widget_empty, chrome.emptyMessage)
+    views.setViewVisibility(R.id.mindwtr_widget_empty, if (chrome.isEmpty) View.VISIBLE else View.GONE)
+  }
+
+  private fun applyCompactChrome(views: RemoteViews, chrome: Chrome) {
+    views.setTextViewText(R.id.mindwtr_widget_title, chrome.title)
+    views.setTextViewText(R.id.mindwtr_widget_subtitle, chrome.subtitle.orEmpty())
+    views.setTextViewText(R.id.mindwtr_widget_empty, chrome.emptyMessage)
+    views.setViewVisibility(R.id.mindwtr_widget_empty, if (chrome.isEmpty) View.VISIBLE else View.GONE)
   }
 
   private fun immutableFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

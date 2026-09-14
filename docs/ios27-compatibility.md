@@ -49,6 +49,10 @@ Expo 54's development launcher expects an AppDelegate window during launch and p
 
 For a tester session, exercise normal capture; cold and warm Shortcuts capture; repeated identical shortcut requests; share capture; notification and widget opening; app lock on return; foreground/background transitions; Watch delivery; and a supported older iOS device/runtime. Confirm one task per accepted save and no task on cancellation. Scene diagnostics prove native routing only; a save requires separate persistence evidence.
 
+### CI checkpoint, 2026-09-14
+
+[Native run 34888210875](https://github.com/dongdongbh/Mindwtr/actions/runs/34888210875), at `09276a308ded3868e1dce1e112f86f8740e544bd`, passed all six jobs. Both Xcode lanes passed the 15 Siri transport store tests. Xcode 26 compiled the host and Watch target; Xcode 27 built the bundled Release simulator app, passed cold/warm scene routing checks, and produced the unsigned device archive. The runtime used was iOS 27.0 build `24A5423a`; there was no older iOS simulator runtime installed. The simulator test opened capture but did not save a task, so it does not establish exactly-once persistence. Physical device, older-runtime, notification/share/app-lock/accessibility, and conversational Siri checks remain open. The Siri transport is a dormant building block, not completed schema support.
+
 ## Follow-up work
 
 #1194 and #1195 are evaluations, with on-device quality and performance gates before production adoption. #915 reuses the existing app-maintained snapshot and needs an explicit mutation-completion contract. CI build success does not supply model-capable device results or conversational Siri evidence for those tickets.

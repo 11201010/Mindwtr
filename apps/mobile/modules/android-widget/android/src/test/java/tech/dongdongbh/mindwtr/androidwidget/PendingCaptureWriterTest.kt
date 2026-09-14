@@ -46,24 +46,29 @@ class PendingCaptureWriterTest {
   }
 
   @Test
-  fun undoRemovesTheQueuedCompletionAndToleratesOneAlreadyGone() {
+  fun widgetCompletionRetryReusesTheExactDurableQueueItem() {
     val filesDir = tempFilesDir()
-    val written = PendingCaptureWriter.writeCompletion(filesDir, "task-9")
 
-    assertTrue(PendingCaptureWriter.deleteQueued(filesDir, written.name))
-    assertTrue(!written.exists())
-    assertTrue(PendingCaptureWriter.deleteQueued(filesDir, written.name))
+    val first = PendingCaptureWriter.writeCompletion(filesDir, "task-9", 1_000L)
+    val second = PendingCaptureWriter.writeCompletion(filesDir, "task-9", 1_000L)
+
+    assertEquals(first.canonicalFile, second.canonicalFile)
+    assertEquals(listOf(first.name), File(filesDir, "pending-captures").list()!!.toList())
+    val json = JSONObject(first.readText())
+    assertEquals("1970-01-01T00:00:04.000Z", json.getString("completedAt"))
   }
 
   @Test
-  fun undoRefusesANameThatIsNotAPlainQueueFile() {
+  fun aCommittedTapCannotRemoveTheQueuedCompletion() {
     val filesDir = tempFilesDir()
-    val outside = File(filesDir, "keep.json").apply { writeText("{}") }
+    val written = PendingCaptureWriter.writeCompletion(filesDir, "task-9", 1_000L)
 
-    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, "../keep.json"))
-    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, "sub/keep.json"))
-    assertTrue(!PendingCaptureWriter.deleteQueued(filesDir, ""))
-    assertTrue(outside.exists())
+    assertTrue(PendingCaptureWriter.hasQueuedCompletion(filesDir, "task-9", 1_000L))
+    assertEquals(
+      CheckoffStore.TapAction.RECONCILE,
+      CheckoffStore.tapAction(isCommitted = false, hasQueuedCompletion = true),
+    )
+    assertTrue(written.exists())
   }
 
   @Test

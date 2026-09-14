@@ -84,8 +84,14 @@ class TaskPeekActivity : AppCompatActivity() {
 
   /** Same path as the row's ring, so the undo window and the queue are shared. */
   private fun complete() {
-    if (!CheckoffStore.isCommitted(this, taskId)) CheckoffStore.toggle(this, taskId)
-    WidgetRenderer.refreshAll(this)
+    when (CheckoffStore.tapAction(this, taskId)) {
+      CheckoffStore.TapAction.TOGGLE_PENDING -> {
+        CheckoffStore.toggle(this, taskId)
+        WidgetRenderer.refreshAll(this)
+      }
+      CheckoffStore.TapAction.RECONCILE -> CheckoffStore.reconcileFromInteraction(this)
+      CheckoffStore.TapAction.NO_OP -> Unit
+    }
     finish()
   }
 

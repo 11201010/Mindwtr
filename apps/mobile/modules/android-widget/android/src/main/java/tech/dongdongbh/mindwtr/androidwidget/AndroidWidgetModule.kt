@@ -13,8 +13,14 @@ class AndroidWidgetModule : Module() {
     }
 
     Function("updateWidgets") {
-      val result = appContext.reactContext?.let { WidgetRenderer.refreshAll(it) } ?: WidgetRenderer.RefreshResult()
-      mapOf("legacyWidgetCount" to result.legacyWidgetCount, "compactWidgetCount" to result.compactWidgetCount)
+      val context = appContext.reactContext
+      val result = context?.let { WidgetRenderer.refreshAll(it) } ?: WidgetRenderer.RefreshResult()
+      val hiddenCheckoffCount = context?.let { CheckoffStore.consumeHiddenCount(it) } ?: 0
+      mapOf(
+        "legacyWidgetCount" to result.legacyWidgetCount,
+        "compactWidgetCount" to result.compactWidgetCount,
+        "hiddenCheckoffCount" to hiddenCheckoffCount,
+      )
     }
 
     Function("getWidgetListSelections") {

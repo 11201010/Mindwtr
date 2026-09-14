@@ -186,6 +186,16 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
         const refreshResult = AndroidWidget.updateWidgets();
         // Older installed native modules return only the compatibility count.
         const legacyWidgetCount = typeof refreshResult === 'number' ? refreshResult : refreshResult?.legacyWidgetCount;
+        const hiddenCheckoffCount = typeof refreshResult === 'object' ? refreshResult.hiddenCheckoffCount : undefined;
+        if (typeof hiddenCheckoffCount === 'number' && hiddenCheckoffCount > 0) {
+            void logInfo('Android widget check-offs hidden after Undo', {
+                scope: 'widget',
+                extra: {
+                    releaseCheck: 'v1.3.1/widget-checkoff-hide',
+                    count: String(hiddenCheckoffCount),
+                },
+            });
+        }
         if (typeof refreshResult === 'object' && refreshResult.compactWidgetCount > 0) {
             void logInfo('Compact Android widgets refreshed', {
                 scope: 'widget',
