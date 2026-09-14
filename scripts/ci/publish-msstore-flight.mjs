@@ -111,6 +111,24 @@ export async function publishFlight({ appId, flightId, tag, fileName, archive, r
   throw new Error(`Timed out waiting for flight submission ${submissionId} to finish committing.`);
 }
 
+export function createStoreRequest({ token, tenantId, fetchImpl = fetch, log = console.log }) {
+  return async (method, url, data) => {
+    const upload = method === 'UPLOAD';
+    if (upload) log(`::add-mask::${url}`);
+    const response = await fetchImpl(url, {
+      method: upload ? 'PUT' : method,
+      headers: upload
+        ? { 'x-ms-blob-type': 'BlockBlob', 'Content-Type': 'application/octet-stream' }
+        : { Authorization: `Bearer ${token}`, TenantId: tenantId, ...(data ? { 'Content-Type': 'application/json' } : {}) },
+      body: data ? (upload ? data : JSON.stringify(data)) : undefined,
+      signal: AbortSignal.timeout(upload ? 300_000 : 60_000),
+    });
+    if (!response.ok) throw new Error(`Store ${upload ? 'upload' : method} failed (HTTP ${response.status}); inspect the flight in Partner Center.`);
+    const text = await response.text();
+    return text && !upload ? JSON.parse(text) : {};
+  };
+}
+
 export async function main(env = process.env) {
   for (const name of ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_STORE_APP_ID', 'MSSTORE_FLIGHT_ID', 'RELEASE_TAG', 'MSIX_FILE_NAME', 'MSIX_ZIP_PATH']) {
     if (!env[name]) throw new Error(`Missing required configuration: ${name}.`);
@@ -124,21 +142,7 @@ export async function main(env = process.env) {
   const { access_token: token } = await tokenResponse.json();
   if (!token) throw new Error('Store authentication returned no access token.');
   console.log(`::add-mask::${token}`);
-  const request = async (method, url, data) => {
-    const upload = method === 'UPLOAD';
-    if (upload) console.log(`::add-mask::${url}`);
-    const response = await fetch(url, {
-      method: upload ? 'PUT' : method,
-      headers: upload
-        ? { 'x-ms-blob-type': 'BlockBlob', 'Content-Type': 'application/octet-stream' }
-        : { Authorization: `Bearer ${token}`, ...(data ? { 'Content-Type': 'application/json' } : {}) },
-      body: data ? (upload ? data : JSON.stringify(data)) : undefined,
-      signal: AbortSignal.timeout(upload ? 300_000 : 60_000),
-    });
-    if (!response.ok) throw new Error(`Store ${upload ? 'upload' : method} failed (HTTP ${response.status}); inspect the flight in Partner Center.`);
-    const text = await response.text();
-    return text && !upload ? JSON.parse(text) : {};
-  };
+  const request = createStoreRequest({ token, tenantId: env.MS_TENANT_ID });
   const result = await publishFlight({
     appId: env.MS_STORE_APP_ID, flightId: env.MSSTORE_FLIGHT_ID, tag: env.RELEASE_TAG,
     fileName: env.MSIX_FILE_NAME, archive: readFileSync(env.MSIX_ZIP_PATH), request,

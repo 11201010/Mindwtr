@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { msstoreVersion } from './msstore-version.mjs';
-import { compareVersions, publishFlight } from './publish-msstore-flight.mjs';
+import { compareVersions, createStoreRequest, publishFlight } from './publish-msstore-flight.mjs';
 
 const flightId = '640b80df-45ed-4604-acaf-e8c28c983184';
 const root = `https://manage.devcenter.microsoft.com/v1.0/my/applications/9N0V5B0B6FRX/flights/${flightId}`;
@@ -31,6 +31,27 @@ function fixture({ flight = {}, submission = {}, statuses = ['PreProcessing'], p
   const run = overrides => publishFlight({ appId: '9N0V5B0B6FRX', flightId, tag, fileName: 'mindwtr_1.3.0-rc.2_x64.msix', archive, request, sleep: async () => {}, log: () => {}, ...overrides });
   return { calls, run };
 }
+
+test('Dev Center flight requests include the tenant header required by the current Store CLI', async () => {
+  const tenantId = '11111111-2222-3333-4444-555555555555';
+  const requests = [];
+  const request = createStoreRequest({
+    token: 'fixture-token',
+    tenantId,
+    log: () => {},
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (url.includes('.blob.core.windows.net')) return new Response('', { status: 201 });
+      if (options.headers.TenantId !== tenantId) return new Response('', { status: 403 });
+      return new Response(JSON.stringify({ flightId }), { status: 200 });
+    },
+  });
+
+  await expect(request('GET', root)).resolves.toEqual({ flightId });
+  await expect(request('UPLOAD', 'https://example.blob.core.windows.net/upload', archive)).resolves.toEqual({});
+  expect(requests[0].options.headers).toEqual({ Authorization: 'Bearer fixture-token', TenantId: tenantId });
+  expect(requests[1].options.headers).toEqual({ 'x-ms-blob-type': 'BlockBlob', 'Content-Type': 'application/octet-stream' });
+});
 
 test('Store versions order previous stable, RCs, stable, and next patch while reserving revision zero', () => {
   const versions = ['1.2.8.0', ...['v1.3.0-rc.1', tag, 'v1.3.0-rc.98', 'v1.3.0', 'v1.3.1-rc.1', 'v1.3.1', 'v1.4.0-rc.1'].map(msstoreVersion)];
