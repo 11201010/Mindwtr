@@ -1875,7 +1875,7 @@ describe('AgendaView', () => {
         expect(getByText('Storage request timed out. Try again.')).toBeInTheDocument();
     });
 
-    it('applies and clears saved Focus filters from the chip row', () => {
+    it('clears an active saved Focus filter when its chip is clicked again without mutating it', () => {
         const deskTask: Task = {
             id: 'desk-task',
             title: 'Desk task',
@@ -1915,20 +1915,131 @@ describe('AgendaView', () => {
             highlightTaskId: null,
         });
 
+        const savedFiltersBefore = useTaskStore.getState().settings.savedFilters;
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: 'Desk' }));
 
         expect(getByText('Desk task')).toBeInTheDocument();
         expect(queryByText('Phone task')).not.toBeInTheDocument();
+        expect(getByRole('button', { name: 'Desk' })).toHaveAttribute('aria-pressed', 'true');
 
-        fireEvent.click(getByRole('button', { name: 'All' }));
+        fireEvent.click(getByRole('button', { name: 'Desk' }));
 
         expect(getByText('Desk task')).toBeInTheDocument();
         expect(getByText('Phone task')).toBeInTheDocument();
+        expect(getByRole('button', { name: 'Desk' })).toHaveAttribute('aria-pressed', 'false');
+        expect(queryByText('Delete saved filter?')).not.toBeInTheDocument();
+        expect(useTaskStore.getState().settings.savedFilters).toEqual(savedFiltersBefore);
     });
 
-    it('applies saved Focus sort preferences from the chip row', () => {
+    it('switches directly between saved Focus filters', () => {
+        const deskTask = makeAgendaTask('desk-task', 'Desk task', { contexts: ['@desk'] });
+        const phoneTask = makeAgendaTask('phone-task', 'Phone task', { contexts: ['@phone'] });
+        useTaskStore.setState({
+            tasks: [deskTask, phoneTask],
+            _allTasks: [deskTask, phoneTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: {
+                savedFilters: [
+                    {
+                        id: 'filter-desk',
+                        name: 'Desk',
+                        view: 'focus',
+                        criteria: { contexts: ['@desk'] },
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
+                    },
+                    {
+                        id: 'filter-phone',
+                        name: 'Phone',
+                        view: 'focus',
+                        criteria: { contexts: ['@phone'] },
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
+                    },
+                ],
+            },
+            highlightTaskId: null,
+        });
+
+        const { getByRole, getByText, queryByText } = renderAgenda();
+
+        fireEvent.click(getByRole('button', { name: 'Desk' }));
+        expect(getByText('Desk task')).toBeInTheDocument();
+        expect(queryByText('Phone task')).not.toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: 'Phone' }));
+        expect(queryByText('Desk task')).not.toBeInTheDocument();
+        expect(getByText('Phone task')).toBeInTheDocument();
+        expect(getByRole('button', { name: 'Desk' })).toHaveAttribute('aria-pressed', 'false');
+        expect(getByRole('button', { name: 'Phone' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('hides a saved filter summary while collapsed but keeps its controls editable when expanded', () => {
+        const deskTask = makeAgendaTask('desk-task', 'Desk task', { contexts: ['@desk'] });
+        useTaskStore.setState({
+            tasks: [deskTask],
+            _allTasks: [deskTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: {
+                savedFilters: [{
+                    id: 'filter-desk',
+                    name: 'Desk',
+                    view: 'focus',
+                    criteria: { contexts: ['@desk'] },
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                }],
+            },
+            highlightTaskId: null,
+        });
+
+        const { getByPlaceholderText, getByRole, queryByPlaceholderText, queryByText } = renderAgenda();
+
+        fireEvent.click(getByRole('button', { name: 'Desk' }));
+        expect(queryByPlaceholderText('Search...')).not.toBeInTheDocument();
+        expect(queryByText('@desk')).not.toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
+        expect(getByPlaceholderText('Search...')).toBeInTheDocument();
+        expect(getByRole('button', { name: '@desk' })).toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
+        expect(queryByPlaceholderText('Search...')).not.toBeInTheDocument();
+        expect(queryByText('@desk')).not.toBeInTheDocument();
+    });
+
+    it('keeps an ad hoc Focus filter summary visible when the controls collapse', () => {
+        const deskTask = makeAgendaTask('desk-task', 'Desk task', { contexts: ['@desk'] });
+        useTaskStore.setState({
+            tasks: [deskTask],
+            _allTasks: [deskTask],
+            projects: [],
+            _allProjects: [],
+            areas: [],
+            _allAreas: [],
+            settings: {},
+            highlightTaskId: null,
+        });
+
+        const { getByRole, getByText, queryByRole } = renderAgenda();
+
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
+        fireEvent.click(getByRole('button', { name: '@desk' }));
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
+
+        expect(getByText('@desk')).toBeInTheDocument();
+        expect(queryByRole('button', { name: '@desk' })).not.toBeInTheDocument();
+    });
+
+    it('restores the prior Focus sort and group when toggling a saved filter clear', () => {
         const highLaterTask: Task = {
             id: 'high-later-task',
             title: 'High later task',
@@ -1966,23 +2077,35 @@ describe('AgendaView', () => {
                     view: 'focus',
                     criteria: {},
                     sortBy: 'start',
+                    groupBy: 'project',
                     createdAt: nowIso,
                     updatedAt: nowIso,
                 }],
             },
             highlightTaskId: null,
         });
+        useUiStore.setState((state) => ({
+            listOptions: { ...state.listOptions, focusGroupBy: 'context' },
+        }));
 
         const { container, getByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: 'Start first' }));
 
-        const taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
+        let taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
             .map((element) => element.dataset.taskId);
         expect(taskIds).toEqual(['low-earlier-task', 'high-later-task']);
+        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Project');
+
+        fireEvent.click(getByRole('button', { name: 'Start first' }));
+
+        taskIds = Array.from(container.querySelectorAll<HTMLElement>('[data-task-id]'))
+            .map((element) => element.dataset.taskId);
+        expect(taskIds).toEqual(['high-later-task', 'low-earlier-task']);
+        expect(getByRole('combobox', { name: 'Group' })).toHaveTextContent('Context');
     });
 
-    it('deletes the active saved Focus filter from the chip row', async () => {
+    it('cancels and confirms saved Focus filter deletion from its menu', async () => {
         const deskTask: Task = {
             id: 'desk-task',
             title: 'Desk task',
@@ -2016,7 +2139,28 @@ describe('AgendaView', () => {
         const { getByRole, queryByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: 'Desk' }));
-        fireEvent.click(getByRole('button', { name: 'Delete saved filter Desk' }));
+        expect(queryByRole('button', { name: 'Delete saved filter Desk' })).not.toBeInTheDocument();
+
+        const menuTrigger = getByRole('button', { name: 'More options: Desk' });
+        fireEvent.click(menuTrigger);
+        const keyboardMenuItem = getByRole('menuitem', { name: 'Delete saved filter Desk' });
+        expect(keyboardMenuItem).toHaveFocus();
+        fireEvent.keyDown(keyboardMenuItem, { key: 'Escape' });
+        expect(queryByRole('menuitem', { name: 'Delete saved filter Desk' })).not.toBeInTheDocument();
+        expect(menuTrigger).toHaveFocus();
+
+        fireEvent.click(menuTrigger);
+        fireEvent.click(getByRole('menuitem', { name: 'Delete saved filter Desk' }));
+        fireEvent.click(getByRole('button', { name: /^Cancel$/i }));
+
+        expect(useTaskStore.getState().settings.savedFilters).toEqual([
+            expect.objectContaining({ id: 'filter-desk' }),
+        ]);
+        expect(useTaskStore.getState().settings.savedFilters?.[0]?.deletedAt).toBeUndefined();
+        expect(getByRole('button', { name: 'Desk' })).toBeInTheDocument();
+
+        fireEvent.click(getByRole('button', { name: 'More options: Desk' }));
+        fireEvent.click(getByRole('menuitem', { name: 'Delete saved filter Desk' }));
         fireEvent.click(getByRole('button', { name: /^Delete$/i }));
 
         await waitFor(() => {
@@ -2068,6 +2212,7 @@ describe('AgendaView', () => {
         const { getByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: 'Desk' }));
+        fireEvent.click(getByRole('button', { name: /^Filters/i }));
         fireEvent.click(getByRole('button', { name: 'Delete Due Date: This week' }));
 
         await waitFor(() => {

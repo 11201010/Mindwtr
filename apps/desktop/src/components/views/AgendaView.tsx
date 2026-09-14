@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     DndContext,
@@ -20,7 +21,7 @@ import { useTaskFilterSelections } from '@mindwtr/core/task-filter-selections';
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
 import { useUiStore } from '../../store/ui-store';
-import { AlertCircle, CalendarDays, Clock, ArrowRight, Folder, CheckCircle2, X } from 'lucide-react';
+import { AlertCircle, CalendarDays, Clock, ArrowRight, Folder, CheckCircle2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
@@ -119,6 +120,136 @@ function getAgendaScrollMargin(containerElement: HTMLDivElement, scrollElement: 
 function getSavedFilterDefaultName(chips: AgendaActiveFilterChip[], fallback: string): string {
     const label = chips.slice(0, 3).map((chip) => chip.label).join(' + ');
     return label || fallback;
+}
+
+function SavedFocusFilterChip({
+    filter,
+    isActive,
+    onApply,
+    onDelete,
+    resolveText,
+}: {
+    filter: SavedFilter;
+    isActive: boolean;
+    onApply: (filter: SavedFilter) => void;
+    onDelete: (filter: SavedFilter) => Promise<void>;
+    resolveText: (key: string, fallback: string) => string;
+}) {
+    const menuAnchorRef = useRef<HTMLDivElement | null>(null);
+    const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+    const menuPanelRef = useRef<HTMLDivElement | null>(null);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [menuStyle, setMenuStyle] = useState<CSSProperties>({ position: 'fixed', top: 0, left: 0 });
+    const moreOptionsLabel = `${resolveText('taskEdit.moreOptions', 'More options')}: ${filter.name}`;
+    const deleteLabel = `${resolveText('common.delete', 'Delete')} ${resolveText('savedFilters.label', 'saved filter')} ${filter.name}`;
+
+    useLayoutEffect(() => {
+        if (!menuOpen) return;
+        const place = () => {
+            const rect = menuAnchorRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const menuWidth = 176;
+            setMenuStyle({
+                position: 'fixed',
+                top: rect.bottom + 4,
+                left: Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)),
+            });
+        };
+        place();
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        return () => {
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+        };
+    }, [menuOpen]);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        menuPanelRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+        const handlePointer = (event: Event) => {
+            const target = event.target as Node;
+            if (menuAnchorRef.current?.contains(target) || menuPanelRef.current?.contains(target)) return;
+            setMenuOpen(false);
+        };
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            setMenuOpen(false);
+            menuButtonRef.current?.focus();
+        };
+        window.addEventListener('mousedown', handlePointer);
+        window.addEventListener('keydown', handleKey);
+        return () => {
+            window.removeEventListener('mousedown', handlePointer);
+            window.removeEventListener('keydown', handleKey);
+        };
+    }, [menuOpen]);
+
+    return (
+        <div ref={menuAnchorRef} className="inline-flex shrink-0 items-center">
+            <button
+                type="button"
+                onClick={() => onApply(filter)}
+                aria-pressed={isActive}
+                className={cn(
+                    'inline-flex max-w-[220px] shrink-0 items-center gap-1.5 rounded-l-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                    isActive
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+            >
+                {filter.icon && <span aria-hidden="true">{filter.icon}</span>}
+                <span className="truncate">{filter.name}</span>
+            </button>
+            <button
+                ref={menuButtonRef}
+                type="button"
+                onClick={() => setMenuOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={moreOptionsLabel}
+                title={moreOptionsLabel}
+                className={cn(
+                    'inline-flex h-[30px] w-8 shrink-0 items-center justify-center rounded-r-full border border-l-0 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+                    isActive
+                        ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+            >
+                <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            {menuOpen && typeof document !== 'undefined' && createPortal(
+                <div
+                    ref={menuPanelRef}
+                    role="menu"
+                    aria-label={moreOptionsLabel}
+                    style={menuStyle}
+                    className="z-50 min-w-44 rounded-md border border-border bg-card p-1 shadow-lg"
+                    onKeyDown={(event) => {
+                        if (event.key !== 'Tab') return;
+                        setMenuOpen(false);
+                        menuButtonRef.current?.focus();
+                    }}
+                >
+                    <button
+                        type="button"
+                        role="menuitem"
+                        aria-label={deleteLabel}
+                        onClick={() => {
+                            setMenuOpen(false);
+                            void onDelete(filter);
+                        }}
+                        className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-muted focus:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        <span>{resolveText('common.delete', 'Delete')}</span>
+                    </button>
+                </div>,
+                document.body,
+            )}
+        </div>
+    );
 }
 
 function AgendaTaskList({
@@ -628,9 +759,10 @@ export function AgendaView() {
     }, [setProjectView]);
     const showFiltersPanel = filtersOpen;
     const shouldRenderFiltersPanel = filtersOpen
-        || hasTaskFilters
-        || focusSortBy !== DEFAULT_FOCUS_SORT_BY
-        || Boolean(activeSavedFilterId);
+        || (!activeSavedFilter && (
+            hasTaskFilters
+            || focusSortBy !== DEFAULT_FOCUS_SORT_BY
+        ));
     useEffect(() => {
         if (!filtersOpen) return;
         filterInputRef.current?.focus();
@@ -650,10 +782,14 @@ export function AgendaView() {
         setListOptions({ focusGroupBy: value });
     }, [setListOptions, unbindSavedFilter]);
     const applySavedFocusFilter = useCallback((filter: SavedFilter) => {
+        if (activeSavedFilterId === filter.id) {
+            clearAllFilters();
+            return;
+        }
         applySavedSelections(filter);
         setFocusSortBy(filter.sortBy ?? DEFAULT_FOCUS_SORT_BY);
         setFiltersOpen(false);
-    }, [applySavedSelections]);
+    }, [activeSavedFilterId, applySavedSelections, clearAllFilters]);
     const handleSaveFilterConfirm = useCallback((name: string) => {
         const trimmedName = name.trim();
         if (!trimmedName || !canSaveFocusPerspective) return;
@@ -1138,34 +1274,14 @@ export function AgendaView() {
                     {savedFocusFilters.map((filter) => {
                         const isActive = activeSavedFilterId === filter.id;
                         return (
-                            <div key={filter.id} className="inline-flex shrink-0 items-center">
-                                <button
-                                    type="button"
-                                    onClick={() => applySavedFocusFilter(filter)}
-                                    aria-pressed={isActive}
-                                    className={cn(
-                                        'inline-flex max-w-[220px] shrink-0 items-center gap-1.5 border px-3 py-1.5 text-xs font-medium transition-colors',
-                                        isActive ? 'rounded-l-full rounded-r-none' : 'rounded-full',
-                                        isActive
-                                            ? 'border-primary bg-primary text-primary-foreground'
-                                            : 'border-border bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground',
-                                    )}
-                                >
-                                    {filter.icon && <span aria-hidden="true">{filter.icon}</span>}
-                                    <span className="truncate">{filter.name}</span>
-                                </button>
-                                {isActive && (
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleDeleteSavedFilter(filter)}
-                                        aria-label={`${resolveText('common.delete', 'Delete')} ${resolveText('savedFilters.label', 'saved filter')} ${filter.name}`}
-                                        title={`${resolveText('common.delete', 'Delete')} ${filter.name}`}
-                                        className="inline-flex h-[30px] w-7 shrink-0 items-center justify-center rounded-l-none rounded-r-full border border-l-0 border-primary bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
-                                    >
-                                        <X className="h-3.5 w-3.5" aria-hidden="true" />
-                                    </button>
-                                )}
-                            </div>
+                            <SavedFocusFilterChip
+                                key={filter.id}
+                                filter={filter}
+                                isActive={isActive}
+                                onApply={applySavedFocusFilter}
+                                onDelete={handleDeleteSavedFilter}
+                                resolveText={resolveText}
+                            />
                         );
                     })}
                 </div>
