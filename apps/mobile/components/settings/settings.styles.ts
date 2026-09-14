@@ -557,29 +557,6 @@ export const styles = StyleSheet.create({
         lineHeight: 18,
         marginTop: 4,
     },
-    feedbackGitHubOption: {
-        marginVertical: -4,
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        columnGap: 8,
-    },
-    feedbackGitHubHint: {
-        fontSize: 12,
-        lineHeight: 18,
-        flexShrink: 1,
-    },
-    feedbackNoticeLink: {
-        alignSelf: 'flex-start',
-        minHeight: 44,
-        justifyContent: 'center',
-    },
-    feedbackNoticeLinkText: {
-        fontSize: 14,
-        lineHeight: 20,
-        fontWeight: '700',
-        textDecorationLine: 'underline',
-    },
     feedbackActions: {
         borderTopWidth: 1,
         flexDirection: 'row',

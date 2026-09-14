@@ -15,7 +15,7 @@ export const plOverrides: Record<string, string> = {
     'sandbox.unavailable': "Niedostępne w piaskownicy",
     'sandbox.switching': "Przełączanie przestrzeni roboczej…",
     'sandbox.switchFailed': "Nie udało się przełączyć przestrzeni roboczej. Bieżąca przestrzeń nie została zmieniona.",
-        'settings.feedbackGitHubDesc': "Zalecane do dalszego kontaktu",
+        'settings.feedbackGitHubDesc': "Zalecane dla łatwiejszego kontaktu: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "Rozpocznij dyskusję na GitHubie",
         'settings.aiAdvanced': "Zaawansowane",
         'settings.aiRequestTimeout': "Limit czasu żądania",

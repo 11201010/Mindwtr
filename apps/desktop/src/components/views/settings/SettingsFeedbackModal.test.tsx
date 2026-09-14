@@ -66,7 +66,11 @@ describe('SettingsFeedbackModal', () => {
         fireEvent.change(message, { target: { value: 'Keep this draft' } });
 
         fireEvent.click(screen.getByRole('button', { name: categoryLabel }));
-        expect(screen.getByText(t.feedbackGitHubDesc)).toBeInTheDocument();
+        const githubLink = screen.getByRole('button', { name: linkLabel });
+        expect(githubLink.closest('p')).toHaveTextContent(
+            `${t.feedbackDesc} ${t.feedbackGitHubDesc.replace('{channel}', linkLabel)}`,
+        );
+        expect(screen.queryByText(/No account needed/)).not.toBeInTheDocument();
         expect(screen.queryByText(t.feedbackPrivacy)).not.toBeInTheDocument();
         expect(screen.getByRole('textbox', { name: t.feedbackEmail })).not.toBeRequired();
         fireEvent.click(screen.getByRole('button', { name: linkLabel }));

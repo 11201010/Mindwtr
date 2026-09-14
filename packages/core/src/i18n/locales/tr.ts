@@ -15,7 +15,7 @@ export const trOverrides: Record<string, string> = {
     'sandbox.unavailable': "Deneme alanında kullanılamaz",
     'sandbox.switching': "Çalışma alanı değiştiriliyor…",
     'sandbox.switchFailed': "Çalışma alanı değiştirilemedi. Mevcut çalışma alanınız değişmedi.",
-        'settings.feedbackGitHubDesc': "Takip için önerilir",
+        'settings.feedbackGitHubDesc': "Kolay takip için önerilir: {channel}.",
         'settings.feedbackOpenGitHubDiscussion': "GitHub'da tartışma başlat",
         'settings.aiAdvanced': "Gelişmiş",
         'settings.aiRequestTimeout': "İstek zaman aşımı",

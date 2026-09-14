@@ -168,6 +168,19 @@ export function FeedbackSettingsModal({
                                 </Text>
                                 <Text style={[styles.feedbackModalSubtitle, { color: tc.secondaryText }]}>
                                     {tr('settings.feedbackDesc')}
+                                    {onOpenGitHub && status !== 'sent' ? (
+                                        <>
+                                            {' '}{tr('settings.feedbackGitHubDesc').split('{channel}')[0]}
+                                            <Text
+                                                accessibilityRole="link"
+                                                onPress={() => onOpenGitHub(category)}
+                                                style={{ color: tc.tint, textDecorationLine: 'underline' }}
+                                            >
+                                                {tr(category === 'other' ? 'settings.feedbackOpenGitHubDiscussion' : 'settings.feedbackOpenGitHubIssue')}
+                                            </Text>
+                                            {tr('settings.feedbackGitHubDesc').split('{channel}')[1]}
+                                        </>
+                                    ) : null}
                                 </Text>
                             </View>
                             <TouchableOpacity
@@ -205,23 +218,6 @@ export function FeedbackSettingsModal({
                                 showsVerticalScrollIndicator
                                 {...androidScrollViewFocusProps}
                             >
-                                {onOpenGitHub ? (
-                                    <View style={styles.feedbackGitHubOption}>
-                                        <TouchableOpacity
-                                            accessibilityRole="link"
-                                            accessibilityHint={tr('settings.feedbackGitHubDesc')}
-                                            onPress={() => onOpenGitHub(category)}
-                                            style={styles.feedbackNoticeLink}
-                                        >
-                                            <Text style={[styles.feedbackNoticeLinkText, { color: tc.tint }]}>
-                                                {tr(category === 'other' ? 'settings.feedbackOpenGitHubDiscussion' : 'settings.feedbackOpenGitHubIssue')}
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <Text style={[styles.feedbackGitHubHint, { color: tc.secondaryText }]}>
-                                            {tr('settings.feedbackGitHubDesc')}
-                                        </Text>
-                                    </View>
-                                ) : null}
                                 <Text style={[styles.feedbackFieldLabel, { color: tc.secondaryText }]}>
                                     {tr('settings.feedbackCategory')}
                                 </Text>
