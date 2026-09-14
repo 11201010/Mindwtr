@@ -19,10 +19,11 @@ for (const style of ['standard', 'vim'] as const) {
     } else {
       await nav.click();
     }
-    await nav.focus();
-    await page.keyboard.press(style === 'vim' ? 'l' : 'ArrowRight');
     const alpha = page.locator('[data-project-navigation-item][data-project-id="alpha"]');
     const beta = page.locator('[data-project-navigation-item][data-project-id="beta"]');
+    await expect(alpha).toBeVisible();
+    await nav.focus();
+    await page.keyboard.press(style === 'vim' ? 'l' : 'ArrowRight');
     await expect(alpha).toBeFocused();
     await expect(page.locator('[data-project-workspace] [data-task-id="alpha-task"]')).toBeVisible();
     await page.keyboard.press(style === 'vim' ? 'j' : 'ArrowDown');
