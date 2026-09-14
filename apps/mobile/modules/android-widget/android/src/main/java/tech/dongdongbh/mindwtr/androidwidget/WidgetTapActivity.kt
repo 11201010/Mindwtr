@@ -8,8 +8,8 @@ import android.os.Bundle
  * Invisible trampoline behind the widget rows' one mutable PendingIntent
  * template: the row's fill-in data says what to do. An app deep link opens
  * MainActivity; `mindwtr-widget://task/<taskId>` opens the task sheet and
- * `mindwtr-widget://checkoff/<taskId>` toggles the task's
- * pending check-off, and undoes it once the completion is queued. An activity (not a receiver) so the launch is never a
+ * `mindwtr-widget://checkoff/<taskId>` toggles the task's pending check-off
+ * during the short Undo window. An activity (not a receiver) so the launch is never a
  * background activity start. Finishes inside onCreate.
  */
 class WidgetTapActivity : Activity() {
@@ -33,12 +33,16 @@ class WidgetTapActivity : Activity() {
       data.scheme == CHECKOFF_SCHEME && data.host == CHECKOFF_HOST -> {
         val taskId = data.lastPathSegment?.trim().orEmpty()
         if (taskId.isNotEmpty()) {
-          // Already queued: the ring takes it back off the queue. Only an
-          // activity may redraw a collection widget (a background Handler
-          // breaks every later update on Android 16).
-          if (CheckoffStore.isCommitted(this, taskId)) CheckoffStore.undo(this, taskId)
-          else CheckoffStore.toggle(this, taskId)
-          WidgetRenderer.refreshAll(this)
+          when (CheckoffStore.tapAction(this, taskId)) {
+            CheckoffStore.TapAction.TOGGLE_PENDING -> {
+              CheckoffStore.toggle(this, taskId)
+              WidgetRenderer.refreshAll(this)
+            }
+            // A stale tap after the durable queue boundary may only reconcile
+            // presentation; it must never remove the queued command.
+            CheckoffStore.TapAction.RECONCILE -> CheckoffStore.reconcileFromInteraction(this)
+            CheckoffStore.TapAction.NO_OP -> Unit
+          }
         }
       }
       data.scheme == "mindwtr" -> startActivity(WidgetRenderer.appIntent(this, data.toString()))

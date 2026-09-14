@@ -27,6 +27,7 @@ class TasksWidgetFactory(
   private val context: Context,
   private val kind: WidgetKind,
   private val appWidgetId: Int,
+  snapshot: WidgetPayload? = null,
 ) : RemoteViewsService.RemoteViewsFactory {
   /** One list row: a section header or a task. */
   sealed class Row {
@@ -37,12 +38,23 @@ class TasksWidgetFactory(
   private var payload: WidgetPayload = WidgetPayload.EMPTY
   private var rows: List<Row> = emptyList()
 
+  init {
+    snapshot?.let { setSnapshot(it) }
+  }
+
   override fun onCreate() = reload()
 
   override fun onDataSetChanged() = reload()
 
   private fun reload() {
-    payload = WidgetPayloadStore.read(context)
+    setSnapshot(WidgetPayloadStore.read(context)
+      .displaySnapshot(CheckoffStore.committed(context))
+      .payload)
+  }
+
+  /** Direct collections and the legacy service share the exact same rows. */
+  private fun setSnapshot(snapshot: WidgetPayload) {
+    payload = snapshot
     rows = when (kind) {
       WidgetKind.TASKS -> buildRows(payload.listFor(WidgetListStore.read(context, appWidgetId)))
       WidgetKind.COMPACT -> buildRows(payload.listFor(payload.compactListId()), compact = true)
@@ -84,8 +96,9 @@ class TasksWidgetFactory(
       if (struck) R.drawable.mindwtr_widget_circle else R.drawable.mindwtr_widget_ring,
     )
     views.setInt(R.id.mindwtr_widget_item_priority, "setColorFilter", item.priorityColor ?: mutedText)
-    // The ring always acts: it checks the task off, undoes it inside the window,
-    // and un-queues it after that. Without an action here the tap fell through
+    // The ring checks the task off or undoes it only inside the short window;
+    // later stale taps reconcile presentation without touching the queue.
+    // Without an action here the tap fell through
     // to the row and opened the app, which read as "check-off does nothing".
     if (item.id.isNotEmpty()) {
       views.setOnClickFillInIntent(R.id.mindwtr_widget_item_ring_target, Intent().setData(Uri.parse(WidgetTapActivity.checkoffUri(item.id))))

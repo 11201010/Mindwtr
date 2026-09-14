@@ -278,6 +278,21 @@ describe('widget-service', () => {
         });
     });
 
+    it('logs delayed native checkoff hides after the bridge reports a successful partial refresh', async () => {
+        mockAndroidWidgetUpdateWidgets.mockReturnValue({
+            legacyWidgetCount: 0,
+            compactWidgetCount: 0,
+            hiddenCheckoffCount: 2,
+        });
+
+        expect(await updateMobileWidgetFromData(buildData(3))).toBe(true);
+
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget check-offs hidden after Undo', {
+            scope: 'widget',
+            extra: { releaseCheck: 'v1.3.1/widget-checkoff-hide', count: '2' },
+        });
+    });
+
     it('carries every GTD list before placement for Compact fallback and offline list switching (#1211)', async () => {
         const data = buildData(2);
         data.tasks.push({ id: 'w1', title: 'Waiting on Sam', status: 'waiting', tags: [], contexts: [], createdAt: data.tasks[0].createdAt, updatedAt: data.tasks[0].updatedAt });

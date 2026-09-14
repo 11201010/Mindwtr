@@ -28,6 +28,20 @@ explicit choice of Inbox, Today, Next, Waiting, Someday, or a project remains
 selected across payload updates. Check-offs append queue commands for the app
 to apply through the normal store; widget code never writes SQLite.
 
+A check-off stays visible and struck through during the three-second Undo
+window, whose pending map is persisted with `AtomicFile`. After the completion command is durably published, Tasks and Compact
+hide every cached occurrence locally, remove empty section headings, and let
+the remaining rows fill the widget. Compact chooses its Focus/Next Actions
+fallback after this filtering, so its header always matches its rows. The
+delayed path partially updates rows and header/count/empty chrome without
+replacing the row PendingIntent template. Android 12+ receives direct
+`RemoteCollectionItems` using the same row renderer as the legacy service;
+only older Android uses collection invalidation. Direct collections avoid
+Android 16's asynchronous conversion of the legacy service adapter. Queue failures keep the row pending and visible for a
+deterministic retry. The app still owns the eventual task completion through
+the normal pending-capture drain. A stale tap after publication only reconciles
+the hidden presentation; it never removes the queued completion.
+
 ## Compact widget
 
 The optional Compact style uses native RemoteViews with the simple v1.2.8
