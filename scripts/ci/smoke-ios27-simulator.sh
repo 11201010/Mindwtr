@@ -16,6 +16,9 @@ INFO_PLIST="$APP_PATH/Info.plist"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST")"
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO_PLIST")"
 JS_BUNDLE="$(find "$APP_PATH" -type f -name 'main.jsbundle' -print -quit)"
+URL_SCHEME="mindwtr"
+SCHEME_APPROVAL_DOMAIN="com.apple.launchservices.schemeapproval"
+SCHEME_APPROVAL_KEY="com.apple.CoreSimulator.CoreSimulatorBridge-->${URL_SCHEME}"
 if [ -z "${JS_BUNDLE:-}" ] || [ ! -s "$JS_BUNDLE" ]; then
   echo "::error::Release app does not contain a non-empty main.jsbundle; the smoke test must not depend on Metro."
   exit 1
@@ -75,9 +78,65 @@ wait_for_marker_count() {
   return 1
 }
 
+approve_url_scheme() {
+  local evidence="$ARTIFACTS_DIR/simulator-scheme-approval.txt"
+  local approved_bundle_id
+  {
+    echo "approval_scope=github_actions_simulator"
+    echo "approval_action=write_single_scheme_binding"
+    echo "approval_domain=$SCHEME_APPROVAL_DOMAIN"
+    echo "approval_key=$SCHEME_APPROVAL_KEY"
+    echo "expected_bundle_id=$BUNDLE_ID"
+  } > "$evidence"
+
+  if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+    echo "approval_status=refused_outside_github_actions" >> "$evidence"
+    echo "::error::Automatic URL-scheme approval is restricted to the disposable GitHub Actions simulator."
+    return 1
+  fi
+
+  if ! xcrun simctl get_app_container "$SIMULATOR_UDID" "$BUNDLE_ID" app >/dev/null 2>&1; then
+    echo "approval_status=app_not_installed" >> "$evidence"
+    echo "::error::Cannot approve the URL scheme because $BUNDLE_ID is not installed on the selected simulator."
+    return 1
+  fi
+
+  # Use the selected simulator's preferences daemon. This changes one scheme
+  # binding on that disposable simulator, not the host defaults database.
+  if ! xcrun simctl spawn "$SIMULATOR_UDID" defaults write \
+    "$SCHEME_APPROVAL_DOMAIN" \
+    "$SCHEME_APPROVAL_KEY" \
+    -string "$BUNDLE_ID"; then
+    echo "approval_status=write_failed" >> "$evidence"
+    echo "::error::Could not preapprove the $URL_SCHEME URL scheme on the selected simulator."
+    return 1
+  fi
+
+  if ! approved_bundle_id="$(
+    xcrun simctl spawn "$SIMULATOR_UDID" defaults read \
+      "$SCHEME_APPROVAL_DOMAIN" \
+      "$SCHEME_APPROVAL_KEY" 2>/dev/null
+  )"; then
+    echo "approval_status=read_failed" >> "$evidence"
+    echo "::error::Could not read back the $URL_SCHEME URL-scheme approval."
+    return 1
+  fi
+  if [ "$approved_bundle_id" != "$BUNDLE_ID" ]; then
+    echo "approval_status=readback_mismatch" >> "$evidence"
+    echo "::error::The $URL_SCHEME URL-scheme approval did not resolve to the installed Mindwtr bundle."
+    return 1
+  fi
+
+  {
+    echo "approved_bundle_id=$approved_bundle_id"
+    echo "approval_status=verified"
+  } >> "$evidence"
+}
+
 xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"
+approve_url_scheme
 
 running_pid() {
   xcrun simctl spawn "$SIMULATOR_UDID" launchctl list 2>/dev/null \

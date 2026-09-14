@@ -96,22 +96,6 @@ const walkFiles = (directory, predicate) => {
   return matches;
 };
 
-const collectSceneDelegateNames = (value, names = []) => {
-  if (Array.isArray(value)) {
-    for (const item of value) collectSceneDelegateNames(item, names);
-    return names;
-  }
-  if (!value || typeof value !== 'object') return names;
-  for (const [key, child] of Object.entries(value)) {
-    if (key === 'UISceneDelegateClassName' && typeof child === 'string') {
-      names.push(child);
-    } else {
-      collectSceneDelegateNames(child, names);
-    }
-  }
-  return names;
-};
-
 const objectBlockAt = (source, start) => {
   const openingBrace = source.indexOf('{', start);
   if (openingBrace < 0) return null;
@@ -290,9 +274,15 @@ const validate = (iosDirectory) => {
   if (!launchScreenKeys.some((key) => infoPlist[key] !== undefined)) {
     fail(`Generated Info.plist has none of the iOS 27 launch screen keys: ${launchScreenKeys.join(', ')}.`);
   }
-  const delegates = collectSceneDelegateNames(infoPlist.UIApplicationSceneManifest);
-  if (!delegates.some((name) => name.endsWith(`.${expectedSceneDelegate}`) || name === expectedSceneDelegate)) {
-    fail(`UIApplicationSceneManifest does not point at ${expectedSceneDelegate}.`);
+  const manifest = infoPlist.UIApplicationSceneManifest;
+  if (manifest.UIApplicationSupportsMultipleScenes !== false) {
+    fail('UIApplicationSceneManifest must explicitly disable multiple scenes.');
+  }
+  const configurations = manifest.UISceneConfigurations?.UIWindowSceneSessionRoleApplication;
+  if (!Array.isArray(configurations) || configurations.length !== 1
+      || configurations[0]?.UISceneConfigurationName !== 'Default Configuration'
+      || configurations[0]?.UISceneDelegateClassName !== `$(PRODUCT_MODULE_NAME).${expectedSceneDelegate}`) {
+    fail(`UIApplicationSceneManifest does not point its single application configuration at $(PRODUCT_MODULE_NAME).${expectedSceneDelegate}.`);
   }
 
   const sceneSources = walkFiles(

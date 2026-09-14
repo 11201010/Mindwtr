@@ -11,7 +11,12 @@ export type IosSceneDiagnosticStage =
   | 'didEnterBackground'
   | 'willEnterForeground';
 
-export type IosSceneDeliveryKind = 'none' | 'url' | 'userActivity' | 'shortcut';
+export type IosSceneDeliveryKind =
+  | 'none'
+  | 'url'
+  | 'userActivity'
+  | 'shortcut'
+  | 'notification';
 
 export interface IosSceneDiagnosticRecord {
   stage: IosSceneDiagnosticStage;
@@ -44,6 +49,7 @@ const allowedDeliveryKinds = new Set<IosSceneDeliveryKind>([
   'url',
   'userActivity',
   'shortcut',
+  'notification',
 ]);
 
 let cachedNativeModule: MindwtrIosSceneLifecycleNativeModule | null | undefined;

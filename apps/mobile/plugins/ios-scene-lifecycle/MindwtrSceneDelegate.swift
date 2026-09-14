@@ -5,6 +5,7 @@ private enum MindwtrSceneDeliveryKind: String {
     case url
     case userActivity
     case shortcut
+    case notification
 }
 
 public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -148,6 +149,18 @@ public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
         launchOptions: inout [UIApplication.LaunchOptionsKey: Any],
         appDelegate: AppDelegate
     ) -> MindwtrSceneDeliveryKind {
+        if let response = connectionOptions.notificationResponse {
+            // A scene-based cold launch receives this response here instead of
+            // through a synthetic UNUserNotificationCenter delegate callback.
+            // RNAlarm remains the single owner of action side effects and holds
+            // the normalized payload until the normal root handler is ready.
+            RnAlarmNotification.didReceiveNotificationResponse(
+                response,
+                cacheForColdStart: true
+            )
+            return .notification
+        }
+
         if let shortcutItem = connectionOptions.shortcutItem,
            let destinationURL = quickActionURL(shortcutItem) {
             launchOptions[.shortcutItem] = shortcutItem
@@ -182,6 +195,15 @@ public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
         _ connectionOptions: UIScene.ConnectionOptions,
         appDelegate: AppDelegate
     ) {
+        if let response = connectionOptions.notificationResponse {
+            // Reconnect is a live delivery. Use RNAlarm's existing non-caching
+            // entrypoint so its event reaches JS once and cannot replay later.
+            RnAlarmNotification.didReceiveNotificationResponse(response)
+            appDelegate.mindwtrRecordSceneDiagnostic(
+                stage: "warmDelivery",
+                deliveryKind: MindwtrSceneDeliveryKind.notification.rawValue
+            )
+        }
         for context in connectionOptions.urlContexts {
             _ = appDelegate.mindwtrForwardWarmURL(
                 context.url,

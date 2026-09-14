@@ -955,6 +955,21 @@ const getIosSourceCandidates = (projectRoot) => [
   path.join(projectRoot, '..', '..', 'node_modules', 'react-native-alarm-notification', 'ios', 'RnAlarmNotification.m'),
 ];
 
+const getIosHeaderCandidates = (projectRoot) => [
+  path.join(projectRoot, 'node_modules', 'react-native-alarm-notification', 'ios', 'RnAlarmNotification.h'),
+  path.join(projectRoot, '..', '..', 'node_modules', 'react-native-alarm-notification', 'ios', 'RnAlarmNotification.h'),
+];
+
+const applyAlarmIosColdStartHeaderPatchToSource = (original) => {
+  if (original.includes('cacheForColdStart:(BOOL)cacheForColdStart')) return original;
+  return original.replace(
+    '+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response API_AVAILABLE(ios(10.0));',
+    `+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response API_AVAILABLE(ios(10.0));
++ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response
+                     cacheForColdStart:(BOOL)cacheForColdStart API_AVAILABLE(ios(10.0));`
+  );
+};
+
 const applyAlarmIosCompleteActionPatchToSource = (original) => {
   let next = original;
 
@@ -1028,6 +1043,12 @@ RCT_EXPORT_METHOD(consumePendingNotificationOpenPayload:(RCTPromiseResolveBlock)
     /\+ \(void\)didReceiveNotificationResponse:\(UNNotificationResponse \*\)response\nAPI_AVAILABLE\(ios\(10\.0\)\) \{[\s\S]*?\n\}\n\n- \(void\)startObserving/,
     `+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response
 API_AVAILABLE(ios(10.0)) {
+    [RnAlarmNotification didReceiveNotificationResponse:response cacheForColdStart:NO];
+}
+
++ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response
+                     cacheForColdStart:(BOOL)cacheForColdStart
+API_AVAILABLE(ios(10.0)) {
     NSLog(@"show notification");
     [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
     NSString *mindwtrActionIdentifier = @"open";
@@ -1055,7 +1076,7 @@ API_AVAILABLE(ios(10.0)) {
     }
 
     NSDictionary *formattedNotification = RCTFormatUNNotificationWithAction(response.notification, mindwtrActionIdentifier);
-    if ([mindwtrActionIdentifier isEqualToString:@"complete"]) {
+    if (cacheForColdStart || [mindwtrActionIdentifier isEqualToString:@"complete"]) {
         cachePendingNotificationOpenPayload(formattedNotification);
     }
     [[NSNotificationCenter defaultCenter] postNotificationName:kLocalNotificationReceived
@@ -1437,6 +1458,15 @@ const PATCHES = [
     appliedMarker: 'RCT_EXPORT_METHOD(consumePendingNotificationOpenPayload',
   },
   {
+    id: 'alarm-ios-cold-start-header',
+    platform: 'ios',
+    getCandidates: getIosHeaderCandidates,
+    transform: applyAlarmIosColdStartHeaderPatchToSource,
+    required: true,
+    firstMatchOnly: true,
+    appliedMarker: 'cacheForColdStart:(BOOL)cacheForColdStart',
+  },
+  {
     id: 'alarm-ios-unique-identifier',
     platform: 'ios',
     getCandidates: iosSourceCandidates,
@@ -1644,6 +1674,7 @@ module.exports.__testables = {
   patchFile,
   getAndroidSourceCandidates,
   getIosSourceCandidates,
+  getIosHeaderCandidates,
   PATCHES,
   applyPatches,
 };

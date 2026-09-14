@@ -5,6 +5,8 @@ const path = require('path');
 const plugin = require('./ios-scene-lifecycle');
 
 const {
+  ALARM_NOTIFICATION_IMPORT,
+  BRIDGING_HEADER_FILE,
   LEGACY_ROOT_STARTUP,
   MIGRATION_MARKER,
   SCENE_CONFIGURATION_NAME,
@@ -12,6 +14,7 @@ const {
   SCENE_DELEGATE_FILE,
   SCENE_ROLE,
   migrateAppDelegate,
+  migrateBridgingHeader,
 } = plugin.__testables;
 
 const appDelegateFixture = `import Expo
@@ -77,6 +80,21 @@ describe('ios-scene-lifecycle', () => {
     expect(sceneStart.indexOf('factory.startReactNative(')).toBeLessThan(
       sceneStart.indexOf('mindwtrCompleteDeferredLaunchSubscriber()'),
     );
+    const deferredLaunch = migrated.slice(
+      migrated.indexOf('private func mindwtrCompleteDeferredLaunchSubscriber'),
+      migrated.indexOf('func mindwtrLaunchOptionsForScene'),
+    );
+    expect(deferredLaunch.indexOf('didFinishLaunchingWithOptions:')).toBeLessThan(
+      deferredLaunch.indexOf('open: coldURL'),
+    );
+    expect(deferredLaunch).toContain('mindwtrPendingDevLauncherColdURL = nil');
+    const coldURLSeed = migrated.slice(
+      migrated.indexOf('func mindwtrSeedColdURL'),
+      migrated.indexOf('func mindwtrSeedColdUserActivity'),
+    );
+    expect(coldURLSeed).toContain('mindwtrPendingDevLauncherColdURL = url');
+    expect(coldURLSeed).toContain('named: "LinkingAppDelegateSubscriber"');
+    expect(coldURLSeed).not.toContain('mindwtrForwardWarmURL');
     expect(migrated).toContain('@objc(drainMindwtrSceneDiagnostics)');
     expect(migrated).toContain('var mindwtrHasStartedReactNative: Bool');
     expect(migrateAppDelegate(migrated)).toBe(migrated);
@@ -87,6 +105,15 @@ describe('ios-scene-lifecycle', () => {
     expect(() => migrateAppDelegate(withoutLegacyRoot)).toThrow(
       'Unsupported Expo AppDelegate template: expected one legacy React root startup',
     );
+  });
+
+  it('exposes the maintained RNAlarm cold-start API to generated Swift once', () => {
+    const fixture = '// Generated bridging header\n';
+    const migrated = migrateBridgingHeader(fixture);
+
+    expect(BRIDGING_HEADER_FILE).toBe('Mindwtr-Bridging-Header.h');
+    expect(migrated).toContain(ALARM_NOTIFICATION_IMPORT);
+    expect(migrateBridgingHeader(migrated)).toBe(migrated);
   });
 
   it('ships a single-scene host delegate with cold and warm delivery owners', () => {
@@ -104,6 +131,8 @@ describe('ios-scene-lifecycle', () => {
     expect(source).toContain('launchOptions[.url] = context.url');
     expect(source).toContain('launchOptions[.userActivityDictionary]');
     expect(source).toContain('connectionOptions.shortcutItem');
+    expect(source).toContain('connectionOptions.notificationResponse');
+    expect(source).toContain('cacheForColdStart: true');
     expect(source).toContain('mindwtrForwardWarmURL(');
     expect(source).toContain('mindwtrForwardWarmUserActivity(');
     expect(source).toContain('if appDelegate.mindwtrHasStartedReactNative');
@@ -113,6 +142,21 @@ describe('ios-scene-lifecycle', () => {
     expect(source).not.toContain('application.open(');
     expect(source).not.toContain('asyncAfter');
     expect(source).not.toContain('UIScreen.main');
+
+    const coldDelivery = source.slice(
+      source.indexOf('private func prepareColdDelivery'),
+      source.indexOf('private func forwardReconnectDeliveries'),
+    );
+    expect(coldDelivery).toContain('RnAlarmNotification.didReceiveNotificationResponse(');
+    expect(coldDelivery).toContain('cacheForColdStart: true');
+    const reconnectDelivery = source.slice(
+      source.indexOf('private func forwardReconnectDeliveries'),
+      source.indexOf('private func openOptions'),
+    );
+    expect(reconnectDelivery).toContain(
+      'RnAlarmNotification.didReceiveNotificationResponse(response)',
+    );
+    expect(reconnectDelivery).not.toContain('cacheForColdStart: true');
   });
 
   it('forwards scene lifecycle to Expo subscribers without synthesizing app notifications', () => {

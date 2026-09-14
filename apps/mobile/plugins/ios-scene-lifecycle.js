@@ -9,6 +9,8 @@ const {
 } = require('@expo/config-plugins');
 
 const SCENE_DELEGATE_FILE = 'MindwtrSceneDelegate.swift';
+const BRIDGING_HEADER_FILE = 'Mindwtr-Bridging-Header.h';
+const ALARM_NOTIFICATION_IMPORT = '#import <RnAlarmNotification.h>';
 const SCENE_DELEGATE_CLASS = '$(PRODUCT_MODULE_NAME).MindwtrSceneDelegate';
 const SCENE_CONFIGURATION_NAME = 'Default Configuration';
 const SCENE_ROLE = 'UIWindowSceneSessionRoleApplication';
@@ -33,6 +35,8 @@ const SCENE_ROOT_STARTUP = `#if os(iOS)
 const APP_DELEGATE_STATE = `  // ${MIGRATION_MARKER}
   private var mindwtrApplicationLaunchOptions: [UIApplication.LaunchOptionsKey: Any]?
   private var mindwtrDeferredDevLauncherSubscriber: ExpoAppDelegateSubscriberProtocol?
+  private var mindwtrPendingDevLauncherColdURL: URL?
+  private var mindwtrPendingDevLauncherColdURLOptions: [UIApplication.OpenURLOptionsKey: Any] = [:]
   private var mindwtrReactNativeStarted = false
   private var mindwtrSceneDiagnostics: [[String: Any]] = []
   private var mindwtrSceneDiagnosticCounts: [String: Int] = [:]
@@ -82,11 +86,27 @@ const APP_DELEGATE_METHODS = `  // MINDWTR_SCENE_LIFECYCLE_METHODS_BEGIN
 
   private func mindwtrCompleteDeferredLaunchSubscriber() {
     guard let subscriber = mindwtrDeferredDevLauncherSubscriber else { return }
-    mindwtrDeferredDevLauncherSubscriber = nil
     _ = subscriber.application?(
       UIApplication.shared,
       didFinishLaunchingWithOptions: mindwtrApplicationLaunchOptions
     )
+
+    // Expo Dev Launcher returns early from autoSetupStart when launch options
+    // contain a URL. Re-deliver that cold URL only to its subscriber, after
+    // autoSetupPrepare and autoSetupStart, so it can populate its pending-deep-
+    // link registry without creating a duplicate warm React Native delivery.
+    let coldURL = mindwtrPendingDevLauncherColdURL
+    let coldURLOptions = mindwtrPendingDevLauncherColdURLOptions
+    mindwtrDeferredDevLauncherSubscriber = nil
+    mindwtrPendingDevLauncherColdURL = nil
+    mindwtrPendingDevLauncherColdURLOptions = [:]
+    if let coldURL {
+      _ = subscriber.application?(
+        UIApplication.shared,
+        open: coldURL,
+        options: coldURLOptions
+      )
+    }
   }
 
   func mindwtrLaunchOptionsForScene() -> [UIApplication.LaunchOptionsKey: Any] {
@@ -125,6 +145,10 @@ const APP_DELEGATE_METHODS = `  // MINDWTR_SCENE_LIFECYCLE_METHODS_BEGIN
     _ url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any]
   ) {
+    if mindwtrDeferredDevLauncherSubscriber != nil {
+      mindwtrPendingDevLauncherColdURL = url
+      mindwtrPendingDevLauncherColdURLOptions = options
+    }
     guard let subscriber = mindwtrSubscriber(named: "LinkingAppDelegateSubscriber") else {
       return
     }
@@ -248,6 +272,11 @@ const migrateAppDelegate = (contents) => {
   return next;
 };
 
+const migrateBridgingHeader = (contents) => {
+  if (contents.includes(ALARM_NOTIFICATION_IMPORT)) return contents;
+  return `${contents.trimEnd()}\n\n${ALARM_NOTIFICATION_IMPORT}\n`;
+};
+
 const addSceneManifest = (config) =>
   withInfoPlist(config, (cfg) => {
     cfg.modResults.UIApplicationSceneManifest = {
@@ -303,11 +332,21 @@ const migrateGeneratedAppDelegate = (config) =>
         appName,
         'AppDelegate.swift'
       );
+      const bridgingHeaderPath = path.join(
+        cfg.modRequest.platformProjectRoot,
+        appName,
+        BRIDGING_HEADER_FILE
+      );
       if (!fs.existsSync(appDelegatePath)) {
         throw new Error(`[ios-scene-lifecycle] Missing generated AppDelegate: ${appDelegatePath}`);
       }
+      if (!fs.existsSync(bridgingHeaderPath)) {
+        throw new Error(`[ios-scene-lifecycle] Missing generated bridging header: ${bridgingHeaderPath}`);
+      }
       const contents = fs.readFileSync(appDelegatePath, 'utf8');
       fs.writeFileSync(appDelegatePath, migrateAppDelegate(contents));
+      const bridgingHeader = fs.readFileSync(bridgingHeaderPath, 'utf8');
+      fs.writeFileSync(bridgingHeaderPath, migrateBridgingHeader(bridgingHeader));
       return cfg;
     },
   ]);
@@ -324,6 +363,8 @@ module.exports = withIosSceneLifecycle;
 module.exports.__testables = {
   APP_DELEGATE_METHODS,
   APP_DELEGATE_STATE,
+  ALARM_NOTIFICATION_IMPORT,
+  BRIDGING_HEADER_FILE,
   LEGACY_ROOT_STARTUP,
   MIGRATION_MARKER,
   SCENE_CONFIGURATION_NAME,
@@ -332,5 +373,6 @@ module.exports.__testables = {
   SCENE_ROLE,
   SCENE_ROOT_STARTUP,
   migrateAppDelegate,
+  migrateBridgingHeader,
   replaceExactlyOnce,
 };

@@ -21,6 +21,7 @@ const infoPlist = (
     <key>UIApplicationSupportsMultipleScenes</key><false/>
     <key>UISceneConfigurations</key><dict>
       <key>UIWindowSceneSessionRoleApplication</key><array><dict>
+        <key>UISceneConfigurationName</key><string>Default Configuration</string>
         <key>UISceneDelegateClassName</key><string>${delegate}</string>
       </dict></array>
     </dict>
@@ -85,7 +86,9 @@ const makeFixture = (options = {}) => {
   mkdirSync(projectDirectory, { recursive: true });
   writeFileSync(
     join(app, 'Info.plist'),
-    infoPlist(options.delegate, options.launchScreen !== false),
+    infoPlist(options.delegate, options.launchScreen !== false)
+      .replace('UIWindowSceneSessionRoleApplication', options.role ?? 'UIWindowSceneSessionRoleApplication')
+      .replace('<false/>', options.multipleScenes ? '<true/>' : '<false/>'),
   );
   writeFileSync(join(app, 'MindwtrSceneDelegate.swift'), sceneDelegate);
   writeFileSync(join(app, 'AppDelegate.swift'), appDelegate(options.launchBody));
@@ -110,6 +113,9 @@ test('accepts scene-owned React startup and the preserved iOS 16.4 host floor', 
 
 test.each([
   ['a wrong manifest delegate', { delegate: '$(PRODUCT_MODULE_NAME).OtherSceneDelegate' }, 'does not point'],
+  ['a wrong module-qualified delegate', { delegate: 'WrongModule.MindwtrSceneDelegate' }, 'does not point'],
+  ['a non-application scene role', { role: 'UIWindowSceneSessionRoleExternalDisplay' }, 'does not point'],
+  ['multiple scenes', { multipleScenes: true }, 'disable multiple scenes'],
   ['a missing launch screen declaration', { launchScreen: false }, 'launch screen keys'],
   ['an uncompiled scene source', { includeSource: false }, 'not compiled'],
   ['a changed deployment floor', { deploymentTarget: '17.0' }, 'deployment floor'],

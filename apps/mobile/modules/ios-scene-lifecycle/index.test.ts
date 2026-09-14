@@ -34,6 +34,7 @@ describe('ios-scene-lifecycle bridge', () => {
         url: 'mindwtr:///capture?task=private',
         title: 'private',
       },
+      { stage: 'coldDelivery', deliveryKind: 'notification', count: 1 },
       { stage: 'unknown', deliveryKind: 'url', count: 2 },
       { stage: 'warmDelivery', deliveryKind: 'url', count: 0 },
     ]);
@@ -41,6 +42,7 @@ describe('ios-scene-lifecycle bridge', () => {
 
     expect(bridge.drainIosSceneDiagnostics()).toEqual([
       { stage: 'coldDelivery', deliveryKind: 'url', count: 1 },
+      { stage: 'coldDelivery', deliveryKind: 'notification', count: 1 },
     ]);
   });
 

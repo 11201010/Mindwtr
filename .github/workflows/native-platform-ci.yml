@@ -497,7 +497,6 @@ jobs:
           echo "Using iPhoneOS SDK ${IOS_SDK_VERSION}"
 
       - name: Typecheck iOS widgets at the minimum deployment target
-        if: matrix.lane == 'xcode26'
         run: |
           xcrun swiftc \
             -typecheck \
@@ -510,7 +509,6 @@ jobs:
             apps/mobile/modules/ios-widget/ios/MindwtrWidgetActionStore.swift
 
       - name: Typecheck Watch receiver against the iOS SDK
-        if: matrix.lane == 'xcode26'
         run: |
           xcrun swiftc \
             -typecheck \
@@ -525,27 +523,21 @@ jobs:
             apps/mobile/modules/watch-connectivity/ios/MindwtrWatchConnectivityReceiver.swift
 
       - name: Run attachment installer Swift recovery tests
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/attachment-file-installer/ios
 
       - name: Run File Sync stable-lock Swift tests
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/sync-file-lock/ios
 
       - name: Run CloudKit attachment error classifier tests
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/cloudkit-sync
 
       - name: Run Watch payload and receipt recovery tests
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/watch-connectivity
 
       - name: Test iOS widget durable action queue
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/modules/ios-widget
 
       - name: Run Watch outbox retry tests
-        if: matrix.lane == 'xcode26'
         run: swift test --package-path apps/mobile/targets/watch
 
       - name: Generate iOS native project
