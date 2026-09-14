@@ -202,7 +202,7 @@ describe('widget-data', () => {
     it('builds a saved-filter list with the app\'s own predicate and offers it to the chooser (#1173)', () => {
         const now = new Date().toISOString();
         const savedFilters = [
-            { id: 'f1', name: 'Errands', view: 'focus' as const, criteria: { contexts: ['@errand'] }, sortBy: 'title' as const, createdAt: now, updatedAt: now },
+            { id: 'f/1 ?', name: 'Errands', view: 'focus' as const, criteria: { contexts: ['@errand'] }, sortBy: 'title' as const, createdAt: now, updatedAt: now },
             { id: 'f2', name: 'Deleted', view: 'focus' as const, criteria: {}, createdAt: now, updatedAt: now, deletedAt: now },
         ];
         const data: AppData = {
@@ -215,10 +215,11 @@ describe('widget-data', () => {
             ],
         };
 
-        const payload = buildWidgetPayload(data, 'en', { maxItems: 5, listIds: ['filter:f1', 'filter:gone'] });
-        expect(payload.savedFilters).toEqual([{ id: 'f1', name: 'Errands' }]);
-        expect(payload.lists['filter:f1'].title).toBe('Errands');
-        expect(payload.lists['filter:f1'].items.map((item) => item.title)).toEqual(['Alpha errand', 'Zebra errand']);
+        const payload = buildWidgetPayload(data, 'en', { maxItems: 5, listIds: ['filter:f/1 ?', 'filter:gone'] });
+        expect(payload.savedFilters).toEqual([{ id: 'f/1 ?', name: 'Errands' }]);
+        expect(payload.lists['filter:f/1 ?'].title).toBe('Errands');
+        expect(payload.lists['filter:f/1 ?'].items.map((item) => item.title)).toEqual(['Alpha errand', 'Zebra errand']);
+        expect(payload.lists['filter:f/1 ?'].openUri).toBe('mindwtr:///widget-list/filter%3Af%2F1%20%3F');
         // A filter that no longer exists builds no list; the widget falls back to Focus.
         expect(payload.lists['filter:gone']).toBeUndefined();
     });
@@ -378,6 +379,9 @@ describe('widget-data', () => {
             'Eingang: 0 · +15 Mehr',
         ]);
         expect(projected[0].palette.background).toBe('#3B4252');
+        expect(projection.getTaskList('focus')?.tasks).toHaveLength(65);
+        expect(projection.getTaskList('filter:office')?.tasks).toHaveLength(65);
+        expect(projection.getTaskList('missing')).toBeNull();
         expect(JSON.stringify(projected)).not.toContain('Archived task');
         expect(JSON.stringify(projected)).not.toContain('Deleted project task');
     });
@@ -413,9 +417,21 @@ describe('widget-data', () => {
         expect(payload.lists.focus.items).toEqual([]);
         expect(payload.lists.focus.sections).toEqual([]);
         expect(payload.lists.next.items.map((item) => item.title)).toEqual(['Test 2', 'Test1']);
+        expect(payload.lists.focus.openUri).toBe('mindwtr:///focus');
+        expect(payload.lists.next.openUri).toBe('mindwtr:///widget-list/next');
         expect(payload.focusedCount).toBe(0);
         expect(payload.subtitle).toBe('Inbox: 0');
         expect(payload.emptyMessage).toBe('No tasks found');
+    });
+
+    it('publishes canonical direct routes for fixed lists that own screens', () => {
+        const payload = buildWidgetPayload(baseData, 'en', {
+            listIds: ['inbox', 'waiting', 'someday'],
+        });
+        expect(payload.lists.inbox.openUri).toBe('mindwtr:///inbox');
+        expect(payload.lists.waiting.openUri).toBe('mindwtr:///waiting');
+        expect(payload.lists.someday.openUri).toBe('mindwtr:///someday');
+        expect(payload.chooseListLabel).toBe('Change');
     });
 
     it('keeps the widget palette aligned with Sepia theme settings', () => {

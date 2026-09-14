@@ -24,8 +24,12 @@ intent.
 
 The Tasks widget reads optional payload sections and supports a list chooser.
 Its default Focus projection combines Today's Focus and Today. A user's
-explicit choice of Inbox, Today, Next, Waiting, Someday, or a project remains
-selected across payload updates. Check-offs append queue commands for the app
+explicit choice of Focus, Inbox, Next Actions, Waiting, Someday, or a saved
+filter remains selected across payload updates. The title and empty state open
+the displayed list in the app; a separate 44dp chevron target opens the native
+chooser, and the plus remains capture. Each navigation PendingIntent is scoped
+by widget id and list URI so placed widgets cannot replace one another's route.
+Check-offs append queue commands for the app
 to apply through the normal store; widget code never writes SQLite.
 
 A check-off stays visible and struck through during the three-second Undo
@@ -54,6 +58,20 @@ headings, metadata, or inline checkboxes. Task taps open the existing native det
 `QuickCaptureActivity` over the launcher and durably queues the new task
 without opening the main app. Both styles share the payload, theme, refresh,
 and pending-capture paths; no React Native widget rendering dependency is used.
+Its title and empty state open the list Compact actually displays, including
+the post-filter Next Actions fallback; delayed partial row updates refresh this
+link together with the header.
+
+List payloads may provide a validated hostless `mindwtr:///...` `openUri`.
+Legacy Focus, Inbox, Waiting, and Someday payloads map to their existing app
+routes. Next Actions and saved-filter ids map to the shared
+`/widget-list/<encoded-list-id>` destination; unknown or malformed ids fall
+back to Focus rather than becoming arbitrary paths.
+
+The Tasks header uses the same opaque day/night or custom-palette background
+as its body. The divider and plus retain their subtle border/accent roles, and
+the separate chooser chevron follows the muted-text token for contrast instead
+of retaining a fixed or semi-transparent accent tint.
 
 Every Android snapshot includes bounded Focus, Inbox, Next Actions, Waiting,
 and Someday lists, even before a Tasks widget is placed. After the app has

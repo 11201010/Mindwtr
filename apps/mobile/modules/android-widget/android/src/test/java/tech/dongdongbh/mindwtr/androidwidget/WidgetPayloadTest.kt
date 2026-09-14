@@ -72,7 +72,6 @@ class WidgetPayloadTest {
     assertEquals("Saturday, Sep 6", payload.dateLabel)
     assertEquals(0xFF374151.toInt(), payload.palette!!.border)
     assertEquals(0xFFF59E0B.toInt(), payload.palette!!.warning)
-    assertEquals(0x2E2563EB, payload.palette!!.headerWash)
     assertNull(payload.sections[1].items[0].contextLabel)
     val rows = TasksWidgetFactory.buildRows(WidgetPayload.ListPayload("", null, payload.sections, payload.items))
     assertEquals(4, rows.size)
@@ -271,6 +270,32 @@ class WidgetPayloadTest {
   }
 
   @Test
+  fun listOpenUrisAcceptOnlyHostlessMindwtrRoutes() {
+    val root = JSONObject(sample)
+    root.put("lists", JSONObject()
+      .put("focus", listPayload("Focus", openUri = "mindwtr:///focus"))
+      .put("inbox", listPayload("Inbox", openUri = "https://example.com/inbox"))
+      .put("waiting", listPayload("Waiting", openUri = "mindwtr://evil.example/waiting"))
+      .put("someday", listPayload("Someday", openUri = "mindwtr:opaque"))
+      .put("next", listPayload("Next", openUri = "mindwtr:///%ZZ"))
+      .put("filter:abc", listPayload("Filter", openUri = "mindwtr:///settings"))
+      .put("filter:good", listPayload("Good filter", openUri = "mindwtr:///widget-list/filter%3Agood")))
+
+    val payload = WidgetPayload.parse(root.toString())!!
+
+    assertEquals("mindwtr:///focus", payload.lists.getValue("focus").openUri)
+    assertNull(payload.lists.getValue("inbox").openUri)
+    assertNull(payload.lists.getValue("waiting").openUri)
+    assertNull(payload.lists.getValue("someday").openUri)
+    assertNull(payload.lists.getValue("next").openUri)
+    assertNull(payload.lists.getValue("filter:abc").openUri)
+    assertEquals("mindwtr:///widget-list/filter%3Agood", payload.lists.getValue("filter:good").openUri)
+
+    root.getJSONObject("lists").put("inbox", listPayload("Inbox", openUri = "mindwtr:///widget-list/inbox"))
+    assertNull(WidgetPayload.parse(root.toString())!!.lists.getValue("inbox").openUri)
+  }
+
+  @Test
   fun aListPickedButNotPublishedYetKeepsItsOwnNameAndStaysEmpty() {
     val payload = WidgetPayload.parse(sample)!!
 
@@ -382,10 +407,12 @@ class WidgetPayloadTest {
     title: String,
     items: JSONArray = JSONArray(),
     sections: JSONArray = JSONArray(),
+    openUri: String? = null,
   ): JSONObject = JSONObject()
     .put("title", title)
     .put("items", items)
     .put("sections", sections)
+    .apply { if (openUri != null) put("openUri", openUri) }
 
   private fun items(vararg ids: String): JSONArray = JSONArray().apply {
     ids.forEach { put(JSONObject().put("id", it).put("title", it)) }

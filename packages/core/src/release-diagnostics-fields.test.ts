@@ -64,7 +64,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // widget-focus-today (curated Android widget publication, #1173)
     'focusItems', 'todayItems', 'totalItems',
     // android-widget-lists (bounded GTD snapshots and Compact fallback, #1211)
-    'nextItems', 'inboxItems',
+    'nextItems', 'inboxItems', 'listKind', 'available',
     // Apple Watch capture, command and Focus/timer snapshot (#1175)
     'action', 'focusCount', 'timerPhase', 'timerRunning',
     // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)

@@ -109,6 +109,7 @@ export default function AppLayout() {
         }}
       />
       <Stack.Screen name="saved-search/[id]" options={{ title: t('search.title') }} />
+      <Stack.Screen name="widget-list/[id]" options={{ title: t('nav.next') }} />
     </Stack>
   );
 }

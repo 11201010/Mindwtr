@@ -15,14 +15,23 @@ import android.widget.RemoteViews
 object WidgetRenderer {
   data class RefreshResult(val legacyWidgetCount: Int = 0, val compactWidgetCount: Int = 0)
   data class Chrome(val title: String, val subtitle: String?, val emptyMessage: String, val isEmpty: Boolean)
+  data class NavigationTarget(val requestCode: Int, val uri: String)
+  data class HeaderActions(
+    val openList: NavigationTarget,
+    val openTargetIds: List<Int>,
+    val openChooserRequestCode: Int?,
+    val openChooserTargetId: Int?,
+    val chooserContentDescription: String?,
+  )
+  data class TasksTheme(val headerSurface: Int, val chevron: Int)
   const val EXTRA_KIND = "tech.dongdongbh.mindwtr.androidwidget.kind"
-  private const val REQUEST_FOCUS = 4611
   private const val REQUEST_CAPTURE = 4612
   private const val REQUEST_ROW = 4613
   // Every widget needs its own chooser PendingIntent (extras alone do not make
   // two of them differ), so the request code carries the widget id, offset far
   // enough that it can never land on one of the fixed codes above.
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
+  private const val REQUEST_NAVIGATION_BASE = 2 shl 20
 
   fun refreshAll(context: Context): RefreshResult {
     val app = context.applicationContext
@@ -126,8 +135,8 @@ object WidgetRenderer {
     payload: WidgetPayload,
   ): RemoteViews = RemoteViews(context.packageName, kind.layoutRes).apply {
     when (kind) {
-      WidgetKind.TASKS -> applyTasksChrome(this, tasksChrome(payload, WidgetListStore.read(context, appWidgetId)))
-      WidgetKind.COMPACT -> applyCompactChrome(this, compactChrome(payload))
+      WidgetKind.TASKS -> bindTasksChrome(context, this, appWidgetId, payload)
+      WidgetKind.COMPACT -> bindCompactChrome(context, this, appWidgetId, payload)
       WidgetKind.QUICK_CAPTURE -> Unit
     }
   }
@@ -167,11 +176,8 @@ object WidgetRenderer {
   ) {
     // The simple style prefers Focus, then automatically shows Next Actions
     // when Focus has no rows. It stays chooser-free like v1.2.8.
-    applyCompactChrome(views, compactChrome(payload))
+    bindCompactChrome(context, views, appWidgetId, payload)
     views.setTextViewText(R.id.mindwtr_widget_capture_label, payload.quickCapture.title)
-    val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, appIntent(context, payload.focusUri), immutableFlags())
-    views.setOnClickPendingIntent(R.id.mindwtr_widget_title_target, focus)
-    views.setOnClickPendingIntent(R.id.mindwtr_widget_empty, focus)
     bindCollection(context, views, appWidgetId, WidgetKind.COMPACT, payload)
     palette?.let {
       views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
@@ -195,27 +201,15 @@ object WidgetRenderer {
     // list picked in the chooser that the app has not published yet has no rows
     // to count, so it shows its bare title until the next publish.
     val listId = WidgetListStore.read(context, appWidgetId)
-    applyTasksChrome(views, tasksChrome(payload, listId))
+    bindTasksChrome(context, views, appWidgetId, payload, listId)
 
     bindCollection(context, views, appWidgetId, WidgetKind.TASKS, payload)
-
-    val focusIntent = appIntent(context, payload.focusUri)
-    val focus = PendingIntent.getActivity(context, REQUEST_FOCUS, focusIntent, immutableFlags())
-    views.setOnClickPendingIntent(R.id.mindwtr_widget_empty, focus)
-    // Header title + chevron = this widget's list chooser (Todoist style).
-    val chooser = Intent(context, WidgetConfigureActivity::class.java)
-      .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-      .putExtra(WidgetConfigureActivity.EXTRA_DROPDOWN, true)
-      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    views.setOnClickPendingIntent(
-      R.id.mindwtr_widget_title_target,
-      PendingIntent.getActivity(context, REQUEST_CHOOSER_BASE + appWidgetId, chooser, immutableFlags()),
-    )
-    // Header = a low-alpha accent wash over the card with a hairline under it
-    // (dd: some contrast, not the solid band); the accent itself only on "+".
+    // Match the body surface; the divider and capture plus carry the accent.
     palette?.let {
+      val theme = tasksTheme(it)
       views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
-      views.setInt(R.id.mindwtr_widget_band, "setColorFilter", it.headerWash)
+      views.setInt(R.id.mindwtr_widget_band, "setColorFilter", theme.headerSurface)
+      views.setInt(R.id.mindwtr_widget_chooser_icon, "setColorFilter", theme.chevron)
       views.setTextColor(R.id.mindwtr_widget_title, it.text)
       views.setTextColor(R.id.mindwtr_widget_subtitle, it.mutedText)
       views.setTextColor(R.id.mindwtr_widget_capture, it.accent)
@@ -265,8 +259,6 @@ object WidgetRenderer {
     )
   }
 
-  fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
-
   /** Focus alone owns the curated hidden-row count; chooser lists keep their existing count title. */
   internal fun taskSubtitle(payload: WidgetPayload, isFocus: Boolean): String? =
     payload.subtitle.takeIf { isFocus }
@@ -303,6 +295,71 @@ object WidgetRenderer {
       emptyMessage = payload.emptyMessage,
       isEmpty = rowCount == 0,
     )
+  }
+
+  internal fun tasksHeaderActions(payload: WidgetPayload, listId: String, appWidgetId: Int): HeaderActions {
+    val list = payload.listFor(listId)
+    return HeaderActions(
+      openList = navigationTarget(appWidgetId, payload.openUriFor(listId)),
+      openTargetIds = listOf(R.id.mindwtr_widget_title_target, R.id.mindwtr_widget_empty),
+      openChooserRequestCode = REQUEST_CHOOSER_BASE + appWidgetId,
+      openChooserTargetId = R.id.mindwtr_widget_chooser,
+      chooserContentDescription = "${payload.chooseListLabel}: ${list.title}",
+    )
+  }
+
+  internal fun compactHeaderActions(payload: WidgetPayload, appWidgetId: Int): HeaderActions {
+    val listId = payload.compactListId()
+    return HeaderActions(
+      openList = navigationTarget(appWidgetId, payload.openUriFor(listId)),
+      openTargetIds = listOf(R.id.mindwtr_widget_title_target, R.id.mindwtr_widget_empty),
+      openChooserRequestCode = null,
+      openChooserTargetId = null,
+      chooserContentDescription = null,
+    )
+  }
+
+  internal fun tasksTheme(palette: WidgetPayload.Palette): TasksTheme =
+    TasksTheme(headerSurface = palette.background, chevron = palette.mutedText)
+
+  private fun navigationTarget(appWidgetId: Int, uri: String): NavigationTarget =
+    NavigationTarget(REQUEST_NAVIGATION_BASE + appWidgetId, uri)
+
+  private fun bindTasksChrome(
+    context: Context,
+    views: RemoteViews,
+    appWidgetId: Int,
+    payload: WidgetPayload,
+    listId: String = WidgetListStore.read(context, appWidgetId),
+  ) {
+    applyTasksChrome(views, tasksChrome(payload, listId))
+    val actions = tasksHeaderActions(payload, listId, appWidgetId)
+    bindOpenList(context, views, actions)
+    val chooser = Intent(context, WidgetConfigureActivity::class.java)
+      .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+      .putExtra(WidgetConfigureActivity.EXTRA_DROPDOWN, true)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    views.setOnClickPendingIntent(
+      actions.openChooserTargetId!!,
+      PendingIntent.getActivity(context, actions.openChooserRequestCode!!, chooser, immutableFlags()),
+    )
+    views.setContentDescription(actions.openChooserTargetId, actions.chooserContentDescription)
+  }
+
+  private fun bindCompactChrome(context: Context, views: RemoteViews, appWidgetId: Int, payload: WidgetPayload) {
+    applyCompactChrome(views, compactChrome(payload))
+    bindOpenList(context, views, compactHeaderActions(payload, appWidgetId))
+  }
+
+  private fun bindOpenList(context: Context, views: RemoteViews, actions: HeaderActions) {
+    val target = actions.openList
+    val pendingIntent = PendingIntent.getActivity(
+      context,
+      target.requestCode,
+      appIntent(context, target.uri),
+      immutableFlags(),
+    )
+    actions.openTargetIds.forEach { targetId -> views.setOnClickPendingIntent(targetId, pendingIntent) }
   }
 
   private fun applyTasksChrome(views: RemoteViews, chrome: Chrome) {

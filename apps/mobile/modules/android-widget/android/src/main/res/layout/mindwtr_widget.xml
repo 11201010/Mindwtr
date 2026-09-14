@@ -41,15 +41,8 @@
                 android:paddingStart="14dp"
                 android:paddingEnd="6dp">
 
-                <!-- Title + chevron are one tap target: the list chooser. The
-                     chevron is the title's own drawableEnd, not a sibling, so
-                     it hugs the text at any width and a title too long for the
-                     header ellipsizes around it instead of pushing it out of
-                     view. The wrapper takes the leftover width so the tap area
-                     stays comfortable. Its tint is a fixed mid grey, not a
-                     day/night colour: RemoteViews refuses
-                     setCompoundDrawableTintList, so this is the one header
-                     piece render time cannot repaint from the payload. -->
+                <!-- The title opens the displayed list. The separate 44dp
+                     chevron target opens the native chooser. -->
                 <LinearLayout
                     android:id="@+id/mindwtr_widget_title_target"
                     android:layout_width="0dp"
@@ -62,15 +55,26 @@
                         android:id="@+id/mindwtr_widget_title"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:drawableEnd="@drawable/mindwtr_widget_chevron"
-                        android:drawablePadding="4dp"
-                        android:drawableTint="@color/mindwtr_widget_chevron_tint"
                         android:ellipsize="end"
                         android:singleLine="true"
                         android:textColor="@color/mindwtr_widget_text"
                         android:textSize="15sp"
                         android:textStyle="bold" />
                 </LinearLayout>
+
+                <FrameLayout
+                    android:id="@+id/mindwtr_widget_chooser"
+                    android:layout_width="44dp"
+                    android:layout_height="match_parent">
+
+                    <ImageView
+                        android:id="@+id/mindwtr_widget_chooser_icon"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/mindwtr_widget_chevron" />
+                </FrameLayout>
 
                 <TextView
                     android:id="@+id/mindwtr_widget_subtitle"
