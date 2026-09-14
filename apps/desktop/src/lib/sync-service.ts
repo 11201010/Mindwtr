@@ -403,9 +403,12 @@ const resolveSyncFailureMessage = (rawError: string | undefined): string => {
     }
 };
 
-const logSyncWarning = (message: string, error?: unknown) => {
-    const extra = error
-        ? { error: syncServiceDependencies.sanitizeLogMessage(error instanceof Error ? error.message : String(error)) }
+const logSyncWarning = (message: string, error?: unknown, safeExtra?: Record<string, string>) => {
+    const sanitizedError = error
+        ? syncServiceDependencies.sanitizeLogMessage(error instanceof Error ? error.message : String(error))
+        : undefined;
+    const extra = safeExtra || sanitizedError
+        ? { ...safeExtra, ...(sanitizedError ? { error: sanitizedError } : {}) }
         : undefined;
     void syncServiceDependencies.logWarn(message, { scope: 'sync', extra });
 };

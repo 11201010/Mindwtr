@@ -17,6 +17,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'captureMode', 'diagnosticTruncated', 'debugLoggingEnabled', 'breadcrumbCount', 'breadcrumbs',
     // share-card-export (local PNG export adapters)
     'cardKind', 'exportMethod', 'failureStage', 'errorType', 'nativeCode',
+    // file-sync-attachment-failure reuses errorType/nativeCode and stage/backend/operation/releaseCheck below.
     // sandbox-workspace (desktop/mobile entry drain and immutable workspace bootstrap)
     'workspace', 'stage',
     // watcher-property-order reuses releaseCheck below.

@@ -92,6 +92,11 @@ import {
     installAttachmentDownload,
     type AttachmentInstallExpectation,
 } from './attachment-installer';
+import {
+    reportFileSyncAttachmentFailure,
+    runFileSyncAttachmentStage,
+    type FileSyncAttachmentFailureStage,
+} from './file-sync-attachment-diagnostics';
 
 export type WebDavConfig = {
     url: string;
@@ -112,7 +117,7 @@ export type AttachmentBackendDeps = {
     getTauriFetch: () => Promise<typeof fetch | undefined>;
     isTauriRuntimeEnv: () => boolean;
     logSyncInfo: (message: string, extra?: Record<string, string>) => void;
-    logSyncWarning: (message: string, error?: unknown) => void;
+    logSyncWarning: (message: string, error?: unknown, extra?: Record<string, string>) => void;
     resolveWebdavPassword: (config: WebDavConfig) => Promise<string>;
     /** Identity of the sync location this pass runs against, for the once-a-day presence
      *  reconciliation stamp (#1119 follow-up; see `attachment-presence-scope.ts`). Produced
@@ -1662,8 +1667,21 @@ export async function syncFileAttachments(
     const managedAttachmentsDir = await getManagedPath(ATTACHMENTS_DIR_NAME);
     const attachmentsById = collectAttachmentsById(appData);
 
-    const { readLocalFile, localFilePresence, statLocalFile } = createLocalAttachmentFs(
-        (message, error) => logAttachmentWarning(deps, message, error),
+    let activeLocalSourceStage: FileSyncAttachmentFailureStage | undefined;
+    let snapshotStatFailure: unknown;
+    let snapshotOperationFailureReported = false;
+    let preparingUploadSnapshot = false;
+    const { readLocalFile: rawReadLocalFile, localFilePresence, statLocalFile: rawStatLocalFile } = createLocalAttachmentFs(
+        (message, error) => {
+            if (preparingUploadSnapshot && activeLocalSourceStage === 'local-source-stat') {
+                snapshotStatFailure = error;
+            }
+            try {
+                logAttachmentWarning(deps, message, error);
+            } catch {
+                // A diagnostic sink failure cannot change attachment transfer behavior.
+            }
+        },
         {
             baseDataDir,
             dataBaseDir: BaseDirectory.Data,
@@ -1682,13 +1700,59 @@ export async function syncFileAttachments(
             },
         },
     );
+    const readLocalFileForSnapshot = async (
+        path: string,
+        attachment: Attachment,
+    ): Promise<Uint8Array> => {
+        try {
+            return await rawReadLocalFile(path, attachment);
+        } catch (error) {
+            snapshotOperationFailureReported = true;
+            reportFileSyncAttachmentFailure('local-source-read', error, deps.logSyncWarning);
+            throw error;
+        }
+    };
+    const statLocalFileForSnapshot = async (path: string, attachment: Attachment) => {
+        activeLocalSourceStage = 'local-source-stat';
+        try {
+            return await rawStatLocalFile(path, attachment);
+        } finally {
+            activeLocalSourceStage = undefined;
+        }
+    };
     const computeLocalFileHash = async (path: string, attachment: Attachment): Promise<string | null> =>
-        computeSha256Hex(await readLocalFile(path, attachment));
-    const createUploadSnapshot = createAttachmentUploadSnapshotFactory({
-        readLocalFile,
-        statLocalFile,
+        computeSha256Hex(await rawReadLocalFile(path, attachment));
+    const prepareUploadSnapshot = createAttachmentUploadSnapshotFactory({
+        readLocalFile: readLocalFileForSnapshot,
+        statLocalFile: statLocalFileForSnapshot,
         maxBufferedUploadBytes: MAX_FILE_SYNC_BUFFERED_PLAINTEXT_BYTES,
     });
+    const createUploadSnapshot = async (path: string, attachment: Attachment) => {
+        preparingUploadSnapshot = true;
+        snapshotStatFailure = undefined;
+        snapshotOperationFailureReported = false;
+        try {
+            return await prepareUploadSnapshot(path, attachment);
+        } catch (error) {
+            if (snapshotStatFailure !== undefined) {
+                reportFileSyncAttachmentFailure(
+                    'local-source-stat',
+                    snapshotStatFailure,
+                    deps.logSyncWarning,
+                );
+            } else if (
+                !snapshotOperationFailureReported
+                && !(error instanceof Error && error.name === 'AttachmentUploadTooLargeError')
+            ) {
+                reportFileSyncAttachmentFailure('snapshot-prepare', error, deps.logSyncWarning);
+            }
+            throw error;
+        } finally {
+            preparingUploadSnapshot = false;
+            snapshotStatFailure = undefined;
+            snapshotOperationFailureReported = false;
+        }
+    };
 
     const readFileSyncWireData = async (
         sourcePath: string,
@@ -1747,21 +1811,36 @@ export async function syncFileAttachments(
         wireData: Uint8Array,
         expectedPlaintextSha256: string,
     ): Promise<void> => {
-        const expectedWireSha256 = await computeSha256Hex(wireData);
-        if (!expectedWireSha256) {
-            throw new Error('File Sync attachment generation hash is unavailable');
-        }
+        const expectedWireSha256 = await runFileSyncAttachmentStage(
+            'snapshot-prepare',
+            deps.logSyncWarning,
+            async () => {
+                const sha256 = await computeSha256Hex(wireData);
+                if (!sha256) {
+                    throw new Error('File Sync attachment generation hash is unavailable');
+                }
+                return sha256;
+            },
+        );
         const publicationLeaseToken = fileSyncLeaseToken ?? '';
         const verifyExistingGeneration = async (): Promise<void> => {
             try {
-                const plaintext = await openAttachmentBytes(
-                    await readFileSyncWireData(targetPath, { expectedSize: wireData.byteLength }),
-                    targetPath,
+                const existingWireData = await runFileSyncAttachmentStage(
+                    'existing-generation-read',
+                    deps.logSyncWarning,
+                    () => readFileSyncWireData(targetPath, { expectedSize: wireData.byteLength }),
                 );
-                const actualSha256 = await computeSha256Hex(plaintext);
-                if (actualSha256?.toLowerCase() !== expectedPlaintextSha256.toLowerCase()) {
-                    throw new Error('plaintext digest mismatch');
-                }
+                await runFileSyncAttachmentStage(
+                    'existing-generation-verify',
+                    deps.logSyncWarning,
+                    async () => {
+                        const plaintext = await openAttachmentBytes(existingWireData, targetPath);
+                        const actualSha256 = await computeSha256Hex(plaintext);
+                        if (actualSha256?.toLowerCase() !== expectedPlaintextSha256.toLowerCase()) {
+                            throw new Error('plaintext digest mismatch');
+                        }
+                    },
+                );
             } catch (error) {
                 throw new FileSyncGenerationIntegrityError(
                     'File Sync attachment generation failed integrity verification',
@@ -1770,37 +1849,67 @@ export async function syncFileAttachments(
             }
         };
 
-        if (await syncFsExists(targetPath)) {
+        if (await runFileSyncAttachmentStage(
+            'generation-presence',
+            deps.logSyncWarning,
+            () => syncFsExists(targetPath),
+        )) {
             await verifyExistingGeneration();
             return;
         }
 
-        const reservation = await syncFsReserveAttachmentGeneration(
-            publicationLeaseToken,
-            targetPath,
-            wireData.byteLength,
-            expectedWireSha256,
+        const reservation = await runFileSyncAttachmentStage(
+            'generation-reserve',
+            deps.logSyncWarning,
+            () => syncFsReserveAttachmentGeneration(
+                publicationLeaseToken,
+                targetPath,
+                wireData.byteLength,
+                expectedWireSha256,
+            ),
         );
 
         let target: Awaited<ReturnType<typeof open>> | undefined;
         let closed = false;
         let readyForPublication = false;
         try {
-            target = await open(reservation.scratchPath, { write: true, createNew: true });
-            const written = await target.write(wireData);
-            if (written !== wireData.byteLength) {
-                throw new Error('File Sync attachment generation write was incomplete');
-            }
-            await target.close();
+            target = await runFileSyncAttachmentStage(
+                'scratch-open',
+                deps.logSyncWarning,
+                () => open(reservation.scratchPath, { write: true, createNew: true }),
+            );
+            await runFileSyncAttachmentStage(
+                'scratch-write',
+                deps.logSyncWarning,
+                async () => {
+                    const written = await target!.write(wireData);
+                    if (written !== wireData.byteLength) {
+                        throw new Error('File Sync attachment generation write was incomplete');
+                    }
+                },
+            );
+            await runFileSyncAttachmentStage(
+                'scratch-close',
+                deps.logSyncWarning,
+                () => target!.close(),
+            );
             closed = true;
             readyForPublication = true;
             for (let attempt = 0; attempt < 2; attempt += 1) {
-                const publication = await syncFsPublishAttachmentGeneration(
-                    publicationLeaseToken,
-                    reservation.operationId,
+                const publication = await runFileSyncAttachmentStage(
+                    'native-publication',
+                    deps.logSyncWarning,
+                    () => syncFsPublishAttachmentGeneration(
+                        publicationLeaseToken,
+                        reservation.operationId,
+                    ),
                 );
                 if (publication.status === 'published') return;
-                if (await syncFsExists(targetPath)) {
+                if (await runFileSyncAttachmentStage(
+                    'generation-presence',
+                    deps.logSyncWarning,
+                    () => syncFsExists(targetPath),
+                )) {
                     await verifyExistingGeneration();
                     await syncFsAbandonAttachmentGeneration(
                         publicationLeaseToken,
@@ -1809,7 +1918,9 @@ export async function syncFileAttachments(
                     return;
                 }
             }
-            throw new Error('File Sync attachment generation collision could not be resolved');
+            const collisionError = new Error('File Sync attachment generation collision could not be resolved');
+            reportFileSyncAttachmentFailure('native-publication', collisionError, deps.logSyncWarning);
+            throw collisionError;
         } catch (error) {
             if (target && !closed) await target.close().catch(() => undefined);
             // Before native verification the scratch is only a partial write and
@@ -1878,7 +1989,7 @@ export async function syncFileAttachments(
         deferUploads: helpers?.phase === 'prepare',
         ensureLocalSnapshotFresh: helpers?.ensureLocalSnapshotFresh,
         getLocalFilePresence: localFilePresence,
-        getLocalFileStat: statLocalFile,
+        getLocalFileStat: rawStatLocalFile,
         computeLocalFileHash,
         createUploadSnapshot,
         maxBufferedUploadBytes: MAX_FILE_SYNC_BUFFERED_PLAINTEXT_BYTES,
@@ -1904,7 +2015,11 @@ export async function syncFileAttachments(
             // The sync folder is the remote for this backend, so its attachment bytes are
             // encrypted here for the same reason WebDAV's and Dropbox's are. The LOCAL managed
             // copy (below, in onDownload) stays plaintext — encryption never touches local data.
-            const wireData = await sealAttachmentBytes(fileData, cloudKey);
+            const wireData = await runFileSyncAttachmentStage(
+                'wire-encryption',
+                deps.logSyncWarning,
+                () => sealAttachmentBytes(fileData, cloudKey),
+            );
             await publishFileSyncGeneration(
                 await resolveFileBackendPath(join, baseSyncDir, cloudKey),
                 wireData,
@@ -1919,7 +2034,11 @@ export async function syncFileAttachments(
             return true;
         },
         onUploadError: (attachment, error) => {
-            logAttachmentWarning(deps, `Failed to copy attachment ${attachment.id} to sync folder`, error);
+            try {
+                logAttachmentWarning(deps, `Failed to copy attachment ${attachment.id} to sync folder`, error);
+            } catch {
+                // The structured stage diagnostic already ran; logging is never a transfer failure.
+            }
         },
         onDownload: async (attachment, expectation) => {
             if (!attachment.cloudKey) return false;

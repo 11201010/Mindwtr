@@ -19,6 +19,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.1 (add before tagging, trim in the release after)
 
+- **`v1.3.1/file-sync-attachment-failure`** — desktop `apps/desktop/src/lib/file-sync-attachment-diagnostics.ts` and `sync-attachment-backends.ts`, when a File Sync attachment upload operation fails. Message: `File Sync attachment operation failed`. Fields: `releaseCheck`, `backend` (`file`), `operation` (`upload`), `stage`, `errorType`, `nativeCode`. Enable Diagnostics, retry the failing upload on Windows, and share the fresh log: the marker must identify the failed source-read or generation-publication stage, with a safe error category and native error code when available (`unknown` otherwise). This is diagnostic coverage, not an upload fix or proof that sync completed. The original transfer error, cleanup, retries, and pending-upload safety gate remain unchanged. No paths, file names, content, identifiers, raw error messages, or stacks are logged by this marker.
+
 - **`v1.3.1/archive-reference-recovered`** — `packages/core/src/store-load-migrations.ts` (#1198), when loading recovers references incorrectly completed by an older project-archive migration, including those subsequently auto-archived. Message: `Legacy archived project references recovered during load migration`. Fields: `releaseCheck`, `count`. The tester's log must show a positive recovery count, then Reference's **Include archived projects** filter and search must show the recovered material. A second load must not repeat recovery. This marker proves migration computation, not durable persistence or a successful sync. No content or identifiers are logged.
 
 ## v1.3.0 (add before tagging, trim in the release after)

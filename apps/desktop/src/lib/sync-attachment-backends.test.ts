@@ -1520,6 +1520,244 @@ describe('desktop sync attachment backends', () => {
             resolveWebdavPassword: vi.fn(async () => 'secret'),
         });
 
+        const expectFileUploadFailureDiagnostic = (
+            deps: AttachmentBackendDeps,
+            stage: string,
+            nativeCode = '5',
+        ) => {
+            expect(deps.logSyncWarning).toHaveBeenCalledWith(
+                'File Sync attachment operation failed',
+                undefined,
+                {
+                    releaseCheck: 'v1.3.1/file-sync-attachment-failure',
+                    backend: 'file',
+                    operation: 'upload',
+                    stage,
+                    errorType: 'native-os-error',
+                    nativeCode,
+                },
+            );
+            const calls = JSON.stringify(vi.mocked(deps.logSyncWarning).mock.calls);
+            expect(calls).not.toContain('customer-secret.txt');
+            expect(calls).not.toContain('Private');
+        };
+
+        it('reports a failed local source read before the File Sync uploader runs', async () => {
+            const appData = createCandidateAttachmentData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockRejectedValue('Cannot read C:\\Private\\customer-secret.txt (os error 5)');
+
+            expect(await syncFileAttachments(appData, '/candidate-sync', deps)).toBe(false);
+
+            expectFileUploadFailureDiagnostic(deps, 'local-source-read');
+            expect(vi.mocked(deps.logSyncWarning).mock.calls.filter(
+                ([message]) => message === 'File Sync attachment operation failed',
+            )).toHaveLength(1);
+            expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+        });
+
+        it('does not label a post-download verification read failure as an upload failure', async () => {
+            const appData = createDownloadData('file');
+            const deps = depsFor();
+            const downloadedTarget = '/app-data/mindwtr/attachments/attachment-1.txt';
+            syncFsMocks.exists.mockResolvedValue(true);
+            syncFsMocks.stat.mockResolvedValue({ mtimeMs: 1000, size: DOWNLOAD_BYTES.length });
+            fsMocks.readFile.mockImplementation(async (path: string) => {
+                if (path === downloadedTarget || path === 'mindwtr/attachments/attachment-1.txt') {
+                    throw new Error(`Cannot verify ${downloadedTarget} (os error 5)`);
+                }
+                return DOWNLOAD_BYTES;
+            });
+
+            const result = expectFoldedData(await syncFileAttachments(appData, '/sync-root', deps));
+
+            expect(result.tasks[0].attachments?.[0]).toMatchObject({
+                uri: downloadedTarget,
+                localStatus: 'available',
+                fileHash: DOWNLOAD_BYTES_HASH,
+            });
+            expect(vi.mocked(deps.logSyncWarning).mock.calls.some(
+                ([message]) => message === 'File Sync attachment operation failed',
+            )).toBe(false);
+        });
+
+        it('reports the final local source stat failure without logging a recovered fallback', async () => {
+            const appData = createCandidateAttachmentData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.stat.mockRejectedValue(new Error(
+                'Cannot stat C:\\Private\\customer-secret.txt (os error 3)',
+            ));
+
+            await expect(syncFileAttachments(appData, '/candidate-sync', deps)).rejects.toMatchObject({
+                name: 'AttachmentUploadSizeUnavailableError',
+            });
+
+            expectFileUploadFailureDiagnostic(deps, 'local-source-stat', '3');
+            expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+        });
+
+        it.each([
+            ['generation-reserve', () => {
+                syncFsMocks.reserveAttachmentGeneration.mockRejectedValue(
+                    'Cannot reserve C:\\Private\\customer-secret.txt (os error 5)',
+                );
+            }],
+            ['scratch-open', () => {
+                fsMocks.open.mockRejectedValue(
+                    'Cannot open C:\\Private\\customer-secret.txt (os error 5)',
+                );
+            }],
+            ['scratch-write', () => {
+                fsMocks.open.mockResolvedValue({
+                    write: vi.fn().mockRejectedValue(
+                        'Cannot write C:\\Private\\customer-secret.txt (os error 5)',
+                    ),
+                    close: vi.fn().mockResolvedValue(undefined),
+                });
+            }],
+            ['scratch-close', () => {
+                fsMocks.open.mockResolvedValue({
+                    write: vi.fn(async (value: Uint8Array) => value.byteLength),
+                    close: vi.fn().mockRejectedValue(
+                        'Cannot close C:\\Private\\customer-secret.txt (os error 5)',
+                    ),
+                });
+            }],
+            ['native-publication', () => {
+                syncFsMocks.publishAttachmentGeneration.mockRejectedValue(
+                    'Cannot publish C:\\Private\\customer-secret.txt (os error 5)',
+                );
+            }],
+        ] as const)('reports the failing File Sync upload stage: %s', async (stage, failStage) => {
+            const appData = createCandidateAttachmentData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(bytes);
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(false);
+            failStage();
+
+            expect(await syncFileAttachments(appData, '/candidate-sync', deps)).toBe(false);
+
+            expectFileUploadFailureDiagnostic(deps, stage);
+            expect(syncFsMocks.publishAttachmentGeneration).toHaveBeenCalledTimes(
+                stage === 'native-publication' ? 1 : 0,
+            );
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+        });
+
+        it('keeps the File Sync result independent from a throwing diagnostic callback', async () => {
+            const failedData = createCandidateAttachmentData();
+            failedData.tasks[0].attachments![0].cloudKey = undefined;
+            const failedDeps = depsFor();
+            vi.mocked(failedDeps.logSyncWarning).mockImplementation(() => {
+                throw new Error('diagnostic sink unavailable');
+            });
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(bytes);
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(false);
+            syncFsMocks.reserveAttachmentGeneration.mockRejectedValue('os error 5');
+
+            await expect(syncFileAttachments(failedData, '/candidate-sync', failedDeps)).resolves.toBe(false);
+            expect(failedData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+
+            vi.clearAllMocks();
+            const successfulData = createCandidateAttachmentData();
+            successfulData.tasks[0].attachments![0].cloudKey = undefined;
+            const successfulDeps = depsFor();
+            vi.mocked(successfulDeps.logSyncWarning).mockImplementation(() => {
+                throw new Error('diagnostic sink unavailable');
+            });
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(bytes);
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(false);
+            syncFsMocks.reserveAttachmentGeneration.mockResolvedValue({
+                operationId: 'operation-2',
+                scratchPath: '/candidate-sync/attachments/.mindwtr-attachment-generation-operation-2.tmp',
+            });
+            syncFsMocks.publishAttachmentGeneration.mockResolvedValue({ status: 'published' });
+            fsMocks.open.mockResolvedValue({
+                write: vi.fn(async (value: Uint8Array) => value.byteLength),
+                close: vi.fn().mockResolvedValue(undefined),
+            });
+
+            const result = expectFoldedData(await syncFileAttachments(
+                successfulData,
+                '/candidate-sync',
+                successfulDeps,
+            ));
+            expect(result.tasks[0].attachments?.[0]?.cloudKey).toBe(
+                `attachments/attachment-1.${BYTES_HASH}.txt`,
+            );
+            expect(successfulDeps.logSyncWarning).not.toHaveBeenCalled();
+        });
+
+        it('reports an existing generation read failure through its wrapped native cause', async () => {
+            const appData = makePendingData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(bytes);
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(true);
+            syncFsMocks.stat.mockRejectedValue(
+                'Cannot inspect C:\\Private\\customer-secret.txt (os error 5)',
+            );
+
+            expect(await syncFileAttachments(
+                appData,
+                '/candidate-sync',
+                deps,
+                postMergeHelpers(),
+            )).toBe(false);
+
+            expectFileUploadFailureDiagnostic(deps, 'existing-generation-read');
+            expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+        });
+
+        it('reports an existing generation integrity mismatch at verification', async () => {
+            const appData = makePendingData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            const otherBytes = new Uint8Array([4, 5, 6]);
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockImplementation(async (path: string) => (
+                path.startsWith('/candidate-sync/') ? otherBytes : bytes
+            ));
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(true);
+            syncFsMocks.stat.mockResolvedValue({ mtimeMs: 1000, size: otherBytes.length });
+
+            expect(await syncFileAttachments(
+                appData,
+                '/candidate-sync',
+                deps,
+                postMergeHelpers(),
+            )).toBe(false);
+
+            expect(deps.logSyncWarning).toHaveBeenCalledWith(
+                'File Sync attachment operation failed',
+                undefined,
+                expect.objectContaining({
+                    stage: 'existing-generation-verify',
+                    errorType: 'error',
+                    nativeCode: 'unknown',
+                }),
+            );
+            expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+        });
+
         it('retains a WebDAV pending candidate when the blob is absent and local bytes advanced again', async () => {
             const newerBytes = new Uint8Array([4, 5, 6]);
             const appData = makePendingData();
