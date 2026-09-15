@@ -29,7 +29,7 @@ $manifest = @"
          xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
   <Identity Name="$IdentityName" ProcessorArchitecture="x64"
-            Publisher="$Publisher" 
+            Publisher="$Publisher"
             Version="$MsixVersion" />
   <Properties>
     <DisplayName>Mindwtr</DisplayName>
