@@ -137,7 +137,8 @@ const initialData = (): AppData => ({
     sections: [section()],
     areas: [],
     people: [],
-    settings: { deviceId: 'device-a' },
+    // This fixture tests project reactivation, independently of completed-task age.
+    settings: { deviceId: 'device-a', gtd: { autoArchiveDays: 0 } },
 });
 
 describeSqlite('task-driven project reactivation SQLite durability', () => {
@@ -172,6 +173,11 @@ describeSqlite('task-driven project reactivation SQLite durability', () => {
             await adapter.saveData(initialData());
             setStorageAdapter(adapter);
             await useTaskStore.getState().fetchData({ silent: true });
+            await flushPendingSave();
+            expect(useTaskStore.getState()._allTasks.find((item) => item.id === 'genuine-done')).toMatchObject({
+                status: 'done',
+                completedAt: CREATED_AT,
+            });
 
             await useTaskStore.getState().updateProject('project-1', { status: 'archived' });
             await flushPendingSave();
