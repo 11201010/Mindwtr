@@ -19,6 +19,8 @@ object WidgetRenderer {
   data class HeaderActions(
     val openList: NavigationTarget,
     val openTargetIds: List<Int>,
+    val openHome: NavigationTarget,
+    val openHomeTargetIds: List<Int>,
     val openChooserRequestCode: Int?,
     val openChooserTargetId: Int?,
     val chooserContentDescription: String?,
@@ -32,6 +34,7 @@ object WidgetRenderer {
   // enough that it can never land on one of the fixed codes above.
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
   private const val REQUEST_NAVIGATION_BASE = 2 shl 20
+  private const val REQUEST_HOME_BASE = 3 shl 20
 
   fun refreshAll(context: Context): RefreshResult {
     val app = context.applicationContext
@@ -301,7 +304,9 @@ object WidgetRenderer {
     val list = payload.listFor(listId)
     return HeaderActions(
       openList = navigationTarget(appWidgetId, payload.openUriFor(listId)),
-      openTargetIds = listOf(R.id.mindwtr_widget_title_target, R.id.mindwtr_widget_empty),
+      openTargetIds = listOf(R.id.mindwtr_widget_title_target),
+      openHome = homeTarget(appWidgetId, payload),
+      openHomeTargetIds = listOf(R.id.mindwtr_widget_root, R.id.mindwtr_widget_empty, R.id.mindwtr_widget_spacer),
       openChooserRequestCode = REQUEST_CHOOSER_BASE + appWidgetId,
       openChooserTargetId = R.id.mindwtr_widget_chooser,
       chooserContentDescription = "${payload.chooseListLabel}: ${list.title}",
@@ -312,7 +317,9 @@ object WidgetRenderer {
     val listId = payload.compactListId()
     return HeaderActions(
       openList = navigationTarget(appWidgetId, payload.openUriFor(listId)),
-      openTargetIds = listOf(R.id.mindwtr_widget_title_target, R.id.mindwtr_widget_empty),
+      openTargetIds = listOf(R.id.mindwtr_widget_title_target),
+      openHome = homeTarget(appWidgetId, payload),
+      openHomeTargetIds = listOf(R.id.mindwtr_widget_root, R.id.mindwtr_widget_empty, R.id.mindwtr_widget_spacer),
       openChooserRequestCode = null,
       openChooserTargetId = null,
       chooserContentDescription = null,
@@ -325,6 +332,12 @@ object WidgetRenderer {
   private fun navigationTarget(appWidgetId: Int, uri: String): NavigationTarget =
     NavigationTarget(REQUEST_NAVIGATION_BASE + appWidgetId, uri)
 
+  private fun homeTarget(appWidgetId: Int, payload: WidgetPayload): NavigationTarget =
+    NavigationTarget(
+      REQUEST_HOME_BASE + appWidgetId,
+      payload.focusUri.takeIf { it == WidgetPayload.DEFAULT_FOCUS_URI } ?: WidgetPayload.DEFAULT_FOCUS_URI,
+    )
+
   private fun bindTasksChrome(
     context: Context,
     views: RemoteViews,
@@ -334,7 +347,7 @@ object WidgetRenderer {
   ) {
     applyTasksChrome(views, tasksChrome(payload, listId))
     val actions = tasksHeaderActions(payload, listId, appWidgetId)
-    bindOpenList(context, views, actions)
+    bindHeaderNavigation(context, views, actions)
     val chooser = Intent(context, WidgetConfigureActivity::class.java)
       .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
       .putExtra(WidgetConfigureActivity.EXTRA_DROPDOWN, true)
@@ -348,18 +361,22 @@ object WidgetRenderer {
 
   private fun bindCompactChrome(context: Context, views: RemoteViews, appWidgetId: Int, payload: WidgetPayload) {
     applyCompactChrome(views, compactChrome(payload))
-    bindOpenList(context, views, compactHeaderActions(payload, appWidgetId))
+    bindHeaderNavigation(context, views, compactHeaderActions(payload, appWidgetId))
   }
 
-  private fun bindOpenList(context: Context, views: RemoteViews, actions: HeaderActions) {
-    val target = actions.openList
+  private fun bindHeaderNavigation(context: Context, views: RemoteViews, actions: HeaderActions) {
+    bindNavigationTarget(context, views, actions.openHome, actions.openHomeTargetIds)
+    bindNavigationTarget(context, views, actions.openList, actions.openTargetIds)
+  }
+
+  private fun bindNavigationTarget(context: Context, views: RemoteViews, target: NavigationTarget, targetIds: List<Int>) {
     val pendingIntent = PendingIntent.getActivity(
       context,
       target.requestCode,
       appIntent(context, target.uri),
       immutableFlags(),
     )
-    actions.openTargetIds.forEach { targetId -> views.setOnClickPendingIntent(targetId, pendingIntent) }
+    targetIds.forEach { targetId -> views.setOnClickPendingIntent(targetId, pendingIntent) }
   }
 
   private fun applyTasksChrome(views: RemoteViews, chrome: Chrome) {

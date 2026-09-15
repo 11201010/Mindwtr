@@ -8,18 +8,25 @@ import org.junit.Test
 
 class WidgetNavigationTest {
   @Test
-  fun tasksTitleOpensTheListWhileTheChevronOpensTheChooser() {
+  fun tasksTitleOpensTheListWhileBlankSpaceOpensFocusAndChevronOpensChooser() {
     val payload = payloadWithLists()
 
     val actions = WidgetRenderer.tasksHeaderActions(payload, "inbox", appWidgetId = 42)
 
     assertEquals("mindwtr:///inbox", actions.openList.uri)
     assertEquals(
-      listOf(R.id.mindwtr_widget_title_target, R.id.mindwtr_widget_empty),
+      listOf(R.id.mindwtr_widget_title_target),
       actions.openTargetIds,
     )
+    assertEquals("mindwtr:///focus", actions.openHome.uri)
+    assertEquals(
+      listOf(R.id.mindwtr_widget_root, R.id.mindwtr_widget_empty, R.id.mindwtr_widget_spacer),
+      actions.openHomeTargetIds,
+    )
+    assertNotEquals(actions.openList.requestCode, actions.openHome.requestCode)
     assertEquals(R.id.mindwtr_widget_chooser, actions.openChooserTargetId)
     assertNotEquals(actions.openList.requestCode, actions.openChooserRequestCode)
+    assertNotEquals(actions.openHome.requestCode, actions.openChooserRequestCode)
     assertEquals("Change: Inbox", actions.chooserContentDescription)
   }
 
@@ -33,6 +40,31 @@ class WidgetNavigationTest {
 
     assertNotEquals(firstInbox.requestCode, secondInbox.requestCode)
     assertNotEquals(firstInbox.uri, firstWaiting.uri)
+  }
+
+  @Test
+  fun blankSpaceAlwaysOpensFocusWithItsOwnIdentityAcrossListsAndWidgets() {
+    val payload = payloadWithLists()
+    val focus = WidgetRenderer.tasksHeaderActions(payload, "focus", appWidgetId = 42)
+    val inbox = WidgetRenderer.tasksHeaderActions(payload, "inbox", appWidgetId = 42)
+    val saved = WidgetRenderer.tasksHeaderActions(payload, "filter:abc", appWidgetId = 42)
+    val otherWidget = WidgetRenderer.tasksHeaderActions(payload, "inbox", appWidgetId = 43)
+    val compact = WidgetRenderer.compactHeaderActions(payload, appWidgetId = 42)
+
+    listOf(focus, inbox, saved, otherWidget, compact).forEach { actions ->
+      assertEquals("mindwtr:///focus", actions.openHome.uri)
+      assertNotEquals(actions.openList.requestCode, actions.openHome.requestCode)
+    }
+    assertEquals("mindwtr:///inbox", inbox.openList.uri)
+    assertEquals("mindwtr:///widget-list/filter%3Aabc", saved.openList.uri)
+    assertEquals(focus.openHome, inbox.openHome)
+    assertEquals(inbox.openHome, saved.openHome)
+    assertNotEquals(inbox.openHome.requestCode, otherWidget.openHome.requestCode)
+    assertEquals(inbox.openHome, compact.openHome)
+    assertEquals(listOf(R.id.mindwtr_widget_title_target), compact.openTargetIds)
+
+    val unsafePayload = payloadWithLists(rootFocusUri = "mindwtr://evil.example/focus")
+    assertEquals("mindwtr:///focus", WidgetRenderer.tasksHeaderActions(unsafePayload, "inbox", 42).openHome.uri)
   }
 
   @Test

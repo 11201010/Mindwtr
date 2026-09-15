@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Simple v1.2.8-style card: stacked labels, flat list, native capture footer. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mindwtr_widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
     <ImageView
@@ -42,14 +43,15 @@
                 android:textSize="10sp" />
         </LinearLayout>
         <!-- Reserve the footer even for an empty list. -->
-        <FrameLayout
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:orientation="vertical">
             <ListView
                 android:id="@+id/mindwtr_widget_list"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:divider="@null"
                 android:dividerHeight="0dp"
                 android:scrollbars="none" />
@@ -62,7 +64,12 @@
                 android:maxLines="2"
                 android:textColor="@color/mindwtr_widget_muted_text"
                 android:textSize="11sp" />
-        </FrameLayout>
+            <FrameLayout
+                android:id="@+id/mindwtr_widget_spacer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
         <FrameLayout
             android:id="@+id/mindwtr_widget_capture"
             android:layout_width="wrap_content"

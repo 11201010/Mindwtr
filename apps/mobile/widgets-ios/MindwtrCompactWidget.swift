@@ -23,12 +23,8 @@ private struct MindwtrCompactWidgetView: View {
 
             VStack(alignment: .leading, spacing: metrics.spacing) {
                 HStack(alignment: .center, spacing: 8) {
-                    if widgetFamily == .systemSmall {
+                    Link(destination: safeMindwtrURL(payload.focusUri)) {
                         compactHeader(payload: payload, palette: palette, metrics: metrics)
-                    } else {
-                        Link(destination: safeMindwtrURL(payload.focusUri)) {
-                            compactHeader(payload: payload, palette: palette, metrics: metrics)
-                        }
                     }
 
                     Spacer(minLength: 4)
@@ -69,7 +65,7 @@ private struct MindwtrCompactWidgetView: View {
             }
             .padding(metrics.padding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .mindwtrCompactWidgetURL(widgetFamily == .systemSmall ? safeMindwtrURL(payload.focusUri) : nil)
+            .widgetURL(safeMindwtrURL(MindwtrWidgetListNavigation.defaultDestination))
             .mindwtrCompactBackground(hexColor(palette.background))
         }
     }
@@ -210,15 +206,6 @@ private struct MindwtrCompactMetrics {
 }
 
 private extension View {
-    @ViewBuilder
-    func mindwtrCompactWidgetURL(_ url: URL?) -> some View {
-        if let url {
-            self.widgetURL(url)
-        } else {
-            self
-        }
-    }
-
     @ViewBuilder
     func mindwtrCompactBackground(_ color: Color) -> some View {
         if #available(iOSApplicationExtension 17.0, *) {

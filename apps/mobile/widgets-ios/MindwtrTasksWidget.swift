@@ -532,12 +532,8 @@ private struct MindwtrTasksWidgetView: View {
             )
             VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
                 HStack(alignment: .center, spacing: 8) {
-                    if widgetFamily == .systemSmall {
+                    Link(destination: safeMindwtrURL(payload.focusUri)) {
                         widgetHeader(payload: payload, palette: palette, metrics: metrics)
-                    } else {
-                        Link(destination: safeMindwtrURL(payload.focusUri)) {
-                            widgetHeader(payload: payload, palette: palette, metrics: metrics)
-                        }
                     }
 
                     Spacer(minLength: 4)
@@ -563,7 +559,7 @@ private struct MindwtrTasksWidgetView: View {
                             .lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Link(destination: safeMindwtrURL(payload.focusUri)) {
+                        Link(destination: safeMindwtrURL(MindwtrWidgetListNavigation.defaultDestination)) {
                             Text(payload.emptyMessage)
                                 .font(.system(size: metrics.taskSize))
                                 .foregroundColor(hexColor(palette.mutedText))
@@ -584,7 +580,7 @@ private struct MindwtrTasksWidgetView: View {
             }
             .padding(metrics.padding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .mindwtrSmallWidgetURL(widgetFamily == .systemSmall ? safeMindwtrURL(payload.focusUri) : nil)
+            .widgetURL(safeMindwtrURL(MindwtrWidgetListNavigation.defaultDestination))
             .mindwtrWidgetBackground(hexColor(palette.background))
         }
     }
@@ -872,15 +868,6 @@ private extension View {
     func mindwtrPendingAccessibilityValue(_ value: String?) -> some View {
         if let value {
             self.accessibilityValue(Text(value))
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func mindwtrSmallWidgetURL(_ url: URL?) -> some View {
-        if let url {
-            self.widgetURL(url)
         } else {
             self
         }

@@ -44,7 +44,6 @@ describe('ios-widgets-and-shortcuts', () => {
     expect(tasksSource).toContain('.strikethrough(pendingAction != nil)');
     expect(tasksSource).toContain('item.openUri ?? payload.focusUri');
     expect(tasksSource).toContain('widgetFamily != .systemSmall');
-    expect(tasksSource).toContain('.mindwtrSmallWidgetURL(widgetFamily == .systemSmall');
     expect(tasksSource).toContain('StaticConfiguration(kind: kind');
     expect(tasksSource).toContain('if #available(iOSApplicationExtension 17.0, iOS 17.0, *)');
     expect(tasksSource).toContain('AppIntentConfiguration(');
@@ -104,8 +103,31 @@ describe('ios-widgets-and-shortcuts', () => {
     expect(compactSource).not.toContain('WidgetConfigurationIntent');
     expect(compactSource).toContain('widgetFamily != .systemSmall');
     expect(compactSource).toContain('Link(destination: safeMindwtrURL(payload.focusUri))');
-    expect(compactSource).toContain('.mindwtrCompactWidgetURL(widgetFamily == .systemSmall');
     expect(bundleSource).toContain('MindwtrCompactWidget()');
+  });
+
+  it('opens canonical Focus from blank space in every Tasks and Compact family while keeping explicit destinations', () => {
+    const widgetsDir = path.resolve(__dirname, '..', 'widgets-ios');
+    const tasksSource = fs.readFileSync(path.join(widgetsDir, 'MindwtrTasksWidget.swift'), 'utf8');
+    const compactSource = fs.readFileSync(path.join(widgetsDir, 'MindwtrCompactWidget.swift'), 'utf8');
+    const defaultURL = '.widgetURL(safeMindwtrURL(MindwtrWidgetListNavigation.defaultDestination))';
+
+    // Selecting a list replaces focusUri, so it cannot be the blank-space route.
+    expect(tasksSource).toContain('focusUri: nonEmpty(openUri) ?? focusUri');
+    for (const source of [tasksSource, compactSource]) {
+      expect(source).toContain(defaultURL);
+      expect(source.match(/\.widgetURL\(/g)).toHaveLength(1);
+      expect(source).not.toContain('widgetFamily == .systemSmall ? safeMindwtrURL(payload.focusUri)');
+      expect(source).toContain('Link(destination: safeMindwtrURL(payload.focusUri))');
+      expect(source).toContain('Link(destination: safeMindwtrURL(payload.quickCaptureUri))');
+    }
+    expect(tasksSource).toMatch(/Link\(destination: safeMindwtrURL\(payload\.focusUri\)\) \{\s+widgetHeader\(/);
+    expect(compactSource).toMatch(/Link\(destination: safeMindwtrURL\(payload\.focusUri\)\) \{\s+compactHeader\(/);
+    expect(tasksSource).not.toContain('if widgetFamily == .systemSmall {\n                        widgetHeader(');
+    expect(compactSource).not.toContain('if widgetFamily == .systemSmall {\n                        compactHeader(');
+    expect(tasksSource).toContain('Link(destination: safeMindwtrURL(MindwtrWidgetListNavigation.defaultDestination))');
+    expect(tasksSource).toContain('Link(destination: safeMindwtrURL(item.openUri ?? payload.focusUri))');
+    expect(compactSource).toContain('Link(destination: safeMindwtrURL(item.openUri ?? payload.focusUri))');
   });
 
   it('drops rows that do not fit without presenting a false empty state at large text sizes', () => {

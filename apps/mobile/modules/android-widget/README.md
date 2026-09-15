@@ -25,10 +25,12 @@ intent.
 The Tasks widget reads optional payload sections and supports a list chooser.
 Its default Focus projection combines Today's Focus and Today. A user's
 explicit choice of Focus, Inbox, Next Actions, Waiting, Someday, or a saved
-filter remains selected across payload updates. The title and empty state open
-the displayed list in the app; a separate 44dp chevron target opens the native
-chooser, and the plus remains capture. Each navigation PendingIntent is scoped
-by widget id and list URI so placed widgets cannot replace one another's route.
+filter remains selected across payload updates. The title opens the displayed
+list in the app; blank background, space below the visible rows, section
+headers, and the empty message open Focus regardless of the selected list. A
+separate 44dp chevron target opens the native chooser, and the plus remains
+capture. The Focus background action has its own immutable PendingIntent
+identity per widget id, distinct from the displayed-list route and chooser.
 Check-offs append queue commands for the app
 to apply through the normal store; widget code never writes SQLite.
 
@@ -58,9 +60,10 @@ headings, metadata, or inline checkboxes. Task taps open the existing native det
 `QuickCaptureActivity` over the launcher and durably queues the new task
 without opening the main app. Both styles share the payload, theme, refresh,
 and pending-capture paths; no React Native widget rendering dependency is used.
-Its title and empty state open the list Compact actually displays, including
-the post-filter Next Actions fallback; delayed partial row updates refresh this
-link together with the header.
+Its title opens the list Compact actually displays, including the post-filter
+Next Actions fallback; blank background, space below visible rows, and the
+empty message open Focus. Delayed partial row updates refresh both links
+together with the header.
 
 List payloads may provide a validated hostless `mindwtr:///...` `openUri`.
 Legacy Focus, Inbox, Waiting, and Someday payloads map to their existing app

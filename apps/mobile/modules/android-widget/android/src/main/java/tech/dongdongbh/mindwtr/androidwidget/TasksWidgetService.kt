@@ -70,6 +70,12 @@ class TasksWidgetFactory(
     val palette = payload.palette?.takeUnless { payload.usesSystemColors }
     return when (val row = rows[position]) {
       is Row.Header -> RemoteViews(context.packageName, R.layout.mindwtr_widget_section).apply {
+        // Section rows live inside the ListView, so the parent's blank-space
+        // click cannot receive their taps. Use its existing explicit row template.
+        setOnClickFillInIntent(
+          R.id.mindwtr_widget_section,
+          Intent().setData(Uri.parse(WidgetPayload.DEFAULT_FOCUS_URI)),
+        )
         setTextViewText(R.id.mindwtr_widget_section_title, row.title)
         setViewVisibility(R.id.mindwtr_widget_section_detail, if (row.detail == null) View.GONE else View.VISIBLE)
         if (row.detail != null) setTextViewText(R.id.mindwtr_widget_section_detail, row.detail)
