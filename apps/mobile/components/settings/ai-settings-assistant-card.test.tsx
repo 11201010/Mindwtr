@@ -43,6 +43,9 @@ const baseProps: Parameters<typeof AiSettingsAssistantCard>[0] = {
     aiModel: 'gpt-5-mini',
     aiModelOptions: ['gpt-5-mini'],
     aiProvider: 'openai',
+    appleClarificationAvailability: '',
+    appleClarificationBackend: 'configured',
+    appleClarificationVisible: false,
     aiReasoningEffort: 'medium',
     aiRequestTimeoutSeconds: 30,
     aiThinkingBudget: 0,
@@ -58,6 +61,7 @@ const baseProps: Parameters<typeof AiSettingsAssistantCard>[0] = {
     onAiExtraBodyParamsSave: vi.fn(),
     onAiModelChange: vi.fn(),
     onAiProviderChange: vi.fn(),
+    onAppleClarificationBackendChange: vi.fn(),
     onAiReasoningEffortChange: vi.fn(),
     onAiRequestTimeoutSecondsChange: vi.fn(),
     onAiThinkingBudgetChange: vi.fn(),
@@ -92,6 +96,21 @@ const renderCard = async (props: Parameters<typeof AiSettingsAssistantCard>[0]) 
 };
 
 describe('AiSettingsAssistantCard request timeout', () => {
+    it('offers the development-only device-local clarification route', async () => {
+        const onChange = vi.fn();
+        const tree = await renderCard({
+            ...baseProps,
+            appleClarificationAvailability: 'Available on this device. Requests stay on device.',
+            appleClarificationVisible: true,
+            onAppleClarificationBackendChange: onChange,
+        });
+
+        expect(texts(tree)).toContain('Inbox clarification');
+        expect(texts(tree)).toContain('Available on this device. Requests stay on device.');
+        await press(tree, 'On-device');
+        expect(onChange).toHaveBeenCalledWith('on-device');
+    });
+
     it('keeps Advanced collapsed and offers every supported duration', async () => {
         const onChange = vi.fn();
         const tree = await renderCard({

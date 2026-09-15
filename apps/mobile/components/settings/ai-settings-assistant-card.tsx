@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { AI_REQUEST_TIMEOUT_OPTIONS, type AIProviderId, type AIReasoningEffort } from '@mindwtr/core';
+import { AI_REQUEST_TIMEOUT_OPTIONS, tFallback, type AIProviderId, type AIReasoningEffort } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText } from '@/components/compact-text';
+import type { AppleClarificationBackend } from '@/lib/apple-clarification-preference';
 
 import { AiSettingsAssistantAnthropicPanel } from './ai-settings-assistant-anthropic-panel';
 import { AiSettingsAssistantGeminiPanel } from './ai-settings-assistant-gemini-panel';
@@ -28,6 +29,9 @@ type AiSettingsAssistantCardProps = {
     aiModel: string;
     aiModelOptions: string[];
     aiProvider: AIProviderId;
+    appleClarificationAvailability: string;
+    appleClarificationBackend: AppleClarificationBackend;
+    appleClarificationVisible: boolean;
     aiReasoningEffort: AIReasoningEffort;
     aiRequestTimeoutSeconds: number;
     aiThinkingBudget: number;
@@ -43,6 +47,7 @@ type AiSettingsAssistantCardProps = {
     onAiExtraBodyParamsSave: () => void;
     onAiModelChange: (value: string) => void;
     onAiProviderChange: (provider: AIProviderId) => void;
+    onAppleClarificationBackendChange: (backend: AppleClarificationBackend) => void;
     onAiReasoningEffortChange: (value: AIReasoningEffort) => void;
     onAiRequestTimeoutSecondsChange: (value: AIRequestTimeoutSeconds) => void;
     onAiThinkingBudgetChange: (value: number) => void;
@@ -65,6 +70,9 @@ export function AiSettingsAssistantCard({
     aiModel,
     aiModelOptions,
     aiProvider,
+    appleClarificationAvailability,
+    appleClarificationBackend,
+    appleClarificationVisible,
     aiReasoningEffort,
     aiRequestTimeoutSeconds,
     aiThinkingBudget,
@@ -80,6 +88,7 @@ export function AiSettingsAssistantCard({
     onAiExtraBodyParamsSave,
     onAiModelChange,
     onAiProviderChange,
+    onAppleClarificationBackendChange,
     onAiReasoningEffortChange,
     onAiRequestTimeoutSecondsChange,
     onAiThinkingBudgetChange,
@@ -104,6 +113,77 @@ export function AiSettingsAssistantCard({
 
             {aiAssistantOpen && (
                 <>
+                    {appleClarificationVisible && (
+                        <>
+                            <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                                <View style={styles.settingInfo}>
+                                    <Text style={[styles.settingLabel, { color: tc.text }]}>
+                                        {tFallback(t, 'settings.appleClarification.title', 'Inbox clarification')}
+                                    </Text>
+                                    <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                        {tFallback(
+                                            t,
+                                            'settings.appleClarification.prototypeHint',
+                                            'Development prototype. This choice is stored only on this device.',
+                                        )}
+                                    </Text>
+                                    {appleClarificationAvailability ? (
+                                        <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                            {appleClarificationAvailability}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                            </View>
+                            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                                <View style={styles.backendToggle}>
+                                    <TouchableOpacity
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: appleClarificationBackend === 'configured' }}
+                                        style={[
+                                            styles.backendOption,
+                                            {
+                                                borderColor: tc.border,
+                                                backgroundColor: appleClarificationBackend === 'configured' ? tc.filterBg : 'transparent',
+                                            },
+                                        ]}
+                                        onPress={() => onAppleClarificationBackendChange('configured')}
+                                    >
+                                        <CompactText
+                                            style={[
+                                                styles.backendOptionText,
+                                                { color: appleClarificationBackend === 'configured' ? tc.tint : tc.secondaryText },
+                                            ]}
+                                            numberOfLines={2}
+                                        >
+                                            {tFallback(t, 'settings.appleClarification.configured', 'Configured provider')}
+                                        </CompactText>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        accessibilityRole="button"
+                                        accessibilityState={{ selected: appleClarificationBackend === 'on-device' }}
+                                        style={[
+                                            styles.backendOption,
+                                            {
+                                                borderColor: tc.border,
+                                                backgroundColor: appleClarificationBackend === 'on-device' ? tc.filterBg : 'transparent',
+                                            },
+                                        ]}
+                                        onPress={() => onAppleClarificationBackendChange('on-device')}
+                                    >
+                                        <CompactText
+                                            style={[
+                                                styles.backendOptionText,
+                                                { color: appleClarificationBackend === 'on-device' ? tc.tint : tc.secondaryText },
+                                            ]}
+                                            numberOfLines={2}
+                                        >
+                                            {tFallback(t, 'settings.appleClarification.onDevice', 'On-device')}
+                                        </CompactText>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </>
+                    )}
                     <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
                         <View style={styles.settingInfo}>
                             <Text style={[styles.settingLabel, { color: tc.text }]}>{t('settings.aiEnable')}</Text>

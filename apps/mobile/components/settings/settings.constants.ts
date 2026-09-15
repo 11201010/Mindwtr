@@ -255,6 +255,7 @@ export type MobileExtraConfig = {
     isFossBuild?: boolean | string;
     dropboxAppKey?: string;
     promptTestControlsEnabled?: boolean | string;
+    appleClarificationPrototypeEnabled?: boolean | string;
 };
 
 export type CloudProvider = 'selfhosted' | 'dropbox' | 'cloudkit';

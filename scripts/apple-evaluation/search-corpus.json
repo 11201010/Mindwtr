@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "resultLimit": 50,
+  "thresholds": {
+    "minimumMeanPrecision": 0.9,
+    "minimumMeanRecall": 0.9,
+    "maximumP95LatencyMs": 2000,
+    "maximumMemoryDeltaMb": 64
+  },
+  "cases": [
+    {
+      "id": "paraphrase-passport",
+      "category": "retrieval",
+      "query": "What do I need to do for my travel document?",
+      "expectedTaskIds": ["task-passport"]
+    },
+    {
+      "id": "multilingual-travel",
+      "category": "retrieval",
+      "query": "下周前要处理的旅行证件",
+      "expectedTaskIds": ["task-passport"]
+    },
+    {
+      "id": "duplicate-title-stable-id",
+      "category": "retrieval",
+      "query": "Renew the Canadian passport",
+      "expectedTaskIds": ["task-passport-ca"]
+    },
+    {
+      "id": "explicit-waiting-filter",
+      "category": "retrieval",
+      "query": "forms for the visa application",
+      "filters": { "selectedStatuses": ["waiting"] },
+      "expectedTaskIds": ["task-visa-waiting"]
+    },
+    {
+      "id": "deleted-index-entry",
+      "category": "stale-removal",
+      "query": "old tax appointment",
+      "expectedTaskIds": []
+    },
+    {
+      "id": "bounded-large-library",
+      "category": "bounded",
+      "query": "tasks about the house move",
+      "expectedTaskIds": ["task-move-anchor"]
+    },
+    {
+      "id": "cancel-active-query",
+      "category": "cancellation",
+      "query": "everything related to travel",
+      "expectedOutcome": "cancelled"
+    },
+    {
+      "id": "model-unavailable",
+      "category": "unavailable",
+      "query": "passport",
+      "expectedOutcome": "unavailable"
+    }
+  ]
+}

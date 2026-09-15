@@ -1,0 +1,8 @@
+{
+  "platforms": ["ios"],
+  "ios": {
+    "podspecPath": "ios/MindwtrAppleFoundationModels.podspec",
+    "swiftModuleName": "MindwtrAppleFoundationModels",
+    "modules": ["MindwtrAppleFoundationModelsModule"]
+  }
+}

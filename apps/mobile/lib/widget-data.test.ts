@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadTranslations, type AppData } from '@mindwtr/core';
-import { buildShortcutsSnapshot, buildWidgetPayload, createWidgetPayloadProjection, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX } from './widget-data';
+import { buildShortcutsSnapshot, buildWidgetPayload, createWidgetPayloadProjection, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, SHORTCUTS_SNAPSHOT_VERSION, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX } from './widget-data';
 
 const baseData: AppData = {
     tasks: [],
@@ -1000,6 +1000,7 @@ describe('widget-data', () => {
             expect(item.projectName).toBe('Errands');
             expect(item.dueDate).toBe('2026-08-14');
             expect(item.startDate).toBe('2026-08-01');
+            expect(item.deepLink).toBe('mindwtr://open?task=t1');
             // The archived project's task is neither an active-project group
             // nor, on its own, excluded from list buckets by project status --
             // but only active projects get a group at all.
@@ -1064,12 +1065,25 @@ describe('widget-data', () => {
             const snapshot = buildShortcutsSnapshot({ ...baseData, tasks: manyTasks });
 
             expect(snapshot.lists.next).toHaveLength(SHORTCUTS_SNAPSHOT_ITEM_CAP);
+            expect(snapshot.coverage.lists.next).toEqual({
+                eligible: SHORTCUTS_SNAPSHOT_ITEM_CAP + 10,
+                published: SHORTCUTS_SNAPSHOT_ITEM_CAP,
+                omitted: 10,
+            });
+            expect(snapshot.coverage.tasks).toEqual({
+                eligible: SHORTCUTS_SNAPSHOT_ITEM_CAP + 10,
+                published: SHORTCUTS_SNAPSHOT_ITEM_CAP,
+                omitted: 10,
+            });
         });
 
-        it('never includes a generatedAt-dependent field inside lists/projects', () => {
+        it('publishes a versioned freshness and coverage contract outside lists/projects', () => {
             const snapshot = buildShortcutsSnapshot({ ...baseData, tasks: [task({ id: 't1' })] });
+            expect(snapshot.version).toBe(SHORTCUTS_SNAPSHOT_VERSION);
             expect(typeof snapshot.generatedAt).toBe('string');
             expect(new Date(snapshot.generatedAt).toString()).not.toBe('Invalid Date');
+            expect(snapshot.coverage.tasks).toEqual({ eligible: 1, published: 1, omitted: 0 });
+            expect(snapshot.lists.next[0].deepLink).toBe('mindwtr://open?task=t1');
         });
     });
 });

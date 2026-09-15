@@ -1,0 +1,19 @@
+{
+  "corpusVersion": 1,
+  "environment": {
+    "kind": "deterministic-fixture",
+    "device": "fixture-only",
+    "os": "fixture-only",
+    "model": "fixture-only"
+  },
+  "results": [
+    { "caseId": "paraphrase-passport", "outcome": "complete", "taskIds": ["task-passport"], "latencyMs": 620, "memoryDeltaMb": 8 },
+    { "caseId": "multilingual-travel", "outcome": "complete", "taskIds": ["task-passport"], "latencyMs": 780, "memoryDeltaMb": 9 },
+    { "caseId": "duplicate-title-stable-id", "outcome": "complete", "taskIds": ["task-passport-ca"], "latencyMs": 650, "memoryDeltaMb": 8 },
+    { "caseId": "explicit-waiting-filter", "outcome": "complete", "taskIds": ["task-visa-waiting"], "latencyMs": 700, "memoryDeltaMb": 8 },
+    { "caseId": "deleted-index-entry", "outcome": "complete", "taskIds": [], "latencyMs": 540, "memoryDeltaMb": 7 },
+    { "caseId": "bounded-large-library", "outcome": "complete", "taskIds": ["task-move-anchor"], "latencyMs": 900, "memoryDeltaMb": 11 },
+    { "caseId": "cancel-active-query", "outcome": "cancelled", "taskIds": [], "latencyMs": 45, "memoryDeltaMb": 1 },
+    { "caseId": "model-unavailable", "outcome": "unavailable", "taskIds": [], "latencyMs": 12, "memoryDeltaMb": 0 }
+  ]
+}

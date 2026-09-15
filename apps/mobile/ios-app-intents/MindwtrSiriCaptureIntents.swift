@@ -52,6 +52,26 @@ private enum MindwtrSiriCaptureLauncher {
         )
     }
 
+    static func taskURL(taskId: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "mindwtr"
+        components.host = "open"
+        components.queryItems = [URLQueryItem(name: "task", value: taskId)]
+        return components.url
+    }
+
+    static func validatedTaskURL(_ rawValue: String?, expectedTaskId: String) -> URL? {
+        guard let rawValue,
+              let url = URL(string: rawValue),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "mindwtr",
+              components.host?.lowercased() == "open",
+              components.queryItems?.first(where: { $0.name == "task" })?.value == expectedTaskId else {
+            return taskURL(taskId: expectedTaskId)
+        }
+        return url
+    }
+
     @MainActor
     static func open(_ url: URL) {
         // React Native may still be attaching its Linking listener on a cold Siri launch.
@@ -393,6 +413,26 @@ private enum MindwtrShortcutsSnapshotStore {
     static let appGroup = "group.tech.dongdongbh.mindwtr"
     static let snapshotKey = "mindwtr-ios-shortcuts-snapshot"
 
+    private static let staleAfter: TimeInterval = 24 * 60 * 60
+    private static let generatedAtFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    enum Freshness {
+        case missing
+        case invalidTimestamp
+        case stale
+        case current
+    }
+
+    enum ProjectResolution {
+        case matched([MindwtrShortcutsSnapshotItem])
+        case missing
+        case ambiguous
+    }
+
     private static func rawSnapshot() -> [String: Any]? {
         guard let defaults = UserDefaults(suiteName: appGroup),
               let jsonString = defaults.string(forKey: snapshotKey),
@@ -400,6 +440,27 @@ private enum MindwtrShortcutsSnapshotStore {
             return nil
         }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    static func freshness(now: Date = Date()) -> Freshness {
+        guard let root = rawSnapshot() else { return .missing }
+        guard let rawGeneratedAt = root["generatedAt"] as? String,
+              let generatedAt = generatedAtFormatter.date(from: rawGeneratedAt)
+                ?? ISO8601DateFormatter().date(from: rawGeneratedAt) else {
+            return .invalidTimestamp
+        }
+        let age = now.timeIntervalSince(generatedAt)
+        return age >= 0 && age <= staleAfter ? .current : .stale
+    }
+
+    static func knownOmittedTaskCount() -> Int? {
+        guard let root = rawSnapshot(),
+              let coverage = root["coverage"] as? [String: Any],
+              let tasks = coverage["tasks"] as? [String: Any],
+              let omitted = tasks["omitted"] as? NSNumber else {
+            return nil
+        }
+        return max(0, omitted.intValue)
     }
 
     /// All snapshot items, deduped by id (a task can appear both in its list
@@ -431,16 +492,20 @@ private enum MindwtrShortcutsSnapshotStore {
         return entries.compactMap(MindwtrShortcutsSnapshotItem.init(dict:))
     }
 
-    static func items(forProjectNamed name: String) -> [MindwtrShortcutsSnapshotItem] {
+    static func items(forProjectNamed name: String) -> ProjectResolution {
         let needle = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty,
               let root = rawSnapshot(),
-              let projects = root["projects"] as? [[String: Any]],
-              let match = projects.first(where: { ($0["name"] as? String)?.lowercased() == needle }) else {
-            return []
+              let projects = root["projects"] as? [[String: Any]] else {
+            return .missing
         }
+        let matches = projects.filter {
+            ($0["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == needle
+        }
+        guard !matches.isEmpty else { return .missing }
+        guard matches.count == 1, let match = matches.first else { return .ambiguous }
         let entries = match["items"] as? [[String: Any]] ?? []
-        return entries.compactMap(MindwtrShortcutsSnapshotItem.init(dict:))
+        return .matched(entries.compactMap(MindwtrShortcutsSnapshotItem.init(dict:)))
     }
 }
 
@@ -452,6 +517,7 @@ struct MindwtrShortcutsSnapshotItem {
     let startDate: String?
     let projectId: String?
     let projectName: String?
+    let deepLink: String?
 
     init?(dict: [String: Any]) {
         guard let id = dict["id"] as? String, !id.isEmpty,
@@ -465,6 +531,7 @@ struct MindwtrShortcutsSnapshotItem {
         self.startDate = dict["startDate"] as? String
         self.projectId = dict["projectId"] as? String
         self.projectName = dict["projectName"] as? String
+        self.deepLink = dict["deepLink"] as? String
     }
 }
 
@@ -550,7 +617,7 @@ struct MindwtrTaskEntity: AppEntity {
     let title: String
     let listLabel: String
     let dueDate: String?
-    let openFeature: String
+    let openURL: URL?
 
     static var typeDisplayRepresentation = TypeDisplayRepresentation(
         name: "Mindwtr Task",
@@ -571,12 +638,11 @@ struct MindwtrTaskEntity: AppEntity {
         id = item.id
         title = item.title
         dueDate = item.dueDate
+        openURL = MindwtrSiriCaptureLauncher.validatedTaskURL(item.deepLink, expectedTaskId: item.id)
         if let projectName = item.projectName, !projectName.isEmpty {
             listLabel = projectName
-            openFeature = "projects"
         } else {
             listLabel = MindwtrGetTasksList(rawValue: item.list)?.dialogTitle ?? item.list.capitalized
-            openFeature = item.list.isEmpty ? "inbox" : item.list
         }
     }
 }
@@ -584,10 +650,10 @@ struct MindwtrTaskEntity: AppEntity {
 @available(iOS 16.0, *)
 struct MindwtrTaskEntityQuery: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [MindwtrTaskEntity] {
-        let idSet = Set(identifiers)
-        return MindwtrShortcutsSnapshotStore.loadAllItems()
-            .filter { idSet.contains($0.id) }
-            .map(MindwtrTaskEntity.init(item:))
+        let itemById = Dictionary(
+            uniqueKeysWithValues: MindwtrShortcutsSnapshotStore.loadAllItems().map { ($0.id, $0) }
+        )
+        return identifiers.compactMap { itemById[$0] }.map(MindwtrTaskEntity.init(item:))
     }
 
     func entities(matching string: String) async throws -> [MindwtrTaskEntity] {
@@ -612,11 +678,10 @@ extension MindwtrTaskEntity: IndexedEntity {
         if let dueDate, let parsedDueDate = MindwtrTaskDueDateDisplay.date(dueDate) {
             attributes.dueDate = parsedDueDate
         }
-        // Reuses the same mindwtr:// scheme + open-feature route every other
-        // deep link in this file already opens (#755) -- tapping a Spotlight
-        // result opens Mindwtr to the task's containing list. A per-task open
-        // route doesn't exist yet, so the containing list is the v2 target.
-        attributes.contentURL = MindwtrSiriCaptureLauncher.featureURL(feature: openFeature)
+        // Stable task ids, rather than titles, drive the exact-task deep link.
+        // React Native revalidates that id against current hydrated state before
+        // navigating, so a deleted/capped-out result never opens a replacement.
+        attributes.contentURL = openURL
         return attributes
     }
 }
@@ -652,7 +717,14 @@ struct MindwtrGetTasksIntent: AppIntent {
         let trimmedProject = project?.trimmingCharacters(in: .whitespacesAndNewlines)
         let items: [MindwtrShortcutsSnapshotItem]
         if let trimmedProject, !trimmedProject.isEmpty {
-            items = MindwtrShortcutsSnapshotStore.items(forProjectNamed: trimmedProject)
+            switch MindwtrShortcutsSnapshotStore.items(forProjectNamed: trimmedProject) {
+            case .matched(let matchedItems):
+                items = matchedItems
+            case .missing:
+                return .result(value: [], dialog: "That project is not in the current Mindwtr snapshot. Open Mindwtr to refresh it.")
+            case .ambiguous:
+                return .result(value: [], dialog: "More than one project has that name. Open Mindwtr and choose the project there.")
+            }
         } else {
             items = MindwtrShortcutsSnapshotStore.items(forList: list)
         }
@@ -661,7 +733,15 @@ struct MindwtrGetTasksIntent: AppIntent {
         guard !entities.isEmpty else {
             return .result(value: [], dialog: "No tasks found. Open Mindwtr to refresh this list.")
         }
-        return .result(value: entities, dialog: "Found \(entities.count) task(s).")
+        switch MindwtrShortcutsSnapshotStore.freshness() {
+        case .current:
+            if let omitted = MindwtrShortcutsSnapshotStore.knownOmittedTaskCount(), omitted > 0 {
+                return .result(value: entities, dialog: "Found \(entities.count) task(s) in a bounded snapshot; \(omitted) eligible task(s) were omitted.")
+            }
+            return .result(value: entities, dialog: "Found \(entities.count) task(s).")
+        case .missing, .invalidTimestamp, .stale:
+            return .result(value: entities, dialog: "Found \(entities.count) task(s) in a stale snapshot. Open Mindwtr to refresh it.")
+        }
     }
 }
 

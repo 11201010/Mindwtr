@@ -85,6 +85,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     donationPromptEnabled,
     promptTestControlsEnabled,
     watchEnabled,
+    // #1214 is an evaluation prototype. Store/preview builds omit every JS
+    // route to the compiled optional module until device quality gates pass.
+    appleClarificationPrototypeEnabled: isDevVariant,
   };
 
   return withAppVariant({

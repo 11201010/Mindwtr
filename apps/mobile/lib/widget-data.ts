@@ -55,6 +55,7 @@ export const IOS_WIDGET_PAYLOAD_KEY_EXTRA_LARGE = 'mindwtr-ios-widget-payload-ex
 // running in the main app process can read it with the same access pattern
 // -- no second storage mechanism, no live database read from an intent.
 export const IOS_SHORTCUTS_SNAPSHOT_KEY = 'mindwtr-ios-shortcuts-snapshot';
+export const SHORTCUTS_SNAPSHOT_VERSION = 2;
 export const SHORTCUTS_SNAPSHOT_ITEM_CAP = 50;
 // Global ceiling on project groups (not just items per group) -- otherwise a
 // library with hundreds of active projects has no bound on snapshot size or
@@ -249,6 +250,8 @@ export interface ShortcutsSnapshotTaskItem {
     startDate?: string;
     projectId?: string;
     projectName?: string;
+    /** Stable-id deep link; titles are display data and never identity. */
+    deepLink: string;
 }
 
 export interface ShortcutsSnapshotProjectGroup {
@@ -258,9 +261,15 @@ export interface ShortcutsSnapshotProjectGroup {
 }
 
 export interface ShortcutsSnapshot {
+    version: typeof SHORTCUTS_SNAPSHOT_VERSION;
     generatedAt: string;
     lists: Record<ShortcutsSnapshotListKey, ShortcutsSnapshotTaskItem[]>;
     projects: ShortcutsSnapshotProjectGroup[];
+    coverage: {
+        lists: Record<ShortcutsSnapshotListKey, { eligible: number; published: number; omitted: number }>;
+        projects: { eligible: number; published: number; omitted: number };
+        tasks: { eligible: number; published: number; omitted: number };
+    };
 }
 
 const TASK_SORT_OPTIONS: TaskSortBy[] = ['default', 'due', 'start', 'review', 'timeEstimate', 'title', 'created', 'created-desc'];
@@ -678,6 +687,7 @@ const buildSnapshotItem = (
         ...(task.startTime ? { startDate: task.startTime } : {}),
         ...(task.projectId ? { projectId: task.projectId } : {}),
         ...(project?.title ? { projectName: project.title } : {}),
+        deepLink: `mindwtr://open?task=${encodeURIComponent(task.id)}`,
     };
 };
 
@@ -738,12 +748,15 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
         else tasksByProjectId.set(task.projectId, [task]);
     }
 
-    const projectGroups: ShortcutsSnapshotProjectGroup[] = projects
+    const eligibleProjects = projects
         .filter((project) => project.status === 'active' && !project.deletedAt)
+        .filter((project) => (tasksByProjectId.get(project.id)?.length ?? 0) > 0)
         // Deterministic global cap on project groups (below): manual project
         // order, same ordering the Projects list itself shows, so which
         // projects survive the cap matches what the user already sees first.
-        .sort((a, b) => a.order - b.order)
+        .sort((a, b) => a.order - b.order);
+
+    const projectGroups: ShortcutsSnapshotProjectGroup[] = eligibleProjects
         .slice(0, SHORTCUTS_SNAPSHOT_PROJECT_CAP)
         .map((project) => {
             const projectTasks = sortTasksBy(
@@ -758,12 +771,39 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
                 // reference), so the cast is safe.
                 items: projectTasks.map((task) => buildSnapshotItem(task, task.status as ShortcutsSnapshotListKey, projectById)),
             };
-        })
-        .filter((group) => group.items.length > 0);
+        });
+
+    const listCoverage = SHORTCUTS_SNAPSHOT_LISTS.reduce((acc, key) => {
+        const eligible = listTasksByKey[key].length;
+        const published = lists[key].length;
+        acc[key] = { eligible, published, omitted: Math.max(0, eligible - published) };
+        return acc;
+    }, {} as ShortcutsSnapshot['coverage']['lists']);
+    const publishedTaskIds = new Set<string>();
+    for (const items of Object.values(lists)) {
+        for (const item of items) publishedTaskIds.add(item.id);
+    }
+    for (const group of projectGroups) {
+        for (const item of group.items) publishedTaskIds.add(item.id);
+    }
 
     return {
-        generatedAt: new Date().toISOString(),
+        version: SHORTCUTS_SNAPSHOT_VERSION,
+        generatedAt: now.toISOString(),
         lists,
         projects: projectGroups,
+        coverage: {
+            lists: listCoverage,
+            projects: {
+                eligible: eligibleProjects.length,
+                published: projectGroups.length,
+                omitted: Math.max(0, eligibleProjects.length - projectGroups.length),
+            },
+            tasks: {
+                eligible: activeTasks.length,
+                published: publishedTaskIds.size,
+                omitted: Math.max(0, activeTasks.length - publishedTaskIds.size),
+            },
+        },
     };
 }

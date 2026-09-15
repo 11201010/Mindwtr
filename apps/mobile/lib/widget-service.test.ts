@@ -504,6 +504,45 @@ describe('widget-service', () => {
         expect(JSON.parse(value).lists.next).toHaveLength(3);
     });
 
+    it('publishes changed omission coverage even when the capped task identities stay the same', async () => {
+        mockPlatform.OS = 'ios';
+        mockIosWidgetSetItem.mockResolvedValue(undefined);
+
+        const data = buildData(50);
+        await updateMobileWidgetFromData(data);
+        mockIosWidgetSetItem.mockClear();
+        mockIosWidgetReloadTimelines.mockClear();
+
+        const extraTask = {
+            ...data.tasks[0],
+            id: '51',
+            title: 'Focused 51',
+        };
+        await updateMobileWidgetFromData({ ...data, tasks: [...data.tasks, extraTask] });
+
+        const snapshotWrites = mockIosWidgetSetItem.mock.calls.filter(([key]) => (
+            key === 'mindwtr-ios-shortcuts-snapshot'
+        ));
+        expect(snapshotWrites).toHaveLength(1);
+        const [key, value] = snapshotWrites[0] as [string, string];
+        expect(key).toBe('mindwtr-ios-shortcuts-snapshot');
+        const snapshot = JSON.parse(value);
+        expect(snapshot.lists.next).toHaveLength(50);
+        expect(snapshot.coverage.lists.next).toEqual({ eligible: 51, published: 50, omitted: 1 });
+        expect(snapshot.coverage.tasks).toEqual({ eligible: 51, published: 50, omitted: 1 });
+        expect(mockLogInfo).toHaveBeenCalledWith('iOS task snapshot published to App Group', {
+            scope: 'widget',
+            force: true,
+            extra: {
+                releaseCheck: 'v1.3.1/apple-task-snapshot',
+                snapshotVersion: 2,
+                publishedCount: 50,
+                omittedCount: 1,
+                exactLinkCount: 50,
+            },
+        });
+    });
+
     it('refreshes only the widget payloads when a change is invisible to the snapshot, skipping the snapshot write (#980 correction)', async () => {
         mockPlatform.OS = 'ios';
         mockIosWidgetSetItem.mockResolvedValue(undefined);

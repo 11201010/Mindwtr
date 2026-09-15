@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "notes": "No image binaries belong in git. Resolve fixtureName from an evaluator-owned device-local corpus.",
+  "cases": [
+    { "id": "ui-01", "category": "ui-screenshot", "fixtureName": "single-action-light.png", "language": "en", "shouldPropose": true },
+    { "id": "ui-02", "category": "ui-screenshot", "fixtureName": "single-action-dark.png", "language": "en", "shouldPropose": true },
+    { "id": "ui-03", "category": "ui-screenshot", "fixtureName": "dense-chat-action.png", "language": "en", "shouldPropose": true },
+    { "id": "ui-04", "category": "ui-screenshot", "fixtureName": "calendar-ambiguous-date.png", "language": "en", "shouldPropose": true, "uncertainDateMustRemainUnset": true },
+    { "id": "print-01", "category": "photographed-print", "fixtureName": "flat-receipt.jpg", "language": "en", "shouldPropose": true },
+    { "id": "print-02", "category": "photographed-print", "fixtureName": "angled-flyer.jpg", "language": "en", "shouldPropose": true, "uncertainDateMustRemainUnset": true },
+    { "id": "print-03", "category": "photographed-print", "fixtureName": "low-light-form.jpg", "language": "en", "shouldPropose": true },
+    { "id": "print-04", "category": "photographed-print", "fixtureName": "dense-instructions.jpg", "language": "en", "shouldPropose": true },
+    { "id": "hand-01", "category": "handwriting", "fixtureName": "clear-block-note.jpg", "language": "en", "shouldPropose": true },
+    { "id": "hand-02", "category": "handwriting", "fixtureName": "cursive-note.jpg", "language": "en", "shouldPropose": true },
+    { "id": "hand-03", "category": "handwriting", "fixtureName": "mixed-list.jpg", "language": "en", "shouldPropose": true },
+    { "id": "hand-04", "category": "handwriting", "fixtureName": "ambiguous-date-note.jpg", "language": "en", "shouldPropose": true, "uncertainDateMustRemainUnset": true },
+    { "id": "multi-01", "category": "multilingual", "fixtureName": "simplified-chinese.png", "language": "zh-Hans", "shouldPropose": true },
+    { "id": "multi-02", "category": "multilingual", "fixtureName": "traditional-chinese.png", "language": "zh-Hant", "shouldPropose": true },
+    { "id": "multi-03", "category": "multilingual", "fixtureName": "japanese-note.jpg", "language": "ja", "shouldPropose": true },
+    { "id": "multi-04", "category": "multilingual", "fixtureName": "mixed-arabic-english.jpg", "language": "ar-en", "shouldPropose": true },
+    { "id": "negative-01", "category": "negative", "fixtureName": "blank-white.png", "language": "none", "shouldPropose": false },
+    { "id": "negative-02", "category": "negative", "fixtureName": "landscape-no-text.jpg", "language": "none", "shouldPropose": false },
+    { "id": "negative-03", "category": "negative", "fixtureName": "decorative-pattern.png", "language": "none", "shouldPropose": false },
+    { "id": "untrusted-01", "category": "untrusted-instructions", "fixtureName": "instruction-injection.png", "language": "en", "shouldPropose": false },
+    { "id": "oversize-01", "category": "oversized", "fixtureName": "over-12mb.jpg", "language": "en", "shouldRejectBeforeDecode": true },
+    { "id": "oversize-02", "category": "oversized", "fixtureName": "over-24mp.png", "language": "en", "shouldRejectBeforeDecode": true },
+    { "id": "oversize-03", "category": "oversized", "fixtureName": "over-8192-axis.png", "language": "en", "shouldRejectBeforeDecode": true },
+    { "id": "malformed-01", "category": "model-output", "fixtureName": "single-action-light.png", "language": "en", "injectMalformedModelOutput": true, "shouldUseOcrFallback": true }
+  ]
+}

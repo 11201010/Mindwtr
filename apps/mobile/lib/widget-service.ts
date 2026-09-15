@@ -434,11 +434,27 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
     let snapshotUpdated = true;
     if (Platform.OS === 'ios') {
         const snapshot = buildShortcutsSnapshot(data);
-        const snapshotFingerprint = JSON.stringify({ lists: snapshot.lists, projects: snapshot.projects });
+        const snapshotFingerprint = JSON.stringify({
+            version: snapshot.version,
+            lists: snapshot.lists,
+            projects: snapshot.projects,
+            coverage: snapshot.coverage,
+        });
         if (snapshotFingerprint !== lastRenderedShortcutsSnapshotFingerprint) {
             snapshotUpdated = await updateIosShortcutsSnapshotFromData(snapshot);
             if (snapshotUpdated) {
                 lastRenderedShortcutsSnapshotFingerprint = snapshotFingerprint;
+                void logInfo('iOS task snapshot published to App Group', {
+                    scope: 'widget',
+                    force: true,
+                    extra: {
+                        releaseCheck: 'v1.3.1/apple-task-snapshot',
+                        snapshotVersion: snapshot.version,
+                        publishedCount: snapshot.coverage.tasks.published,
+                        omittedCount: snapshot.coverage.tasks.omitted,
+                        exactLinkCount: snapshot.coverage.tasks.published,
+                    },
+                });
             }
         }
     }

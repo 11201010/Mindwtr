@@ -752,7 +752,9 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
           titleDirectionStyle={controller.titleDirectionStyle}
           aiEnabled={controller.aiEnabled}
           isAIWorking={controller.isAIWorking}
+          isAICancellable={controller.isAICancellable}
           handleAIClarifyInbox={controller.handleAIClarifyInbox}
+          handleAICancelInbox={controller.handleAICancelInbox}
           aiWorkingText={aiWorkingText}
           notesOpen={notesOpen}
           setNotesOpen={setNotesOpen}

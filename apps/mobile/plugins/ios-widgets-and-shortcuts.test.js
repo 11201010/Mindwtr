@@ -286,6 +286,10 @@ describe('ios-widgets-and-shortcuts', () => {
     expect(source).toContain('@available(iOS 18.0, *)\nextension MindwtrTaskEntity: IndexedEntity');
     expect(source).toContain('CSSearchableIndex.default().indexAppEntities(');
     expect(source).toContain('@available(iOS 18.0, *)\nenum MindwtrShortcutsSpotlightIndexer');
+    expect(source).toContain('let deepLink: String?');
+    expect(source).toContain('validatedTaskURL(item.deepLink, expectedTaskId: item.id)');
+    expect(source).toContain('URLQueryItem(name: "task", value: taskId)');
+    expect(source).toContain('return identifiers.compactMap { itemById[$0] }');
 
     // Reindexing must be driven by the app's refresh path, never by an
     // intent's perform().
@@ -312,6 +316,21 @@ describe('ios-widgets-and-shortcuts', () => {
     const indexEntities = spotlightIndexer.indexOf('indexAppEntities(entities)');
     expect(deleteIndex).toBeGreaterThan(-1);
     expect(indexEntities).toBeGreaterThan(deleteIndex);
+  });
+
+  it('reports bounded or stale snapshot reads and refuses ambiguous project names', () => {
+    const sourceDir = path.resolve(__dirname, '..', APP_INTENTS_FOLDER);
+    const source = fs.readFileSync(
+      path.join(sourceDir, 'MindwtrSiriCaptureIntents.swift'),
+      'utf8'
+    );
+
+    expect(source).toContain('private static let staleAfter: TimeInterval = 24 * 60 * 60');
+    expect(source).toContain('static func knownOmittedTaskCount() -> Int?');
+    expect(source).toContain('case ambiguous');
+    expect(source).toContain('More than one project has that name.');
+    expect(source).toContain('task(s) were omitted.');
+    expect(source).toContain('task(s) in a stale snapshot.');
   });
 
   it('wires Spotlight reindexing into AppDelegate launch, guarded to iOS 18+, idempotently', () => {

@@ -26,7 +26,9 @@ type Props = {
   titleDirectionStyle: object;
   aiEnabled: boolean;
   isAIWorking: boolean;
+  isAICancellable: boolean;
   handleAIClarifyInbox: () => void;
+  handleAICancelInbox: () => void;
   aiWorkingText: string;
   notesOpen: boolean;
   setNotesOpen: (v: boolean) => void;
@@ -55,7 +57,9 @@ export function InboxCaptureCard({
   titleDirectionStyle,
   aiEnabled,
   isAIWorking,
+  isAICancellable,
   handleAIClarifyInbox,
+  handleAICancelInbox,
   aiWorkingText,
   notesOpen,
   setNotesOpen,
@@ -121,16 +125,18 @@ export function InboxCaptureCard({
           <TouchableOpacity
             accessibilityRole="button"
             style={styles.anchorActionButton}
-            onPress={handleAIClarifyInbox}
-            disabled={isAIWorking}
-            accessibilityState={{ disabled: isAIWorking, busy: isAIWorking }}
+            onPress={isAIWorking && isAICancellable ? handleAICancelInbox : handleAIClarifyInbox}
+            disabled={isAIWorking && !isAICancellable}
+            accessibilityState={{ disabled: isAIWorking && !isAICancellable, busy: isAIWorking }}
             hitSlop={6}
           >
             {isAIWorking
               ? <ActivityIndicator size="small" color={tc.tint} />
               : <Sparkles size={14} color={tc.tint} />}
             <Text style={[styles.anchorActionText, { color: tc.tint }]}>
-              {isAIWorking ? aiWorkingText : t('taskEdit.aiClarify')}
+              {isAIWorking
+                ? isAICancellable ? t('common.cancel') : aiWorkingText
+                : t('taskEdit.aiClarify')}
             </Text>
           </TouchableOpacity>
         )}

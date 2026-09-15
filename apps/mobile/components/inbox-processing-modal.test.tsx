@@ -29,6 +29,12 @@ vi.mock('expo-haptics', () => ({
 }));
 
 const reducedMotionMock = vi.hoisted(() => ({ value: false }));
+const appleClarificationMocks = vi.hoisted(() => ({
+  prototypeEnabled: false,
+  capability: vi.fn(),
+  request: vi.fn(),
+  report: vi.fn(),
+}));
 const similarityMocks = vi.hoisted(() => ({
   createIndex: vi.fn(),
   find: vi.fn(),
@@ -37,6 +43,16 @@ const similarityMocks = vi.hoisted(() => ({
 vi.mock('@/hooks/use-reduced-motion', () => ({
   useReducedMotion: () => reducedMotionMock.value,
 }));
+vi.mock('../lib/apple-foundation-models', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/apple-foundation-models')>();
+  return {
+    ...actual,
+    isAppleClarificationPrototypeEnabled: () => appleClarificationMocks.prototypeEnabled,
+    getAppleClarificationCapability: appleClarificationMocks.capability,
+    requestAppleInboxClarification: appleClarificationMocks.request,
+    reportAppleClarificationOutcome: appleClarificationMocks.report,
+  };
+});
 const push = vi.fn();
 const clarifyTask = vi.fn();
 const showToast = vi.fn();
@@ -324,6 +340,7 @@ vi.mock('../lib/ai-config', () => ({
 
 vi.mock('../lib/app-log', () => ({
   logError: vi.fn(),
+  logInfo: vi.fn(),
   logWarn: vi.fn(),
 }));
 
@@ -360,6 +377,13 @@ describe('InboxProcessingModal', () => {
     asyncStorageMock.setItem.mockReset();
     asyncStorageMock.setItem.mockResolvedValue(undefined);
     reducedMotionMock.value = false;
+    appleClarificationMocks.prototypeEnabled = false;
+    appleClarificationMocks.capability.mockReset().mockResolvedValue({
+      available: true,
+      supportedOperations: ['inbox_clarification'],
+    });
+    appleClarificationMocks.request.mockReset();
+    appleClarificationMocks.report.mockReset().mockResolvedValue(null);
     similarityMocks.createIndex.mockClear();
     similarityMocks.find.mockClear();
     addProject.mockClear();
@@ -2334,6 +2358,148 @@ describe('InboxProcessingModal', () => {
     });
 
     expect(root.findByProps({ children: 'Working...' })).toBeTruthy();
+  });
+
+  it('keeps an on-device suggestion in the editable draft until the normal workflow saves', async () => {
+    setPlatform('ios');
+    appleClarificationMocks.prototypeEnabled = true;
+    asyncStorageMock.getItem.mockImplementation(async (storageKey: string) => (
+      storageKey === 'mindwtr:appleClarificationBackend:v1' ? 'on-device' : null
+    ));
+    appleClarificationMocks.request.mockResolvedValue({
+      cleanedTitle: 'Call the dentist',
+      status: 'next',
+      contextIds: [],
+      tagIds: [],
+      dueDate: '2026-09-18',
+    });
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={vi.fn()} />);
+    });
+    await flushAsyncActions();
+    const root = tree.root;
+
+    act(() => {
+      findPressableWithText(root, 'taskEdit.aiClarify').props.onPress();
+    });
+    await flushAsyncActions();
+    expect(root.findAll((node) => (
+      typeof node.props?.children === 'string'
+      && node.props.children.includes('Due: 2026-09-18 (date only)')
+    ))).not.toHaveLength(0);
+    const apply = findPressableWithText(root, 'ai.applySuggestion').props.onPress;
+
+    act(() => {
+      apply();
+      apply();
+    });
+
+    expect(findTextInputByAccessibilityLabel(root, 'taskEdit.titleLabel').props.value).toBe('Call the dentist');
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(appleClarificationMocks.report).toHaveBeenCalledWith(
+      'applied_to_draft',
+      expect.objectContaining({ dateCount: 1, statusIncluded: true }),
+    );
+  });
+
+  it('ignores a late on-device result after the processing draft changes', async () => {
+    setPlatform('ios');
+    appleClarificationMocks.prototypeEnabled = true;
+    asyncStorageMock.getItem.mockImplementation(async (storageKey: string) => (
+      storageKey === 'mindwtr:appleClarificationBackend:v1' ? 'on-device' : null
+    ));
+    let resolveSuggestion!: (value: any) => void;
+    appleClarificationMocks.request.mockReturnValue(new Promise((resolve) => {
+      resolveSuggestion = resolve;
+    }));
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={vi.fn()} />);
+    });
+    await flushAsyncActions();
+    const root = tree.root;
+
+    act(() => {
+      findPressableWithText(root, 'taskEdit.aiClarify').props.onPress();
+    });
+    await flushAsyncActions();
+    act(() => {
+      findTextInputByAccessibilityLabel(root, 'taskEdit.titleLabel').props.onChangeText('My newer edit');
+    });
+    await act(async () => {
+      resolveSuggestion({ cleanedTitle: 'Late title', contextIds: [], tagIds: [] });
+      await Promise.resolve();
+    });
+
+    expect(findTextInputByAccessibilityLabel(root, 'taskEdit.titleLabel').props.value).toBe('My newer edit');
+    expect(findNodesWithText(root, 'On-device suggestion')).toHaveLength(0);
+    expect(appleClarificationMocks.report).toHaveBeenCalledWith('stale_ignored');
+  });
+
+  it('cancels an in-flight on-device request from the processing card', async () => {
+    setPlatform('ios');
+    appleClarificationMocks.prototypeEnabled = true;
+    asyncStorageMock.getItem.mockImplementation(async (storageKey: string) => (
+      storageKey === 'mindwtr:appleClarificationBackend:v1' ? 'on-device' : null
+    ));
+    let observedSignal: AbortSignal | undefined;
+    appleClarificationMocks.request.mockImplementation((_input, options) => {
+      observedSignal = options?.signal;
+      return new Promise(() => {});
+    });
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={vi.fn()} />);
+    });
+    await flushAsyncActions();
+    const root = tree.root;
+
+    act(() => {
+      findPressableWithText(root, 'taskEdit.aiClarify').props.onPress();
+    });
+    await flushAsyncActions();
+    expect(observedSignal?.aborted).toBe(false);
+
+    act(() => {
+      findPressableWithText(root, 'common.cancel').props.onPress();
+    });
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(findNodesWithText(root, 'On-device suggestion')).toHaveLength(0);
+  });
+
+  it('does not start native inference when cancelled while capability is pending', async () => {
+    setPlatform('ios');
+    appleClarificationMocks.prototypeEnabled = true;
+    asyncStorageMock.getItem.mockImplementation(async (storageKey: string) => (
+      storageKey === 'mindwtr:appleClarificationBackend:v1' ? 'on-device' : null
+    ));
+    let resolveCapability!: (value: { available: boolean; supportedOperations: string[] }) => void;
+    appleClarificationMocks.capability.mockReturnValue(new Promise((resolve) => {
+      resolveCapability = resolve;
+    }));
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={vi.fn()} />);
+    });
+    await flushAsyncActions();
+    const root = tree.root;
+
+    act(() => {
+      findPressableWithText(root, 'taskEdit.aiClarify').props.onPress();
+    });
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      findPressableWithText(root, 'common.cancel').props.onPress();
+    });
+    await act(async () => {
+      resolveCapability({ available: true, supportedOperations: ['inbox_clarification'] });
+      await Promise.resolve();
+    });
+
+    expect(appleClarificationMocks.request).not.toHaveBeenCalled();
+    expect(findNodesWithText(root, 'On-device suggestion')).toHaveLength(0);
   });
 
   describe('terminal decisions', () => {

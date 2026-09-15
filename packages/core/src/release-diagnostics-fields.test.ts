@@ -13,6 +13,10 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // Apple development evaluations (#915, #1194, #1214, #1195).
+    'statusIncluded', 'associationCount', 'dateCount', 'failureClass',
+    'matchCount', 'acceptedCount', 'droppedCount',
+    'snapshotVersion', 'publishedCount', 'omittedCount', 'exactLinkCount',
     // feedback-diagnostics: opt-in snapshot of bounded session and saved logs.
     'captureMode', 'diagnosticTruncated', 'debugLoggingEnabled', 'breadcrumbCount', 'breadcrumbs',
     // share-card-export (local PNG export adapters)

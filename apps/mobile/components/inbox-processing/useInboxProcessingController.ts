@@ -63,6 +63,23 @@ import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { getAssignedToSuggestions, rankTokenSuggestions } from '../task-metadata-suggestions';
 import { buildAIConfig, isAIKeyRequired, loadAIKey } from '../../lib/ai-config';
 import { logWarn } from '../../lib/app-log';
+import { readAppleClarificationBackend } from '../../lib/apple-clarification-preference';
+import {
+  APPLE_CLARIFICATION_RELEASE_CHECK,
+  AppleClarificationCancelledError,
+  areAppleClarificationAssociationsCurrent,
+  buildAppleClarificationCandidates,
+  consumeAppleClarificationApply,
+  createAppleClarificationLease,
+  describeAppleClarificationUnavailableReason,
+  getAppleClarificationCapability,
+  isAppleClarificationLeaseCurrent,
+  isAppleClarificationPrototypeEnabled,
+  reportAppleClarificationOutcome,
+  requestAppleInboxClarification,
+  type AppleClarificationDraftSnapshot,
+  type AppleClarificationSuggestion,
+} from '../../lib/apple-foundation-models';
 import { createSomedaySection as persistSomedaySection } from '../../lib/someday-section-actions';
 import {
   getActionFailureMessage,
@@ -182,12 +199,15 @@ export function useInboxProcessingController({
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
   const [showReviewDatePicker, setShowReviewDatePicker] = useState(false);
   const [isAIWorking, setIsAIWorking] = useState(false);
+  const [appleClarificationBackend, setAppleClarificationBackend] = useState<'configured' | 'on-device'>('configured');
   const [aiModal, setAiModal] = useState<{ title: string; message?: string; actions: AIResponseAction[] } | null>(null);
   const [selectedContexts, setSelectedContexts] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedPriority, setSelectedPriority] = useState<TaskPriority | undefined>(undefined);
   const [selectedSomedaySectionId, setSelectedSomedaySectionId] = useState<string | undefined>(undefined);
   const dirtyScheduleFieldsRef = useRef(new Set<'startTime' | 'dueDate' | 'reviewAt'>());
+  const activeAppleClarificationRef = useRef<AbortController | null>(null);
+  const consumedAppleClarificationRequestsRef = useRef(new Set<string>());
 
   const titleInputRef = useRef<any>(null);
   const processingScrollRef = useRef<any>(null);
@@ -215,6 +235,10 @@ export function useInboxProcessingController({
   const defaultScheduleTime = normalizeClockTimeInput(settings?.gtd?.defaultScheduleTime) || '';
   const aiEnabled = settings?.ai?.enabled === true;
   const aiProvider = (settings?.ai?.provider ?? 'openai') as AIProviderId;
+  const appleClarificationPrototypeEnabled = isAppleClarificationPrototypeEnabled();
+  const aiClarifyEnabled = appleClarificationBackend === 'on-device'
+    ? appleClarificationPrototypeEnabled
+    : aiEnabled;
   const showProjectSection = processInboxPlan.showProjectStep;
   const showContextSection = showContextsField || showTagsField;
   const showOrganizationSection = showPriorityField || showEnergyLevelField || showAssignedToField || showTimeEstimateField;
@@ -371,6 +395,40 @@ export function useInboxProcessingController({
     () => rankTokenSuggestions(tagSuggestionPool, selectedTags, suggestionTerms, MAX_TOKEN_SUGGESTIONS),
     [selectedTags, suggestionTerms, tagSuggestionPool],
   );
+
+  const appleClarificationDraft = useMemo<AppleClarificationDraftSnapshot | null>(() => currentTask ? ({
+    taskId: currentTask.id,
+    revision: `${currentTask.rev ?? ''}:${currentTask.revBy ?? ''}:${currentTask.updatedAt}`,
+    title: processingTitle,
+    description: processingDescription,
+    projectId: selectedProjectId,
+    areaId: selectedAreaId,
+    contexts: selectedContexts,
+    tags: selectedTags,
+    startDate: pendingStartDate ? safeFormatDate(pendingStartDate, 'yyyy-MM-dd') : null,
+    dueDate: pendingDueDate ? safeFormatDate(pendingDueDate, 'yyyy-MM-dd') : null,
+  }) : null, [
+    currentTask,
+    pendingDueDate,
+    pendingStartDate,
+    processingDescription,
+    processingTitle,
+    selectedAreaId,
+    selectedContexts,
+    selectedProjectId,
+    selectedTags,
+  ]);
+  const appleClarificationDraftRef = useRef<AppleClarificationDraftSnapshot | null>(null);
+  appleClarificationDraftRef.current = appleClarificationDraft;
+
+  const appleClarificationAssociations = useMemo(() => ({
+    projectIds: new Set(projects.filter(isSelectableProjectForTaskAssignment).map((project) => project.id)),
+    areaIds: new Set(areas.filter((area) => !area.deletedAt).map((area) => area.id)),
+    contextIds: new Set([...contextSuggestionPool, ...selectedContexts]),
+    tagIds: new Set([...tagSuggestionPool, ...selectedTags]),
+  }), [areas, contextSuggestionPool, projects, selectedContexts, selectedTags, tagSuggestionPool]);
+  const appleClarificationAssociationsRef = useRef(appleClarificationAssociations);
+  appleClarificationAssociationsRef.current = appleClarificationAssociations;
 
   const projectFilterAreaId = selectedAreaId || undefined;
   const areaFilteredProjects = useMemo(
@@ -557,12 +615,37 @@ export function useInboxProcessingController({
     primeTaskState(null);
   }, [primeTaskState]);
 
+  const cancelAppleClarification = useCallback(() => {
+    activeAppleClarificationRef.current?.abort();
+    activeAppleClarificationRef.current = null;
+    setIsAIWorking(false);
+  }, []);
+
   const handleClose = useCallback(() => {
+    cancelAppleClarification();
     resetProcessingState();
     onClose();
-  }, [onClose, resetProcessingState]);
+  }, [cancelAppleClarification, onClose, resetProcessingState]);
 
   const closeAIModal = useCallback(() => setAiModal(null), []);
+
+  useEffect(() => {
+    if (!visible || !appleClarificationPrototypeEnabled) {
+      setAppleClarificationBackend('configured');
+      return;
+    }
+    let active = true;
+    void readAppleClarificationBackend().then((backend) => {
+      if (active) setAppleClarificationBackend(backend);
+    });
+    return () => {
+      active = false;
+    };
+  }, [appleClarificationPrototypeEnabled, visible]);
+
+  useEffect(() => () => {
+    cancelAppleClarification();
+  }, [cancelAppleClarification, currentTask?.id, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -1213,8 +1296,218 @@ export function useInboxProcessingController({
     await applyWorkflowDecision({ type: 'skip' });
   }, [applyWorkflowDecision]);
 
+  const applyAppleClarificationStatus = useCallback((status: AppleClarificationSuggestion['status']) => {
+    if (!status) return;
+    if (status === 'someday' || status === 'reference') {
+      setActionabilityChoice(status);
+      setTwoMinuteChoice(null);
+      setExecutionChoice(null);
+      return;
+    }
+    setActionabilityChoice('actionable');
+    setTwoMinuteChoice('no');
+    setExecutionChoice(status === 'waiting' ? 'delegate' : 'defer');
+  }, []);
+
+  const applyAppleClarificationSuggestion = useCallback((suggestion: AppleClarificationSuggestion) => {
+    setProcessingTitle(suggestion.cleanedTitle);
+    if (suggestion.projectId) {
+      setSelectedProjectId(suggestion.projectId);
+      setSelectedAreaId(null);
+    } else if (suggestion.areaId) {
+      setSelectedAreaId(suggestion.areaId);
+      setSelectedProjectId(null);
+    }
+    if (suggestion.contextIds.length > 0) {
+      setSelectedContexts((previous) => Array.from(new Set([...previous, ...suggestion.contextIds])));
+    }
+    if (suggestion.tagIds.length > 0) {
+      setSelectedTags((previous) => Array.from(new Set([...previous, ...suggestion.tagIds])));
+    }
+    if (suggestion.startDate) {
+      const value = safeParseDate(suggestion.startDate);
+      if (value) {
+        dirtyScheduleFieldsRef.current.add('startTime');
+        setPendingStartDate(value);
+        setPendingStartDateOnly(true);
+      }
+    }
+    if (suggestion.dueDate) {
+      const value = safeParseDate(suggestion.dueDate);
+      if (value) {
+        dirtyScheduleFieldsRef.current.add('dueDate');
+        setPendingDueDate(value);
+        setPendingDueDateOnly(true);
+      }
+    }
+    if (
+      suggestion.projectId
+      || suggestion.areaId
+      || suggestion.contextIds.length > 0
+      || suggestion.tagIds.length > 0
+      || suggestion.startDate
+      || suggestion.dueDate
+    ) {
+      setShowAdvancedOptions(true);
+    }
+    applyAppleClarificationStatus(suggestion.status);
+  }, [applyAppleClarificationStatus]);
+
+  const formatAppleClarificationPreview = useCallback((suggestion: AppleClarificationSuggestion): string => {
+    const labels = new Map<string, string>();
+    for (const project of projects) labels.set(project.id, project.title);
+    for (const area of areas) labels.set(area.id, area.name);
+    for (const value of [...contextSuggestionPool, ...tagSuggestionPool]) labels.set(value, value);
+    const lines = [`Title: ${suggestion.cleanedTitle}`];
+    if (suggestion.status) lines.push(`GTD status: ${suggestion.status}`);
+    if (suggestion.projectId) lines.push(`Project: ${labels.get(suggestion.projectId) ?? suggestion.projectId}`);
+    if (suggestion.areaId) lines.push(`Area: ${labels.get(suggestion.areaId) ?? suggestion.areaId}`);
+    if (suggestion.contextIds.length > 0) lines.push(`Contexts: ${suggestion.contextIds.map((id) => labels.get(id) ?? id).join(', ')}`);
+    if (suggestion.tagIds.length > 0) lines.push(`Tags: ${suggestion.tagIds.map((id) => labels.get(id) ?? id).join(', ')}`);
+    if (suggestion.startDate) lines.push(`Start: ${suggestion.startDate} (date only)`);
+    if (suggestion.dueDate) lines.push(`Due: ${suggestion.dueDate} (date only)`);
+    return lines.join('\n');
+  }, [areas, contextSuggestionPool, projects, tagSuggestionPool]);
+
+  const handleAppleClarifyInbox = useCallback(async () => {
+    const initialDraft = appleClarificationDraftRef.current;
+    if (!currentTask || !initialDraft) return;
+
+    cancelAppleClarification();
+    const controller = new AbortController();
+    activeAppleClarificationRef.current = controller;
+    const requestId = `inbox-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const lease = createAppleClarificationLease(requestId, initialDraft);
+    setIsAIWorking(true);
+    try {
+      const capability = await getAppleClarificationCapability(language);
+      if (controller.signal.aborted || activeAppleClarificationRef.current !== controller) {
+        throw new AppleClarificationCancelledError();
+      }
+      const draftBeforeRequest = appleClarificationDraftRef.current;
+      if (!draftBeforeRequest || !isAppleClarificationLeaseCurrent(lease, draftBeforeRequest)) {
+        void reportAppleClarificationOutcome('stale_ignored');
+        return;
+      }
+      if (!capability.available) {
+        showToast({
+          title: tFallback(t, 'taskEdit.aiClarify', 'Clarify with AI'),
+          message: describeAppleClarificationUnavailableReason(capability.reason),
+          tone: 'warning',
+          durationMs: 6200,
+        });
+        void reportAppleClarificationOutcome('unavailable', { reason: capability.reason ?? 'unknown' });
+        return;
+      }
+      const candidates = buildAppleClarificationCandidates({
+        title: initialDraft.title,
+        description: initialDraft.description,
+        projects,
+        areas,
+        contexts: contextSuggestionPool,
+        tags: tagSuggestionPool,
+        selectedProjectId,
+        selectedAreaId,
+        selectedContexts,
+        selectedTags,
+      });
+      const suggestion = await requestAppleInboxClarification({
+        requestId,
+        locale: language,
+        title: initialDraft.title,
+        description: initialDraft.description,
+        candidates,
+      }, { signal: controller.signal });
+      if (controller.signal.aborted || activeAppleClarificationRef.current !== controller) {
+        throw new AppleClarificationCancelledError();
+      }
+      const currentDraft = appleClarificationDraftRef.current;
+      if (!currentDraft || !isAppleClarificationLeaseCurrent(lease, currentDraft)) {
+        void reportAppleClarificationOutcome('stale_ignored');
+        return;
+      }
+
+      const apply = () => {
+        const latestDraft = appleClarificationDraftRef.current;
+        if (
+          !latestDraft
+          || !areAppleClarificationAssociationsCurrent(suggestion, appleClarificationAssociationsRef.current)
+          || !consumeAppleClarificationApply(lease, latestDraft, consumedAppleClarificationRequestsRef.current)
+        ) {
+          closeAIModal();
+          showToast({
+            title: tFallback(t, 'common.notice', 'Notice'),
+            message: tFallback(
+              t,
+              'ai.appleClarification.stale',
+              'The item or its available associations changed. Ask for a fresh suggestion.',
+            ),
+            tone: 'warning',
+          });
+          return;
+        }
+        applyAppleClarificationSuggestion(suggestion);
+        closeAIModal();
+        void reportAppleClarificationOutcome('applied_to_draft', {
+          statusIncluded: Boolean(suggestion.status),
+          associationCount: suggestion.contextIds.length + suggestion.tagIds.length
+            + Number(Boolean(suggestion.projectId)) + Number(Boolean(suggestion.areaId)),
+          dateCount: Number(Boolean(suggestion.startDate)) + Number(Boolean(suggestion.dueDate)),
+        });
+      };
+      setAiModal({
+        title: tFallback(t, 'ai.appleClarification.suggestionTitle', 'On-device suggestion'),
+        message: formatAppleClarificationPreview(suggestion),
+        actions: [
+          { label: t('ai.applySuggestion'), variant: 'primary', onPress: apply },
+          { label: t('common.cancel'), variant: 'secondary', onPress: closeAIModal },
+        ],
+      });
+      void reportAppleClarificationOutcome('suggestion_ready');
+    } catch (error) {
+      if (!(error instanceof AppleClarificationCancelledError)) {
+        void logWarn('Apple Inbox clarification path failed', {
+          scope: 'inbox',
+          extra: {
+            releaseCheck: APPLE_CLARIFICATION_RELEASE_CHECK,
+            backend: 'apple_on_device',
+            outcome: 'failed',
+            failureClass: error instanceof Error ? error.name : 'unknown',
+          },
+        });
+        Alert.alert(t('ai.errorTitle'), formatAIErrorAlertBody(t('ai.errorBody'), error));
+      }
+    } finally {
+      if (activeAppleClarificationRef.current === controller) {
+        activeAppleClarificationRef.current = null;
+        setIsAIWorking(false);
+      }
+    }
+  }, [
+    applyAppleClarificationSuggestion,
+    areas,
+    cancelAppleClarification,
+    closeAIModal,
+    contextSuggestionPool,
+    currentTask,
+    formatAppleClarificationPreview,
+    language,
+    projects,
+    selectedAreaId,
+    selectedContexts,
+    selectedProjectId,
+    selectedTags,
+    showToast,
+    t,
+    tagSuggestionPool,
+  ]);
+
   const handleAIClarifyInbox = useCallback(async () => {
     if (!currentTask) return;
+    if (appleClarificationBackend === 'on-device') {
+      await handleAppleClarifyInbox();
+      return;
+    }
     if (!aiEnabled) {
       showToast({
         title: t('ai.errorTitle'),
@@ -1298,9 +1591,11 @@ export function useInboxProcessingController({
   }, [
     aiEnabled,
     aiProvider,
+    appleClarificationBackend,
     closeAIModal,
     contextSuggestionPool,
     currentTask,
+    handleAppleClarifyInbox,
     openSettingsLabel,
     processingTitle,
     router,
@@ -1313,7 +1608,7 @@ export function useInboxProcessingController({
   return {
     actionabilityChoice,
     addCustomContextMobile,
-    aiEnabled,
+    aiEnabled: aiClarifyEnabled,
     aiModal,
     applyTokenSuggestion,
     areaById,
@@ -1338,6 +1633,7 @@ export function useInboxProcessingController({
     filteredProjects,
     formatProgressLabel,
     handleAIClarifyInbox,
+    handleAICancelInbox: cancelAppleClarification,
     handleClose,
     handleConfirmWaitingMobile,
     handleConvertToProject,
@@ -1358,6 +1654,7 @@ export function useInboxProcessingController({
     headerStyle,
     insets,
     isAIWorking,
+    isAICancellable: isAIWorking && appleClarificationBackend === 'on-device',
     isDark,
     isNextTaskDisabled,
     newContext,

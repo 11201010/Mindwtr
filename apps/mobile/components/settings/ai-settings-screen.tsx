@@ -25,6 +25,15 @@ import {
 } from '@mindwtr/core';
 
 import { loadAIKey, saveAIKey } from '@/lib/ai-config';
+import {
+    readAppleClarificationBackend,
+    writeAppleClarificationBackend,
+    type AppleClarificationBackend,
+} from '@/lib/apple-clarification-preference';
+import {
+    describeAppleClarificationUnavailableReason,
+    getAppleClarificationCapability,
+} from '@/lib/apple-foundation-models';
 import { DEFAULT_GEMINI_STT_MODEL, DEFAULT_OPENAI_STT_MODEL } from '@/lib/speech-to-text';
 import { useToast } from '@/contexts/toast-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
@@ -68,6 +77,10 @@ export function AISettingsScreen() {
     }), shallow);
     const extraConfig = Constants.expoConfig?.extra as MobileExtraConfig | undefined;
     const isFossBuild = extraConfig?.isFossBuild === true || extraConfig?.isFossBuild === 'true';
+    const appleClarificationPrototypeEnabled = Platform.OS === 'ios' && (
+        extraConfig?.appleClarificationPrototypeEnabled === true
+        || extraConfig?.appleClarificationPrototypeEnabled === 'true'
+    );
     const isExpoGo = Constants.appOwnership === 'expo';
     const [aiKey, setAiKey] = useState<LoadedKey>({ provider: '', value: '' });
     const [speechKey, setSpeechKey] = useState<LoadedKey>({ provider: '', value: '' });
@@ -84,6 +97,8 @@ export function AISettingsScreen() {
     // failed, which mergeModelOptions degrades to the static catalog.
     const [fetchedChatModels, setFetchedChatModels] = useState<string[] | null>(null);
     const [fetchedSpeechModels, setFetchedSpeechModels] = useState<string[] | null>(null);
+    const [appleClarificationBackend, setAppleClarificationBackend] = useState<AppleClarificationBackend>('configured');
+    const [appleClarificationAvailability, setAppleClarificationAvailability] = useState('');
 
     const aiProvider = (isFossBuild ? 'openai' : (settings.ai?.provider ?? 'openai')) as AIProviderId;
     const aiApiKey = aiKey.provider === aiProvider ? aiKey.value : '';
@@ -129,6 +144,29 @@ export function AISettingsScreen() {
     const updateAISettings = useCallback((next: Partial<NonNullable<AppSettings['ai']>>) => {
         updateSettings({ ai: { ...(aiSettings ?? {}), ...next } }).catch(logSettingsError);
     }, [aiSettings, updateSettings]);
+
+    useEffect(() => {
+        if (!appleClarificationPrototypeEnabled) return;
+        let active = true;
+        void Promise.all([
+            readAppleClarificationBackend(),
+            getAppleClarificationCapability(),
+        ]).then(([backend, capability]) => {
+            if (!active) return;
+            setAppleClarificationBackend(backend);
+            setAppleClarificationAvailability(capability.available
+                ? 'Available on this device. Requests stay on device.'
+                : describeAppleClarificationUnavailableReason(capability.reason));
+        });
+        return () => {
+            active = false;
+        };
+    }, [appleClarificationPrototypeEnabled]);
+
+    const handleAppleClarificationBackendChange = useCallback((backend: AppleClarificationBackend) => {
+        setAppleClarificationBackend(backend);
+        void writeAppleClarificationBackend(backend);
+    }, []);
 
     useEffect(() => {
         setOpenAIExtraParamsDraft(formatOpenAIExtraBodyParams(aiOpenAIExtraBodyParams));
@@ -565,6 +603,9 @@ export function AISettingsScreen() {
                         aiModel={aiModel}
                         aiModelOptions={aiModelOptions}
                         aiProvider={aiProvider}
+                        appleClarificationAvailability={appleClarificationAvailability}
+                        appleClarificationBackend={appleClarificationBackend}
+                        appleClarificationVisible={appleClarificationPrototypeEnabled}
                         aiReasoningEffort={aiReasoningEffort}
                         aiRequestTimeoutSeconds={aiRequestTimeoutSeconds}
                         aiThinkingBudget={aiThinkingBudget}
@@ -580,6 +621,7 @@ export function AISettingsScreen() {
                         onAiExtraBodyParamsSave={handleOpenAIExtraBodyParamsSave}
                         onAiModelChange={(value) => updateAISettings({ model: value })}
                         onAiProviderChange={handleAIProviderChange}
+                        onAppleClarificationBackendChange={handleAppleClarificationBackendChange}
                         onAiReasoningEffortChange={(value) => updateAISettings({ reasoningEffort: value })}
                         onAiRequestTimeoutSecondsChange={(value) => updateAISettings({ requestTimeoutSeconds: value })}
                         onAiThinkingBudgetChange={(value) => updateAISettings({ thinkingBudget: value })}
