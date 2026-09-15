@@ -157,7 +157,12 @@ brew install --cask mindwtr
 ```
 
 ```powershell
+# WinGet
 winget install dongdongbh.Mindwtr
+
+# Scoop
+scoop bucket add extras
+scoop install extras/mindwtr
 ```
 
 APT/RPM 仓库配置、源码构建、便携版 ZIP、移动商店变体与 Docker 设置请参考上方完整安装指南。
