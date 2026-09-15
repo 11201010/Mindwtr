@@ -88,6 +88,21 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="1.3.1-rc.1" date="2026-09-15">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.1-rc.1</url>
+      <description>
+        <p>Mindwtr 1.3.1-rc.1 improves Someday organization, project navigation, search, and recovery for Linux testers.</p>
+        <p xml:lang="de">Mindwtr 1.3.1-rc.1 verbessert die Organisation von Irgendwann-Aufgaben, die Projektnavigation, Suche und Wiederherstellung fuer Linux-Testende.</p>
+        <ul>
+          <li>Move one or several Someday tasks between sections with Undo; area pickers follow custom ordering.</li>
+          <li xml:lang="de">Verschiebe einzelne oder mehrere Irgendwann-Aufgaben zwischen Abschnitten mit Rueckgaengig; Bereichsauswahlen folgen der eigenen Reihenfolge.</li>
+          <li>Navigate Projects with the keyboard, toggle saved Focus filters safely, and see highlighted global search matches.</li>
+          <li xml:lang="de">Navigiere Projekte per Tastatur, schalte gespeicherte Fokusfilter sicher um und sieh hervorgehobene Suchtreffer.</li>
+          <li>Recover legacy archived-project references and retain restorable archived sections and referenced attachments.</li>
+          <li xml:lang="de">Stelle alte Referenzen aus archivierten Projekten wieder her und bewahre wiederherstellbare Abschnitte und referenzierte Anhaenge.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-09-13">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.0</url>
       <description>
