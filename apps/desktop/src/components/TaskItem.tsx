@@ -1287,7 +1287,10 @@ export const TaskItem = memo(function TaskItem({
             return;
         }
         window.setTimeout(() => {
-            quickActionReturnFocusRef.current?.focus();
+            // A menu action may have opened a dialog which now owns focus.
+            if (!document.activeElement?.closest('[role="dialog"]')) {
+                quickActionReturnFocusRef.current?.focus();
+            }
             quickActionReturnFocusRef.current = null;
         }, 0);
     }, []);

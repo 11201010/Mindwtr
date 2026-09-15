@@ -45,6 +45,15 @@ test('right-click moves a Someday task into an empty section, supports Undo, and
         await dialog.getByRole('button', { name: 'Save', exact: true }).click();
         await expect(dialog).toBeHidden();
     };
+    await page.getByText('Learn botanical drawing', { exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to section…', exact: true }).click();
+    const moveDialog = page.getByRole('dialog', { name: 'Move to section…' });
+    await expect(moveDialog).toHaveAccessibleDescription('1 selected');
+    await page.keyboard.press('Tab');
+    await expect(moveDialog.getByRole('combobox', { name: 'Someday section' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(moveDialog).toBeHidden();
+
     await move('travel');
     await expect.poll(async () => (await readTask())?.viewSectionIds).toEqual({ someday: 'travel', waiting: 'later' });
     await page.getByRole('button', { name: 'Undo', exact: true }).click();
