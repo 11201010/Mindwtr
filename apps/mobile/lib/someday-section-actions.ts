@@ -1,4 +1,4 @@
-import { sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
+import { flushPendingSave, sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
 
 const makeSomedaySectionId = () => (
   `someday-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -15,7 +15,14 @@ export async function createSomedaySection(title: string): Promise<string | null
   const existing = currentSections.find(
     (section) => section.title.toLowerCase() === trimmed.toLowerCase(),
   );
-  if (existing) return existing.id;
+  if (existing) {
+    if (useTaskStore.getState().persistenceFailure) {
+      await useTaskStore.getState().retryPersistence();
+    }
+    await flushPendingSave();
+    if (useTaskStore.getState().persistenceFailure) throw new Error('Someday section save incomplete');
+    return existing.id;
+  }
 
   const id = makeSomedaySectionId();
   const maxOrder = currentSections.reduce(
@@ -31,5 +38,7 @@ export async function createSomedaySection(title: string): Promise<string | null
       },
     },
   });
+  await flushPendingSave();
+  if (useTaskStore.getState().persistenceFailure) throw new Error('Someday section save incomplete');
   return id;
 }

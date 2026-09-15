@@ -23,6 +23,7 @@ import { areSyncPayloadsEqual } from './sync-helpers';
 import { computeRemoteSyncDocumentFingerprint, toRemoteSyncDocument } from './sync-document';
 import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from './store-helpers';
 import { purgeExpiredTombstones } from './sync-tombstones';
+import { buildTaskViewSectionUpdates, buildTaskViewSectionUndoUpdates } from './view-sections';
 
 const require = createRequire(import.meta.url);
 type BunStatement = {
@@ -148,6 +149,63 @@ describeSqlite('SqliteAdapter', () => {
         additionalConnections.push(connection);
         return connection;
     };
+
+    it('persists Someday section moves, clears, and undo across reopen and sync with an older peer', async () => {
+        const createdAt = '2026-09-15T10:00:00.000Z';
+        const initial: AppData = {
+            tasks: ['one', 'two'].map((id) => ({
+                id, title: id, status: 'someday', tags: [], contexts: [],
+                createdAt, updatedAt: createdAt, rev: 1, revBy: 'device-a',
+                viewSectionIds: { someday: 'books', waiting: 'people' },
+                dueDate: '2026-10-10',
+            })),
+            projects: [], sections: [], areas: [], settings: {},
+        };
+        await adapter.saveData(initial);
+        const moved = buildTaskViewSectionUpdates(initial.tasks, 'someday', 'travel');
+        const movedData: AppData = {
+            ...initial,
+            tasks: initial.tasks.map((task) => ({
+                ...task, ...moved.find((update) => update.id === task.id)!.updates,
+                rev: 2, updatedAt: '2026-09-15T10:01:00.000Z',
+            })),
+        };
+        await adapter.saveData(movedData);
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const reopened = await adapter.getData();
+        expect(reopened.tasks.map((task) => task.viewSectionIds)).toEqual([
+            { someday: 'travel', waiting: 'people' }, { someday: 'travel', waiting: 'people' },
+        ]);
+        const merged = mergeAppDataWithStats(initial, reopened).data;
+        expect(merged.tasks.map((task) => task.viewSectionIds)).toEqual(reopened.tasks.map((task) => task.viewSectionIds));
+
+        const latest = reopened.tasks.map((task) => ({
+            ...task, title: `${task.title} edited`, viewSectionIds: { ...task.viewSectionIds, waiting: 'new-people' },
+        }));
+        const undo = buildTaskViewSectionUndoUpdates(latest, 'someday', [{ id: 'one', sectionId: 'books' }], 'travel');
+        const clear = buildTaskViewSectionUpdates(latest.filter((task) => task.id === 'two'), 'someday');
+        const finalData: AppData = {
+            ...reopened,
+            tasks: latest.map((task) => ({
+                ...task, ...[...undo, ...clear].find((update) => update.id === task.id)!.updates,
+                rev: 3, updatedAt: '2026-09-15T10:02:00.000Z',
+            })),
+        };
+        await adapter.saveData(finalData);
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const final = await adapter.getData();
+        expect(final.tasks.find((task) => task.id === 'one')).toMatchObject({
+            title: 'one edited', status: 'someday', dueDate: '2026-10-10',
+            viewSectionIds: { someday: 'books', waiting: 'new-people' },
+        });
+        expect(final.tasks.find((task) => task.id === 'two')?.viewSectionIds).toEqual({ waiting: 'new-people' });
+        expect(mergeAppDataWithStats(reopened, final).data.tasks.find((task) => task.id === 'two')?.viewSectionIds)
+            .toEqual({ waiting: 'new-people' });
+    });
 
     it('round-trips tasks, projects, areas, people, and settings', async () => {
         const now = new Date().toISOString();

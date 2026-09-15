@@ -8,6 +8,8 @@ import { SomedayView } from './someday-view';
 const mocked = vi.hoisted(() => ({
   state: null as any,
   taskListProps: null as any,
+  showToast: vi.fn(),
+  flush: vi.fn(),
 }));
 
 vi.mock('@mindwtr/core', async (importOriginal) => {
@@ -15,7 +17,11 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
   return {
     ...actual,
     shallow: vi.fn(),
-    useTaskStore: (selector: (state: unknown) => unknown) => selector(mocked.state),
+    flushPendingSave: mocked.flush,
+    useTaskStore: Object.assign(
+      (selector: (state: unknown) => unknown) => selector(mocked.state),
+      { getState: () => mocked.state },
+    ),
   };
 });
 
@@ -62,6 +68,20 @@ vi.mock('../task-edit-modal', () => ({
   TaskEditModal: () => null,
 }));
 
+vi.mock('@/contexts/toast-context', () => ({
+  useToast: () => ({ showToast: mocked.showToast }),
+}));
+
+vi.mock('@/lib/app-log', () => ({ logError: vi.fn(), logInfo: vi.fn() }));
+
+vi.mock('../someday-section-picker', () => ({
+  SomedaySectionPicker: (props: any) => React.createElement('SomedaySectionPicker', props),
+}));
+
+vi.mock('@/lib/someday-section-actions', () => ({
+  createSomedaySection: vi.fn(async () => 'new-section'),
+}));
+
 vi.mock('../task-list-view', () => ({
   TaskListView: (props: unknown) => {
     mocked.taskListProps = props;
@@ -75,6 +95,9 @@ vi.mock('../task-list/TaskListBulkBar', () => ({
 
 vi.mock('../use-task-list-selection', () => ({
   useTaskListSelection: () => ({}),
+  assertBulkActionSucceeded: (result: { success?: boolean }) => {
+    if (result?.success === false) throw new Error('save failed');
+  },
 }));
 
 vi.mock('./deferred-projects-section', () => ({
@@ -105,6 +128,9 @@ const setState = (tasks: Task[], somedaySections: { id: string; title: string; o
     batchMoveTasks: vi.fn(),
     batchDeleteTasks: vi.fn(),
     batchUpdateTasks: vi.fn(),
+    addTask: vi.fn(async () => ({ success: true, id: 'added' })),
+    persistenceFailure: null,
+    retryPersistence: vi.fn(async () => { mocked.state.persistenceFailure = null; }),
     highlightTaskId: null,
     setHighlightTask: vi.fn(),
   };
@@ -122,6 +148,8 @@ describe('SomedayView section grouping', () => {
   beforeEach(() => {
     vi.stubGlobal('React', React);
     mocked.taskListProps = null;
+    mocked.flush.mockReset().mockResolvedValue(undefined);
+    mocked.showToast.mockClear();
   });
 
   afterEach(() => {
@@ -152,5 +180,72 @@ describe('SomedayView section grouping', () => {
     expect(mocked.taskListProps.taskGroups.map((group: { title: string }) => group.title))
       .toEqual(['Books to read', 'No section']);
     expect(mocked.taskListProps.taskGroups[0].tasks[0].id).toBe('book');
+  });
+
+  it('keeps an empty heading actionable and preassigns a task created there', async () => {
+    setState([], [{ id: 'books', title: 'Books to read', order: 0 }]);
+    renderSomedayView();
+    expect(mocked.taskListProps.taskGroups).toEqual([
+      expect.objectContaining({ title: 'Books to read', tasks: [] }),
+    ]);
+
+    await act(async () => {
+      mocked.taskListProps.onAddTaskToSection('view-section:someday:books');
+    });
+    const input = renderer!.root.findByType('TextInput' as never);
+    await act(async () => { input.props.onChangeText('Read Dune'); });
+    const save = renderer!.root.findAllByProps({ accessibilityLabel: 'common.save' })[0];
+    await act(async () => { await save.props.onPress(); });
+
+    expect(mocked.state.addTask).toHaveBeenCalledWith('Read Dune', {
+      status: 'someday', viewSectionIds: { someday: 'books' },
+    });
+    await vi.waitFor(() => expect(mocked.flush).toHaveBeenCalledOnce());
+    expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
+  });
+
+  it('retries a failed heading task save without creating a duplicate', async () => {
+    setState([], [{ id: 'books', title: 'Books to read', order: 0 }]);
+    mocked.state.addTask.mockImplementationOnce(async (title: string, props: Partial<Task>) => {
+      mocked.state.tasks = [makeTask('added', { title, ...props })];
+      return { success: true, id: 'added' };
+    });
+    mocked.flush.mockImplementationOnce(async () => {
+      mocked.state.persistenceFailure = { message: 'disk full', failedAt: 'now', retrying: false };
+      throw new Error('disk full');
+    }).mockResolvedValue(undefined);
+    renderSomedayView();
+    await act(async () => { mocked.taskListProps.onAddTaskToSection('view-section:someday:books'); });
+    const input = renderer!.root.findByType('TextInput' as never);
+    await act(async () => { input.props.onChangeText('Read Dune'); });
+    const save = renderer!.root.findAllByProps({ accessibilityLabel: 'common.save' })[0];
+    await act(async () => { save.props.onPress(); });
+    await vi.waitFor(() => expect(mocked.flush).toHaveBeenCalledOnce());
+    expect(mocked.showToast).not.toHaveBeenCalled();
+    expect(renderer!.root.findByType('TextInput' as never).props.value).toBe('Read Dune');
+    expect(renderer!.root.findByType('TextInput' as never).props.editable).toBe(false);
+
+    const retry = renderer!.root.findAllByProps({ accessibilityLabel: 'Retry' })[0];
+    await act(async () => { retry.props.onPress(); });
+    await vi.waitFor(() => expect(mocked.state.retryPersistence).toHaveBeenCalledOnce());
+    expect(mocked.state.addTask).toHaveBeenCalledOnce();
+    expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
+  });
+
+  it('shows the list New section action and the single/bulk move wiring', async () => {
+    setState([makeTask('one')], [{ id: 'books', title: 'Books to read', order: 0 }]);
+    renderSomedayView();
+    expect(mocked.taskListProps.onMoveTaskToSection).toEqual(expect.any(Function));
+    expect(mocked.taskListProps.onMoveSelectionToSection).toEqual(expect.any(Function));
+
+    let headerRenderer: ReactTestRenderer;
+    act(() => { headerRenderer = create(mocked.taskListProps.ListHeaderComponent); });
+    const newSection = headerRenderer!.root.findAllByProps({ accessibilityLabel: 'New section…' })[0];
+    await act(async () => { newSection.props.onPress(); });
+    const picker = renderer!.root.findAllByType('SomedaySectionPicker' as never)
+      .find((node) => node.props.createOnly);
+    expect(picker).toBeDefined();
+    expect(picker?.props.sections).toEqual([{ id: 'books', title: 'Books to read', order: 0 }]);
+    act(() => headerRenderer!.unmount());
   });
 });

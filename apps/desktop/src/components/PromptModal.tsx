@@ -22,6 +22,8 @@ interface PromptModalProps {
     isOpen: boolean;
     title: string;
     description?: string;
+    errorMessage?: string;
+    busy?: boolean;
     placeholder?: string;
     defaultValue?: string;
     suggestions?: readonly string[];
@@ -47,6 +49,8 @@ export function PromptModal({
     isOpen,
     title,
     description,
+    errorMessage,
+    busy = false,
     placeholder,
     defaultValue,
     suggestions,
@@ -209,6 +213,9 @@ export function PromptModal({
                         {t('common.validationRequired')}
                     </p>
                 )}
+                {errorMessage && (
+                    <p role="alert" className="text-xs text-destructive">{errorMessage}</p>
+                )}
                 {numericField && (
                     <div className="flex flex-col gap-1">
                         <label htmlFor={numericFieldId} className="text-xs font-medium text-muted-foreground">
@@ -270,7 +277,7 @@ export function PromptModal({
                             {secondaryLabel}
                         </Button>
                     )}
-                    <Button variant="secondary" onMouseDown={keepInputFocus} onClick={onCancel}>
+                    <Button variant="secondary" onMouseDown={keepInputFocus} onClick={onCancel} disabled={busy}>
                         {cancelLabel}
                     </Button>
                     <Button
@@ -282,7 +289,7 @@ export function PromptModal({
                                 setHasInteracted(true);
                             }
                         }}
-                        disabled={!canConfirm}
+                        disabled={!canConfirm || busy}
                     >
                         {confirmLabel}
                     </Button>

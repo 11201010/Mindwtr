@@ -17,6 +17,7 @@ import { ptOverrides } from './locales/pt';
 import { ruOverrides } from './locales/ru';
 import { svOverrides } from './locales/sv';
 import { trOverrides } from './locales/tr';
+import { ukOverrides } from './locales/uk';
 import { viOverrides } from './locales/vi';
 import { zhHans } from './locales/zh-Hans';
 import { zhHant } from './locales/zh-Hant';
@@ -42,7 +43,7 @@ const translationsByLocale: Record<Locale, Record<string, string>> = {
     zh: zhHans, 'zh-Hant': zhHant,
     ar: arOverrides, cs: csOverrides, de: deOverrides, es: esOverrides, fa: faOverrides, fr: frOverrides,
     hi: hiOverrides, hu: huOverrides, it: itOverrides, ja: jaOverrides, ko: koOverrides, nl: nlOverrides,
-    pl: plOverrides, pt: ptOverrides, ru: ruOverrides, sv: svOverrides, tr: trOverrides, vi: viOverrides,
+    pl: plOverrides, pt: ptOverrides, ru: ruOverrides, sv: svOverrides, tr: trOverrides, uk: ukOverrides, vi: viOverrides,
 };
 
 const englishKeyCount = Object.keys(en).length;

@@ -19,6 +19,7 @@ import { useAndroidKeyboardInset } from '@/lib/use-android-keyboard-inset';
 type SomedaySectionPickerProps = {
   sections: readonly ViewSectionDefinition[];
   selectedId?: string;
+  selectionMixed?: boolean;
   onSelect: (sectionId: string | undefined) => void;
   onCreate: (title: string) => Promise<string | null>;
   t: (key: string) => string;
@@ -26,11 +27,15 @@ type SomedaySectionPickerProps = {
   optionsStyle?: StyleProp<ViewStyle>;
   optionStyle?: StyleProp<ViewStyle>;
   optionTextStyle?: StyleProp<TextStyle>;
+  /** Open the existing name prompt directly from a list-level New section action. */
+  createOnly?: boolean;
+  onCancelCreate?: () => void;
 };
 
 export function SomedaySectionPicker({
   sections,
   selectedId,
+  selectionMixed = false,
   onSelect,
   onCreate,
   t,
@@ -38,12 +43,15 @@ export function SomedaySectionPicker({
   optionsStyle,
   optionStyle,
   optionTextStyle,
+  createOnly = false,
+  onCancelCreate,
 }: SomedaySectionPickerProps) {
   const sortedSections = sortViewSectionDefinitions(sections);
   const resolvedSelectedId = sortedSections.some((section) => section.id === selectedId) ? selectedId : undefined;
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(createOnly);
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(false);
   const keyboardInset = useAndroidKeyboardInset(createOpen);
   const newSectionLabel = `+ ${tFallback(t, 'viewSections.add', 'New section…')}`;
   const nameLabel = tFallback(t, 'viewSections.nameHint', 'Section name');
@@ -52,20 +60,27 @@ export function SomedaySectionPicker({
     if (creating) return;
     setCreateOpen(false);
     setTitle('');
+    setCreateError(false);
+    if (createOnly) onCancelCreate?.();
   };
 
   const createSection = async () => {
     const trimmed = title.trim();
     if (!trimmed || creating) return;
     setCreating(true);
+    setCreateError(false);
     try {
       const createdId = await onCreate(trimmed);
-      if (!createdId) return;
+      if (!createdId) {
+        setCreateError(true);
+        return;
+      }
       onSelect(createdId);
       setCreateOpen(false);
       setTitle('');
     } catch (error) {
       void logError(error, { scope: 'task', extra: { message: 'Failed to create Someday section' } });
+      setCreateError(true);
     } finally {
       setCreating(false);
     }
@@ -78,9 +93,9 @@ export function SomedaySectionPicker({
 
   return (
     <>
-      <View style={optionsStyle}>
+      {!createOnly ? <View style={optionsStyle}>
         {options.map((section) => {
-          const selected = (resolvedSelectedId ?? '') === section.id;
+          const selected = !selectionMixed && (resolvedSelectedId ?? '') === section.id;
           return (
             <TouchableOpacity
               key={section.id || 'no-section'}
@@ -105,12 +120,15 @@ export function SomedaySectionPicker({
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={newSectionLabel}
-          onPress={() => setCreateOpen(true)}
+          onPress={() => {
+            setCreateError(false);
+            setCreateOpen(true);
+          }}
           style={[optionStyle, { backgroundColor: tc.filterBg, borderColor: tc.border }]}
         >
           <Text style={[optionTextStyle, { color: tc.tint }]}>{newSectionLabel}</Text>
         </TouchableOpacity>
-      </View>
+      </View> : null}
 
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={closeCreate} accessibilityViewIsModal>
         <View style={keyboardInset > 0 ? [pickerStyles.overlay, { paddingBottom: keyboardInset }] : pickerStyles.overlay}>
@@ -128,6 +146,11 @@ export function SomedaySectionPicker({
               placeholderTextColor={tc.secondaryText}
               style={[pickerStyles.input, { backgroundColor: tc.bg, borderColor: tc.border, color: tc.text }]}
             />
+            {createError ? (
+              <Text accessibilityRole="alert" style={{ color: tc.danger }}>
+                {tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.')}
+              </Text>
+            ) : null}
             <View style={pickerStyles.actions}>
               <TouchableOpacity
                 accessibilityRole="button"

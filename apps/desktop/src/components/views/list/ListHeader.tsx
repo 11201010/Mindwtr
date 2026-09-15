@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronsUpDown, Filter, List, SlidersHorizontal } from 'lucide-react';
+import { CheckSquare, ChevronsUpDown, Filter, List, Plus, SlidersHorizontal } from 'lucide-react';
 import { tFallback, type TaskSortBy } from '@mindwtr/core';
 import { FOCUS_AXES, type TaskListGroupBy } from './next-grouping';
 import { GroupBySelect } from './GroupBySelect';
@@ -29,6 +29,7 @@ type ListHeaderProps = {
     onToggleDetails: () => void;
     densityMode: 'comfortable' | 'compact' | 'condensed';
     onToggleDensity: () => void;
+    onNewSomedaySection?: () => void;
     t: (key: string) => string;
 };
 
@@ -57,6 +58,7 @@ export function ListHeader({
     onToggleDetails,
     densityMode,
     onToggleDensity,
+    onNewSomedaySection,
     t,
 }: ListHeaderProps) {
     // The button names what clicking it does, not the current state — "Details off"
@@ -111,6 +113,14 @@ export function ListHeader({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                {onNewSomedaySection && (
+                    <ToolbarButton
+                        onClick={onNewSomedaySection}
+                        icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                    >
+                        {tFallback(t, 'viewSections.add', 'New section…')}
+                    </ToolbarButton>
+                )}
                 {showFiltersButton && onToggleFilters && (
                     <ToolbarButton
                         active={filtersOpen}

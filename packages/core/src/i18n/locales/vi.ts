@@ -1,4 +1,19 @@
 export const viOverrides: Record<string, string> = {
+    'common.retry': "Thử lại",
+
+    'viewSections.noSection': "Không có mục",
+    'viewSections.add': "Mục mới…",
+    'viewSections.nameHint': "Tên mục",
+    'viewSections.namePlaceholder': "Sách cần đọc",
+    'viewSections.updateFailed': "Không thể cập nhật các mục Một ngày nào đó/Có thể.",
+    'viewSections.somedaySection': "Mục Một ngày nào đó/Có thể",
+
+    'viewSections.moveToSection': "Chuyển đến mục…",
+    'viewSections.moved': "Đã chuyển đến {section} ({count})",
+    'viewSections.moveFailed': "Không thể chuyển tác vụ đến mục.",
+    'viewSections.undoFailed': "Không thể hoàn tác việc chuyển mục.",
+    'viewSections.addTask': "Thêm tác vụ vào {section}",
+
     'sandbox.open': "Mở môi trường thử nghiệm",
     'sandbox.label': "Thử nghiệm",
     'sandbox.resetShort': "Đặt lại",

@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHant: Record<string, string> = {
+    'common.retry': "重試",
+
+    'viewSections.moveToSection': "移至分區…",
+    'viewSections.moved': "已移至{section}（{count}）",
+    'viewSections.moveFailed': "無法將任務移至該分區。",
+    'viewSections.undoFailed': "無法復原分區移動。",
+    'viewSections.addTask': "向{section}新增任務",
+
     'sandbox.open': "開啟沙盒",
     'sandbox.label': "沙盒",
     'sandbox.resetShort': "重設",

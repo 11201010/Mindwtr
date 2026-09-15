@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'common.retry': "Tekrar dene",
+
+    'viewSections.noSection': "Bölüm yok",
+    'viewSections.add': "Yeni bölüm…",
+    'viewSections.nameHint': "Bölüm adı",
+    'viewSections.namePlaceholder': "Okunacak kitaplar",
+    'viewSections.updateFailed': "Bir Gün/Belki bölümleri güncellenemedi.",
+    'viewSections.somedaySection': "Bir Gün/Belki bölümü",
+
+    'viewSections.moveToSection': "Bölüme taşı…",
+    'viewSections.moved': "{section} bölümüne taşındı ({count})",
+    'viewSections.moveFailed': "Görevler bölüme taşınamadı.",
+    'viewSections.undoFailed': "Bölüme taşıma geri alınamadı.",
+    'viewSections.addTask': "{section} bölümüne görev ekle",
+
     'sandbox.open': "Deneme alanını aç",
     'sandbox.label': "Deneme ortamı",
     'sandbox.resetShort': "Sıfırla",

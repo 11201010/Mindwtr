@@ -99,6 +99,7 @@ interface TaskItemProps {
     editorPresentation?: TaskEditorPresentation;
     appearsAtLabel?: string;
     projectDeadlineLabel?: string;
+    onMoveToSomedaySection?: (taskId: string) => void;
 }
 
 type ProjectNextActionPromptState = {
@@ -133,6 +134,7 @@ export const TaskItem = memo(function TaskItem({
     editorPresentation,
     appearsAtLabel,
     projectDeadlineLabel,
+    onMoveToSomedaySection,
 }: TaskItemProps) {
     const [isEditing, setIsEditing] = useState(false);
     const [autoFocusTitle, setAutoFocusTitle] = useState(false);
@@ -1600,6 +1602,13 @@ export const TaskItem = memo(function TaskItem({
                         focusAction: quickActionFocus,
                         onBeforeDelete: closeQuickEditSession,
                         onStatusChange: handleStatusChange,
+                        extraActions: onMoveToSomedaySection && !effectiveReadOnly
+                            ? [{
+                                id: 'move-to-someday-section',
+                                label: tFallback(t, 'viewSections.moveToSection', 'Move to section…'),
+                                onSelect: () => onMoveToSomedaySection(task.id),
+                            }]
+                            : undefined,
                     }}
                 />
             )}

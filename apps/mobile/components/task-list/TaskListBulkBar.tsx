@@ -34,6 +34,7 @@ export type TaskListBulkBarProps = {
   hasSelection: boolean;
   onExitSelectionMode: () => void;
   onOpenOrganize?: () => void;
+  onMoveToSection?: () => void;
   onToggleRangeSelectMode: () => void;
   onOpenTagModal: () => void;
   onOpenRemoveTagPicker?: () => void;
@@ -53,6 +54,7 @@ export function TaskListBulkBar({
   hasSelection,
   onExitSelectionMode,
   onOpenOrganize,
+  onMoveToSection,
   onToggleRangeSelectMode,
   onOpenTagModal,
   onOpenRemoveTagPicker,
@@ -115,6 +117,19 @@ export function TaskListBulkBar({
         ))}
       </ScrollView>
       <View style={styles.bulkActions}>
+        {onMoveToSection ? (
+          <TouchableOpacity
+            onPress={onMoveToSection}
+            disabled={!hasSelection || bulkActionLoading}
+            style={[styles.bulkActionButton, { backgroundColor: themeColors.filterBg, opacity: hasSelection && !bulkActionLoading ? 1 : 0.5 }]}
+            accessibilityRole="button"
+            accessibilityLabel={tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+          >
+            <Text style={[styles.bulkActionText, { color: themeColors.text }]}>
+              {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
         {onOpenOrganize ? (
           <TouchableOpacity
             onPress={onOpenOrganize}

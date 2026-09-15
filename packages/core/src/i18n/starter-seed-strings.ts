@@ -4,7 +4,7 @@
 //
 // Every `starter.*` string, per language, already merged onto English the way
 // i18n-loader.ts merges an 'overrides' locale. getting-started-seed.ts reads these
-// ~39 keys instead of loading all 21 locale dictionaries, because it sits on
+// ~39 keys instead of loading all 22 locale dictionaries, because it sits on
 // every platform's cold path (store.ts -> store-settings.ts -> here).
 import type { Language } from './i18n-types';
 
@@ -254,6 +254,47 @@ export const STARTER_SEED_STRINGS: Record<Language, Record<string, string>> = {
         "starter.weeklyReview.check3": "Válassza ki a következő néhány feladatot, a többit hagyja várni",
         "starter.weeklyReview.desc": "Egy rövid heti rendrakás segít megbízhatóvá tenni a listáit.",
         "starter.weeklyReview.title": "Végezze el az első heti áttekintését",
+    },
+    "uk": {
+        "starter.focus.check1": "Відкрийте Фокус",
+        "starter.focus.check2": "Використовуйте зірочку, щоб вибрати головні завдання",
+        "starter.focus.check3": "Відкладіть завдання, щоб приховати його, поки воно вам не знадобиться",
+        "starter.focus.desc": "Виберіть кілька справ, які ви дійсно будете робити сьогодні.",
+        "starter.focus.title": "Позначте зірочкою до 3 завдань для Фокусу сьогодні",
+        "starter.import.check1": "Відкрийте Налаштування -> Дані",
+        "starter.import.check2": "Імпортуйте Todoist, DGT GTD, OmniFocus або файл резервної копії",
+        "starter.import.check3": "Перегляньте імпортовані елементи з папки \"Вхідні\".",
+        "starter.import.desc": "Додайте наявні завдання, перш ніж реорганізовувати їх у Mindwtr.",
+        "starter.import.title": "Імпортуйте завдання з іншої програми",
+        "starter.processInbox.check1": "Відкрийте папку \"Вхідні\".",
+        "starter.processInbox.check2": "Торкніться «Обробити вхідні».",
+        "starter.processInbox.check3": "Вирішіть наступний крок для одного зразка предмета або залиште його на потім",
+        "starter.processInbox.desc": "Перетворіть записану думку на невеликий здійсненний крок.",
+        "starter.processInbox.title": "Почніть тут: обробіть свій перший елемент папки \"Вхідні\".",
+        "starter.projectNotes": "Ці початкові завдання необов’язкові. Видаліть цей проект будь-коли, коли Mindwtr відчує, що все налаштовано.",
+        "starter.projectTitle": "Початок роботи",
+        "starter.quickCapture.check1": "Натисніть кнопку швидкого додавання",
+        "starter.quickCapture.check2": "Спробуйте: Зателефонувати Алексу @phone /due:tomorrow",
+        "starter.quickCapture.check3": "Вказуйте лише дати речам із реальними термінами",
+        "starter.quickCapture.desc": "Введіть думку та додайте деталі прямо в тексті – форми не потрібні.",
+        "starter.quickCapture.title": "Зафіксуйте завдання в одному рядку",
+        "starter.sampleBuyMilk": "Купити молоко",
+        "starter.sampleReplySam": "Відповісти Сему",
+        "starter.simplify.check1": "Відкрийте Параметри -> GTD -> Макет редактора завдань",
+        "starter.simplify.check2": "Приховайте поля, які ви ніколи не використовуєте",
+        "starter.simplify.check3": "Поверніть їх у будь-який час – приховування ніколи не видаляє дані",
+        "starter.simplify.desc": "Віддаєте перевагу простому списку? Залиште в редакторі завдань лише потрібні поля.",
+        "starter.simplify.title": "Зробіть Mindwtr своїм: сховайте те, що не використовуєте",
+        "starter.sync.check1": "Відкрийте Налаштування -> Синхронізація",
+        "starter.sync.check2": "Виберіть Dropbox, iCloud, WebDAV, File Sync або автономне розміщення",
+        "starter.sync.check3": "Запустіть Перевірити підключення, коли воно доступне, а потім Синхронізувати зараз",
+        "starter.sync.desc": "Виберіть один метод синхронізації, якщо потрібно, щоб комп’ютер і мобільний пристрій обмінювалися даними.",
+        "starter.sync.title": "Налаштуйте синхронізацію між своїми пристроями",
+        "starter.weeklyReview.check1": "Відкрийте Огляд",
+        "starter.weeklyReview.check2": "Очистіть папку \"Вхідні\".",
+        "starter.weeklyReview.check3": "Виберіть кілька наступних завдань, а решту зачекайте",
+        "starter.weeklyReview.desc": "Коротке щотижневе прибирання збереже ваші списки гідними довіри.",
+        "starter.weeklyReview.title": "Проведіть свій перший щотижневий огляд",
     },
     "hi": {
         "starter.focus.check1": "फ़ोकस खोलें",

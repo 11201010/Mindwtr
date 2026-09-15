@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHans: Record<string, string> = {
+    'common.retry': "重试",
+
+    'viewSections.moveToSection': "移至分区…",
+    'viewSections.moved': "已移至{section}（{count}）",
+    'viewSections.moveFailed': "无法将任务移至该分区。",
+    'viewSections.undoFailed': "无法撤销分区移动。",
+    'viewSections.addTask': "向{section}添加任务",
+
     'sandbox.open': "打开沙盒",
     'sandbox.label': "沙盒",
     'sandbox.resetShort': "重置",

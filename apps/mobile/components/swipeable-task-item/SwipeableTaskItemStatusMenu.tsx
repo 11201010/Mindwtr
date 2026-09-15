@@ -10,6 +10,7 @@ interface SwipeableTaskItemStatusMenuProps {
     onBackdatedComplete?: () => void;
     onClose: () => void;
     onStatusChange: (status: TaskStatus) => void;
+    onMoveToSection?: () => void;
     taskStatus: TaskStatus;
     tc: ThemeColors;
     t: (key: string) => string;
@@ -22,6 +23,7 @@ export function SwipeableTaskItemStatusMenu({
     onBackdatedComplete,
     onClose,
     onStatusChange,
+    onMoveToSection,
     taskStatus,
     tc,
     t,
@@ -73,6 +75,21 @@ export function SwipeableTaskItemStatusMenu({
                             );
                         })}
                     </View>
+                    {onMoveToSection ? (
+                        <Pressable
+                            style={[styles.menuItem, { borderColor: tc.border }]}
+                            onPress={() => {
+                                onMoveToSection();
+                                onClose();
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+                        >
+                            <Text style={[styles.menuText, { color: tc.text }]}>
+                                {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+                            </Text>
+                        </Pressable>
+                    ) : null}
                 </View>
             </Pressable>
         </Modal>

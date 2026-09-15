@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'common.retry': "फिर से कोशिश करें",
+
+    'viewSections.noSection': "कोई अनुभाग नहीं",
+    'viewSections.add': "नया अनुभाग…",
+    'viewSections.nameHint': "अनुभाग का नाम",
+    'viewSections.namePlaceholder': "पढ़ने के लिए किताबें",
+    'viewSections.updateFailed': "कभी/शायद अनुभाग अपडेट नहीं किए जा सके।",
+    'viewSections.somedaySection': "कभी/शायद अनुभाग",
+
+    'viewSections.moveToSection': "अनुभाग में ले जाएँ…",
+    'viewSections.moved': "स्थानांतरण पूरा: {section} ({count})",
+    'viewSections.moveFailed': "कार्यों को अनुभाग में नहीं ले जाया जा सका।",
+    'viewSections.undoFailed': "अनुभाग में ले जाने की कार्रवाई पूर्ववत नहीं की जा सकी।",
+    'viewSections.addTask': "{section} में कार्य जोड़ें",
+
     'sandbox.open': "सैंडबॉक्स खोलें",
     'sandbox.label': "सैंडबॉक्स",
     'sandbox.resetShort': "रीसेट",

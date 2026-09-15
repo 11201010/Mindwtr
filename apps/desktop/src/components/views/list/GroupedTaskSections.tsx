@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Virtualizer } from '@tanstack/react-virtual';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import type { Task } from '@mindwtr/core';
 import { cn } from '../../../lib/utils';
 import type { TaskGroup } from './next-grouping';
@@ -12,6 +12,8 @@ type GroupedTaskSectionsProps = {
     onToggleGroup?: (groupId: string) => void;
     collapsedGroupIds?: Set<string>;
     getSectionDomId?: (group: TaskGroup, index: number) => string | undefined;
+    onAddTaskToGroup?: (group: TaskGroup) => void;
+    addTaskLabel?: (group: TaskGroup) => string | undefined;
 };
 
 type GroupedTaskListProps = GroupedTaskSectionsProps & {
@@ -100,6 +102,8 @@ type GroupedTaskSectionHeaderProps = {
     controlsId?: string;
     onToggleGroup?: (groupId: string) => void;
     className?: string;
+    onAddTaskToGroup?: (group: TaskGroup) => void;
+    addTaskLabel?: (group: TaskGroup) => string | undefined;
 };
 
 export function GroupedTaskSectionHeader({
@@ -108,8 +112,10 @@ export function GroupedTaskSectionHeader({
     controlsId,
     onToggleGroup,
     className,
+    onAddTaskToGroup,
+    addTaskLabel,
 }: GroupedTaskSectionHeaderProps) {
-    const collapsible = Boolean(onToggleGroup);
+    const collapsible = Boolean(onToggleGroup) && group.tasks.length > 0;
     const title = (
         <span className="inline-flex min-w-0 items-center gap-1.5">
             {collapsible && (
@@ -125,6 +131,37 @@ export function GroupedTaskSectionHeader({
             <span className="truncate">{group.title}</span>
         </span>
     );
+
+    const addLabel = addTaskLabel?.(group);
+    if (onAddTaskToGroup && addLabel) {
+        return (
+            <div className={cn(
+                'flex items-center gap-2 border-b border-border/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide',
+                group.muted ? 'text-muted-foreground' : 'text-foreground/90',
+                className,
+            )}>
+                {collapsible ? (
+                    <button
+                        type="button"
+                        onClick={() => onToggleGroup?.(group.id)}
+                        aria-expanded={!collapsed}
+                        aria-controls={controlsId}
+                        className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >{title}</button>
+                ) : <div className="min-w-0 flex-1">{title}</div>}
+                <span className="shrink-0 text-muted-foreground">{group.tasks.length}</span>
+                <button
+                    type="button"
+                    onClick={() => onAddTaskToGroup(group)}
+                    aria-label={addLabel}
+                    title={addLabel}
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                </button>
+            </div>
+        );
+    }
 
     return collapsible ? (
         <button
@@ -178,6 +215,8 @@ export function GroupedTaskList({
     collapsedGroupIds,
     onToggleGroup,
     getSectionDomId,
+    onAddTaskToGroup,
+    addTaskLabel,
     flatRowClassName = 'pb-1.5',
 }: GroupedTaskListProps) {
     const isGrouping = Boolean(virtualRows);
@@ -211,6 +250,8 @@ export function GroupedTaskList({
                                     collapsed={row.collapsed}
                                     controlsId={row.controlsId}
                                     onToggleGroup={onToggleGroup}
+                                    onAddTaskToGroup={onAddTaskToGroup}
+                                    addTaskLabel={addTaskLabel}
                                     className={cn(
                                         SECTION_HEADER_CARD,
                                         row.collapsed ? 'rounded-md' : 'rounded-t-md',
@@ -256,6 +297,8 @@ export function GroupedTaskList({
                 onToggleGroup={onToggleGroup}
                 collapsedGroupIds={collapsedGroupIds}
                 getSectionDomId={getSectionDomId}
+                onAddTaskToGroup={onAddTaskToGroup}
+                addTaskLabel={addTaskLabel}
             />
         );
     }
@@ -278,6 +321,8 @@ export function GroupedTaskSections({
     onToggleGroup,
     collapsedGroupIds,
     getSectionDomId,
+    onAddTaskToGroup,
+    addTaskLabel,
 }: GroupedTaskSectionsProps) {
     const collapsible = Boolean(onToggleGroup);
     return (
@@ -292,6 +337,8 @@ export function GroupedTaskSections({
                             collapsed={collapsed}
                             controlsId={controlsId}
                             onToggleGroup={onToggleGroup}
+                            onAddTaskToGroup={onAddTaskToGroup}
+                            addTaskLabel={addTaskLabel}
                         />
                         {!collapsed && (
                             <div id={controlsId} className="divide-y divide-border/30">

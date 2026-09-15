@@ -19,6 +19,13 @@ describe('i18n-loader sync fallback', () => {
         expect(vi['nav.inbox']).toBe('Hộp thư đến');
     });
 
+    it('loads Ukrainian task and Someday copy on demand', async () => {
+        const uk = await loadTranslations('uk');
+        expect(uk['nav.inbox']).toBe('Вхідні');
+        expect(uk['viewSections.moveToSection']).toBe('Перемістити до розділу…');
+        expect(uk['app.name']).toBe('Mindwtr');
+    });
+
     it('loads Traditional Chinese translations on demand', async () => {
         const zhHant = await loadTranslations('zh-Hant');
         expect(zhHant['nav.settings']).toBe('設置');

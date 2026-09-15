@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'common.retry': "Tentar novamente",
+
+    'viewSections.noSection': "Sem seção",
+    'viewSections.add': "Nova seção…",
+    'viewSections.nameHint': "Nome da seção",
+    'viewSections.namePlaceholder': "Livros para ler",
+    'viewSections.updateFailed': "Não foi possível atualizar as seções Algum dia/Talvez.",
+    'viewSections.somedaySection': "Seção Algum dia/Talvez",
+
+    'viewSections.moveToSection': "Mover para seção…",
+    'viewSections.moved': "Movimentação para {section} ({count})",
+    'viewSections.moveFailed': "Não foi possível mover as tarefas para a seção.",
+    'viewSections.undoFailed': "Não foi possível desfazer a mudança de seção.",
+    'viewSections.addTask': "Adicionar tarefa a {section}",
+
     'sandbox.open': "Abrir ambiente de teste",
     'sandbox.label': "Teste",
     'sandbox.resetShort': "Redefinir",

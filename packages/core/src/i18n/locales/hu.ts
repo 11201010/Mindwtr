@@ -2,6 +2,14 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Hungarian.
 export const huOverrides: Record<string, string> = {
+    'common.retry': "Újrapróbálkozás",
+
+    'viewSections.moveToSection': "Áthelyezés szakaszba…",
+    'viewSections.moved': "Áthelyezve ide: {section} ({count})",
+    'viewSections.moveFailed': "Nem sikerült a feladatokat a szakaszba helyezni.",
+    'viewSections.undoFailed': "Nem sikerült visszavonni az áthelyezést.",
+    'viewSections.addTask': "Feladat hozzáadása: {section}",
+
     'sandbox.open': 'Homokozó megnyitása',
     'sandbox.label': 'Homokozó',
     'sandbox.resetShort': 'Visszaállítás',

@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+    'common.retry': "Försök igen",
+
+    'viewSections.moveToSection': "Flytta till sektion…",
+    'viewSections.moved': "Flyttat till {section} ({count})",
+    'viewSections.moveFailed': "Det gick inte att flytta uppgifterna till sektionen.",
+    'viewSections.undoFailed': "Det gick inte att ångra flytten.",
+    'viewSections.addTask': "Lägg till uppgift i {section}",
+
     'sandbox.open': "Öppna sandlådan",
     'sandbox.label': "Sandlåda",
     'sandbox.resetShort': "Återställ",

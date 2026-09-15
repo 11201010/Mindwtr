@@ -134,4 +134,13 @@ describe('TaskListBulkBar', () => {
     expect(html).toContain('aria-label="Bulk organize"');
     expect(html).not.toContain('Bulk organize Inbox');
   });
+
+  it('offers the section move only when a list supplies it, with a focusable button', () => {
+    const html = renderBulkBar({ onMoveToSection: vi.fn() });
+    expect(html).toContain('aria-label="Move to section…"');
+    expect(html).toContain('Move to section…');
+    expect(renderBulkBar()).not.toContain('aria-label="Move to section…"');
+    expect(renderBulkBar({ onMoveToSection: vi.fn(), hasSelection: false }))
+      .toContain('aria-label="Move to section…" disabled');
+  });
 });

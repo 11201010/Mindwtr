@@ -10,6 +10,14 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
+    'common.retry': "再試行",
+
+    'viewSections.moveToSection': "セクションに移動…",
+    'viewSections.moved': "{section}に移動しました（{count}）",
+    'viewSections.moveFailed': "タスクをセクションに移動できませんでした。",
+    'viewSections.undoFailed': "セクションへの移動を元に戻せませんでした。",
+    'viewSections.addTask': "{section} にタスクを追加",
+
     'sandbox.open': "サンドボックスを開く",
     'sandbox.label': "サンドボックス",
     'sandbox.resetShort': "リセット",

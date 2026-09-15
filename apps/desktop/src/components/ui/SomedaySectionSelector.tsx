@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { sortViewSectionDefinitions, tFallback, type ViewSectionDefinition } from '@mindwtr/core';
 
 import { reportError } from '../../lib/report-error';
@@ -14,6 +14,7 @@ type SomedaySectionSelectorProps = {
     t: (key: string) => string;
     id?: string;
     className?: string;
+    disabled?: boolean;
 };
 
 export function SomedaySectionSelector({
@@ -24,8 +25,12 @@ export function SomedaySectionSelector({
     t,
     id,
     className,
+    disabled = false,
 }: SomedaySectionSelectorProps) {
     const [createOpen, setCreateOpen] = useState(false);
+    const [createBusy, setCreateBusy] = useState(false);
+    const [createError, setCreateError] = useState<string | null>(null);
+    const createBusyRef = useRef(false);
     const sortedSections = sortViewSectionDefinitions(sections);
     const selectedValue = sortedSections.some((section) => section.id === value) ? value : '';
 
@@ -33,10 +38,12 @@ export function SomedaySectionSelector({
         <>
             <select
                 id={id}
+                disabled={disabled}
                 aria-label={tFallback(t, 'viewSections.somedaySection', 'Someday section')}
                 value={selectedValue}
                 onChange={(event) => {
                     if (event.target.value === NEW_SOMEDAY_SECTION_VALUE) {
+                        setCreateError(null);
                         setCreateOpen(true);
                         return;
                     }
@@ -56,17 +63,31 @@ export function SomedaySectionSelector({
                 isOpen={createOpen}
                 title={tFallback(t, 'viewSections.add', 'New section…')}
                 description={tFallback(t, 'viewSections.nameHint', 'Section name')}
+                errorMessage={createError ?? undefined}
+                busy={createBusy}
                 placeholder={tFallback(t, 'viewSections.namePlaceholder', 'Books to read')}
                 confirmLabel={t('common.save')}
                 cancelLabel={t('common.cancel')}
-                onCancel={() => setCreateOpen(false)}
+                onCancel={() => { if (!createBusyRef.current) setCreateOpen(false); }}
                 onConfirm={(title) => {
-                    setCreateOpen(false);
-                    void onCreateSection(title)
-                        .then((sectionId) => {
-                            if (sectionId) onChange(sectionId);
-                        })
-                        .catch((error) => reportError('Failed to create Someday section', error));
+                    if (createBusyRef.current) return;
+                    createBusyRef.current = true;
+                    setCreateBusy(true);
+                    setCreateError(null);
+                    void onCreateSection(title).then((sectionId) => {
+                        if (sectionId) {
+                            setCreateOpen(false);
+                            onChange(sectionId);
+                        } else {
+                            setCreateError(tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.'));
+                        }
+                    }).catch((error) => {
+                        reportError('Failed to create Someday section', error);
+                        setCreateError(tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.'));
+                    }).finally(() => {
+                        createBusyRef.current = false;
+                        setCreateBusy(false);
+                    });
                 }}
             />}
         </>

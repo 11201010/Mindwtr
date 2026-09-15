@@ -17,6 +17,7 @@ vi.mock('react-native', () => ({
   ),
   StyleSheet: { create: (styles: unknown) => styles },
   Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+  TouchableOpacity: ({ children, ...props }: any) => React.createElement('TouchableOpacity', props, children),
   View: ({ children, ...props }: any) => React.createElement('View', props, children),
 }));
 
@@ -155,6 +156,70 @@ describe('TaskListView', () => {
 
     expect(row.props.actions.remove(row.props.task)).toBe(result);
     expect(onDeleteTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
+  });
+
+  it('wires the Someday row menu, bulk action and empty-heading Add task', () => {
+    const task = makeTask('one', { status: 'someday', viewSectionIds: { someday: 'books' } });
+    const onMoveTaskToSection = vi.fn();
+    const onMoveSelectionToSection = vi.fn();
+    const onAddTaskToSection = vi.fn();
+    const renderer = renderView({
+      tasks: [task],
+      taskGroups: [
+        { id: 'view-section:someday:books', title: 'Books to read', tasks: [task] },
+        { id: 'view-section:someday:empty', title: 'Empty section', tasks: [] },
+      ],
+      onMoveTaskToSection,
+      onMoveSelectionToSection,
+      onAddTaskToSection,
+      selection: makeSelection({ selectionMode: true, hasSelection: true, selectedIdsArray: ['one'] }),
+    });
+    const row = renderer.root.findByType('SwipeableTaskItem' as never);
+    act(() => { row.props.actions.moveToSection(task); });
+    expect(onMoveTaskToSection).toHaveBeenCalledWith(task);
+
+    const bulkBar = renderer.root.findByType('TaskListBulkBar' as never);
+    act(() => { bulkBar.props.onMoveToSection(); });
+    expect(onMoveSelectionToSection).toHaveBeenCalledOnce();
+
+    const addButton = renderer.root.findAllByType('TouchableOpacity' as never)
+      .find((button) => button.props.accessibilityLabel === 'Add task to Empty section');
+    expect(addButton).toBeDefined();
+    act(() => { addButton?.props.onPress(); });
+    expect(onAddTaskToSection).toHaveBeenCalledWith('view-section:someday:empty');
+  });
+
+  it('omits the section action from Waiting rows when no handler is provided', () => {
+    const renderer = renderView({ tasks: [makeTask('waiting', { status: 'waiting' })] });
+    const row = renderer.root.findByType('SwipeableTaskItem' as never);
+    expect(row.props.actions.moveToSection).toBeUndefined();
+  });
+
+  it('keeps row actions stable while the section-move capability remains present', () => {
+    const task = makeTask('someday', { status: 'someday' });
+    const firstHandler = vi.fn();
+    const secondHandler = vi.fn();
+    const props: TaskListViewProps = {
+      tasks: [task], isDark: false, themeColors, t: (key) => key,
+      onPressTask: vi.fn(), onChangeTaskStatus: vi.fn(), onDeleteTask: vi.fn(),
+      onMoveTaskToSection: firstHandler,
+      selection: makeSelection(), bulkStatusOptions: ['next'],
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(<TaskListView {...props} />); });
+    const rowActions = renderer.root.findByType('SwipeableTaskItem' as never).props.actions;
+
+    act(() => { renderer.update(<TaskListView {...props} onMoveTaskToSection={secondHandler} />); });
+    const updatedActions = renderer.root.findByType('SwipeableTaskItem' as never).props.actions;
+    expect(updatedActions).toBe(rowActions);
+    act(() => { updatedActions.moveToSection(task); });
+    expect(secondHandler).toHaveBeenCalledWith(task);
+    expect(firstHandler).not.toHaveBeenCalled();
+
+    act(() => { renderer.update(<TaskListView {...props} onMoveTaskToSection={undefined} />); });
+    const absentActions = renderer.root.findByType('SwipeableTaskItem' as never).props.actions;
+    expect(absentActions).not.toBe(rowActions);
+    expect(absentActions.moveToSection).toBeUndefined();
   });
 
   it('wires selection state and the visible-id list into each row', () => {

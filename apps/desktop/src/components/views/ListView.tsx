@@ -22,6 +22,7 @@ import { buildProjectOrderMap,
     formatQuickAddHelp,
     resolveFeatureFlags,
     resolveTaskGroupByForFeatures,
+    sortViewSectionDefinitions,
     shallow,
     shouldShowTaskForStart,
     sortTasksBy,
@@ -43,6 +44,7 @@ import { ListFiltersPanel } from './list/ListFiltersPanel';
 import { ListQuickAdd } from './list/ListQuickAdd';
 import { QuickAddPreview } from '../QuickAddPreview';
 import { PromptModal } from '../PromptModal';
+import { SomedaySectionMoveDialog } from './list/SomedaySectionMoveDialog';
 import { TokenPickerModal } from '../TokenPickerModal';
 import { InboxProcessor } from './InboxProcessor';
 import { MindSweepModal, MindSweepTrigger } from '../MindSweepModal';
@@ -56,6 +58,16 @@ import { checkBudget } from '../../config/performanceBudgets';
 import { useListViewOptimizations } from '../../hooks/useListViewOptimizations';
 import { dispatchNavigateEvent } from '../../lib/navigation-events';
 import { reportError } from '../../lib/report-error';
+import { logInfo } from '../../lib/app-log';
+import { registerUndoableAction } from '../../lib/undo-registry';
+import { createSomedaySection } from '../../lib/someday-section-actions';
+import {
+    retryPendingSomedaySectionMove,
+    saveSomedaySectionMove,
+    SomedaySectionUndoSaveError,
+    undoSomedaySectionMove,
+    type SomedaySectionMove,
+} from '../../lib/someday-section-move';
 import { nextDensityMode } from '../../lib/density';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
@@ -191,6 +203,11 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const [newTaskTitle, setNewTaskTitle] = useState('');
     const [quickAddSyntaxOpen, setQuickAddSyntaxOpen] = useState(false);
     const [mindSweepOpen, setMindSweepOpen] = useState(false);
+    const [somedayMoveTargetIds, setSomedayMoveTargetIds] = useState<string[] | null>(null);
+    const [newSomedaySectionOpen, setNewSomedaySectionOpen] = useState(false);
+    const [newSomedaySectionBusy, setNewSomedaySectionBusy] = useState(false);
+    const [newSomedaySectionError, setNewSomedaySectionError] = useState<string | null>(null);
+    const newSomedaySectionBusyRef = useRef(false);
     const {
         criteria: listFilterCriteria,
         filtersOpen,
@@ -617,18 +634,32 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 ? SOMEDAY_AXES
                 : FOCUS_AXES;
     const isListGrouping = activeGroupBy !== 'none';
-    const groupedTasks = useMemo(() => (
-        isListGrouping
-            ? groupTasks(activeGroupBy, {
+    const somedaySectionDefinitions = useMemo(
+        () => sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday),
+        [settings?.gtd?.viewSections?.someday],
+    );
+    const groupedTasks = useMemo(() => {
+        if (!isListGrouping) return [] as TaskGroup[];
+        const groups = groupTasks(activeGroupBy, {
                 tasks: filteredTasks,
                 areas,
                 projectMap,
                 t,
                 theme: settings?.theme,
                 viewSectionDefinitions: settings?.gtd?.viewSections?.someday,
-            })
-            : [] as TaskGroup[]
-    ), [activeGroupBy, areas, completedGroupingDayKey, filteredTasks, isListGrouping, projectMap, settings?.gtd?.viewSections?.someday, settings?.theme, t]);
+        });
+        if (statusFilter !== 'someday' || activeGroupBy !== 'viewSection') return groups;
+        const byId = new Map(groups.map((group) => [group.id, group]));
+        const sectionGroups = somedaySectionDefinitions.map((section) => (
+            byId.get(`view-section:someday:${section.id}`) ?? {
+                id: `view-section:someday:${section.id}`,
+                title: section.title,
+                tasks: [],
+            }
+        ));
+        const noSectionGroup = byId.get('view-section:someday:none');
+        return noSectionGroup ? [...sectionGroups, noSectionGroup] : sectionGroups;
+    }, [activeGroupBy, areas, completedGroupingDayKey, filteredTasks, isListGrouping, projectMap, settings?.gtd?.viewSections?.someday, settings?.theme, somedaySectionDefinitions, statusFilter, t]);
     const {
         collapsedGroupIds,
         getSectionDomId,
@@ -684,7 +715,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             .sort((a, b) => (a.order - b.order) || a.title.localeCompare(b.title))
         : [];
     const showDeferredProjectSection = showDeferredProjects && deferredProjects.length > 0;
-    const showEmptyState = filteredTasks.length === 0 && !showDeferredProjectSection;
+    const showEmptyState = filteredTasks.length === 0
+        && !showDeferredProjectSection
+        && !(statusFilter === 'someday' && activeGroupBy === 'viewSection' && somedaySectionDefinitions.length > 0);
     const handleOpenProject = useCallback((projectId: string) => {
         setProjectView({ selectedProjectId: projectId });
         dispatchNavigateEvent('projects');
@@ -758,6 +791,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         isExporting,
         allVisibleTasksSelected,
         clearTaskSelection,
+        exitSelectionMode,
         multiSelectedIds,
         organizeSelectedTasks,
         removableTagOptions,
@@ -803,6 +837,88 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         tasksById,
         undoNotificationsEnabled,
     });
+    const openSomedayMove = useCallback((taskId: string) => {
+        if (statusFilter !== 'someday' || readOnly) return;
+        setSomedayMoveTargetIds([taskId]);
+    }, [readOnly, statusFilter]);
+    const handleApplySomedayMove = useCallback(async (
+        destinationId: string | undefined,
+        pendingMove?: SomedaySectionMove,
+    ) => {
+        if (!somedayMoveTargetIds?.length) throw new Error('No selected Someday tasks');
+        const move = pendingMove
+            ? await retryPendingSomedaySectionMove(pendingMove)
+            : await saveSomedaySectionMove(
+                somedayMoveTargetIds,
+                destinationId,
+                selectableTaskIds,
+                tFallback(t, 'viewSections.noSection', 'No section'),
+            );
+        if (move.changedCount > 0) {
+            void logInfo('Someday section assignment saved', {
+                scope: 'task',
+                extra: {
+                    releaseCheck: 'v1.3.1/someday-section-move',
+                    count: move.changedCount,
+                    operation: 'move',
+                },
+            }).catch((error) => reportError('Failed to log Someday section move', error));
+
+            let pendingUndoCount: number | undefined;
+            const runUndo = async () => {
+                try {
+                    const count = await undoSomedaySectionMove(move, pendingUndoCount);
+                    pendingUndoCount = undefined;
+                    if (count > 0) {
+                        void logInfo('Someday section assignment saved', {
+                            scope: 'task',
+                            extra: {
+                                releaseCheck: 'v1.3.1/someday-section-move',
+                                count,
+                                operation: 'undo',
+                            },
+                        }).catch((error) => reportError('Failed to log Someday section undo', error));
+                    }
+                } catch (error) {
+                    if (error instanceof SomedaySectionUndoSaveError) pendingUndoCount = error.pendingCount;
+                    reportError('Failed to undo Someday section move', error);
+                    showToast(
+                        tFallback(t, 'viewSections.undoFailed', 'Could not undo the section move.'),
+                        'error',
+                        5000,
+                        { label: tFallback(t, 'common.retry', 'Retry'), onClick: () => { void runUndo(); } },
+                    );
+                }
+            };
+            const undo = registerUndoableAction(() => { void runUndo(); });
+            const message = tFallback(t, 'viewSections.moved', 'Moved to {section} ({count})')
+                .replace('{count}', String(move.changedCount))
+                .replace('{section}', move.destinationTitle);
+            showToast(message, 'success', 5000, {
+                label: tFallback(t, 'common.undo', 'Undo'),
+                onClick: undo,
+            });
+        }
+        setSomedayMoveTargetIds(null);
+        exitSelectionMode();
+    }, [exitSelectionMode, selectableTaskIds, showToast, somedayMoveTargetIds, t]);
+    const handleAddTaskToSomedaySection = useCallback((group: TaskGroup) => {
+        if (statusFilter !== 'someday' || activeGroupBy !== 'viewSection') return;
+        const prefix = 'view-section:someday:';
+        if (!group.id.startsWith(prefix) || group.id === `${prefix}none`) return;
+        const sectionId = group.id.slice(prefix.length);
+        const latest = sortViewSectionDefinitions(useTaskStore.getState().settings?.gtd?.viewSections?.someday);
+        if (!latest.some((section) => section.id === sectionId)) return;
+        window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+            detail: { initialProps: { status: 'someday', viewSectionIds: { someday: sectionId } } },
+        }));
+    }, [activeGroupBy, statusFilter]);
+    const getSomedayAddTaskLabel = useCallback((group: TaskGroup) => (
+        group.id === 'view-section:someday:none'
+            ? undefined
+            : tFallback(t, 'viewSections.addTask', 'Add task to {section}')
+                .replace('{section}', group.title)
+    ), [t]);
     const bulkAreaOptions = [...areas]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((area) => ({ id: area.id, name: area.name }));
@@ -1006,6 +1122,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 compactMetaEnabled={showListDetails}
                 showProjectBadgeInActions={false}
                 interactionDisabled={isHistoricalReference}
+                onMoveToSomedaySection={statusFilter === 'someday' ? openSomedayMove : undefined}
             />
         );
     }, [
@@ -1019,6 +1136,8 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         showQuickDone,
         taskIndexById,
         toggleMultiSelect,
+        openSomedayMove,
+        statusFilter,
     ]);
     const handleToggleDetails = useCallback(() => {
         if (showListDetails) {
@@ -1080,6 +1199,10 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                 },
                             });
                         }}
+                        onNewSomedaySection={statusFilter === 'someday' ? () => {
+                            setNewSomedaySectionError(null);
+                            setNewSomedaySectionOpen(true);
+                        } : undefined}
                         t={t}
                     />
 
@@ -1104,6 +1227,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                     selectionCount={selectedIdsArray.length}
                                     currentStatus={statusFilter}
                                     onMoveToStatus={handleBatchMove}
+                                    onMoveToSomedaySection={statusFilter === 'someday'
+                                        ? () => setSomedayMoveTargetIds([...selectedIdsArray])
+                                        : undefined}
                                     onAssignArea={handleBatchAssignArea}
                                     areaOptions={bulkAreaOptions}
                                     onBulkOrganize={() => setBulkOrganizeOpen(true)}
@@ -1388,6 +1514,12 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         collapsedGroupIds={collapsedGroupIds}
                         onToggleGroup={isListGrouping ? toggleGroup : undefined}
                         getSectionDomId={getSectionDomId}
+                        onAddTaskToGroup={statusFilter === 'someday' && activeGroupBy === 'viewSection'
+                            ? (group) => {
+                                if (group.id !== 'view-section:someday:none') handleAddTaskToSomedaySection(group);
+                            }
+                            : undefined}
+                        addTaskLabel={getSomedayAddTaskLabel}
                         flatRowClassName={densityMode === 'condensed'
                             ? 'pb-0.5'
                             : densityMode === 'compact'
@@ -1450,6 +1582,47 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             titleFallback={isInbox ? 'Bulk organize Inbox' : 'Bulk organize tasks'}
             onCancel={() => setBulkOrganizeOpen(false)}
             onApply={handleApplyTaskBulkOrganize}
+        />
+        {somedayMoveTargetIds && (
+            <SomedaySectionMoveDialog
+                key={somedayMoveTargetIds.join('|')}
+                sections={somedaySectionDefinitions}
+                selectedCount={somedayMoveTargetIds.length}
+                initialSectionId={somedayMoveTargetIds.length === 1
+                    ? tasksById.get(somedayMoveTargetIds[0])?.viewSectionIds?.someday
+                    : undefined}
+                t={t}
+                onCreateSection={createSomedaySection}
+                onApply={handleApplySomedayMove}
+                onCancel={() => setSomedayMoveTargetIds(null)}
+            />
+        )}
+        <PromptModal
+            isOpen={newSomedaySectionOpen}
+            title={tFallback(t, 'viewSections.add', 'New section…')}
+            description={tFallback(t, 'viewSections.nameHint', 'Section name')}
+            errorMessage={newSomedaySectionError ?? undefined}
+            busy={newSomedaySectionBusy}
+            placeholder={tFallback(t, 'viewSections.namePlaceholder', 'Books to read')}
+            confirmLabel={t('common.save')}
+            cancelLabel={t('common.cancel')}
+            onCancel={() => { if (!newSomedaySectionBusyRef.current) setNewSomedaySectionOpen(false); }}
+            onConfirm={(title) => {
+                if (newSomedaySectionBusyRef.current) return;
+                newSomedaySectionBusyRef.current = true;
+                setNewSomedaySectionBusy(true);
+                setNewSomedaySectionError(null);
+                void createSomedaySection(title).then((id) => {
+                    if (id) setNewSomedaySectionOpen(false);
+                    else setNewSomedaySectionError(tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.'));
+                }).catch((error) => {
+                    reportError('Failed to create Someday list section', error);
+                    setNewSomedaySectionError(tFallback(t, 'viewSections.updateFailed', 'Could not update Someday sections.'));
+                }).finally(() => {
+                    newSomedaySectionBusyRef.current = false;
+                    setNewSomedaySectionBusy(false);
+                });
+            }}
         />
         </ErrorBoundary>
     );

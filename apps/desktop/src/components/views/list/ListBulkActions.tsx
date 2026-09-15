@@ -5,6 +5,7 @@ type ListBulkActionsProps = {
     selectionCount: number;
     currentStatus?: TaskStatus | 'all';
     onMoveToStatus: (status: TaskStatus) => void;
+    onMoveToSomedaySection?: () => void;
     onAssignArea?: (areaId: string | null) => void;
     areaOptions?: Array<{ id: string; name: string }>;
     onAssignEnergyLevel?: (energyLevel: TaskEnergyLevel) => void;
@@ -34,6 +35,7 @@ export function ListBulkActions({
     selectionCount,
     currentStatus,
     onMoveToStatus,
+    onMoveToSomedaySection,
     onAssignArea,
     areaOptions,
     onAssignEnergyLevel,
@@ -97,6 +99,15 @@ export function ListBulkActions({
                     </option>
                 ))}
             </select>
+            {onMoveToSomedaySection && (
+                <button
+                    type="button"
+                    onClick={onMoveToSomedaySection}
+                    className="rounded border border-border bg-muted/50 px-2 py-1 text-xs transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                    {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
+                </button>
+            )}
             {hasAreaAssignment && (
                 <select
                     defaultValue=""

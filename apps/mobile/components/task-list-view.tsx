@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef } from 'react';
-import { FlatList, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import type { Task, TaskStatus, ViewSectionTaskGroup } from '@mindwtr/core';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import { tFallback, type Task, type TaskStatus, type ViewSectionTaskGroup } from '@mindwtr/core';
 
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -33,6 +33,9 @@ export interface TaskListViewProps {
   onPressTask: (task: Task) => void;
   onChangeTaskStatus: (task: Task, status: TaskStatus) => void | Promise<unknown>;
   onDeleteTask: (task: Task) => void | Promise<unknown>;
+  onMoveTaskToSection?: (task: Task) => void;
+  onMoveSelectionToSection?: () => void;
+  onAddTaskToSection?: (groupId: string) => void;
   highlightTaskId?: string | null;
   rowContext?: SwipeableTaskItemRowContext;
 
@@ -71,6 +74,9 @@ export function TaskListView({
   onPressTask,
   onChangeTaskStatus,
   onDeleteTask,
+  onMoveTaskToSection,
+  onMoveSelectionToSection,
+  onAddTaskToSection,
   highlightTaskId,
   rowContext,
   selection,
@@ -119,6 +125,7 @@ export function TaskListView({
     onPressTask,
     onChangeTaskStatus,
     onDeleteTask,
+    onMoveTaskToSection,
     toggleMultiSelect,
     visibleTaskIds,
   });
@@ -126,18 +133,23 @@ export function TaskListView({
     onPressTask,
     onChangeTaskStatus,
     onDeleteTask,
+    onMoveTaskToSection,
     toggleMultiSelect,
     visibleTaskIds,
   };
+  const hasSectionMove = Boolean(onMoveTaskToSection);
   const rowActions = useMemo<TaskRowActions>(() => ({
     edit: (task) => rowActionSourcesRef.current.onPressTask(task),
     changeStatus: (task, status) => rowActionSourcesRef.current.onChangeTaskStatus(task, status),
     remove: (task) => rowActionSourcesRef.current.onDeleteTask(task),
+    ...(hasSectionMove ? {
+      moveToSection: (task: Task) => rowActionSourcesRef.current.onMoveTaskToSection?.(task),
+    } : {}),
     toggleSelect: (task) => {
       const sources = rowActionSourcesRef.current;
       sources.toggleMultiSelect(task.id, { visibleTaskIds: sources.visibleTaskIds });
     },
-  }), []);
+  }), [hasSectionMove]);
 
   const renderTask = useCallback(({ item }: { item: (typeof rows)[number] }) => {
     if (item.kind === 'heading') {
@@ -149,6 +161,18 @@ export function TaskListView({
           >
             {item.title}
           </Text>
+          {onAddTaskToSection ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={tFallback(t, 'viewSections.addTask', 'Add task to {section}').replace('{section}', item.title)}
+              onPress={() => onAddTaskToSection(item.id)}
+              style={styles.groupAddButton}
+            >
+              <Text style={{ color: themeColors.tint }}>
+                {tFallback(t, 'nav.addTask', 'Add task')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       );
     }
@@ -174,6 +198,8 @@ export function TaskListView({
     isDark,
     multiSelectedIds,
     rowActions,
+    onAddTaskToSection,
+    t,
     rowContext,
     selectionMode,
     themeColors,
@@ -187,6 +213,7 @@ export function TaskListView({
           bulkActionLoading={bulkActionLoading}
           handleBatchDelete={handleBatchDelete}
           handleBatchMove={handleBatchMove}
+          onMoveToSection={onMoveSelectionToSection}
           hasSelection={hasSelection}
           onExitSelectionMode={exitSelectionMode}
           onOpenTagModal={() => setTagModalVisible(true)}
@@ -233,12 +260,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   groupHeading: {
+    alignItems: 'center',
+    flexDirection: 'row',
     paddingBottom: 6,
     paddingTop: 18,
   },
   groupHeadingText: {
+    flex: 1,
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.4,
   },
+  groupAddButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 },
 });

@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    'common.retry': "Spróbuj ponownie",
+
+    'viewSections.noSection': "Bez sekcji",
+    'viewSections.add': "Nowa sekcja…",
+    'viewSections.nameHint': "Nazwa sekcji",
+    'viewSections.namePlaceholder': "Książki do przeczytania",
+    'viewSections.updateFailed': "Nie udało się zaktualizować sekcji Kiedyś/Może.",
+    'viewSections.somedaySection': "Sekcja Kiedyś/Może",
+
+    'viewSections.moveToSection': "Przenieś do sekcji…",
+    'viewSections.moved': "Przeniesiono do {section} ({count})",
+    'viewSections.moveFailed': "Nie udało się przenieść zadań do sekcji.",
+    'viewSections.undoFailed': "Nie udało się cofnąć przeniesienia.",
+    'viewSections.addTask': "Dodaj zadanie do {section}",
+
     'sandbox.open': "Otwórz piaskownicę",
     'sandbox.label': "Piaskownica",
     'sandbox.resetShort': "Resetuj",

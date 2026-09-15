@@ -47,6 +47,7 @@ export type TaskRowActions = {
     edit: (task: Task) => void;
     changeStatus: (task: Task, status: TaskStatus) => void | Promise<unknown>;
     remove: (task: Task) => void | Promise<unknown>;
+    moveToSection?: (task: Task) => void;
     /** Omitted by lists without multi-select. */
     toggleSelect?: (task: Task) => void;
 };
@@ -61,6 +62,7 @@ export interface SwipeableTaskItemProps {
     onPress?: () => void;
     onStatusChange?: (status: TaskStatus) => void | Promise<unknown>;
     onDelete?: () => void | Promise<unknown>;
+    onMoveToSection?: () => void;
     /** Receives the row's task so callers can pass one stable handler. */
     onLongPressAction?: (task: Task) => void;
     onLongPressActionLabel?: string;
@@ -134,6 +136,7 @@ type ResolvedRowCallbacks = {
     onPress: () => void;
     onStatusChange: (status: TaskStatus) => void | Promise<unknown>;
     onDelete: () => void | Promise<unknown>;
+    onMoveToSection?: () => void;
     onToggleSelect?: () => void;
 };
 
@@ -155,6 +158,8 @@ function resolveRowCallbacks(props: SwipeableTaskItemProps): ResolvedRowCallback
         onStatusChange: props.onStatusChange
             ?? (actions ? (status: TaskStatus) => actions.changeStatus(task, status) : noop),
         onDelete: props.onDelete ?? (actions ? () => actions.remove(task) : noop),
+        onMoveToSection: props.onMoveToSection
+            ?? (actions?.moveToSection ? () => actions.moveToSection?.(task) : undefined),
         onToggleSelect: props.onToggleSelect ?? (toggleSelect ? () => toggleSelect(task) : undefined),
     };
 }
@@ -230,6 +235,7 @@ function SwipeableTaskItemInner({
     onPress,
     onStatusChange,
     onDelete,
+    onMoveToSection,
     onLongPressAction,
     onLongPressActionLabel,
     hideContexts = false,
@@ -804,6 +810,7 @@ function SwipeableTaskItemInner({
                 visible={!interactionDisabled && showStatusMenu}
                 onClose={() => setShowStatusMenu(false)}
                 onStatusChange={handleStatusChange}
+                onMoveToSection={onMoveToSection}
                 onBackdatedComplete={interactionDisabled || task.status === 'done'
                     ? undefined
                     : () => setCompletedAtPicker('complete')}

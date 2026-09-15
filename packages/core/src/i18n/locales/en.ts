@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const en: Record<string, string> = {
+    'common.retry': "Try again",
+
+    'viewSections.moveToSection': "Move to section…",
+    'viewSections.moved': "Moved to {section} ({count})",
+    'viewSections.moveFailed': "Could not move tasks to the section.",
+    'viewSections.undoFailed': "Could not undo the section move.",
+    'viewSections.addTask': "Add task to {section}",
+
     'sandbox.open': "Open sandbox",
     'sandbox.label': "Sandbox",
     'sandbox.resetShort': "Reset",

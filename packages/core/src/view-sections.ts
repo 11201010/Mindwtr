@@ -53,6 +53,48 @@ export function setTaskViewSectionId(
     return sorted as ViewSectionIds;
 }
 
+type TaskViewSectionUpdate = { id: string; updates: Pick<Task, 'viewSectionIds'> };
+
+/** Assign one view's section without touching task containers or other view scopes. */
+export function buildTaskViewSectionUpdates(
+    tasks: readonly Task[],
+    scope: ViewSectionScope,
+    sectionId?: string,
+): TaskViewSectionUpdate[] {
+    const destination = sectionId || undefined;
+    const seen = new Set<string>();
+    return tasks.flatMap((task) => {
+        if (seen.has(task.id) || task.deletedAt) return [];
+        seen.add(task.id);
+        if ((task.viewSectionIds?.[scope] || undefined) === destination) return [];
+        return [{
+            id: task.id,
+            updates: { viewSectionIds: setTaskViewSectionId(task.viewSectionIds, scope, destination) },
+        }];
+    });
+}
+
+/**
+ * Undo against the latest tasks, preserving intervening edits and skipping tasks
+ * moved elsewhere since this action. Callers capture only the ids actually moved.
+ */
+export function buildTaskViewSectionUndoUpdates(
+    tasks: readonly Task[],
+    scope: ViewSectionScope,
+    previous: readonly { id: string; sectionId?: string }[],
+    expectedSectionId?: string,
+): TaskViewSectionUpdate[] {
+    const previousById = new Map(previous.map((assignment) => [assignment.id, assignment.sectionId]));
+    const expected = expectedSectionId || undefined;
+    const seen = new Set<string>();
+    return tasks.flatMap((task) => {
+        if (seen.has(task.id) || task.deletedAt || !previousById.has(task.id)) return [];
+        seen.add(task.id);
+        if ((task.viewSectionIds?.[scope] || undefined) !== expected) return [];
+        return buildTaskViewSectionUpdates([task], scope, previousById.get(task.id));
+    });
+}
+
 export interface ViewSectionTaskGroup {
     id: string;
     title: string;

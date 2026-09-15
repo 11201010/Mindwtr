@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    'common.retry': "Повторить",
+
+    'viewSections.noSection': "Без раздела",
+    'viewSections.add': "Новый раздел…",
+    'viewSections.nameHint': "Название раздела",
+    'viewSections.namePlaceholder': "Книги для чтения",
+    'viewSections.updateFailed': "Не удалось обновить разделы «Когда-нибудь/Может быть».",
+    'viewSections.somedaySection': "Раздел «Когда-нибудь/Может быть»",
+
+    'viewSections.moveToSection': "Переместить в раздел…",
+    'viewSections.moved': "Перемещено в {section} ({count})",
+    'viewSections.moveFailed': "Не удалось переместить задачи в раздел.",
+    'viewSections.undoFailed': "Не удалось отменить перемещение.",
+    'viewSections.addTask': "Добавить задачу в «{section}»",
+
     'sandbox.open': "Открыть песочницу",
     'sandbox.label': "Песочница",
     'sandbox.resetShort': "Сбросить",

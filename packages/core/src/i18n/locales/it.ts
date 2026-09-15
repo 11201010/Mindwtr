@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const itOverrides: Record<string, string> = {
+    'common.retry': "Riprova",
+
+    'viewSections.noSection': "Nessuna sezione",
+    'viewSections.add': "Nuova sezione…",
+    'viewSections.nameHint': "Nome della sezione",
+    'viewSections.namePlaceholder': "Libri da leggere",
+    'viewSections.updateFailed': "Impossibile aggiornare le sezioni Un giorno/Forse.",
+    'viewSections.somedaySection': "Sezione Un giorno/Forse",
+
+    'viewSections.moveToSection': "Sposta nella sezione…",
+    'viewSections.moved': "Spostamento in {section} ({count})",
+    'viewSections.moveFailed': "Impossibile spostare le attività nella sezione.",
+    'viewSections.undoFailed': "Impossibile annullare lo spostamento.",
+    'viewSections.addTask': "Aggiungi attività a {section}",
+
     'sandbox.open': "Apri la sandbox",
     'sandbox.label': "Sandbox",
     'sandbox.resetShort': "Ripristina",

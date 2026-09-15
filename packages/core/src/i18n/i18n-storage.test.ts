@@ -11,6 +11,8 @@ describe('i18n-storage locale defaults', () => {
         expect(resolveLanguageFromLocale('ja-JP')).toBe('ja');
         expect(resolveLanguageFromLocale('ja_JP')).toBe('ja');
         expect(resolveLanguageFromLocale('ko-KR')).toBe('ko');
+        expect(resolveLanguageFromLocale('uk-UA')).toBe('uk');
+        expect(resolveLanguageFromLocale('uk_UA')).toBe('uk');
     });
 
     it('falls back to english for partially supported locales', () => {
@@ -26,5 +28,14 @@ describe('i18n-storage locale defaults', () => {
         };
         expect(loadStoredLanguageSync(storage, resolveLanguageFromLocale('es-MX'))).toBe('es');
         expect(loadStoredLanguageSync(storage, resolveLanguageFromLocale('fr-FR'))).toBe('en');
+        expect(loadStoredLanguageSync(storage, resolveLanguageFromLocale('uk-UA'))).toBe('uk');
+    });
+
+    it('keeps a saved language when the system locale is Ukrainian', () => {
+        const storage = {
+            getItem: () => 'es',
+            setItem: () => undefined,
+        };
+        expect(loadStoredLanguageSync(storage, resolveLanguageFromLocale('uk-UA'))).toBe('es');
     });
 });

@@ -31,6 +31,7 @@ describe('getLocaleCoverageTier', () => {
         // 'all' commitment, both load modes.
         expect(getLocaleCoverageTier('zh')).toBe('full');
         expect(getLocaleCoverageTier('sv')).toBe('full');
+        expect(getLocaleCoverageTier('uk')).toBe('full');
     });
 
     it('calls a locale with a low key floor partial', () => {

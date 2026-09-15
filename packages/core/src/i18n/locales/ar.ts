@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'common.retry': "حاول مجددًا",
+
+    'viewSections.noSection': "بدون قسم",
+    'viewSections.add': "قسم جديد…",
+    'viewSections.nameHint': "اسم القسم",
+    'viewSections.namePlaceholder': "كتب للقراءة",
+    'viewSections.updateFailed': "تعذر تحديث أقسام يومًا ما/ربما.",
+    'viewSections.somedaySection': "قسم يومًا ما/ربما",
+
+    'viewSections.moveToSection': "نقل إلى قسم…",
+    'viewSections.moved': "تم النقل إلى {section} ({count})",
+    'viewSections.moveFailed': "تعذر نقل المهام إلى القسم.",
+    'viewSections.undoFailed': "تعذر التراجع عن النقل إلى القسم.",
+    'viewSections.addTask': "إضافة مهمة إلى {section}",
+
     'sandbox.open': "فتح البيئة التجريبية",
     'sandbox.label': "بيئة التجربة",
     'sandbox.resetShort': "إعادة ضبط",

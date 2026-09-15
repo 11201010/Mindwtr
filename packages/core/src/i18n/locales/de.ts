@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    'common.retry': "Erneut versuchen",
+
+    'viewSections.moveToSection': "In Abschnitt verschieben…",
+    'viewSections.moved': "Verschoben nach {section} ({count})",
+    'viewSections.moveFailed': "Aufgaben konnten nicht in den Abschnitt verschoben werden.",
+    'viewSections.undoFailed': "Das Verschieben konnte nicht rückgängig gemacht werden.",
+    'viewSections.addTask': "Aufgabe zu {section} hinzufügen",
+
     'sandbox.open': "Sandbox öffnen",
     'sandbox.label': "Sandbox",
     'sandbox.resetShort': "Zurücksetzen",

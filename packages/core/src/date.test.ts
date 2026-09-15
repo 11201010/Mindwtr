@@ -245,6 +245,14 @@ describe('date utils', () => {
         configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
     });
 
+    it('formats Ukrainian dates with Ukrainian month forms and region tag', () => {
+        expect(resolveDateLocaleTag({ language: 'uk', dateFormat: 'dmy', systemLocale: 'en-US' })).toBe('uk-UA');
+        configureDateFormatting({ language: 'uk', dateFormat: 'dmy', timeFormat: 'system', systemLocale: 'uk-UA' });
+        expect(safeFormatDate('2026-08-08', 'PP')).toBe('8 серп. 2026 р.');
+        expect(safeFormatDate('2026-08-08', 'PPPP')).toContain('серпня');
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
+    });
+
     it('detects when a review date is due', () => {
         const now = new Date('2025-01-10T10:00:00Z');
         expect(isDueForReview('2025-01-10T09:00:00Z', now)).toBe(true);

@@ -1,5 +1,13 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    'common.retry': "تلاش دوباره",
+
+    'viewSections.moveToSection': "انتقال به بخش…",
+    'viewSections.moved': "به {section} منتقل شد ({count})",
+    'viewSections.moveFailed': "انتقال کارها به بخش انجام نشد.",
+    'viewSections.undoFailed': "بازگردانی انتقال به بخش انجام نشد.",
+    'viewSections.addTask': "افزودن کار به {section}",
+
     'sandbox.open': "باز کردن محیط آزمایشی",
     'sandbox.label': "محیط آزمایشی",
     'sandbox.resetShort': "بازنشانی",

@@ -2,6 +2,14 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
+    'common.retry': "Volver a intentar",
+
+    'viewSections.moveToSection': "Mover a sección…",
+    'viewSections.moved': "Traslado completado a {section} ({count})",
+    'viewSections.moveFailed': "No se pudieron mover las tareas a la sección.",
+    'viewSections.undoFailed': "No se pudo deshacer el cambio de sección.",
+    'viewSections.addTask': "Añadir tarea a {section}",
+
     'sandbox.open': "Abrir entorno de prueba",
     'sandbox.label': "Prueba",
     'sandbox.resetShort': "Reiniciar",

@@ -1,9 +1,37 @@
-import { sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
+import { flushPendingSave, sortViewSectionDefinitions, useTaskStore } from '@mindwtr/core';
 
 import { useUiStore } from '../store/ui-store';
 
 const makeSomedaySectionId = () => globalThis.crypto?.randomUUID?.()
     ?? `someday-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+// A failed first-section save leaves the definition optimistic in the store.
+// Keep its id until recovery completes so retry finishes that same creation.
+let pendingFirstSectionId: string | null = null;
+
+function enableGroupingAfterFirstSectionSave(wasFirstCreation: boolean): void {
+    const latestSections = sortViewSectionDefinitions(useTaskStore.getState().settings?.gtd?.viewSections?.someday);
+    const firstCreationRecovered = pendingFirstSectionId !== null
+        && latestSections.some((section) => section.id === pendingFirstSectionId);
+    if (!wasFirstCreation && !firstCreationRecovered) {
+        pendingFirstSectionId = null;
+        return;
+    }
+    const uiState = useUiStore.getState();
+    if (uiState.listOptions.somedayGroupBy === 'none') {
+        uiState.setListOptions({ somedayGroupBy: 'viewSection' });
+    }
+    pendingFirstSectionId = null;
+}
+
+async function ensureCatalogueSaved(): Promise<void> {
+    const state = useTaskStore.getState();
+    // A terminal flush can exhaust its queue while keeping an optimistic
+    // definition in settings. A plain second flush would return empty; the
+    // store's recovery path re-enqueues its current snapshot before flushing.
+    if (state.persistenceFailure) await state.retryPersistence();
+    else await flushPendingSave();
+}
 
 /**
  * The one desktop write path for creating a Someday catalogue section.
@@ -20,7 +48,11 @@ export async function createSomedaySection(title: string): Promise<string | null
     const existing = currentSections.find(
         (section) => section.title.toLowerCase() === trimmed.toLowerCase(),
     );
-    if (existing) return existing.id;
+    if (existing) {
+        await ensureCatalogueSaved();
+        enableGroupingAfterFirstSectionSave(false);
+        return existing.id;
+    }
 
     const id = makeSomedaySectionId();
     const maxOrder = currentSections.reduce(
@@ -36,10 +68,9 @@ export async function createSomedaySection(title: string): Promise<string | null
             },
         },
     });
-
-    const uiState = useUiStore.getState();
-    if (currentSections.length === 0 && uiState.listOptions.somedayGroupBy === 'none') {
-        uiState.setListOptions({ somedayGroupBy: 'viewSection' });
-    }
+    const wasFirstCreation = currentSections.length === 0;
+    if (wasFirstCreation) pendingFirstSectionId = id;
+    await ensureCatalogueSaved();
+    enableGroupingAfterFirstSectionSave(wasFirstCreation);
     return id;
 }

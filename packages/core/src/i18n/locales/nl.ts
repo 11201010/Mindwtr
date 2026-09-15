@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'common.retry': "Opnieuw proberen",
+
+    'viewSections.noSection': "Geen sectie",
+    'viewSections.add': "Nieuwe sectie…",
+    'viewSections.nameHint': "Sectienaam",
+    'viewSections.namePlaceholder': "Boeken om te lezen",
+    'viewSections.updateFailed': "De secties voor Ooit/Misschien konden niet worden bijgewerkt.",
+    'viewSections.somedaySection': "Sectie Ooit/Misschien",
+
+    'viewSections.moveToSection': "Naar sectie verplaatsen…",
+    'viewSections.moved': "Verplaatst naar {section} ({count})",
+    'viewSections.moveFailed': "De taken konden niet naar de sectie worden verplaatst.",
+    'viewSections.undoFailed': "Het verplaatsen kon niet ongedaan worden gemaakt.",
+    'viewSections.addTask': "Taak toevoegen aan {section}",
+
     'sandbox.open': "Sandbox openen",
     'sandbox.label': "Sandbox",
     'sandbox.resetShort': "Herstellen",

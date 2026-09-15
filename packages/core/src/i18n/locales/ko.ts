@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    'common.retry': "다시 시도",
+
+    'viewSections.noSection': "섹션 없음",
+    'viewSections.add': "새 섹션…",
+    'viewSections.nameHint': "섹션 이름",
+    'viewSections.namePlaceholder': "읽을 책",
+    'viewSections.updateFailed': "언젠가/아마도 섹션을 업데이트하지 못했습니다.",
+    'viewSections.somedaySection': "언젠가/아마도 섹션",
+
+    'viewSections.moveToSection': "섹션으로 이동…",
+    'viewSections.moved': "이동 완료: {section} ({count})",
+    'viewSections.moveFailed': "작업을 섹션으로 이동하지 못했습니다.",
+    'viewSections.undoFailed': "섹션 이동을 취소하지 못했습니다.",
+    'viewSections.addTask': "{section}에 작업 추가",
+
     'sandbox.open': "샌드박스 열기",
     'sandbox.label': "샌드박스",
     'sandbox.resetShort': "초기화",

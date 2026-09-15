@@ -1,5 +1,20 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+    'common.retry': "Zkusit znovu",
+
+    'viewSections.noSection': "Bez sekce",
+    'viewSections.add': "Nová sekce…",
+    'viewSections.nameHint': "Název sekce",
+    'viewSections.namePlaceholder': "Knihy k přečtení",
+    'viewSections.updateFailed': "Sekce Někdy/Možná se nepodařilo aktualizovat.",
+    'viewSections.somedaySection': "Sekce Někdy/Možná",
+
+    'viewSections.moveToSection': "Přesunout do sekce…",
+    'viewSections.moved': "Přesunuto do {section} ({count})",
+    'viewSections.moveFailed': "Úkoly se nepodařilo přesunout do sekce.",
+    'viewSections.undoFailed': "Přesun do sekce se nepodařilo vrátit zpět.",
+    'viewSections.addTask': "Přidat úkol do {section}",
+
     'sandbox.open': "Otevřít testovací prostředí",
     'sandbox.label': "Zkušební režim",
     'sandbox.resetShort': "Obnovit",
