@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Area, Project, Section } from '@mindwtr/core';
@@ -98,6 +98,46 @@ describe('TaskBulkOrganizeModal', () => {
         createProjectMock.mockReset();
         ensureDestinationSavedMock.mockReset();
         ensureDestinationSavedMock.mockResolvedValue(undefined);
+    });
+
+    it('offers areas in custom order through search while keeping sentinel choices and selection', async () => {
+        const suppliedAreas = [
+            { ...area, id: 'home', name: 'Home', order: 1 },
+            { ...area, id: 'work', name: 'Work', order: 0 },
+        ];
+        const suppliedIds = suppliedAreas.map((choice) => choice.id);
+        const { getByLabelText, getByRole, onApply } = renderModal({ areas: suppliedAreas });
+        const optionNames = () => within(getByRole('listbox', { name: 'Area' }))
+            .getAllByRole('option').map((option) => option.textContent);
+
+        fireEvent.click(getByRole('button', { name: 'Area' }));
+        expect(optionNames()).toEqual(['Keep area', 'No area', 'Work', 'Home']);
+        setInputValue(getByLabelText('Search areas') as HTMLInputElement, 'o');
+        expect(optionNames()).toEqual(['Keep area', 'No area', 'Create area "o"', 'Work', 'Home']);
+        fireEvent.click(getByRole('option', { name: 'Work' }));
+        await waitFor(() => expect(getByRole('button', { name: 'Area' })).toHaveTextContent('Work'));
+        fireEvent.click(getByRole('button', { name: 'Apply to selected' }));
+        expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ areaId: 'work' }));
+        expect(suppliedAreas.map((choice) => choice.id)).toEqual(suppliedIds);
+    });
+
+    it('uses names to break equal or invalid order ties and excludes deleted areas', () => {
+        const suppliedAreas: Area[] = [
+            { ...area, id: 'zebra', name: 'Zebra', order: 2 },
+            { ...area, id: 'cedar', name: 'Cedar', order: undefined as unknown as number },
+            { ...area, id: 'deleted', name: 'Acorn', order: -1, deletedAt: '2026-09-15T00:00:00.000Z' },
+            { ...area, id: 'birch', name: 'Birch', order: Number.POSITIVE_INFINITY },
+            { ...area, id: 'apple', name: 'Apple', order: 2 },
+            { ...area, id: 'apricot', name: 'Apricot', order: Number.NaN },
+        ];
+        const originalIds = suppliedAreas.map((choice) => choice.id);
+        const { getByRole } = renderModal({ areas: suppliedAreas });
+
+        fireEvent.click(getByRole('button', { name: 'Area' }));
+        expect(within(getByRole('listbox', { name: 'Area' })).getAllByRole('option')
+            .map((option) => option.textContent))
+            .toEqual(['Keep area', 'No area', 'Apple', 'Zebra', 'Apricot', 'Birch', 'Cedar']);
+        expect(suppliedAreas.map((choice) => choice.id)).toEqual(originalIds);
     });
 
     it('creates a project in the chosen explicit area without applying task changes', async () => {

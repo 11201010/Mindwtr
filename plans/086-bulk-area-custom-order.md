@@ -1,6 +1,6 @@
 # Plan 086: Preserve custom area order in desktop bulk organize
 
-Status: TODO. Priority P3. Effort S. Risk LOW. Confidence HIGH. Category correctness/parity. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected by review-improve loop.
+Status: DONE. Priority P3. Effort S. Risk LOW. Confidence HIGH. Category correctness/parity. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected by review-improve loop.
 
 ## Why and current state
 
@@ -31,3 +31,7 @@ Use RTK for shell commands and CodeGraph before structural discovery. Read AGENT
 ## Stop conditions
 
 Report to root if the excerpts have materially changed, an existing behavior contract disagrees, new locale strings or schema changes are needed, or an out-of-scope file is necessary. Do not redesign the form or add global abstractions. Run focused tests with tool working directory set to the package; do not use `bun --cwd ... run test`, which can print help without running tests.
+
+## Validation
+
+Real-modal order regression failed alphabetic Home/Work, then passed saved Work/Home. Modal 19/19 and AreaSelector 5/5 tests pass, including search, sentinel placement, assignment, missing/nonfinite/tied orders, deleted exclusion and unchanged source-array ordering. Desktop typecheck/lint/diff check pass with no warnings.
