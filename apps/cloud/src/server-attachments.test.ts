@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
     closeSync,
     existsSync,
@@ -340,6 +340,113 @@ describe('garbageCollectOrphanAttachments', () => {
             expect(existsSync(join(attachmentsRoot, 'mixed'))).toBe(true);
             expect(existsSync(join(attachmentsRoot, 'stale-only'))).toBe(false);
             expect(existsSync(join(attachmentsRoot, 'fresh-only'))).toBe(true);
+        });
+    });
+
+    test('retains both current and historical nested bytes for a prefixed capture key', () => {
+        withSandbox((dataDir) => {
+            const key = 'capture-history';
+            const attachmentsRoot = join(dataDir, key, 'attachments');
+            const currentPath = join(attachmentsRoot, 'recording.m4a');
+            const historicalPath = join(attachmentsRoot, 'attachments', 'recording.m4a');
+            mkdirSync(join(attachmentsRoot, 'attachments'), { recursive: true });
+            writeFileSync(currentPath, 'current recording');
+            writeFileSync(historicalPath, 'historical recording');
+            expireFile(currentPath);
+            expireFile(historicalPath);
+            const data = emptyAppData();
+            data.tasks = [makeTask({
+                id: 'capture-task',
+                title: 'Capture',
+                attachments: [makeFileAttachment({ id: 'recording', cloudKey: 'attachments/recording.m4a' })],
+            })];
+
+            const result = garbageCollectOrphanAttachments(dataDir, key, data);
+
+            expect(result).toEqual({ deleted: 0, errors: [], kept: 2, scanned: 2 });
+            expect(existsSync(currentPath)).toBe(true);
+            expect(existsSync(historicalPath)).toBe(true);
+        });
+    });
+
+    test('keeps standard keys on live and restorable owners but deletes purged and explicitly deleted references', () => {
+        withSandbox((dataDir) => {
+            const key = 'owner-lifecycle';
+            const attachmentsRoot = join(dataDir, key, 'attachments');
+            mkdirSync(attachmentsRoot, { recursive: true });
+            const names = ['live-task.bin', 'trash-task.bin', 'trash-project.bin', 'purged-project.bin', 'deleted-attachment.bin'];
+            for (const name of names) {
+                const filePath = join(attachmentsRoot, name);
+                writeFileSync(filePath, name);
+                expireFile(filePath);
+            }
+            const data = emptyAppData();
+            data.tasks = [
+                makeTask({ id: 'live', title: 'Live', attachments: [makeFileAttachment({ id: 'a1', cloudKey: 'attachments/live-task.bin' })] }),
+                makeTask({ id: 'trash', title: 'Trash', deletedAt: iso, attachments: [makeFileAttachment({ id: 'a2', cloudKey: 'attachments/trash-task.bin' })] }),
+            ];
+            data.projects = [
+                makeProject({ id: 'trash-project', title: 'Trash', deletedAt: iso, attachments: [makeFileAttachment({ id: 'a3', cloudKey: 'attachments/trash-project.bin' })] }),
+                makeProject({ id: 'purged', title: 'Purged', purgedAt: iso, attachments: [makeFileAttachment({ id: 'a4', cloudKey: 'attachments/purged-project.bin' })] }),
+                makeProject({ id: 'deleted-attachment', title: 'Active', attachments: [makeFileAttachment({ id: 'a5', cloudKey: 'attachments/deleted-attachment.bin', deletedAt: iso })] }),
+            ];
+
+            const result = garbageCollectOrphanAttachments(dataDir, key, data);
+
+            expect(result).toEqual({ deleted: 2, errors: [], kept: 3, scanned: 5 });
+            for (const name of names.slice(0, 3)) expect(existsSync(join(attachmentsRoot, name))).toBe(true);
+            for (const name of names.slice(3)) expect(existsSync(join(attachmentsRoot, name))).toBe(false);
+        });
+    });
+
+    test('ignores a traversal-shaped stored key and logs retention without a path or namespace', () => {
+        withSandbox((dataDir) => {
+            const key = 'private-namespace';
+            const attachmentsRoot = join(dataDir, key, 'attachments');
+            mkdirSync(attachmentsRoot, { recursive: true });
+            const retainedPath = join(attachmentsRoot, 'retained.bin');
+            const orphanPath = join(attachmentsRoot, 'orphan.bin');
+            writeFileSync(retainedPath, 'private attachment bytes');
+            writeFileSync(orphanPath, 'orphan');
+            expireFile(retainedPath);
+            expireFile(orphanPath);
+            const data = emptyAppData();
+            data.tasks = [makeTask({
+                id: 'privacy-fixture',
+                title: 'Fixture',
+                attachments: [
+                    makeFileAttachment({ id: 'retained', cloudKey: 'attachments/retained.bin' }),
+                    makeFileAttachment({ id: 'invalid', cloudKey: 'attachments/../orphan.bin' }),
+                ],
+            })];
+            const captured: string[] = [];
+            const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+                captured.push(String(chunk));
+                return true;
+            });
+            let result: ReturnType<typeof garbageCollectOrphanAttachments>;
+            try {
+                result = garbageCollectOrphanAttachments(dataDir, key, data);
+            } finally {
+                stdoutSpy.mockRestore();
+            }
+
+            expect(result).toEqual({ deleted: 1, errors: [], kept: 1, scanned: 2 });
+            expect(existsSync(retainedPath)).toBe(true);
+            expect(existsSync(orphanPath)).toBe(false);
+            const lines = captured.join('').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+            expect(lines).toHaveLength(1);
+            expect(lines[0].message).toBe('Referenced attachment files retained during cleanup');
+            expect(lines[0].context).toEqual({
+                count: 1,
+                operation: 'orphan-gc',
+                outcome: 'complete',
+                releaseCheck: 'v1.3.1/cloud-attachment-gc-retention',
+            });
+            expect(captured.join('')).not.toContain(key);
+            expect(captured.join('')).not.toContain(dataDir);
+            expect(captured.join('')).not.toContain('retained.bin');
+            expect(captured.join('')).not.toContain('private attachment bytes');
         });
     });
 

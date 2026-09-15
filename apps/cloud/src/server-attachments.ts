@@ -11,7 +11,7 @@ import {
     type PendingRemoteAttachmentDelete,
     type Project,
 } from '@mindwtr/core';
-import { corsOrigin, errorResponse, jsonResponse, logFailureWarn } from './server-config';
+import { corsOrigin, errorResponse, jsonResponse, logFailureWarn, logInfo } from './server-config';
 import { loadAppDataForWrite } from './server-data-cache';
 import {
     abandonPreparedFilePublication,
@@ -139,10 +139,25 @@ export function garbageCollectOrphanAttachments(
         };
     }
     const rootRealPath = realpathSync(rootDir);
-    const referenced = collectReferencedAttachmentCloudKeys(data);
+    // Cloud keys are URL-shaped (`attachments/id.m4a`), but this root is already
+    // the namespace's attachments directory. Resolve the stored identity before
+    // comparing it with a root-relative scanned path. Keep the old nested layout
+    // for prefixed keys too; historical captures may still have bytes there and
+    // the separate legacy-read compatibility path can serve them.
+    const referenced = new Set<string>();
+    for (const cloudKey of collectReferencedAttachmentCloudKeys(data)) {
+        const rootRelative = cloudKey.startsWith('attachments/')
+            ? cloudKey.slice('attachments/'.length)
+            : cloudKey;
+        const canonical = normalizeAttachmentRelativePath(rootRelative);
+        if (!canonical) continue;
+        referenced.add(canonical);
+        if (rootRelative !== cloudKey) referenced.add(cloudKey);
+    }
     const errors: string[] = [];
     let deleted = 0;
     let kept = 0;
+    let referencedKept = 0;
     let scanned = 0;
 
     const visit = (dirPath: string) => {
@@ -179,8 +194,10 @@ export function garbageCollectOrphanAttachments(
 
             scanned += 1;
             const relativePath = normalizeAttachmentRelativePath(relative(rootRealPath, entryPath).replace(/\\/g, '/'));
-            if (!relativePath || referenced.has(relativePath)) {
+            const isReferenced = Boolean(relativePath && referenced.has(relativePath));
+            if (!relativePath || isReferenced) {
                 kept += 1;
+                if (isReferenced) referencedKept += 1;
                 continue;
             }
             if (stat.mtimeMs > Date.now() - ORPHAN_ATTACHMENT_GC_GRACE_MS) {
@@ -217,6 +234,14 @@ export function garbageCollectOrphanAttachments(
     };
 
     visit(rootRealPath);
+    if (referencedKept > 0) {
+        logInfo('Referenced attachment files retained during cleanup', {
+            count: referencedKept,
+            operation: 'orphan-gc',
+            outcome: errors.length === 0 ? 'complete' : 'partial',
+            releaseCheck: 'v1.3.1/cloud-attachment-gc-retention',
+        });
+    }
     return { deleted, errors, kept, scanned };
 }
 

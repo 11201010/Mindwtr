@@ -4818,8 +4818,9 @@ describe('cloud server api', () => {
     });
 
     test('garbage-collects unreferenced attachment files on demand', async () => {
-        const referencedPath = 'folder/referenced.bin';
-        const orphanPath = 'folder/orphan.bin';
+        const referencedPath = 'referenced.bin';
+        const referencedCloudKey = `attachments/${referencedPath}`;
+        const orphanPath = 'orphan.bin';
         const uploadReferenced = await fetch(`${baseUrl}/v1/attachments/${referencedPath}`, {
             method: 'PUT',
             headers: authHeaders,
@@ -4833,6 +4834,7 @@ describe('cloud server api', () => {
         expect(uploadReferenced.status).toBe(200);
         expect(uploadOrphan.status).toBe(200);
         const key = tokenToKey(integrationToken);
+        expireFileForOrphanGc(join(dataDir, key, 'attachments', referencedPath));
         expireFileForOrphanGc(join(dataDir, key, 'attachments', orphanPath));
 
         const iso = '2026-01-01T00:00:00.000Z';
@@ -4856,7 +4858,7 @@ describe('cloud server api', () => {
                         kind: 'file',
                         title: 'referenced.bin',
                         uri: '',
-                        cloudKey: referencedPath,
+                        cloudKey: referencedCloudKey,
                         createdAt: iso,
                         updatedAt: iso,
                     }],
@@ -4868,6 +4870,9 @@ describe('cloud server api', () => {
             }),
         });
         expect(seedResponse.status).toBe(200);
+        const seededResponse = await fetch(`${baseUrl}/v1/data`, { headers: authHeaders });
+        const seededData = (await seededResponse.json()) as AppData;
+        expect(seededData.tasks[0].attachments?.[0].cloudKey).toBe(referencedCloudKey);
 
         const gcResponse = await fetch(`${baseUrl}/v1/attachments/orphans`, {
             method: 'POST',
@@ -4878,8 +4883,15 @@ describe('cloud server api', () => {
         expect(gcBody.deleted).toBe(1);
 
         const referencedGet = await fetch(`${baseUrl}/v1/attachments/${referencedPath}`, { headers: authHeaders });
+        const referencedHead = await fetch(`${baseUrl}/v1/attachments/${referencedPath}`, {
+            method: 'HEAD',
+            headers: authHeaders,
+        });
         const orphanGet = await fetch(`${baseUrl}/v1/attachments/${orphanPath}`, { headers: authHeaders });
         expect(referencedGet.status).toBe(200);
+        expect(await referencedGet.text()).toBe('referenced');
+        expect(referencedHead.status).toBe(200);
+        expect(referencedHead.headers.get('content-length')).toBe(String('referenced'.length));
         expect(orphanGet.status).toBe(404);
     });
 

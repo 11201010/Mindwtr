@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { AppData, Attachment, Task } from '@mindwtr/core';
@@ -182,6 +182,37 @@ describe('POST /v1/capture', () => {
         const tasks = await readStoredTasks();
         expect(tasks).toHaveLength(1);
         expect(tasks[0].attachments?.[0].cloudKey).toBe(attachment.cloudKey);
+    });
+
+    test('cleanup retains an aged capture recording referenced by its Inbox task', async () => {
+        const created = await postFormCapture({
+            transcription: 'Fixture recording',
+            audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+        });
+        expect(created.status).toBe(201);
+        const { attachment } = (await created.json()) as { attachment: Attachment };
+        if (!attachment.cloudKey) throw new Error('capture did not publish a cloud key');
+        const attachmentUrl = `${harness.url}/v1/${attachment.cloudKey}`;
+        const storedPath = join(
+            harness.dataDir,
+            createHash('sha256').update(TOKEN).digest('hex'),
+            attachment.cloudKey,
+        );
+        const staleTime = new Date(Date.now() - 10 * 60 * 1000);
+        utimesSync(storedPath, staleTime, staleTime);
+
+        const cleanup = await fetch(`${harness.url}/v1/attachments/orphans`, { method: 'POST', headers: AUTH });
+        expect(cleanup.status).toBe(200);
+        const result = (await cleanup.json()) as { deleted: number; kept: number };
+        expect(result.deleted).toBe(0);
+        expect(result.kept).toBe(1);
+
+        const head = await fetch(attachmentUrl, { method: 'HEAD', headers: AUTH });
+        const download = await fetch(attachmentUrl, { headers: AUTH });
+        expect(head.status).toBe(200);
+        expect(head.headers.get('content-length')).toBe(String(AUDIO_BYTES.byteLength));
+        expect(download.status).toBe(200);
+        expect([...new Uint8Array(await download.arrayBuffer())]).toEqual([...AUDIO_BYTES]);
     });
 
     test('accepts a transcription with no audio as multipart, JSON, and plain text', async () => {
