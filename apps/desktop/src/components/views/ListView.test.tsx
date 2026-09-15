@@ -1,5 +1,5 @@
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
-import type { Project, Task } from '@mindwtr/core';
+import type { Area, Project, Task } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -64,6 +64,56 @@ const renderListView = (statusFilter: 'inbox' | 'next' | 'waiting' | 'someday' |
   );
 
 describe('ListView', () => {
+  it('keeps Inbox global while other lists retain the selected area', () => {
+    const work: Area = {
+      id: 'area-work', name: 'Work', color: '#2563eb', order: 0, createdAt: now, updatedAt: now,
+    };
+    const personal: Area = { ...work, id: 'area-personal', name: 'Personal', order: 1 };
+    const personalProject: Project = {
+      id: 'project-personal', title: 'Personal project', status: 'active', color: '#16a34a',
+      order: 0, tagIds: [], areaId: personal.id, createdAt: now, updatedAt: now,
+    };
+    const parkedProject: Project = { ...personalProject, id: 'project-parked', status: 'someday' };
+    const tasks = [
+      makeTask('work-inbox', { title: 'Work inbox', status: 'inbox', areaId: work.id }),
+      makeTask('personal-inbox', { title: 'Personal inbox', status: 'inbox', areaId: personal.id }),
+      makeTask('inherited-inbox', { title: 'Inherited inbox', status: 'inbox', projectId: personalProject.id }),
+      makeTask('unassigned-inbox', { title: 'Unassigned inbox', status: 'inbox' }),
+      makeTask('parked-inbox', { title: 'Parked inbox', status: 'inbox', projectId: parkedProject.id }),
+      makeTask('deleted-inbox', { title: 'Deleted inbox', status: 'inbox', deletedAt: now }),
+      makeTask('work-next', { title: 'Work next', status: 'next', areaId: work.id }),
+      makeTask('personal-next', { title: 'Personal next', status: 'next', areaId: personal.id }),
+    ];
+    const filters = {
+      areaId: work.id,
+      areaIds: [work.id],
+      excludedAreaIds: [personal.id, '__none__'],
+    };
+    useTaskStore.setState({
+      _allAreas: [work, personal],
+      _allProjects: [personalProject, parkedProject],
+      _allTasks: tasks,
+      settings: { filters },
+      lastDataChangeAt: 1,
+    });
+
+    const inbox = renderListView('inbox', 'Inbox');
+    expect(inbox.getByText('All areas')).toBeInTheDocument();
+    expect(inbox.getByText('Work inbox')).toBeInTheDocument();
+    expect(inbox.getByText('Personal inbox')).toBeInTheDocument();
+    expect(inbox.getByText('Inherited inbox')).toBeInTheDocument();
+    expect(inbox.getByText('Unassigned inbox')).toBeInTheDocument();
+    expect(inbox.queryByText('Parked inbox')).not.toBeInTheDocument();
+    expect(inbox.queryByText('Deleted inbox')).not.toBeInTheDocument();
+    expect(inbox.getByRole('button', { name: /Process Inbox \(4\)/i })).toBeInTheDocument();
+    expect(useTaskStore.getState().settings.filters).toEqual(filters);
+    inbox.unmount();
+
+    const next = renderListView('next', 'Next');
+    expect(next.getByText('Work next')).toBeInTheDocument();
+    expect(next.queryByText('Personal next')).not.toBeInTheDocument();
+  });
+
   it('keeps the reveal scroll callback stable across non-data rerenders', () => {
     const tasks = Array.from({ length: 200 }, (_, index) => makeTask(String(index)));
     useTaskStore.setState({ _allTasks: tasks, tasks, lastDataChangeAt: 1 });

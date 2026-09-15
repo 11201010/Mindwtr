@@ -28,7 +28,7 @@ import type {
 } from '../../InboxProcessingQuickPanel';
 import type { InboxProcessingScheduleFieldKey, InboxProcessingScheduleFieldsControls } from '../../InboxProcessingScheduleFields';
 import type { ProcessingStep } from '../../InboxProcessingWizard';
-import { isTaskVisibleInArea, resolveAreaFilterSelection } from '@mindwtr/core';
+import { isTaskVisibleInInbox } from '@mindwtr/core';
 import {
     getDateFieldDraft,
     mergeSuggestedTokens,
@@ -170,14 +170,6 @@ export function useInboxProcessingState({
                 : setTaskDraftField(next, 'projectId', '');
         });
     }, [projectMap]);
-    const resolvedAreaFilter = useMemo(
-        () => resolveAreaFilterSelection(settings?.filters, areas),
-        [settings?.filters, areas],
-    );
-    const areaVisibility = useMemo(
-        () => ({ areaById, projectById: projectMap, resolvedAreaFilter }),
-        [areaById, projectMap, resolvedAreaFilter],
-    );
     const processingStep = processingSession.currentStep ?? 'actionable';
     const stepHistory = processingSession.stepHistory;
     const skippedIds = processingSession.skippedTaskIds;
@@ -198,8 +190,8 @@ export function useInboxProcessingState({
     );
 
     const eligibleInboxTasks = useMemo(
-        () => selectProcessInboxCandidates(tasks, (task) => isTaskVisibleInArea(task, areaVisibility)),
-        [areaVisibility, tasks],
+        () => selectProcessInboxCandidates(tasks, (task) => isTaskVisibleInInbox(task, { projectById: projectMap })),
+        [projectMap, tasks],
     );
     const processingTask = useMemo(
         () => eligibleInboxTasks.find((task) => task.id === processingSession.currentTaskId) ?? null,

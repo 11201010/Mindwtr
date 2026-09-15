@@ -20,17 +20,20 @@ export type SeedTask = {
     reviewAt?: string;
     isFocusedToday?: boolean;
     projectId?: string;
+    areaId?: string;
     attachments?: Attachment[];
 };
 
 export type SeedProject = {
     id: string;
     title: string;
+    areaId?: string;
 };
 
 export type SeedData = {
     tasks?: SeedTask[];
     projects?: SeedProject[];
+    areas?: { id: string; name: string }[];
     settings?: Record<string, unknown>;
 };
 
@@ -83,6 +86,7 @@ export const seedAppData = async (page: Page, data: SeedData): Promise<void> => 
             ...(task.reviewAt ? { reviewAt: task.reviewAt } : {}),
             ...(task.isFocusedToday ? { isFocusedToday: true } : {}),
             ...(task.projectId ? { projectId: task.projectId } : {}),
+            ...(task.areaId ? { areaId: task.areaId } : {}),
             ...(task.attachments ? { attachments: task.attachments } : {}),
         })),
         projects: (data.projects ?? []).map((project) => ({
@@ -93,7 +97,11 @@ export const seedAppData = async (page: Page, data: SeedData): Promise<void> => 
             updatedAt: SEED_TIMESTAMP,
         })),
         sections: [],
-        areas: [],
+        areas: (data.areas ?? []).map((area) => ({
+            ...area,
+            createdAt: SEED_TIMESTAMP,
+            updatedAt: SEED_TIMESTAMP,
+        })),
         people: [],
         settings: data.settings ?? {},
     });

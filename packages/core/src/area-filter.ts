@@ -166,3 +166,17 @@ export function isTaskVisibleInArea(task: Task, ctx: AreaVisibilityContext): boo
         && isTaskInActiveProject(task, ctx.projectById)
         && taskMatchesAreaFilterSelection(task, ctx.resolvedAreaFilter, ctx.projectById, ctx.areaById);
 }
+
+/**
+ * Base visibility for Inbox surfaces. The Inbox is a global capture queue, so
+ * it keeps the normal tombstone and active-project guards but deliberately
+ * ignores the user's area selection. Callers retain their own queue/status
+ * rule; Process Inbox also admits due Someday items that have returned for
+ * clarification.
+ */
+export function isTaskVisibleInInbox(
+    task: Task,
+    ctx: Pick<AreaVisibilityContext, 'projectById'>,
+): boolean {
+    return !task.deletedAt && isTaskInActiveProject(task, ctx.projectById);
+}

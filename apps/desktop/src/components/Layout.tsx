@@ -34,7 +34,7 @@ import { useUiStore } from '../store/ui-store';
 import { useObsidianStore } from '../store/obsidian-store';
 import { reportError } from '../lib/report-error';
 import { ToastHost } from './ToastHost';
-import { areaFilterSelectionToFilters, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from '@mindwtr/core';
+import { areaFilterSelectionToFilters, isTaskVisibleInInbox, resolveAreaFilterSelection, type AreaFilterSelection } from '@mindwtr/core';
 import { SyncService } from '../lib/sync-service';
 import { SidebarAreaFilter } from './ui/SidebarAreaFilter';
 import { getCalendarTaskDragTaskId, hasCalendarTaskDragData } from '../lib/calendar-task-drag';
@@ -290,7 +290,6 @@ export function Layout({
         : tFallback(t, 'settings.lastSyncNever', 'Never');
     const dismissLabel = t('common.dismiss');
     const dismissText = dismissLabel && dismissLabel !== 'common.dismiss' ? dismissLabel : 'Dismiss';
-    const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
     const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const resolvedAreaFilter = useMemo(
         () => resolveAreaFilterSelection(settings?.filters, areas),
@@ -300,13 +299,12 @@ export function Layout({
     const inboxCount = useMemo(() => {
         let count = 0;
         for (const task of tasks) {
-            if (task.deletedAt) continue;
             if (task.status !== 'inbox') continue;
-            if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectMap, areaById)) continue;
+            if (!isTaskVisibleInInbox(task, { projectById: projectMap })) continue;
             count += 1;
         }
         return count;
-    }, [tasks, resolvedAreaFilter, projectMap, areaById]);
+    }, [tasks, projectMap]);
     const wideViews = new Set([
         'inbox',
         'next',

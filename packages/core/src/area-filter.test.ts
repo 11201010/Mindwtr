@@ -11,6 +11,7 @@ import {
     projectMatchesAreaFilterSelection,
     resolveAreaFilterSelection,
     isTaskVisibleInArea,
+    isTaskVisibleInInbox,
     taskMatchesAreaFilterSelection,
 } from './area-filter';
 
@@ -159,5 +160,50 @@ describe('isTaskVisibleInArea', () => {
     it('keeps a purged task hidden without any purgedAt clause of its own', () => {
         const purged = { ...baseTask, deletedAt: '2026-03-17T00:00:00.000Z', purgedAt: '2026-03-18T00:00:00.000Z' };
         expect(isTaskVisibleInArea(purged, ctxFor([project]))).toBe(false);
+    });
+});
+
+describe('isTaskVisibleInInbox', () => {
+    const personalArea: Area = { ...homeArea, id: 'area-personal', name: 'Personal' };
+    const personalProject: Project = {
+        ...project,
+        id: 'project-personal',
+        areaId: personalArea.id,
+    };
+    const parkedProject: Project = {
+        ...project,
+        id: 'project-parked',
+        status: 'someday',
+    };
+    const projectById = new Map([
+        [project.id, project],
+        [personalProject.id, personalProject],
+        [parkedProject.id, parkedProject],
+    ]);
+
+    it('keeps eligible tasks from every area and with no area in the global Inbox scope', () => {
+        const tasks = [
+            { ...baseTask, id: 'work-direct', status: 'inbox' as const, areaId: workArea.id },
+            { ...baseTask, id: 'personal-project', status: 'inbox' as const, projectId: personalProject.id },
+            { ...baseTask, id: 'unassigned', status: 'inbox' as const },
+        ];
+
+        expect(tasks.filter((task) => isTaskVisibleInInbox(task, { projectById })).map((task) => task.id))
+            .toEqual(['work-direct', 'personal-project', 'unassigned']);
+    });
+
+    it('retains deleted and parked-project exclusions without applying a status rule', () => {
+        const visibleReturningTask = { ...baseTask, id: 'returning', status: 'someday' as const };
+        const deleted = {
+            ...baseTask,
+            id: 'deleted',
+            status: 'inbox' as const,
+            deletedAt: '2026-03-17T00:00:00.000Z',
+        };
+        const parked = { ...baseTask, id: 'parked', status: 'inbox' as const, projectId: parkedProject.id };
+
+        expect(isTaskVisibleInInbox(visibleReturningTask, { projectById })).toBe(true);
+        expect(isTaskVisibleInInbox(deleted, { projectById })).toBe(false);
+        expect(isTaskVisibleInInbox(parked, { projectById })).toBe(false);
     });
 });

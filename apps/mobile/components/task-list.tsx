@@ -18,6 +18,7 @@ import {
   resolveFeatureFlags,
   tFallback,
   isTaskInActiveProject,
+  isTaskVisibleInInbox,
   getTaskMetadataFilterVisibility,
   getProjectSectionsForView,
   createReferenceSearchPredicate,
@@ -542,7 +543,9 @@ function TaskListComponent({
         }
       }
       const areaProjectLookup = statusFilter === 'reference' ? allProjectById : projectById;
-      if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, areaProjectLookup, areaById)) return false;
+      if (statusFilter === 'inbox') {
+        if (!isTaskVisibleInInbox(task, { projectById: areaProjectLookup })) return false;
+      } else if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, areaProjectLookup, areaById)) return false;
       return matchesStatus && matchesProject;
     });
   }, [allProjectById, areaById, includeArchivedReferenceProjects, includeDone, projectById, projectId, resolvedAreaFilter, statusFilter, tasks]);
