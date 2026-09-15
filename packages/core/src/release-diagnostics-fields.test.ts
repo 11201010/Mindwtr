@@ -14,6 +14,8 @@ import { sanitizeLogContext } from './log-sanitize';
  */
 const RELEASE_CHECK_FIELD_NAMES = [
     // shortcut-failure-privacy reuses releaseCheck and stage below.
+    // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
+    'method',
     // capture-token-revocation reuses releaseCheck and outcome below.
     // cloud-attachment-gc-retention reuses releaseCheck, count, operation, and outcome below.
     // archive-section-retention: number of restorable sections kept during timed cleanup.

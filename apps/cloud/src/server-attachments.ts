@@ -12,7 +12,7 @@ import {
     type Project,
 } from '@mindwtr/core';
 import { corsOrigin, errorResponse, jsonResponse, logFailureWarn, logInfo } from './server-config';
-import { loadAppDataForWrite } from './server-data-cache';
+import { loadAppDataForWrite, loadAppDataOrError } from './server-data-cache';
 import {
     abandonPreparedFilePublication,
     durablyRemoveDirectory,
@@ -22,6 +22,7 @@ import {
     isBodyReadError,
     isPathWithinRoot,
     normalizeAttachmentRelativePath,
+    pathContainsSymlink,
     prepareFilePublicationSafely,
     publishPreparedFilePublication,
     readRequestBytes,
@@ -273,6 +274,69 @@ export function handleOrphanAttachmentGcRequest(dataDir: string, key: string, fi
     return jsonResponse({ ok, ...result }, { status: ok ? 200 : 500 });
 }
 
+/** Only the v1.2.8 capture layout is eligible: a single validated attachment
+ * name under one extra `attachments/` directory, backed by current metadata. */
+const historicalCaptureReadPath = (
+    dataFilePath: string,
+    resolved: { rootRealPath: string; filePath: string },
+    assertStorageRoot?: () => void,
+): string | Response | null => {
+    const { rootRealPath, filePath } = resolved;
+    const requested = normalizeAttachmentRelativePath(relative(rootRealPath, filePath).replace(/\\/g, '/'));
+    if (!requested || requested.includes('/')) return null;
+    const cloudKey = normalizeAttachmentRelativePath(`attachments/${requested}`);
+    if (!cloudKey) return null;
+
+    assertStorageRoot?.();
+    const loaded = loadAppDataOrError(dataFilePath);
+    assertStorageRoot?.();
+    if ('error' in loaded) return loaded.error;
+    const validated = validateAppData(loaded);
+    assertStorageRoot?.();
+    if (!validated.ok) return errorResponse('Stored data failed validation', 500);
+    const referenced = collectReferencedAttachmentCloudKeys(validated.data).has(cloudKey);
+    assertStorageRoot?.();
+    if (!referenced) return null;
+
+    const historicalPath = join(rootRealPath, 'attachments', requested);
+    if (!isPathWithinRoot(historicalPath, rootRealPath) || pathContainsSymlink(rootRealPath, historicalPath)) {
+        assertStorageRoot?.();
+        return errorResponse('Invalid attachment path', 400);
+    }
+    assertStorageRoot?.();
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+        stat = lstatSync(historicalPath);
+    } catch (error) {
+        assertStorageRoot?.();
+        if (getFsErrorCode(error) === 'ENOENT') return null;
+        return errorResponse('Failed to read attachment', 500);
+    }
+    assertStorageRoot?.();
+    if (!stat.isFile() || stat.isSymbolicLink()) return errorResponse('Invalid attachment path', 400);
+    let realFilePath: string;
+    try {
+        realFilePath = realpathSync(historicalPath);
+    } catch (error) {
+        assertStorageRoot?.();
+        if (getFsErrorCode(error) === 'ENOENT') return null;
+        return errorResponse('Failed to read attachment', 500);
+    }
+    assertStorageRoot?.();
+    if (!isPathWithinRoot(realFilePath, rootRealPath)) return errorResponse('Invalid attachment path', 400);
+    return historicalPath;
+};
+
+const attachmentPathMissing = (filePath: string): boolean => {
+    try {
+        lstatSync(filePath);
+        return false;
+    } catch (error) {
+        if (getFsErrorCode(error) === 'ENOENT') return true;
+        throw error;
+    }
+};
+
 const normalizeAttachmentContentType = (value: string | null): string => value?.split(';', 1)[0]?.trim().toLowerCase() || '';
 
 const getBlockedAttachmentSignature = (bytes: Uint8Array): string | null => {
@@ -312,24 +376,55 @@ export async function handleAttachmentPathRequest(
         abortSignal: AbortSignal;
         removalFileSystem?: DurableRemovalFileSystem;
         assertStorageRoot?: () => void;
+        historicalDataFilePath?: string;
     },
 ): Promise<Response> {
     const { rootRealPath, filePath } = resolved;
 
     if (req.method === 'GET' || req.method === 'HEAD') {
         options.assertStorageRoot?.();
-        if (!existsSync(filePath)) {
-            options.assertStorageRoot?.();
-            return errorResponse('Not found', 404);
+        let selectedPath = filePath;
+        if (attachmentPathMissing(filePath)) {
+            if (!options.historicalDataFilePath) {
+                options.assertStorageRoot?.();
+                return errorResponse('Not found', 404);
+            }
+            const historical = historicalCaptureReadPath(options.historicalDataFilePath, resolved, options.assertStorageRoot);
+            if (historical instanceof Response) return historical;
+            if (!historical) {
+                options.assertStorageRoot?.();
+                return errorResponse('Not found', 404);
+            }
+            // A canonical file published while metadata was checked still wins.
+            selectedPath = attachmentPathMissing(filePath) ? historical : filePath;
         }
         try {
-            const realFilePath = realpathSync(filePath);
+            if (selectedPath !== filePath && pathContainsSymlink(rootRealPath, selectedPath)) {
+                options.assertStorageRoot?.();
+                return errorResponse('Invalid attachment path', 400);
+            }
+            const realFilePath = realpathSync(selectedPath);
             if (!isPathWithinRoot(realFilePath, rootRealPath)) {
+                options.assertStorageRoot?.();
+                return errorResponse('Invalid attachment path', 400);
+            }
+            if (selectedPath !== filePath && !lstatSync(selectedPath).isFile()) {
                 options.assertStorageRoot?.();
                 return errorResponse('Invalid attachment path', 400);
             }
             const file = readFileSync(realFilePath);
             options.assertStorageRoot?.();
+            if (selectedPath !== filePath) {
+                const linked = pathContainsSymlink(rootRealPath, selectedPath);
+                options.assertStorageRoot?.();
+                if (linked) return errorResponse('Invalid attachment path', 400);
+                logInfo('Legacy capture audio served from historical layout', {
+                    method: req.method,
+                    operation: 'legacy-capture-audio-read',
+                    outcome: 'served',
+                    releaseCheck: 'v1.3.1/legacy-capture-audio',
+                });
+            }
             const headers = new Headers();
             headers.set('Access-Control-Allow-Origin', corsOrigin);
             headers.set('Content-Type', 'application/octet-stream');

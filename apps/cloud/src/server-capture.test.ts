@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { AppData, Attachment, Task } from '@mindwtr/core';
@@ -213,6 +213,96 @@ describe('POST /v1/capture', () => {
         expect(head.headers.get('content-length')).toBe(String(AUDIO_BYTES.byteLength));
         expect(download.status).toBe(200);
         expect([...new Uint8Array(await download.arrayBuffer())]).toEqual([...AUDIO_BYTES]);
+    });
+
+    test('GET and HEAD serve historical nested capture audio without writing another file', async () => {
+        const created = await postFormCapture({
+            transcription: 'Historical fixture recording',
+            audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+        });
+        expect(created.status).toBe(201);
+        const { attachment } = (await created.json()) as { attachment: Attachment };
+        if (!attachment.cloudKey) throw new Error('capture did not publish a cloud key');
+        const namespaceDir = join(harness.dataDir, createHash('sha256').update(TOKEN).digest('hex'));
+        const currentPath = join(namespaceDir, attachment.cloudKey);
+        const historicalDir = join(namespaceDir, 'attachments', 'attachments');
+        const historicalPath = join(historicalDir, `${attachment.id}.m4a`);
+        mkdirSync(historicalDir);
+        renameSync(currentPath, historicalPath);
+        const attachmentUrl = `${harness.url}/v1/${attachment.cloudKey}`;
+
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        try {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                const get = await fetch(attachmentUrl, { headers: AUTH });
+                const head = await fetch(attachmentUrl, { method: 'HEAD', headers: AUTH });
+                expect(get.status).toBe(200);
+                expect([...new Uint8Array(await get.arrayBuffer())]).toEqual([...AUDIO_BYTES]);
+                expect(head.status).toBe(200);
+                expect(head.headers.get('content-length')).toBe(String(AUDIO_BYTES.byteLength));
+            }
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+        expect(existsSync(currentPath)).toBe(false);
+        expect(existsSync(historicalPath)).toBe(true);
+        expect(readdirSync(historicalDir)).toEqual([`${attachment.id}.m4a`]);
+        const proof = captured.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+            .filter((line) => line.message === 'Legacy capture audio served from historical layout');
+        expect(proof.map((line) => line.context.method)).toEqual(['GET', 'HEAD', 'GET', 'HEAD']);
+        for (const line of proof) {
+            expect(line.context).toEqual({
+                method: line.context.method,
+                operation: 'legacy-capture-audio-read',
+                outcome: 'served',
+                releaseCheck: 'v1.3.1/legacy-capture-audio',
+            });
+        }
+        expect(captured.join('')).not.toContain(TOKEN);
+        expect(captured.join('')).not.toContain(attachment.id);
+        expect(captured.join('')).not.toContain(attachment.cloudKey);
+        expect(captured.join('')).not.toContain('Historical fixture recording');
+    });
+
+    test('GET and HEAD prefer canonical capture bytes when a historical copy also exists', async () => {
+        const created = await postFormCapture({
+            transcription: 'Canonical precedence fixture',
+            audio: { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' },
+        });
+        expect(created.status).toBe(201);
+        const { attachment } = (await created.json()) as { attachment: Attachment };
+        if (!attachment.cloudKey) throw new Error('capture did not publish a cloud key');
+        const namespaceDir = join(harness.dataDir, createHash('sha256').update(TOKEN).digest('hex'));
+        const currentPath = join(namespaceDir, attachment.cloudKey);
+        const historicalDir = join(namespaceDir, 'attachments', 'attachments');
+        const historicalPath = join(historicalDir, `${attachment.id}.m4a`);
+        mkdirSync(historicalDir);
+        renameSync(currentPath, historicalPath);
+        writeFileSync(currentPath, 'newer canonical bytes');
+
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        let get: Response;
+        let head: Response;
+        try {
+            get = await fetch(`${harness.url}/v1/${attachment.cloudKey}`, { headers: AUTH });
+            head = await fetch(`${harness.url}/v1/${attachment.cloudKey}`, { method: 'HEAD', headers: AUTH });
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+        expect(get.status).toBe(200);
+        expect(await get.text()).toBe('newer canonical bytes');
+        expect(head.status).toBe(200);
+        expect(head.headers.get('content-length')).toBe(String('newer canonical bytes'.length));
+        expect(existsSync(historicalPath)).toBe(true);
+        expect(captured.join('')).not.toContain('Legacy capture audio served from historical layout');
     });
 
     test('accepts a transcription with no audio as multipart, JSON, and plain text', async () => {

@@ -1761,6 +1761,7 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                             maxAttachmentBytes,
                             abortSignal: requestAbortController.signal,
                             assertStorageRoot,
+                            historicalDataFilePath: ctx.filePath,
                         });
                     }, requestAbortController.signal);
                     if (attachmentPathResponse) return attachmentPathResponse;

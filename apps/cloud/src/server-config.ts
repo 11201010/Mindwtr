@@ -45,6 +45,7 @@ export const CLOUD_LOG_MESSAGES = [
     'Failed to clone cloud app data cache entry',
     'Failed to start server',
     'Legacy Cloud attachment data repaired',
+    'Legacy capture audio served from historical layout',
     'Referenced attachment files retained during cleanup',
     'MINDWTR_CLOUD_ALLOW_ANY_TOKEN is enabled. Prefer MINDWTR_CLOUD_AUTH_TOKENS for stronger access control.',
     'MINDWTR_CLOUD_TOKEN is deprecated; use MINDWTR_CLOUD_AUTH_TOKENS instead',

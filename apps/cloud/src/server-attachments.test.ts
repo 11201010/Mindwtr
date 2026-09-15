@@ -6,6 +6,7 @@ import {
     mkdirSync,
     mkdtempSync,
     openSync,
+    renameSync,
     rmSync,
     rmdirSync,
     symlinkSync,
@@ -755,6 +756,175 @@ describe('handleAttachmentPathRequest HEAD', () => {
             const response = await head(paths);
 
             expect(response.status).toBe(400);
+        });
+    });
+});
+
+describe('historical capture audio reads', () => {
+    const withHistoricalFile = async (
+        run: (paths: { sandbox: string; rootRealPath: string; filePath: string; historicalPath: string; dataFilePath: string }) => Promise<void>,
+    ): Promise<void> => {
+        const sandbox = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-historical-audio-'));
+        try {
+            const rootRealPath = join(sandbox, 'attachments');
+            const filePath = join(rootRealPath, 'recording.m4a');
+            const historicalPath = join(rootRealPath, 'attachments', 'recording.m4a');
+            const dataFilePath = join(sandbox, 'data.json');
+            mkdirSync(join(rootRealPath, 'attachments'), { recursive: true });
+            writeFileSync(historicalPath, 'historical bytes');
+            await run({ sandbox, rootRealPath, filePath, historicalPath, dataFilePath });
+        } finally {
+            rmSync(sandbox, { recursive: true, force: true });
+        }
+    };
+
+    const read = (
+        method: 'GET' | 'HEAD',
+        paths: { rootRealPath: string; filePath: string; dataFilePath: string },
+        assertStorageRoot?: () => void,
+    ): Promise<Response> => handleAttachmentPathRequest(
+        new Request('http://localhost/v1/attachments/recording.m4a', { method }),
+        '/v1/attachments/recording.m4a',
+        { rootRealPath: paths.rootRealPath, filePath: paths.filePath },
+        {
+            maxAttachmentBytes: 1024,
+            abortSignal: new AbortController().signal,
+            historicalDataFilePath: paths.dataFilePath,
+            assertStorageRoot,
+        },
+    );
+
+    const referencedData = (): AppData => {
+        const data = emptyAppData();
+        data.tasks = [makeTask({
+            id: 'historical-task',
+            title: 'Capture',
+            attachments: [makeFileAttachment({ id: 'recording', cloudKey: 'attachments/recording.m4a' })],
+        })];
+        return data;
+    };
+
+    test('a restorable project can read its historical recording', async () => {
+        await withHistoricalFile(async (paths) => {
+            const data = emptyAppData();
+            data.projects = [makeProject({
+                id: 'trashed-project',
+                title: 'Restorable',
+                deletedAt: iso,
+                attachments: [makeFileAttachment({ id: 'recording', cloudKey: 'attachments/recording.m4a' })],
+            })];
+            writeFileSync(paths.dataFilePath, JSON.stringify(data));
+
+            const get = await read('GET', paths);
+            const head = await read('HEAD', paths);
+            expect(get.status).toBe(200);
+            expect(await get.text()).toBe('historical bytes');
+            expect(head.status).toBe(200);
+            expect(head.headers.get('content-length')).toBe(String('historical bytes'.length));
+            expect(existsSync(paths.historicalPath)).toBe(true);
+            expect(existsSync(paths.filePath)).toBe(false);
+        });
+    });
+
+    test('missing, unrelated, deleted, and purged references cannot authorize a historical read', async () => {
+        const cases: Array<[string, AppData]> = [
+            ['missing', emptyAppData()],
+            ['unrelated', (() => { const data = referencedData(); data.tasks[0].attachments![0].cloudKey = 'attachments/other.m4a'; return data; })()],
+            ['deleted attachment', (() => { const data = referencedData(); data.tasks[0].attachments![0].deletedAt = iso; return data; })()],
+            ['purged task', (() => { const data = referencedData(); data.tasks[0].purgedAt = iso; return data; })()],
+            ['purged project', (() => {
+                const data = emptyAppData();
+                data.projects = [makeProject({
+                    id: 'purged-project', title: 'Purged', purgedAt: iso,
+                    attachments: [makeFileAttachment({ id: 'recording', cloudKey: 'attachments/recording.m4a' })],
+                })];
+                return data;
+            })()],
+        ];
+        for (const [name, data] of cases) {
+            await withHistoricalFile(async (paths) => {
+                writeFileSync(paths.dataFilePath, JSON.stringify(data));
+                const response = await read('GET', paths);
+                expect(`${name}: ${response.status}`).toBe(`${name}: 404`);
+                expect(existsSync(paths.historicalPath)).toBe(true);
+            });
+        }
+    });
+
+    test('a canonical file wins, including when its directory or broken symlink prevents a read', async () => {
+        await withHistoricalFile(async (paths) => {
+            // Canonical reads never need to inspect metadata, even when it is invalid.
+            writeFileSync(paths.dataFilePath, 'invalid JSON fixture');
+            writeFileSync(paths.filePath, 'current bytes');
+            const current = await read('GET', paths);
+            expect(current.status).toBe(200);
+            expect(await current.text()).toBe('current bytes');
+
+            unlinkSync(paths.filePath);
+            mkdirSync(paths.filePath);
+            expect((await read('GET', paths)).status).toBe(500);
+            rmdirSync(paths.filePath);
+            symlinkSync(join(paths.rootRealPath, 'missing.m4a'), paths.filePath);
+            expect((await read('GET', paths)).status).toBe(500);
+            expect(existsSync(paths.historicalPath)).toBe(true);
+        });
+    });
+
+    test('legacy directory and leaf symlinks are rejected even if they point within the root', async () => {
+        for (const targetInsideRoot of [false, true]) {
+            await withHistoricalFile(async (paths) => {
+                writeFileSync(paths.dataFilePath, JSON.stringify(referencedData()));
+                const targetDir = targetInsideRoot
+                    ? join(paths.rootRealPath, 'other')
+                    : join(paths.sandbox, 'outside');
+                mkdirSync(targetDir);
+                writeFileSync(join(targetDir, 'recording.m4a'), 'linked bytes');
+                const historicalDir = join(paths.rootRealPath, 'attachments');
+                unlinkSync(paths.historicalPath);
+                rmdirSync(historicalDir);
+                symlinkSync(targetDir, historicalDir, 'dir');
+                const throughDirectory = await read('GET', paths);
+                expect(throughDirectory.status).toBe(400);
+                expect(await throughDirectory.text()).not.toContain('linked bytes');
+
+                unlinkSync(historicalDir);
+                mkdirSync(historicalDir);
+                symlinkSync(join(targetDir, 'recording.m4a'), paths.historicalPath);
+                const throughLeaf = await read('GET', paths);
+                expect(throughLeaf.status).toBe(400);
+                expect(await throughLeaf.text()).not.toContain('linked bytes');
+                expect(existsSync(join(targetDir, 'recording.m4a'))).toBe(true);
+            });
+        }
+    });
+
+    test('a malformed resolved path and lost storage authority never read historical bytes', async () => {
+        await withHistoricalFile(async (paths) => {
+            writeFileSync(paths.dataFilePath, JSON.stringify(referencedData()));
+            const malformed = await read('GET', { ...paths, filePath: join(paths.rootRealPath, '..', 'escape.m4a') });
+            expect(malformed.status).toBe(404);
+
+            let checks = 0;
+            const displaced = `${paths.sandbox}-displaced`;
+            const assertStorageRoot = () => {
+                checks += 1;
+                if (checks === 3) {
+                    renameSync(paths.sandbox, displaced);
+                    mkdirSync(paths.sandbox);
+                    writeFileSync(join(paths.sandbox, 'replacement-sentinel'), 'fresh root');
+                    throw new Error('storage root replaced after metadata access');
+                }
+            };
+            try {
+                await expect(read('GET', paths, assertStorageRoot)).rejects.toThrow('storage root replaced after metadata access');
+                expect(existsSync(join(displaced, 'attachments', 'attachments', 'recording.m4a'))).toBe(true);
+                expect(existsSync(join(paths.sandbox, 'attachments', 'attachments', 'recording.m4a'))).toBe(false);
+            } finally {
+                if (existsSync(displaced)) {
+                    rmSync(paths.sandbox, { recursive: true, force: true });
+                    renameSync(displaced, paths.sandbox);
+                }
+            }
         });
     });
 });
