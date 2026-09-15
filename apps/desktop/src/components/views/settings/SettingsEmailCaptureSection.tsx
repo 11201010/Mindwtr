@@ -19,6 +19,7 @@ import {
 import { useUiStore } from '../../../store/ui-store';
 
 type Labels = {
+    emailCaptureGuideTitle: string;
     emailCapture: string;
     emailCaptureDesc: string;
     emailCaptureHost: string;
@@ -173,7 +174,7 @@ export function SettingsEmailCaptureSection({ t, isTauri, showSaved }: SettingsE
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                     >
-                        Email capture guide
+                        {t.emailCaptureGuideTitle}
                         <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                     </a>
                 </div>

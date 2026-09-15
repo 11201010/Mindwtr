@@ -840,8 +840,8 @@ export function CalendarSettingsScreen() {
                 <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.calendarDesc')}</Text>
 
                 <SettingsGuideLink
-                    title="Calendar setup guide"
-                    description="Setup notes for device calendars, push-to-calendar, and ICS subscriptions."
+                    title={t('settings.calendarIntegrationGuideTitle')}
+                    description={t('settings.calendarIntegrationGuideDesc')}
                     url={getDocsGuideUrl('use/calendar-integration', language)}
                     testID="calendar-guide-link"
                 />

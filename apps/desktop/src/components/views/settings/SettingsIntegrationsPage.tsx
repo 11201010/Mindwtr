@@ -6,6 +6,9 @@ import { SettingsEmailCaptureSection } from './SettingsEmailCaptureSection';
 import { SettingsObsidianSection } from './SettingsObsidianSection';
 
 type Labels = {
+    calendarIntegrationGuideTitle: string;
+    obsidianIntegrationGuideTitle: string;
+    emailCaptureGuideTitle: string;
     calendar: string;
     calendarDesc: string;
     calendarName: string;

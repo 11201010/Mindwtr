@@ -13,6 +13,7 @@ import { cn } from '../../../lib/utils';
 import { Switch } from '../../ui/Switch';
 
 type Labels = {
+    calendarIntegrationGuideTitle: string;
     calendar: string;
     calendarDesc: string;
     calendarName: string;
@@ -187,7 +188,7 @@ export function SettingsCalendarPage({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                 >
-                    Calendar integration guide
+                    {t.calendarIntegrationGuideTitle}
                     <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                 </a>
 

@@ -5,6 +5,7 @@ import { SyncConfigurationSection } from './SyncConfigurationSection';
 
 const baseProps: Parameters<typeof SyncConfigurationSection>[0] = {
     t: {
+        syncSetupGuideTitle: 'Data & Sync setup guide',
         sync: 'Sync',
         syncDescription: 'Sync description',
         syncBackend: 'Sync backend',
@@ -179,7 +180,7 @@ describe('SyncConfigurationSection', () => {
         expect(queryByText('Advanced / Custom Server')).not.toBeInTheDocument();
         expect(queryByText('Cloud provider')).not.toBeInTheDocument();
         expect(queryByText('Sync description')).not.toBeInTheDocument();
-        expect(getByRole('link', { name: /Data and Sync guide/ })).toHaveAttribute(
+        expect(getByRole('link', { name: /Data & Sync setup guide/ })).toHaveAttribute(
             'href',
             'https://docs.mindwtr.app/data-sync/'
         );

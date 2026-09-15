@@ -632,7 +632,7 @@ export function SyncConfigurationSection({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                 >
-                    Data and Sync guide
+                    {t.syncSetupGuideTitle}
                     <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                 </a>
 

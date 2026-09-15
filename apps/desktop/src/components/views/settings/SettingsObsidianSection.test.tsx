@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SettingsObsidianSection } from './SettingsObsidianSection';
 
 const t = {
+    obsidianIntegrationGuideTitle: 'Obsidian integration guide',
     obsidianVault: 'Obsidian vault import',
     obsidianVaultDesc: 'Import tasks from a local Obsidian vault.',
     obsidianEnable: 'Enable Obsidian integration',
