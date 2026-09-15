@@ -82,6 +82,17 @@ const t = (key: string) => ({
   'taskEdit.tagsLabel': 'Tags',
 }[key] ?? key);
 
+const localizedT = (key: string) => ({
+  'process.delegateWhoLabel': 'En attente de',
+  'process.followUpLabel': 'Relance',
+  'status.waiting': 'En attente',
+  'taskEdit.contextsLabel': 'Contextes',
+  'taskEdit.dueDateLabel': 'Échéance',
+  'taskEdit.reviewDateLabel': 'Révision',
+  'taskEdit.startDateLabel': 'Début',
+  'taskEdit.tagsLabel': 'Étiquettes',
+}[key] ?? t(key));
+
 const makeProject = (id: string, title: string, order: number): Project => ({
   id,
   title,
@@ -157,6 +168,33 @@ beforeEach(() => {
 });
 
 describe('TaskListBulkOrganizeModal', () => {
+  it('names the three date inputs distinctly, including after a date is filled', () => {
+    const tree = renderModal();
+    const dateInputs = () => tree.root.findAllByType(TextInput)
+      .filter((node) => node.props.placeholder === 'YYYY-MM-DD');
+
+    expect(dateInputs().map((node) => node.props.accessibilityLabel)).toEqual(['Start', 'Due', 'Review']);
+    act(() => { dateInputs()[0].props.onChangeText('2026-09-15'); });
+    expect(dateInputs()[0].props).toMatchObject({ value: '2026-09-15', accessibilityLabel: 'Start' });
+  });
+
+  it('uses localized Follow-up and form captions as input names when Waiting is selected', () => {
+    const tree = renderModal({ t: localizedT });
+    const dateNames = () => tree.root.findAllByType(TextInput)
+      .filter((node) => node.props.placeholder === 'YYYY-MM-DD')
+      .map((node) => node.props.accessibilityLabel);
+
+    expect(dateNames()).toEqual(['Début', 'Échéance', 'Révision']);
+    act(() => { buttonWithText(tree, 'En attente').props.onPress(); });
+    expect(dateNames()).toEqual(['Début', 'Échéance', 'Relance']);
+    const captionedInputs = () => tree.root.findAllByType(TextInput)
+      .filter((node) => ['Person or team', '@computer, @office', '#project, #admin'].includes(node.props.placeholder));
+    expect(captionedInputs().map((node) => node.props.accessibilityLabel))
+      .toEqual(['En attente de', 'Contextes', 'Étiquettes']);
+    act(() => { captionedInputs()[0].props.onChangeText('Camille'); });
+    expect(captionedInputs()[0].props).toMatchObject({ value: 'Camille', accessibilityLabel: 'En attente de' });
+  });
+
   it.each(['project', 'area'] as const)('retries storage before selecting a %s left visible by failed creation', async (kind) => {
     const core = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
     resetForTests();

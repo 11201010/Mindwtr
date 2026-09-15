@@ -182,6 +182,14 @@ export function TaskListBulkOrganizeModal({
       ? tFallback(t, 'taskEdit.noAreaOption', 'No area')
       : selectedArea?.name ?? tFallback(t, 'projects.areaLabel', 'Area');
   const isWaiting = status === 'waiting';
+  const waitingForLabel = tFallback(t, 'process.delegateWhoLabel', 'Waiting for');
+  const startDateLabel = tFallback(t, 'taskEdit.startDateLabel', 'Start');
+  const dueDateLabel = tFallback(t, 'taskEdit.dueDateLabel', 'Due');
+  const reviewDateLabel = isWaiting
+    ? tFallback(t, 'process.followUpLabel', 'Follow-up')
+    : tFallback(t, 'taskEdit.reviewDateLabel', 'Review');
+  const contextsLabel = tFallback(t, 'taskEdit.contextsLabel', 'Contexts');
+  const tagsLabel = tFallback(t, 'taskEdit.tagsLabel', 'Tags');
   const canApply = selectedCount > 0 && (!isWaiting || delegateWho.trim().length > 0);
   const isBusy = isApplying || isCreatingDestination;
 
@@ -370,9 +378,10 @@ export function TaskListBulkOrganizeModal({
             {isWaiting && (
               <View style={styles.bulkOrganizeSection}>
                 <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {tFallback(t, 'process.delegateWhoLabel', 'Waiting for')}
+                  {waitingForLabel}
                 </Text>
                 <TextInput
+                  accessibilityLabel={waitingForLabel}
                   value={delegateWho}
                   onChangeText={(value) => {
                     setDelegateWho(value);
@@ -391,9 +400,10 @@ export function TaskListBulkOrganizeModal({
             <View style={styles.bulkOrganizeDateGrid}>
               <View style={styles.bulkOrganizeDateField}>
                 <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {tFallback(t, 'taskEdit.startDateLabel', 'Start')}
+                  {startDateLabel}
                 </Text>
                 <TextInput
+                  accessibilityLabel={startDateLabel}
                   value={startDate}
                   onChangeText={setStartDate}
                   placeholder="YYYY-MM-DD"
@@ -406,9 +416,10 @@ export function TaskListBulkOrganizeModal({
               </View>
               <View style={styles.bulkOrganizeDateField}>
                 <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {tFallback(t, 'taskEdit.dueDateLabel', 'Due')}
+                  {dueDateLabel}
                 </Text>
                 <TextInput
+                  accessibilityLabel={dueDateLabel}
                   value={dueDate}
                   onChangeText={setDueDate}
                   placeholder="YYYY-MM-DD"
@@ -421,9 +432,10 @@ export function TaskListBulkOrganizeModal({
               </View>
               <View style={styles.bulkOrganizeDateField}>
                 <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {isWaiting ? tFallback(t, 'process.followUpLabel', 'Follow-up') : tFallback(t, 'taskEdit.reviewDateLabel', 'Review')}
+                  {reviewDateLabel}
                 </Text>
                 <TextInput
+                  accessibilityLabel={reviewDateLabel}
                   value={reviewDate}
                   onChangeText={setReviewDate}
                   placeholder="YYYY-MM-DD"
@@ -438,9 +450,10 @@ export function TaskListBulkOrganizeModal({
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'taskEdit.contextsLabel', 'Contexts')}
+                {contextsLabel}
               </Text>
               <TextInput
+                accessibilityLabel={contextsLabel}
                 value={contextsInput}
                 onChangeText={setContextsInput}
                 placeholder="@computer, @office"
@@ -454,9 +467,10 @@ export function TaskListBulkOrganizeModal({
 
             <View style={styles.bulkOrganizeSection}>
               <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                {tFallback(t, 'taskEdit.tagsLabel', 'Tags')}
+                {tagsLabel}
               </Text>
               <TextInput
+                accessibilityLabel={tagsLabel}
                 value={tagsInput}
                 onChangeText={setTagsInput}
                 placeholder="#project, #admin"

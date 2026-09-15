@@ -1,6 +1,6 @@
 # Plan 085: Name mobile bulk date inputs for screen readers
 
-Status: TODO. Priority P2. Effort S. Risk LOW. Confidence HIGH. Category accessibility/correctness. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected by review-improve loop.
+Status: DONE. Priority P2. Effort S. Risk LOW. Confidence HIGH. Category accessibility/correctness. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected by review-improve loop.
 
 ## Why and current state
 
@@ -31,3 +31,7 @@ Use RTK for shell commands and CodeGraph before structural discovery. Read AGENT
 ## Stop conditions
 
 Report to root if the excerpts have materially changed, an existing behavior contract disagrees, new locale strings or schema changes are needed, or an out-of-scope file is necessary. Do not redesign the form or add global abstractions. Run focused tests with tool working directory set to the package; do not use `bun --cwd ... run test`, which can print help without running tests.
+
+## Validation
+
+Two native-prop regressions failed before the fix; 14/14 actual-modal tests pass after it, including filled and translated labels and Waiting Follow-up. Mobile typecheck/lint and diff check pass; 68 existing lint warnings are outside owned files. A worktree-local core symlink corrected two-store test resolution without changing product code or shared dependencies. No physical screen-reader run.

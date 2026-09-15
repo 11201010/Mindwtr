@@ -6,7 +6,7 @@ Planned against `51ac48c2f`. The comprehensive batch fixes archive-section reten
 
 | Plan | Finding | Priority | Effort | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
-| [085](085-bulk-date-accessible-names.md) | QUALITY-01: mobile bulk input accessible names | P2 | S | None | TODO |
+| [085](085-bulk-date-accessible-names.md) | QUALITY-01: mobile bulk input accessible names | P2 | S | None | DONE |
 | [086](086-bulk-area-custom-order.md) | QUALITY-02: desktop bulk area custom order | P3 | S | None | TODO |
 | [087](087-archive-reactivation-validation.md) | PERF-01: remove per-task archived-section projections | P2 | M | None | TODO |
 
