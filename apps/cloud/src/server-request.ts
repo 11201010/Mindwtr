@@ -7,8 +7,8 @@ import {
     toRateLimitRoute,
     type AllowedAuthTokens,
 } from './server-auth';
-import { lookupCaptureToken, type TokenScope } from './server-capture-tokens';
-import { errorResponse } from './server-config';
+import { isGeneratedCaptureTokenShape, lookupCaptureToken, type TokenScope } from './server-capture-tokens';
+import { errorResponse, logInfo } from './server-config';
 import type { RateLimiter } from './server-rate-limit';
 
 const TOKEN_NAMESPACE_FILE_PATTERN = /^([a-f0-9]{64})\.json$/;
@@ -115,6 +115,16 @@ export async function withNamespace(
         key = captureToken.namespaceKey;
         scope = 'capture';
     } else {
+        // Revocation removes the mapping. In any-token mode, that must end the
+        // capture credential rather than admitting it as an unrelated full token.
+        // Explicitly allowlisted full tokens retain their configured authority.
+        if (!cfg.allowedAuthTokens && isGeneratedCaptureTokenShape(token)) {
+            logInfo('Unmapped capture credential refused in any-token mode', {
+                outcome: 'refused',
+                releaseCheck: 'v1.3.1/capture-token-revocation',
+            });
+            return cfg.unauthorizedResponse(req, token);
+        }
         if (!isAuthorizedToken(token, cfg.allowedAuthTokens)) return cfg.unauthorizedResponse(req, token);
         key = tokenToKey(token);
         scope = 'full';

@@ -273,10 +273,91 @@ describe('capture-only tokens (any-token mode)', () => {
         expect(created.status).toBe(201);
         // Admission reserved the owner's empty namespace, so the capture token is not an orphan.
         expect(existsSync(join(harness.dataDir, `${sha256(freshOwner)}.json`))).toBe(true);
-        expect((await postJsonCapture(String(created.body.token), 'hello')).status).toBe(201);
+        const captureToken = String(created.body.token);
+        expect((await fetch(`${harness.url}/v1/data`, { headers: bearer(captureToken) })).status).toBe(403);
+        expect((await postJsonCapture(captureToken, 'hello')).status).toBe(201);
         expect((await readData(freshOwner)).tasks.map((task) => task.title)).toEqual(['hello']);
         // The capture token never got a namespace of its own.
-        expect(existsSync(join(harness.dataDir, `${sha256(String(created.body.token))}.json`))).toBe(false);
+        expect(existsSync(join(harness.dataDir, `${sha256(captureToken)}.json`))).toBe(false);
+    });
+
+    test('revoking a capture token refuses later capture and cannot create a separate namespace', async () => {
+        const created = await createToken(OWNER_TOKEN);
+        expect(created.status).toBe(201);
+        const token = String(created.body.token);
+        expect((await postJsonCapture(token, 'Before revocation')).status).toBe(201);
+        expect((await deleteToken(OWNER_TOKEN, String(created.body.id))).status).toBe(204);
+
+        const laterCapture = await postJsonCapture(token, 'After revocation');
+        const laterRead = await fetch(`${harness.url}/v1/data`, { headers: bearer(token) });
+        expect(laterCapture.status).toBe(401);
+        expect(laterRead.status).toBe(401);
+        expect((await readData(OWNER_TOKEN)).tasks.map((task) => task.title)).toEqual(['Before revocation']);
+        expect(existsSync(join(harness.dataDir, `${sha256(token)}.json`))).toBe(false);
+
+        harness.stopServer();
+        harness = await startHarness(null, harness.dataDir);
+        expect((await postJsonCapture(token, 'After restart')).status).toBe(401);
+        expect(existsSync(join(harness.dataDir, `${sha256(token)}.json`))).toBe(false);
+    });
+
+    test('an unknown generated credential is rejected without admission or sensitive diagnostics', async () => {
+        const unknown = `mwc_${'A'.repeat(43)}`;
+        expect(BEARER_TOKEN_PATTERN.test(unknown)).toBe(true);
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        let read: Response;
+        let capture: Response;
+        try {
+            read = await fetch(`${harness.url}/v1/data`, { headers: bearer(unknown) });
+            capture = await postJsonCapture(unknown, 'Private fixture note');
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+
+        expect(read.status).toBe(401);
+        expect(capture.status).toBe(401);
+        expect(existsSync(join(harness.dataDir, `${sha256(unknown)}.json`))).toBe(false);
+        expect(existsSync(join(harness.dataDir, sha256(unknown)))).toBe(false);
+        const proof = captured.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+            .filter((line) => line.message === 'Unmapped capture credential refused in any-token mode');
+        expect(proof).toHaveLength(2);
+        expect(proof.map((line) => line.context)).toEqual([
+            { outcome: 'refused', releaseCheck: 'v1.3.1/capture-token-revocation' },
+            { outcome: 'refused', releaseCheck: 'v1.3.1/capture-token-revocation' },
+        ]);
+        expect(captured.join('')).not.toContain(unknown);
+        expect(captured.join('')).not.toContain(sha256(unknown));
+        expect(captured.join('')).not.toContain('Private fixture note');
+    });
+
+    test('ordinary arbitrary tokens and loose mwc_ prefixes still become full accounts', async () => {
+        const ordinary = 'ordinary-any-token-owner-1234567890';
+        const loosePrefixes = [`mwc_${'B'.repeat(42)}`, `mwc_${'D'.repeat(44)}`];
+        for (const token of loosePrefixes) expect(BEARER_TOKEN_PATTERN.test(token)).toBe(true);
+        expect((await postJsonCapture(ordinary, 'Ordinary full token')).status).toBe(201);
+        for (const token of loosePrefixes) {
+            expect((await postJsonCapture(token, 'Loose prefix full token')).status).toBe(201);
+        }
+        expect((await readData(ordinary)).tasks.map((task) => task.title)).toEqual(['Ordinary full token']);
+        for (const token of loosePrefixes) {
+            expect((await readData(token)).tasks.map((task) => task.title)).toEqual(['Loose prefix full token']);
+        }
+        expect(existsSync(join(harness.dataDir, `${sha256(ordinary)}.json`))).toBe(true);
+        for (const token of loosePrefixes) expect(existsSync(join(harness.dataDir, `${sha256(token)}.json`))).toBe(true);
+    });
+
+    test('an explicitly allowlisted full token keeps access even with the generated shape', async () => {
+        const fullToken = `mwc_${'C'.repeat(43)}`;
+        harness.stopServer();
+        harness = await startHarness(new Set([fullToken]), harness.dataDir);
+
+        expect((await postJsonCapture(fullToken, 'Configured full token')).status).toBe(201);
+        expect((await readData(fullToken)).tasks.map((task) => task.title)).toEqual(['Configured full token']);
+        expect(existsSync(join(harness.dataDir, `${sha256(fullToken)}.json`))).toBe(true);
     });
 });
 

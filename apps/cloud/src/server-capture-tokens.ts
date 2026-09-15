@@ -23,6 +23,7 @@ export const CAPTURE_TOKENS_ROUTE_PATH = '/v1/capture-tokens';
 export const MAX_CAPTURE_TOKENS_PER_NAMESPACE = 20;
 const MAX_CAPTURE_TOKEN_LABEL_LENGTH = 64;
 const CAPTURE_TOKEN_PREFIX = 'mwc_';
+const CAPTURE_TOKEN_RANDOM_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CAPTURE_TOKEN_FILE_PATTERN = /^[a-f0-9]{64}\.json$/;
 const NAMESPACE_KEY_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -34,6 +35,13 @@ export type CaptureTokenRecord = {
 };
 
 export type TokenScope = 'full' | 'capture';
+
+/** Generated capture credentials reserve this exact shape in any-token mode.
+ * A loose `mwc_` prefix remains available to ordinary full tokens. */
+export const isGeneratedCaptureTokenShape = (token: string): boolean => (
+    token.startsWith(CAPTURE_TOKEN_PREFIX)
+    && CAPTURE_TOKEN_RANDOM_PATTERN.test(token.slice(CAPTURE_TOKEN_PREFIX.length))
+);
 
 const captureTokensDir = (dataDir: string): string => join(dataDir, CAPTURE_TOKENS_DIR_NAME);
 

@@ -61,6 +61,7 @@ export const CLOUD_LOG_MESSAGES = [
     'shutdown signal received',
     'token auth allowlist enabled',
     'token namespace mode enabled by explicit opt-in',
+    'Unmapped capture credential refused in any-token mode',
     'trusting proxy IP headers for auth failure rate limiting',
 ] as const;
 
