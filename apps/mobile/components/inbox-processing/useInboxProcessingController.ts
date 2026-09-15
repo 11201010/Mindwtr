@@ -32,7 +32,7 @@ import {
   safeFormatDate,
   safeParseDate,
   setTaskViewSectionId,
-  isTaskVisibleInArea,
+  isTaskVisibleInInbox,
   selectProcessInboxCandidates,
   startProcessInboxSession,
   sortViewSectionDefinitions,
@@ -248,12 +248,12 @@ export function useInboxProcessingController({
       : MOBILE_TIME_ESTIMATE_OPTIONS;
   }, [selectedTimeEstimate, settings?.gtd?.timeEstimatePresets]);
 
-  const { areaById, visibility } = useVisibleTaskContext();
+  const { areaById, projectById } = useVisibleTaskContext();
   const inboxTasks = useMemo(
     // Not `visibleTasks`: the queue is the process-inbox candidate set, which
     // has its own status rule on top of the shared visibility predicate.
-    () => selectProcessInboxCandidates(tasks, (task) => isTaskVisibleInArea(task, visibility)),
-    [tasks, visibility],
+    () => selectProcessInboxCandidates(tasks, (task) => isTaskVisibleInInbox(task, { projectById })),
+    [projectById, tasks],
   );
 
   const processingQueue = useMemo(

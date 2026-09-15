@@ -230,12 +230,9 @@ describe('getDailyReviewBuckets', () => {
         expect(buckets.focusCandidates.map((task) => task.id)).toEqual(['next-later-today']);
     });
 
-    // Both branches are pinned on purpose. The default — spanning every area —
-    // is the product decision (a review sweeps the whole system; the area filter
-    // is a browsing device), so it must not drift into honouring the app-wide
-    // filter just because every other list does. The opt-in branch keeps the
-    // seam honest so it still works the day something wants to use it.
-    it('spans every area by default and narrows only when given an area filter', () => {
+    // Inbox remains a global capture queue even when another review inventory
+    // opts into area narrowing.
+    it('spans every area by default and keeps Inbox global with an area filter', () => {
         const project = createProject({ id: 'project-work', areaId: 'area-work' });
         const workTask = createTask({ id: 'inbox-work', status: 'inbox', projectId: project.id });
         const looseTask = createTask({ id: 'inbox-loose', status: 'inbox' });
@@ -248,7 +245,7 @@ describe('getDailyReviewBuckets', () => {
             now: dailyNow,
             areaVisibility: { resolvedAreaFilter: { included: ['area-work'], excluded: [] } },
         });
-        expect(narrowed.inbox.map((task) => task.id)).toEqual(['inbox-work']);
+        expect(narrowed.inbox.map((task) => task.id)).toEqual(['inbox-work', 'inbox-loose']);
     });
 
     it('defers a next task starting tomorrow out of the focus candidates', () => {
@@ -642,7 +639,10 @@ describe('getReviewOverviewGroups', () => {
             tasks: [
                 createTask({ id: 'visible', projectId: active.id }),
                 createTask({ id: 'personal', areaId: personal.id }),
+                createTask({ id: 'personal-inbox', status: 'inbox', areaId: personal.id }),
+                createTask({ id: 'unassigned-inbox', status: 'inbox' }),
                 createTask({ id: 'deferred', projectId: deferred.id }),
+                createTask({ id: 'deferred-inbox', status: 'inbox', projectId: deferred.id }),
                 createTask({ id: 'archived', projectId: archived.id }),
                 createTask({ id: 'deleted', projectId: active.id, deletedAt: staleUpdatedAt }),
             ],
@@ -652,9 +652,13 @@ describe('getReviewOverviewGroups', () => {
             sortBy: 'default',
         });
 
-        expect(groups).toHaveLength(1);
-        expect(groups[0].areaId).toBe(work.id);
-        expect(groups[0].projectGroups.flatMap((group) => group.tasks.map((task) => task.id))).toEqual(['visible']);
+        const taskIds = groups.flatMap((group) => group.projectGroups.flatMap((projectGroup) => (
+            projectGroup.tasks.map((task) => task.id)
+        )));
+        expect(taskIds).toEqual(expect.arrayContaining(['visible', 'personal-inbox', 'unassigned-inbox']));
+        for (const hiddenId of ['personal', 'deferred', 'deferred-inbox', 'archived', 'deleted']) {
+            expect(taskIds).not.toContain(hiddenId);
+        }
     });
 });
 

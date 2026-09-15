@@ -9,6 +9,7 @@ type ListHeaderProps = {
     showNextCount: boolean;
     nextCount: number;
     taskCount: number;
+    scopeLabel?: string;
     hasFilters: boolean;
     filterSummaryLabel: string;
     filterSummarySuffix: string;
@@ -36,6 +37,7 @@ export function ListHeader({
     showNextCount,
     nextCount,
     taskCount,
+    scopeLabel,
     hasFilters,
     filterSummaryLabel,
     filterSummarySuffix,
@@ -94,6 +96,11 @@ export function ListHeader({
                 </h2>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
                     <span>{taskCount} {t('common.tasks')}</span>
+                    {scopeLabel && (
+                        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium">
+                            {scopeLabel}
+                        </span>
+                    )}
                     {hasFilters && (
                         <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary sm:max-w-[420px]">
                             <SlidersHorizontal className="h-3 w-3 shrink-0" aria-hidden="true" />

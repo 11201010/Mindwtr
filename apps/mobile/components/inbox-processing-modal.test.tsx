@@ -1133,7 +1133,7 @@ describe('InboxProcessingModal', () => {
     expect(findNodesWithText(root, 'Work Project').length).toBeGreaterThan(0);
   });
 
-  it('respects the global area filter when building the processing queue', async () => {
+  it('processes the global queue without changing the selected area filter', async () => {
     mockSettings.filters = { areaId: workArea.id };
     storeState.areas = [workArea, homeArea];
     storeState.projects = [workProject, homeProject];
@@ -1165,7 +1165,7 @@ describe('InboxProcessingModal', () => {
     const root = tree!.root;
 
     openAnchorEditor(root);
-    expect(root.findByProps({ placeholder: 'taskEdit.titleLabel', accessibilityLabel: 'taskEdit.titleLabel' }).props.value).toBe('Work inbox');
+    expect(root.findByProps({ placeholder: 'taskEdit.titleLabel', accessibilityLabel: 'taskEdit.titleLabel' }).props.value).toBe('Home inbox');
 
     const skipLabel = root.findByProps({ children: 'Skip' });
     const skipButton = skipLabel.parent;
@@ -1179,13 +1179,14 @@ describe('InboxProcessingModal', () => {
     });
 
     expect(updateTask).toHaveBeenCalledWith(
-      'work-inbox',
+      'home-inbox',
       expect.objectContaining({
-        title: 'Work inbox',
+        title: 'Home inbox',
       }),
     );
     await flushAsyncActions();
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockSettings.filters).toEqual({ areaId: workArea.id });
   });
 
   it('creates inbox processing projects in the selected area', async () => {

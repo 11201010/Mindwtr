@@ -51,6 +51,9 @@ _Avoid_: filter state, active filters
 
 ### Capture
 
+**Inbox**:
+The queue of captured tasks awaiting clarification. On desktop and mobile, its list, counts, and processing queue ignore the global area filter, including items with no area. Opening Inbox preserves the selected area filter for other views and any task assignments. Existing deleted-task and project-lifecycle visibility rules still apply.
+
 **Capture**:
 Turning quick-add input into a new inbox task. A capture is never dropped: a `+Project` naming only an archived project behaves like an unknown name and creates a fresh project. Parsed tokens are untrusted (validated against assignable projects); the capturing surface's own context (its current project, pickers) is trusted.
 _Avoid_: quick task, note

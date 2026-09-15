@@ -7,6 +7,7 @@ import { getWeekStartsOnIndex, hasTimeComponent, isDueForReview, safeParseDate, 
 import { timeEstimateToMinutes } from './calendar-scheduling';
 import {
     isTaskVisibleInArea,
+    isTaskVisibleInInbox,
     type AreaFilterSelection,
     type AreaVisibilityContext,
 } from './area-filter';
@@ -332,7 +333,9 @@ export function getDailyReviewBuckets(
     };
 
     const activeTasks = tasks.filter((task) => (
-        isTaskVisibleInArea(task, visibility)
+        (task.status === 'inbox'
+            ? isTaskVisibleInInbox(task, visibility)
+            : isTaskVisibleInArea(task, visibility))
         && isTaskActionable(task)
     ));
 
@@ -542,11 +545,13 @@ export function getReviewOverviewGroups({
     const areaOrderById = new Map(orderedAreas.map((area, index) => [area.id, index]));
     const visibleTasks = sortTasksBy(
         tasks.filter((task) => (
-            isTaskVisibleInArea(task, {
-                areaById,
-                projectById,
-                resolvedAreaFilter: areaFilter,
-            })
+            (task.status === 'inbox'
+                ? isTaskVisibleInInbox(task, { projectById })
+                : isTaskVisibleInArea(task, {
+                    areaById,
+                    projectById,
+                    resolvedAreaFilter: areaFilter,
+                }))
             && isTaskActionable(task)
         )),
         sortBy,

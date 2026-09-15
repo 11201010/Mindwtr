@@ -19,7 +19,7 @@ import { TokenPickerModal } from '../TokenPickerModal';
 import { useLanguage } from '../../contexts/language-context';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { checkBudget } from '../../config/performanceBudgets';
-import { isTaskVisibleInArea } from '@mindwtr/core';
+import { isTaskVisibleInArea, isTaskVisibleInInbox } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { useUiStore } from '../../store/ui-store';
 import { usePersistedViewState } from '../../hooks/usePersistedViewState';
@@ -133,7 +133,9 @@ export function ReviewView() {
             tasks.forEach((task) => {
                 nextTasksById[task.id] = task;
                 if (task.status === 'reference') return;
-                if (!isTaskVisibleInArea(task, visibility)) return;
+                if (task.status === 'inbox') {
+                    if (!isTaskVisibleInInbox(task, visibility)) return;
+                } else if (!isTaskVisibleInArea(task, visibility)) return;
                 nextVisibleTasks.push(task);
                 if (task.status !== 'done') {
                     nextOpenTasks.push(task);

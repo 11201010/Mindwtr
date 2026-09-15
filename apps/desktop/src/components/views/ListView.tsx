@@ -57,7 +57,7 @@ import { useListViewOptimizations } from '../../hooks/useListViewOptimizations';
 import { dispatchNavigateEvent } from '../../lib/navigation-events';
 import { reportError } from '../../lib/report-error';
 import { nextDensityMode } from '../../lib/density';
-import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection } from '@mindwtr/core';
+import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { sortDoneTasksForListView } from './list/done-sort';
 import { DONE_TASK_LIST_SORT_OPTIONS, LIST_END_GAP, VIEW_FILTER_INPUT } from './list/list-toolbar';
@@ -266,7 +266,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             if (isReferenceView) {
                 if (!isReferenceInVisibleProject(task, projectMap, includeArchivedReferenceProjects)) return false;
             } else if (!allowDeferredProjectTasks && !isTaskInActiveProject(task, projectMap)) return false;
-            if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectMap, areaById)) return false;
+            if (statusFilter === 'inbox') {
+                if (!isTaskVisibleInInbox(task, { projectById: projectMap })) return false;
+            } else if (!taskMatchesAreaFilterSelection(task, resolvedAreaFilter, projectMap, areaById)) return false;
             return true;
         });
     }, [
@@ -532,7 +534,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         deferredFilterInputs.includeArchivedReferenceProjects,
                     )) return false;
                 } else if (!allowDeferredProjectTasks && !isTaskInActiveProject(t, deferredFilterInputs.projectMap)) return false;
-                if (!taskMatchesAreaFilterSelection(
+                if (deferredFilterInputs.statusFilter === 'inbox') {
+                    if (!isTaskVisibleInInbox(t, { projectById: deferredFilterInputs.projectMap })) return false;
+                } else if (!taskMatchesAreaFilterSelection(
                     t,
                     deferredFilterInputs.resolvedAreaFilter,
                     deferredFilterInputs.projectMap,
@@ -1034,6 +1038,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         showNextCount={isNextView}
                         nextCount={nextCount}
                         taskCount={filteredTasks.length}
+                        scopeLabel={isInbox ? t('projects.allAreas') : undefined}
                         hasFilters={hasFilters}
                         filterSummaryLabel={filterSummaryLabel}
                         filterSummarySuffix={filterSummarySuffix}

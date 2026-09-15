@@ -4,7 +4,7 @@ import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Brain, ListChecks } from 'lucide-react-native';
 
-import { useTaskStore } from '@mindwtr/core';
+import { isTaskVisibleInInbox, useTaskStore } from '@mindwtr/core';
 import { TaskList, type TaskListGroupBy } from '../../../components/task-list';
 import { InboxProcessingModal } from '../../../components/inbox-processing-modal';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
@@ -21,6 +21,7 @@ import { dismissMobileHint } from '@/lib/onboarding-hints';
 export default function InboxScreen() {
   const onStartupLayout = useStartupScreenReady('inbox');
   const settings = useTaskStore((state) => state.settings);
+  const tasks = useTaskStore((state) => state.tasks);
   const { t } = useLanguage();
   const tc = useThemeColors();
   const tokens = useThemeTokens();
@@ -39,13 +40,22 @@ export default function InboxScreen() {
   const router = useRouter();
   const [showProcessing, setShowProcessing] = useState(false);
   const [groupBy, setGroupBy] = useState<TaskListGroupBy>('none');
-  const { visibleTasks } = useVisibleTaskContext();
+  const { projectById } = useVisibleTaskContext();
 
   // The same base set TaskList narrows below, so the Process count and the list
   // can only ever differ by the user's own filter chips.
   const inboxTasks = useMemo(
-    () => visibleTasks.filter((task) => task.status === 'inbox'),
-    [visibleTasks],
+    () => tasks.filter((task) => (
+      task.status === 'inbox' && isTaskVisibleInInbox(task, { projectById })
+    )),
+    [projectById, tasks],
+  );
+  const inboxScopeHint = (
+    <View style={styles.scopeHint}>
+      <CompactText style={[styles.scopeHintText, { color: tc.secondaryText }]}>
+        {t('projects.allAreas')}
+      </CompactText>
+    </View>
   );
 
   const defaultCaptureMethod = settings.gtd?.defaultCaptureMethod ?? 'text';
@@ -139,6 +149,7 @@ export default function InboxScreen() {
         groupBy={groupBy}
         onChangeGroupBy={setGroupBy}
         primaryActionRow={primaryActionRow}
+        listHeaderComponent={inboxScopeHint}
         defaultEditTab="task"
       />
       <ErrorBoundary>
@@ -164,6 +175,16 @@ const styles = StyleSheet.create({
     // process action from the list controls without orphaning it (#grouping).
     paddingTop: 6,
     paddingBottom: 10,
+  },
+  scopeHint: {
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  scopeHintText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   processButton: {
     flex: 1,

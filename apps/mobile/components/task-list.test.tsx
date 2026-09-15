@@ -388,6 +388,51 @@ describe('TaskList', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps Inbox rows global while other status lists retain the selected area', async () => {
+    const work: Area = {
+      id: 'area-work', name: 'Work', color: '#2563eb', order: 0,
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z',
+    };
+    const personal: Area = { ...work, id: 'area-personal', name: 'Personal', order: 1 };
+    const personalProject: Project = { ...project, id: 'project-personal', areaId: personal.id };
+    const parkedProject: Project = { ...project, id: 'project-parked', status: 'someday' };
+    storeState.areas = [work, personal];
+    storeState.projects = [project, personalProject, parkedProject];
+    storeState._allProjects = storeState.projects;
+    mobileAreaFilterState.current = {
+      areaById: new Map([[work.id, work], [personal.id, personal]]),
+      resolvedAreaFilter: { included: [work.id], excluded: [personal.id, '__none__'] },
+    };
+    const inboxTasks = [
+      makeTask('work-inbox', 'Work inbox', { status: 'inbox', projectId: undefined, areaId: work.id }),
+      makeTask('personal-inbox', 'Personal inbox', { status: 'inbox', projectId: undefined, areaId: personal.id }),
+      makeTask('inherited-inbox', 'Inherited inbox', { status: 'inbox', projectId: personalProject.id }),
+      makeTask('unassigned-inbox', 'Unassigned inbox', { status: 'inbox', projectId: undefined, areaId: undefined }),
+      makeTask('parked-inbox', 'Parked inbox', { status: 'inbox', projectId: parkedProject.id }),
+    ];
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<TaskList showHeader={false} statusFilter="inbox" taskSource={inboxTasks} title="Inbox" />);
+    });
+    const inboxIds = (flatListPropsSpy.mock.calls.at(-1)?.[0].data as { type: string; task?: Task }[])
+      .filter((item) => item.type === 'task')
+      .map((item) => item.task!.id);
+    expect(inboxIds).toEqual(['work-inbox', 'personal-inbox', 'inherited-inbox', 'unassigned-inbox']);
+    act(() => tree.unmount());
+
+    await act(async () => {
+      tree = create(<TaskList showHeader={false} statusFilter="next" taskSource={[
+        makeTask('work-next', 'Work next', { projectId: undefined, areaId: work.id }),
+        makeTask('personal-next', 'Personal next', { projectId: undefined, areaId: personal.id }),
+      ]} title="Next" />);
+    });
+    const nextIds = (flatListPropsSpy.mock.calls.at(-1)?.[0].data as { type: string; task?: Task }[])
+      .filter((item) => item.type === 'task')
+      .map((item) => item.task!.id);
+    expect(nextIds).toEqual(['work-next']);
+    act(() => tree.unmount());
+  });
+
   it('shows a References pile below the project list, including tag-matched references (#1000)', async () => {
     const active = makeTask('task-1', 'Write intro');
     const ownReference = makeTask('ref-1', 'Style guide', { status: 'reference' });
