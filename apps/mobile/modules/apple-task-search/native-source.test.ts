@@ -21,7 +21,7 @@ describe('MindwtrAppleTaskSearch native source contract', () => {
 
   it('scopes Spotlight output to items and accepts only exact Mindwtr task links', () => {
     expect(source).toContain('source.maximumResultCount = 50');
-    expect(source).toContain('guide: .focused(.items)');
+    expect(source).toContain('guide: .init(level: .focused(.items))');
     expect(source).toContain('components.scheme?.lowercased() == "mindwtr"');
     expect(source).toContain('components.host?.lowercased() == "open"');
     expect(source).toContain('$0.name == "task"');

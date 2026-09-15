@@ -20,6 +20,14 @@ does not have Xcode or an Apple model-capable runtime.
 
 ## Native build
 
+For a fast API-only check, dispatch Native Platform CI with
+`platform=apple-api`. This typechecks the actual search and image engines
+against simulator and device SDKs without installing React Native dependencies.
+It does not compile the Expo bridge or replace the full `platform=ios` run.
+The affected pods explicitly enable Swift cross-import overlays; the SDK's
+Core Spotlight/Foundation Models integration is not visible to CocoaPods' Swift
+compiler without that setting. The full Xcode 27 lane runs this preflight too.
+
 The existing **Native Platform CI** runs Xcode 26 and Xcode 27 matrix lanes.
 Dispatch it with `platform=ios` on the revision being evaluated.
 Each lane checks its required toolchain,

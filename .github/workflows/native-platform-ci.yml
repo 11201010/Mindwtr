@@ -25,6 +25,7 @@ on:
       - "apps/mobile/modules/ios-siri-actions/**"
       - "scripts/ci/select-apple-sdk.test.js"
       - "scripts/ci/select-apple-sdk.sh"
+      - "scripts/ci/probe-apple-sdk.sh"
       - "apps/mobile/modules/apple-image-capture/ios/Tests/**"
       - "apps/mobile/modules/apple-image-capture/Package.swift"
       - "apps/mobile/modules/apple-foundation-models/Tests/**"
@@ -72,6 +73,7 @@ on:
       - "apps/mobile/modules/ios-siri-actions/**"
       - "scripts/ci/select-apple-sdk.test.js"
       - "scripts/ci/select-apple-sdk.sh"
+      - "scripts/ci/probe-apple-sdk.sh"
       - "apps/mobile/modules/apple-image-capture/ios/Tests/**"
       - "apps/mobile/modules/apple-image-capture/Package.swift"
       - "apps/mobile/modules/apple-foundation-models/Tests/**"
@@ -187,7 +189,7 @@ jobs:
                 ;;
             esac
             case "$path" in
-              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/modules/apple-foundation-models/Package.swift|apps/mobile/modules/apple-task-search/Package.swift|apps/mobile/modules/apple-task-search/tests/*|apps/mobile/modules/apple-foundation-models/Tests/*|apps/mobile/modules/apple-image-capture/Package.swift|apps/mobile/modules/apple-image-capture/ios/Tests/*|scripts/ci/select-apple-sdk.sh|scripts/ci/select-apple-sdk.test.js|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/modules/apple-foundation-models/Package.swift|apps/mobile/modules/apple-task-search/Package.swift|apps/mobile/modules/apple-task-search/tests/*|apps/mobile/modules/apple-foundation-models/Tests/*|apps/mobile/modules/apple-image-capture/Package.swift|apps/mobile/modules/apple-image-capture/ios/Tests/*|scripts/ci/select-apple-sdk.sh|scripts/ci/probe-apple-sdk.sh|scripts/ci/select-apple-sdk.test.js|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 ios=true
                 ;;
             esac
@@ -488,6 +490,10 @@ jobs:
       - name: Select the requested Apple SDK
         if: matrix.lane == 'xcode26'
         run: bash scripts/ci/select-apple-sdk.sh 26
+
+      - name: Preflight Apple evaluation SDK APIs
+        if: matrix.lane == 'xcode27'
+        run: bash scripts/ci/probe-apple-sdk.sh
 
       - name: Check App Intents availability and native plugin contracts
         run: |
