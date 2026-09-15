@@ -158,7 +158,7 @@ export function SomedayView() {
       setAddingGroup(null);
       setNewTaskTitle('');
       setAddTaskError(false);
-      showToast({ message: tFallback(t, 'list.taskAdded', 'Task added'), tone: 'success' });
+      showToast({ message: tFallback(t, 'calendar.eventTaskCreatedTitle', 'Task created'), tone: 'success' });
     } catch (error) {
       setAddTaskError(true);
       void logError(error, { scope: 'task', extra: { message: 'Failed to add Someday section task' } });
@@ -323,7 +323,7 @@ export function SomedayView() {
               editable={!addingTask && !pendingAddedTaskRef.current}
               onChangeText={setNewTaskTitle}
               onSubmitEditing={() => { void saveSectionTask(); }}
-              placeholder={tFallback(t, 'taskEdit.titlePlaceholder', 'Task title')}
+              placeholder={tFallback(t, 'quickAdd.inputLabel', 'Task title')}
               placeholderTextColor={tc.secondaryText}
               style={[styles.taskTitleInput, { color: tc.text, borderColor: tc.border, backgroundColor: tc.bg }]}
             />
