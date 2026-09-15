@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { CheckSquare, Square } from 'lucide-react-native';
 import {
   formatRecurrenceLabel,
@@ -25,6 +25,7 @@ import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { MarkdownInlineText, MarkdownText } from '../markdown-text';
 import { AttachmentProgressIndicator } from '../AttachmentProgressIndicator';
 import { TaskStatusBadge } from '../task-status-badge';
+import { usePreviewChecklistKeyboard } from './use-preview-checklist-keyboard';
 
 type TaskEditViewTabProps = {
   t: (key: string) => string;
@@ -87,6 +88,8 @@ function TaskEditViewTabComponent({
 }: TaskEditViewTabProps) {
   const [checklistDraft, setChecklistDraft] = React.useState('');
   const checklistDraftRef = React.useRef<TextInput>(null);
+  const previewScrollRef = React.useRef<ScrollView>(null);
+  const checklistKeyboard = usePreviewChecklistKeyboard(previewScrollRef, checklistDraftRef);
 
   const renderViewRow = (label: string, value?: string, onPress?: () => void, accessibilityLabel?: string) => {
     if (value === undefined || value === null || value === '') return null;
@@ -188,9 +191,18 @@ function TaskEditViewTabComponent({
 
   return (
     <ScrollView
+      ref={previewScrollRef}
       style={styles.content}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[
+        styles.contentContainer,
+        checklistKeyboard.bottomInset > 0 ? { paddingBottom: 32 + checklistKeyboard.bottomInset } : null,
+      ]}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+      onLayout={checklistKeyboard.onLayout}
+      onContentSizeChange={checklistKeyboard.onLayout}
+      onScroll={checklistKeyboard.onScroll}
+      scrollEventThrottle={16}
       nestedScrollEnabled={nestedScrollEnabled}
     >
       {title ? (
@@ -323,6 +335,9 @@ function TaskEditViewTabComponent({
               ref={checklistDraftRef}
               value={checklistDraft}
               onChangeText={setChecklistDraft}
+              onFocus={checklistKeyboard.onFocus}
+              onBlur={checklistKeyboard.onBlur}
+              onLayout={checklistKeyboard.onLayout}
               onSubmitEditing={() => {
                 const title = checklistDraft.trim();
                 if (!title) {
