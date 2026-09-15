@@ -64,7 +64,13 @@ export function TaskEditAreaPicker({
     }, [visible]);
 
     const activeAreas = useMemo(() => {
-        return [...areas].sort((a, b) => a.name.localeCompare(b.name));
+        return areas
+            .filter((area) => !area.deletedAt)
+            .sort((a, b) => {
+                const aOrder = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
+                const bOrder = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
+                return (aOrder - bOrder) || a.name.localeCompare(b.name);
+            });
     }, [areas]);
 
     const normalizedAreaQuery = areaQuery.trim().toLowerCase();

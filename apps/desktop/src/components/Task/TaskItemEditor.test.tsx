@@ -1,6 +1,6 @@
 import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { createTaskDraft, type Task } from '@mindwtr/core';
+import { createTaskDraft, type Area, type Task } from '@mindwtr/core';
 
 import { TaskItemEditor } from './TaskItemEditor';
 import { LanguageProvider } from '../../contexts/language-context';
@@ -363,6 +363,50 @@ describe('TaskItemEditor', () => {
         fireEvent.click(getByRole('button', { name: 'Editor layout help' }));
 
         expect(queryByText('You can customize which fields appear here in Settings -> GTD -> Task Editor Layout.')).not.toBeInTheDocument();
+    });
+
+    it('keeps the configured area order through search without mutating the supplied areas (#1217)', () => {
+        const makeArea = (id: string, name: string, order: number, deletedAt?: string): Area => ({
+            id,
+            name,
+            order,
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-01T00:00:00.000Z',
+            deletedAt,
+        });
+        const areas = Object.freeze([
+            makeArea('apple', 'Apple', 1),
+            makeArea('azure', 'Azure', 1),
+            makeArea('deleted', 'Archived area', -1, '2026-05-02T00:00:00.000Z'),
+            makeArea('zebra', 'Zebra', 0),
+            makeArea('z-unset', 'Zed unset', Number.NaN),
+            makeArea('a-unset', 'Alpha unset', Number.NaN),
+        ]) as unknown as Area[];
+        const originalIds = areas.map((area) => area.id);
+        const { getAllByRole, getByRole, queryByRole } = render(
+            <TaskItemEditor
+                {...baseProps}
+                areas={areas}
+                organizerFields={['area']}
+            />
+        );
+
+        fireEvent.click(getByRole('button', { name: 'No Area' }));
+        expect(getAllByRole('option').map((option) => option.textContent))
+            .toEqual(['No Area', 'Zebra', 'Apple', 'Azure', 'Alpha unset', 'Zed unset']);
+
+        fireEvent.change(getByRole('textbox', { name: 'Search areas' }), { target: { value: 'a' } });
+        expect(getAllByRole('option')
+            .filter((option) => option.getAttribute('data-selector-option-kind') === 'item')
+            .map((option) => option.textContent))
+            .toEqual(['Zebra', 'Apple', 'Azure', 'Alpha unset']);
+        fireEvent.change(getByRole('textbox', { name: 'Search areas' }), { target: { value: 'az' } });
+        expect(getAllByRole('option')
+            .filter((option) => option.getAttribute('data-selector-option-kind') === 'item')
+            .map((option) => option.textContent))
+            .toEqual(['Azure']);
+        expect(queryByRole('option', { name: 'Archived area' })).not.toBeInTheDocument();
+        expect(areas.map((area) => area.id)).toEqual(originalIds);
     });
 
     it('uses stronger weight for organization field labels without changing label size', () => {

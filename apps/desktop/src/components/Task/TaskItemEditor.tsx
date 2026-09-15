@@ -167,7 +167,13 @@ export function TaskItemEditor({
     const compareLabels = (left: string, right: string) =>
         numericTextCollator.compare(left, right);
     const sortedProjects = [...projects].sort((a, b) => compareLabels(a.title, b.title));
-    const sortedAreas = [...areas].sort((a, b) => compareLabels(a.name, b.name));
+    const sortedAreas = areas
+        .filter((area) => !area.deletedAt)
+        .sort((a, b) => {
+            const aOrder = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
+            const bOrder = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
+            return (aOrder - bOrder) || compareLabels(a.name, b.name);
+        });
     const projectFilterAreaId = editAreaId || undefined;
     const filteredProjects = filterProjectsBySelectedArea(sortedProjects, projectFilterAreaId);
     const [schedulingOpen, setSchedulingOpen] = useState(() => sectionOpenDefaults.scheduling || sectionCounts.scheduling > 0);

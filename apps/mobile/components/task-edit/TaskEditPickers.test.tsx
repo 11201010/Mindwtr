@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import type { Area } from '@mindwtr/core';
 
 import { TaskEditAreaPicker } from './TaskEditAreaPicker';
 import { TaskEditProjectPicker } from './TaskEditProjectPicker';
@@ -57,6 +58,82 @@ describe('Task edit pickers', () => {
         expect(modal.props.accessibilityViewIsModal).toBe(true);
         expect(title).toBeTruthy();
         expect(input).toBeTruthy();
+    });
+
+    it('keeps configured area order through search without mutating the supplied areas (#1217)', () => {
+        const areas = Object.freeze([
+            {
+                id: 'apple',
+                name: 'Apple',
+                order: 1,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+            },
+            {
+                id: 'azure',
+                name: 'Azure',
+                order: 1,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+            },
+            {
+                id: 'deleted',
+                name: 'Archived area',
+                order: -1,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+                deletedAt: '2025-01-02T00:00:00.000Z',
+            },
+            {
+                id: 'zebra',
+                name: 'Zebra',
+                order: 0,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+            },
+            {
+                id: 'z-unset',
+                name: 'Zed unset',
+                order: Number.NaN,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+            },
+            {
+                id: 'a-unset',
+                name: 'Alpha unset',
+                order: Number.NaN,
+                createdAt: '2025-01-01T00:00:00.000Z',
+                updatedAt: '2025-01-01T00:00:00.000Z',
+            },
+        ]);
+        const originalIds = areas.map((area) => area.id);
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <TaskEditAreaPicker
+                    visible
+                    areas={areas as unknown as Area[]}
+                    tc={tc as any}
+                    t={(key) => key}
+                    onClose={vi.fn()}
+                    onSelectArea={vi.fn()}
+                    onCreateArea={vi.fn().mockResolvedValue(null)}
+                />
+            );
+        });
+
+        const optionLabels = () => tree!.root
+            .findAll((node) => node.props.accessibilityRole === 'button' && typeof node.type === 'string')
+            .map((node) => node.props.accessibilityLabel)
+            .filter((label) => ['taskEdit.noAreaOption', 'Apple', 'Azure', 'Archived area', 'Zebra', 'Alpha unset', 'Zed unset'].includes(label));
+
+        expect(optionLabels()).toEqual(['taskEdit.noAreaOption', 'Zebra', 'Apple', 'Azure', 'Alpha unset', 'Zed unset']);
+        const input = tree!.root.findByProps({ accessibilityLabel: 'taskEdit.areaLabel' });
+        act(() => {
+            input.props.onChangeText('a');
+        });
+        expect(optionLabels()).toEqual(['taskEdit.noAreaOption', 'Zebra', 'Apple', 'Azure', 'Alpha unset']);
+        expect(areas.map((area) => area.id)).toEqual(originalIds);
     });
 
     it('announces section search misses', () => {
