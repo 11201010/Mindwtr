@@ -41,6 +41,10 @@ vi.mock('@/hooks/use-theme-colors', () => ({
   }),
 }));
 
+vi.mock('@/contexts/language-context', () => ({
+  useLanguage: () => ({ language: 'en', t: (key: string) => key }),
+}));
+
 const originalPlatformOs = Platform.OS;
 const baseDraft = createTaskDraft({
   id: 'task-1',
