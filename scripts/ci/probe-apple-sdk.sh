@@ -13,10 +13,10 @@ source = source.replace('import ExpoModulesCore\n', '')
 Path(sys.argv[1], 'SearchEngine.swift').write_text(source)
 PYTHON
 status=0
-for sdk in iphonesimulator iphoneos; do
+for target in arm64-apple-ios16.4-simulator x86_64-apple-ios16.4-simulator arm64-apple-ios16.4; do
+  sdk=iphoneos
+  if [[ "$target" == *-simulator ]]; then sdk=iphonesimulator; fi
   sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
-  target=arm64-apple-ios16.4
-  if [ "$sdk" = iphonesimulator ]; then target="$target-simulator"; fi
   echo "SDK API preflight: $sdk ($target)"
   # Cross-import overlays expose APIs shared by CoreSpotlight/FoundationModels.
   xcrun swiftc -typecheck -parse-as-library -swift-version 5 \
