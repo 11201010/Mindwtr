@@ -130,6 +130,50 @@ describe('useRootLayoutExternalCapture', () => {
     showToast = vi.fn<ShowToast>();
   });
 
+  it.each(['note', 'body', 'thingDescription', 'itemListDescription'])(
+    'keeps private %s content out of invalid shortcut diagnostics', (alias) => {
+      const secret = 'private-shortcut-note';
+      let tree!: ReturnType<typeof create>;
+      act(() => {
+        tree = create(<TestHarness
+          incomingUrl={`mindwtr://capture?${alias}=${secret}&project=private-project&tags=private-tag`}
+          router={router} showToast={showToast}
+        />);
+      });
+      expect(showToast).toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(logWarn).toHaveBeenCalledWith('Invalid shortcut capture URL', {
+        scope: 'shortcuts',
+        extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'invalid-payload' },
+      });
+      expect(JSON.stringify([vi.mocked(logWarn).mock.calls, vi.mocked(logError).mock.calls])).not.toContain('private-');
+      act(() => tree.unmount());
+    },
+  );
+
+  it.each(['title', 'text', 'name', 'thingName', 'itemListElementName', 'itemListName'])(
+    'keeps private %s content and router errors out of failed shortcut diagnostics', (alias) => {
+      const incomingUrl = `mindwtr://capture?${alias}=private-title&body=private-note&project=private-project&tags=private-tag`;
+      router.replace.mockImplementation(() => { throw new Error(`Cannot navigate to ${incomingUrl}`); });
+      let tree!: ReturnType<typeof create>;
+      act(() => {
+        tree = create(<TestHarness incomingUrl={incomingUrl} router={router} showToast={showToast} />);
+      });
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      expect(logWarn).toHaveBeenCalledWith('Shortcut capture confirmation failed', {
+        scope: 'shortcuts',
+        extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'navigation' },
+      });
+      expect(logError).not.toHaveBeenCalled();
+      expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain('private-');
+      // The failed delivery remains retryable once navigation is available.
+      router.replace.mockReset();
+      act(() => { tree.update(<TestHarness incomingUrl={incomingUrl} router={router} showToast={showToast} />); });
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      act(() => tree.unmount());
+    },
+  );
+
   it.each([true, false])('returns from shortcut confirmation without a blank capture route (initial=%s)', (initial) => {
     const url = 'mindwtr:///capture?title=Call%20dentist&note=Tomorrow&tags=phone&project=Home';
     const stack: unknown[] = [redirectSystemPath({ path: url, initial })];

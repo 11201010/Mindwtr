@@ -557,7 +557,7 @@ export function useRootLayoutExternalCapture({
             lastHandledKey.current = incomingUrlKey;
             void logWarn('Invalid shortcut capture URL', {
                 scope: 'shortcuts',
-                extra: { url: incomingUrl },
+                extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'invalid-payload' },
             });
             showToast({
                 title: resolveText('shortcuts.captureUnavailable', 'Capture shortcut unavailable'),
@@ -574,9 +574,13 @@ export function useRootLayoutExternalCapture({
                 scope: 'shortcuts',
                 extra: { releaseCheck: 'v1.3.0/shortcut-capture-single-owner' },
             });
-        } catch (error) {
+        } catch {
             lastHandledKey.current = 0;
-            void logError(error, { scope: 'shortcuts', extra: { url: incomingUrl } });
+            // Router errors can echo the private capture parameters too.
+            void logWarn('Shortcut capture confirmation failed', {
+                scope: 'shortcuts',
+                extra: { releaseCheck: 'v1.3.1/shortcut-failure-privacy', stage: 'navigation' },
+            });
         }
     }, [dataReady, disabled, incomingUrl, incomingUrlKey, resolveText, openCaptureConfirmation, router, showToast]);
 }
