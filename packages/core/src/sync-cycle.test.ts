@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { performSyncCycle } from './sync';
 import { createSyncCycleExecutor } from './sync-cycle';
 import { consoleLogger, setLogger, type LogPayload } from './logger';
+import { applyProjectLifecycleTransition } from './store-helpers';
 import { createMockArea, createMockProject, createMockSection, createMockTask, mockAppData } from './sync-test-utils';
 import type { AppData, Project, Section, Task } from './types';
 
@@ -59,6 +60,69 @@ describe('createSyncCycleExecutor', () => {
 });
 
 describe('performSyncCycle', () => {
+    it('keeps an expired cancelled-project section across local, remote, and merged cleanup', async () => {
+        const archivedAt = '2026-01-01T12:00:00.000Z';
+        const retentionAt = '2026-04-10T12:00:00.000Z';
+        const project: Project = {
+            id: 'project-record', title: 'Private project title', status: 'active', color: '#94a3b8',
+            order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+            rev: 1, revBy: 'device-a',
+        };
+        const section: Section = {
+            id: 'section-record', projectId: project.id, title: 'Private section title',
+            description: 'Private preparation notes', order: 4, createdAt: archivedAt,
+            updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+        };
+        const task: Task = {
+            id: 'task-record', title: 'Private task title', status: 'next',
+            projectId: project.id, sectionId: section.id, tags: [], contexts: [],
+            createdAt: archivedAt, updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+        };
+        const archived = applyProjectLifecycleTransition(
+            project, { status: 'archived', cancelledAt: archivedAt },
+            [task], [section], archivedAt, 'device-a',
+        );
+        const archiveData: AppData = {
+            projects: [{ ...project, ...archived.projectUpdates, updatedAt: archivedAt, rev: 2 }],
+            tasks: archived.tasks, sections: archived.sections, areas: [], people: [],
+            settings: { deviceId: 'device-a' },
+        };
+        let local = structuredClone(archiveData);
+        let remote = structuredClone(archiveData);
+        const logs: LogPayload[] = [];
+        setLogger((payload) => logs.push(payload));
+        try {
+            const cycle = async () => {
+                const result = await performSyncCycle({
+                    readLocal: async () => structuredClone(local),
+                    readRemote: async () => structuredClone(remote),
+                    writeLocal: async (data) => { local = structuredClone(data); },
+                    writeRemote: async (data) => { remote = structuredClone(data); },
+                    now: () => retentionAt,
+                });
+                expect(result.status).toBe('success');
+                return result.data;
+            };
+            const first = await cycle();
+            const second = await cycle();
+            const proofLogs = logs.filter((entry) =>
+                entry.context?.releaseCheck === 'v1.3.1/archive-section-retention',
+            );
+
+            expect(first.sections).toEqual(archived.sections);
+            expect(first.tasks[0].sectionId).toBe(section.id);
+            expect(remote.sections).toEqual(archived.sections);
+            expect(second.sections).toEqual(first.sections);
+            expect(second.tasks).toEqual(first.tasks);
+            expect(second.projects).toEqual(first.projects);
+            expect(proofLogs.length).toBeGreaterThan(0);
+            expect(proofLogs.every((entry) => entry.context?.retainedSectionCount === 1)).toBe(true);
+            expect(JSON.stringify(proofLogs)).not.toMatch(/Private|section-record|task-record|project-record/);
+        } finally {
+            setLogger(consoleLogger);
+        }
+    });
+
     it.each([false, true])('reports full merge timing only when computation ran (skip=%s)', async (skip) => {
         const logs: LogPayload[] = [];
         const local = mockAppData([createMockTask('private-id', '2026-06-01')]);

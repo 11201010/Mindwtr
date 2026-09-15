@@ -1,5 +1,7 @@
 import type { AppData, Attachment, Area, Person, Project, SavedFilter, Section, Task } from './types';
 import { prunePendingRemoteAttachmentDeletes } from './attachment-cleanup';
+import { isRestorableProjectArchiveSection } from './store-helpers';
+import { logInfo } from './logger';
 
 export const DEFAULT_TOMBSTONE_RETENTION_DAYS = 90;
 const MIN_TOMBSTONE_RETENTION_DAYS = 1;
@@ -114,6 +116,7 @@ export const purgeExpiredTombstones = (
     let removedPersonTombstones = 0;
     let removedAttachmentTombstones = 0;
     let removedSavedFilterTombstones = 0;
+    let retainedExpiredArchiveSections = 0;
     const nextTasks: Task[] = [];
     for (const task of data.tasks) {
         if (isEntityTombstoneExpired('task', task, cutoffMs)) {
@@ -139,13 +142,32 @@ export const purgeExpiredTombstones = (
         removedAttachmentTombstones += pruned.removed;
         nextProjects.push(pruned.removed > 0 ? { ...project, attachments: pruned.next } : project);
     }
+    const restorableArchivedProjectIds = new Set(
+        nextProjects.filter((project) => project.status === 'archived' && !project.purgedAt)
+            .map((project) => project.id),
+    );
     const nextSections: Section[] = [];
     for (const section of data.sections) {
         if (isEntityTombstoneExpired('section', section, cutoffMs)) {
+            if (restorableArchivedProjectIds.has(section.projectId) && isRestorableProjectArchiveSection(section)) {
+                retainedExpiredArchiveSections += 1;
+                nextSections.push(section);
+                continue;
+            }
             removedSectionTombstones += 1;
             continue;
         }
         nextSections.push(section);
+    }
+    if (retainedExpiredArchiveSections > 0) {
+        logInfo('Expired archived project sections retained during tombstone cleanup', {
+            scope: 'sync',
+            category: 'storage',
+            context: {
+                releaseCheck: 'v1.3.1/archive-section-retention',
+                retainedSectionCount: retainedExpiredArchiveSections,
+            },
+        });
     }
     const nextAreas: Area[] = [];
     for (const area of data.areas) {

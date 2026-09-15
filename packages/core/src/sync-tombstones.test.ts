@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppData } from './types';
+import type { AppData, Project, Section } from './types';
 import { isEntityTombstoneExpired, purgeExpiredTombstones } from './sync-tombstones';
 
 const nowIso = '2026-04-08T00:00:00.000Z';
@@ -28,6 +28,116 @@ describe('isEntityTombstoneExpired', () => {
 });
 
 describe('purgeExpiredTombstones', () => {
+    it('retains sections and notes of completed and cancelled projects after ordinary deletion expiry', () => {
+        const archivedAt = '2026-01-01T00:00:00.000Z';
+        const projects: Project[] = [
+            {
+                id: 'completed', title: 'Completed project', status: 'archived', color: '#94a3b8',
+                order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+            },
+            {
+                id: 'cancelled', title: 'Cancelled project', status: 'archived', cancelledAt: archivedAt,
+                color: '#94a3b8', order: 1, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+            },
+        ];
+        const sections: Section[] = [
+            {
+                id: 'completed-section', projectId: 'completed', title: 'Completed plan',
+                description: 'Notes to keep', order: 3, createdAt: archivedAt, updatedAt: archivedAt,
+                deletedAt: archivedAt, projectArchivedAt: archivedAt,
+            },
+            {
+                id: 'cancelled-section', projectId: 'cancelled', title: 'Cancelled plan',
+                description: 'Preparation to keep', order: 5, createdAt: archivedAt, updatedAt: archivedAt,
+                deletedAt: archivedAt, projectArchivedAt: archivedAt,
+                deletedAtBeforeProjectArchive: null,
+            },
+        ];
+        const data: AppData = { tasks: [], projects, sections, areas: [], settings: {} };
+
+        const result = purgeExpiredTombstones(data, nowIso);
+
+        expect(result.removedSectionTombstones).toBe(0);
+        expect(result.data.sections).toEqual(sections);
+    });
+
+    it('keeps archived sections while their deleted project is still restorable in Trash', () => {
+        const archivedAt = '2026-01-01T00:00:00.000Z';
+        const deletedAt = '2026-03-20T00:00:00.000Z';
+        const project: Project = {
+            id: 'project', title: 'Project', status: 'archived', color: '#94a3b8',
+            order: 0, tagIds: [], createdAt: archivedAt, updatedAt: deletedAt, deletedAt,
+        };
+        const section: Section = {
+            id: 'section', projectId: project.id, title: 'Plan', description: 'Notes',
+            order: 2, createdAt: archivedAt, updatedAt: archivedAt,
+            deletedAt: archivedAt, projectArchivedAt: archivedAt,
+        };
+        const data: AppData = { tasks: [], projects: [project], sections: [section], areas: [], settings: {} };
+
+        const first = purgeExpiredTombstones(data, nowIso);
+        const second = purgeExpiredTombstones(first.data, nowIso);
+
+        expect(first.data.sections).toEqual([section]);
+        expect(second.data.sections).toEqual([section]);
+        expect(second.data.projects).toEqual([project]);
+        expect(second.removedSectionTombstones).toBe(0);
+        expect(second.removedProjectTombstones).toBe(0);
+    });
+
+    it.each([
+        ['missing owner', [] as Project[], undefined],
+        ['expired deleted owner', undefined, { deletedAt: '2026-01-01T00:00:00.000Z' }],
+        ['purged owner', undefined, { deletedAt: '2026-03-20T00:00:00.000Z', purgedAt: '2026-03-20T00:00:00.000Z' }],
+        ['active owner', undefined, { status: 'active' as const }],
+    ])('expires an archived section with a %s', (_reason, projectOverride, fields) => {
+        const archivedAt = '2026-01-01T00:00:00.000Z';
+        const project: Project = {
+            id: 'project', title: 'Project', status: 'archived', color: '#94a3b8',
+            order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+            ...fields,
+        };
+        const section: Section = {
+            id: 'section', projectId: project.id, title: 'Plan', order: 0,
+            createdAt: archivedAt, updatedAt: archivedAt,
+            deletedAt: archivedAt, projectArchivedAt: archivedAt,
+        };
+        const data: AppData = {
+            tasks: [], projects: projectOverride ?? [project], sections: [section], areas: [], settings: {},
+        };
+
+        const result = purgeExpiredTombstones(data, nowIso);
+
+        expect(result.data.sections).toEqual([]);
+        expect(result.removedSectionTombstones).toBe(1);
+    });
+
+    it.each([
+        ['independently deleted', { deletedAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }],
+        ['edited after archive', { updatedAt: '2026-01-02T00:00:00.000Z' }],
+        ['deleted before archive', { deletedAtBeforeProjectArchive: '2025-12-31T00:00:00.000Z' }],
+        ['mismatched project', { projectId: 'other-project' }],
+        ['missing archive marker', { projectArchivedAt: undefined }],
+    ])('expires a section %s even if an archived project survives', (_reason, fields) => {
+        const archivedAt = '2026-01-01T00:00:00.000Z';
+        const project: Project = {
+            id: 'project', title: 'Project', status: 'archived', color: '#94a3b8',
+            order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+        };
+        const section: Section = {
+            id: 'section', projectId: project.id, title: 'Plan', order: 0,
+            createdAt: archivedAt, updatedAt: archivedAt,
+            deletedAt: archivedAt, projectArchivedAt: archivedAt,
+            ...fields,
+        };
+        const data: AppData = { tasks: [], projects: [project], sections: [section], areas: [], settings: {} };
+
+        const result = purgeExpiredTombstones(data, nowIso);
+
+        expect(result.data.sections).toEqual([]);
+        expect(result.removedSectionTombstones).toBe(1);
+    });
+
     it('purges expired task tombstones even when purgedAt is missing', () => {
         const data: AppData = {
             tasks: [

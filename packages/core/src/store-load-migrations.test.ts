@@ -8,6 +8,7 @@ import {
     type LoadContext,
 } from './store-load-migrations';
 import { applyProjectLifecycleTransition } from './store-helpers';
+import { repairMergedSyncReferences } from './sync-normalization';
 import type { AppData, AppSettings, Area, Person, Project, Section, Task } from './types';
 
 const NOW_ISO = '2026-04-10T12:00:00.000Z';
@@ -193,6 +194,71 @@ describe('runLoadMigrations', () => {
             setLogger(consoleLogger);
         }
     });
+
+    it.each([
+        { outcome: 'completed', autoArchiveDays: 0, expectedTaskStatus: 'next' },
+        { outcome: 'cancelled', autoArchiveDays: 0, expectedTaskStatus: 'next' },
+        { outcome: 'completed with default task auto-archive', autoArchiveDays: undefined, expectedTaskStatus: 'archived' },
+    ] as const)(
+        'retains an untouched $outcome project section and child through expiry, load, and reactivation',
+        ({ outcome, autoArchiveDays, expectedTaskStatus }) => {
+            const archivedAt = '2026-01-01T12:00:00.000Z';
+            const project: Project = {
+                id: 'project', title: 'Project', status: 'active', color: '#94a3b8',
+                order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt,
+                rev: 1, revBy: 'device-a',
+            };
+            const section: Section = {
+                id: 'section', projectId: project.id, title: 'Retained plan',
+                description: 'Preparation notes', order: 4, createdAt: archivedAt,
+                updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+            };
+            const task: Task = {
+                id: 'task', title: 'Next action', status: 'next', projectId: project.id,
+                sectionId: section.id, tags: [], contexts: [], createdAt: archivedAt,
+                updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+            };
+            const archived = applyProjectLifecycleTransition(
+                project,
+                outcome === 'cancelled' ? { status: 'archived', cancelledAt: archivedAt } : { status: 'archived' },
+                [task], [section], archivedAt, 'device-a',
+            );
+            const archiveData = settledData({
+                projects: [{ ...project, ...archived.projectUpdates, updatedAt: archivedAt }],
+                sections: archived.sections,
+                tasks: archived.tasks,
+            });
+            archiveData.settings = {
+                ...archiveData.settings,
+                // Isolate project restoration from the normal 7-day auto-archive
+                // sweep; the default policy is also covered by the third row.
+                gtd: autoArchiveDays === undefined
+                    ? archiveData.settings.gtd
+                    : { ...archiveData.settings.gtd, autoArchiveDays },
+                migrations: { ...archiveData.settings.migrations, lastTombstoneCleanupAt: archivedAt },
+            };
+
+            const firstLoad = runLoadMigrations(archiveData, ctxFor(archiveData));
+            const canonical = repairMergedSyncReferences(firstLoad.data, NOW_ISO);
+            const secondLoad = runLoadMigrations(canonical, ctxFor(canonical));
+            const reactivated = applyProjectLifecycleTransition(
+                secondLoad.data.projects[0], { status: 'active' },
+                secondLoad.data.tasks, secondLoad.data.sections,
+                '2026-04-11T12:00:00.000Z', 'device-a',
+            );
+
+            expect(firstLoad.data.sections).toEqual(archived.sections);
+            expect(canonical.tasks).toEqual(firstLoad.data.tasks);
+            expect(secondLoad.data.sections).toEqual(firstLoad.data.sections);
+            expect(reactivated.sections[0]).toMatchObject({
+                id: 'section', title: 'Retained plan', description: 'Preparation notes',
+                order: 4, deletedAt: undefined,
+            });
+            expect(reactivated.tasks[0]).toMatchObject({
+                id: 'task', status: expectedTaskStatus, projectId: 'project', sectionId: 'section',
+            });
+        },
+    );
 
     it('repair-dangling-entity-references: clears task references that no longer resolve', () => {
         const data = settledData({
