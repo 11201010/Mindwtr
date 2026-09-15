@@ -19,6 +19,7 @@ const compactWidgetLocales = {
   ru: ['Компактный', 'Простой список фокуса с быстрым добавлением'],
   sv: ['Kompakt', 'En enkel fokuslista med snabbregistrering'],
   tr: ['Kompakt', 'Hızlı kayıt içeren sade bir odak listesi'],
+  uk: ['Компактний', 'Простий список фокусу зі швидким записом'],
   vi: ['Thu gọn', 'Danh sách tập trung đơn giản với ghi nhanh'],
   'zh-Hans': ['简洁', '简单的专注列表，支持快速收集'],
   'zh-Hant': ['簡潔', '簡單的專注清單，支援快速收集'],

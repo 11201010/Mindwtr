@@ -44,8 +44,11 @@ describe('android-widget', () => {
       expect(xml).not.toContain('translatable="false"');
     }
     expect(buildCompactWidgetStringsXml('Mindwtr Dev', 'zh-Hans')).toContain('Mindwtr Dev 简洁');
+    expect(buildCompactWidgetStringsXml('Mindwtr Dev', 'uk')).toContain('Mindwtr Dev Компактний');
+    expect(buildCompactWidgetStringsXml('Mindwtr Dev', 'uk')).toContain('Простий список фокусу зі швидким записом');
     expect(compactWidgetValuesDirectory('zh-Hant')).toBe('values-b+zh+Hant');
     expect(compactWidgetValuesDirectory('de')).toBe('values-de');
+    expect(compactWidgetValuesDirectory('uk')).toBe('values-uk');
   });
 
   it('builds each picker preview from its native layout with sample content', () => {
