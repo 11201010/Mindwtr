@@ -112,7 +112,7 @@ not search-quality or performance evidence.
 
 ## Toolchain evidence and native gates
 
-The compile condition is `compiler(>=6.4)` plus framework and iOS 27 runtime
+The compile condition is `compiler(>=6.4)` and ARM64, plus framework and iOS 27 runtime
 availability. Apple's current Xcode system-requirements table lists Xcode 27
 with Swift 6.4 and Xcode 26.6 with Swift 6.3. The 6.4 boundary prevents the late
 iOS 26 SDK from parsing iOS 27-only symbols. The iOS 27 CI selector must also
@@ -149,3 +149,7 @@ native compile and hardware evidence pass, the production decision is defer.
 - [LanguageModelSession](https://developer.apple.com/documentation/foundationmodels/languagemodelsession)
 - [Build a semantic search experience with Core Spotlight](https://developer.apple.com/videos/play/wwdc2026/246/)
 - [Xcode SDK and system requirements](https://developer.apple.com/xcode/system-requirements)
+
+The Xcode 27 beta SDK omits the search tool types for Intel simulators. The
+bridge reports the evaluation unavailable there; ordinary app search remains
+available. CI checks ARM64 and Intel simulator source plus ARM64 device source.

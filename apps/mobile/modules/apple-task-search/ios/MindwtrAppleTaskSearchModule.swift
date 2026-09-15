@@ -30,7 +30,9 @@ private actor MindwtrAppleTaskSearchCoordinator {
     private var activeRequest: (id: String, task: Task<[[String: String]], Error>)?
     private var cancelledBeforeStart = MindwtrAppleTaskSearchCancellationTombstones<String>()
 
-#if compiler(>=6.4) && canImport(FoundationModels)
+// The iOS 27 SDK exposes the Spotlight search tool only for ARM64;
+// Intel simulators keep the bridge but report the evaluation unavailable.
+#if compiler(>=6.4) && canImport(FoundationModels) && arch(arm64)
     @available(iOS 27.0, *)
     func search(requestId rawRequestId: String, query rawQuery: String) async throws -> [[String: String]] {
         let requestId = rawRequestId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -197,7 +199,7 @@ public final class MindwtrAppleTaskSearchModule: Module {
         Name("MindwtrAppleTaskSearch")
 
         AsyncFunction("availability") { () -> [String: Any] in
-#if DEBUG && compiler(>=6.4) && canImport(FoundationModels)
+#if DEBUG && compiler(>=6.4) && canImport(FoundationModels) && arch(arm64)
             if #available(iOS 27.0, *) {
                 switch SystemLanguageModel.default.availability {
                 case .available:
@@ -215,7 +217,7 @@ public final class MindwtrAppleTaskSearchModule: Module {
         }
 
         AsyncFunction("search") { (requestId: String, query: String) async throws -> [[String: String]] in
-#if DEBUG && compiler(>=6.4) && canImport(FoundationModels)
+#if DEBUG && compiler(>=6.4) && canImport(FoundationModels) && arch(arm64)
             if #available(iOS 27.0, *) {
                 return try await coordinator.search(requestId: requestId, query: query)
             }

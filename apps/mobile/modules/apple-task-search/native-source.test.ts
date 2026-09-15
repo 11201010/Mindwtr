@@ -14,7 +14,7 @@ const source = `${moduleSource}\n${collectorSource}`;
 
 describe('MindwtrAppleTaskSearch native source contract', () => {
   it('keeps the iOS 27 APIs behind compile, runtime, and development guards', () => {
-    expect(source).toContain('#if DEBUG && compiler(>=6.4) && canImport(FoundationModels)');
+    expect(source).toContain('#if DEBUG && compiler(>=6.4) && canImport(FoundationModels) && arch(arm64)');
     expect(source).toContain('if #available(iOS 27.0, *)');
     expect(source).toContain('SystemLanguageModel.default.availability');
   });
