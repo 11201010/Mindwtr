@@ -100,6 +100,8 @@
           <li xml:lang="de">Navigiere Projekte per Tastatur, schalte gespeicherte Fokusfilter sicher um und sieh hervorgehobene Suchtreffer.</li>
           <li>Recover legacy archived-project references and retain restorable archived sections and referenced attachments.</li>
           <li xml:lang="de">Stelle alte Referenzen aus archivierten Projekten wieder her und bewahre wiederherstellbare Abschnitte und referenzierte Anhaenge.</li>
+          <li>Update the desktop TLS dependency to include the rustls security fix.</li>
+          <li xml:lang="de">Aktualisiere die Desktop-TLS-Abhaengigkeit mit der Sicherheitskorrektur von rustls.</li>
         </ul>
       </description>
     </release>
