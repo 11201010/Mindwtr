@@ -57,8 +57,12 @@ export type AppleClarificationDraftSnapshot = Readonly<{
   areaId: string | null;
   contexts: readonly string[];
   tags: readonly string[];
+  // Full timestamp identity, not the date-only text sent to a model.
   startDate: string | null;
   dueDate: string | null;
+  startDateOnly: boolean;
+  dueDateOnly: boolean;
+  workflowChoices: readonly [string | null, string | null, string | null];
 }>;
 
 export type AppleClarificationLease = Readonly<{

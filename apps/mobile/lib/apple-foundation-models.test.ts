@@ -57,6 +57,9 @@ const snapshot: AppleClarificationDraftSnapshot = {
   tags: [],
   startDate: null,
   dueDate: null,
+  startDateOnly: false,
+  dueDateOnly: false,
+  workflowChoices: [null, null, null],
 };
 
 describe('Apple clarification validation and lifecycle', () => {
@@ -135,6 +138,22 @@ describe('Apple clarification validation and lifecycle', () => {
     const consumed = new Set<string>();
     expect(consumeAppleClarificationApply(lease, snapshot, consumed)).toBe(true);
     expect(consumeAppleClarificationApply(lease, snapshot, consumed)).toBe(false);
+  });
+
+  it('rejects suggestions after time-only, date-mode, or workflow edits', () => {
+    const before: AppleClarificationDraftSnapshot = {
+      ...snapshot,
+      startDate: String(Date.parse('2026-09-18T09:00:00Z')),
+      workflowChoices: ['actionable', 'no', 'defer'],
+    };
+    const lease = createAppleClarificationLease('request-1', before);
+    expect(isAppleClarificationLeaseCurrent(lease, {
+      ...before, startDate: String(Date.parse('2026-09-18T10:00:00Z')),
+    })).toBe(false);
+    expect(isAppleClarificationLeaseCurrent(lease, { ...before, startDateOnly: true })).toBe(false);
+    expect(isAppleClarificationLeaseCurrent(lease, {
+      ...before, workflowChoices: ['reference', null, null],
+    })).toBe(false);
   });
 
   it('revalidates IDs against current app state immediately before Apply', () => {
