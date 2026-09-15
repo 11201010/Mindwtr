@@ -207,8 +207,24 @@ describe('ProjectDetailsHeader', () => {
         expect(onDelete).toHaveBeenCalledTimes(1);
 
         openMenu();
-        fireEvent.keyDown(window, { key: 'Escape' });
+        const focusedItem = screen.getByRole('menuitem', { name: 'Details' });
+        expect(focusedItem).toHaveFocus();
+        fireEvent.keyDown(focusedItem, { key: 'Escape' });
         expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'More options: Launch site' })).toHaveFocus();
+
+        openMenu();
+        const title = screen.getByRole('textbox', { name: 'Project title' });
+        title.focus();
+        fireEvent.mouseDown(title);
+        expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+        expect(title).toHaveFocus();
+
+        onDuplicate.mockImplementation(() => title.focus());
+        openMenu();
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
+        expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+        expect(title).toHaveFocus();
     });
 
     it('offers Reactivate instead of Archive and blocks Delete on a read-only archived project', () => {

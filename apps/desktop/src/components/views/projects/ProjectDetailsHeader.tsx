@@ -68,6 +68,7 @@ export function ProjectDetailsHeader({
     const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
     const skipTitleCommitOnBlurRef = useRef(false);
     const menuRef = useRef<HTMLDivElement | null>(null);
+    const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
     const menuPanelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const completedRatio = project.cancelledAt
@@ -183,6 +184,7 @@ export function ProjectDetailsHeader({
             if (event.key !== 'Escape') return;
             event.preventDefault();
             setMenuOpen(false);
+            menuTriggerRef.current?.focus();
         };
         window.addEventListener('mousedown', handlePointer);
         window.addEventListener('keydown', handleKey);
@@ -302,6 +304,7 @@ export function ProjectDetailsHeader({
                     ) : null}
                     <div ref={menuRef} className="relative">
                         <button
+                            ref={menuTriggerRef}
                             type="button"
                             onClick={() => setMenuOpen((open) => !open)}
                             aria-haspopup="menu"
