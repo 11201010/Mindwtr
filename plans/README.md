@@ -1,5 +1,20 @@
 # Plans index
 
+## Review loop from v1.2.8 — September 15, 2026
+
+Planned against `51ac48c2f`. The comprehensive batch fixes archive-section retention, cloud attachment GC, revoked capture-token fallback, legacy capture-audio readability, project-title Escape, menu focus, and Shortcut diagnostic privacy; each remains its own implementation commit. The broad improve pass selects only the three supported opportunities below. Root maintains status and integration.
+
+| Plan | Finding | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [085](085-bulk-date-accessible-names.md) | QUALITY-01: mobile bulk input accessible names | P2 | S | None | TODO |
+| [086](086-bulk-area-custom-order.md) | QUALITY-02: desktop bulk area custom order | P3 | S | None | TODO |
+| [087](087-archive-reactivation-validation.md) | PERF-01: remove per-task archived-section projections | P2 | M | None | TODO |
+
+Plans 085/086 can execute independently from 087. Plan087 is the sole Strong architecture candidate: deepen existing container validation with scoped restoration eligibility, remove repeated projected arrays, preserve the later durable transition. No new generic cache or schema is selected.
+
+Considered and rejected: another widget chooser/fallback rewrite (native Tasks and Compact intentionally differ); generalized bulk-form controllers (working save/session guards); public widget-copy expansion without a concrete misleading instruction; new roadmap features; native-queue or snapshot-sync rewrites without evidence reopening existing ADRs. Fresh dependency audit reproduces the existing image-size Metro build-time deferral with no listed patched release; quick-xml/rkyv parent constraints remain recorded below. No public-doc plan selected. Native accessibility and platform latency require separate device evidence; host tests do not establish those outcomes.
+
+
 Written by the 2026-08-13 improve audit (Phase 2 of the review-improve loop), stamped against `0e4021faa`. Selection was non-interactive: every high-confidence actionable finding became a plan; speculative/deferred items are recorded below instead of planned.
 
 ## Execution order and status
