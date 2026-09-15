@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Project } from '@mindwtr/core';
@@ -50,6 +51,57 @@ function buildProject(overrides: Partial<Project> = {}): Project {
 const openMenu = () => fireEvent.click(screen.getByRole('button', { name: /^More options: / }));
 
 describe('ProjectDetailsHeader', () => {
+    it('discards a project title edit on Escape and still commits later edits', () => {
+        const project = buildProject();
+        const onCommitTitle = vi.fn();
+        const onResetTitle = vi.fn();
+
+        function EditableHeader() {
+            const [editTitle, setEditTitle] = useState(project.title);
+            return (
+                <ProjectDetailsHeader
+                    project={project}
+                    projectColor="#2563eb"
+                    isSequential={false}
+                    editTitle={editTitle}
+                    onEditTitleChange={setEditTitle}
+                    onCommitTitle={onCommitTitle}
+                    onResetTitle={() => {
+                        onResetTitle();
+                        setEditTitle(project.title);
+                    }}
+                    detailsExpanded={false}
+                    onToggleDetails={vi.fn()}
+                    onDuplicate={vi.fn()}
+                    onArchive={vi.fn()}
+                    onReactivate={vi.fn()}
+                    onDelete={vi.fn()}
+                    t={t}
+                />
+            );
+        }
+
+        render(<EditableHeader />);
+        const title = screen.getByRole('textbox', { name: 'Project title' });
+        title.focus();
+        fireEvent.change(title, { target: { value: 'Discarded rename' } });
+        fireEvent.keyDown(title, { key: 'Escape' });
+
+        expect(title).toHaveValue('Launch site');
+        expect(onResetTitle).toHaveBeenCalledTimes(1);
+        expect(onCommitTitle).not.toHaveBeenCalled();
+
+        title.focus();
+        fireEvent.change(title, { target: { value: 'New title on blur' } });
+        title.blur();
+        expect(onCommitTitle).toHaveBeenCalledTimes(1);
+
+        title.focus();
+        fireEvent.change(title, { target: { value: 'New title on Enter' } });
+        fireEvent.keyDown(title, { key: 'Enter' });
+        expect(onCommitTitle).toHaveBeenCalledTimes(2);
+    });
+
     it('shows compact project summary metadata and toggles details from the menu', () => {
         const onToggleDetails = vi.fn();
         const project = buildProject({

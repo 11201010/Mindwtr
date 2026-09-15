@@ -66,6 +66,7 @@ export function ProjectDetailsHeader({
     t,
 }: ProjectDetailsHeaderProps) {
     const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+    const skipTitleCommitOnBlurRef = useRef(false);
     const menuRef = useRef<HTMLDivElement | null>(null);
     const menuPanelRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -216,12 +217,22 @@ export function ProjectDetailsHeader({
                         ref={titleInputRef}
                         value={editTitle}
                         onChange={(e) => onEditTitleChange(e.target.value.replace(/\s*\n+\s*/g, ' '))}
-                        onBlur={onCommitTitle}
+                        onBlur={() => {
+                            if (skipTitleCommitOnBlurRef.current) {
+                                skipTitleCommitOnBlurRef.current = false;
+                                return;
+                            }
+                            onCommitTitle();
+                        }}
+                        onFocus={() => {
+                            skipTitleCommitOnBlurRef.current = false;
+                        }}
                         onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                                 e.preventDefault();
                                 e.currentTarget.blur();
                             } else if (e.key === 'Escape') {
+                                skipTitleCommitOnBlurRef.current = true;
                                 onResetTitle();
                                 e.currentTarget.blur();
                             }
