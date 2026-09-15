@@ -367,6 +367,8 @@
     "getDefaultAIConfig",
     "getDefaultCopilotModel",
     "getDefaultTaskAreaMode",
+    "getDocsGuideUrl",
+    "getDocsLocale",
     "getDropboxAppDataMetadata",
     "getDropboxFileMetadata",
     "getDueReminderRepeatTimes",

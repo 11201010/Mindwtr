@@ -1,4 +1,6 @@
 /** UI-only guidance. Never store tutorial progress in tasks or sync settings. */
+import { getDocsGuideUrl, type DocsSection } from './docs-guidance';
+
 export type OnboardingTopic = 'inbox-project' | 'focus' | 'scheduling' | 'details';
 
 export const ONBOARDING_TOPIC_COPY = {
@@ -10,9 +12,9 @@ export const ONBOARDING_TOPIC_COPY = {
 
 // These are section links, not another learning center. The English guide is
 // the fallback for app languages without a corresponding documentation locale.
-export function getOnboardingGuideUrl(topic: OnboardingTopic, platform: 'desktop' | 'mobile'): string {
-    const anchors = platform === 'mobile'
-        ? { 'inbox-project': 'processing-inbox', focus: 'focus', scheduling: 'scheduling-tasks', details: 'task-editor-task-view' }
-        : { 'inbox-project': '📥-inbox', focus: '🎯-focus', scheduling: 'task-properties', details: 'task-editor-view-edit' };
-    return `https://docs.mindwtr.app/use/${platform}#${encodeURIComponent(anchors[topic])}`;
+export function getOnboardingGuideUrl(topic: OnboardingTopic, platform: 'desktop' | 'mobile', language?: string): string {
+    const sections: Record<OnboardingTopic, DocsSection> = platform === 'mobile'
+        ? { 'inbox-project': 'mobile-inbox', focus: 'mobile-focus', scheduling: 'mobile-scheduling', details: 'mobile-details' }
+        : { 'inbox-project': 'desktop-inbox', focus: 'desktop-focus', scheduling: 'desktop-scheduling', details: 'desktop-details' };
+    return getDocsGuideUrl(`use/${platform}`, language, sections[topic]);
 }

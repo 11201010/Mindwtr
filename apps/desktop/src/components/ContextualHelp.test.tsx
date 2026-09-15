@@ -2,6 +2,12 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ContextualHelp } from './ContextualHelp';
 import { dismissDesktopOnboardingHint } from '../lib/desktop-onboarding-events';
+import { LanguageProvider, useLanguage } from '../contexts/language-context';
+
+function SwitchLanguage() {
+    const { setLanguage } = useLanguage();
+    return <button onClick={() => setLanguage('fr')}>French docs</button>;
+}
 
 const t = (key: string) => key;
 describe('ContextualHelp', () => {
@@ -25,6 +31,24 @@ describe('ContextualHelp', () => {
         expect(screen.queryByText('inbox.projectHint')).not.toBeInTheDocument();
         rerender(<ContextualHelp topic="scheduling" t={t} autoReveal />);
         expect(screen.getByText('onboarding.schedulingHint')).toBeInTheDocument();
+    });
+    it('updates the open guide when language and help topic change', () => {
+        const { rerender } = render(
+            <LanguageProvider persistLanguage={false}>
+                <SwitchLanguage />
+                <ContextualHelp topic="inbox-project" t={t} autoReveal />
+            </LanguageProvider>,
+        );
+        expect(screen.getByRole('link')).toHaveAttribute('href', 'https://docs.mindwtr.app/use/desktop#%F0%9F%93%A5-inbox');
+        fireEvent.click(screen.getByRole('button', { name: 'French docs' }));
+        expect(screen.getByRole('link')).toHaveAttribute('href', 'https://docs.mindwtr.app/fr/use/desktop#%F0%9F%93%A5-boite-de-reception');
+        rerender(
+            <LanguageProvider persistLanguage={false}>
+                <SwitchLanguage />
+                <ContextualHelp topic="scheduling" t={t} autoReveal />
+            </LanguageProvider>,
+        );
+        expect(screen.getByRole('link')).toHaveAttribute('href', 'https://docs.mindwtr.app/fr/use/desktop#proprietes-des-taches');
     });
     it('defaults to an icon-only editor control and never reopens on remount', () => {
         const { unmount } = render(<ContextualHelp topic="details" t={t} />);

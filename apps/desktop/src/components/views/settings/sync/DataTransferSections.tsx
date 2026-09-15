@@ -1,4 +1,6 @@
 import { ExternalLink } from 'lucide-react';
+import { getDocsGuideUrl } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../../contexts/language-context';
 import { useState } from 'react';
 import { SettingsDisclosureCard } from '../SettingRow';
 import type { SettingsDataPageProps } from './types';
@@ -142,6 +144,7 @@ export function ImportSection({
     t,
     transferAction,
 }: ImportSectionProps) {
+    const language = useDocumentationLanguage();
     const disabled = transferAction !== null;
     const [open, setOpen] = useState(false);
 
@@ -154,7 +157,7 @@ export function ImportSection({
             onToggle={() => setOpen((prev) => !prev)}
         >
             <a
-                href="https://docs.mindwtr.app/import/"
+                href={getDocsGuideUrl('import/', language)}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1 px-4 py-3 text-sm font-medium text-primary hover:underline"

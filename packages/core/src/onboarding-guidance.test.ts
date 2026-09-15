@@ -10,6 +10,12 @@ describe('onboarding guidance', () => {
         expect(getOnboardingGuideUrl('scheduling', 'desktop')).toBe('https://docs.mindwtr.app/use/desktop#task-properties');
         expect(new URL(getOnboardingGuideUrl('inbox-project', 'desktop')).hash).toBe('#%F0%9F%93%A5-inbox');
         expect(new URL(getOnboardingGuideUrl('focus', 'desktop')).hash).toBe('#%F0%9F%8E%AF-focus');
+        expect(getOnboardingGuideUrl('focus', 'desktop', 'es'))
+            .toBe('https://docs.mindwtr.app/es/use/desktop#%F0%9F%8E%AF-foco');
+        expect(getOnboardingGuideUrl('scheduling', 'mobile', 'de'))
+            .toBe('https://docs.mindwtr.app/de/use/mobile#aufgaben-planen');
+        expect(getOnboardingGuideUrl('details', 'mobile', 'uk'))
+            .toBe('https://docs.mindwtr.app/use/mobile#task-editor-task-view');
     });
 
     it.each(Object.entries(STARTER_SEED_STRINGS))('recognizes existing %s tutorial content without rewriting it', (_, strings) => {

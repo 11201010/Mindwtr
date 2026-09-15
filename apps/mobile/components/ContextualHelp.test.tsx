@@ -13,11 +13,15 @@ vi.mock('@/lib/onboarding-hints', () => ({
     dismissMobileHint: vi.fn().mockResolvedValue(undefined),
     isMobileHintDismissed: vi.fn().mockResolvedValue(false),
 }));
+let testLanguage = 'en';
+vi.mock('@/contexts/language-context', () => ({
+    useLanguage: () => ({ language: testLanguage }),
+}));
 const tc = { secondaryText: '#555', filterBg: '#eee', tint: '#06c', danger: '#b00' };
 const t = (key: string) => key;
 
 describe('ContextualHelp', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => { vi.clearAllMocks(); testLanguage = 'en'; });
     it('shows contextual guidance, dismisses it, and permits reopening', async () => {
         let tree!: renderer.ReactTestRenderer;
         await act(async () => { tree = renderer.create(<ContextualHelp topic="focus" t={t} tc={tc} autoReveal />); });
@@ -49,6 +53,19 @@ describe('ContextualHelp', () => {
         await act(async () => tree.root.findAllByType(Pressable).find((node) => node.props.accessibilityRole === 'link')!.props.onPress());
         expect(Linking.openURL).toHaveBeenCalledWith('https://docs.mindwtr.app/use/mobile#scheduling-tasks');
         expect(tree.root.findAllByType(Text).some((node) => node.props.children === 'onboarding.guideError')).toBe(true);
+        act(() => tree.unmount());
+    });
+    it('opens the current locale and corresponding section after a language switch', async () => {
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(<ContextualHelp topic="inbox-project" t={t} tc={tc} autoReveal />); });
+        await act(async () => tree.root.findAllByType(Pressable).find((node) => node.props.accessibilityRole === 'link')!.props.onPress());
+        expect(Linking.openURL).toHaveBeenLastCalledWith('https://docs.mindwtr.app/use/mobile#processing-inbox');
+        testLanguage = 'zh-Hant';
+        await act(async () => tree.update(<ContextualHelp topic="scheduling" t={t} tc={tc} autoReveal />));
+        await act(async () => tree.root.findAllByType(Pressable).find((node) => node.props.accessibilityRole === 'link')!.props.onPress());
+        expect(Linking.openURL).toHaveBeenLastCalledWith(
+            'https://docs.mindwtr.app/zh-Hant/use/mobile#%E6%8E%92%E7%A8%8B%E4%BB%BB%E5%8B%99',
+        );
         act(() => tree.unmount());
     });
     it('defaults to an icon-only editor control and resets on remount', async () => {

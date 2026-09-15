@@ -3,8 +3,10 @@ import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'reac
 
 import {
     generateDicewarePassphrase,
+    getDocsGuideUrl,
     isSyncEncryptionRemoteVersionUnavailableError,
     type AppData,
+    type Language,
     type SyncEncryptionState,
     type SyncEncryptionTransitionProgress,
 } from '@mindwtr/core';
@@ -25,8 +27,6 @@ import {
 
 import { SettingsGuideLink } from './settings.shell';
 import { styles } from './settings.styles';
-
-const SYNC_ENCRYPTION_GUIDE_URL = 'https://docs.mindwtr.app/data-sync/#sync-encryption';
 
 type Translate = (key: string) => string;
 
@@ -49,6 +49,7 @@ export type SyncEncryptionCardProps = {
     appData: AppData;
     t: Translate;
     tc: ThemeColors;
+    language?: Language;
     /** True while a sync/test/save transport action runs. On its falling edge the card
      *  re-reads the encryption state: activating a folder that already holds ciphertext
      *  persists 'remote-encrypted-no-key' during the probe, and the card must flip from
@@ -66,7 +67,7 @@ const classifyFailure = (error: unknown, terminal: ErrorKind): ErrorKind => {
     return 'generic';
 };
 
-export function SyncEncryptionCard({ appData, t, tc, transportBusy = false }: SyncEncryptionCardProps) {
+export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = false }: SyncEncryptionCardProps) {
     const [state, setState] = useState<SyncEncryptionState | null>(null);
     const [stateUnavailable, setStateUnavailable] = useState(false);
     const [flow, setFlow] = useState<Flow>('none');
@@ -438,7 +439,7 @@ export function SyncEncryptionCard({ appData, t, tc, transportBusy = false }: Sy
             <SettingsGuideLink
                 title={t('settings.syncEncryptionGuideTitle')}
                 description={t('settings.syncEncryptionGuideDesc')}
-                url={SYNC_ENCRYPTION_GUIDE_URL}
+                url={getDocsGuideUrl('data-sync/', language, 'sync-encryption')}
                 testID="sync-encryption-guide-link"
             />
             <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>

@@ -89,3 +89,8 @@ export function useLanguage() {
     }
     return context;
 }
+
+/** Documentation links can safely use English in isolated renders without the provider. */
+export function useDocumentationLanguage(): Language {
+    return useContext(LanguageContext)?.language ?? 'en';
+}

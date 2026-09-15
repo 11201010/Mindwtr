@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
     EXTERNAL_CALENDAR_COLORS,
+    getDocsGuideUrl,
     generateUUID,
     hasExplicitExternalCalendarColor,
     normalizeExternalCalendarColor,
@@ -56,8 +57,6 @@ import { useSettingsLocalization, useSettingsScrollContent } from './settings.ho
 import { SettingsGuideLink, SettingsTopBar } from './settings.shell';
 import { styles } from './settings.styles';
 
-const CALENDAR_INTEGRATION_GUIDE_URL = 'https://docs.mindwtr.app/use/calendar-integration';
-
 type CollapsibleSettingHeaderProps = {
     title: string;
     description: string;
@@ -100,7 +99,7 @@ export function CalendarSettingsScreen() {
     const { themePreset } = useTheme();
     const filledButton = useFilledButtonColors();
     const { showToast } = useToast();
-    const { isChineseLanguage, tr, t } = useSettingsLocalization();
+    const { isChineseLanguage, language, tr, t } = useSettingsLocalization();
     const { settings, updateSettings } = useTaskStore((state) => ({
         settings: state.settings,
         updateSettings: state.updateSettings,
@@ -843,7 +842,7 @@ export function CalendarSettingsScreen() {
                 <SettingsGuideLink
                     title="Calendar setup guide"
                     description="Setup notes for device calendars, push-to-calendar, and ICS subscriptions."
-                    url={CALENDAR_INTEGRATION_GUIDE_URL}
+                    url={getDocsGuideUrl('use/calendar-integration', language)}
                     testID="calendar-guide-link"
                 />
 

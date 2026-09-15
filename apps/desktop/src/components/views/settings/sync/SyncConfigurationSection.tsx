@@ -1,4 +1,6 @@
 import { AlertCircle, CheckCircle2, ExternalLink, RefreshCw } from 'lucide-react';
+import { getDocsGuideUrl } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../../contexts/language-context';
 import { cn } from '../../../../lib/utils';
 import { Switch } from '../../../ui/Switch';
 import { SettingField, SettingRow } from '../SettingRow';
@@ -541,6 +543,7 @@ export function SyncConfigurationSection({
     webdavUrlError,
     webdavUsername,
 }: SyncConfigurationSectionProps) {
+    const language = useDocumentationLanguage();
     const isSelfHostedSelected = syncBackend === 'cloud' && cloudProvider === 'selfhosted';
     const isDropboxSelected = syncBackend === 'cloud' && cloudProvider === 'dropbox';
     const backendGroups: BackendButtonGroup[] = [
@@ -624,7 +627,7 @@ export function SyncConfigurationSection({
 
             <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <a
-                    href="https://docs.mindwtr.app/data-sync/"
+                    href={getDocsGuideUrl('data-sync/', language)}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

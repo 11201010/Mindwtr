@@ -4,6 +4,7 @@ import { HelpCircle, ExternalLink, X } from 'lucide-react-native';
 import { getOnboardingGuideUrl, ONBOARDING_TOPIC_COPY, type OnboardingTopic } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { dismissMobileHint, isMobileHintDismissed } from '@/lib/onboarding-hints';
+import { useLanguage } from '@/contexts/language-context';
 
 type Props = {
     topic: OnboardingTopic;
@@ -18,6 +19,7 @@ export function ContextualHelp({ topic, autoReveal = false, t, tc }: Props) {
 }
 
 function TopicHelp({ topic, autoReveal, t, tc }: Props) {
+    const { language } = useLanguage();
     const [expanded, setExpanded] = useState(false);
     const [error, setError] = useState(false);
     const interacted = React.useRef(false);
@@ -57,7 +59,7 @@ function TopicHelp({ topic, autoReveal, t, tc }: Props) {
                 <Pressable accessibilityRole="link"
                     onPress={() => {
                         setError(false);
-                        void Linking.openURL(getOnboardingGuideUrl(topic, 'mobile')).catch(() => setError(true));
+                        void Linking.openURL(getOnboardingGuideUrl(topic, 'mobile', language)).catch(() => setError(true));
                     }} style={[styles.control, styles.link]}>
                     <Text style={[styles.label, { color: tc.tint }]}>{t('onboarding.readGuide')}</Text>
                     <ExternalLink size={14} color={tc.tint} />

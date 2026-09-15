@@ -198,5 +198,6 @@ export * from './task-editor-layout';
 export * from './shared-api-write-limits';
 export * from './task-query';
 export * from './onboarding-guidance';
+export * from './docs-guidance';
 export { afterPaint } from './after-paint';
 export { isGettingStartedProject } from './getting-started-seed';

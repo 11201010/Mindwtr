@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import { HelpCircle, ExternalLink, X } from 'lucide-react';
 import { getOnboardingGuideUrl, ONBOARDING_TOPIC_COPY, type OnboardingTopic } from '@mindwtr/core';
 import { dismissDesktopOnboardingHint, isDesktopOnboardingHintDismissed } from '../lib/desktop-onboarding-events';
+import { useDocumentationLanguage } from '../contexts/language-context';
 
 type Props = { topic: OnboardingTopic; t: (key: string) => string; autoReveal?: boolean };
 
@@ -11,6 +12,7 @@ export function ContextualHelp({ topic, t, autoReveal = false }: Props) {
 }
 
 function TopicHelp({ topic, t, autoReveal }: Props) {
+    const language = useDocumentationLanguage();
     const [expanded, setExpanded] = useState(() => autoReveal && !isDesktopOnboardingHintDismissed(topic));
     const id = useId();
     const copy = ONBOARDING_TOPIC_COPY[topic];
@@ -34,7 +36,7 @@ function TopicHelp({ topic, t, autoReveal }: Props) {
             </div>
             {expanded && <div id={id} className="space-y-1 px-2 pb-2">
                 <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{t(copy.body)}</p>
-                <a href={getOnboardingGuideUrl(topic, 'desktop')} target="_blank" rel="noreferrer"
+                <a href={getOnboardingGuideUrl(topic, 'desktop', language)} target="_blank" rel="noreferrer"
                     className="inline-flex min-h-9 items-center gap-1 rounded text-sm text-primary underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                     {t('onboarding.readGuide')} <ExternalLink size={14} aria-hidden="true" />
                 </a>

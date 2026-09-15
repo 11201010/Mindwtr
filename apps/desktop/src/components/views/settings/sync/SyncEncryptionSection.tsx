@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Eye, EyeOff, Lock, ExternalLink } from 'lucide-react';
 
 import { SettingField } from '../SettingRow';
+import { getDocsGuideUrl } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../../contexts/language-context';
 import type { SettingsSyncPageProps } from './types';
 
 type SyncEncryptionSectionProps = Pick<SettingsSyncPageProps, 't' | 'encryption'>;
@@ -15,6 +17,7 @@ const PRIMARY_BUTTON_CLS = 'px-4 py-2 bg-primary text-primary-foreground rounded
 const SECONDARY_BUTTON_CLS = 'px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/90 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed';
 
 export function SyncEncryptionSection({ encryption, t }: SyncEncryptionSectionProps) {
+    const language = useDocumentationLanguage();
     const [flow, setFlow] = useState<Flow>('none');
     const [currentPassphrase, setCurrentPassphrase] = useState('');
     const [nextPassphrase, setNextPassphrase] = useState('');
@@ -184,7 +187,7 @@ export function SyncEncryptionSection({ encryption, t }: SyncEncryptionSectionPr
             </h2>
             <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <a
-                    href="https://docs.mindwtr.app/data-sync/#sync-encryption"
+                    href={getDocsGuideUrl('data-sync/', language, 'sync-encryption')}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

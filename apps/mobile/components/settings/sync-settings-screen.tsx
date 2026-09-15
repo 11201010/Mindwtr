@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Beaker } from 'lucide-react-native';
 
 import {
+    getDocsGuideUrl,
     isSettingsSyncGroupEnabled,
     listMergeConflictSamples,
     summarizeMergeStats,
@@ -66,9 +67,6 @@ import { MenuItem, SettingsGuideLink, SettingsTopBar } from './settings.shell';
 import { styles } from './settings.styles';
 import { reloadIntoMobileSandbox } from '@/lib/sandbox-workspace';
 import { requestMobileSandboxEntry } from './sandbox-entry-confirmation';
-
-const DATA_AND_SYNC_GUIDE_URL = 'https://docs.mindwtr.app/data-sync/';
-const IMPORT_GUIDE_URL = 'https://docs.mindwtr.app/import/';
 
 type VisibleSyncBackendOption = 'off' | 'file' | 'dropbox' | 'webdav' | 'selfhosted' | 'cloudkit';
 type VisibleSyncBackendGroup = {
@@ -772,7 +770,7 @@ function SyncSettingsView({
                         <SettingsGuideLink
                             title={t('settings.syncSetupGuideTitle')}
                             description={t('settings.syncSetupGuideDesc')}
-                            url={DATA_AND_SYNC_GUIDE_URL}
+                            url={getDocsGuideUrl('data-sync/', language)}
                             testID="sync-guide-link"
                         />
 
@@ -863,7 +861,7 @@ function SyncSettingsView({
                         )}
 
                         {isEncryptionCapableBackend && (
-                            <SyncEncryptionCard appData={encryptionAppData} t={t} tc={tc} transportBusy={isSyncing || isTestingConnection || dropboxBusy} />
+                            <SyncEncryptionCard appData={encryptionAppData} t={t} tc={tc} language={language} transportBusy={isSyncing || isTestingConnection || dropboxBusy} />
                         )}
 
                         <SyncPreferencesCard
@@ -914,7 +912,7 @@ function SyncSettingsView({
                                 <SettingsGuideLink
                                     title={t('settings.importSetupGuideTitle')}
                                     description={t('settings.importSetupGuideDesc')}
-                                    url={IMPORT_GUIDE_URL}
+                                    url={getDocsGuideUrl('import/', language)}
                                     style={{ marginBottom: 0 }}
                                     testID="import-guide-link"
                                 />

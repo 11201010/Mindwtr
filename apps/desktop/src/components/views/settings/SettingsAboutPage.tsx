@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { ExternalLink, MessageSquare, RefreshCw } from 'lucide-react';
+import { getDocsGuideUrl } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../contexts/language-context';
 
 import { cn } from '../../../lib/utils';
 import { SettingsFeedbackModal, type FeedbackSubmitInput } from './SettingsFeedbackModal';
@@ -88,6 +90,7 @@ export function SettingsAboutPage({
     feedbackConfigured,
     onSubmitFeedback,
 }: SettingsAboutPageProps) {
+    const language = useDocumentationLanguage();
     const [feedbackOpen, setFeedbackOpen] = useState(false);
     const actionLabel = updateActionLabel ?? t.checkForUpdates;
 
@@ -147,7 +150,7 @@ export function SettingsAboutPage({
                 <div data-settings-key="documentation" className="flex justify-between items-center">
                     <span className="text-muted-foreground">{t.documentation}</span>
                     <button
-                        onClick={() => onOpenLink('https://docs.mindwtr.app')}
+                        onClick={() => onOpenLink(getDocsGuideUrl('', language))}
                         className="text-primary hover:underline flex items-center gap-1"
                     >
                         docs.mindwtr.app

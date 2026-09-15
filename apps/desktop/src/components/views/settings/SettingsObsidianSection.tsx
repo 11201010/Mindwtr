@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { safeFormatDate } from '@mindwtr/core';
+import { getDocsGuideUrl, safeFormatDate } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../contexts/language-context';
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 
 import { Switch } from '../../ui/Switch';
 import { SettingField, SettingRow } from './SettingRow';
 import { listDetectedObsidianVaults, type DetectedObsidianVault } from '../../../lib/obsidian-service';
-
-const OBSIDIAN_INTEGRATION_GUIDE_URL = 'https://docs.mindwtr.app/power-users/obsidian';
 
 type Labels = {
     obsidianVault: string;
@@ -103,6 +102,7 @@ export function SettingsObsidianSection({
     onRemoveObsidian,
     onRescanObsidian,
 }: SettingsObsidianSectionProps) {
+    const language = useDocumentationLanguage();
     const [open, setOpen] = useState(false);
     const [detectedVaults, setDetectedVaults] = useState<DetectedObsidianVault[]>([]);
 
@@ -137,7 +137,7 @@ export function SettingsObsidianSection({
                         {open ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                     </button>
                     <a
-                        href={OBSIDIAN_INTEGRATION_GUIDE_URL}
+                        href={getDocsGuideUrl('power-users/obsidian', language)}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

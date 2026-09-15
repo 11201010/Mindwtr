@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { safeFormatDate } from '@mindwtr/core';
+import { getDocsGuideUrl, safeFormatDate } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../contexts/language-context';
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 
 import { Switch } from '../../ui/Switch';
@@ -16,8 +17,6 @@ import {
     type EmailCaptureStatus,
 } from '../../../lib/email-capture';
 import { useUiStore } from '../../../store/ui-store';
-
-const EMAIL_CAPTURE_GUIDE_URL = 'https://docs.mindwtr.app/power-users/email-capture';
 
 type Labels = {
     emailCapture: string;
@@ -47,6 +46,7 @@ type SettingsEmailCaptureSectionProps = {
 };
 
 export function SettingsEmailCaptureSection({ t, isTauri, showSaved }: SettingsEmailCaptureSectionProps) {
+    const language = useDocumentationLanguage();
     const showToast = useUiStore((state) => state.showToast);
     const [open, setOpen] = useState(false);
     const [enabled, setEnabled] = useState(false);
@@ -168,7 +168,7 @@ export function SettingsEmailCaptureSection({ t, isTauri, showSaved }: SettingsE
                         {open ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                     </button>
                     <a
-                        href={EMAIL_CAPTURE_GUIDE_URL}
+                        href={getDocsGuideUrl('power-users/email-capture', language)}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

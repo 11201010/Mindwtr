@@ -6,11 +6,11 @@ import {
     type ExternalCalendarSubscription,
 } from '@mindwtr/core';
 import { Ban, ExternalLink } from 'lucide-react';
+import { getDocsGuideUrl } from '@mindwtr/core';
+import { useDocumentationLanguage } from '../../../contexts/language-context';
 
 import { cn } from '../../../lib/utils';
 import { Switch } from '../../ui/Switch';
-
-const CALENDAR_INTEGRATION_GUIDE_URL = 'https://docs.mindwtr.app/use/calendar-integration';
 
 type Labels = {
     calendar: string;
@@ -95,6 +95,7 @@ export function SettingsCalendarPage({
     onRefreshCalendarPushTargets,
     maskCalendarUrl,
 }: SettingsCalendarPageProps) {
+    const language = useDocumentationLanguage();
     const permissionLabel = (() => {
         if (systemCalendarPermission === 'granted') return t.calendarSystemPermissionGranted;
         if (systemCalendarPermission === 'undetermined') return t.calendarSystemPermissionUndetermined;
@@ -181,7 +182,7 @@ export function SettingsCalendarPage({
                     <p className="text-xs text-muted-foreground">{t.calendarDesc}</p>
                 </div>
                 <a
-                    href={CALENDAR_INTEGRATION_GUIDE_URL}
+                    href={getDocsGuideUrl('use/calendar-integration', language)}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"

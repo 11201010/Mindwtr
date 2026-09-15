@@ -3,8 +3,10 @@ import renderer, { act } from 'react-test-renderer';
 import { Text, TextInput, TouchableOpacity } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncEncryptionRemoteVersionUnavailableError, type AppData } from '@mindwtr/core';
+import { SyncEncryptionRemoteVersionUnavailableError, type AppData, type Language } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
+import { SyncEncryptionCard } from './sync-settings-encryption-card';
+import { SettingsGuideLink } from './settings.shell';
 
 type EncryptionState = 'off' | 'enabled' | 'remote-encrypted-no-key' | 'remote-plaintext';
 type TransitionOptions = { appData?: unknown; onProgress?: (progress: unknown) => void };
@@ -61,8 +63,6 @@ vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({ t: (key: string) => key }),
 }));
 
-import { SyncEncryptionCard } from './sync-settings-encryption-card';
-
 const tc = {
   bg: '#0f172a',
   cardBg: '#111827',
@@ -92,10 +92,10 @@ const appData = {
   settings: {},
 } as unknown as AppData;
 
-const renderCard = async () => {
+const renderCard = async (language?: Language) => {
   let tree!: renderer.ReactTestRenderer;
   await act(async () => {
-    tree = renderer.create(<SyncEncryptionCard appData={appData} t={t} tc={tc} />);
+    tree = renderer.create(<SyncEncryptionCard appData={appData} t={t} tc={tc} language={language} />);
   });
   return tree;
 };
@@ -130,6 +130,15 @@ const inputLabels = (tree: renderer.ReactTestRenderer): string[] =>
   tree.root.findAllByType(TextInput).map((node) => node.props.accessibilityLabel as string);
 
 describe('SyncEncryptionCard', () => {
+  it('follows the current saved language and English fallback for the guide', async () => {
+    const tree = await renderCard('en');
+    const guideUrl = () => tree.root.findByType(SettingsGuideLink).props.url;
+    expect(guideUrl()).toBe('https://docs.mindwtr.app/data-sync/#sync-encryption');
+    await act(async () => tree.update(<SyncEncryptionCard appData={appData} t={t} tc={tc} language="zh" />));
+    expect(guideUrl()).toBe('https://docs.mindwtr.app/zh-Hans/data-sync/#%E5%90%8C%E6%AD%A5%E5%8A%A0%E5%AF%86');
+    await act(async () => tree.update(<SyncEncryptionCard appData={appData} t={t} tc={tc} language="uk" />));
+    expect(guideUrl()).toBe('https://docs.mindwtr.app/data-sync/#sync-encryption');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off' });
