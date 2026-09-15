@@ -8,7 +8,7 @@ Planned against `51ac48c2f`. The comprehensive batch fixes archive-section reten
 | --- | --- | --- | --- | --- | --- |
 | [085](085-bulk-date-accessible-names.md) | QUALITY-01: mobile bulk input accessible names | P2 | S | None | DONE |
 | [086](086-bulk-area-custom-order.md) | QUALITY-02: desktop bulk area custom order | P3 | S | None | DONE |
-| [087](087-archive-reactivation-validation.md) | PERF-01: remove per-task archived-section projections | P2 | M | None | TODO |
+| [087](087-archive-reactivation-validation.md) | PERF-01: remove per-task archived-section projections | P2 | M | None | DONE |
 
 Plans 085/086 can execute independently from 087. Plan087 is the sole Strong architecture candidate: deepen existing container validation with scoped restoration eligibility, remove repeated projected arrays, preserve the later durable transition. No new generic cache or schema is selected.
 

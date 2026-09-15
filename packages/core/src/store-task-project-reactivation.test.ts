@@ -8,7 +8,7 @@ import {
 import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { StorageAdapter } from './storage';
-import type { AppData, Project, Section, Task } from './types';
+import type { AppData, Area, Project, Section, Task } from './types';
 
 const CREATED_AT = '2026-09-08T08:00:00.000Z';
 const ARCHIVED_AT = '2026-09-08T09:00:00.000Z';
@@ -312,6 +312,193 @@ describe('task-driven project reactivation persistence', () => {
         vi.restoreAllMocks();
     });
 
+    it('reopens archived sections across parents without traversing every section for each task', async () => {
+        const parentIds = ['project-1', 'project-2'];
+        const projects = parentIds.map((id) => project({
+            id, status: 'archived', updatedAt: ARCHIVED_AT, rev: 2,
+        }));
+        const sections = parentIds.flatMap((projectId) => Array.from({ length: 8 }, (_, index) => section({
+            id: `${projectId}-section-${index}`,
+            projectId,
+            deletedAt: ARCHIVED_AT,
+            projectArchivedAt: ARCHIVED_AT,
+            updatedAt: ARCHIVED_AT,
+            rev: 2,
+        })));
+        const tasks = Array.from({ length: 12 }, (_, index) => {
+            const projectId = parentIds[index % parentIds.length];
+            return task(`reopen-${index}`, {
+                status: 'done',
+                completedAt: ARCHIVED_AT,
+                statusBeforeProjectArchive: 'next',
+                projectArchivedAt: ARCHIVED_AT,
+                projectId,
+                sectionId: `${projectId}-section-${index % 8}`,
+                updatedAt: ARCHIVED_AT,
+                rev: 2,
+            });
+        });
+        const initial: AppData = {
+            tasks, projects, sections, areas: [], people: [], settings: { deviceId: 'device-a' },
+        };
+        let saved: AppData | undefined;
+        setStorageAdapter({
+            getData: async () => cloneData(initial),
+            saveData: async (snapshot) => { saved = cloneData(snapshot); },
+        });
+        resetStore(initial);
+
+        let sectionMapVisits = 0;
+        Object.defineProperty(sections, 'map', { value: function (this: Section[], callback: Parameters<Section[]['map']>[0]) {
+            return Array.prototype.map.call(this, (value: Section, index: number, array: Section[]) => {
+                sectionMapVisits += 1;
+                return callback(value, index, array);
+            });
+        } });
+
+        const result = await useTaskStore.getState().batchMoveTasks(tasks.map(({ id }) => id), 'next');
+        await flushPendingSave();
+
+        expect(result).toEqual({ success: true });
+        expect(useTaskStore.getState()._allTasks.map(({ status, projectId, sectionId }) => ({ status, projectId, sectionId })))
+            .toEqual(tasks.map(({ projectId, sectionId }) => ({ status: 'next', projectId, sectionId })));
+        expect(useTaskStore.getState()._allProjects.map(({ status }) => status)).toEqual(['active', 'active']);
+        expect(useTaskStore.getState()._allSections.every(({ deletedAt }) => !deletedAt)).toBe(true);
+        expect(saved?.tasks.map(({ status }) => status)).toEqual(Array(12).fill('next'));
+        expect(saved?.projects.map(({ status }) => status)).toEqual(['active', 'active']);
+        expect(saved?.sections.every(({ deletedAt }) => !deletedAt)).toBe(true);
+        // A few batch-wide maps are expected; task preparation must not project
+        // the full original collection once per selected task.
+        expect(sectionMapVisits).toBeLessThanOrEqual(sections.length * 4);
+    });
+
+    it('uses the final archived project for explicit section moves and leaves an area move outside reactivation', async () => {
+        const area: Area = {
+            id: 'area-1', name: 'Direct area', order: 0,
+            createdAt: CREATED_AT, updatedAt: CREATED_AT,
+        };
+        const archivedSection = (id: string, projectId: string) => section({
+            id, projectId, deletedAt: ARCHIVED_AT, projectArchivedAt: ARCHIVED_AT,
+            updatedAt: ARCHIVED_AT, rev: 2,
+        });
+        const initial: AppData = {
+            tasks: [
+                task('different-parent', { status: 'done', completedAt: ARCHIVED_AT,
+                    projectArchivedAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, rev: 2 }),
+                task('same-parent', { status: 'done', completedAt: ARCHIVED_AT,
+                    projectId: 'project-2', sectionId: 'section-2',
+                    projectArchivedAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, rev: 2 }),
+                task('direct-area', { status: 'done', completedAt: ARCHIVED_AT,
+                    projectArchivedAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, rev: 2 }),
+            ],
+            projects: [
+                project({ status: 'archived', updatedAt: ARCHIVED_AT, rev: 2 }),
+                project({ id: 'project-2', status: 'archived', updatedAt: ARCHIVED_AT, rev: 2 }),
+            ],
+            sections: [
+                archivedSection('section-1', 'project-1'),
+                archivedSection('section-2', 'project-2'),
+                archivedSection('section-3', 'project-2'),
+            ],
+            areas: [area], people: [], settings: { deviceId: 'device-a' },
+        };
+        let saved: AppData | undefined;
+        setStorageAdapter({ getData: async () => cloneData(initial),
+            saveData: async (snapshot) => { saved = cloneData(snapshot); } });
+        resetStore(initial);
+
+        const result = await useTaskStore.getState().batchUpdateTasks([
+            { id: 'different-parent', updates: { status: 'next', projectId: 'project-2', sectionId: 'section-2' } },
+            { id: 'same-parent', updates: { status: 'waiting', sectionId: 'section-3' } },
+            { id: 'direct-area', updates: { status: 'next', projectId: undefined, sectionId: undefined, areaId: 'area-1' } },
+        ]);
+        await flushPendingSave();
+
+        expect(result).toEqual({ success: true });
+        expect(saved?.projects.map(({ status }) => status)).toEqual(['archived', 'active']);
+        expect(saved?.sections.map(({ deletedAt }) => Boolean(deletedAt))).toEqual([true, false, false]);
+        expect(saved?.tasks.map(({ status, projectId, sectionId, areaId }) => ({ status, projectId, sectionId, areaId })))
+            .toEqual([
+                { status: 'next', projectId: 'project-2', sectionId: 'section-2', areaId: undefined },
+                { status: 'waiting', projectId: 'project-2', sectionId: 'section-3', areaId: undefined },
+                { status: 'next', projectId: undefined, sectionId: undefined, areaId: 'area-1' },
+            ]);
+    });
+
+    it('does not make an archived section assignable to a newly created task', async () => {
+        const initial: AppData = {
+            tasks: [],
+            projects: [project({ status: 'archived', updatedAt: ARCHIVED_AT, rev: 2 })],
+            sections: [section({ deletedAt: ARCHIVED_AT, projectArchivedAt: ARCHIVED_AT,
+                updatedAt: ARCHIVED_AT, rev: 2 })],
+            areas: [], people: [], settings: { deviceId: 'device-a' },
+        };
+        const saveData = vi.fn(async () => undefined);
+        setStorageAdapter({ getData: async () => cloneData(initial), saveData });
+        resetStore(initial);
+
+        expect(await useTaskStore.getState().addTask('New task', {
+            projectId: 'project-1', sectionId: 'section-1',
+        })).toEqual({ success: false, error: 'Section not found' });
+        expect(saveData).not.toHaveBeenCalled();
+        expect(useTaskStore.getState()._allTasks).toEqual([]);
+        expect(useTaskStore.getState()._allProjects).toEqual(initial.projects);
+        expect(useTaskStore.getState()._allSections).toEqual(initial.sections);
+    });
+
+    it.each([
+        ['previously deleted', { deletedAtBeforeProjectArchive: CREATED_AT }, {}, {}, 'Section not found'],
+        ['edited after archive', { updatedAt: REOPENED_AT }, {}, {}, 'Section not found'],
+        ['independently deleted', { deletedAt: REOPENED_AT }, {}, {}, 'Section not found'],
+        ['another parent', { projectId: 'project-1' }, {}, {}, 'Section not found'],
+        ['deleted parent', {}, { deletedAt: REOPENED_AT }, {}, 'Project not found'],
+        ['purged parent', {}, { purgedAt: REOPENED_AT }, {}, 'Section not found'],
+        ['deleted task', {}, {}, { deletedAt: REOPENED_AT }, 'Section not found'],
+        ['purged task', {}, {}, { purgedAt: REOPENED_AT }, 'Section not found'],
+        ['edit without actionable status', {}, {}, {}, 'Section not found', { description: 'Edited note' }],
+    ] as Array<[string, Partial<Section>, Partial<Project>, Partial<Task>, string, Partial<Task>?]>)(
+        'rejects a mixed batch with a %s and saves no partial reactivation',
+        async (_reason, sectionOverrides, parentOverrides, taskOverrides, error, invalidUpdates) => {
+            const archivedSection = (id: string, projectId: string, overrides: Partial<Section> = {}) => section({
+                id, projectId, deletedAt: ARCHIVED_AT, projectArchivedAt: ARCHIVED_AT,
+                updatedAt: ARCHIVED_AT, rev: 2, ...overrides,
+            });
+            const initial: AppData = {
+                tasks: [
+                    task('valid', { status: 'done', completedAt: ARCHIVED_AT,
+                        projectArchivedAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, rev: 2 }),
+                    task('invalid', { status: 'done', completedAt: ARCHIVED_AT,
+                        projectId: 'project-2', sectionId: 'section-2',
+                        projectArchivedAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, rev: 2,
+                        ...taskOverrides }),
+                ],
+                projects: [
+                    project({ status: 'archived', updatedAt: ARCHIVED_AT, rev: 2 }),
+                    project({ id: 'project-2', status: 'archived', updatedAt: ARCHIVED_AT, rev: 2,
+                        ...parentOverrides }),
+                ],
+                sections: [
+                    archivedSection('section-1', 'project-1'),
+                    archivedSection('section-2', 'project-2', sectionOverrides),
+                ],
+                areas: [], people: [], settings: { deviceId: 'device-a' },
+            };
+            const saveData = vi.fn(async () => undefined);
+            setStorageAdapter({ getData: async () => cloneData(initial), saveData });
+            resetStore(initial);
+
+            const result = await useTaskStore.getState().batchUpdateTasks([
+                { id: 'valid', updates: { status: 'next' } },
+                { id: 'invalid', updates: invalidUpdates ?? { status: 'next' } },
+            ]);
+            expect(result).toEqual({ success: false, error });
+            expect(saveData).not.toHaveBeenCalled();
+            expect(useTaskStore.getState()._allTasks).toEqual(initial.tasks);
+            expect(useTaskStore.getState()._allProjects).toEqual(initial.projects);
+            expect(useTaskStore.getState()._allSections).toEqual(initial.sections);
+        },
+    );
+
     it('persists the reopened task, parent, and archive-owned section after the archive save already flushed', async () => {
         // Keep the recurring fixture before its due date: otherwise normal
         // load-time promotion changes Someday to Next as the real date advances.
@@ -434,6 +621,8 @@ describe('task-driven project reactivation persistence', () => {
     });
 
     it('batch-reactivates every final parent and waits for the multi-entity snapshot to persist', async () => {
+        const logs: LogPayload[] = [];
+        setLogger((payload) => logs.push(payload));
         let persisted: AppData = {
             tasks: [
                 task('task-1', {
@@ -510,6 +699,7 @@ describe('task-driven project reactivation persistence', () => {
         });
         await vi.waitFor(() => expect(storage.saveData).toHaveBeenCalledTimes(1));
         expect(settled).toBe(false);
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.1/archive-reactivation-validation')).toEqual([]);
         releaseSave?.();
 
         await expect(resultPromise).resolves.toEqual({ success: true });
@@ -518,6 +708,8 @@ describe('task-driven project reactivation persistence', () => {
         expect(persisted.projects[1]?.cancelledAt).toBeUndefined();
         expect(persisted.sections.every((item) => !item.deletedAt)).toBe(true);
         expect(persisted.tasks.map((item) => item.status)).toEqual(['inbox', 'someday']);
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.1/archive-reactivation-validation'))
+            .toEqual([expect.objectContaining({ context: expect.objectContaining({ outcome: 'reactivated', count: 2 }) })]);
     });
 
     it('retries an unrelated failed snapshot without emitting a project-reactivation proof', async () => {
@@ -562,6 +754,7 @@ describe('task-driven project reactivation persistence', () => {
         expect(persisted.settings.theme).toBe('dark');
         expect(useTaskStore.getState()._tasksById.get('selected')).toEqual(taskBeforeRetry);
         expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.0/reopen-project-task')).toEqual([]);
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.1/archive-reactivation-validation')).toEqual([]);
     });
 
     it('returns a failed durable save and retries the unchanged optimistic state without revision churn', async () => {
@@ -611,6 +804,7 @@ describe('task-driven project reactivation persistence', () => {
         expect(useTaskStore.getState().persistenceFailure?.message).toContain('disk unavailable');
         expect(persisted).toEqual(initial);
         expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.0/reopen-project-task')).toEqual([]);
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.1/archive-reactivation-validation')).toEqual([]);
 
         const optimisticTask = cloneValue(useTaskStore.getState()._tasksById.get('selected')!);
         const optimisticProject = cloneValue(useTaskStore.getState()._projectsById.get('project-1')!);
@@ -628,5 +822,6 @@ describe('task-driven project reactivation persistence', () => {
         expect(persisted.projects[0]).toEqual(optimisticProject);
         expect(persisted.sections[0]).toEqual(optimisticSection);
         expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.0/reopen-project-task')).toEqual([]);
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.1/archive-reactivation-validation')).toEqual([]);
     }, 15_000);
 });

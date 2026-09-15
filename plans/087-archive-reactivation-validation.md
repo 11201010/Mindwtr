@@ -1,6 +1,6 @@
 # Plan 087: Validate archived task containers without copying all sections
 
-Status: TODO. Priority P2. Effort M. Risk MED. Confidence HIGH. Category performance/architecture. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected as Strong by the review-improve loop.
+Status: DONE. Priority P2. Effort M. Risk MED. Confidence HIGH. Category performance/architecture. No dependencies. Planned at `51ac48c2f` on 2026-09-15; automatically selected as Strong by the review-improve loop.
 
 ## Evidence and intent
 
@@ -49,3 +49,7 @@ Use `/home/dd/worktrees/Mindwtr/review-20260915-reactivation`; all dependencies/
 ## Stop and maintenance
 
 Report if behavior equivalence requires widening creation/import eligibility, changing persistence ownership, introducing a cycle/global cache, or touching unrelated modules. Future section lifecycle changes must keep validation eligibility aligned with actual strict restoration, and new batch operations must not rebuild whole-container collections once per item.
+
+## Completion
+
+Implemented candidate-scoped section eligibility and removed full-section projections. Focused core/SQLite tests: 251 passed; diagnostic field tests: 2 passed. Typecheck/lint passed with existing warnings only. Deterministic 1k/10k/50k production probes now match active fixtures at three original-section maps. See `docs/performance/archive-reactivation-2026-09-15.md`; aggregate gates and independent closure are recorded by the review loop.

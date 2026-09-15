@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
     // shortcut-failure-privacy reuses releaseCheck and stage below.
     // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
     'method',

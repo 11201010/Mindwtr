@@ -259,6 +259,29 @@ function createLargeStoreFixture(taskCount: LargeStoreSize): LargeStoreFixture {
     };
 }
 
+function createArchivedBatchFixture(taskCount: LargeStoreSize): LargeStoreFixture {
+    const fixture = createLargeStoreFixture(taskCount);
+    const archivedAt = '2026-06-07T09:00:00.000Z';
+    const projects = fixture.projects.map((project) => ({
+        ...project, status: 'archived' as const, updatedAt: archivedAt,
+    }));
+    const sections = fixture.sections.map((section) => ({
+        ...section, deletedAt: archivedAt, projectArchivedAt: archivedAt,
+        deletedAtBeforeProjectArchive: undefined, updatedAt: archivedAt,
+    }));
+    const tasks = fixture.tasks.map((task) => ({
+        ...task, status: 'archived' as const, completedAt: undefined,
+        cancelledAt: archivedAt, statusBeforeProjectArchive: 'next' as const,
+        projectArchivedAt: archivedAt, deletedAt: undefined, purgedAt: undefined,
+        isFocusedToday: false, updatedAt: archivedAt,
+    }));
+    return {
+        ...fixture, tasks, projects, sections,
+        tasksById: buildEntityMap(tasks),
+        data: { ...fixture.data, tasks, projects, sections },
+    };
+}
+
 function measureBest(operation: () => number, attempts = 3): { durationMs: number; value: number } {
     let bestDurationMs = Number.POSITIVE_INFINITY;
     let bestValue = 0;
@@ -604,6 +627,71 @@ describePerf('large-store performance budgets', () => {
             growth,
             `Production batch mutation grew ${growth.toFixed(2)}x from 10k to 50k tasks; max allowed is ${BATCH_MUTATION_MAX_GROWTH_FROM_10K_TO_50K}x`,
         ).toBeLessThanOrEqual(BATCH_MUTATION_MAX_GROWTH_FROM_10K_TO_50K);
+    }, 180_000);
+
+    it('reopens archived-parent selections through the production batch action within existing budgets', async () => {
+        const measurements = new Map<LargeStoreSize, number>();
+
+        for (const size of DATASET_SIZES) {
+            const fixture = createArchivedBatchFixture(size);
+            const ids = fixture.tasks.map(({ id }) => id);
+            const originalSectionIds = fixture.tasks.map(({ sectionId }) => sectionId);
+            let bestDurationMs = Number.POSITIVE_INFINITY;
+
+            for (let attempt = 0; attempt < BATCH_MUTATION_ATTEMPTS; attempt += 1) {
+                let saved: AppData | undefined;
+                resetForTests();
+                setStorageAdapter({
+                    getData: async () => fixture.data,
+                    saveData: async (snapshot) => { saved = snapshot; },
+                });
+                useTaskStore.setState({
+                    tasks: fixture.tasks, projects: fixture.projects,
+                    sections: fixture.sections, areas: fixture.areas, people: [],
+                    settings: fixture.data.settings,
+                    isLoading: false, error: null, persistenceFailure: null,
+                    _allTasks: fixture.tasks, _allProjects: fixture.projects,
+                    _allSections: fixture.sections, _allAreas: fixture.areas,
+                    _allPeople: [], _tasksById: buildEntityMap(fixture.tasks),
+                    _projectsById: buildEntityMap(fixture.projects),
+                    _sectionsById: buildEntityMap(fixture.sections),
+                    _areasById: buildEntityMap(fixture.areas), _peopleById: new Map(),
+                });
+
+                try {
+                    const startedAt = performance.now();
+                    const result = await useTaskStore.getState().batchMoveTasks(ids, 'next');
+                    const durationMs = performance.now() - startedAt;
+                    await flushPendingSave();
+
+                    expect(result).toEqual({ success: true });
+                    const final = useTaskStore.getState();
+                    expect(final._allTasks).toHaveLength(size);
+                    expect(final._allTasks.every(({ status }) => status === 'next')).toBe(true);
+                    expect(final._allTasks.map(({ sectionId }) => sectionId)).toEqual(originalSectionIds);
+                    expect(final._allProjects.every(({ status }) => status === 'active')).toBe(true);
+                    expect(final._allSections.every(({ deletedAt }) => !deletedAt)).toBe(true);
+                    expect(saved?.tasks).toHaveLength(size);
+                    expect(saved?.sections.every(({ deletedAt }) => !deletedAt)).toBe(true);
+                    bestDurationMs = Math.min(bestDurationMs, durationMs);
+                } finally {
+                    await flushPendingSave();
+                    resetForTests();
+                }
+            }
+
+            expectWithinBudget('Production archived-parent batch reopen', size,
+                bestDurationMs, BATCH_MUTATION_BUDGETS_MS[size]);
+            measurements.set(size, bestDurationMs);
+        }
+
+        const tenKDuration = measurements.get(10_000);
+        const fiftyKDuration = measurements.get(50_000);
+        if (tenKDuration === undefined || fiftyKDuration === undefined) {
+            throw new Error('Missing archived-parent batch mutation measurements');
+        }
+        const growth = fiftyKDuration / Math.max(tenKDuration, GROWTH_BASELINE_FLOOR_MS);
+        expect(growth).toBeLessThanOrEqual(BATCH_MUTATION_MAX_GROWTH_FROM_10K_TO_50K);
     }, 180_000);
 
     it('persists one task through the production incremental path within absolute and growth budgets', async () => {

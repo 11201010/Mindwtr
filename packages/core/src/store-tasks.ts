@@ -251,6 +251,15 @@ const logTaskProjectReactivationSaved = (count: number): void => {
             count,
         },
     });
+    logInfo('Archived task container validation saved', {
+        scope: 'store',
+        category: 'storage',
+        context: {
+            releaseCheck: 'v1.3.1/archive-reactivation-validation',
+            outcome: 'reactivated',
+            count,
+        },
+    });
 };
 
 // `tasks` and `_tasksById` are derived from `_allTasks` by
@@ -375,19 +384,16 @@ const prepareTaskUpdatesForStore = ({
     projectOrderReserver?: ProjectOrderReserver;
 }): { ok: true; updates: Partial<Task> } | { ok: false; error: string } => {
     const projectReactivationTarget = findTaskProjectReactivationTarget(task, updates, allProjects);
-    const containerValidationSections = projectReactivationTarget
-        ? allSections.map((section) => (
-            section.projectId === projectReactivationTarget.id && isRestorableProjectArchiveSection(section)
-                ? { ...section, deletedAt: undefined }
-                : section
-        ))
-        : allSections;
     const containerPatch = buildTaskContainerMovePatch({
         task,
         updates,
         allProjects,
-        allSections: containerValidationSections,
+        allSections,
         allAreas,
+        isReactivatingProjectSection: projectReactivationTarget
+            ? (section) => section.projectId === projectReactivationTarget.id
+                && isRestorableProjectArchiveSection(section)
+            : undefined,
         reserveProjectOrder,
         projectOrderReserver,
     });

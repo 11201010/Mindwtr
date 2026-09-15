@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     buildTaskContainerMovePatch,
@@ -108,6 +108,31 @@ describe('resolveTaskContainerAssignment', () => {
             allSections: [],
             allAreas: [makeArea({ deletedAt: now })],
         })).toEqual({ ok: false, error: 'Area not found' });
+    });
+
+    it('keeps archived sections unavailable to ordinary container assignment', () => {
+        expect(resolveTaskContainerAssignment({
+            projectId: 'project-1', sectionId: 'section-1', areaId: undefined,
+            allProjects: [makeProject({ status: 'archived' })],
+            allSections: [makeSection({ deletedAt: now, projectArchivedAt: now, updatedAt: now })],
+            allAreas: [],
+        })).toEqual({ ok: false, error: 'Section not found' });
+    });
+
+    it('asks section-reactivation permission only for a deleted matching candidate', () => {
+        const permission = vi.fn(() => true);
+        const result = resolveTaskContainerAssignment({
+            projectId: 'project-1', sectionId: 'section-1', areaId: undefined,
+            allProjects: [makeProject({ status: 'archived' })],
+            allSections: [
+                makeSection({ id: 'unrelated', deletedAt: now }),
+                makeSection({ id: 'section-1', deletedAt: now }),
+            ],
+            allAreas: [], isReactivatingProjectSection: permission,
+        });
+        expect(result).toEqual({ ok: true, projectId: 'project-1', sectionId: 'section-1', areaId: undefined });
+        expect(permission).toHaveBeenCalledTimes(1);
+        expect(permission).toHaveBeenCalledWith(expect.objectContaining({ id: 'section-1' }));
     });
 });
 

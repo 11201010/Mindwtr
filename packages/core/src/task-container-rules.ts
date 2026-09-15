@@ -1,4 +1,4 @@
-import type { AppData, Task } from './types';
+import type { AppData, Section, Task } from './types';
 
 export type TaskContainerAssignment = {
     projectId?: string;
@@ -89,6 +89,7 @@ export const resolveTaskContainerAssignment = ({
     allProjects,
     allSections,
     allAreas,
+    isReactivatingProjectSection,
 }: {
     projectId: unknown;
     sectionId: unknown;
@@ -96,6 +97,8 @@ export const resolveTaskContainerAssignment = ({
     allProjects: AppData['projects'];
     allSections: AppData['sections'];
     allAreas: AppData['areas'];
+    /** Task-scoped preview for a section owned by the selected archived parent. */
+    isReactivatingProjectSection?: (section: Readonly<Section>) => boolean;
 }): TaskContainerResolution => {
     const projectValidation = validateExistingTaskProjectId(projectId, allProjects);
     if (!projectValidation.ok) return projectValidation;
@@ -103,7 +106,10 @@ export const resolveTaskContainerAssignment = ({
     const resolvedProjectId = projectValidation.projectId;
     const resolvedSectionId = normalizeOptionalContainerId(sectionId);
     if (resolvedSectionId) {
-        const section = allSections.find((candidate) => candidate.id === resolvedSectionId && !candidate.deletedAt);
+        const section = allSections.find((candidate) => (
+            candidate.id === resolvedSectionId
+            && (!candidate.deletedAt || isReactivatingProjectSection?.(candidate))
+        ));
         if (!section) {
             return { ok: false, error: 'Section not found' };
         }
@@ -185,6 +191,7 @@ export const buildTaskContainerMovePatch = ({
     allProjects,
     allSections,
     allAreas,
+    isReactivatingProjectSection,
     reserveProjectOrder = true,
     projectOrderReserver,
 }: {
@@ -193,6 +200,8 @@ export const buildTaskContainerMovePatch = ({
     allProjects: AppData['projects'];
     allSections: AppData['sections'];
     allAreas: AppData['areas'];
+    /** Task-scoped preview for a section owned by the selected archived parent. */
+    isReactivatingProjectSection?: (section: Readonly<Section>) => boolean;
     reserveProjectOrder?: boolean;
     projectOrderReserver?: TaskContainerOrderReserver;
 }): { ok: true; updates: TaskContainerMovePatch } | { ok: false; error: string } => {
@@ -218,6 +227,7 @@ export const buildTaskContainerMovePatch = ({
         allProjects,
         allSections,
         allAreas,
+        isReactivatingProjectSection,
     });
     if (!containerResolution.ok) return containerResolution;
 

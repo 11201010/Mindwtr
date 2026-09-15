@@ -1,5 +1,7 @@
 # Performance and stability handoff
 
+September 15 shared-core update: [archive reactivation candidate validation](archive-reactivation-2026-09-15.md) removes repeated full-section projections. This is synthetic core work-count evidence; native desktop and mobile latency remain unmeasured for this change.
+
 Updated September 13, 2026. Engineering handoff for future desktop and mobile
 sessions, not a claim that the performance audit is complete.
 
