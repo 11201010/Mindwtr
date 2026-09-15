@@ -1,5 +1,6 @@
 import { requireOptionalNativeModule, type NativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
+import { generateUUID } from '@mindwtr/core';
 
 export type AppleTaskSearchAvailability = {
   supported: boolean;
@@ -13,8 +14,8 @@ export type AppleTaskSearchNativeMatch = {
 
 interface MindwtrAppleTaskSearchNativeModule extends NativeModule {
   availability?: () => Promise<AppleTaskSearchAvailability>;
-  search?: (query: string) => Promise<AppleTaskSearchNativeMatch[]>;
-  cancel?: () => Promise<void>;
+  search?: (requestId: string, query: string) => Promise<AppleTaskSearchNativeMatch[]>;
+  cancel?: (requestId: string) => Promise<void>;
 }
 
 const nativeModule = Platform.OS === 'ios'
@@ -22,6 +23,7 @@ const nativeModule = Platform.OS === 'ios'
   : null;
 
 const isDevelopmentBuild = (): boolean => typeof __DEV__ !== 'undefined' && __DEV__ === true;
+let currentRequestId: string | null = null;
 
 export async function getAppleTaskSearchAvailability(): Promise<AppleTaskSearchAvailability> {
   if (!isDevelopmentBuild()) return { supported: false, reason: 'development_only' };
@@ -45,8 +47,9 @@ function abortError(): Error {
 }
 
 export async function cancelAppleTaskSearch(): Promise<void> {
-  if (!nativeModule?.cancel) return;
-  await nativeModule.cancel();
+  const requestId = currentRequestId;
+  if (!requestId || !nativeModule?.cancel) return;
+  await nativeModule.cancel(requestId);
 }
 
 export async function searchAppleTasksNative(
@@ -63,12 +66,14 @@ export async function searchAppleTasksNative(
   if (query.length > 500) throw new Error('Task search queries must be 500 characters or fewer.');
   if (options?.signal?.aborted) throw abortError();
 
+  const requestId = generateUUID();
+  currentRequestId = requestId;
   const cancelOnAbort = () => {
-    void cancelAppleTaskSearch().catch(() => undefined);
+    void nativeModule.cancel?.(requestId).catch(() => undefined);
   };
   options?.signal?.addEventListener('abort', cancelOnAbort, { once: true });
   try {
-    const matches = await nativeModule.search(query);
+    const matches = await nativeModule.search(requestId, query);
     if (options?.signal?.aborted) throw abortError();
     const seenTaskIds = new Set<string>();
     const sanitizedMatches: AppleTaskSearchNativeMatch[] = [];
@@ -82,7 +87,11 @@ export async function searchAppleTasksNative(
       if (sanitizedMatches.length >= 50) break;
     }
     return sanitizedMatches;
+  } catch (error) {
+    if (options?.signal?.aborted) throw abortError();
+    throw error;
   } finally {
     options?.signal?.removeEventListener('abort', cancelOnAbort);
+    if (currentRequestId === requestId) currentRequestId = null;
   }
 }

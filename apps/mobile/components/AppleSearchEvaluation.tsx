@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { shallow, useTaskStore } from '@mindwtr/core';
 
@@ -6,12 +6,14 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import {
   DEFAULT_APPLE_SEARCH_FILTERS,
   runAppleSearchEvaluation,
+  revalidateAppleSearchMatches,
   type AppleSearchFilters,
 } from '@/lib/apple-search-evaluation';
 import {
   cancelAppleTaskSearch,
   getAppleTaskSearchAvailability,
   type AppleTaskSearchAvailability,
+  type AppleTaskSearchNativeMatch,
 } from '@/modules/apple-task-search';
 
 export type AppleSearchEvaluationProps = {
@@ -34,11 +36,32 @@ export function AppleSearchEvaluation({
   }), shallow);
   const [availability, setAvailability] = useState<AppleTaskSearchAvailability | null>(null);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<typeof tasks>([]);
-  const [droppedCount, setDroppedCount] = useState(0);
+  const [candidates, setCandidates] = useState<{
+    query: string;
+    nativeMatches: AppleTaskSearchNativeMatch[];
+  } | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeController = useRef<AbortController | null>(null);
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+
+  const evaluation = useMemo(() => (
+    candidates
+      ? revalidateAppleSearchMatches({
+          query: candidates.query,
+          nativeMatches: candidates.nativeMatches,
+          tasks,
+          projects,
+          areas,
+          filters,
+        })
+      : null
+  ), [areas, candidates, filters, projects, tasks]);
+  const results = evaluation?.tasks ?? [];
+  const droppedCount = evaluation
+    ? evaluation.unavailableTaskIds.length + evaluation.filteredTaskIds.length
+    : 0;
 
   useEffect(() => {
     let active = true;
@@ -60,20 +83,23 @@ export function AppleSearchEvaluation({
     activeController.current = controller;
     setRunning(true);
     setError(null);
-    setResults([]);
-    setDroppedCount(0);
+    setCandidates(null);
     try {
-      const evaluation = await runAppleSearchEvaluation({
+      const runResult = await runAppleSearchEvaluation({
         query: trimmed,
-        tasks,
-        projects,
-        areas,
-        filters,
+        getCurrentState: () => {
+          const state = useTaskStore.getState();
+          return {
+            tasks: state._allTasks,
+            projects: state._allProjects,
+            areas: state._allAreas,
+            filters: filtersRef.current,
+          };
+        },
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      setResults(evaluation.tasks);
-      setDroppedCount(evaluation.unavailableTaskIds.length + evaluation.filteredTaskIds.length);
+      setCandidates({ query: trimmed, nativeMatches: runResult.nativeMatches });
     } catch (searchError) {
       if (searchError instanceof Error && searchError.name === 'AbortError') return;
       setError(searchError instanceof Error ? searchError.message : 'Search failed.');
@@ -87,6 +113,20 @@ export function AppleSearchEvaluation({
 
   const cancelSearch = () => {
     activeController.current?.abort();
+  };
+
+  const openRevalidatedTask = (taskId: string) => {
+    if (!candidates) return;
+    const state = useTaskStore.getState();
+    const latest = revalidateAppleSearchMatches({
+      query: candidates.query,
+      nativeMatches: candidates.nativeMatches,
+      tasks: state._allTasks,
+      projects: state._allProjects,
+      areas: state._allAreas,
+      filters: filtersRef.current,
+    });
+    if (latest.tasks.some((task) => task.id === taskId)) onOpenTask(taskId);
   };
 
   if (!__DEV__) return null;
@@ -133,7 +173,7 @@ export function AppleSearchEvaluation({
           <Pressable
             accessibilityRole="button"
             key={task.id}
-            onPress={() => onOpenTask(task.id)}
+            onPress={() => openRevalidatedTask(task.id)}
             style={({ pressed }) => [styles.result, { borderColor: tc.border, opacity: pressed ? 0.7 : 1 }]}
           >
             <Text numberOfLines={2} style={[styles.resultTitle, { color: tc.text }]}>{task.title}</Text>

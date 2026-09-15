@@ -271,6 +271,7 @@ export interface ShortcutsSnapshotProjectGroup {
     id: string;
     name: string;
     items: ShortcutsSnapshotTaskItem[];
+    coverage: { eligible: number; published: number; omitted: number };
 }
 
 export interface ShortcutsSnapshot {
@@ -794,10 +795,11 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
     const projectGroups: ShortcutsSnapshotProjectGroup[] = eligibleProjects
         .slice(0, SHORTCUTS_SNAPSHOT_PROJECT_CAP)
         .map((project) => {
-            const projectTasks = sortTasksBy(
+            const eligibleProjectTasks = sortTasksBy(
                 tasksByProjectId.get(project.id) ?? [],
                 widgetSort,
-            ).slice(0, SHORTCUTS_SNAPSHOT_ITEM_CAP);
+            );
+            const projectTasks = eligibleProjectTasks.slice(0, SHORTCUTS_SNAPSHOT_ITEM_CAP);
             return {
                 id: project.id,
                 name: project.title,
@@ -805,6 +807,11 @@ export function buildShortcutsSnapshot(data: AppData): ShortcutsSnapshot {
                 // list keys above (activeTasks already excludes done/archived/
                 // reference), so the cast is safe.
                 items: projectTasks.map((task) => buildSnapshotItem(task, task.status as ShortcutsSnapshotListKey, projectById)),
+                coverage: {
+                    eligible: eligibleProjectTasks.length,
+                    published: projectTasks.length,
+                    omitted: Math.max(0, eligibleProjectTasks.length - projectTasks.length),
+                },
             };
         });
 

@@ -59,7 +59,7 @@ describe('apple-task-search wrapper', () => {
       { indexedId: 'entity-opaque-1', taskId: 'task-1' },
       { indexedId: 'entity-opaque-3', taskId: 'task-2' },
     ]);
-    expect(mocks.nativeModule.search).toHaveBeenCalledWith('passport renewal');
+    expect(mocks.nativeModule.search).toHaveBeenCalledWith(expect.any(String), 'passport renewal');
   });
 
   it('cancels native work and rejects a result delivered after abort', async () => {
@@ -75,10 +75,22 @@ describe('apple-task-search wrapper', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(mocks.nativeModule.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.nativeModule.cancel).toHaveBeenCalledWith(
+      mocks.nativeModule.search.mock.calls[0][0],
+    );
   });
 
   it('exposes explicit cancellation for unmount and replacement-query cleanup', async () => {
+    let resolveSearch!: (value: { indexedId: string; taskId: string }[]) => void;
+    mocks.nativeModule.search.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve; }));
+    const pending = searchAppleTasksNative('renew passport');
+    await vi.waitFor(() => expect(mocks.nativeModule.search).toHaveBeenCalledTimes(1));
+
     await cancelAppleTaskSearch();
-    expect(mocks.nativeModule.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.nativeModule.cancel).toHaveBeenCalledWith(
+      mocks.nativeModule.search.mock.calls[0][0],
+    );
+    resolveSearch([]);
+    await expect(pending).resolves.toEqual([]);
   });
 });

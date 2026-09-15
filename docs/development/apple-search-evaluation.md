@@ -31,13 +31,19 @@ returns, Mindwtr performs a bounded drain:
 1. poll the actor-isolated collector every 25 ms;
 2. track Apple's opaque query tokens and require a complete reply for every
    observed token;
-3. after all observed tokens are complete, exit when the collector revision is
+3. after all observed tokens are complete, wait until the collector revision is
    unchanged for two polls;
 4. stop after ten polls (250 ms) even if the stream remains open;
-5. atomically close the collector so later events are ignored;
+5. atomically verify the same revision and complete-token set while closing the
+   collector; retry if a new partial token interleaved after the poll;
 6. return results only from a stable completed stream; throw an explicit
    incomplete-stream error on timeout, discarding partial IDs;
 7. cancel the listener in deferred cleanup.
+
+Each search and cancel call carries the same random request ID. Native code
+retains a bounded set of cancel-before-registration tombstones, so an Expo
+async cancel that reaches the coordinator first is consumed when that request
+arrives. A delayed cancellation for an older ID cannot cancel a newer search.
 
 This avoids the immediate-snapshot race, silent partial success, and an
 indefinite wait on a long-lived stream. Replacement queries cancel their
@@ -48,7 +54,10 @@ result is delivered is still checked before JavaScript accepts it.
 ## Stable-ID hydration and filters
 
 Native output contains the opaque indexed ID and stable task ID. React Native
-uses those as candidates only. It then:
+uses those as candidates only. It reads the latest store entities and filters
+after native search returns, retains only candidate IDs in component state,
+and revalidates again on every later store/filter change and immediately before
+opening a result. It then:
 
 - deduplicates by task ID in result order;
 - drops missing and deleted tasks;

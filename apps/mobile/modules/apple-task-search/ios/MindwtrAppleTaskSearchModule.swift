@@ -26,80 +26,28 @@ private enum MindwtrAppleTaskSearchFailure: Error, LocalizedError {
     }
 }
 
-private struct MindwtrAppleTaskSearchReference: Sendable {
-    let indexedId: String
-    let taskId: String
-}
-
-private struct MindwtrAppleTaskSearchDrainState: Sendable {
-    let revision: Int
-    let allObservedQueriesComplete: Bool
-}
-
-private actor MindwtrAppleTaskSearchResultCollector<QueryToken: Hashable & Sendable> {
-    private static let resultLimit = 50
-
-    private var acceptingResults = true
-    private var seenTaskIds = Set<String>()
-    private var results: [[String: String]] = []
-    private var revision = 0
-    private var observedQueryTokens = Set<QueryToken>()
-    private var completedQueryTokens = Set<QueryToken>()
-
-    func record(
-        queryToken: QueryToken,
-        replyItems: [MindwtrAppleTaskSearchReference],
-        isComplete: Bool
-    ) {
-        guard acceptingResults else { return }
-        revision += 1
-        observedQueryTokens.insert(queryToken)
-        if isComplete {
-            completedQueryTokens.insert(queryToken)
-        }
-
-        for item in replyItems {
-            guard results.count < Self.resultLimit else { break }
-            guard seenTaskIds.insert(item.taskId).inserted else { continue }
-            results.append(["indexedId": item.indexedId, "taskId": item.taskId])
-        }
-    }
-
-    func drainState() -> MindwtrAppleTaskSearchDrainState {
-        MindwtrAppleTaskSearchDrainState(
-            revision: revision,
-            allObservedQueriesComplete: !observedQueryTokens.isEmpty
-                && completedQueryTokens.isSuperset(of: observedQueryTokens)
-        )
-    }
-
-    func finish() -> [[String: String]] {
-        acceptingResults = false
-        return results
-    }
-}
-
 private actor MindwtrAppleTaskSearchCoordinator {
-    private var generation = 0
+    private var activeRequest: (id: String, task: Task<[[String: String]], Error>)?
+    private var cancelledBeforeStart = MindwtrAppleTaskSearchCancellationTombstones<String>()
 
 #if compiler(>=6.4) && canImport(FoundationModels)
     @available(iOS 27.0, *)
-    private var activeTask: Task<[[String: String]], Error>?
-
-    @available(iOS 27.0, *)
-    func search(_ rawQuery: String) async throws -> [[String: String]] {
+    func search(requestId rawRequestId: String, query rawQuery: String) async throws -> [[String: String]] {
+        let requestId = rawRequestId.trimmingCharacters(in: .whitespacesAndNewlines)
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requestId.isEmpty, requestId.count <= 128 else {
+            throw MindwtrAppleTaskSearchFailure.unavailable
+        }
         guard !query.isEmpty else { throw MindwtrAppleTaskSearchFailure.emptyQuery }
         guard query.count <= 500 else { throw MindwtrAppleTaskSearchFailure.queryTooLong }
+        guard !cancelledBeforeStart.consume(requestId) else { throw CancellationError() }
 
-        generation += 1
-        let thisGeneration = generation
-        activeTask?.cancel()
+        activeRequest?.task.cancel()
         let task = Task { try await Self.execute(query: query) }
-        activeTask = task
+        activeRequest = (requestId, task)
         defer {
-            if generation == thisGeneration {
-                activeTask = nil
+            if activeRequest?.id == requestId {
+                activeRequest = nil
             }
         }
         return try await task.value
@@ -177,15 +125,24 @@ private actor MindwtrAppleTaskSearchCoordinator {
         // long-lived stream cannot hold this request open or append after return.
         var previousRevision = -1
         var stableCompletedChecks = 0
-        var didReachStableCompletion = false
+        var completedResults: [[String: String]]?
         for _ in 0..<10 {
             try Task.checkCancellation()
             let state = await collector.drainState()
             if state.allObservedQueriesComplete && state.revision == previousRevision {
                 stableCompletedChecks += 1
                 if stableCompletedChecks >= 2 {
-                    didReachStableCompletion = true
-                    break
+                    if let results = await collector.finishIfCompleteAndUnchanged(
+                        expectedRevision: state.revision
+                    ) {
+                        completedResults = results
+                        break
+                    }
+                    // A partial reply for a new or existing query token landed
+                    // between the poll and finish attempt. Start a fresh drain.
+                    stableCompletedChecks = 0
+                    previousRevision = -1
+                    continue
                 }
             } else {
                 stableCompletedChecks = 0
@@ -193,11 +150,11 @@ private actor MindwtrAppleTaskSearchCoordinator {
             previousRevision = state.revision
             try await Task.sleep(for: .milliseconds(25))
         }
-        let results = await collector.finish()
-        guard didReachStableCompletion else {
+        guard let completedResults else {
+            await collector.close()
             throw MindwtrAppleTaskSearchFailure.resultStreamIncomplete
         }
-        return results
+        return completedResults
     }
 
     @available(iOS 27.0, *)
@@ -215,14 +172,21 @@ private actor MindwtrAppleTaskSearchCoordinator {
     }
 #endif
 
-    func cancel() {
-        generation += 1
-#if compiler(>=6.4) && canImport(FoundationModels)
-        if #available(iOS 27.0, *) {
-            activeTask?.cancel()
-            activeTask = nil
+    func cancel(requestId rawRequestId: String) {
+        let requestId = rawRequestId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requestId.isEmpty, requestId.count <= 128 else { return }
+        if activeRequest?.id == requestId {
+            activeRequest?.task.cancel()
+        } else {
+            // Expo async functions can reach this actor out of order. Retain a
+            // bounded tombstone so cancellation before registration is not lost.
+            cancelledBeforeStart.insert(requestId)
         }
-#endif
+    }
+
+    func cancelAll() {
+        activeRequest?.task.cancel()
+        activeRequest = nil
     }
 }
 
@@ -250,22 +214,22 @@ public final class MindwtrAppleTaskSearchModule: Module {
 #endif
         }
 
-        AsyncFunction("search") { (query: String) async throws -> [[String: String]] in
+        AsyncFunction("search") { (requestId: String, query: String) async throws -> [[String: String]] in
 #if DEBUG && compiler(>=6.4) && canImport(FoundationModels)
             if #available(iOS 27.0, *) {
-                return try await coordinator.search(query)
+                return try await coordinator.search(requestId: requestId, query: query)
             }
 #endif
             throw MindwtrAppleTaskSearchFailure.unavailable
         }
 
-        AsyncFunction("cancel") { () async -> Void in
-            await coordinator.cancel()
+        AsyncFunction("cancel") { (requestId: String) async -> Void in
+            await coordinator.cancel(requestId: requestId)
         }
 
         OnDestroy {
             Task {
-                await self.coordinator.cancel()
+                await self.coordinator.cancelAll()
             }
         }
     }

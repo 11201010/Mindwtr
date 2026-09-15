@@ -45,6 +45,18 @@ AppIntentsTesting against the built app, and App Store acceptance require
 separate checks. A release archive also disables JavaScript development-only
 entry points; use a development client to exercise the evaluations.
 
+## Open the prototypes
+
+Use an iOS development client built with `APP_VARIANT=development` and a
+JavaScript development session. Open the `/apple-evaluation` route for Search
+and Image capture. For Inbox clarification, choose the on-device backend in
+Settings > AI, then use Clarify while processing an Inbox item. Apply changes
+only the editable draft; the normal Inbox Save action persists it.
+
+The unsigned Release CI archive intentionally has no development entry points.
+Use separate evaluator data and record actual hardware results in the feature
+reports; the checked-in search result fixture only tests the scoring harness.
+
 ## Device sequence
 
 1. Use a development build with non-production test data. Keep the existing

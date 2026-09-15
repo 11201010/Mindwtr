@@ -12,7 +12,8 @@ code never reads SQLite. Snapshot version 2 provides:
 - a stable task ID and exact `mindwtr://open?task=<encoded-id>` link;
 - display title, list/project label, due date, and start date;
 - a generation timestamp;
-- eligible, published, and omitted counts for lists, projects, and unique tasks.
+- eligible, published, and omitted counts for each list, each published project,
+  project groups, and unique tasks.
 
 The React Native publisher includes version and coverage in its fingerprint,
 so crossing a cap still publishes changed omission metadata when the visible
@@ -24,8 +25,11 @@ Native queries preserve the caller's identifier order. Duplicate titles never
 act as identity. The entity validates a snapshot link against the same task ID
 and falls back to a newly constructed exact-ID link if the stored URL is absent
 or malformed. Missing and duplicate project names produce distinct dialogs.
-Get Tasks reports a snapshot older than 24 hours and reports a known global
-omission count. Snapshot results remain bounded and are not a full-store answer.
+Get Tasks reports a snapshot older than 24 hours. Its boundedness dialog uses
+the requested list's omission count or the matched project's own omission
+count; another list/project projection cannot mask that query's omissions. An
+older snapshot without query-specific coverage reports possible omissions when
+it returns the 50-item cap. Snapshot results are not a full-store answer.
 
 Spotlight currently performs clear-and-replace indexing when the app launches.
 React Native can refresh the snapshot later without triggering a new index, so

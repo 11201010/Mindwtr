@@ -1017,6 +1017,7 @@ describe('widget-data', () => {
             expect(item.dueDate).toBe('2026-08-14');
             expect(item.startDate).toBe('2026-08-01');
             expect(item.deepLink).toBe('mindwtr://open?task=t1');
+            expect(snapshot.projects[0].coverage).toEqual({ eligible: 1, published: 1, omitted: 0 });
             // The archived project's task is neither an active-project group
             // nor, on its own, excluded from list buckets by project status --
             // but only active projects get a group at all.
@@ -1076,9 +1077,22 @@ describe('widget-data', () => {
 
         it('caps each list and project at the shared item cap', () => {
             const manyTasks = Array.from({ length: SHORTCUTS_SNAPSHOT_ITEM_CAP + 10 }, (_, index) => (
-                task({ id: `n${index}`, status: 'next' })
+                task({ id: `n${index}`, status: 'next', projectId: 'p1' })
             ));
-            const snapshot = buildShortcutsSnapshot({ ...baseData, tasks: manyTasks });
+            const snapshot = buildShortcutsSnapshot({
+                ...baseData,
+                projects: [{
+                    id: 'p1',
+                    title: 'Bounded project',
+                    status: 'active',
+                    color: '#000',
+                    order: 0,
+                    tagIds: [],
+                    createdAt: now,
+                    updatedAt: now,
+                }],
+                tasks: manyTasks,
+            });
 
             expect(snapshot.lists.next).toHaveLength(SHORTCUTS_SNAPSHOT_ITEM_CAP);
             expect(snapshot.coverage.lists.next).toEqual({
@@ -1087,6 +1101,11 @@ describe('widget-data', () => {
                 omitted: 10,
             });
             expect(snapshot.coverage.tasks).toEqual({
+                eligible: SHORTCUTS_SNAPSHOT_ITEM_CAP + 10,
+                published: SHORTCUTS_SNAPSHOT_ITEM_CAP,
+                omitted: 10,
+            });
+            expect(snapshot.projects[0].coverage).toEqual({
                 eligible: SHORTCUTS_SNAPSHOT_ITEM_CAP + 10,
                 published: SHORTCUTS_SNAPSHOT_ITEM_CAP,
                 omitted: 10,

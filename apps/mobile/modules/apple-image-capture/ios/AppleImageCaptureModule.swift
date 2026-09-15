@@ -51,6 +51,7 @@ private final class AppleImageVisionCancellation: @unchecked Sendable {
 
 private enum AppleImageAnalysisEngine {
     static func analyze(uri: String) async throws -> AppleImageAnalysisResult {
+        try Task.checkCancellation()
         guard let url = URL(string: uri), url.isFileURL else {
             throw AppleImageCaptureError.invalidImage
         }
@@ -178,41 +179,9 @@ private enum AppleImageAnalysisEngine {
 #endif
 }
 
-private actor AppleImageAnalysisCoordinator {
-    private var operations: [String: Task<AppleImageAnalysisResult, Error>] = [:]
-
-    func analyze(operationId: String, uri: String) async throws -> AppleImageAnalysisResult {
-        guard operationId.range(
-            of: "^[0-9a-fA-F-]{36}$",
-            options: .regularExpression
-        ) != nil, operations[operationId] == nil else {
-            throw AppleImageCaptureError.invalidOperation
-        }
-        let task = Task.detached(priority: .userInitiated) {
-            try await AppleImageAnalysisEngine.analyze(uri: uri)
-        }
-        operations[operationId] = task
-        defer { operations.removeValue(forKey: operationId) }
-        do {
-            return try await task.value
-        } catch is CancellationError {
-            throw AppleImageCaptureError.cancelled
-        }
-    }
-
-    func cancel(operationId: String) {
-        operations[operationId]?.cancel()
-    }
-
-    func cancelAll() {
-        operations.values.forEach { $0.cancel() }
-        operations.removeAll()
-    }
-}
-
 #if canImport(ExpoModulesCore)
 public final class AppleImageCaptureModule: Module {
-    private let operations = AppleImageAnalysisCoordinator()
+    private let operations = AppleImageAnalysisCoordinator<AppleImageAnalysisResult>()
 
     public func definition() -> ModuleDefinition {
         Name("AppleImageCapture")
@@ -222,7 +191,9 @@ public final class AppleImageCaptureModule: Module {
         }
 
         AsyncFunction("analyzeImage") { (operationId: String, uri: String) async throws -> [String: Any] in
-            try await self.operations.analyze(operationId: operationId, uri: uri).dictionary
+            try await self.operations.analyze(operationId: operationId) {
+                try await AppleImageAnalysisEngine.analyze(uri: uri)
+            }.dictionary
         }
 
         AsyncFunction("cancelAnalysis") { (operationId: String) async -> Void in

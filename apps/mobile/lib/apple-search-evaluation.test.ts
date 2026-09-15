@@ -1,9 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Area, Project, Task } from '@mindwtr/core';
+
+const mocks = vi.hoisted(() => ({
+  searchAppleTasksNative: vi.fn(),
+  logInfo: vi.fn(),
+  logWarn: vi.fn(),
+}));
+
+vi.mock('@/modules/apple-task-search', () => ({
+  searchAppleTasksNative: mocks.searchAppleTasksNative,
+}));
+
+vi.mock('@/lib/app-log', () => ({
+  logInfo: mocks.logInfo,
+  logWarn: mocks.logWarn,
+}));
 
 import {
   DEFAULT_APPLE_SEARCH_FILTERS,
   revalidateAppleSearchMatches,
+  runAppleSearchEvaluation,
 } from './apple-search-evaluation';
 
 const now = '2026-09-14T12:00:00.000Z';
@@ -37,6 +53,12 @@ const area = (id: string): Area => ({
 });
 
 describe('apple-search-evaluation revalidation', () => {
+  beforeEach(() => {
+    mocks.searchAppleTasksNative.mockReset();
+    mocks.logInfo.mockReset();
+    mocks.logWarn.mockReset();
+  });
+
   it('uses stable ids to select one of two tasks with the same title', () => {
     const tasks = [task('task-1', 'Renew passport'), task('task-2', 'Renew passport')];
     const result = revalidateAppleSearchMatches({
@@ -112,5 +134,59 @@ describe('apple-search-evaluation revalidation', () => {
 
     expect(result.tasks).toEqual([current]);
     expect(result.tasks[0].title).toBe('Renew Canadian passport');
+  });
+
+  it('reads store entities and filters after native search resolves', async () => {
+    let resolveNative!: (matches: { indexedId: string; taskId: string }[]) => void;
+    mocks.searchAppleTasksNative.mockReturnValue(new Promise((resolve) => {
+      resolveNative = resolve;
+    }));
+    let currentTask = task('task-1', 'Old title', { status: 'next' });
+    let currentFilters = DEFAULT_APPLE_SEARCH_FILTERS;
+    const getCurrentState = vi.fn(() => ({
+      tasks: [currentTask],
+      projects: [],
+      areas: [],
+      filters: currentFilters,
+    }));
+
+    const pending = runAppleSearchEvaluation({
+      query: 'passport',
+      getCurrentState,
+    });
+    expect(getCurrentState).not.toHaveBeenCalled();
+
+    currentTask = task('task-1', 'Current passport title', { status: 'waiting' });
+    currentFilters = { ...DEFAULT_APPLE_SEARCH_FILTERS, selectedStatuses: ['waiting'] };
+    resolveNative([{ indexedId: 'opaque-1', taskId: 'task-1' }]);
+
+    const result = await pending;
+    expect(getCurrentState).toHaveBeenCalledTimes(1);
+    expect(result.tasks).toEqual([currentTask]);
+    expect(result.nativeMatches).toEqual([{ indexedId: 'opaque-1', taskId: 'task-1' }]);
+  });
+
+  it('revalidates retained ids when a later store or filter change makes a task ineligible', () => {
+    const nativeMatches = [{ indexedId: 'opaque-1', taskId: 'task-1' }];
+    const initial = revalidateAppleSearchMatches({
+      query: 'passport',
+      nativeMatches,
+      tasks: [task('task-1', 'Renew passport', { status: 'next' })],
+      projects: [],
+      areas: [],
+      filters: DEFAULT_APPLE_SEARCH_FILTERS,
+    });
+    const changed = revalidateAppleSearchMatches({
+      query: 'passport',
+      nativeMatches,
+      tasks: [task('task-1', 'Renew passport', { status: 'waiting' })],
+      projects: [],
+      areas: [],
+      filters: { ...DEFAULT_APPLE_SEARCH_FILTERS, selectedStatuses: ['next'] },
+    });
+
+    expect(initial.tasks.map((item) => item.id)).toEqual(['task-1']);
+    expect(changed.tasks).toEqual([]);
+    expect(changed.filteredTaskIds).toEqual(['task-1']);
   });
 });

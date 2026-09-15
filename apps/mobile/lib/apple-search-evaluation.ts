@@ -42,6 +42,18 @@ export type AppleSearchRevalidation = {
   filteredTaskIds: string[];
 };
 
+export type AppleSearchEvaluationState = {
+  tasks: Task[];
+  projects: Project[];
+  areas: Area[];
+  filters: AppleSearchFilters;
+};
+
+export type AppleSearchEvaluationRun = AppleSearchRevalidation & {
+  /** Stable-ID candidates retained so callers can revalidate future state. */
+  nativeMatches: AppleTaskSearchNativeMatch[];
+};
+
 /**
  * Treats Spotlight output as an ordered set of candidate ids only. Current
  * hydrated tasks supply every displayed field and shared global-search logic
@@ -100,22 +112,21 @@ export function revalidateAppleSearchMatches(params: {
 
 export async function runAppleSearchEvaluation(params: {
   query: string;
-  tasks: Task[];
-  projects: Project[];
-  areas: Area[];
-  filters?: AppleSearchFilters;
+  /** Read only after native work completes; never capture pre-await Task objects. */
+  getCurrentState: () => AppleSearchEvaluationState;
   signal?: AbortSignal;
-}): Promise<AppleSearchRevalidation> {
+}): Promise<AppleSearchEvaluationRun> {
   const startedAt = Date.now();
   try {
     const nativeMatches = await searchAppleTasksNative(params.query, { signal: params.signal });
+    const current = params.getCurrentState();
     const result = revalidateAppleSearchMatches({
       query: params.query,
       nativeMatches,
-      tasks: params.tasks,
-      projects: params.projects,
-      areas: params.areas,
-      filters: params.filters ?? DEFAULT_APPLE_SEARCH_FILTERS,
+      tasks: current.tasks,
+      projects: current.projects,
+      areas: current.areas,
+      filters: current.filters,
     });
     void logInfo('Apple task search evaluation completed', {
       scope: 'apple-search',
@@ -129,7 +140,7 @@ export async function runAppleSearchEvaluation(params: {
         elapsedMs: Date.now() - startedAt,
       },
     });
-    return result;
+    return { ...result, nativeMatches };
   } catch (error) {
     const cancelled = error instanceof Error && error.name === 'AbortError';
     const logger = cancelled ? logInfo : logWarn;

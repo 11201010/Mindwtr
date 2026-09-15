@@ -17,7 +17,7 @@ let package = Package(
                 "AppleImageCaptureModule.swift",
                 "Tests",
             ],
-            sources: ["AppleImageCaptureBounds.swift"]
+            sources: ["AppleImageCaptureBounds.swift", "AppleImageAnalysisCoordinator.swift"]
         ),
         .testTarget(
             name: "AppleImageCaptureTests",

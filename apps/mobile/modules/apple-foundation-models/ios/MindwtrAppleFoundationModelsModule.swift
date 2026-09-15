@@ -75,14 +75,22 @@ public final class MindwtrAppleFoundationModelsModule: Module {
                 throw AppleClarificationInvalidInputException()
             }
 
-            let task = Task<[String: Any], Error> {
-                try await self.generate(request: request)
-            }
-            guard let reservation = self.requests.reserve(task, for: requestId) else {
-                task.cancel()
+            let task: Task<[String: Any], Error>
+            let reservationToken: UUID
+            switch self.requests.reserve(for: requestId, createValue: {
+                Task<[String: Any], Error> {
+                    try await self.generate(request: request)
+                }
+            }) {
+            case .reserved(let token, let value):
+                reservationToken = token
+                task = value
+            case .duplicate:
                 throw AppleClarificationDuplicateRequestException()
+            case .cancelledBeforeReservation:
+                throw AppleClarificationCancelledException()
             }
-            defer { self.requests.remove(requestId, token: reservation) }
+            defer { self.requests.remove(requestId, token: reservationToken) }
 
             do {
                 return try await task.value
@@ -101,7 +109,7 @@ public final class MindwtrAppleFoundationModelsModule: Module {
     }
 
     private func cancelRequest(_ requestId: String) {
-        requests.value(for: requestId)?.cancel()
+        requests.cancel(requestId)?.cancel()
     }
 
     private func cancelAllRequests() {

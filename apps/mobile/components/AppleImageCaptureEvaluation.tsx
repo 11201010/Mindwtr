@@ -16,6 +16,7 @@ import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { logInfo, logWarn } from '@/lib/app-log';
 import {
+  APPLE_IMAGE_LIMITS,
   AppleImageEvaluationController,
   type AppleImageDiagnostic,
 } from '@/lib/apple-image-evaluation';
@@ -214,6 +215,7 @@ export function AppleImageCaptureEvaluation({
           <Text style={[styles.sectionTitle, { color: tc.text }]}>Editable Inbox proposal</Text>
           <TextInput
             accessibilityLabel="Proposed task title"
+            maxLength={APPLE_IMAGE_LIMITS.maxTitleLength}
             editable={!proposalLocked}
             onChangeText={(title) => controller.updateProposal({ title })}
             placeholder="Task title"
@@ -223,6 +225,7 @@ export function AppleImageCaptureEvaluation({
           />
           <TextInput
             accessibilityLabel="Proposed task notes"
+            maxLength={APPLE_IMAGE_LIMITS.maxDescriptionLength}
             editable={!proposalLocked}
             multiline
             onChangeText={(description) => controller.updateProposal({ description })}
@@ -232,7 +235,7 @@ export function AppleImageCaptureEvaluation({
             textAlignVertical="top"
             value={state.proposal.description}
           />
-          <Text style={[styles.help, { color: tc.secondaryText }]}>Dates, reminders, status, projects, tags, and attachments stay unset.</Text>
+          <Text style={[styles.help, { color: tc.secondaryText }]}>Creates an Inbox task without dates, reminders, projects, tags, or attachments.</Text>
         </View>
       )}
 

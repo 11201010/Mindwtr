@@ -38,10 +38,10 @@ describe('Apple image native source compatibility contract', () => {
   });
 
   it('keeps XCTest sources out of the application pod and the bounds library target', () => {
-    expect(podspec).toContain("s.source_files = 'AppleImageCaptureBounds.swift', 'AppleImageCaptureModule.swift'");
+    expect(podspec).toContain("s.source_files = 'AppleImageCaptureBounds.swift', 'AppleImageCaptureModule.swift', 'AppleImageAnalysisCoordinator.swift'");
     expect(podspec).not.toContain("s.source_files = '**/*");
     expect(packageManifest).toContain('"AppleImageCaptureModule.swift"');
     expect(packageManifest).toContain('"Tests"');
-    expect(packageManifest).toContain('sources: ["AppleImageCaptureBounds.swift"]');
+    expect(packageManifest).toContain('sources: ["AppleImageCaptureBounds.swift", "AppleImageAnalysisCoordinator.swift"]');
   });
 });

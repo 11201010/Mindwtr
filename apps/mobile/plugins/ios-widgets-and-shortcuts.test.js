@@ -338,10 +338,12 @@ describe('ios-widgets-and-shortcuts', () => {
     );
 
     expect(source).toContain('private static let staleAfter: TimeInterval = 24 * 60 * 60');
-    expect(source).toContain('static func knownOmittedTaskCount() -> Int?');
+    expect(source).toContain('static func knownOmittedTaskCount(forList list: MindwtrGetTasksList) -> Int?');
+    expect(source).toContain('let omittedCount = (match["coverage"] as? [String: Any])?["omitted"] as? NSNumber');
     expect(source).toContain('case ambiguous');
     expect(source).toContain('More than one project has that name.');
-    expect(source).toContain('task(s) were omitted.');
+    expect(source).toContain('eligible task(s) from this \\(sourceLabel) were omitted');
+    expect(source).toContain('This \\(sourceLabel) may contain more tasks.');
     expect(source).toContain('task(s) in a stale snapshot.');
   });
 

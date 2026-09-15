@@ -20,5 +20,5 @@ Pod::Spec.new do |s|
     'SWIFT_COMPILATION_MODE' => 'wholemodule'
   }
 
-  s.source_files = 'AppleImageCaptureBounds.swift', 'AppleImageCaptureModule.swift'
+  s.source_files = 'AppleImageCaptureBounds.swift', 'AppleImageCaptureModule.swift', 'AppleImageAnalysisCoordinator.swift'
 end

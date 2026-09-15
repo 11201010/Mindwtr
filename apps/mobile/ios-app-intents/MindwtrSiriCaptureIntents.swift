@@ -428,7 +428,7 @@ private enum MindwtrShortcutsSnapshotStore {
     }
 
     enum ProjectResolution {
-        case matched([MindwtrShortcutsSnapshotItem])
+        case matched([MindwtrShortcutsSnapshotItem], omittedCount: Int?)
         case missing
         case ambiguous
     }
@@ -453,11 +453,12 @@ private enum MindwtrShortcutsSnapshotStore {
         return age >= 0 && age <= staleAfter ? .current : .stale
     }
 
-    static func knownOmittedTaskCount() -> Int? {
+    static func knownOmittedTaskCount(forList list: MindwtrGetTasksList) -> Int? {
         guard let root = rawSnapshot(),
               let coverage = root["coverage"] as? [String: Any],
-              let tasks = coverage["tasks"] as? [String: Any],
-              let omitted = tasks["omitted"] as? NSNumber else {
+              let lists = coverage["lists"] as? [String: Any],
+              let listCoverage = lists[list.rawValue] as? [String: Any],
+              let omitted = listCoverage["omitted"] as? NSNumber else {
             return nil
         }
         return max(0, omitted.intValue)
@@ -505,7 +506,11 @@ private enum MindwtrShortcutsSnapshotStore {
         guard !matches.isEmpty else { return .missing }
         guard matches.count == 1, let match = matches.first else { return .ambiguous }
         let entries = match["items"] as? [[String: Any]] ?? []
-        return .matched(entries.compactMap(MindwtrShortcutsSnapshotItem.init(dict:)))
+        let omittedCount = (match["coverage"] as? [String: Any])?["omitted"] as? NSNumber
+        return .matched(
+            entries.compactMap(MindwtrShortcutsSnapshotItem.init(dict:)),
+            omittedCount: omittedCount.map { max(0, $0.intValue) }
+        )
     }
 }
 
@@ -716,10 +721,14 @@ struct MindwtrGetTasksIntent: AppIntent {
     func perform() async throws -> some IntentResult & ReturnsValue<[MindwtrTaskEntity]> & ProvidesDialog {
         let trimmedProject = project?.trimmingCharacters(in: .whitespacesAndNewlines)
         let items: [MindwtrShortcutsSnapshotItem]
+        let omittedCount: Int?
+        let sourceLabel: String
         if let trimmedProject, !trimmedProject.isEmpty {
             switch MindwtrShortcutsSnapshotStore.items(forProjectNamed: trimmedProject) {
-            case .matched(let matchedItems):
+            case .matched(let matchedItems, let matchedOmittedCount):
                 items = matchedItems
+                omittedCount = matchedOmittedCount
+                sourceLabel = "project"
             case .missing:
                 return .result(value: [], dialog: "That project is not in the current Mindwtr snapshot. Open Mindwtr to refresh it.")
             case .ambiguous:
@@ -727,17 +736,33 @@ struct MindwtrGetTasksIntent: AppIntent {
             }
         } else {
             items = MindwtrShortcutsSnapshotStore.items(forList: list)
+            omittedCount = MindwtrShortcutsSnapshotStore.knownOmittedTaskCount(forList: list)
+            sourceLabel = "list"
         }
 
         let entities = items.map(MindwtrTaskEntity.init(item:))
         guard !entities.isEmpty else {
             return .result(value: [], dialog: "No tasks found. Open Mindwtr to refresh this list.")
         }
-        switch MindwtrShortcutsSnapshotStore.freshness() {
-        case .current:
-            if let omitted = MindwtrShortcutsSnapshotStore.knownOmittedTaskCount(), omitted > 0 {
-                return .result(value: entities, dialog: "Found \(entities.count) task(s) in a bounded snapshot; \(omitted) eligible task(s) were omitted.")
+        let freshness = MindwtrShortcutsSnapshotStore.freshness()
+        if let omittedCount, omittedCount > 0 {
+            switch freshness {
+            case .current:
+                return .result(value: entities, dialog: "Found \(entities.count) task(s); \(omittedCount) eligible task(s) from this \(sourceLabel) were omitted by the snapshot limit.")
+            case .missing, .invalidTimestamp, .stale:
+                return .result(value: entities, dialog: "Found \(entities.count) task(s) in a stale snapshot; \(omittedCount) eligible task(s) from this \(sourceLabel) were omitted. Open Mindwtr to refresh it.")
             }
+        }
+        if omittedCount == nil && entities.count >= 50 {
+            switch freshness {
+            case .current:
+                return .result(value: entities, dialog: "Found \(entities.count) task(s) at the snapshot limit. This \(sourceLabel) may contain more tasks.")
+            case .missing, .invalidTimestamp, .stale:
+                return .result(value: entities, dialog: "Found \(entities.count) task(s) at the limit in a stale snapshot. This \(sourceLabel) may contain more tasks. Open Mindwtr to refresh it.")
+            }
+        }
+        switch freshness {
+        case .current:
             return .result(value: entities, dialog: "Found \(entities.count) task(s).")
         case .missing, .invalidTimestamp, .stale:
             return .result(value: entities, dialog: "Found \(entities.count) task(s) in a stale snapshot. Open Mindwtr to refresh it.")
