@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 
 import { useTaskStore } from '@mindwtr/core';
 
-import { logError } from '@/lib/app-log';
+import { logError, logInfo } from '@/lib/app-log';
 import { ingestPendingCaptures } from '@/lib/pending-captures';
 import { flushPendingTaskActionSave } from '@/lib/pending-capture-persistence';
 import { ingestIosWidgetCompletions } from '@/lib/ios-widget-completions';
@@ -38,7 +38,7 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
             do {
                 pendingRef.current = false;
                 const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
-                await ingestPendingCaptures({
+                const ingested = await ingestPendingCaptures({
                     addTask,
                     updateTask,
                     addProject,
@@ -60,6 +60,23 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
                         });
                     },
                 });
+                // Startup/foreground refreshes can run before a slow queue
+                // import finishes. Publish again after its durable store writes,
+                // without requiring a manual refresh or another app opening.
+                if (ingested > 0 && enabledRef.current) {
+                    try {
+                        if (await updateMobileWidgetFromStore()) {
+                            void logInfo('Widgets refreshed after pending capture import', {
+                                scope: 'widget',
+                                extra: { releaseCheck: 'v1.3.1/pending-capture-widget-refresh', count: ingested },
+                            });
+                        }
+                    } catch (error) {
+                        // The capture is already persisted; a display refresh
+                        // failure must not replay it or block other queue work.
+                        void logError(error, { scope: 'widget', extra: { message: 'Post-import widget refresh failed' } });
+                    }
+                }
                 if (enabledRef.current) {
                     await ingestIosWidgetCompletions({
                         updateTask,

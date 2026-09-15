@@ -52,6 +52,77 @@ class WidgetProviderCompatibilityTest {
   }
 
   @Test
+  fun legacyDelayedCheckoffRefreshInvalidatesRowsAndPartiallyUpdatesChrome() {
+    val idsByProvider = mapOf(
+      currentTasksProvider to intArrayOf(10),
+      legacyTasksProvider to intArrayOf(20, 21),
+      compactProvider to intArrayOf(40),
+      quickCaptureProvider to intArrayOf(30),
+    )
+    val operations = mutableListOf<String>()
+
+    val count = WidgetRenderer.refreshTaskCollections(
+      applicationPackage,
+      sdkInt = 30,
+      idsForProvider = { idsByProvider[it] ?: intArrayOf() },
+      invalidateRows = { ids -> operations += "rows:${ids.joinToString()}" },
+      partiallyUpdateChrome = { id, kind -> operations += "chrome:${kind.name}:$id" },
+    )
+
+    assertEquals(4, count)
+    assertEquals(
+      listOf(
+        "rows:10",
+        "chrome:TASKS:10",
+        "rows:20, 21",
+        "chrome:TASKS:20",
+        "chrome:TASKS:21",
+        "rows:40",
+        "chrome:COMPACT:40",
+      ),
+      operations,
+    )
+  }
+
+  @Test
+  fun modernDelayedRefreshSendsPartialRowsWithoutLegacyServiceInvalidation() {
+    for (sdkInt in listOf(31, 36)) {
+      val operations = mutableListOf<String>()
+      val count = WidgetRenderer.refreshTaskCollections(
+        applicationPackage,
+        sdkInt = sdkInt,
+        idsForProvider = { provider -> when (provider) {
+          currentTasksProvider -> intArrayOf(10)
+          legacyTasksProvider -> intArrayOf(20)
+          compactProvider -> intArrayOf(40)
+          quickCaptureProvider -> intArrayOf(30)
+          else -> intArrayOf()
+        } },
+        invalidateRows = { throw AssertionError("Modern collections must not bind a service") },
+        partiallyUpdateChrome = { id, kind -> operations += "${kind.name}:$id" },
+      )
+      assertEquals(3, count)
+      assertEquals(listOf("TASKS:10", "TASKS:20", "COMPACT:40"), operations)
+    }
+  }
+
+  @Test
+  fun delayedCheckoffRefreshDoesNoWorkWithoutPlacedTaskWidgets() {
+    var operations = 0
+
+    val count = WidgetRenderer.refreshTaskCollections(
+      applicationPackage,
+      sdkInt = 31,
+      idsForProvider = { intArrayOf() },
+      invalidateRows = { operations += 1 },
+      partiallyUpdateChrome = { _, _ -> operations += 1 },
+    )
+
+    assertEquals(0, count)
+    assertEquals(0, operations)
+  }
+
+  @Test
   fun listSelectionsIncludeCurrentAndLegacyTaskWidgetsOnce() {
     val idsByProvider = mapOf(
       currentTasksProvider to intArrayOf(10, 11),

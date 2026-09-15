@@ -278,20 +278,61 @@ describe('widget-service', () => {
         });
     });
 
-    it('carries every GTD list once a widget is placed so the header chooser switches without the app (#1173)', async () => {
+    it('logs delayed native checkoff hides after the bridge reports a successful partial refresh', async () => {
+        mockAndroidWidgetUpdateWidgets.mockReturnValue({
+            legacyWidgetCount: 0,
+            compactWidgetCount: 0,
+            hiddenCheckoffCount: 2,
+        });
+
+        expect(await updateMobileWidgetFromData(buildData(3))).toBe(true);
+
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget check-offs hidden after Undo', {
+            scope: 'widget',
+            extra: { releaseCheck: 'v1.3.1/widget-checkoff-hide', count: '2' },
+        });
+    });
+
+    it('carries every GTD list before placement for Compact fallback and offline list switching (#1211)', async () => {
         const data = buildData(2);
         data.tasks.push({ id: 'w1', title: 'Waiting on Sam', status: 'waiting', tags: [], contexts: [], createdAt: data.tasks[0].createdAt, updatedAt: data.tasks[0].updatedAt });
-        // No widget placed: nothing beyond the Focus list is worth building.
+        // Compact also needs Next Actions. A newly placed Tasks widget must be
+        // able to switch to Inbox before the app next publishes.
         expect(await updateMobileWidgetFromData(data)).toBe(true);
-        expect(Object.keys(JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string).lists)).toEqual(['focus']);
+        expect(Object.keys(JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string).lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
 
         mockAndroidWidgetGetWidgetListSelections.mockReturnValue(['waiting', 'project:missing']);
         expect(await updateMobileWidgetFromData(data)).toBe(true);
-        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
-        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[1][0] as string);
+        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
+        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
         expect(Object.keys(payload.lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
         expect(payload.lists.waiting).toMatchObject({ title: 'Waiting For', items: [{ title: 'Waiting on Sam' }] });
         expect(payload.listTitles).toMatchObject({ inbox: 'Inbox', next: 'Next Actions', someday: 'Someday/Maybe' });
+        expect(payload.headerTitle).toBe('Today');
+    });
+
+    it('publishes bounded Next Actions without changing the Focus payload when today is empty (#1211)', async () => {
+        const data = buildData(25);
+        data.tasks = data.tasks.map((task) => ({ ...task, isFocusedToday: false }));
+        data.tasks.push({ ...data.tasks[0], id: 'inbox-task', status: 'inbox' });
+
+        expect(await updateMobileWidgetFromData(data)).toBe(true);
+        const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
+        expect(payload.items).toEqual([]);
+        expect(payload.sections).toEqual([]);
+        expect(payload.lists.focus.items).toEqual([]);
+        expect(payload.lists.next.items).toHaveLength(20);
+        expect(payload.lists.inbox.items.map((item: { id: string }) => item.id)).toEqual(['inbox-task']);
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget fixed lists published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/android-widget-lists',
+                count: '5',
+                focusItems: '0',
+                nextItems: '20',
+                inboxItems: '1',
+            },
+        });
     });
 
     it('localizes the capture dialog labels with the widget language', async () => {
@@ -303,9 +344,10 @@ describe('widget-service', () => {
         const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
         expect(payload.quickCapture.cancel).toBe('Abbrechen');
         expect(payload.quickCapture.save).toBe('Speichern');
+        expect(payload.headerTitle).toBe('Heute');
     });
 
-    it('writes family-specific iOS payloads with per-size item budgets', async () => {
+    it('writes family-specific iOS payloads with bounded refill caches', async () => {
         mockPlatform.OS = 'ios';
         mockIosWidgetSetItem.mockResolvedValue(undefined);
         const data = buildData(30);
@@ -318,13 +360,14 @@ describe('widget-service', () => {
         const payloadByKey = new Map(
             mockIosWidgetSetItem.mock.calls.map(([key, value]) => [key, JSON.parse(value as string)])
         );
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.items).toHaveLength(3);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-medium')?.items).toHaveLength(5);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-large')?.items).toHaveLength(12);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-extra-large')?.items).toHaveLength(24);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(12);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.items).toHaveLength(11);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-medium')?.items).toHaveLength(13);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-large')?.items).toHaveLength(20);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-extra-large')?.items).toHaveLength(30);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.items).toHaveLength(20);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload')?.headerTitle).toBe('Today');
         expect(Object.keys(payloadByKey.get('mindwtr-ios-widget-payload')?.lists)).toEqual(['focus', 'inbox', 'next', 'waiting', 'someday']);
-        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.lists.focus.items).toHaveLength(3);
+        expect(payloadByKey.get('mindwtr-ios-widget-payload-small')?.lists.focus.items).toHaveLength(11);
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrTasksWidget');
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrCompactWidget');
         expect(mockIosWidgetReloadTimelines).toHaveBeenCalledWith('MindwtrFocusLockWidget');
@@ -332,21 +375,33 @@ describe('widget-service', () => {
             scope: 'widget',
             extra: { releaseCheck: 'v1.3.0/widget-batch-derivation', count: 5 },
         });
+        expect(mockLogInfo).toHaveBeenCalledWith('iOS widget parity snapshot published', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/ios-widget-parity',
+                count: '5',
+                totalItems: '20',
+                nextItems: '0',
+            },
+        });
         expect(JSON.stringify(mockLogInfo.mock.calls)).not.toContain('Focused 1');
 
         const listIds = ['focus', 'inbox', 'next', 'waiting', 'someday'];
         const expectedFamilies = new Map([
-            ['mindwtr-ios-widget-payload', 12],
-            ['mindwtr-ios-widget-payload-small', 3],
-            ['mindwtr-ios-widget-payload-medium', 5],
-            ['mindwtr-ios-widget-payload-large', 12],
-            ['mindwtr-ios-widget-payload-extra-large', 24],
-        ].map(([key, maxItems]) => [key, JSON.stringify(buildWidgetPayload(data, 'en', {
-            systemColorScheme: 'light',
-            maxItems: maxItems as number,
-            listIds,
-            includeSavedFilterLists: true,
-        }))]));
+            ['mindwtr-ios-widget-payload', 20],
+            ['mindwtr-ios-widget-payload-small', 11],
+            ['mindwtr-ios-widget-payload-medium', 13],
+            ['mindwtr-ios-widget-payload-large', 20],
+            ['mindwtr-ios-widget-payload-extra-large', 32],
+        ].map(([key, maxItems]) => {
+            const payload = buildWidgetPayload(data, 'en', {
+                systemColorScheme: 'light',
+                maxItems: maxItems as number,
+                listIds,
+                includeSavedFilterLists: true,
+            });
+            return [key, JSON.stringify({ ...payload, headerTitle: 'Today' })];
+        }));
         for (const [key, expected] of expectedFamilies) {
             expect(mockIosWidgetSetItem.mock.calls.find(([writtenKey]) => writtenKey === key)?.[1]).toBe(expected);
         }
@@ -460,8 +515,9 @@ describe('widget-service', () => {
         expect(await updateMobileWidgetFromData(data)).toBe(true);
         const payload = JSON.parse(mockIosWidgetSetItem.mock.calls.find(([key]) => key === 'mindwtr-ios-widget-payload-small')![1]);
         expect(payload.savedFilters).toEqual([{ id: 'focused', name: 'My list' }]);
-        expect(payload.lists['filter:focused'].items).toHaveLength(3);
+        expect(payload.lists['filter:focused'].items).toHaveLength(10);
         expect(payload.lists['filter:focused'].title).toBe('My list');
+        expect(payload.lists['filter:focused'].openUri).toBe('mindwtr:///widget-list/filter%3Afocused');
         expect(payload.lists['filter:focused'].items.every((item: { completionToken?: string }) => !!item.completionToken)).toBe(true);
     });
 

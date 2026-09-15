@@ -51,7 +51,7 @@ import { mobileSha256Hex } from '../lib/sync-crypto-native';
 import { keepPersistentCaptureNotificationArmed } from '../lib/persistent-capture-notification';
 import { markStartupPhase } from '../lib/startup-profiler';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { logError, logInfo, logWarn, setupGlobalErrorLogging } from '../lib/app-log';
+import { logError, logInfo, logWarn } from '../lib/app-log';
 import { useThemeColors } from '../hooks/use-theme-colors';
 import { AdaptiveWindowProvider } from '@/hooks/use-adaptive-window';
 import { useRootLayoutContextAutomation } from '@/hooks/root-layout/use-root-layout-context-automation';
@@ -91,6 +91,7 @@ import { SYNC_BACKEND_KEY } from '@/lib/sync-constants';
 import { coerceSupportedBackend, resolveBackend, type SyncBackend } from '@/lib/sync-service-utils';
 import { persistLastRoute, sanitizeAndroidActivityNavigationState } from '@/lib/session-restore';
 import { useAndroidActivitySession } from '@/hooks/use-android-activity-session';
+import { useIosSceneDiagnostics } from '@/hooks/use-ios-scene-diagnostics';
 
 // Blurred screens stay mounted, so every store change re-rendered every list in
 // the stack: a #766 log showed three project task lists (tab route + two pushed
@@ -357,6 +358,7 @@ function RootLayoutContent() {
 }
 
 function RootLayoutContentInner() {
+  useIosSceneDiagnostics();
   const sandboxMode = isSandboxMode();
   const router = useRouter();
   const navigationRef = useNavigationContainerRef();
@@ -597,10 +599,6 @@ function RootLayoutContentInner() {
 
   useEffect(() => {
     markStartupPhase('js.root_layout.mounted');
-  }, []);
-
-  useEffect(() => {
-    setupGlobalErrorLogging();
   }, []);
 
   useEffect(() => {

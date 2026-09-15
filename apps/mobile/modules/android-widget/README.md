@@ -24,20 +24,59 @@ intent.
 
 The Tasks widget reads optional payload sections and supports a list chooser.
 Its default Focus projection combines Today's Focus and Today. A user's
-explicit choice of Inbox, Today, Next, Waiting, Someday, or a project remains
-selected across payload updates. Check-offs append queue commands for the app
+explicit choice of Focus, Inbox, Next Actions, Waiting, Someday, or a saved
+filter remains selected across payload updates. The title and empty state open
+the displayed list in the app; a separate 44dp chevron target opens the native
+chooser, and the plus remains capture. Each navigation PendingIntent is scoped
+by widget id and list URI so placed widgets cannot replace one another's route.
+Check-offs append queue commands for the app
 to apply through the normal store; widget code never writes SQLite.
+
+A check-off stays visible and struck through during the three-second Undo
+window, whose pending map is persisted with `AtomicFile`. After the completion command is durably published, Tasks and Compact
+hide every cached occurrence locally, remove empty section headings, and let
+the remaining rows fill the widget. Compact chooses its Focus/Next Actions
+fallback after this filtering, so its header always matches its rows. The
+delayed path partially updates rows and header/count/empty chrome without
+replacing the row PendingIntent template. Android 12+ receives direct
+`RemoteCollectionItems` using the same row renderer as the legacy service;
+only older Android uses collection invalidation. Direct collections avoid
+Android 16's asynchronous conversion of the legacy service adapter. Queue failures keep the row pending and visible for a
+deterministic retry. The app still owns the eventual task completion through
+the normal pending-capture drain. A stale tap after publication only reconciles
+the hidden presentation; it never removes the queued completion.
 
 ## Compact widget
 
 The optional Compact style uses native RemoteViews with the simple v1.2.8
 layout: a 13sp title, 10sp Inbox count, flat 12sp task rows, and a capture
-button pinned below the scrollable list. It always shows the shared Focus
-projection, without list selection, section headings, metadata, or inline
-checkboxes. Task taps open the existing native detail sheet. Capture opens
+button pinned below the scrollable list. It shows the shared Focus projection
+under the localized `Today` header; when Today's Focus and Today are both empty, it shows Next Actions
+under that list's localized title. The list fills the resized widget with as
+many rows as fit, up to the available tasks. It has no list selection, section
+headings, metadata, or inline checkboxes. Task taps open the existing native detail sheet. Capture opens
 `QuickCaptureActivity` over the launcher and durably queues the new task
 without opening the main app. Both styles share the payload, theme, refresh,
 and pending-capture paths; no React Native widget rendering dependency is used.
+Its title and empty state open the list Compact actually displays, including
+the post-filter Next Actions fallback; delayed partial row updates refresh this
+link together with the header.
+
+List payloads may provide a validated hostless `mindwtr:///...` `openUri`.
+Legacy Focus, Inbox, Waiting, and Someday payloads map to their existing app
+routes. Next Actions and saved-filter ids map to the shared
+`/widget-list/<encoded-list-id>` destination; unknown or malformed ids fall
+back to Focus rather than becoming arbitrary paths.
+
+The Tasks header uses the same opaque day/night or custom-palette background
+as its body. The divider and plus retain their subtle border/accent roles, and
+the separate chooser chevron follows the muted-text token for contrast instead
+of retaining a fixed or semi-transparent accent tint.
+
+Every Android snapshot includes bounded Focus, Inbox, Next Actions, Waiting,
+and Someday lists, even before a Tasks widget is placed. After the app has
+published once, a newly placed widget can select those cached lists without
+another app opening. Saved-filter lists remain published on demand.
 
 ## Picker previews
 

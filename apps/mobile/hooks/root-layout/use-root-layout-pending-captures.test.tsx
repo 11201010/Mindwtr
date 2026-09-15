@@ -57,7 +57,7 @@ vi.mock('@/lib/watch-audio', () => ({
 vi.mock('@/lib/pomodoro-controller', () => ({
   mobilePomodoroController: { applyWatchCommand: mocks.applyWatchCommand },
 }));
-vi.mock('@/lib/app-log', () => ({ logError: vi.fn(async () => undefined) }));
+vi.mock('@/lib/app-log', () => ({ logError: vi.fn(async () => undefined), logInfo: vi.fn(async () => undefined) }));
 
 // eslint-disable-next-line import/first
 import { useRootLayoutPendingCaptures } from './use-root-layout-pending-captures';
@@ -105,6 +105,48 @@ describe('useRootLayoutPendingCaptures', () => {
 
     expect(mocks.ingestPendingCaptures).not.toHaveBeenCalled();
     expect(mocks.ingestIosWidgetCompletions).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it('refreshes widgets after a slow capture import finishes, not before it', async () => {
+    let finishImport!: (count: number) => void;
+    mocks.ingestPendingCaptures.mockImplementationOnce(() => new Promise((resolve) => { finishImport = resolve; }));
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness />); });
+    expect(mocks.refreshWidgets).not.toHaveBeenCalled();
+
+    await act(async () => { finishImport(1); });
+    expect(mocks.refreshWidgets).toHaveBeenCalledOnce();
+    expect(mocks.ingestPendingCaptures).toHaveBeenCalledOnce();
+    act(() => tree.unmount());
+  });
+
+  it('does not refresh widgets for an empty pending queue', async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness />); });
+    expect(mocks.refreshWidgets).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it('does not replay an imported capture when widget publication fails', async () => {
+    mocks.ingestPendingCaptures.mockResolvedValueOnce(1);
+    mocks.refreshWidgets.mockRejectedValueOnce(new Error('Widget unavailable'));
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness />); });
+    expect(mocks.ingestPendingCaptures).toHaveBeenCalledOnce();
+    expect(mocks.refreshWidgets).toHaveBeenCalledOnce();
+    expect(mocks.ingestIosWidgetCompletions).toHaveBeenCalledOnce();
+    act(() => tree.unmount());
+  });
+
+  it('does not publish personal widgets if disabled during capture import', async () => {
+    let finishImport!: (count: number) => void;
+    mocks.ingestPendingCaptures.mockImplementationOnce(() => new Promise((resolve) => { finishImport = resolve; }));
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness />); });
+    act(() => tree.update(<Harness disabled />));
+    await act(async () => { finishImport(1); });
+    expect(mocks.refreshWidgets).not.toHaveBeenCalled();
     act(() => tree.unmount());
   });
 

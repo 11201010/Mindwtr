@@ -17,6 +17,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'statusIncluded', 'associationCount', 'dateCount', 'failureClass',
     'matchCount', 'acceptedCount', 'droppedCount',
     'snapshotVersion', 'publishedCount', 'omittedCount', 'exactLinkCount',
+    // local-crash-capture: bounded app/build and technical exception metadata.
+    'appVersion', 'buildVersion', 'exceptionType',
+    // ios-scene-lifecycle: fixed native scene/delivery categories, never URLs or task content.
+    'deliveryKind',
     // feedback-diagnostics: opt-in snapshot of bounded session and saved logs.
     'captureMode', 'diagnosticTruncated', 'debugLoggingEnabled', 'breadcrumbCount', 'breadcrumbs',
     // share-card-export (local PNG export adapters)
@@ -66,6 +70,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'legacyWidgetCount',
     // widget-focus-today (curated Android widget publication, #1173)
     'focusItems', 'todayItems', 'totalItems',
+    // android-widget-lists (bounded GTD snapshots and Compact fallback, #1211)
+    'nextItems', 'inboxItems', 'listKind', 'available',
     // Apple Watch capture, command and Focus/timer snapshot (#1175)
     'action', 'focusCount', 'timerPhase', 'timerRunning',
     // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)

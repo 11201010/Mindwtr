@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronsLeft, CornerDownRight, Folder, Plus } from 'lucide-react';
 import { cn } from '../../../lib/utils';
@@ -12,6 +12,10 @@ import {
     type ProjectAreaSection,
     type CollapsedProjectAreas,
 } from './project-area-collapse';
+import {
+    useOptionalKeybindings,
+    type ProjectListScope,
+} from '../../../contexts/keybinding-context';
 
 const PROJECT_SELECTION_IGNORE_SELECTOR = '[data-project-selection-ignore="true"]';
 
@@ -30,6 +34,40 @@ type TagOptionList = {
 };
 
 type GroupedProjects = Array<[string, Project[]]>;
+
+export function getVisibleProjectIds({
+    groupedActiveProjects,
+    groupedDeferredProjects,
+    groupedArchivedProjects,
+    collapsedAreas,
+    showDeferredProjects,
+    showArchivedProjects,
+}: {
+    groupedActiveProjects: GroupedProjects;
+    groupedDeferredProjects: GroupedProjects;
+    groupedArchivedProjects: GroupedProjects;
+    collapsedAreas: CollapsedProjectAreas;
+    showDeferredProjects: boolean;
+    showArchivedProjects: boolean;
+}): string[] {
+    const collectVisible = (
+        section: ProjectAreaSection,
+        groups: GroupedProjects,
+        sectionVisible = true,
+    ) => sectionVisible
+        ? groups.flatMap(([areaId, areaProjects]) => (
+            isProjectAreaCollapsed(collapsedAreas, section, areaId)
+                ? []
+                : areaProjects.map((project) => project.id)
+        ))
+        : [];
+
+    return [
+        ...collectVisible('active', groupedActiveProjects),
+        ...collectVisible('deferred', groupedDeferredProjects, showDeferredProjects),
+        ...collectVisible('archived', groupedArchivedProjects, showArchivedProjects),
+    ];
+}
 
 // Matches core's projectTaskSummaryById value shape (store-types.ts DerivedState),
 // computed once in store-helpers.ts computeTaskDerivedState. See #927.
@@ -66,6 +104,9 @@ interface ProjectsSidebarProps {
     onToggleArchivedProjects: () => void;
     selectedProjectId: string | null;
     onSelectProject: (projectId: string) => void;
+    onActivateProject?: (projectId: string) => void;
+    navigationVisible?: boolean;
+    onRequestNavigationVisible?: () => void;
     getProjectColor: (project: Project) => string;
     projectTaskSummaryById: Map<string, ProjectTaskSummary>;
     projects: Project[];
@@ -108,6 +149,9 @@ export function ProjectsSidebar({
     onToggleArchivedProjects,
     selectedProjectId,
     onSelectProject,
+    onActivateProject,
+    navigationVisible = true,
+    onRequestNavigationVisible,
     getProjectColor,
     projectTaskSummaryById,
     focusedProjectCount,
@@ -122,6 +166,190 @@ export function ProjectsSidebar({
     const contextMenuRef = useRef<HTMLDivElement | null>(null);
     const contextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
     const pendingProjectSelectionRef = useRef<{ projectId: string; timeoutId: number } | null>(null);
+    const projectNavigationRootRef = useRef<HTMLDivElement | null>(null);
+    const projectRowRefs = useRef(new Map<string, HTMLDivElement>());
+    const pendingKeyboardFocusFrameRef = useRef<number | null>(null);
+    const focusedProjectIdRef = useRef<string | null>(null);
+    const projectListHadFocusRef = useRef(false);
+    const previousVisibleProjectIdsRef = useRef<string[]>([]);
+    const keybindings = useOptionalKeybindings();
+    const registerProjectListScope = keybindings?.registerProjectListScope;
+
+    const visibleProjectIds = useMemo(() => getVisibleProjectIds({
+        groupedActiveProjects,
+        groupedDeferredProjects,
+        groupedArchivedProjects,
+        collapsedAreas,
+        showDeferredProjects,
+        showArchivedProjects,
+    }), [
+        collapsedAreas,
+        groupedActiveProjects,
+        groupedArchivedProjects,
+        groupedDeferredProjects,
+        showArchivedProjects,
+        showDeferredProjects,
+    ]);
+
+    const focusProject = useCallback((projectId: string): boolean => {
+        const row = projectRowRefs.current.get(projectId);
+        if (!row) return false;
+        focusedProjectIdRef.current = projectId;
+        projectListHadFocusRef.current = true;
+        onSelectProject(projectId);
+        row.focus();
+        row.scrollIntoView?.({ block: 'nearest' });
+        return true;
+    }, [onSelectProject]);
+
+    const activateProject = useCallback((projectId: string) => {
+        onSelectProject(projectId);
+        onActivateProject?.(projectId);
+    }, [onActivateProject, onSelectProject]);
+
+    const focusVisibleProjectAt = useCallback((index: number) => {
+        if (visibleProjectIds.length === 0) return;
+        const boundedIndex = Math.max(0, Math.min(index, visibleProjectIds.length - 1));
+        focusProject(visibleProjectIds[boundedIndex]);
+    }, [focusProject, visibleProjectIds]);
+
+    const currentVisibleProjectIndex = useCallback(() => {
+        const active = document.activeElement;
+        const focusedId = active instanceof HTMLElement
+            ? active.closest<HTMLElement>('[data-project-navigation-item]')?.dataset.projectId
+            : undefined;
+        const currentId = focusedId ?? selectedProjectId ?? focusedProjectIdRef.current;
+        return currentId ? visibleProjectIds.indexOf(currentId) : -1;
+    }, [selectedProjectId, visibleProjectIds]);
+
+    const projectNavigationScope = useMemo<ProjectListScope>(() => ({
+        kind: 'projectList',
+        selectNext: () => {
+            const currentIndex = currentVisibleProjectIndex();
+            focusVisibleProjectAt(currentIndex < 0 ? 0 : currentIndex + 1);
+        },
+        selectPrev: () => {
+            const currentIndex = currentVisibleProjectIndex();
+            focusVisibleProjectAt(currentIndex < 0 ? visibleProjectIds.length - 1 : currentIndex - 1);
+        },
+        selectFirst: () => focusVisibleProjectAt(0),
+        selectLast: () => focusVisibleProjectAt(visibleProjectIds.length - 1),
+        focusSelected: () => {
+            const targetId = selectedProjectId && visibleProjectIds.includes(selectedProjectId)
+                ? selectedProjectId
+                : visibleProjectIds[0];
+            if (!targetId) return false;
+            if (!navigationVisible && onRequestNavigationVisible) {
+                onRequestNavigationVisible();
+                if (pendingKeyboardFocusFrameRef.current !== null) {
+                    window.cancelAnimationFrame(pendingKeyboardFocusFrameRef.current);
+                }
+                pendingKeyboardFocusFrameRef.current = window.requestAnimationFrame(() => {
+                    pendingKeyboardFocusFrameRef.current = null;
+                    focusProject(targetId);
+                });
+                return true;
+            }
+            return focusProject(targetId);
+        },
+        activateSelected: () => {
+            const currentIndex = currentVisibleProjectIndex();
+            const targetId = currentIndex >= 0 ? visibleProjectIds[currentIndex] : selectedProjectId;
+            if (targetId) onActivateProject?.(targetId);
+        },
+        ownsFocus: () => {
+            const active = document.activeElement;
+            if (!(active instanceof HTMLElement) || !projectNavigationRootRef.current?.contains(active)) {
+                return false;
+            }
+            return active.closest('[data-project-navigation-item]') !== null
+                && active.closest(PROJECT_SELECTION_IGNORE_SELECTOR) === null;
+        },
+    }), [
+        currentVisibleProjectIndex,
+        focusProject,
+        focusVisibleProjectAt,
+        navigationVisible,
+        onActivateProject,
+        onRequestNavigationVisible,
+        selectedProjectId,
+        visibleProjectIds,
+    ]);
+
+    useEffect(() => {
+        if (!registerProjectListScope) return;
+        registerProjectListScope(projectNavigationScope);
+        return () => registerProjectListScope(null);
+    }, [projectNavigationScope, registerProjectListScope]);
+
+    useEffect(() => {
+        const previousIds = previousVisibleProjectIdsRef.current;
+        previousVisibleProjectIdsRef.current = visibleProjectIds;
+        const focusedProjectId = focusedProjectIdRef.current;
+        const selectedWasRemoved = selectedProjectId !== null
+            && previousIds.includes(selectedProjectId)
+            && !visibleProjectIds.includes(selectedProjectId);
+        const focusedProjectWasRemoved = projectListHadFocusRef.current
+            && focusedProjectId !== null
+            && previousIds.includes(focusedProjectId)
+            && !visibleProjectIds.includes(focusedProjectId);
+        if (!selectedWasRemoved && !focusedProjectWasRemoved) return;
+        if (visibleProjectIds.length === 0) {
+            focusedProjectIdRef.current = null;
+            projectListHadFocusRef.current = false;
+            return;
+        }
+
+        const removedId = focusedProjectWasRemoved ? focusedProjectId : selectedProjectId;
+        const removedIndex = removedId ? previousIds.indexOf(removedId) : 0;
+        const fallbackId = selectedProjectId && visibleProjectIds.includes(selectedProjectId)
+            ? selectedProjectId
+            : visibleProjectIds[Math.min(Math.max(removedIndex, 0), visibleProjectIds.length - 1)];
+        const active = document.activeElement;
+        const focusWasLostWithRemovedRow = focusedProjectWasRemoved
+            && projectListHadFocusRef.current
+            && (
+                !(active instanceof HTMLElement)
+                || active === document.body
+                || !active.isConnected
+            );
+        if (focusWasLostWithRemovedRow) {
+            focusProject(fallbackId);
+        } else {
+            projectListHadFocusRef.current = false;
+            onSelectProject(fallbackId);
+        }
+    }, [focusProject, onSelectProject, selectedProjectId, visibleProjectIds]);
+
+    const setProjectRowRef = useCallback((projectId: string, row: HTMLDivElement | null) => {
+        if (row) {
+            projectRowRefs.current.set(projectId, row);
+        } else {
+            projectRowRefs.current.delete(projectId);
+        }
+    }, []);
+
+    const handleProjectFocus = useCallback((event: React.FocusEvent<HTMLDivElement>, projectId: string) => {
+        if (getProjectSelectionTarget(event.target)?.closest(PROJECT_SELECTION_IGNORE_SELECTOR)) return;
+        focusedProjectIdRef.current = projectId;
+        projectListHadFocusRef.current = true;
+        if (selectedProjectId !== projectId) onSelectProject(projectId);
+    }, [onSelectProject, selectedProjectId]);
+
+    const handleProjectBlur = useCallback(() => {
+        window.setTimeout(() => {
+            const active = document.activeElement;
+            if (
+                active instanceof HTMLElement
+                && projectNavigationRootRef.current?.contains(active)
+                && active.closest('[data-project-navigation-item]')
+                && !active.closest(PROJECT_SELECTION_IGNORE_SELECTOR)
+            ) {
+                return;
+            }
+            projectListHadFocusRef.current = false;
+        }, 0);
+    }, []);
 
     const closeContextMenu = useCallback(() => {
         setContextMenu(null);
@@ -141,10 +369,10 @@ export function ProjectsSidebar({
         clearPendingProjectSelection();
         const timeoutId = window.setTimeout(() => {
             pendingProjectSelectionRef.current = null;
-            onSelectProject(projectId);
+            activateProject(projectId);
         }, 0);
         pendingProjectSelectionRef.current = { projectId, timeoutId };
-    }, [clearPendingProjectSelection, onSelectProject]);
+    }, [activateProject, clearPendingProjectSelection]);
 
     const shouldIgnoreProjectSelection = useCallback((target: EventTarget | null) => {
         const element = getProjectSelectionTarget(target);
@@ -173,15 +401,15 @@ export function ProjectsSidebar({
     const handleProjectClick = useCallback((event: React.MouseEvent<HTMLDivElement>, projectId: string) => {
         if (shouldIgnoreProjectSelection(event.target)) return;
         if (pendingProjectSelectionRef.current?.projectId === projectId) return;
-        onSelectProject(projectId);
-    }, [onSelectProject, shouldIgnoreProjectSelection]);
+        activateProject(projectId);
+    }, [activateProject, shouldIgnoreProjectSelection]);
 
     const handleProjectKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>, projectId: string) => {
         if (shouldIgnoreProjectSelection(event.target)) return;
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
-        onSelectProject(projectId);
-    }, [onSelectProject, shouldIgnoreProjectSelection]);
+        activateProject(projectId);
+    }, [activateProject, shouldIgnoreProjectSelection]);
 
     useEffect(() => {
         if (!contextMenu) return;
@@ -211,6 +439,9 @@ export function ProjectsSidebar({
 
     useEffect(() => () => {
         clearPendingProjectSelection();
+        if (pendingKeyboardFocusFrameRef.current !== null) {
+            window.cancelAnimationFrame(pendingKeyboardFocusFrameRef.current);
+        }
     }, [clearPendingProjectSelection]);
 
     const renderMissingAreaDropTargets = (section: ProjectAreaSection, groups: GroupedProjects) => {
@@ -252,7 +483,11 @@ export function ProjectsSidebar({
     const createProjectLabel = `${tFallback(t, 'projects.create', 'Create')} ${tFallback(t, 'taskEdit.projectLabel', 'Project')}`;
 
     return (
-        <div className="w-full h-full min-h-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6">
+        <div
+            ref={projectNavigationRootRef}
+            data-project-navigation-root
+            className="w-full h-full min-h-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6"
+        >
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                     <h2 className="text-xl font-bold tracking-tight">{t('projects.title')}</h2>
@@ -405,7 +640,7 @@ export function ProjectsSidebar({
                                                     {({ handle, isDragging, isTaskOver }) => (
                                                 <div
                                                     className={cn(
-                                                        "group rounded-lg cursor-pointer transition-colors text-sm",
+                                                        "group rounded-lg cursor-pointer transition-colors text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                                                         selectedProjectId === project.id
                                                             ? "bg-primary/10 text-primary"
                                                             : project.isFocused
@@ -416,7 +651,12 @@ export function ProjectsSidebar({
                                                     )}
                                                     role="button"
                                                     tabIndex={0}
+                                                    data-project-navigation-item
+                                                    data-project-id={project.id}
                                                     aria-pressed={selectedProjectId === project.id}
+                                                    ref={(row) => setProjectRowRef(project.id, row)}
+                                                    onFocus={(event) => handleProjectFocus(event, project.id)}
+                                                    onBlur={handleProjectBlur}
                                                     onMouseDown={(event) => handleProjectMouseDown(event, project.id)}
                                                     onClick={(event) => handleProjectClick(event, project.id)}
                                                     onKeyDown={(event) => handleProjectKeyDown(event, project.id)}
@@ -528,7 +768,7 @@ export function ProjectsSidebar({
                                                                 {({ handle, isDragging, isTaskOver }) => (
                                                                     <div
                                                                     className={cn(
-                                                                        "group rounded-lg cursor-pointer transition-colors text-sm",
+                                                                        "group rounded-lg cursor-pointer transition-colors text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                                                                         selectedProjectId === project.id
                                                                             ? "bg-primary/10 text-primary"
                                                                             : "hover:bg-muted/40 text-foreground",
@@ -537,7 +777,12 @@ export function ProjectsSidebar({
                                                                     )}
                                                                     role="button"
                                                                     tabIndex={0}
+                                                                    data-project-navigation-item
+                                                                    data-project-id={project.id}
                                                                     aria-pressed={selectedProjectId === project.id}
+                                                                    ref={(row) => setProjectRowRef(project.id, row)}
+                                                                    onFocus={(event) => handleProjectFocus(event, project.id)}
+                                                                    onBlur={handleProjectBlur}
                                                                     onMouseDown={(event) => handleProjectMouseDown(event, project.id)}
                                                                     onClick={(event) => handleProjectClick(event, project.id)}
                                                                     onKeyDown={(event) => handleProjectKeyDown(event, project.id)}
@@ -620,7 +865,7 @@ export function ProjectsSidebar({
                                                                     {({ handle, isDragging }) => (
                                                                         <div
                                                                             className={cn(
-                                                                                "group rounded-lg cursor-pointer transition-colors text-sm",
+                                                                                "group rounded-lg cursor-pointer transition-colors text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                                                                                 selectedProjectId === project.id
                                                                                     ? "bg-primary/10 text-primary"
                                                                                     : "hover:bg-muted/40 text-foreground",
@@ -628,7 +873,12 @@ export function ProjectsSidebar({
                                                                             )}
                                                                             role="button"
                                                                             tabIndex={0}
+                                                                            data-project-navigation-item
+                                                                            data-project-id={project.id}
                                                                             aria-pressed={selectedProjectId === project.id}
+                                                                            ref={(row) => setProjectRowRef(project.id, row)}
+                                                                            onFocus={(event) => handleProjectFocus(event, project.id)}
+                                                                            onBlur={handleProjectBlur}
                                                                             onMouseDown={(event) => handleProjectMouseDown(event, project.id)}
                                                                             onClick={(event) => handleProjectClick(event, project.id)}
                                                                             onKeyDown={(event) => handleProjectKeyDown(event, project.id)}

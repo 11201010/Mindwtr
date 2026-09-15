@@ -94,10 +94,14 @@ struct MindwtrTasksWidgetAppIntentProvider: AppIntentTimelineProvider {
         in context: Context
     ) async -> Timeline<MindwtrTasksWidgetEntry> {
         let now = Date()
-        let entry = entry(for: configuration, family: context.family, date: now)
+        let entries = MindwtrTasksWidgetSnapshotStore.timelineEntries(
+            for: context.family,
+            listId: configuration.list?.id ?? mindwtrDefaultWidgetListId,
+            now: now
+        )
         let refresh = Calendar.current.date(byAdding: .minute, value: 30, to: now)
             ?? now.addingTimeInterval(1800)
-        return Timeline(entries: [entry], policy: .after(refresh))
+        return Timeline(entries: entries, policy: .after(refresh))
     }
 
     private func entry(

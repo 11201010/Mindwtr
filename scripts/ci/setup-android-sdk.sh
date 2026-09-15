@@ -8,7 +8,9 @@ set -euo pipefail
 
 cmdline_tools_version="${ANDROID_CMDLINE_TOOLS_VERSION:-12266719}"
 cmdline_tools_short_version="${ANDROID_CMDLINE_TOOLS_SHORT_VERSION:-16.0}"
-sdk_packages="${ANDROID_SDK_PACKAGES:-tools platform-tools}"
+# cmdline-tools is installed below; the obsolete SDK `tools` package is no
+# longer available from Google's repository and must not be requested.
+sdk_packages="${ANDROID_SDK_PACKAGES:-platform-tools}"
 android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
 
 cmdline_tools_dir="${android_sdk_root}/cmdline-tools/${cmdline_tools_short_version}"

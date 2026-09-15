@@ -84,6 +84,11 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(iosJob).toContain("swift test --package-path apps/mobile/modules/ios-widget");
   expect(workflow.match(/- "apps\/mobile\/modules\/ios-widget\/Package\.swift"/g)).toHaveLength(2);
   expect(workflow.match(/- "apps\/mobile\/modules\/ios-widget\/tests\/\*\*"/g)).toHaveLength(2);
+  expect(workflow.match(/- "apps\/mobile\/modules\/ios-scene-lifecycle\/\*\*"/g)).toHaveLength(2);
+  expect(workflow.match(/- "apps\/mobile\/modules\/ios-siri-actions\/\*\*"/g)).toHaveLength(2);
+  expect(workflow).toContain("apps/mobile/modules/ios-siri-actions/*|");
+  expect(iosJob).toContain("swift test --package-path apps/mobile/modules/ios-siri-actions");
+  expect(workflow.match(/- "apps\/mobile\/hooks\/use-ios-scene-diagnostics\.ts"/g)).toHaveLength(2);
   expect(workflow).toContain("apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|");
   const widgetActionStore = readFileSync("apps/mobile/modules/ios-widget/ios/MindwtrWidgetActionStore.swift", "utf8");
   expect(widgetActionStore).not.toContain("Darwin.flock(");
@@ -116,6 +121,139 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(workflow).toMatch(
     /apps\/mobile\/modules\/cloudkit-sync\/Package\.swift\|apps\/mobile\/modules\/cloudkit-sync\/tests\/\*\|/,
   );
+});
+
+test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence", () => {
+  const workflowText = readFileSync(".github/workflows/native-platform-ci.yml", "utf8");
+  const workflow = parse(workflowText);
+  const job = workflow.jobs["ios-native"];
+  const lanes = Object.fromEntries(
+    job.strategy.matrix.include.map((entry) => [entry.lane, entry]),
+  );
+
+  expect(job.strategy["fail-fast"]).toBe(false);
+  expect(lanes.xcode26.runner).toBe("macos-15");
+  expect(lanes.xcode27.runner).toBe("xcode-27");
+  expect(workflow.on.push.branches).toContain("fix/ios27-1193");
+
+  const generation = job.steps.find((step) => step.name === "Generate iOS native project");
+  expect(generation.env.CI).toBe("1");
+  expect(generation.run).toMatch(/prebuild \\\n\s+--clean \\\n\s+--platform ios/);
+  expect(job.steps.find((step) => step.name === "Validate generated iOS scene lifecycle").run)
+    .toContain("validate-ios-scene-lifecycle.js apps/mobile/ios");
+
+  const environment = job.steps.find((step) => step.name === "Capture and validate Xcode 27 environment");
+  expect(environment.if).toContain("matrix.lane == 'xcode27'");
+  expect(environment.run).toContain("collect-ios27-environment.sh");
+
+  const selectSimulator = job.steps.find((step) => step.name === "Select an available iOS 27 simulator");
+  expect(selectSimulator.if).toContain("matrix.lane == 'xcode27'");
+  expect(selectSimulator.run).toContain("select-ios27-simulator.sh");
+
+  for (const stepName of [
+    "Typecheck iOS widgets at the minimum deployment target",
+    "Typecheck Watch receiver against the iOS SDK",
+    "Run attachment installer Swift recovery tests",
+    "Run File Sync stable-lock Swift tests",
+    "Run CloudKit attachment error classifier tests",
+    "Run Watch payload and receipt recovery tests",
+    "Test iOS widget durable action queue",
+    "Test iOS Siri durable action transport",
+    "Run Watch outbox retry tests",
+  ]) {
+    const step = job.steps.find((step) => step.name === stepName);
+    expect(step).toBeDefined();
+    expect(step.if).toBeUndefined();
+  }
+
+  for (const stepName of [
+    "Compile Watch app and complications",
+    "Compile iOS app and native Swift modules",
+  ]) {
+    expect(job.steps.find((step) => step.name === stepName)?.if)
+      .toContain("matrix.lane == 'xcode26'");
+  }
+
+  const simulatorBuild = job.steps.find((step) => step.name === "Build bundled Release app for the iOS 27 simulator");
+  expect(simulatorBuild.if).toContain("matrix.lane == 'xcode27'");
+  expect(simulatorBuild.env.NODE_ENV).toBe("production");
+  expect(simulatorBuild.env.RCT_NO_LAUNCH_PACKAGER).toBe("1");
+  expect(simulatorBuild.run).toContain("-configuration Release");
+  expect(simulatorBuild.run).toContain("platform=iOS Simulator,id=${{ steps.ios27_simulator.outputs.simulator_udid }}");
+  expect(simulatorBuild.run).toContain("CODE_SIGNING_ALLOWED=NO");
+
+  const smoke = job.steps.find((step) => step.name === "Smoke test cold and warm links on the iOS 27 simulator");
+  expect(smoke.run).toContain("smoke-ios27-simulator.sh");
+  const smokeScript = readFileSync("scripts/ci/smoke-ios27-simulator.sh", "utf8");
+  expect(smokeScript).toContain("main.jsbundle");
+  expect(smokeScript).toContain("mindwtr://capture?title=CI%20iOS%2027%20Smoke&requestId=");
+  expect(smokeScript).toContain("mindwtr://open-feature?feature=waiting");
+  expect(smokeScript).toContain("cold-link-screen.png");
+  expect(smokeScript).toContain("STABLE_COLD_PID");
+  expect(smokeScript).toContain("WARM_PID");
+  expect(smokeScript).toContain("stage=sceneConnected deliveryKind=url");
+  expect(smokeScript).toContain("stage=rootStarted deliveryKind=url");
+  expect(smokeScript).toContain("stage=coldDelivery deliveryKind=url");
+  expect(smokeScript).toContain("stage=warmDelivery deliveryKind=url");
+  expect(smokeScript).toContain("stage=bridgeReady deliveryKind=none");
+
+  const archive = job.steps.find((step) => step.name === "Create unsigned Release device archive with Xcode 27");
+  expect(archive.run).toContain("-destination 'generic/platform=iOS'");
+  expect(archive.run).toContain("CODE_SIGNING_ALLOWED=NO");
+  expect(archive.run).toContain("CODE_SIGNING_REQUIRED=NO");
+  expect(archive.run).toContain("Mindwtr-unsigned.xcarchive");
+  expect(archive.run).not.toContain("-sdk iphoneos");
+
+  const upload = job.steps.find((step) => step.name === "Upload Xcode 27 validation evidence");
+  expect(upload.uses).toBe(
+    "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+  );
+  expect(upload.with.path).toBe("${{ runner.temp }}/ios27-artifacts");
+
+  for (const script of [
+    "scripts/ci/collect-ios27-environment.sh",
+    "scripts/ci/select-ios27-simulator.sh",
+    "scripts/ci/smoke-ios27-simulator.sh",
+  ]) {
+    expect(() => execFileSync("bash", ["-n", script])).not.toThrow();
+    expect(workflowText.match(new RegExp(`- "${script.replaceAll("/", "\\/")}"`, "g")))
+      .toHaveLength(2);
+  }
+});
+
+test("iOS 27 smoke scopes and verifies simulator URL-scheme approval", () => {
+  const smokeScript = readFileSync("scripts/ci/smoke-ios27-simulator.sh", "utf8");
+
+  expect(smokeScript).toContain(
+    'SCHEME_APPROVAL_DOMAIN="com.apple.launchservices.schemeapproval"',
+  );
+  expect(smokeScript).toContain(
+    'SCHEME_APPROVAL_KEY="com.apple.CoreSimulator.CoreSimulatorBridge-->${URL_SCHEME}"',
+  );
+  expect(smokeScript).toMatch(
+    /xcrun simctl spawn "\$SIMULATOR_UDID" defaults write \\\n\s+"\$SCHEME_APPROVAL_DOMAIN" \\\n\s+"\$SCHEME_APPROVAL_KEY" \\\n\s+-string "\$BUNDLE_ID"/,
+  );
+  expect(smokeScript).toMatch(
+    /xcrun simctl spawn "\$SIMULATOR_UDID" defaults read \\\n\s+"\$SCHEME_APPROVAL_DOMAIN" \\\n\s+"\$SCHEME_APPROVAL_KEY"/,
+  );
+  expect(smokeScript).toContain('if [ "$approved_bundle_id" != "$BUNDLE_ID" ]');
+  expect(smokeScript).toContain('if [ "${GITHUB_ACTIONS:-}" != "true" ]');
+  expect(smokeScript).toContain('approval_scope=github_actions_simulator');
+  expect(smokeScript).toContain('approval_status=refused_outside_github_actions');
+  expect(smokeScript).toContain('approval_status=verified');
+  expect(smokeScript).toContain(
+    'xcrun simctl get_app_container "$SIMULATOR_UDID" "$BUNDLE_ID" app',
+  );
+
+  const installIndex = smokeScript.indexOf('xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"');
+  const approvalIndex = smokeScript.lastIndexOf("\napprove_url_scheme\n");
+  const firstOpenIndex = smokeScript.indexOf('xcrun simctl openurl "$SIMULATOR_UDID"');
+  expect(installIndex).toBeGreaterThan(-1);
+  expect(approvalIndex).toBeGreaterThan(installIndex);
+  expect(firstOpenIndex).toBeGreaterThan(approvalIndex);
+  expect(smokeScript.match(/xcrun simctl openurl/g)).toHaveLength(2);
+  expect(smokeScript).not.toContain("xcrun simctl launch");
+  expect(smokeScript).not.toContain("com.apple.launchservices.schemeapproval.plist");
 });
 
 test("native CI typechecks all maintained widgets before the expensive host build", () => {

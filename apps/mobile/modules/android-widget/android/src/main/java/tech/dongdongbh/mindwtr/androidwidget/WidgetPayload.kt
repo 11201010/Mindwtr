@@ -1,6 +1,10 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
 import android.content.Context
+import java.net.URI
+import java.net.URISyntaxException
+import java.net.URLDecoder
+import java.net.URLEncoder
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -28,7 +32,10 @@ data class WidgetPayload(
   val palette: Palette?,
   val quickCapture: QuickCaptureLabels,
   val taskPeek: TaskPeekLabels,
+  val chooseListLabel: String = "Change",
 ) {
+  data class DisplaySnapshot(val sourceTaskIds: Set<String>, val payload: WidgetPayload)
+
   data class Item(
     val id: String,
     val title: String,
@@ -53,7 +60,13 @@ data class WidgetPayload(
   data class Section(val title: String, val detail: String?, val items: List<Item>)
 
   /** One list a placed Tasks widget can show (#1173). */
-  data class ListPayload(val title: String, val dateLabel: String?, val sections: List<Section>, val items: List<Item>)
+  data class ListPayload(
+    val title: String,
+    val dateLabel: String?,
+    val sections: List<Section>,
+    val items: List<Item>,
+    val openUri: String? = null,
+  )
 
   data class SavedFilterOption(val id: String, val name: String)
 
@@ -66,7 +79,6 @@ data class WidgetPayload(
     val onAccent: Int,
     val border: Int,
     val warning: Int,
-    val headerWash: Int,
   )
 
   data class TaskPeekLabels(
@@ -109,6 +121,31 @@ data class WidgetPayload(
     return ids
   }
 
+  /**
+   * Builds the launcher-facing snapshot without mutating the app-published
+   * payload. [sourceTaskIds] deliberately comes from the unfiltered payload so
+   * committed check-offs can still be reconciled after the app ingests them.
+   */
+  fun displaySnapshot(hiddenTaskIds: Set<String>): DisplaySnapshot {
+    if (hiddenTaskIds.isEmpty()) return DisplaySnapshot(allTaskIds(), this)
+    fun visible(items: List<Item>): List<Item> = items.filterNot { it.id in hiddenTaskIds }
+    fun visible(sections: List<Section>): List<Section> = sections.mapNotNull { section ->
+      section.copy(items = visible(section.items)).takeIf { it.items.isNotEmpty() }
+    }
+    fun visible(list: ListPayload): ListPayload = list.copy(
+      sections = visible(list.sections),
+      items = visible(list.items),
+    )
+    return DisplaySnapshot(
+      sourceTaskIds = allTaskIds(),
+      payload = copy(
+        items = visible(items),
+        sections = visible(sections),
+        lists = lists.mapValues { (_, list) -> visible(list) },
+      ),
+    )
+  }
+
   /** The row a tap names, wherever the payload carries it; null when the payload has moved on. */
   fun itemFor(taskId: String): Item? {
     if (taskId.isEmpty()) return null
@@ -139,9 +176,39 @@ data class WidgetPayload(
       ?: lists[WidgetListStore.DEFAULT_LIST]
       ?: ListPayload(headerTitle, dateLabel, sections, items)
 
+  /** Compact shows Next Actions only when Focus has no flat or section rows. */
+  fun compactListId(): String {
+    val focus = listFor(WidgetListStore.DEFAULT_LIST)
+    val next = lists[NEXT_LIST_ID]
+    return if (!focus.hasRows() && next?.hasRows() == true) NEXT_LIST_ID else WidgetListStore.DEFAULT_LIST
+  }
+
+  /** Safe app destination for a selected list; unknown legacy ids return Focus. */
+  fun openUriFor(listId: String): String {
+    val safeFocusUri = listAppUriOrNull(focusUri, WidgetListStore.DEFAULT_LIST) ?: DEFAULT_FOCUS_URI
+    val validListId = navigableListIdOrNull(listId) ?: return safeFocusUri
+    lists[validListId]?.openUri?.let { return it }
+    return when (validListId) {
+      WidgetListStore.DEFAULT_LIST -> safeFocusUri
+      "inbox" -> "mindwtr:///inbox"
+      NEXT_LIST_ID -> listRoute(validListId)
+      "waiting" -> "mindwtr:///waiting"
+      "someday" -> "mindwtr:///someday"
+      else -> listRoute(validListId)
+    }
+  }
+
+  private fun listRoute(listId: String): String =
+    "mindwtr:///widget-list/${URLEncoder.encode(listId, Charsets.UTF_8.name()).replace("+", "%20")}"
+
+  private fun ListPayload.hasRows(): Boolean = items.isNotEmpty() || sections.any { it.items.isNotEmpty() }
+
   companion object {
     const val DEFAULT_FOCUS_URI = "mindwtr:///focus"
+    const val NEXT_LIST_ID = "next"
     const val MAX_ITEMS = 50
+    private const val MAX_LIST_ID_LENGTH = 1_024
+    private val FIXED_LIST_IDS = setOf(WidgetListStore.DEFAULT_LIST, "inbox", NEXT_LIST_ID, "waiting", "someday")
 
     val EMPTY = WidgetPayload(
       headerTitle = "Today's Focus",
@@ -200,6 +267,7 @@ data class WidgetPayload(
             dateLabel = list.optString("dateLabel").trim().takeIf { it.isNotEmpty() && !list.isNull("dateLabel") },
             sections = parseSections(list.optJSONArray("sections")),
             items = parseItems(list.optJSONArray("items")),
+            openUri = listAppUriOrNull(list.optString("openUri"), key),
           )
         }
       }
@@ -245,6 +313,7 @@ data class WidgetPayload(
       val inboxCount = maxOf(0, root.optInt("inboxCount", 0))
       return WidgetPayload(
         headerTitle = root.stringOr("headerTitle", defaults.headerTitle),
+        chooseListLabel = root.stringOr("chooseListLabel", defaults.chooseListLabel),
         dateLabel = root.stringOr("dateLabel", defaults.dateLabel),
         inboxLabel = inboxLabel,
         inboxCount = inboxCount,
@@ -333,12 +402,40 @@ data class WidgetPayload(
         onAccent = parseHexColor(json.optString("onAccent")) ?: background,
         border = parseHexColor(json.optString("border")) ?: (parseHexColor(json.optString("mutedText")) ?: text),
         warning = parseHexColor(json.optString("warning")) ?: (parseHexColor(json.optString("accent")) ?: text),
-        headerWash = parseHexColor(json.optString("headerWash"))
-          ?: WidgetRenderer.withAlpha(parseHexColor(json.optString("accent")) ?: text, 0x2E),
       )
     }
 
     fun appUriOrNull(value: String?): String? = value?.takeIf { it.startsWith("mindwtr:") }
+
+    /** List navigation accepts only hostless, hierarchical routes owned by this app. */
+    private fun listAppUriOrNull(value: String?, listId: String): String? {
+      val validListId = navigableListIdOrNull(listId) ?: return null
+      val candidate = value?.trim()?.takeIf { it.length in 1..MAX_LIST_URI_LENGTH } ?: return null
+      val uri = try {
+        URI(candidate)
+      } catch (_: URISyntaxException) {
+        return null
+      }
+      if (uri.scheme != "mindwtr" || uri.isOpaque || uri.rawAuthority != null || uri.rawQuery != null || uri.rawFragment != null) return null
+      val routedListId = when (val path = uri.rawPath) {
+        "/focus" -> WidgetListStore.DEFAULT_LIST
+        "/inbox" -> "inbox"
+        "/waiting" -> "waiting"
+        "/someday" -> "someday"
+        else -> {
+          val segment = path?.removePrefix(LIST_ROUTE_PREFIX)?.takeIf { path.startsWith(LIST_ROUTE_PREFIX) && it.isNotEmpty() && !it.contains('/') }
+            ?: return null
+          val decoded = try {
+            URLDecoder.decode(segment, Charsets.UTF_8.name())
+          } catch (_: IllegalArgumentException) {
+            return null
+          }
+          decoded.takeIf { it == NEXT_LIST_ID || it.startsWith(WidgetListStore.FILTER_PREFIX) }
+            ?: return null
+        }
+      }
+      return candidate.takeIf { routedListId == validListId }
+    }
 
     /**
      * `#RRGGBB` or `#RRGGBBAA` (CSS order, what core's getAccentTint writes) to
@@ -357,6 +454,18 @@ data class WidgetPayload(
     private fun JSONObject?.stringOr(key: String, fallback: String): String {
       val value = this?.optString(key)?.trim()
       return if (value.isNullOrEmpty()) fallback else value
+    }
+
+    private const val MAX_LIST_URI_LENGTH = 12_512
+    private const val LIST_ROUTE_PREFIX = "/widget-list/"
+
+    private fun navigableListIdOrNull(listId: String): String? = when {
+      listId in FIXED_LIST_IDS -> listId
+      listId.startsWith(WidgetListStore.FILTER_PREFIX) &&
+        listId.length <= MAX_LIST_ID_LENGTH &&
+        listId.removePrefix(WidgetListStore.FILTER_PREFIX).isNotBlank() &&
+        listId.none(Char::isISOControl) -> listId
+      else -> null
     }
   }
 }

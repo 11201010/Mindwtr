@@ -80,16 +80,64 @@ vi.mock('expo-file-system', () => ({
 vi.mock('expo-file-system/legacy', () => legacyFileSystemMocks);
 
 import {
+  __appLogTestUtils,
   clearLog,
   collectFeedbackDiagnostics,
   ensureLogFilePath,
   getLogPath,
+  LOCAL_FATAL_CRASH_RELEASE_CHECK,
   logInfo,
   logError,
   readRecentLogText,
+  recoverRetainedFatalCrash,
   setLogBackend,
+  setupGlobalErrorLogging,
   type LogBackend,
 } from './app-log';
+import {
+  createLocalFatalCrashCapture,
+  type LocalFatalCrashCapture,
+  type LocalFatalCrashStorage,
+  type RetainedFatalCrashEntry,
+} from './mobile-crash-capture';
+
+const retainedCrashEntry: RetainedFatalCrashEntry = {
+  ts: '2026-09-14T12:34:56.000Z',
+  level: 'error',
+  scope: 'fatal-recovery',
+  message: 'Cannot read properties of undefined (property omitted)',
+  stack: 'at renderTask (index.android.bundle:123:45)',
+  context: {
+    platform: 'android',
+    appVersion: '1.3.1',
+    buildVersion: '144',
+    exceptionType: 'TypeError',
+  },
+};
+
+const createRetainedCrashCapture = (initial: RetainedFatalCrashEntry | null = retainedCrashEntry) => {
+  let retained = initial;
+  const serialized = () => retained ? `${JSON.stringify(retained)}\n` : null;
+  const capture: LocalFatalCrashCapture = {
+    capture: vi.fn(),
+    clear: vi.fn(() => {
+      retained = null;
+    }),
+    clearIfUnchanged: vi.fn((identity: string) => {
+      if (serialized() !== identity) return false;
+      retained = null;
+      return true;
+    }),
+    getPath: vi.fn(() => retained ? 'file://document/logs/mindwtr-fatal-js-crash.json' : null),
+    read: vi.fn(() => retained),
+    readSnapshot: vi.fn(() => {
+      const identity = serialized();
+      return retained && identity ? { entry: retained, identity } : null;
+    }),
+    readText: vi.fn(serialized),
+  };
+  return { capture, retained: () => retained };
+};
 
 describe('app-log', () => {
   const backend: Required<LogBackend> = {
@@ -100,7 +148,9 @@ describe('app-log', () => {
   };
 
   beforeEach(async () => {
+    __appLogTestUtils.resetGlobalErrorLogging();
     await clearLog();
+    __appLogTestUtils.resetGlobalErrorLogging();
     vi.stubGlobal('__DEV__', true);
     vi.clearAllMocks();
     legacyFileSystemMocks.reset();
@@ -115,6 +165,7 @@ describe('app-log', () => {
 
   afterEach(() => {
     setLogBackend(null);
+    __appLogTestUtils.resetGlobalErrorLogging();
     vi.unstubAllGlobals();
   });
 
@@ -259,5 +310,235 @@ describe('app-log', () => {
       infoSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+
+  it('captures fatal evidence before the default handler even when disk logging is disabled', () => {
+    storeState.settings.diagnostics.loggingEnabled = false;
+    const order: string[] = [];
+    const crashCapture = {
+      capture: vi.fn(() => {
+        order.push('capture');
+      }),
+    };
+    let installedHandler: ((error: unknown, isFatal?: boolean) => void) | undefined;
+    vi.stubGlobal('ErrorUtils', {
+      getGlobalHandler: () => (error: unknown, isFatal?: boolean) => {
+        expect(error).toBe(fatalError);
+        expect(isFatal).toBe(true);
+        order.push('default');
+        throw new Error('default handler terminated');
+      },
+      setGlobalHandler: (handler: (error: unknown, isFatal?: boolean) => void) => {
+        installedHandler = handler;
+      },
+    });
+    const fatalError = new TypeError("Cannot read properties of undefined (reading 'status')");
+
+    (setupGlobalErrorLogging as unknown as (options: { crashCapture: typeof crashCapture }) => void)({ crashCapture });
+
+    expect(() => installedHandler?.(fatalError, true)).toThrow('default handler terminated');
+    expect(crashCapture.capture).toHaveBeenCalledWith(fatalError);
+    expect(order).toEqual(['capture', 'default']);
+    expect(backend.appendLogLine).not.toHaveBeenCalled();
+  });
+
+  it('delegates a fatal error exactly once when local capture throws', () => {
+    const fatalError = new Error('fatal');
+    Object.defineProperty(fatalError, 'message', {
+      get: () => { throw new Error('hostile message getter'); },
+    });
+    const defaultHandler = vi.fn((_error: unknown, _isFatal?: boolean) => {
+      throw new Error('default handler terminated');
+    });
+    let installedHandler: ((error: unknown, isFatal?: boolean) => void) | undefined;
+    vi.stubGlobal('ErrorUtils', {
+      getGlobalHandler: () => defaultHandler,
+      setGlobalHandler: (handler: (error: unknown, isFatal?: boolean) => void) => {
+        installedHandler = handler;
+      },
+    });
+    const crashCapture = createRetainedCrashCapture(null).capture;
+    vi.mocked(crashCapture.capture).mockImplementation(() => {
+      throw new Error('slot unavailable');
+    });
+
+    setupGlobalErrorLogging({ crashCapture });
+    expect(() => installedHandler?.(fatalError, true)).toThrow('default handler terminated');
+
+    expect(crashCapture.capture).toHaveBeenCalledOnce();
+    expect(defaultHandler).toHaveBeenCalledOnce();
+    expect(defaultHandler.mock.calls[0]?.[0]).toBe(fatalError);
+    expect(defaultHandler.mock.calls[0]?.[1]).toBe(true);
+  });
+
+  it('does not write the fatal slot for nonfatal global errors', () => {
+    const error = new Error('recoverable');
+    const defaultHandler = vi.fn();
+    let installedHandler: ((error: unknown, isFatal?: boolean) => void) | undefined;
+    vi.stubGlobal('ErrorUtils', {
+      getGlobalHandler: () => defaultHandler,
+      setGlobalHandler: (handler: (error: unknown, isFatal?: boolean) => void) => {
+        installedHandler = handler;
+      },
+    });
+    const crashCapture = createRetainedCrashCapture(null).capture;
+
+    setupGlobalErrorLogging({ crashCapture });
+    installedHandler?.(error, false);
+
+    expect(crashCapture.capture).not.toHaveBeenCalled();
+    expect(defaultHandler).toHaveBeenCalledOnce();
+    expect(defaultHandler).toHaveBeenCalledWith(error, false);
+  });
+
+  it('still installs and delegates when synchronous file-system capture is unavailable', () => {
+    const fatalError = new Error('fatal');
+    const defaultHandler = vi.fn();
+    let installedHandler: ((error: unknown, isFatal?: boolean) => void) | undefined;
+    vi.stubGlobal('ErrorUtils', {
+      getGlobalHandler: () => defaultHandler,
+      setGlobalHandler: (handler: (error: unknown, isFatal?: boolean) => void) => {
+        installedHandler = handler;
+      },
+    });
+
+    setupGlobalErrorLogging({ crashCapture: null });
+    installedHandler?.(fatalError, true);
+
+    expect(defaultHandler).toHaveBeenCalledOnce();
+    expect(defaultHandler).toHaveBeenCalledWith(fatalError, true);
+  });
+
+  it('recovers a retained crash through a forced serialized append before clearing it', async () => {
+    storeState.settings.diagnostics.loggingEnabled = false;
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+
+    await expect(recoverRetainedFatalCrash()).resolves.toBe(true);
+
+    expect(backend.appendLogLine).toHaveBeenNthCalledWith(1, retainedCrashEntry, { force: true });
+    expect(backend.appendLogLine).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      level: 'info',
+      scope: 'diagnostics',
+      message: 'Retained fatal JavaScript crash recovered',
+      context: {
+        releaseCheck: LOCAL_FATAL_CRASH_RELEASE_CHECK,
+        count: '1',
+      },
+    }), { force: true });
+    expect(retained.capture.clearIfUnchanged).toHaveBeenCalledOnce();
+    expect(retained.retained()).toBeNull();
+  });
+
+  it('retains a failed recovery and exposes the crash slot to Settings log sharing', async () => {
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+    vi.mocked(backend.appendLogLine).mockResolvedValue(null);
+
+    await expect(recoverRetainedFatalCrash()).resolves.toBe(false);
+    await expect(ensureLogFilePath()).resolves.toBe('file://document/logs/mindwtr-fatal-js-crash.json');
+
+    expect(retained.capture.clearIfUnchanged).not.toHaveBeenCalled();
+    expect(retained.retained()).toEqual(retainedCrashEntry);
+  });
+
+  it('retains the slot when the recovery proof cannot be appended', async () => {
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+    vi.mocked(backend.appendLogLine)
+      .mockResolvedValueOnce('file://test.log')
+      .mockResolvedValueOnce(null);
+
+    await expect(recoverRetainedFatalCrash()).resolves.toBe(false);
+
+    expect(backend.appendLogLine).toHaveBeenCalledTimes(2);
+    expect(retained.capture.clearIfUnchanged).not.toHaveBeenCalled();
+    expect(retained.retained()).toEqual(retainedCrashEntry);
+  });
+
+  it('includes a retained crash in explicit feedback diagnostics after a failed import', async () => {
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+    vi.mocked(backend.appendLogLine).mockResolvedValue(null);
+
+    const diagnostics = await collectFeedbackDiagnostics();
+
+    expect(diagnostics).toContain('Cannot read properties of undefined (property omitted)');
+    expect(diagnostics).not.toContain(LOCAL_FATAL_CRASH_RELEASE_CHECK);
+    expect(retained.capture.clearIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it('coalesces simultaneous retained-crash imports', async () => {
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+    let releaseAppend: (() => void) | undefined;
+    const appendReleased = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    vi.mocked(backend.appendLogLine).mockImplementation(async () => {
+      await appendReleased;
+      return 'file://test.log';
+    });
+
+    const first = recoverRetainedFatalCrash();
+    const second = recoverRetainedFatalCrash();
+    expect(second).toBe(first);
+    await Promise.resolve();
+    expect(backend.appendLogLine).toHaveBeenCalledTimes(1);
+
+    releaseAppend?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(backend.appendLogLine).toHaveBeenCalledTimes(2);
+    expect(retained.capture.clearIfUnchanged).toHaveBeenCalledOnce();
+  });
+
+  it('does not clear a newer fatal crash written during awaited recovery', async () => {
+    let stored: string | null = null;
+    const storage: LocalFatalCrashStorage = {
+      clearTextSync: () => { stored = null; },
+      getPath: () => stored ? 'file://document/logs/mindwtr-fatal-js-crash.json' : null,
+      readTextSync: () => stored,
+      writeTextSync: (value) => { stored = value; },
+    };
+    let timestamp = '2026-09-14T12:34:56.000Z';
+    const capture = createLocalFatalCrashCapture(storage, { platform: 'android' }, {
+      now: () => new Date(timestamp),
+    });
+    capture.capture(new TypeError("Cannot read properties of undefined (reading 'first')"));
+    __appLogTestUtils.setLocalFatalCrashCapture(capture);
+    let markDetailStarted: (() => void) | undefined;
+    let releaseDetail: (() => void) | undefined;
+    const detailStarted = new Promise<void>((resolve) => { markDetailStarted = resolve; });
+    const detailReleased = new Promise<void>((resolve) => { releaseDetail = resolve; });
+    vi.mocked(backend.appendLogLine).mockImplementation(async (entry) => {
+      if (entry.scope === 'fatal-recovery') {
+        markDetailStarted?.();
+        await detailReleased;
+      }
+      return 'file://test.log';
+    });
+
+    const recovery = recoverRetainedFatalCrash();
+    await detailStarted;
+    timestamp = '2026-09-14T12:35:56.000Z';
+    capture.capture(new RangeError('Maximum call stack size exceeded'));
+    releaseDetail?.();
+
+    await expect(recovery).resolves.toBe(true);
+    expect(capture.read()).toMatchObject({
+      ts: '2026-09-14T12:35:56.000Z',
+      message: 'Maximum call stack size exceeded',
+    });
+  });
+
+  it('clears the retained crash slot with the normal diagnostics log', async () => {
+    const retained = createRetainedCrashCapture();
+    __appLogTestUtils.setLocalFatalCrashCapture(retained.capture);
+
+    await clearLog();
+
+    expect(backend.clearLog).toHaveBeenCalledOnce();
+    expect(retained.capture.clear).toHaveBeenCalledOnce();
+    expect(retained.retained()).toBeNull();
   });
 });

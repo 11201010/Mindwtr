@@ -37,9 +37,12 @@ import { buildWidgetCompletionToken } from './widget-completion-token';
 import {
     buildWidgetSavedFilterOptions,
     buildWidgetTaskList,
+    type WidgetTaskList,
     WIDGET_SAVED_FILTER_LIST_PREFIX,
     widgetListTitles,
 } from './widget-lists';
+
+export type { WidgetTaskList } from './widget-lists';
 
 export const WIDGET_DATA_KEY = 'mindwtr-data';
 export const WIDGET_LANGUAGE_KEY = 'mindwtr-language';
@@ -66,6 +69,12 @@ export const IOS_WIDGET_COMPACT_KIND = 'MindwtrCompactWidget';
 export const IOS_WIDGET_LOCK_KIND = 'MindwtrFocusLockWidget';
 export const WIDGET_FOCUS_URI = 'mindwtr:///focus';
 export const WIDGET_QUICK_CAPTURE_URI = 'mindwtr:///capture-quick?mode=text';
+const WIDGET_LIST_DIRECT_URIS = {
+    focus: WIDGET_FOCUS_URI,
+    inbox: 'mindwtr:///inbox',
+    waiting: 'mindwtr:///waiting',
+    someday: 'mindwtr:///someday',
+} as const;
 type ConcreteThemePresetName = Exclude<ThemePresetName, 'default'>;
 
 export type WidgetSystemColorScheme = 'light' | 'dark' | null | undefined;
@@ -138,6 +147,9 @@ export interface WidgetListPayload {
     dateLabel?: string;
     sections?: WidgetTaskSection[];
     items: WidgetTaskItem[];
+    // Backward-compatible list-level destination. Next and saved filters use
+    // the host-owned widget-list route; existing list screens stay direct.
+    openUri?: string;
 }
 
 export interface WidgetSavedFilterOption {
@@ -168,6 +180,7 @@ export interface TasksWidgetPayload {
     captureLabel: string;
     completeLabel: string;
     undoLabel: string;
+    chooseListLabel?: string;
     focusUri: string;
     quickCaptureUri: string;
     themeMode?: string;
@@ -438,6 +451,8 @@ export interface WidgetPayloadBuildOptions {
 
 export interface WidgetPayloadProjection {
     build: (maxItems?: number) => TasksWidgetPayload;
+    /** Fresh uncapped task list for the host-owned widget-list route. */
+    getTaskList: (listId: string) => WidgetTaskList | null;
 }
 
 type WidgetPayloadProjectionOptions = Omit<WidgetPayloadBuildOptions, 'maxItems'>;
@@ -598,6 +613,12 @@ export function createWidgetPayloadProjection(
     };
 
     return {
+        getTaskList: (listId: string): WidgetTaskList | null => {
+            if (listId === 'focus') {
+                return { title: listTitles.focus, tasks: curatedTasks };
+            }
+            return taskLists.get(listId) ?? null;
+        },
         build: (requestedMaxItems?: number): TasksWidgetPayload => {
             const maxItems = Number.isFinite(requestedMaxItems)
                 ? Math.max(1, Math.floor(requestedMaxItems as number))
@@ -631,10 +652,23 @@ export function createWidgetPayloadProjection(
             }
 
             const listPayloads: Record<string, WidgetListPayload> = {
-                focus: { title: listTitles.focus, dateLabel, sections, items },
+                focus: {
+                    title: listTitles.focus,
+                    dateLabel,
+                    sections,
+                    items,
+                    openUri: WIDGET_LIST_DIRECT_URIS.focus,
+                },
             };
             for (const [listId, list] of taskLists) {
-                listPayloads[listId] = { title: list.title, items: list.tasks.slice(0, maxItems).map(toItem) };
+                const directUri = WIDGET_LIST_DIRECT_URIS[listId as keyof typeof WIDGET_LIST_DIRECT_URIS];
+                const openUri = directUri
+                    ?? `mindwtr:///widget-list/${encodeURIComponent(listId)}`;
+                listPayloads[listId] = {
+                    title: list.title,
+                    items: list.tasks.slice(0, maxItems).map(toItem),
+                    openUri,
+                };
             }
 
             return {
@@ -653,6 +687,7 @@ export function createWidgetPayloadProjection(
                 captureLabel: tr['widget.capture'] ?? 'Quick capture',
                 completeLabel: tr['review.markDone'] ?? 'Mark Done',
                 undoLabel: tr['common.undo'] ?? 'Undo',
+                chooseListLabel: tr['common.change'] ?? 'Change',
                 focusUri: WIDGET_FOCUS_URI,
                 quickCaptureUri: WIDGET_QUICK_CAPTURE_URI,
                 themeMode: typeof data.settings?.theme === 'string' ? data.settings.theme : 'system',

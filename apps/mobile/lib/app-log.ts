@@ -1,5 +1,13 @@
 import { buildFeedbackDiagnostics, createFeedbackDiagnosticsBuffer, FEEDBACK_DIAGNOSTICS_SOURCE_CHARS, getBreadcrumbs, sanitizeForLog, sanitizeLogContext, sanitizeUrl, useTaskStore } from '@mindwtr/core';
 import * as ExpoLegacyFileSystem from 'expo-file-system/legacy';
+import {
+  createDefaultLocalFatalCrashCapture,
+  type LocalFatalCrashCapture,
+  type LocalFatalCrashMetadata,
+  type RetainedFatalCrashSnapshot,
+} from './mobile-crash-capture';
+
+export const LOCAL_FATAL_CRASH_RELEASE_CHECK = 'v1.3.1/local-crash-capture';
 
 const feedbackDiagnosticsBuffer = createFeedbackDiagnosticsBuffer();
 
@@ -161,6 +169,8 @@ export type LogBackend = {
 
 let customLogBackend: LogBackend | null = null;
 let logWriteQueue: Promise<void> = Promise.resolve();
+let localFatalCrashCapture: LocalFatalCrashCapture | null | undefined;
+let localFatalCrashRecovery: Promise<boolean> | null = null;
 
 export function setLogBackend(backend: LogBackend | null): void {
   customLogBackend = backend;
@@ -353,6 +363,72 @@ async function appendLogLine(entry: LogEntry, options?: { force?: boolean }): Pr
   return pendingWrite;
 }
 
+const getLocalFatalCrashCapture = (
+  metadata: LocalFatalCrashMetadata = {},
+): LocalFatalCrashCapture | null => {
+  if (localFatalCrashCapture === undefined) {
+    localFatalCrashCapture = createDefaultLocalFatalCrashCapture(metadata);
+  }
+  return localFatalCrashCapture;
+};
+
+const readRetainedFatalCrashText = (): string | null => {
+  try {
+    return getLocalFatalCrashCapture()?.readText() ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const getRetainedFatalCrashPath = (): string | null => {
+  try {
+    return getLocalFatalCrashCapture()?.getPath() ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const runRetainedFatalCrashRecovery = async (): Promise<boolean> => {
+  const capture = getLocalFatalCrashCapture();
+  if (!capture) return false;
+  let snapshot: RetainedFatalCrashSnapshot | null;
+  try {
+    snapshot = capture.readSnapshot();
+  } catch {
+    return false;
+  }
+  if (!snapshot) return false;
+  try {
+    const appendedPath = await appendLogLine(snapshot.entry, { force: true });
+    if (!appendedPath) return false;
+    const markerPath = await appendLogLine({
+      ts: new Date().toISOString(),
+      level: 'info',
+      scope: 'diagnostics',
+      message: 'Retained fatal JavaScript crash recovered',
+      context: {
+        releaseCheck: LOCAL_FATAL_CRASH_RELEASE_CHECK,
+        count: '1',
+      },
+    }, { force: true });
+    if (!markerPath) return false;
+    capture.clearIfUnchanged(snapshot.identity);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export function recoverRetainedFatalCrash(): Promise<boolean> {
+  if (localFatalCrashRecovery) return localFatalCrashRecovery;
+  const recovery = runRetainedFatalCrashRecovery();
+  localFatalCrashRecovery = recovery;
+  void recovery.finally(() => {
+    if (localFatalCrashRecovery === recovery) localFatalCrashRecovery = null;
+  });
+  return recovery;
+}
+
 export async function getLogPath(): Promise<string | null> {
   if (customLogBackend?.getLogPath) {
     return customLogBackend.getLogPath();
@@ -364,81 +440,103 @@ export async function getLogPath(): Promise<string | null> {
 }
 
 export async function ensureLogFilePath(): Promise<string | null> {
+  await recoverRetainedFatalCrash();
+  const retainedCrashPath = getRetainedFatalCrashPath();
   if (customLogBackend?.ensureLogFilePath) {
-    return customLogBackend.ensureLogFilePath();
+    const logPath = await customLogBackend.ensureLogFilePath();
+    return retainedCrashPath ?? logPath;
   }
   await ensureLogTargets();
   try {
     await ensureLogDir();
-    if (!await ensureLogFile()) return await ensureLegacyLogFilePath();
+    if (!await ensureLogFile()) return retainedCrashPath ?? await ensureLegacyLogFilePath();
     if (!LOG_FILE) return null;
     if (!fileExists(LOG_FILE)) return null;
-    return LOG_FILE.uri;
+    return retainedCrashPath ?? LOG_FILE.uri;
   } catch (error) {
     logInternalFailure('ensure log file path', error);
-    return await ensureLegacyLogFilePath();
+    return retainedCrashPath ?? await ensureLegacyLogFilePath();
   }
 }
 
 export async function clearLog(): Promise<void> {
+  if (localFatalCrashRecovery) {
+    await localFatalCrashRecovery.catch(() => false);
+  }
   feedbackDiagnosticsBuffer.clear();
   await logWriteQueue;
-  if (customLogBackend?.clearLog) {
-    await customLogBackend.clearLog();
-    return;
-  }
-  await ensureLogTargets();
   try {
-    if (LOG_FILE && fileExists(LOG_FILE)) {
-      LOG_FILE.delete();
-      logWriteCount = 0;
+    if (customLogBackend?.clearLog) {
+      await customLogBackend.clearLog();
       return;
     }
-    const fs = await getExpoFileSystem();
-    if (LOG_FILE_URI && LOG_FILE_URI !== fs?.Paths?.document?.uri && fs) {
-      const strayDir = new fs.Directory(LOG_FILE_URI);
-      if (strayDir.exists) {
-        strayDir.delete();
+    await ensureLogTargets();
+    try {
+      if (LOG_FILE && fileExists(LOG_FILE)) {
+        LOG_FILE.delete();
+        logWriteCount = 0;
+        return;
       }
+      const fs = await getExpoFileSystem();
+      if (LOG_FILE_URI && LOG_FILE_URI !== fs?.Paths?.document?.uri && fs) {
+        const strayDir = new fs.Directory(LOG_FILE_URI);
+        if (strayDir.exists) {
+          strayDir.delete();
+        }
+      }
+    } catch (error) {
+      logInternalFailure('clear log', error);
     }
-  } catch (error) {
-    logInternalFailure('clear log', error);
-  }
-  try {
-    const fs = await getLegacyFileSystem();
-    const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
-    if (!fs || !path) return;
-    await fs.deleteAsync(path, { idempotent: true });
-    logWriteCount = 0;
-  } catch (error) {
-    logInternalFailure('legacy clear log', error);
+    try {
+      const fs = await getLegacyFileSystem();
+      const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
+      if (!fs || !path) return;
+      await fs.deleteAsync(path, { idempotent: true });
+      logWriteCount = 0;
+    } catch (error) {
+      logInternalFailure('legacy clear log', error);
+    }
+  } finally {
+    try {
+      getLocalFatalCrashCapture()?.clear();
+    } catch {
+    }
   }
 }
 
+const withRetainedFatalCrash = (
+  logText: string | null,
+  retainedCrashText: string | null,
+  maxChars: number,
+): string | null => {
+  const combined = [logText?.trim(), retainedCrashText?.trim()].filter(Boolean).join('\n');
+  return combined ? combined.slice(-Math.max(1, maxChars)) : null;
+};
+
 export async function readRecentLogText(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
+  await recoverRetainedFatalCrash();
+  const retainedCrashText = readRetainedFatalCrashText();
   await logWriteQueue;
   await ensureLogTargets();
   try {
     if (!LOG_FILE || !fileExists(LOG_FILE)) throw new Error('primary log file unavailable');
     const raw = await LOG_FILE.text();
     const trimmed = raw.trim();
-    if (!trimmed) return null;
-    return trimmed.slice(-Math.max(1, maxChars));
+    return withRetainedFatalCrash(trimmed || null, retainedCrashText, maxChars);
   } catch (error) {
     logInternalFailure('read recent log', error);
     try {
       const fs = await getLegacyFileSystem();
       const path = buildLegacyTargets(fs?.documentDirectory)?.fileUri;
-      if (!fs || !path) return null;
+      if (!fs || !path) return withRetainedFatalCrash(null, retainedCrashText, maxChars);
       const info = await fs.getInfoAsync(path);
-      if (!info.exists || info.isDirectory) return null;
+      if (!info.exists || info.isDirectory) return withRetainedFatalCrash(null, retainedCrashText, maxChars);
       const raw = await fs.readAsStringAsync(path, { encoding: UTF8_ENCODING });
       const trimmed = raw.trim();
-      if (!trimmed) return null;
-      return trimmed.slice(-Math.max(1, maxChars));
+      return withRetainedFatalCrash(trimmed || null, retainedCrashText, maxChars);
     } catch (fallbackError) {
       logInternalFailure('legacy read recent log', fallbackError);
-      return null;
+      return withRetainedFatalCrash(null, retainedCrashText, maxChars);
     }
   }
 }
@@ -462,7 +560,11 @@ export async function collectFeedbackDiagnostics(maxChars = RECENT_LOG_MAX_CHARS
     }),
   });
   const recentLogs = await readRecentLogText(FEEDBACK_DIAGNOSTICS_SOURCE_CHARS);
-  return buildFeedbackDiagnostics([recentLogs, feedbackDiagnosticsBuffer.read()], snapshot, maxChars);
+  return buildFeedbackDiagnostics(
+    [recentLogs, feedbackDiagnosticsBuffer.read(), readRetainedFatalCrashText()],
+    snapshot,
+    maxChars,
+  );
 }
 
 export async function logError(
@@ -535,9 +637,18 @@ export async function logSyncError(
 
 let globalHandlersAttached = false;
 
-export function setupGlobalErrorLogging(): void {
+export type GlobalErrorLoggingOptions = {
+  crashCapture?: LocalFatalCrashCapture | null;
+  crashMetadata?: LocalFatalCrashMetadata;
+};
+
+export function setupGlobalErrorLogging(options: GlobalErrorLoggingOptions = {}): void {
   if (globalHandlersAttached) return;
   globalHandlersAttached = true;
+
+  localFatalCrashCapture = Object.prototype.hasOwnProperty.call(options, 'crashCapture')
+    ? options.crashCapture ?? null
+    : createDefaultLocalFatalCrashCapture(options.crashMetadata);
 
   const globalAny = globalThis as typeof globalThis & {
     ErrorUtils?: {
@@ -548,17 +659,39 @@ export function setupGlobalErrorLogging(): void {
 
   const defaultHandler = globalAny.ErrorUtils?.getGlobalHandler?.();
   globalAny.ErrorUtils?.setGlobalHandler?.((error, isFatal) => {
-    void logError(error, {
-      scope: isFatal ? 'fatal' : 'error',
-    });
-    if (defaultHandler) {
-      defaultHandler(error, isFatal);
+    try {
+      if (isFatal) {
+        try {
+          localFatalCrashCapture?.capture(error);
+        } catch {
+          // Fatal delegation must never depend on the best-effort local slot.
+        }
+      }
+      void logError(error, {
+        scope: isFatal ? 'fatal' : 'error',
+      }).catch(() => undefined);
+    } finally {
+      if (defaultHandler) {
+        defaultHandler(error, isFatal);
+      }
     }
   });
 
   if (typeof globalThis.addEventListener === 'function') {
     globalThis.addEventListener('unhandledrejection', (event: any) => {
-      void logError(event?.reason, { scope: 'unhandledrejection' });
+      void logError(event?.reason, { scope: 'unhandledrejection' }).catch(() => undefined);
     });
   }
 }
+
+export const __appLogTestUtils = {
+  resetGlobalErrorLogging(): void {
+    globalHandlersAttached = false;
+    localFatalCrashCapture = undefined;
+    localFatalCrashRecovery = null;
+  },
+  setLocalFatalCrashCapture(capture: LocalFatalCrashCapture | null): void {
+    localFatalCrashCapture = capture;
+    localFatalCrashRecovery = null;
+  },
+};

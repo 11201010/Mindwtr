@@ -43,6 +43,7 @@ const applyAlarmDeadRowUtilPatchToSource = transformFor('alarm-dead-row-util');
 const applyAlarmActionDeadRowPatchToSource = transformFor('alarm-dead-row-actions');
 const applyAlarmExactPermissionModulePatchToSource = transformFor('alarm-exact-permission-module');
 const applyAlarmIosCompleteActionPatchToSource = transformFor('alarm-ios-complete-action');
+const applyAlarmIosColdStartHeaderPatchToSource = transformFor('alarm-ios-cold-start-header');
 const applyAlarmIosUniqueIdentifierPatchToSource = transformFor('alarm-ios-unique-identifier');
 const applyAlarmIosDeletePendingPatchToSource = transformFor('alarm-ios-delete-pending-arg');
 const applyAlarmIosPendingKindPatchToSource = transformFor('alarm-ios-pending-kind');
@@ -746,7 +747,7 @@ class AlarmReceiver {
     );
   });
 
-  it('adds iOS complete actions and exposes pending action payloads', () => {
+  it('keeps warm notification opens live while caching cold responses for the root owner', () => {
     const input = `#import "RnAlarmNotification.h"
 
 static NSString *const kLocalNotificationReceived = @"LocalNotificationReceived";
@@ -842,12 +843,43 @@ API_AVAILABLE(ios(10.0)) {
     expect(output).toContain('consumePendingNotificationOpenPayload');
     expect(output).toContain('actionWithIdentifier:@"COMPLETE_ACTION"');
     expect(output).toContain('cachePendingNotificationOpenPayload(formattedNotification)');
+    expect(output).toContain('cacheForColdStart:(BOOL)cacheForColdStart');
+    expect(output).toContain('[RnAlarmNotification didReceiveNotificationResponse:response cacheForColdStart:NO]');
+    expect(output).toContain('if (cacheForColdStart || [mindwtrActionIdentifier isEqualToString:@"complete"])');
+    const warmEntry = output.slice(
+      output.indexOf('+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response'),
+      output.indexOf('+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response\n                     cacheForColdStart:'),
+    );
+    expect(warmEntry).not.toContain('cachePendingNotificationOpenPayload');
+    expect(warmEntry.match(/cacheForColdStart:NO/g)).toHaveLength(1);
+    const coldCapableOwner = output.slice(
+      output.indexOf('+ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response\n                     cacheForColdStart:'),
+      output.indexOf('- (void)startObserving'),
+    );
+    expect(coldCapableOwner).toContain(
+      'if (cacheForColdStart || [mindwtrActionIdentifier isEqualToString:@"complete"])',
+    );
+    expect(coldCapableOwner.match(/\[RnAlarmNotification snoozeAlarm:/g)).toHaveLength(1);
+    expect(coldCapableOwner.match(/removeDeliveredNotificationsWithIdentifiers:/g)).toHaveLength(1);
     // Nil-safe injection: a caller omitting has_complete_action (the pomodoro
     // path) must not raise NSInvalidArgumentException from the userInfo
     // dictionary literal (#888).
     expect(output).toContain('@"has_complete_action": (details[@"has_complete_action"] ?: @NO)');
     expect(output).toContain('@"has_complete_action": ([contentInfo.userInfo objectForKey:@"has_complete_action"] ?: @NO)');
     expect(output).not.toContain('@"has_complete_action": details[@"has_complete_action"],');
+  });
+
+  it('declares the cold-start notification response overload in the maintained header', () => {
+    const input = `#import <UserNotifications/UserNotifications.h>
+
+@interface RnAlarmNotification : NSObject
++ (void)didReceiveNotificationResponse:(UNNotificationResponse *)response API_AVAILABLE(ios(10.0));
+@end`;
+
+    const output = applyAlarmIosColdStartHeaderPatchToSource(input);
+
+    expect(output).toContain('cacheForColdStart:(BOOL)cacheForColdStart');
+    expect(applyAlarmIosColdStartHeaderPatchToSource(output)).toBe(output);
   });
 
   it('makes iOS notification identifiers unique instead of epoch-second shared', () => {
@@ -966,6 +998,7 @@ describe('PATCHES registry completeness', () => {
     ['AlarmReceiver.java', 'applyAlarmCompleteReceiverPatchToSource'],
     ['Constants.java', 'applyAlarmCompleteConstantsPatchToSource'],
     ['RnAlarmNotification.m', 'applyAlarmIosCompleteActionPatchToSource'],
+    ['RnAlarmNotification.h', 'applyAlarmIosColdStartHeaderPatchToSource'],
     ['RnAlarmNotification.m', 'applyAlarmIosUniqueIdentifierPatchToSource'],
     // Added after the collapse (#1020), pinned here for the same reason as the
     // original sites: dropping it silently restores the duplicate-reminder leak.
@@ -992,7 +1025,7 @@ describe('PATCHES registry completeness', () => {
   });
 
   it('every entry declares required/firstMatchOnly explicitly', () => {
-    expect(PATCHES).toHaveLength(22);
+    expect(PATCHES).toHaveLength(23);
     for (const patch of PATCHES) {
       expect(typeof patch.id).toBe('string');
       expect(typeof patch.required).toBe('boolean');

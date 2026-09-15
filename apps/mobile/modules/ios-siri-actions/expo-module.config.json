@@ -1,0 +1,8 @@
+{
+  "platforms": ["ios"],
+  "ios": {
+    "podspecPath": "ios/MindwtrIosSiriActions.podspec",
+    "swiftModuleName": "MindwtrIosSiriActions",
+    "modules": ["MindwtrIosSiriActionsModule"]
+  }
+}

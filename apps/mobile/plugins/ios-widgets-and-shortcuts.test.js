@@ -29,6 +29,10 @@ describe('ios-widgets-and-shortcuts', () => {
       path.join(widgetsDir, 'MindwtrTasksWidgetIntents.swift'),
       'utf8'
     );
+    const actionStoreSource = fs.readFileSync(
+      path.resolve(__dirname, '..', IOS_WIDGET_MODULE_FOLDER, SHARED_WIDGET_ACTION_STORE),
+      'utf8'
+    );
 
     expect(tasksSource).toContain('let sections: [MindwtrWidgetSection]?');
     expect(tasksSource).toContain('let lists: [String: MindwtrWidgetListPayload]?');
@@ -36,7 +40,7 @@ describe('ios-widgets-and-shortcuts', () => {
     expect(tasksSource).toContain('let completionToken: String?');
     expect(tasksSource).toContain('let completeLabel: String?');
     expect(tasksSource).toContain('nonEmpty(completeLabel) ?? "Complete"');
-    expect(tasksSource).toContain('pendingAction: pendingAction(for: item.id)');
+    expect(tasksSource).toContain('pendingAction: pendingAction(for: item)');
     expect(tasksSource).toContain('.strikethrough(pendingAction != nil)');
     expect(tasksSource).toContain('item.openUri ?? payload.focusUri');
     expect(tasksSource).toContain('widgetFamily != .systemSmall');
@@ -44,6 +48,14 @@ describe('ios-widgets-and-shortcuts', () => {
     expect(tasksSource).toContain('StaticConfiguration(kind: kind');
     expect(tasksSource).toContain('if #available(iOSApplicationExtension 17.0, iOS 17.0, *)');
     expect(tasksSource).toContain('AppIntentConfiguration(');
+    expect(tasksSource).toContain('MindwtrWidgetActionProjection.resolvedListId(');
+    expect(tasksSource).toContain('MindwtrWidgetActionProjection.timelineDates(');
+    expect(actionStoreSource).toContain('action.taskId == identity.taskId');
+    expect(actionStoreSource).toContain('action.token == token');
+    expect(actionStoreSource).toContain('now < action.notBefore');
+    expect(tasksSource).not.toContain('familyTaskCap');
+    expect(tasksSource).not.toContain('.claimReady(');
+    expect(tasksSource).not.toContain('.acknowledge(');
 
     expect(intentsSource).toContain('struct MindwtrTasksWidgetConfigurationIntent: WidgetConfigurationIntent');
     expect(intentsSource).toContain('struct MindwtrTasksWidgetAppIntentProvider: AppIntentTimelineProvider');

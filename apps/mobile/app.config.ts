@@ -50,6 +50,30 @@ const watchEnabled = watchEnabledValue === '1' || watchEnabledValue === 'true'
   || (!watchEnabledValue && isDevVariant);
 const DEV_VARIANT_ID_SUFFIX = '.dev';
 const DEV_VARIANT_NAME_SUFFIX = ' Dev';
+const IOS_WIDGETS_PLUGIN = './plugins/ios-widgets-and-shortcuts';
+const IOS_SCENE_LIFECYCLE_PLUGIN = './plugins/ios-scene-lifecycle';
+
+const pluginName = (entry: NonNullable<ExpoConfig['plugins']>[number]): string => (
+  (Array.isArray(entry) ? entry[0] : entry) ?? ''
+);
+
+const withIosSceneLifecyclePlugin = (
+  plugins: NonNullable<ExpoConfig['plugins']>,
+): NonNullable<ExpoConfig['plugins']> => {
+  const withoutScenePlugin = plugins.filter(
+    (entry) => pluginName(entry) !== IOS_SCENE_LIFECYCLE_PLUGIN,
+  );
+  const widgetsIndex = withoutScenePlugin.findIndex(
+    (entry) => pluginName(entry) === IOS_WIDGETS_PLUGIN,
+  );
+  if (widgetsIndex === -1) {
+    throw new Error(
+      `[app.config] ${IOS_SCENE_LIFECYCLE_PLUGIN} must run after ${IOS_WIDGETS_PLUGIN}`,
+    );
+  }
+  withoutScenePlugin.splice(widgetsIndex + 1, 0, IOS_SCENE_LIFECYCLE_PLUGIN);
+  return withoutScenePlugin;
+};
 
 const withAppVariant = (base: ExpoConfig): ExpoConfig => {
   if (!isDevVariant && !isBenchmarkVariant) return base;
@@ -98,7 +122,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       infoPlist: { ...base.ios?.infoPlist, MindwtrWatchEnabled: watchEnabled },
     },
     plugins: [
-      ...(base.plugins ?? []).filter((entry) => (Array.isArray(entry) ? entry[0] : entry) !== './plugins/ios-watch'),
+      ...withIosSceneLifecyclePlugin(
+        (base.plugins ?? []).filter((entry) => pluginName(entry) !== './plugins/ios-watch'),
+      ),
       ['./plugins/ios-watch', { enabled: watchEnabled }],
     ],
   });

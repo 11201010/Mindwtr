@@ -12,6 +12,7 @@ type AndroidWidgetModule = {
 type WidgetRefreshResult = {
   legacyWidgetCount: number;
   compactWidgetCount: number;
+  hiddenCheckoffCount?: number;
 };
 
 export type CaptureIntentConfig = {

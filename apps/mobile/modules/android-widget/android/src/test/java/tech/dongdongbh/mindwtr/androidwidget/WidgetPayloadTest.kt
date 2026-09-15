@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.androidwidget
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -71,7 +72,6 @@ class WidgetPayloadTest {
     assertEquals("Saturday, Sep 6", payload.dateLabel)
     assertEquals(0xFF374151.toInt(), payload.palette!!.border)
     assertEquals(0xFFF59E0B.toInt(), payload.palette!!.warning)
-    assertEquals(0x2E2563EB, payload.palette!!.headerWash)
     assertNull(payload.sections[1].items[0].contextLabel)
     val rows = TasksWidgetFactory.buildRows(WidgetPayload.ListPayload("", null, payload.sections, payload.items))
     assertEquals(4, rows.size)
@@ -98,6 +98,156 @@ class WidgetPayloadTest {
   }
 
   @Test
+  fun committedRowsAreHiddenEverywhereWithoutChangingTheSourceSnapshot() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val display = payload.displaySnapshot(setOf("a"))
+
+    assertEquals(setOf("a", "b", "w", "e"), display.sourceTaskIds)
+    assertEquals(listOf("b"), display.payload.items.map { it.id })
+    assertEquals(listOf("Upcoming"), display.payload.sections.map { it.title })
+    assertEquals(listOf("b"), display.payload.sections.single().items.map { it.id })
+    assertTrue(display.payload.listFor("focus").items.isEmpty())
+    assertTrue(display.payload.listFor("focus").sections.isEmpty())
+    assertEquals(listOf("w"), display.payload.listFor("waiting").items.map { it.id })
+  }
+
+  @Test
+  fun undoWindowRowsStayVisibleUntilTheyJoinTheCommittedSet() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val duringUndo = payload.displaySnapshot(emptySet()).payload
+    val afterCommit = payload.displaySnapshot(setOf("a")).payload
+
+    assertEquals(listOf("a", "b"), duringUndo.items.map { it.id })
+    assertEquals(listOf("b"), afterCommit.items.map { it.id })
+  }
+
+  @Test
+  fun compactFallsBackToTranslatedNextActionsWhenFocusIsEmpty() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload("Prochaines actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetPayload.NEXT_LIST_ID, payload.compactListId())
+    assertEquals("Prochaines actions", WidgetRenderer.compactHeaderTitle(payload))
+    assertEquals(
+      listOf("next-1"),
+      TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun hidingAllTodayRowsSwitchesCompactRowsAndHeaderToNextActions() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", sections = sections("Today", "today-1")),
+      next = listPayload("Next Actions", items = items("next-1", "next-2")),
+    )
+
+    val visible = payload.displaySnapshot(setOf("today-1")).payload
+    val chrome = WidgetRenderer.compactChrome(visible)
+
+    assertEquals("Next Actions", chrome.title)
+    assertFalse(chrome.isEmpty)
+    assertEquals(
+      listOf("next-1", "next-2"),
+      TasksWidgetFactory.buildRows(visible.listFor(visible.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun hidingEveryAvailableRowShowsTheCoherentEmptyState() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", items = items("focus-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    val visible = payload.displaySnapshot(setOf("focus-1", "next-1")).payload
+    val chrome = WidgetRenderer.compactChrome(visible)
+
+    assertEquals("Today's Focus", chrome.title)
+    assertTrue(chrome.isEmpty)
+    assertTrue(TasksWidgetFactory.buildRows(visible.listFor(visible.compactListId()), compact = true).isEmpty())
+  }
+
+  @Test
+  fun hiddenChooserRowsUpdateTheDisplayedCountAndEmptyState() {
+    val payload = WidgetPayload.parse(sample)!!
+
+    val chrome = WidgetRenderer.tasksChrome(payload.displaySnapshot(setOf("w")).payload, "waiting")
+
+    assertEquals("Waiting For · 0", chrome.title)
+    assertTrue(chrome.isEmpty)
+    assertNull(chrome.subtitle)
+  }
+
+  @Test
+  fun compactKeepsFocusWhenItsFlatRowsArePopulated() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", items = items("focus-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, payload.compactListId())
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(payload))
+  }
+
+  @Test
+  fun compactKeepsFocusWhenTodayOnlyHasSectionRows() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus", sections = sections("Today", "today-1")),
+      next = listPayload("Next Actions", items = items("next-1")),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, payload.compactListId())
+    assertEquals(
+      listOf("today-1"),
+      TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+        .map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+  }
+
+  @Test
+  fun compactPreservesLegacyEmptyFocusWhenNextIsMissingOrEmpty() {
+    val missingNext = payloadWithLists(focus = listPayload("Focus"))
+    val emptyNext = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload("Next Actions"),
+    )
+
+    assertEquals(WidgetListStore.DEFAULT_LIST, missingNext.compactListId())
+    assertEquals(WidgetListStore.DEFAULT_LIST, emptyNext.compactListId())
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(missingNext))
+    assertEquals("Today's Focus", WidgetRenderer.compactHeaderTitle(emptyNext))
+  }
+
+  @Test
+  fun compactFlattensNextSectionsInOrderWithoutChangingTasksFocusRows() {
+    val payload = payloadWithLists(
+      focus = listPayload("Focus"),
+      next = listPayload(
+        "Next Actions",
+        items = items("flat-copy"),
+        sections = JSONArray()
+          .put(section("First", "next-1", "next-2"))
+          .put(section("Second", "next-3")),
+      ),
+    )
+
+    val compactRows = TasksWidgetFactory.buildRows(payload.listFor(payload.compactListId()), compact = true)
+    val tasksFocusRows = TasksWidgetFactory.buildRows(payload.listFor(WidgetListStore.DEFAULT_LIST))
+
+    assertEquals(
+      listOf("next-1", "next-2", "next-3"),
+      compactRows.map { (it as TasksWidgetFactory.Row.Task).item.id },
+    )
+    assertTrue("Tasks widgets must keep the empty Focus list", tasksFocusRows.isEmpty())
+  }
+
+  @Test
   fun flatItemsBackTheRowsWhenAPayloadCarriesNoSections() {
     val payload = WidgetPayload.parse(JSONObject(sample).apply { remove("sections"); remove("lists") }.toString())!!
 
@@ -117,6 +267,32 @@ class WidgetPayloadTest {
     assertEquals("Focus", payload.listFor("project:gone").title)
     assertEquals("Saved filters", payload.listTitles["savedFilters"])
     assertEquals(2, TasksWidgetFactory.buildRows(payload.listFor("focus")).size)
+  }
+
+  @Test
+  fun listOpenUrisAcceptOnlyHostlessMindwtrRoutes() {
+    val root = JSONObject(sample)
+    root.put("lists", JSONObject()
+      .put("focus", listPayload("Focus", openUri = "mindwtr:///focus"))
+      .put("inbox", listPayload("Inbox", openUri = "https://example.com/inbox"))
+      .put("waiting", listPayload("Waiting", openUri = "mindwtr://evil.example/waiting"))
+      .put("someday", listPayload("Someday", openUri = "mindwtr:opaque"))
+      .put("next", listPayload("Next", openUri = "mindwtr:///%ZZ"))
+      .put("filter:abc", listPayload("Filter", openUri = "mindwtr:///settings"))
+      .put("filter:good", listPayload("Good filter", openUri = "mindwtr:///widget-list/filter%3Agood")))
+
+    val payload = WidgetPayload.parse(root.toString())!!
+
+    assertEquals("mindwtr:///focus", payload.lists.getValue("focus").openUri)
+    assertNull(payload.lists.getValue("inbox").openUri)
+    assertNull(payload.lists.getValue("waiting").openUri)
+    assertNull(payload.lists.getValue("someday").openUri)
+    assertNull(payload.lists.getValue("next").openUri)
+    assertNull(payload.lists.getValue("filter:abc").openUri)
+    assertEquals("mindwtr:///widget-list/filter%3Agood", payload.lists.getValue("filter:good").openUri)
+
+    root.getJSONObject("lists").put("inbox", listPayload("Inbox", openUri = "mindwtr:///widget-list/inbox"))
+    assertNull(WidgetPayload.parse(root.toString())!!.lists.getValue("inbox").openUri)
   }
 
   @Test
@@ -216,4 +392,35 @@ class WidgetPayloadTest {
     assertEquals("Inbox: 4", bumped.getString("subtitle"))
     assertEquals("Inbox: 4", WidgetPayload.parse(bumped.toString())!!.subtitle)
   }
+
+  private fun payloadWithLists(focus: JSONObject, next: JSONObject? = null): WidgetPayload {
+    val lists = JSONObject().put(WidgetListStore.DEFAULT_LIST, focus)
+    if (next != null) lists.put(WidgetPayload.NEXT_LIST_ID, next)
+    val root = JSONObject(sample)
+      .put("items", JSONArray())
+      .put("sections", JSONArray())
+      .put("lists", lists)
+    return WidgetPayload.parse(root.toString())!!
+  }
+
+  private fun listPayload(
+    title: String,
+    items: JSONArray = JSONArray(),
+    sections: JSONArray = JSONArray(),
+    openUri: String? = null,
+  ): JSONObject = JSONObject()
+    .put("title", title)
+    .put("items", items)
+    .put("sections", sections)
+    .apply { if (openUri != null) put("openUri", openUri) }
+
+  private fun items(vararg ids: String): JSONArray = JSONArray().apply {
+    ids.forEach { put(JSONObject().put("id", it).put("title", it)) }
+  }
+
+  private fun sections(title: String, vararg ids: String): JSONArray = JSONArray().put(section(title, *ids))
+
+  private fun section(title: String, vararg ids: String): JSONObject = JSONObject()
+    .put("title", title)
+    .put("items", items(*ids))
 }

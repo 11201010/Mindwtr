@@ -42,21 +42,6 @@ const SHORTCUT_ITEMS = [
   },
 ];
 
-const escapeSwiftString = (value) =>
-  String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-
-const buildShortcutTypeToUrlMapLiteral = () => {
-  const lines = SHORTCUT_ITEMS
-    .map((item) => {
-      const type = item?.UIApplicationShortcutItemType;
-      const url = item?.UIApplicationShortcutItemUserInfo?.[SHORTCUT_URL_KEY];
-      if (typeof type !== 'string' || typeof url !== 'string') return null;
-      return `    "${escapeSwiftString(type)}": "${escapeSwiftString(url)}"`;
-    })
-    .filter(Boolean);
-  return lines.join(',\n');
-};
-
 const copyRecursive = (sourceDir, targetDir) => {
   fs.mkdirSync(targetDir, { recursive: true });
   for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
@@ -182,7 +167,10 @@ const addAppGroupEntitlement = (config) =>
     return cfg;
   });
 
-const addAppDelegateShortcutHandling = (config) =>
+// Scene-based delivery is owned by ios-scene-lifecycle. This plugin keeps the
+// launch-time App Shortcuts/Spotlight registration beside their maintained
+// sources, but must not install a second quick-action delivery path.
+const addAppDelegateShortcutsRegistration = (config) =>
   withDangerousMod(config, [
     'ios',
     async (cfg) => {
@@ -191,40 +179,6 @@ const addAppDelegateShortcutHandling = (config) =>
       if (!fs.existsSync(appDelegatePath)) return cfg;
 
       let contents = fs.readFileSync(appDelegatePath, 'utf8');
-      const hasQuickActionHandling = contents.includes('handleHomeScreenQuickAction');
-
-      if (!hasQuickActionHandling) {
-        const classHeader = 'public class AppDelegate: ExpoAppDelegate {';
-        if (contents.includes(classHeader)) {
-          const quickActionMapLiteral = buildShortcutTypeToUrlMapLiteral();
-          contents = contents.replace(
-            classHeader,
-            `${classHeader}\n  private let quickActionTypeToUrl: [String: String] = [\n${quickActionMapLiteral}\n  ]\n  private let quickActionUrlUserInfoKey = "${SHORTCUT_URL_KEY}"`
-          );
-        }
-
-        const returnLine = '    return super.application(application, didFinishLaunchingWithOptions: launchOptions)';
-        if (contents.includes(returnLine)) {
-          contents = contents.replace(
-            returnLine,
-            `    let launchHandled = super.application(application, didFinishLaunchingWithOptions: launchOptions)\n    if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {\n      _ = handleHomeScreenQuickAction(shortcutItem, application: application)\n    }\n    return launchHandled`
-          );
-        }
-
-        const marker = '\n\nclass ReactNativeDelegate: ExpoReactNativeFactoryDelegate {';
-        const quickActionHandlers = `  public override func application(\n    _ application: UIApplication,\n    performActionFor shortcutItem: UIApplicationShortcutItem,\n    completionHandler: @escaping (Bool) -> Void\n  ) {\n    completionHandler(handleHomeScreenQuickAction(shortcutItem, application: application))\n  }\n\n  private func handleHomeScreenQuickAction(\n    _ shortcutItem: UIApplicationShortcutItem,\n    application: UIApplication\n  ) -> Bool {\n    guard let destinationUrl = quickActionUrl(shortcutItem) else {\n      return false\n    }\n\n    // Give React Native routing a brief moment to initialize on cold launch.\n    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {\n      _ = RCTLinkingManager.application(application, open: destinationUrl, options: [:])\n      application.open(destinationUrl, options: [:], completionHandler: nil)\n    }\n    return true\n  }\n\n  private func quickActionUrl(_ shortcutItem: UIApplicationShortcutItem) -> URL? {\n    if let userInfo = shortcutItem.userInfo,\n       let rawUrl = userInfo[quickActionUrlUserInfoKey] as? String,\n       let parsedUrl = URL(string: rawUrl) {\n      return parsedUrl\n    }\n    if let mappedUrl = quickActionTypeToUrl[shortcutItem.type] {\n      return URL(string: mappedUrl)\n    }\n    return nil\n  }`;
-        const markerIndex = contents.indexOf(marker);
-        if (markerIndex !== -1) {
-          const beforeMarker = contents.slice(0, markerIndex);
-          const appDelegateCloseIndex = beforeMarker.lastIndexOf('\n}');
-          if (appDelegateCloseIndex !== -1) {
-            contents = `${contents.slice(0, appDelegateCloseIndex)}\n\n${quickActionHandlers}\n${contents.slice(appDelegateCloseIndex)}`;
-          } else {
-            contents = contents.replace(marker, `\n\n${quickActionHandlers}\n${marker}`);
-          }
-        }
-      }
-
       contents = addSiriShortcutsRegistrationToAppDelegate(contents);
       fs.writeFileSync(appDelegatePath, contents);
       return cfg;
@@ -506,7 +460,7 @@ function withIosWidgetsAndShortcuts(config) {
   return withPlugins(config, [
     addQuickActionsToInfoPlist,
     addAppGroupEntitlement,
-    addAppDelegateShortcutHandling,
+    addAppDelegateShortcutsRegistration,
     addAppIntentSourcesToMainTarget,
     addWidgetTargetToXcode,
     ensureWidgetTargetInPodfile,

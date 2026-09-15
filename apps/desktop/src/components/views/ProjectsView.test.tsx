@@ -63,12 +63,30 @@ vi.mock('./projects/ProjectsSidebar', () => ({
     ProjectsSidebar: ({
         collapseLabel,
         onToggleCollapsed,
+        onSelectProject,
+        onActivateProject,
+        navigationVisible,
+        onRequestNavigationVisible,
     }: {
         collapseLabel?: string;
         onToggleCollapsed?: () => void;
+        onSelectProject?: (projectId: string) => void;
+        onActivateProject?: (projectId: string) => void;
+        navigationVisible?: boolean;
+        onRequestNavigationVisible?: () => void;
     }) => (
         <div data-testid="projects-sidebar">
             Projects sidebar
+            <span data-testid="projects-sidebar-navigation-visible">{String(navigationVisible)}</span>
+            {onSelectProject && (
+                <button type="button" onClick={() => onSelectProject('project-1')}>Select project</button>
+            )}
+            {onActivateProject && (
+                <button type="button" onClick={() => onActivateProject('project-1')}>Activate project</button>
+            )}
+            {onRequestNavigationVisible && (
+                <button type="button" onClick={onRequestNavigationVisible}>Request project navigation</button>
+            )}
             {collapseLabel && onToggleCollapsed && (
                 <button type="button" aria-label={collapseLabel} onClick={onToggleCollapsed}>
                     Collapse
@@ -457,6 +475,50 @@ describe('ProjectsView', () => {
         expect(restoredSidebarFrame).toHaveStyle({ width: '304px' });
         expect(layout).toHaveStyle({ maxWidth: '1344px' });
         expect(screen.getByRole('separator', { name: 'Resize projects panel' })).toBeInTheDocument();
+
+        if (originalClientWidthDescriptor) {
+            Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidthDescriptor);
+        } else {
+            delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+        }
+        Object.defineProperty(window, 'innerWidth', {
+            configurable: true,
+            value: originalInnerWidth,
+        });
+    });
+
+    it('keeps compact project navigation mounted, opens it for keyboard focus, and closes only on activation', async () => {
+        const originalInnerWidth = window.innerWidth;
+        const originalClientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+        Object.defineProperty(window, 'innerWidth', {
+            configurable: true,
+            value: 700,
+        });
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+            configurable: true,
+            get: () => 700,
+        });
+
+        render(<ProjectsView />);
+        act(() => {
+            flushAnimationFrames();
+        });
+
+        const sidebar = screen.getByTestId('projects-sidebar');
+        const sidebarFrame = sidebar.parentElement?.parentElement;
+        expect(sidebarFrame).toHaveClass('hidden');
+        expect(screen.getByTestId('projects-sidebar-navigation-visible')).toHaveTextContent('false');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Request project navigation' }));
+        await waitFor(() => expect(sidebarFrame).not.toHaveClass('hidden'));
+        expect(screen.getByTestId('projects-sidebar-navigation-visible')).toHaveTextContent('true');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Select project' }));
+        expect(setProjectView).toHaveBeenCalledWith({ selectedProjectId: 'project-1' });
+        expect(sidebarFrame).not.toHaveClass('hidden');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Activate project' }));
+        await waitFor(() => expect(sidebarFrame).toHaveClass('hidden'));
 
         if (originalClientWidthDescriptor) {
             Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidthDescriptor);
