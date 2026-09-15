@@ -14,6 +14,8 @@ import { sanitizeLogContext } from './log-sanitize';
  */
 const RELEASE_CHECK_FIELD_NAMES = [
     // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
+    // mcp-core-log-stderr: count of the first event actually forwarded.
+    'forwardedEventCount',
     // shortcut-failure-privacy reuses releaseCheck and stage below.
     // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
     'method',

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { TASK_STATUS_VALUES } from '@mindwtr/core';
+import { sanitizeForLog, sanitizeLogContext, setLogger, TASK_STATUS_VALUES, type LogPayload } from '@mindwtr/core';
 import * as z from 'zod';
 
 import { createCloudService } from './cloud-service.js';
@@ -61,11 +61,12 @@ const resolvePackageVersion = (): string => {
   return '0.0.0';
 };
 
-type LogLevel = 'info' | 'error';
+type LogLevel = 'info' | 'warn' | 'error';
 type LogEntry = {
   ts: string;
   level: LogLevel;
-  scope: 'mcp';
+  scope: string;
+  category?: string;
   message: string;
   context?: Record<string, unknown>;
 };
@@ -99,6 +100,34 @@ const logInfo = (message: string, context?: Record<string, unknown>) => {
     scope: 'mcp',
     message,
     context,
+  });
+};
+
+const installCoreLoggerBridge = () => {
+  let forwardingProofWritten = false;
+  setLogger((event: LogPayload) => {
+    const context = sanitizeLogContext({
+      ...event.context,
+      ...(event.error !== undefined ? { error: event.error } : {}),
+    });
+    writeLog({
+      ts: new Date().toISOString(),
+      level: event.level,
+      scope: sanitizeForLog(event.scope ?? 'core'),
+      ...(event.category ? { category: sanitizeForLog(event.category) } : {}),
+      message: sanitizeForLog(event.message),
+      ...(context ? { context } : {}),
+    });
+    if (!forwardingProofWritten) {
+      forwardingProofWritten = true;
+      writeLog({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'mcp',
+        message: 'Core diagnostic forwarded to MCP stderr',
+        context: { releaseCheck: 'v1.3.1/mcp-core-log-stderr', forwardedEventCount: 1 },
+      });
+    }
   });
 };
 
@@ -859,6 +888,10 @@ export async function startMcpServer(argv: string[] = process.argv.slice(2)) {
   const flags = parseArgs(argv);
 
   const config = resolveServerConfig(flags);
+
+  // The core logger defaults to console.info (protocol stdout). Install the stderr
+  // bridge only when the server starts, before any local data can be loaded.
+  installCoreLoggerBridge();
 
   const service = config.backend === 'cloud'
     ? createCloudService({
