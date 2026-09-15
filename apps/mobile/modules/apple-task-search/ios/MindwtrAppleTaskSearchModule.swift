@@ -64,7 +64,7 @@ private actor MindwtrAppleTaskSearchCoordinator {
         let tool = SpotlightSearchTool(
             configuration: .init(
                 sources: [.coreSpotlight(source)],
-                guide: .focused(.items)
+                guide: .init(level: .focused(.items))
             )
         )
         let collector = MindwtrAppleTaskSearchResultCollector<

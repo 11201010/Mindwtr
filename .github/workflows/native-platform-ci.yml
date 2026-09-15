@@ -101,7 +101,7 @@ on:
         description: Native platform to validate
         type: choice
         default: all
-        options: [all, ios, android, macos, windows]
+        options: [all, ios, android, macos, windows, apple-api]
 
 permissions:
   contents: read
@@ -110,10 +110,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform == 'apple-api' && 'apple-api' || 'native' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  apple-api:
+    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'apple-api'
+    runs-on: xcode-27
+    name: Apple SDK API preflight
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Select Xcode 27
+        run: bash scripts/ci/select-apple-sdk.sh 27
+      - name: Typecheck actual Apple evaluation engines against the SDK
+        run: bash scripts/ci/probe-apple-sdk.sh
+
   changes:
     runs-on: ubuntu-latest
     name: Detect native changes
