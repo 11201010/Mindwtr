@@ -35,6 +35,7 @@ export * from './feedback-diagnostics';
 export * from './sandbox';
 export * from './sandbox-data';
 export * from './store';
+export { buildNewProject } from './store-projects/project-actions';
 export { nameNotifyListener } from './store-notify-profiler';
 export * from './store-types';
 export * from './store-helpers';

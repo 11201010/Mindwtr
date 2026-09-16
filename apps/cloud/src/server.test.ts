@@ -20,7 +20,15 @@ import {
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
-import { CLOUD_SYNC_TOKEN_PATTERN, cloudHeadJson, cloudPutJson, TASK_SORT_BY_VALUES, type AppData, type Task } from '@mindwtr/core';
+import {
+    CLOUD_SYNC_TOKEN_PATTERN,
+    DEFAULT_PROJECT_COLOR,
+    cloudHeadJson,
+    cloudPutJson,
+    TASK_SORT_BY_VALUES,
+    type AppData,
+    type Task,
+} from '@mindwtr/core';
 import {
     getAuthFailureRateKey,
     getAuthFailureTokenRateKey,
@@ -3731,6 +3739,53 @@ describe('cloud server api', () => {
         expect((await areasList.json()).total).toBe(1);
     });
 
+    test('creates REST projects with core defaults while honoring explicit props', async () => {
+        const seedResponse = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                tasks: [],
+                projects: [],
+                sections: [],
+                areas: [{
+                    id: 'area-defaults',
+                    name: 'Work',
+                    order: 0,
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                }],
+                settings: { gtd: { defaultProjectFlowMode: 'sequential' } },
+            } satisfies AppData),
+        });
+        expect(seedResponse.status).toBe(200);
+
+        const defaultResponse = await fetch(`${baseUrl}/v1/projects`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Default project', props: { areaId: 'area-defaults' } }),
+        });
+        expect(defaultResponse.status).toBe(201);
+        const defaultProject = (await defaultResponse.json()).project;
+        expect(defaultProject.color).toBe(DEFAULT_PROJECT_COLOR);
+        expect(defaultProject.isSequential).toBe(true);
+        expect(defaultProject.areaId).toBe('area-defaults');
+        expect(defaultProject.areaTitle).toBe('Work');
+        expect('isFocused' in defaultProject).toBe(false);
+
+        const explicitResponse = await fetch(`${baseUrl}/v1/projects`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                title: 'Explicit project',
+                props: { color: '#123456', isSequential: false },
+            }),
+        });
+        expect(explicitResponse.status).toBe(201);
+        const explicitProject = (await explicitResponse.json()).project;
+        expect(explicitProject.color).toBe('#123456');
+        expect(explicitProject.isSequential).toBe(false);
+    });
+
     test('purges deleted REST projects with refcounted remote attachment cleanup', async () => {
         const iso = '2026-01-01T00:00:00.000Z';
         const purgeIso = '2026-01-02T00:00:00.000Z';
@@ -4011,7 +4066,7 @@ describe('cloud server api', () => {
             expect(record.status).toBe('archived');
             expect(record.cancelledAt).toBe(cancelledAt);
             expect(record.completedAt).toBeUndefined();
-            if (entity === 'project') expect(record.color).toBe('#6B7280');
+            if (entity === 'project') expect(record.color).toBe(DEFAULT_PROJECT_COLOR);
             else expect(record.isFocusedToday).toBe(false);
 
             const explicitStatus = entity === 'task' ? 'next' : 'active';

@@ -8,6 +8,7 @@ import {
     applyProjectLifecycleTransition,
     areSyncPayloadsEqual,
     buildHttpRemoteFileFingerprint,
+    buildNewProject,
     compactPurgedProjectSectionTombstone,
     compactPurgedProjectTombstone,
     filterNotDeleted,
@@ -853,21 +854,35 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 areaId: _areaId,
                 ...restProps
             } = props;
-            const project: Project = {
-                id: generateUUID(),
+            const project = buildNewProject({
                 title,
-                ...restProps,
-                areaId: areaId || undefined,
-                status: props.cancelledAt && rawStatus === undefined ? 'archived' : status,
-                color: typeof rawColor === 'string' && rawColor.trim() ? rawColor : '#6B7280',
-                order: typeof rawOrder === 'number' && Number.isFinite(rawOrder) ? rawOrder : nextOrder(data.projects),
-                tagIds: Array.isArray(rawTagIds) ? rawTagIds.filter((item): item is string => typeof item === 'string') : [],
-                createdAt: nowIso,
-                updatedAt: nowIso,
+                color: typeof rawColor === 'string' && rawColor.trim() ? rawColor : undefined,
+                initialProps: {
+                    ...restProps,
+                    areaId: areaId || undefined,
+                    status: props.cancelledAt && rawStatus === undefined ? 'archived' : status,
+                    order: typeof rawOrder === 'number' && Number.isFinite(rawOrder)
+                        ? rawOrder
+                        : nextOrder(data.projects),
+                    tagIds: Array.isArray(rawTagIds)
+                        ? rawTagIds.filter((item): item is string => typeof item === 'string')
+                        : [],
+                },
+                existingProjects: data.projects,
+                existingAreas: data.areas,
+                settings: data.settings,
+                deviceId: CLOUD_API_REV_BY,
+                now: nowIso,
+                id: generateUUID(),
+            });
+            const cloudProject: Project = { ...project, ...restProps };
+            if (!Object.prototype.hasOwnProperty.call(props, 'isFocused')) delete cloudProject.isFocused;
+            if (!Object.prototype.hasOwnProperty.call(props, 'areaTitle')) delete cloudProject.areaTitle;
+            return normalizeProjectLifecycleFields({
+                ...cloudProject,
                 rev: 1,
                 revBy: CLOUD_API_REV_BY,
-            };
-            return normalizeProjectLifecycleFields(project);
+            });
         },
         canPatchDeletedEntity: isProjectPurgePatch,
         patchEntity: (bodyRecord, existing: Project, data, nowIso): Project | Response => {
