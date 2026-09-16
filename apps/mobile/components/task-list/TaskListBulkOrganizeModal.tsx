@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { ChevronRight, ClipboardCheck, X } from 'lucide-react-native';
 import {
+  compareAreasByOrder,
   createBulkOrganizeArea,
   createBulkOrganizeProject,
   ensureBulkOrganizeDestinationSaved,
@@ -163,7 +164,7 @@ export function TaskListBulkOrganizeModal({
   const activeAreas = useMemo(
     () => areas
       .filter((area) => !area.deletedAt)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort(compareAreasByOrder),
     [areas],
   );
 

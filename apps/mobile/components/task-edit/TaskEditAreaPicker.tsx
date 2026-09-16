@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { tFallback, type Area } from '@mindwtr/core';
+import { compareAreasByOrder, tFallback, type Area } from '@mindwtr/core';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { styles } from './task-edit-modal.styles';
 import { logError } from '../../lib/app-log';
@@ -66,11 +66,7 @@ export function TaskEditAreaPicker({
     const activeAreas = useMemo(() => {
         return areas
             .filter((area) => !area.deletedAt)
-            .sort((a, b) => {
-                const aOrder = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
-                const bOrder = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
-                return (aOrder - bOrder) || a.name.localeCompare(b.name);
-            });
+            .sort(compareAreasByOrder);
     }, [areas]);
 
     const normalizedAreaQuery = areaQuery.trim().toLowerCase();

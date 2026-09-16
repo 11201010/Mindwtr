@@ -9,6 +9,7 @@ import {
     getFrequentTaskTokens,
     getUsedTaskTokens,
     collectBulkTaskTokens,
+    compareAreasByOrder,
     tFallback,
     type Task,
     type ContextOrTagMatchMode,
@@ -315,7 +316,7 @@ export function ContextsView() {
     );
     const bulkAreaOptions = useMemo(
         () => [...areas]
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort(compareAreasByOrder)
             .map((area) => ({ id: area.id, name: area.name })),
         [areas]
     );

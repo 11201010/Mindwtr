@@ -19,6 +19,7 @@ import {
     DEFAULT_TASK_EDITOR_SECTION_BY_FIELD,
     DEFAULT_TASK_EDITOR_SECTION_OPEN,
     DEFAULT_TASK_EDITOR_VISIBLE,
+    compareAreasByOrder,
     FOCUS_TASK_LIMIT_OPTIONS,
     formatTimeEstimateLabel,
     getTaskEditorSectionAssignments,
@@ -109,7 +110,7 @@ export function GtdSettingsScreen({
     const defaultAreaMode = getDefaultTaskAreaMode(settings);
     const sortedAreas = [...areas]
         .filter((area) => !area.deletedAt)
-        .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name));
+        .sort(compareAreasByOrder);
     const defaultAreaId = resolveDefaultNewTaskAreaId(settings, sortedAreas) ?? '';
     const defaultAreaPickerValue = defaultAreaMode === 'active'
         ? DEFAULT_AREA_ACTIVE_OPTION_ID

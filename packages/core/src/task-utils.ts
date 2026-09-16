@@ -2,7 +2,7 @@
  * Utility functions for task operations
  */
 
-import { Task, TaskStatus, TaskSortBy, TaskPriority, Project, Section, AppData, AppSettings, SortField } from './types';
+import { Task, TaskStatus, TaskSortBy, TaskPriority, Project, Section, AppData, AppSettings, SortField, Area } from './types';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { differenceInCalendarDays, startOfDay } from 'date-fns';
 import { hasTimeComponent, isDueForReview, safeParseDate, safeParseDueDate } from './date';
@@ -334,6 +334,18 @@ export function compareProjectsByOrder(
     const bOrder = Number.isFinite(b.order) ? (b.order as number) : Number.POSITIVE_INFINITY;
     if (aOrder !== bOrder) return aOrder - bOrder;
     return textCollator.compare(a.title, b.title);
+}
+
+// Ranks areas by their custom order, with the task editor's numeric,
+// case-insensitive name ordering as the tie-break. Areas without an order sort last.
+export function compareAreasByOrder(
+    a: Pick<Area, 'order' | 'name'>,
+    b: Pick<Area, 'order' | 'name'>,
+): number {
+    const aOrder = Number.isFinite(a.order) ? (a.order as number) : Number.POSITIVE_INFINITY;
+    const bOrder = Number.isFinite(b.order) ? (b.order as number) : Number.POSITIVE_INFINITY;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return numericTextCollator.compare(a.name, b.name);
 }
 
 // Builds the projectId -> rank map that project-grouped views sort tasks by.

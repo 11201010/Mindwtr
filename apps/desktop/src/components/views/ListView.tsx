@@ -4,6 +4,7 @@ import { AlertTriangle, Folder, HelpCircle } from 'lucide-react';
 import { buildProjectOrderMap,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
+    compareAreasByOrder,
     compareTasksByProjectThenOrder,
     createReferenceSearchPredicate,
     createTaskFilterPredicate,
@@ -920,7 +921,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                 .replace('{section}', group.title)
     ), [t]);
     const bulkAreaOptions = [...areas]
-        .sort((a, b) => a.name.localeCompare(b.name))
+        .sort(compareAreasByOrder)
         .map((area) => ({ id: area.id, name: area.name }));
     const handleApplyTaskBulkOrganize = useCallback(async (input: BulkOrganizeTaskUpdateInput) => {
         const selectedCount = selectedIdsArray.length;

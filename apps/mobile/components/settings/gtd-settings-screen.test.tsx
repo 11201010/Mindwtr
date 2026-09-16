@@ -64,7 +64,8 @@ const storeState: MockStoreState = {
   updateSettings,
 };
 
-vi.mock('@mindwtr/core', () => ({
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+  compareAreasByOrder: (await importOriginal<typeof import('@mindwtr/core')>()).compareAreasByOrder,
   createFeedbackDiagnosticsBuffer: () => ({
     record: vi.fn(),
     read: () => '',

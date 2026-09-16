@@ -5,6 +5,7 @@ import {
     buildProjectOrderMap,
     buildTasksByProjectId,
     buildTrashTimeline,
+    compareAreasByOrder,
     compareProjectsByOrder,
     compareTasksByProjectOrder,
     compareTasksByProjectThenOrder,
@@ -32,7 +33,7 @@ import {
     sortTasksByFocusOrder,
     splitCompletedTasks,
 } from './task-utils';
-import { Project, Task } from './types';
+import { Area, Project, Task } from './types';
 
 describe('task-utils', () => {
     describe('buildTrashTimeline', () => {
@@ -67,6 +68,24 @@ describe('task-utils', () => {
             const noOrderB = { id: 'c', title: 'Beta' } as Project;
             expect(compareProjectsByOrder(ordered, noOrderA)).toBeLessThan(0);
             expect(compareProjectsByOrder(noOrderA, noOrderB)).toBeLessThan(0);
+        });
+    });
+
+    describe('compareAreasByOrder', () => {
+        it('sorts by finite order, then name, with missing orders last', () => {
+            const areas = [
+                { id: 'unordered', name: 'Unordered' },
+                { id: 'area-10', name: 'Area 10', order: 2 },
+                { id: 'area-2', name: 'Area 2', order: 2 },
+                { id: 'first', name: 'First', order: 1 },
+            ] as Area[];
+
+            expect(areas.sort(compareAreasByOrder).map((area) => area.id)).toEqual([
+                'first',
+                'area-2',
+                'area-10',
+                'unordered',
+            ]);
         });
     });
 

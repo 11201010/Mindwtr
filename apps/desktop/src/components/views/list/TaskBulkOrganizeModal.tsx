@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardCheck, X } from 'lucide-react';
 import {
+    compareAreasByOrder,
     createBulkOrganizeArea,
     createBulkOrganizeProject,
     ensureBulkOrganizeDestinationSaved,
@@ -108,11 +109,7 @@ export function TaskBulkOrganizeModal({
     const activeAreas = useMemo(
         () => areas
             .filter((area) => !area.deletedAt)
-            .sort((a, b) => {
-                const aOrder = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
-                const bOrder = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
-                return (aOrder - bOrder) || a.name.localeCompare(b.name);
-            }),
+            .sort(compareAreasByOrder),
         [areas],
     );
 

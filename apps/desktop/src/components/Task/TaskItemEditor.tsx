@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type DragEvent, type FormEvent, type React
 import { ContextualHelp } from '../ContextualHelp';
 import { ArrowRight, Check, Folder, HelpCircle, Layers, MapPin, Trash2 } from 'lucide-react';
 import {
+    compareAreasByOrder,
     filterProjectsBySelectedArea,
     resolveAutoTextDirection,
     setTaskViewSectionId,
@@ -169,11 +170,7 @@ export function TaskItemEditor({
     const sortedProjects = [...projects].sort((a, b) => compareLabels(a.title, b.title));
     const sortedAreas = areas
         .filter((area) => !area.deletedAt)
-        .sort((a, b) => {
-            const aOrder = Number.isFinite(a.order) ? a.order : Number.POSITIVE_INFINITY;
-            const bOrder = Number.isFinite(b.order) ? b.order : Number.POSITIVE_INFINITY;
-            return (aOrder - bOrder) || compareLabels(a.name, b.name);
-        });
+        .sort(compareAreasByOrder);
     const projectFilterAreaId = editAreaId || undefined;
     const filteredProjects = filterProjectsBySelectedArea(sortedProjects, projectFilterAreaId);
     const [schedulingOpen, setSchedulingOpen] = useState(() => sectionOpenDefaults.scheduling || sectionCounts.scheduling > 0);
