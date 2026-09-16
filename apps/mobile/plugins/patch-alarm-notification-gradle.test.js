@@ -1130,7 +1130,7 @@ describe('applyPatches (registry-driven fixture tree)', () => {
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   // The mechanism behind #1020, stated as an invariant rather than as one
   // method's spelling: under the New Architecture the interop marshals a

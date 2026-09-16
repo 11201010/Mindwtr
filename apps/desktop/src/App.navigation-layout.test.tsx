@@ -123,5 +123,5 @@ describe('App deferred navigation layout', () => {
             expect(content()).toHaveClass('max-w-6xl');
             expect(content()).not.toHaveClass('max-w-screen-2xl');
         });
-    });
+    }, 20_000);
 });

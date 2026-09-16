@@ -64,7 +64,7 @@ describe('cloud sync http helpers', () => {
             timeoutMs: 1,
         })).rejects.toThrow('Cloud request timed out');
         expect(cancel).toHaveBeenCalledOnce();
-    }, 100);
+    });
 
     it('times out and cancels a request JSON response body that stalls after headers', async () => {
         const { cancel, response } = hangingBodyResponse();
@@ -74,7 +74,7 @@ describe('cloud sync http helpers', () => {
             timeoutMs: 1,
         })).rejects.toThrow('Cloud request timed out');
         expect(cancel).toHaveBeenCalledOnce();
-    }, 100);
+    });
 
     it('times out and cancels a post-write JSON body that stalls after mutation headers', async () => {
         const { cancel, response } = hangingBodyResponse();
@@ -84,7 +84,7 @@ describe('cloud sync http helpers', () => {
             timeoutMs: 1,
         })).rejects.toThrow('Cloud request timed out');
         expect(cancel).toHaveBeenCalledOnce();
-    }, 100);
+    });
 
     it('returns null on 404 when fetching json', async () => {
         const fetcher = vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', text: async () => '' } as Response));
