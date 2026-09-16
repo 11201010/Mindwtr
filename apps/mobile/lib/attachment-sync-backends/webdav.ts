@@ -272,7 +272,12 @@ export const syncWebdavAttachments = async (
   };
 
   const shouldDownload = (attachment: Attachment): boolean => {
-    if (getWebdavDownloadBackoff(attachment.id)) return false;
+    // The backoff is keyed by attachment id, not by destination, so it is stale
+    // for the candidate backend an activation probe has to prove right now. A
+    // deferred download would leave the attachment `unproven` and fail activation
+    // (core sync-run `classifyActivationAttachmentProof` allows `deferred` only
+    // for the file backend).
+    if (!options.activationProbe && getWebdavDownloadBackoff(attachment.id)) return false;
     if (downloadCount >= WEBDAV_ATTACHMENT_MAX_DOWNLOADS_PER_SYNC) {
       if (!downloadLimitLogged) {
         logAttachmentInfo('WebDAV attachment download limit reached', {

@@ -2111,6 +2111,32 @@ describe('attachment sync', () => {
     }
   });
 
+  it('ignores a stale per-attachment download backoff during a WebDAV activation probe', async () => {
+    const bytes = new Uint8Array([7, 8, 9]);
+    mockMissingTargetWithDownloadStage(bytes);
+    fileSystemMock.readAsStringAsync.mockResolvedValue(base64Of(bytes));
+    const core = await import('@mindwtr/core');
+    const config = { url: 'https://example.com/data.json', username: 'u', password: 'p' };
+    const data = singleAttachmentData({
+      id: 'backoff-download', uri: '', cloudKey: 'attachments/backoff-download.txt',
+    });
+
+    // A normal cycle fails the download and arms the per-attachment backoff.
+    vi.mocked(core.webdavGetFile).mockRejectedValueOnce(new Error('connection reset'));
+    await attachmentSync.syncWebdavAttachments(data, config, 'https://example.com');
+    expect(core.webdavGetFile).toHaveBeenCalledTimes(1);
+
+    // The backoff is keyed by attachment id, so it is stale for the candidate
+    // destination an activation probe must prove right now.
+    vi.mocked(core.webdavGetFile).mockResolvedValue(bytes.slice().buffer as ArrayBuffer);
+    const probed = syncResult(await attachmentSync.syncWebdavAttachments(
+      data, config, 'https://example.com', undefined, { activationProbe: true },
+    ), data).data;
+
+    expect(core.webdavGetFile).toHaveBeenCalledTimes(2);
+    expect(probed.tasks[0].attachments?.[0]?.localStatus).toBe('available');
+  });
+
   it('reports an activation download batch limit without declaring the remaining file available', async () => {
     let now = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => { now += 1_000; return now; });
