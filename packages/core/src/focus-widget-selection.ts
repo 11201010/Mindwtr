@@ -17,8 +17,8 @@
  * `now` is a parameter, never `Date.now()`, so the selection is deterministic
  * in tests and one payload build sees one instant.
  */
-import { safeParseDate, safeParseDueDate } from './date';
-import { deriveFocusTaskLists, type FocusPools } from './focus-sections';
+import { safeParseDate } from './date';
+import { deriveFocusTaskLists, isTodayScheduleCandidate, type FocusPools } from './focus-sections';
 import { TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
 import { shouldShowTaskForStart, sortTasksBy } from './task-utils';
 import type { Project, Section, Task, TaskSortBy } from './types';
@@ -63,10 +63,10 @@ export interface TodayFocusSelection {
  *    or starting today. The screens keep every starred task because Today's
  *    Focus is its own labelled section; a bare "Today" list must not lead with
  *    a task that starts next week.
- * 3. Review Due rejoins the one list, next actions only. The screens split a
- *    next action that is also due for review into its own section; here that
- *    would drop it from the widget altogether. Waiting and someday tasks stay
- *    out of the list, as they always have.
+ * 3. Review Due rejoins the one list, next actions only and minus the steps the
+ *    sequential gate holds back. The screens split a next action that is also
+ *    due for review into its own section; here that would drop it from the
+ *    widget altogether. Waiting and someday tasks stay out, as they always have.
  */
 export function computeTodayFocusTasks({
     activeTasks,
@@ -75,23 +75,16 @@ export function computeTodayFocusTasks({
     sortBy,
     now,
 }: TodayFocusSelectionInput): TodayFocusSelection {
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     const isPlannedForFuture = (task: Task) => {
         const start = safeParseDate(task.startTime);
         return Boolean(start && start > endOfToday);
     };
-    const isScheduleCandidate = (task: Task) => {
-        const due = safeParseDueDate(task.dueDate);
-        const start = safeParseDate(task.startTime);
-        const startsToday = Boolean(start && start >= startOfToday && start <= endOfToday);
-        return Boolean(due && due <= endOfToday) || startsToday;
-    };
 
     const pools: FocusPools = {
         focused: activeTasks.filter((task) => (
             task.isFocusedToday === true
-            && (!isPlannedForFuture(task) || isScheduleCandidate(task))
+            && (!isPlannedForFuture(task) || isTodayScheduleCandidate(task, now))
         )),
         active: activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
         schedule: activeTasks,
@@ -115,7 +108,11 @@ export function computeTodayFocusTasks({
     const scheduled = new Set(lists.schedule.map((task) => task.id));
     const listed = new Set(
         [...lists.reviewDue, ...lists.nextActions]
-            .filter((task) => task.status === 'next')
+            // Today and Next actions are already gated; Review Due is not, so
+            // folding it in would show a sequential step that is waiting its
+            // turn. The screens keep that step visible under their own Review
+            // Due heading, where the order is obvious; one flat list cannot.
+            .filter((task) => task.status === 'next' && !lists.sequentialBlockedIds.has(task.id))
             .map((task) => task.id),
     );
     return {

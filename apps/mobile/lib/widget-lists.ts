@@ -5,10 +5,10 @@ import {
     type AppData,
     type SavedFilter,
     type Task,
+    type FocusTaskLists,
     type TaskSortBy,
 } from '@mindwtr/core';
 
-import type { FocusTaskLists } from './focus-sections';
 import { compareSomedayTasks, compareWaitingTasks } from './list-order';
 
 // The lists a placed Tasks widget can show (#1173): Mindwtr's own GTD lists,

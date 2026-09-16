@@ -1,8 +1,9 @@
 /**
- * The Focus derivation now lives in `@mindwtr/core` (`focus-sections.ts`). This
- * file is a temporary adapter for `lib/widget-data.ts`, which still calls the
- * old flat-argument shape. Delete it — and fold that call into `buildFocusPools`
- * / `deriveFocusTaskLists` — once that file can be edited again.
+ * The Focus derivation lives in `@mindwtr/core` (`focus-sections.ts`). This file
+ * is a temporary adapter with exactly ONE importer left, `lib/widget-data.ts`,
+ * which still calls the old flat-argument shape. Delete this file — and fold
+ * that call into `buildFocusPools` / `deriveFocusTaskLists` — the moment that
+ * file can be edited again. Import from `@mindwtr/core`, never from here.
  */
 import {
     deriveFocusTaskLists as deriveFocusTaskListsFromPools,
@@ -13,13 +14,7 @@ import {
     type Task,
 } from '@mindwtr/core';
 
-export {
-    buildFocusTaskSections,
-    DEFAULT_FOCUS_SORT_BY,
-    type FocusTaskLists,
-    type FocusTaskSection,
-    type FocusTaskSectionKey,
-} from '@mindwtr/core';
+export { buildFocusTaskSections } from '@mindwtr/core';
 
 export interface DeriveFocusTaskListsInput {
     now: Date;

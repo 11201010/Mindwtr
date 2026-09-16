@@ -51,7 +51,7 @@ describe('buildFocusTaskSections', () => {
     const translate = (key: string) => ({ 'agenda.todaysFocus': 'Starred', 'focus.schedule': 'Today', 'agenda.reviewDue': 'Review', 'focus.nextActions': 'Next', 'agenda.upcoming': 'Soon' } as Record<string, string>)[key];
 
     it('keeps the Focus screen order and only shows the optional sections when they have tasks', async () => {
-        const { buildFocusTaskSections } = await import('./focus-sections');
+        const { buildFocusTaskSections } = await import('@mindwtr/core');
         const full = buildFocusTaskSections({
             focusedTasks: [task('f')], schedule: [task('s')], reviewDue: [], nextActions: [task('n')], upcoming: [task('u')],
         }, translate);

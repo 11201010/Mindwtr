@@ -993,7 +993,7 @@ export default function FocusScreen() {
           ...buildTaskItems(group.tasks, true),
         ]);
     };
-    // Same buckets, order and titles as the widget (lib/focus-sections.ts).
+    // Same buckets, order and titles as the widget (@mindwtr/core focus-sections).
     const nextSections: FocusSection[] = buildFocusTaskSections(
       { focusedTasks, schedule, reviewDue, nextActions, upcoming },
       t,

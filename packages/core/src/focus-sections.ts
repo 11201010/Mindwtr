@@ -19,6 +19,7 @@ import {
     getFocusSequentialFirstTaskIds,
     getProjectDeadlineBoosts,
     getUpcomingDeferredTasks,
+    PRIORITY_RANK,
     shouldShowTaskForStart,
     sortFocusNextActions,
     sortTasksByFocusOrder,
@@ -29,6 +30,27 @@ import {
 import type { FilterCriteria, Project, Section, SortField, Task, TaskPriority } from './types';
 
 export const DEFAULT_FOCUS_SORT_BY: SortField = 'default';
+
+/** The calendar day `now` falls in, as the half-open pair every Today rule reads. */
+export function getTodayBounds(now: Date): { startOfToday: Date; endOfToday: Date } {
+    return {
+        startOfToday: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0),
+        endOfToday: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999),
+    };
+}
+
+/**
+ * "Due today or starting today" — the ONE answer to what belongs in Today, read
+ * by the Today bucket below and by the widget selection's starred rule. A change
+ * to what counts as today is an edit to this function and nothing else.
+ */
+export function isTodayScheduleCandidate(task: Task, now: Date): boolean {
+    const { startOfToday, endOfToday } = getTodayBounds(now);
+    const due = safeParseDueDate(task.dueDate);
+    const start = safeParseDate(task.startTime);
+    const startsToday = Boolean(start && start >= startOfToday && start <= endOfToday);
+    return Boolean(due && due <= endOfToday) || startsToday;
+}
 
 /**
  * The narrowed task pools every Focus section is cut from. Kept apart from the
@@ -107,6 +129,13 @@ export interface FocusTaskLists {
     nextActions: Task[];
     upcoming: Task[];
     projectDeadlineBoosts: Map<string, ProjectDeadlineBoost>;
+    /**
+     * The steps the sequential gate holds back: in a sequential project and not
+     * the one holding its slot. Today and Next actions already exclude them;
+     * Review Due deliberately does not, so a caller that folds Review Due into
+     * another list (the widget) can apply the gate itself.
+     */
+    sequentialBlockedIds: Set<string>;
 }
 
 export interface FocusListContext {
@@ -125,8 +154,6 @@ export interface FocusListContext {
     sortBySavedPerspective?: (items: Task[]) => Task[];
 }
 
-const PRIORITY_RANK: Record<TaskPriority, number> = { low: 1, medium: 2, high: 3, urgent: 4 };
-
 export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): FocusTaskLists {
     const { now, projects, sections, sortBy, prioritiesEnabled } = ctx;
     const isDefaultSort = sortBy === DEFAULT_FOCUS_SORT_BY;
@@ -136,9 +163,6 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
             prioritizeByPriority: prioritiesEnabled,
             sortOrder: ctx.sortOrder,
         })));
-
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     // Equal times fall back to priority (when the feature is on) and then to
     // creation order — one rule for Today and Review Due on every surface.
@@ -176,10 +200,7 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
         if (task.isFocusedToday) return false;
         if (task.status !== 'next') return false;
         if (isSequentialBlocked(task)) return false;
-        const due = safeParseDueDate(task.dueDate);
-        const start = safeParseDate(task.startTime);
-        const startsToday = Boolean(start && start >= startOfToday && start <= endOfToday);
-        return Boolean(due && due <= endOfToday) || startsToday;
+        return isTodayScheduleCandidate(task, now);
     });
     const scheduleIds = new Set(scheduleItems.map((task) => task.id));
 
@@ -224,6 +245,9 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
         // date a task appears is the only ordering that means anything here.
         upcoming: pools.upcoming.map((entry) => entry.task).filter((task) => !isSequentialBlocked(task)),
         projectDeadlineBoosts,
+        sequentialBlockedIds: new Set(
+            pools.base.filter(isSequentialBlocked).map((task) => task.id),
+        ),
     };
 }
 

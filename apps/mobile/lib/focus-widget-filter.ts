@@ -1,6 +1,4 @@
-import type { FilterCriteria, SortField } from '@mindwtr/core';
-
-import { DEFAULT_FOCUS_SORT_BY } from './focus-sections';
+import { DEFAULT_FOCUS_SORT_BY, type FilterCriteria, type SortField } from '@mindwtr/core';
 
 /**
  * What the Focus screen is filtering and sorting by right now, so the widget's
