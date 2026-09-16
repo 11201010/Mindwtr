@@ -5,6 +5,7 @@ import { getAttachmentDisplayTitle } from '../../../lib/attachment-utils';
 import { isImageAttachment } from '../task-item-attachment-utils';
 import { AttachmentImage } from '../AttachmentImage';
 import { QUICK_ADD_FIELD_TOKENS, QuickAddTokenBadge, TaskEditorFieldLabel } from '../task-editor-label';
+import { AttachmentProgressIndicator } from '../../AttachmentProgressIndicator';
 
 // Secondary add actions share one bordered blue shape with the checklist's
 // "Add item" control so every way to grow a task reads the same.
@@ -166,6 +167,19 @@ export function AttachmentsField({
                         const displayTitle = getAttachmentDisplayTitle(attachment);
                         const isPointer = attachment.kind === 'link' || isBareFileReference(attachment);
                         const fullTitle = isPointer ? attachment.uri : attachment.title;
+                        // Same three states the mobile editor and the desktop
+                        // list rows already show, so a synced-but-not-downloaded
+                        // file no longer reads as a dead link.
+                        const isMissing = attachment.kind === 'file'
+                            && (!attachment.uri || attachment.localStatus === 'missing');
+                        const isDownloading = attachment.localStatus === 'downloading';
+                        const statusLabel = isDownloading
+                            ? t('common.loading')
+                            : isMissing && attachment.cloudKey
+                                ? t('attachments.download')
+                                : isMissing
+                                    ? t('attachments.missing')
+                                    : null;
                         return (
                             <div key={attachment.id} className="flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted/40">
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -184,8 +198,12 @@ export function AttachmentsField({
                                     >
                                         {displayTitle}
                                     </button>
+                                    {statusLabel ? (
+                                        <span className="shrink-0 text-[11px] text-muted-foreground">{statusLabel}</span>
+                                    ) : null}
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1">
+                                    <AttachmentProgressIndicator attachmentId={attachment.id} />
                                     {canEditAsLink(attachment) && (
                                         <button
                                             type="button"
