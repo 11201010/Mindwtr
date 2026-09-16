@@ -225,8 +225,9 @@ const validateStoredAppData = (
     const parsed = parseSyncDocument(rawData, 'local');
     const validated = parsed.ok ? validateAppData(parsed.data) : parsed;
     if (!validated.ok) {
-        // Field paths only (indexes, never record content), so an operator can
-        // find the offending record instead of bisecting the whole namespace.
+        // Field paths plus the entity ids the validator names (opaque UUIDs, no
+        // titles or bodies), so an operator can find the offending record
+        // instead of bisecting the whole namespace.
         const sample = 'errors' in validated ? validated.errors.slice(0, 3).join('; ') : validated.error;
         logFailureWarn('Stored cloud data failed validation', {
             failureClass: 'validation',
