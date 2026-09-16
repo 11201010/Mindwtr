@@ -2860,4 +2860,21 @@ describe('AgendaView', () => {
             expect(queryByRole('button', { name: 'Reorder' })).toBeNull();
         });
     });
+    // The star dropped the store result: a refused write left the row unstarred
+    // with no explanation, unlike every other star surface (TaskItem toasts).
+    it('reports a failed focus-star write', async () => {
+        const updateTask = vi.fn().mockResolvedValue({ success: false, error: 'Disk full' });
+        useTaskStore.setState({ updateTask } as never);
+        useUiStore.setState({ toasts: [] });
+
+        const { getByLabelText } = renderAgenda();
+
+        await act(async () => {
+            fireEvent.click(getByLabelText('Remove from focus'));
+        });
+
+        await waitFor(() => {
+            expect(useUiStore.getState().toasts.map((toast) => toast.message)).toContain('Disk full');
+        });
+    });
 });

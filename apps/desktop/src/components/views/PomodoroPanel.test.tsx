@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { getPomodoroLocalDayKey, useTaskStore, type Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
+import { useUiStore } from '../../store/ui-store';
 import { DESKTOP_POMODORO_SESSION_STORAGE_KEY, PomodoroPanel } from './PomodoroPanel';
 const nowIso = '2026-07-01T12:00:00.000Z';
 const task: Task = {
@@ -185,5 +186,26 @@ describe('PomodoroPanel desktop persistence', () => {
         );
 
         expect(screen.getByLabelText('Timer task').textContent).toContain('Timer only');
+    });
+    // Mark done dropped the store result, so a rejected write left the task
+    // untouched with nothing on screen and the user pressed the button again.
+    it('reports a failed Mark done instead of silently doing nothing', async () => {
+        const updateTask = vi.fn().mockResolvedValue({ success: false, error: 'Disk full' });
+        useUiStore.setState({ toasts: [] });
+        useTaskStore.setState({ tasks: [task], _allTasks: [task], updateTask } as never);
+        storeSession('task-1');
+
+        render(
+            <LanguageProvider>
+                <PomodoroPanel tasks={[task]} />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            fireEvent.click(screen.getByLabelText('Mark task done'));
+        });
+
+        expect(updateTask).toHaveBeenCalledWith('task-1', { status: 'done', isFocusedToday: false });
+        expect(useUiStore.getState().toasts.map((toast) => toast.message)).toContain('Disk full');
     });
 });

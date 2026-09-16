@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
+import { useUiStore } from '../../../store/ui-store';
 import { useInboxProcessingController } from './useInboxProcessingController';
 
 type InboxControllerOptions = Parameters<typeof useInboxProcessingController>[0];
@@ -741,5 +742,37 @@ describe('useInboxProcessingController title grammar', () => {
         expect(updateTask).toHaveBeenCalledWith('one', expect.objectContaining({
             dueDate: expect.stringContaining('2026-09-01'),
         }));
+    });
+});
+
+// The inline person create awaited `addPerson` and threw the `Person | null`
+// result away, so a refused write left the Waiting step with no person and no
+// message — the step's other writes all toast.
+describe('useInboxProcessingController inline person create', () => {
+    it('reports a refused person create', async () => {
+        useUiStore.setState({ toasts: [] });
+        useTaskStore.setState({ addPerson: vi.fn(async () => null) } as never);
+
+        const { result } = renderHook(() => useInboxProcessingController({
+            t: (key: string) => key,
+            tasks: [makeTask('one')],
+            projects: [],
+            areas: [],
+            settings: {},
+            addProject: async () => null,
+            addTask: async () => ({ success: true }),
+            updateTask: async () => ({ success: true }),
+            deleteTask: async () => ({ success: true }),
+            allContexts: [],
+            allTags: [],
+            isProcessing: true,
+            setIsProcessing: () => undefined,
+        } as unknown as InboxControllerOptions));
+
+        await act(async () => {
+            await result.current.wizardProps.onCreatePerson?.('Dana');
+        });
+
+        expect(useUiStore.getState().toasts.map((toast) => toast.message)).toContain('Failed to add task');
     });
 });

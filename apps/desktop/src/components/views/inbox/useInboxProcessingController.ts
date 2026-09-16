@@ -815,8 +815,9 @@ export function useInboxProcessingController({
     const handleCreatePerson = useCallback(async (name: string) => {
         const trimmed = name.trim();
         if (!trimmed) return;
-        await addPerson(trimmed);
-    }, [addPerson]);
+        const person = await addPerson(trimmed);
+        if (!person) showToast(tFallback(t, 'task.addFailed', 'Failed to add task'), 'error');
+    }, [addPerson, showToast, t]);
 
     const handleCreateSomedaySection = useCallback(async (title: string) => {
         try {

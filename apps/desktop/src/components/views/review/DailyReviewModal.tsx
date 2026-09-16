@@ -5,6 +5,7 @@ import {
     getDailyReviewBuckets,
     getUsedTaskTokens,
     formatFocusTaskLimitText,
+    getFocusStarBlockedText,
     isDueForReview,
     normalizeFocusTaskLimit,
     parseStoredReviewStepSession,
@@ -326,12 +327,15 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                 </div>
             );
         }
-        const focusedCount = focusedTasks.length;
         return (
             <div className="space-y-2">
                 {focusCandidates.map((task) => {
                     const project = task.projectId ? projectMap.get(task.projectId) : null;
-                    const canFocus = task.isFocusedToday || focusedCount < focusTaskLimit;
+                    // Same contract as every other star surface: core decides
+                    // eligibility, and a refusal is shown rather than swallowed.
+                    const starAction = useTaskStore.getState().getFocusStarAction(task);
+                    const blockedText = getFocusStarBlockedText(t, starAction, focusTaskLimit);
+                    const canFocus = starAction.canToggle;
                     return (
                         <div
                             key={task.id}
@@ -368,10 +372,8 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                             <button
                                 type="button"
                                 onClick={() => {
-                                    // Core focus-star module: eligibility + cap + patch.
-                                    const action = useTaskStore.getState().getFocusStarAction(task);
-                                    if (!action.canToggle) return;
-                                    updateTask(task.id, action.patch);
+                                    if (!starAction.canToggle) return;
+                                    void updateTask(task.id, starAction.patch);
                                 }}
                                 disabled={!canFocus}
                                 className={cn(
@@ -385,9 +387,7 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                                 aria-label={task.isFocusedToday ? t('agenda.removeFromFocus') : t('agenda.addToFocus')}
                                 title={task.isFocusedToday
                                     ? t('agenda.removeFromFocus')
-                                    : focusedCount >= focusTaskLimit
-                                        ? formatFocusTaskLimitText(t('agenda.maxFocusItems'), focusTaskLimit)
-                                        : t('agenda.addToFocus')}
+                                    : blockedText ?? t('agenda.addToFocus')}
                             >
                                 <FocusStarIcon className="w-4 h-4" filled={task.isFocusedToday} />
                             </button>

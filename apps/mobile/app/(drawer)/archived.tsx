@@ -45,6 +45,8 @@ import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigatio
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { CompletedAtPicker } from '@/components/completed-at-picker';
 import { assertBulkActionSucceeded, usePruneSelectionToVisible, useTaskListSelection } from '@/components/use-task-list-selection';
+import { settleStoreAction } from '@/components/store-action-result';
+import { useToast } from '@/contexts/toast-context';
 import { TASK_LIST_WINDOWING_PROPS } from '@/components/task-list-windowing';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Archive, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react-native';
@@ -317,6 +319,7 @@ export default function ArchivedScreen() {
         setHighlightTask: state.setHighlightTask,
     }), shallow);
     const { t } = useLanguage();
+    const { showToast } = useToast();
     const [segment, setSegment] = useState<ArchiveSegment>('tasks');
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
@@ -526,9 +529,21 @@ export default function ArchivedScreen() {
         return result;
     }, [updateTask]);
 
+    const showTaskUpdateError = useCallback((message?: string) => {
+        showToast({
+            title: tFallback(t, 'common.error', 'Error'),
+            message: message || tFallback(t, 'task.updateFailed', 'Could not update task.'),
+            tone: 'error',
+            durationMs: 4200,
+        });
+    }, [showToast, t]);
+
     const handleRestore = useCallback((taskId: string) => {
-        updateTask(taskId, { status: 'inbox' });
-    }, [updateTask]);
+        void settleStoreAction(() => updateTask(taskId, { status: 'inbox' }))
+            .then((outcome) => {
+                if (!outcome.ok) showTaskUpdateError(outcome.message);
+            });
+    }, [showTaskUpdateError, updateTask]);
 
     const selectAllTasks = useCallback(() => {
         setMultiSelectedIds(new Set(visibleTaskIds));
@@ -551,8 +566,11 @@ export default function ArchivedScreen() {
         const taskId = completedAtTaskId;
         setCompletedAtTaskId(null);
         if (!taskId) return;
-        updateTask(taskId, { completedAt: iso });
-    }, [completedAtTaskId, updateTask]);
+        void settleStoreAction(() => updateTask(taskId, { completedAt: iso }))
+            .then((outcome) => {
+                if (!outcome.ok) showTaskUpdateError(outcome.message);
+            });
+    }, [completedAtTaskId, showTaskUpdateError, updateTask]);
 
     const handleDelete = useCallback((taskId: string) => {
         Alert.alert(

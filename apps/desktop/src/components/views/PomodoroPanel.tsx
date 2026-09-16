@@ -13,6 +13,7 @@ import { Play, Pause, RotateCcw, TimerReset, CheckCircle2, ChevronDown, ChevronU
 import { cn } from '../../lib/utils';
 import { useLanguage } from '../../contexts/language-context';
 import { reconcilePomodoroSnapshot, usePomodoroStore } from '../../store/pomodoro-store';
+import { useUiStore } from '../../store/ui-store';
 import { PomodoroTaskPicker } from './PomodoroTaskPicker';
 
 export { DESKTOP_POMODORO_SESSION_STORAGE_KEY } from '../../store/pomodoro-store';
@@ -160,7 +161,11 @@ export function PomodoroPanel({ tasks }: PomodoroPanelProps) {
 
     const handleMarkTaskDone = async () => {
         if (!selectedTask) return;
-        await updateTask(selectedTask.id, { status: 'done', isFocusedToday: false });
+        const result = await updateTask(selectedTask.id, { status: 'done', isFocusedToday: false });
+        if (result?.success === false) {
+            useUiStore.getState().showToast(result.error || t('task.updateFailed'), 'error');
+            return;
+        }
         commitSnapshot((prev) => ({ ...prev, lastEvent: null }));
     };
 

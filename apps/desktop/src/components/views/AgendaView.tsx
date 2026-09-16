@@ -918,7 +918,9 @@ export function AgendaView() {
             if (blockedText) showToast(blockedText, 'info');
             return;
         }
-        updateTask(taskId, action.patch);
+        void updateTask(taskId, action.patch).then((result) => {
+            if (!result.success) showToast(result.error || t('task.updateFailed'), 'error');
+        });
     }, [focusTaskLimit, showToast, t, tasksById, updateTask]);
 
     const buildFocusToggle = useCallback((task: Task) => {

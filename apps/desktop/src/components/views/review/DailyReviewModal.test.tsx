@@ -271,4 +271,24 @@ describe('DailyReviewGuideModal', () => {
 
         expect(screen.getByTestId('task-tomorrow-1')).toBeInTheDocument();
     });
+    // The star swallowed the blocked reason (`if (!action.canToggle) return;`)
+    // and the cap-only render gate left it enabled, so a task that can never be
+    // focused offered an Add to Focus button that did nothing when pressed.
+    it('disables the focus star for a task that must be clarified first and says why', () => {
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        useTaskStore.setState({
+            _allTasks: [makeTask({ id: 'waiting-due', title: 'Chase invoice', status: 'waiting', dueDate: yesterday })],
+        });
+
+        render(<DailyReviewGuideModal onClose={vi.fn()} />);
+
+        for (let step = 0; step < 5; step += 1) {
+            if (screen.queryByRole('heading', { level: 1, name: "Today's Focus" })) break;
+            fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        }
+
+        const star = screen.getByLabelText('Add to Focus');
+        expect(star).toBeDisabled();
+        expect(star.getAttribute('title')).toBe('Clarify this task before adding it to Focus.');
+    });
 });

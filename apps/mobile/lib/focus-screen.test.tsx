@@ -507,6 +507,31 @@ describe('FocusScreen', () => {
     vi.useRealTimers();
   });
 
+  // Pomodoro's Mark done dropped the store result, so a refused write left the
+  // task untouched with nothing on screen.
+  it('reports a failed Pomodoro Mark done', async () => {
+    storeState.settings = { appearance: {}, features: { pomodoro: true } };
+    storeState.updateTask.mockResolvedValue({ success: false, error: 'Disk full' });
+
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    const panel = tree.root.findByType('PomodoroPanel' as never);
+
+    await act(async () => {
+      await panel.props.onMarkDone('focus-task');
+    });
+
+    expect(storeState.updateTask).toHaveBeenCalledWith('focus-task', { status: 'done', isFocusedToday: false });
+    expect(showToastMock).toHaveBeenCalledWith(expect.objectContaining({
+      tone: 'error',
+      message: 'Disk full',
+    }));
+  });
+
   it('defers an unstarred next action without writing a focus flag', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 4, 2, 10, 0, 0, 0));

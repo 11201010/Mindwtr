@@ -465,6 +465,12 @@ export default function FocusScreen() {
       durationMs: 4200,
     });
   }, [resolveText, showToast]);
+  const markPomodoroTaskDone = useCallback((taskId: string) => {
+    void settleStoreAction(() => updateTask(taskId, { status: 'done', isFocusedToday: false }))
+      .then((outcome) => {
+        if (!outcome.ok) showTaskUpdateError(outcome.message);
+      });
+  }, [showTaskUpdateError, updateTask]);
   const deferTaskUntil = useCallback((task: Task, selectedDate: Date) => {
     const startDate = new Date(selectedDate);
     startDate.setHours(0, 0, 0, 0);
@@ -1558,7 +1564,7 @@ export default function FocusScreen() {
             {pomodoroEnabled && (
               <PomodoroPanel
                 tasks={pomodoroTasks}
-                onMarkDone={(id) => updateTask(id, { status: 'done', isFocusedToday: false })}
+                onMarkDone={markPomodoroTaskDone}
               />
             )}
             <View style={styles.headerTopRow}>

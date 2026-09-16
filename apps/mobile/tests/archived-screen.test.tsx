@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import ArchivedScreen from '../app/(drawer)/archived';
+import { CompletedAtPicker } from '@/components/completed-at-picker';
 
 const mocks = vi.hoisted(() => {
   const alert = vi.fn();
@@ -358,6 +359,45 @@ describe('ArchivedScreen', () => {
 
     expect(mocks.batchMoveTasks).toHaveBeenCalledWith(['task-1', 'task-2'], 'inbox');
     expect(mocks.updateTask).not.toHaveBeenCalledWith('task-1', { status: 'inbox' });
+  });
+
+  // Restore and the completion-time edit were fire-and-forget, so a refused
+  // write left the row where it was with nothing on screen — unlike the bulk
+  // restore beside them, which warns.
+  it('warns when restoring a single archived task is refused', async () => {
+    mocks.updateTask.mockResolvedValueOnce({ success: false, error: 'Task not found' });
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<ArchivedScreen />);
+    });
+
+    await renderer.act(async () => {
+      await tree.root.find((node) => typeof node.props.restoreLabel === 'string' && node.props.task?.id === 'task-1').props.onRestore();
+    });
+
+    expect(mocks.updateTask).toHaveBeenCalledWith('task-1', { status: 'inbox' });
+    expect(mocks.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error' }));
+  });
+
+  it('warns when saving an edited completion time is refused', async () => {
+    mocks.updateTask.mockResolvedValueOnce({ success: false, error: 'Task not found' });
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<ArchivedScreen />);
+    });
+
+    renderer.act(() => {
+      tree.root.find((node) => node.props.accessibilityLabel === 'Edit completion time')
+        .props.onPress({ stopPropagation: () => undefined });
+    });
+
+    const picker = tree.root.findByType(CompletedAtPicker);
+    await renderer.act(async () => {
+      await picker.props.onConfirm('2026-09-01T10:00:00.000Z');
+    });
+
+    expect(mocks.updateTask).toHaveBeenCalledWith('task-1', { completedAt: '2026-09-01T10:00:00.000Z' });
+    expect(mocks.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error' }));
   });
 
   it('keeps selection and warns when a bulk restore reports failure', async () => {
