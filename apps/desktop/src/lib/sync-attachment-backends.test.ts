@@ -1725,10 +1725,9 @@ describe('desktop sync attachment backends', () => {
             expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
         });
 
-        it('reports an existing generation integrity mismatch at verification', async () => {
-            const appData = makePendingData();
-            appData.tasks[0].attachments![0].cloudKey = undefined;
-            const deps = depsFor();
+        /** The corrupt generation every rewrite test below starts from: the sync folder
+         *  holds a file under this content-addressed name whose bytes are not this content. */
+        const stageCorruptGeneration = () => {
             const otherBytes = new Uint8Array([4, 5, 6]);
             fsMocks.exists.mockResolvedValue(true);
             fsMocks.readFile.mockImplementation(async (path: string) => (
@@ -1737,13 +1736,22 @@ describe('desktop sync attachment backends', () => {
             fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
             syncFsMocks.exists.mockResolvedValue(true);
             syncFsMocks.stat.mockResolvedValue({ mtimeMs: 1000, size: otherBytes.length });
+        };
 
-            expect(await syncFileAttachments(
+        it('rewrites an existing generation once after an integrity mismatch at verification', async () => {
+            const appData = makePendingData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const deps = depsFor();
+            const generationKey = `attachments/attachment-1.${BYTES_HASH}.txt`;
+            const generationPath = `/candidate-sync/${generationKey}`;
+            stageCorruptGeneration();
+
+            const result = expectFoldedData(await syncFileAttachments(
                 appData,
                 '/candidate-sync',
                 deps,
                 postMergeHelpers(),
-            )).toBe(false);
+            ));
 
             expect(deps.logSyncWarning).toHaveBeenCalledWith(
                 'File Sync attachment operation failed',
@@ -1754,8 +1762,67 @@ describe('desktop sync attachment backends', () => {
                     nativeCode: 'unknown',
                 }),
             );
+            // Replaced through the ordinary create-new + write + publish protocol, never
+            // written over in place.
+            expect(syncFsMocks.remove).toHaveBeenCalledWith(generationPath);
+            expect(syncFsMocks.reserveAttachmentGeneration).toHaveBeenCalledWith(
+                '',
+                generationPath,
+                bytes.byteLength,
+                BYTES_HASH,
+            );
+            expect(syncFsMocks.publishAttachmentGeneration).toHaveBeenCalledTimes(1);
+            expect(result.tasks[0].attachments?.[0]?.cloudKey).toBe(generationKey);
+            expect(result.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+        });
+
+        it('marks the attachment unrecoverable when a rewritten generation is still corrupt', async () => {
+            const generationPath = `/candidate-sync/attachments/attachment-1.${BYTES_HASH}.txt`;
+            stageCorruptGeneration();
+
+            await syncFileAttachments(makePendingData(), '/candidate-sync', depsFor(), postMergeHelpers());
+            const rewrites = syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath).length;
+            expect(rewrites).toBe(1);
+
+            const result = expectFoldedData(await syncFileAttachments(
+                makePendingData(),
+                '/candidate-sync',
+                depsFor(),
+                postMergeHelpers(),
+            ));
+
+            // One rewrite is the whole budget: the second identical verdict is terminal, so
+            // the attachment stops being retried every cycle.
+            expect(syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath)).toHaveLength(1);
+            expect(syncFsMocks.reserveAttachmentGeneration).toHaveBeenCalledTimes(1);
+            expect(syncFsMocks.publishAttachmentGeneration).toHaveBeenCalledTimes(1);
+            expect(result.tasks[0].attachments?.[0]).toMatchObject({
+                cloudKey: undefined,
+                localStatus: 'missing',
+            });
+            expect(result.tasks[0].attachments?.[0]?.deletedAt).toBeTruthy();
+        });
+
+        it('never rewrites a healthy existing generation', async () => {
+            const appData = makePendingData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            const generationKey = `attachments/attachment-1.${BYTES_HASH}.txt`;
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(bytes);
+            fsMocks.stat.mockResolvedValue({ mtime: new Date(1000), size: bytes.length });
+            syncFsMocks.exists.mockResolvedValue(true);
+            syncFsMocks.stat.mockResolvedValue({ mtimeMs: 1000, size: bytes.length });
+
+            const result = expectFoldedData(await syncFileAttachments(
+                appData,
+                '/candidate-sync',
+                depsFor(),
+                postMergeHelpers(),
+            ));
+
+            expect(syncFsMocks.remove).not.toHaveBeenCalledWith(`/candidate-sync/${generationKey}`);
             expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
-            expect(appData.tasks[0].attachments?.[0]?.cloudKey).toBeUndefined();
+            expect(result.tasks[0].attachments?.[0]?.cloudKey).toBe(generationKey);
         });
 
         it('retains a WebDAV pending candidate when the blob is absent and local bytes advanced again', async () => {

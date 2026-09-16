@@ -59,6 +59,7 @@ import {
     exists as syncFsExists,
     mkdir as syncFsMkdir,
     publishAttachmentGeneration as syncFsPublishAttachmentGeneration,
+    remove as syncFsRemoveFile,
     reserveAttachmentGeneration as syncFsReserveAttachmentGeneration,
     stat as syncFsStat,
 } from './sync-fs';
@@ -135,12 +136,38 @@ const FILE_BACKEND_VALIDATION_CONFIG = {
 const FILE_DOWNLOAD_READ_CHUNK_BYTES = 64 * 1024;
 
 class FileSyncGenerationIntegrityError extends Error {
-    constructor(message: string, cause?: unknown) {
+    /** The stored generation is definitively not this content: its bytes were in hand and
+     *  did not verify. A read the pass could not finish is NOT this — it proves nothing
+     *  about the file — and may never trigger a rewrite or a terminal verdict. */
+    readonly corrupt: boolean;
+    /** This generation already spent its one rewrite and verified wrong again, so retrying
+     *  it every cycle can only repeat the same result (P8: no unbounded retries). */
+    readonly terminal: boolean;
+    constructor(
+        message: string,
+        options: { cause?: unknown; corrupt?: boolean; terminal?: boolean } = {},
+    ) {
         super(message);
         this.name = 'FileSyncGenerationIntegrityError';
-        if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+        this.corrupt = options.corrupt === true;
+        this.terminal = options.terminal === true;
+        if (options.cause !== undefined) (this as Error & { cause?: unknown }).cause = options.cause;
     }
 }
+
+/**
+ * Generation paths this process has already rewritten once after finding the sync folder's
+ * copy corrupt. A generation key is content-addressed, so rewriting it is always safe — but
+ * it must not become a per-cycle habit, which is what happened before: a corrupt existing
+ * generation failed verification, returned, and was re-read identically every cycle forever.
+ *
+ * ponytail: process-local, cleared with the rest of the attachment sync state when the sync
+ * configuration is reset. A restart therefore grants one more rewrite, exactly like the
+ * attempt counter in `sync-attachment-validation.ts`, and that is the safer direction: the
+ * terminal verdict soft-deletes an attachment whose local bytes are still fine. Upgrade path
+ * if a restart loop is ever observed: a durable marker beside the presence stamp.
+ */
+const fileSyncGenerationRewrites = new Set<string>();
 
 const UPLOAD_TIMEOUT_MS = 120_000;
 const WEBDAV_ATTACHMENT_RETRY_OPTIONS = {
@@ -400,6 +427,7 @@ let webdavAttachmentRateLimitedUntil = 0;
 export const clearAttachmentSyncState = (): void => {
     webdavDownloadBackoff.clear();
     webdavAttachmentRateLimitedUntil = 0;
+    fileSyncGenerationRewrites.clear();
 };
 
 const getWebdavAttachmentRateLimitRemainingMs = (): number => Math.max(0, webdavAttachmentRateLimitedUntil - Date.now());
@@ -1823,13 +1851,22 @@ export async function syncFileAttachments(
             },
         );
         const publicationLeaseToken = fileSyncLeaseToken ?? '';
+        const INTEGRITY_FAILURE = 'File Sync attachment generation failed integrity verification';
         const verifyExistingGeneration = async (): Promise<void> => {
+            let existingWireData: Uint8Array;
             try {
-                const existingWireData = await runFileSyncAttachmentStage(
+                existingWireData = await runFileSyncAttachmentStage(
                     'existing-generation-read',
                     deps.logSyncWarning,
                     () => readFileSyncWireData(targetPath, { expectedSize: wireData.byteLength }),
                 );
+            } catch (error) {
+                // A read that could not finish (a dropped mount, a permission blip, a file
+                // changing size under it) says nothing about the stored bytes, so it stays
+                // an ordinary retryable failure: never a rewrite, never terminal.
+                throw new FileSyncGenerationIntegrityError(INTEGRITY_FAILURE, { cause: error });
+            }
+            try {
                 await runFileSyncAttachmentStage(
                     'existing-generation-verify',
                     deps.logSyncWarning,
@@ -1842,10 +1879,12 @@ export async function syncFileAttachments(
                     },
                 );
             } catch (error) {
-                throw new FileSyncGenerationIntegrityError(
-                    'File Sync attachment generation failed integrity verification',
-                    error,
-                );
+                // This stage only touches bytes already in memory, so any failure here is
+                // the stored generation being wrong — not the folder being unreachable.
+                throw new FileSyncGenerationIntegrityError(INTEGRITY_FAILURE, {
+                    cause: error,
+                    corrupt: true,
+                });
             }
         };
 
@@ -1854,8 +1893,27 @@ export async function syncFileAttachments(
             deps.logSyncWarning,
             () => syncFsExists(targetPath),
         )) {
-            await verifyExistingGeneration();
-            return;
+            try {
+                await verifyExistingGeneration();
+                return;
+            } catch (error) {
+                if (!(error instanceof FileSyncGenerationIntegrityError) || !error.corrupt) throw error;
+                if (fileSyncGenerationRewrites.has(targetPath)) {
+                    throw new FileSyncGenerationIntegrityError(INTEGRITY_FAILURE, {
+                        cause: error,
+                        corrupt: true,
+                        terminal: true,
+                    });
+                }
+                // Self-heal once. The key is content-addressed and the replacement bytes come
+                // from the same upload snapshot, so this can only ever restore the file the
+                // key already promises. Removing the corrupt copy first is what lets the
+                // ordinary create-new + sequential write + publish protocol below run: nothing
+                // is ever written over in place.
+                fileSyncGenerationRewrites.add(targetPath);
+                deps.logSyncWarning('Rewriting a corrupt File Sync attachment generation');
+                await syncFsRemoveFile(targetPath);
+            }
         }
 
         const reservation = await runFileSyncAttachmentStage(
@@ -2031,11 +2089,21 @@ export async function syncFileAttachments(
                 deps.logSyncWarning,
                 () => sealAttachmentBytes(fileData, cloudKey),
             );
-            await publishFileSyncGeneration(
-                await resolveFileBackendPath(join, baseSyncDir, cloudKey),
-                wireData,
-                snapshot.fileHash,
-            );
+            try {
+                await publishFileSyncGeneration(
+                    await resolveFileBackendPath(join, baseSyncDir, cloudKey),
+                    wireData,
+                    snapshot.fileHash,
+                );
+            } catch (error) {
+                if (!(error instanceof FileSyncGenerationIntegrityError) || !error.terminal) throw error;
+                // Same seam the WebDAV remote-404 path uses: stop retrying an attachment the
+                // sync folder cannot hold correctly, instead of re-reading it every cycle.
+                deps.logSyncWarning(
+                    'File Sync attachment generation is still corrupt after a rewrite; marking attachment unrecoverable',
+                );
+                return markAttachmentUnrecoverable(attachment);
+            }
             attachment.cloudKey = cloudKey;
             attachment.localStatus = 'available';
             deps.logSyncInfo('File Sync attachment transfer completed', {
