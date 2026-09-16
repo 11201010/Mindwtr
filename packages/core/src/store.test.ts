@@ -1984,6 +1984,30 @@ describe('TaskStore', () => {
         }
     });
 
+    describe('store write contract guard (development)', () => {
+        beforeEach(() => {
+            vi.stubEnv('NODE_ENV', 'development');
+        });
+
+        afterEach(() => {
+            vi.unstubAllEnvs();
+        });
+
+        it('throws when an update writes only the visible collection', () => {
+            const visibleTask = createStoreTask('task-visible');
+            expect(() => {
+                useTaskStore.setState({ tasks: [visibleTask] });
+            }).toThrow('TaskStore invariant violated: write _allTasks instead of tasks/_tasksById');
+            expect(useTaskStore.getState().tasks).toEqual([]);
+        });
+
+        it('throws when an update writes a non-array all collection', () => {
+            expect(() => {
+                useTaskStore.setState({ _allTasks: undefined as unknown as Task[] });
+            }).toThrow('TaskStore invariant violated: _allTasks must be an array');
+        });
+    });
+
     it('keeps derived context and tag lists scoped to used tokens', () => {
         const { addTask } = useTaskStore.getState();
         addTask('Token Task', {
