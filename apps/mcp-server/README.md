@@ -398,7 +398,8 @@ Any MCP-compatible client can work as long as it can launch a **stdio** server w
 ## Tools
 
 - `mindwtr_list_tasks`
-  - Input: `{ status?, projectId?, includeDeleted?, limit?, offset?, search?, dueDateFrom?, dueDateTo?, sortBy?, sortOrder? }`
+  - Input: `{ status?, projectId?, includeDeleted?, limit?, offset?, search?, dueDateFrom?, dueDateTo?, isFocusedToday?, view?, sortBy?, sortOrder? }`
+  - `view` narrows by GTD availability: `available`, `deferred` or `blocked`
 - `mindwtr_list_projects`
   - Input: `{}`
 - `mindwtr_get_project`
