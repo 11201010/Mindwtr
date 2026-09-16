@@ -528,6 +528,13 @@ export interface MigrationSettings {
      */
     lastAutoArchiveAt?: string;
     lastTombstoneCleanupAt?: string;
+    /**
+     * Records that recover-legacy-project-references already ran on this
+     * install. Device-local like the rest of `migrations` (the settings sync
+     * allowlist drops it), so every install repairs its own document once and
+     * a <=1.2.8 peer re-completing the task cannot restart the flip-flop.
+     */
+    legacyReferenceRecoveryVersion?: number;
 }
 
 export interface AppSettings extends NotificationSettings {

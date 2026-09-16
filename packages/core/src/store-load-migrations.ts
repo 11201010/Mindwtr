@@ -23,6 +23,9 @@ import type { AppData, Area, Project, Task, TaskEditorFieldId } from './types';
 // backfill) needs to run once for installs that predate it. Existing installs
 // already at this version skip that block entirely.
 export const MIGRATION_VERSION = 1;
+// Bumped only if the legacy archived-reference recovery below has to run again
+// for installs that already recorded the current version.
+export const LEGACY_REFERENCE_RECOVERY_VERSION = 1;
 export const TOMBSTONE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TASK_EDITOR_DEFAULTS_VERSION = 5;
 const FOCUS_GROUP_BY_DEFAULTS_VERSION = 1;
@@ -49,6 +52,8 @@ export type LoadContext = {
     shouldRunSchemaMigration: boolean;
     /** Throttles the tombstone purge to TOMBSTONE_CLEANUP_INTERVAL_MS. */
     shouldRunTombstoneCleanup: boolean;
+    /** Gates the one-shot legacy archived-reference recovery. */
+    shouldRunLegacyReferenceRecovery: boolean;
 };
 
 export const buildLoadContext = (
@@ -65,6 +70,8 @@ export const buildLoadContext = (
         isFreshInstall,
         shouldRunSchemaMigration: (migrations.version ?? 0) < MIGRATION_VERSION,
         shouldRunTombstoneCleanup: nowMs - lastTombstoneCleanupAt > TOMBSTONE_CLEANUP_INTERVAL_MS,
+        shouldRunLegacyReferenceRecovery:
+            (migrations.legacyReferenceRecoveryVersion ?? 0) < LEGACY_REFERENCE_RECOVERY_VERSION,
     };
 };
 
@@ -245,6 +252,11 @@ const clearDeletedTaskProjectArchiveMetadataMigration: LoadMigration = {
 
 const recoverLegacyProjectReferencesMigration: LoadMigration = {
     name: 'recover-legacy-project-references',
+    // One shot per install. A <=1.2.8 peer re-completes every non-finished
+    // child of an archived project on its own load, re-creating exactly the
+    // marker shape below; without this gate the two devices would flip the
+    // task Done <-> Reference with a fresh rev on every sync cycle.
+    shouldRun: (ctx) => ctx.shouldRunLegacyReferenceRecovery,
     run: (data, ctx) => {
         const archivedProjectIds = new Set(data.projects
             .filter((project) => project.status === 'archived' && !project.deletedAt && !project.purgedAt && !isProjectCancelled(project))
@@ -281,7 +293,17 @@ const recoverLegacyProjectReferencesMigration: LoadMigration = {
             category: 'storage',
             context: { releaseCheck: 'v1.3.1/archive-reference-recovered', count },
         });
-        return { ...data, tasks };
+        return {
+            ...data,
+            tasks,
+            settings: {
+                ...data.settings,
+                migrations: {
+                    ...(data.settings.migrations ?? {}),
+                    legacyReferenceRecoveryVersion: LEGACY_REFERENCE_RECOVERY_VERSION,
+                },
+            },
+        };
     },
 };
 

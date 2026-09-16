@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { completeTaskForProjectArchive } from './store-helpers';
-import { buildLoadContext, runLoadMigrations, MIGRATION_VERSION } from './store-load-migrations';
+import { buildLoadContext, runLoadMigrations, LEGACY_REFERENCE_RECOVERY_VERSION, MIGRATION_VERSION } from './store-load-migrations';
 import { createReferenceSearchPredicate, isReferenceInVisibleProject } from './reference';
 import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { mergeAppData } from './sync';
@@ -85,6 +85,31 @@ describe('legacy archived-project Reference recovery (#1198)', () => {
         expect(reloaded.applied).not.toContain('recover-legacy-project-references');
         const repeated = mergeAppData(reloaded.data, original, { nowIso: now });
         expect(repeated).toEqual(merged);
+    });
+
+    it('recovers once per install so an older peer cannot restart the ping-pong', () => {
+        const first = load(makeData());
+        expect(first.applied).toContain('recover-legacy-project-references');
+        expect(first.data.settings.migrations?.legacyReferenceRecoveryVersion).toBe(LEGACY_REFERENCE_RECOVERY_VERSION);
+        // A <=1.2.8 peer completes the recovered reference again on its own load.
+        const relapsed = {
+            ...first.data,
+            tasks: [completeTaskForProjectArchive(first.data.tasks[0], now, 'older-device')],
+        };
+        const second = load(relapsed);
+        expect(second.applied).not.toContain('recover-legacy-project-references');
+        expect(second.data.tasks[0]).toEqual(relapsed.tasks[0]);
+    });
+
+    it('skips the recovery on an install that already recorded it', () => {
+        const data = makeData();
+        data.settings.migrations = {
+            ...data.settings.migrations,
+            legacyReferenceRecoveryVersion: LEGACY_REFERENCE_RECOVERY_VERSION,
+        };
+        const result = load(data);
+        expect(result.applied).not.toContain('recover-legacy-project-references');
+        expect(result.data.tasks[0]).toEqual(legacyReference);
     });
 
     it('emits a content-free recovery count only on the repairing load', () => {
