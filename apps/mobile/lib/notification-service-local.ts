@@ -779,22 +779,30 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
   const recurringRequests = requests.filter((request) => request.repeatInterval);
   const oneShotRequests = requests.filter((request) => !request.repeatInterval);
 
-  for (const request of recurringRequests) {
-    activeKeys.add(request.key);
-    await scheduleAlarmForKey(api, request.key, toLocalAlarmConfig(request));
-  }
+  // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
+  // alarm cap) aborts the cycle. Whatever was created before that point is live in
+  // AlarmManager, so the map has to reach storage anyway or a restart can never
+  // cancel those alarms. saveAlarmMap no-ops on an unchanged map and swallows its
+  // own storage errors, so the extra call is free and cannot mask the original.
+  try {
+    for (const request of recurringRequests) {
+      activeKeys.add(request.key);
+      await scheduleAlarmForKey(api, request.key, toLocalAlarmConfig(request));
+    }
 
-  for (const request of oneShotRequests) {
-    activeKeys.add(request.key);
-  }
-  await scheduleAlarmRequests(api, oneShotRequests.map((request) => ({
-    key: request.key,
-    config: toLocalAlarmConfig(request),
-  })));
-  scheduleOneShotTopUp(api, oneShotRequests.map((request) => request.fireAt.getTime()), now.getTime());
+    for (const request of oneShotRequests) {
+      activeKeys.add(request.key);
+    }
+    await scheduleAlarmRequests(api, oneShotRequests.map((request) => ({
+      key: request.key,
+      config: toLocalAlarmConfig(request),
+    })));
+    scheduleOneShotTopUp(api, oneShotRequests.map((request) => request.fireAt.getTime()), now.getTime());
 
-  await cancelInactiveKeys(api, activeKeys);
-  await saveAlarmMap();
+    await cancelInactiveKeys(api, activeKeys);
+  } finally {
+    await saveAlarmMap();
+  }
   if (!taskRemindersEnabled) {
     const morningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:morning');
     const eveningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:evening');

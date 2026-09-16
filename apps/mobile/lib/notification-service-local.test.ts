@@ -1336,4 +1336,36 @@ describe('notification-service-local', () => {
     expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(42);
     expect(storage.getPomodoro()).toBeNull();
   });
+  // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
+  // alarm cap) aborted the cycle before its single save, so alarms created earlier
+  // stayed live in AlarmManager while the persisted map never learned their ids —
+  // after a restart nothing could cancel them and the reminders kept firing.
+  describe('alarm map persistence when a cycle aborts', () => {
+    const readSavedAlarmMap = () => {
+      const call = [...mockAsyncStorageSetItem.mock.calls]
+        .reverse()
+        .find(([key]) => key === 'mindwtr:local:alarms:v1');
+      return call ? JSON.parse(call[1] as string) as Record<string, { id: number }> : null;
+    };
+
+    beforeEach(() => {
+      mockStoreState.tasks = [
+        { id: 'task-1', title: 'Task one', dueDate: new Date(Date.now() + 5 * 60 * 1000).toISOString() },
+        { id: 'task-2', title: 'Task two', dueDate: new Date(Date.now() + 10 * 60 * 1000).toISOString() },
+      ];
+    });
+
+    it('keeps the ids of alarms already created when a later schedule call fails', async () => {
+      mockAlarmScheduleAlarm.mockReset();
+      mockAlarmScheduleAlarm
+        .mockResolvedValueOnce({ id: 11 })
+        .mockRejectedValue(new Error('exact alarm permission revoked'));
+
+      await expect(startLocalMobileNotifications()).rejects.toThrow('exact alarm permission revoked');
+
+      const saved = readSavedAlarmMap();
+      expect(saved).not.toBeNull();
+      expect(Object.values(saved ?? {}).map((entry) => entry.id)).toContain(11);
+    });
+  });
 });
