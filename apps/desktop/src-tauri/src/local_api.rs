@@ -2144,10 +2144,12 @@ fn normalize_local_task_lifecycle(task: &mut Map<String, Value>, now: &str) {
         .and_then(Value::as_str)
         .unwrap_or("inbox")
         .to_string();
-    if status != "archived" {
+    let has_valid_cancellation =
+        status == "archived" && valid_cancellation_timestamp(task.get("cancelledAt"));
+    if !has_valid_cancellation {
         task.remove("cancelledAt");
     }
-    if status == "archived" && has_non_empty_string(task, "cancelledAt") {
+    if has_valid_cancellation {
         task.remove("completedAt");
     } else if matches!(status.as_str(), "done" | "archived") {
         if !has_non_empty_string(task, "completedAt") {
@@ -5638,6 +5640,30 @@ mod tests {
             let mut patch = Map::from_iter([("cancelledAt".to_string(), value)]);
             assert!(sanitize_task_patch_map(&mut patch).is_err());
         }
+    }
+
+    #[test]
+    fn task_patch_drops_malformed_existing_cancellation_timestamp() {
+        let mut task = json!({
+            "id": "cancelled-task", "title": "Closed action", "status": "archived",
+            "cancelledAt": "2026-02-30T12:00:00Z",
+            "completedAt": "2026-02-28T12:00:00Z", "rev": 3
+        })
+        .as_object()
+        .expect("task object")
+        .clone();
+
+        apply_task_patch(
+            &mut task,
+            json!({ "description": "Keep the completion" })
+                .as_object()
+                .expect("task patch"),
+            "device-a",
+        )
+        .expect("patch succeeds");
+
+        assert!(!task.contains_key("cancelledAt"));
+        assert_eq!(task["completedAt"], "2026-02-28T12:00:00Z");
     }
 
     fn comparable_local_api_recurring_task(task: Option<Map<String, Value>>) -> Value {
