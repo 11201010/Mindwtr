@@ -72,8 +72,17 @@ type LogEntry = {
 };
 
 const writeLog = (entry: LogEntry) => {
-  const line = `${JSON.stringify(entry)}\n`;
-  process.stderr.write(line);
+  // Everything this server writes goes through core's sanitizer, not only what the
+  // core bridge below forwards: a thrown error can carry a token or a secret-bearing
+  // path into the message, the context, or a stack frame.
+  const sanitized: LogEntry = {
+    ...entry,
+    scope: sanitizeForLog(entry.scope),
+    message: sanitizeForLog(entry.message),
+    context: sanitizeLogContext(entry.context),
+  };
+  if (entry.category) sanitized.category = sanitizeForLog(entry.category);
+  process.stderr.write(`${JSON.stringify(sanitized)}\n`);
 };
 
 export const logError = (message: string, error?: unknown) => {

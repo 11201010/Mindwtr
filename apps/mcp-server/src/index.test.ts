@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodTypeAny } from 'zod';
 
 import { NotFoundError } from './errors.js';
-import { addTaskSchema, parseArgs, parseBooleanFlag, registerMindwtrTools, resolveServerConfig, resolveServerModeFlags, updateTaskSchema } from './index.js';
+import { addTaskSchema, logError, parseArgs, parseBooleanFlag, registerMindwtrTools, resolveServerConfig, resolveServerModeFlags, updateTaskSchema } from './index.js';
 import { MAX_TASK_LIST_LIMIT } from './input-validation.js';
 import type { Area, Person, Project, Section, Task } from './queries.js';
 import type { MindwtrService } from './service.js';
@@ -636,6 +636,34 @@ describe('registered tool input schemas', () => {
     // Known gap: the date schema checks shape only, so an impossible calendar date
     // reaches the handler. Tightening it is a schema change, out of this test's scope.
     expect((await addTask({ title: 'Buy milk', dueDate: '2026-13-45' })).isError).toBeUndefined();
+  });
+});
+
+describe('mcp server logging', () => {
+  test('redacts secrets the server logs itself, not just the ones core forwards', () => {
+    const written: string[] = [];
+    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    }) as never);
+
+    try {
+      logError(
+        'Tool failed for token=abc123',
+        new Error('Read failed: token=abc123 at https://user:pw@example.com/feed.ics')
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    const raw = written.join('');
+    expect(raw).not.toContain('abc123');
+    expect(raw).not.toContain('user:pw');
+    const entry = JSON.parse(written[written.length - 1] as string);
+    expect(entry.level).toBe('error');
+    expect(entry.message).toBe('Tool failed for token=[redacted]');
+    expect(entry.context.error).toContain('token=[redacted]');
+    expect(entry.context.error).toContain('[redacted-ics-url]');
   });
 });
 
