@@ -105,6 +105,7 @@ export function SettingsFeedbackModal({
     const messageRef = useRef<HTMLTextAreaElement>(null);
     const titleId = useId();
     const descriptionId = useId();
+    const categoryLabelId = useId();
     const diagnosticsDescriptionId = useId();
 
     const categoryLabels: Record<FeedbackCategory, string> = {
@@ -236,10 +237,14 @@ export function SettingsFeedbackModal({
             ) : (
                 <DialogBody className="space-y-4 p-4">
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <label id={categoryLabelId} className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             {t.feedbackCategory}
                         </label>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <div
+                            className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                            role="group"
+                            aria-labelledby={categoryLabelId}
+                        >
                             {FEEDBACK_CATEGORIES.map((item) => {
                                 const Icon = categoryIcons[item];
                                 const selected = item === category;
@@ -247,6 +252,7 @@ export function SettingsFeedbackModal({
                                     <button
                                         key={item}
                                         type="button"
+                                        aria-pressed={selected}
                                         className={cn(
                                             'flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
                                             selected

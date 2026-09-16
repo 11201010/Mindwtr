@@ -19,6 +19,15 @@ const renderFeedbackModal = (props?: Partial<Parameters<typeof SettingsFeedbackM
 };
 
 describe('SettingsFeedbackModal', () => {
+    it('exposes the selected feedback category', () => {
+        renderFeedbackModal();
+
+        expect(screen.getByRole('group', { name: t.feedbackCategory })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: t.feedbackCategoryBug })).toHaveAttribute('aria-pressed', 'true');
+        expect(screen.getByRole('button', { name: t.feedbackCategoryFeature })).toHaveAttribute('aria-pressed', 'false');
+        expect(screen.getByRole('button', { name: t.feedbackCategoryOther })).toHaveAttribute('aria-pressed', 'false');
+    });
+
     it('uses category-specific message placeholders', () => {
         renderFeedbackModal();
 
