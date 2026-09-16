@@ -39,8 +39,8 @@ test('Contexts combines tokens with All/Any and keeps the compact selector usabl
     await page.setViewportSize({ width: 700, height: 900 });
     await page.getByRole('combobox', { name: 'Contexts & Tags' }).selectOption('@alice');
     await page.getByRole('combobox', { name: 'Contexts & Tags' }).selectOption('#bob');
-    await expect(page.getByRole('button', { name: 'Remove @alice' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Remove #bob' })).toBeVisible();
-    await page.getByRole('button', { name: 'Remove #bob' }).click();
+    await expect(page.getByRole('button', { name: 'Remove filter @alice' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Remove filter #bob' })).toBeVisible();
+    await page.getByRole('button', { name: 'Remove filter #bob' }).click();
     await expect(page.getByRole('heading', { name: '@alice' })).toBeVisible();
 });

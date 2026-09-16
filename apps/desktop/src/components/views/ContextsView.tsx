@@ -588,7 +588,7 @@ export function ContextsView() {
                                                 key={token}
                                                 type="button"
                                                 onClick={() => toggleSelectedContext(token)}
-                                                aria-label={`${tFallback(t, 'common.remove', 'Remove')} ${token}`}
+                                                aria-label={`${t('filters.remove')} ${token}`}
                                                 className="rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                                             >{token} ×</button>
                                         ))}
