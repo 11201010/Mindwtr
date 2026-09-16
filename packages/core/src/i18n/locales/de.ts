@@ -1093,6 +1093,7 @@ export const deOverrides: Record<string, string> = {
         'settings.weeklyReviewIncludeContextsStep': 'Kontexte-Schritt einbeziehen',
         'settings.weeklyReviewIncludeContextsStepDesc': 'Zeigt einen eigenen Kontext-Revisionsschritt zwischen Warten auf und Projekte an.',
         'widget.capture': 'Schnelleingabe',
+        'widget.viewAllTasks': 'Alle {{count}} Aufgaben anzeigen',
         
         //Digest
         'digest.morningTitle': 'Morgendliche Tagesplanung',

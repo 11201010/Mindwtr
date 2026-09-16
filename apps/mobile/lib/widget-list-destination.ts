@@ -6,7 +6,10 @@ import { getFocusWidgetFilter } from './focus-widget-filter';
 export function normalizeWidgetListDestinationId(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 1024 || /[\u0000-\u001f\u007f]/.test(value)) return null;
   if (value === 'next') return value;
-  return value.startsWith('filter:') && value.slice(7).trim().length > 0 ? value : null;
+  for (const prefix of ['filter:', 'project:']) {
+    if (value.startsWith(prefix) && value.slice(prefix.length).trim().length > 0) return value;
+  }
+  return null;
 }
 
 export function resolveWidgetListDestination(data: AppData, language: Language, value: unknown) {

@@ -75,6 +75,7 @@ const WIDGET_LIST_DIRECT_URIS = {
     waiting: 'mindwtr:///waiting',
     someday: 'mindwtr:///someday',
 } as const;
+const WIDGET_PROJECT_LIST_PREFIX = 'project:';
 type ConcreteThemePresetName = Exclude<ThemePresetName, 'default'>;
 
 export type WidgetSystemColorScheme = 'light' | 'dark' | null | undefined;
@@ -147,6 +148,9 @@ export interface WidgetListPayload {
     dateLabel?: string;
     sections?: WidgetTaskSection[];
     items: WidgetTaskItem[];
+    // Eligible rows before the bounded publication slice. Android uses this to
+    // distinguish a complete list from one that needs an in-widget overflow row.
+    totalCount: number;
     // Backward-compatible list-level destination. Next and saved filters use
     // the host-owned widget-list route; existing list screens stay direct.
     openUri?: string;
@@ -217,6 +221,8 @@ export interface AndroidTaskPeekLabels {
 export interface AndroidTasksWidgetPayload extends TasksWidgetPayload {
     quickCapture: AndroidQuickCaptureLabels;
     taskPeek: AndroidTaskPeekLabels;
+    // Localized template formatted natively after parcel-budget truncation.
+    viewAllLabel: string;
 }
 
 // Core's translator owns the locale-then-English chain; a second raw dictionary
@@ -599,7 +605,18 @@ export function createWidgetPayloadProjection(
     }
     for (const listId of requestedListIds) {
         if (listId === 'focus') continue;
-        const list = buildWidgetTaskList(listId, listContext);
+        const projectId = listId.startsWith(WIDGET_PROJECT_LIST_PREFIX)
+            ? listId.slice(WIDGET_PROJECT_LIST_PREFIX.length)
+            : null;
+        const project = projectId ? projectById.get(projectId) : undefined;
+        const projectList = projectId && project && !project.deletedAt
+            && (project.status === 'active' || project.isFocused === true)
+            ? {
+                title: project.title,
+                tasks: sortTasksBy(activeTasks.filter((task) => task.projectId === projectId), project.taskSortBy ?? widgetSort),
+            }
+            : null;
+        const list = projectId ? projectList : buildWidgetTaskList(listId, listContext);
         if (list) taskLists.set(listId, list);
     }
     const scheduleById = new Map(lists.schedule.map((task) => [task.id, task]));
@@ -658,6 +675,7 @@ export function createWidgetPayloadProjection(
                     dateLabel,
                     sections,
                     items,
+                    totalCount: curatedTasks.length,
                     openUri: WIDGET_LIST_DIRECT_URIS.focus,
                 },
             };
@@ -668,6 +686,7 @@ export function createWidgetPayloadProjection(
                 listPayloads[listId] = {
                     title: list.title,
                     items: list.tasks.slice(0, maxItems).map(toItem),
+                    totalCount: list.tasks.length,
                     openUri,
                 };
             }

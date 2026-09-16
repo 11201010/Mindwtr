@@ -1425,6 +1425,7 @@ export const zhHans: Record<string, string> = {
         'settings.weeklyReviewIncludeContextsStep': '包含情境步骤',
         'settings.weeklyReviewIncludeContextsStepDesc': '在“等待中”和“项目”之间显示专门的情境回顾步骤。',
         'widget.capture': '快速记录',
+        'widget.viewAllTasks': '查看全部 {{count}} 个任务',
         'digest.morningTitle': '早间简报',
         'digest.morningBody': '打开 Mindwtr 规划今天。',
         'digest.eveningTitle': '晚间回顾',

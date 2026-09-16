@@ -30,7 +30,7 @@ export default function WidgetListScreen() {
   const list = useMemo(() => resolveWidgetListDestination(data, language, id), [data, id, language]);
   const title = list?.title ?? t('search.noResults');
   const available = Boolean(list);
-  const listKind = id === 'next' ? 'next' : 'filter';
+  const listKind = id === 'next' ? 'next' : typeof id === 'string' && id.startsWith('project:') ? 'project' : 'filter';
   const { updateTask, deleteTask, fetchData } = useTaskStore((state) => ({
     updateTask: state.updateTask,
     deleteTask: state.deleteTask,

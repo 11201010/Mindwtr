@@ -258,12 +258,62 @@ class WidgetPayloadTest {
   }
 
   @Test
+  fun parserKeepsTwoHundredRowsAndTheEligibleTotal() {
+    val many = JSONArray().apply {
+      repeat(240) { index -> put(JSONObject().put("id", "task-$index").put("title", "Task $index")) }
+    }
+    val payload = WidgetPayload.parse(JSONObject()
+      .put("viewAllLabel", "View all {{count}} tasks")
+      .put("lists", JSONObject().put("next", listPayload("Next", items = many).put("totalCount", 240)))
+      .toString())!!
+
+    val list = payload.listFor("next")
+    assertEquals(200, list.items.size)
+    assertEquals(240, list.eligibleTaskCount())
+    assertEquals("View all 240 tasks", payload.formatViewAllLabel(list.eligibleTaskCount()))
+  }
+
+  @Test
+  fun sectionCapIsSharedAndNeverLeavesAnOrphanHeader() {
+    val first = Array(150) { "first-$it" }
+    val second = Array(100) { "second-$it" }
+    val list = WidgetPayload.parse(JSONObject()
+      .put("lists", JSONObject().put("focus", listPayload(
+        "Focus",
+        sections = JSONArray().put(section("First", *first)).put(section("Second", *second)),
+      ).put("totalCount", 250)))
+      .toString())!!.listFor("focus")
+
+    assertEquals(listOf(150, 50), list.sections.map { it.items.size })
+    val limited = TasksWidgetFactory.takeTaskRows(TasksWidgetFactory.buildBaseRows(list), 151)
+    assertEquals(151, limited.count { it is TasksWidgetFactory.Row.Task })
+    assertTrue(limited.last() is TasksWidgetFactory.Row.Task)
+    assertEquals(2, limited.count { it is TasksWidgetFactory.Row.Header })
+  }
+
+  @Test
+  fun committedRowsDecrementProvidedTotalsOncePerListAndLegacyUsesActualRows() {
+    val root = JSONObject(sample)
+    val focus = root.getJSONObject("lists").getJSONObject("focus")
+    focus.put("totalCount", 1)
+    val payload = WidgetPayload.parse(root.toString())!!
+
+    val visible = payload.displaySnapshot(setOf("a")).payload.listFor("focus")
+    assertEquals(0, visible.eligibleTaskCount())
+    assertTrue(visible.sections.isEmpty())
+    assertTrue(visible.items.isEmpty())
+
+    val legacy = WidgetPayload.parse(sample)!!.displaySnapshot(setOf("a")).payload.listFor("waiting")
+    assertEquals(1, legacy.eligibleTaskCount())
+  }
+
+  @Test
   fun listsResolveToTheSelectionOrFallBackToFocus() {
     val payload = WidgetPayload.parse(sample)!!
 
     assertEquals(setOf("focus", "waiting", "filter:f1"), payload.lists.keys)
     assertEquals("Reply from Sam", payload.listFor("waiting").items[0].title)
-    // Per-project lists are retired: an id we cannot name draws Focus.
+    // An unpublished project cannot borrow Focus rows under another title.
     assertEquals("Focus", payload.listFor("project:gone").title)
     assertEquals("Saved filters", payload.listTitles["savedFilters"])
     assertEquals(2, TasksWidgetFactory.buildRows(payload.listFor("focus")).size)

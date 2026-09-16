@@ -1480,6 +1480,7 @@ export const svOverrides: Record<string, string> = {
         'settings.captureSettings': 'Standardvärden för inspelning',
         'settings.reviewSettings': 'Genomgångssteg',
         'widget.capture': 'Snabbinspelning',
+        'widget.viewAllTasks': 'Visa alla {{count}} uppgifter',
         'obsidian.taskNotesDetectedTitle': 'TaskNotes-läge är aktivt',
         'obsidian.taskNotesDetectedBody': 'Mindwtr upptäckte TaskNotes-liknande metadata i de här filerna, så inline-checklistuppgifter från andra anteckningar ignoreras.',
         'obsidian.taskNotesDetectedHint': 'Leta efter ett statusfält samt TaskNotes-metadata som tags: [task], due, scheduled, contexts, projects, timeEstimate, recurrence eller completedDate.',

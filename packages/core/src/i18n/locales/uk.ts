@@ -1457,6 +1457,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.captureSettings": "Параметри швидкого запису",
     "settings.reviewSettings": "Огляд кроків",
     "widget.capture": "Швидкий запис",
+    "widget.viewAllTasks": "Переглянути всі завдання ({{count}})",
     "obsidian.taskNotesDetectedTitle": "Режим TaskNotes активний",
     "obsidian.taskNotesDetectedBody": "Mindwtr виявив у цих файлах передній матеріал у стилі TaskNotes, тому вбудовані завдання контрольного списку з інших нотаток ігноруються.",
     "obsidian.taskNotesDetectedHint": "Шукайте поле status і метадані TaskNotes, як-от tags: [task], due, scheduled, contexts, projects, timeEstimate, recurrence або completedDate.",

@@ -13,6 +13,10 @@ type WidgetRefreshResult = {
   legacyWidgetCount: number;
   compactWidgetCount: number;
   hiddenCheckoffCount?: number;
+  directCollectionCount?: number;
+  renderedTaskCount?: number;
+  eligibleTaskCount?: number;
+  collectionBytes?: number;
 };
 
 export type CaptureIntentConfig = {

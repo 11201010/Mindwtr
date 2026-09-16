@@ -10,7 +10,6 @@ import {
     buildAndroidQuickCaptureLabels,
     buildAndroidTaskPeekLabels,
     buildShortcutsSnapshot,
-    buildWidgetPayload,
     createWidgetPayloadProjection,
     IOS_SHORTCUTS_SNAPSHOT_KEY,
     IOS_WIDGET_APP_GROUP,
@@ -108,22 +107,6 @@ function widgetPayloadOptions(): Omit<WidgetPayloadBuildOptions, 'maxItems'> {
     };
 }
 
-function buildPayloadFromData(
-    data: AppData,
-    language: Language,
-    maxItems?: number,
-): TasksWidgetPayload {
-    const payload = buildWidgetPayload(data, language, {
-        ...widgetPayloadOptions(),
-        maxItems,
-    });
-    // Android Compact and iOS Tasks both combine starred and scheduled rows
-    // under one short localized Today header.
-    return Platform.OS === 'android' || Platform.OS === 'ios'
-        ? { ...payload, headerTitle: getTranslator(language)('focus.schedule') }
-        : payload;
-}
-
 function createPayloadProjectionFromData(data: AppData, language: Language): WidgetPayloadProjection {
     const projection = createWidgetPayloadProjection(data, language, widgetPayloadOptions());
     return {
@@ -140,34 +123,14 @@ function createPayloadProjectionFromData(data: AppData, language: Language): Wid
 
 // The native widget's task list scrolls (RemoteViewsService), so the payload
 // carries a fixed slice instead of a per-widget-height budget.
-const ANDROID_WIDGET_MAX_ITEMS = 20;
+const ANDROID_WIDGET_MAX_ITEMS = 200;
+const ANDROID_WIDGET_LIST_BUDGET_RELEASE_CHECK = 'v1.3.1/android-widget-list-budget';
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.3.0/android-native-widget';
 const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.3.0/android-widget-provider-compat';
 const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.3.0/widget-focus-today';
 const IOS_WIDGET_PARITY_RELEASE_CHECK = 'v1.3.1/ios-widget-parity';
 let androidWidgetUnavailableLogged = false;
 
-function capWidgetSections(
-    sections: TasksWidgetPayload['sections'] | undefined,
-    maxItems: number,
-): TasksWidgetPayload['sections'] | undefined {
-    if (!sections) return undefined;
-    let remaining = maxItems;
-    const capped: TasksWidgetPayload['sections'] = [];
-    for (const section of sections) {
-        if (remaining <= 0) break;
-        const items = section.items.slice(0, remaining);
-        if (items.length === 0) continue;
-        capped.push({ ...section, items });
-        remaining -= items.length;
-    }
-    return capped;
-}
-
-// `rendered` is built at the Android publication cap. The broader fingerprint
-// below still detects changes in chooser lists, but reusing its 50-row payload
-// here would make the published subtitle claim that no rows were hidden after
-// this path sliced the native payload to 20.
 async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, language: Language, audioEnabled: boolean): Promise<boolean> {
     if (Platform.OS !== 'android') return false;
     // Expo Go does not link modules/android-widget. Say so once, then stay quiet.
@@ -182,21 +145,36 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
     try {
         const payload: AndroidTasksWidgetPayload = {
             ...rendered,
-            items: rendered.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
-            sections: capWidgetSections(rendered.sections, ANDROID_WIDGET_MAX_ITEMS) ?? [],
-            lists: Object.fromEntries(Object.entries(rendered.lists).map(([id, list]) => [id, {
-                ...list,
-                items: list.items.slice(0, ANDROID_WIDGET_MAX_ITEMS),
-                ...(list.sections ? { sections: capWidgetSections(list.sections, ANDROID_WIDGET_MAX_ITEMS) } : {}),
-            }])),
             quickCapture: buildAndroidQuickCaptureLabels(language, audioEnabled),
             taskPeek: buildAndroidTaskPeekLabels(language),
+            viewAllLabel: getTranslator(language)('widget.viewAllTasks'),
         };
         AndroidWidget.setPayload(JSON.stringify(payload));
         const refreshResult = AndroidWidget.updateWidgets();
         // Older installed native modules return only the compatibility count.
         const legacyWidgetCount = typeof refreshResult === 'number' ? refreshResult : refreshResult?.legacyWidgetCount;
         const hiddenCheckoffCount = typeof refreshResult === 'object' ? refreshResult.hiddenCheckoffCount : undefined;
+        const directCollectionCount = typeof refreshResult === 'object' ? refreshResult.directCollectionCount : undefined;
+        const renderedTaskCount = typeof refreshResult === 'object' ? refreshResult.renderedTaskCount : undefined;
+        const eligibleTaskCount = typeof refreshResult === 'object' ? refreshResult.eligibleTaskCount : undefined;
+        const collectionBytes = typeof refreshResult === 'object' ? refreshResult.collectionBytes : undefined;
+        if (
+            typeof directCollectionCount === 'number' && directCollectionCount > 0
+            && typeof renderedTaskCount === 'number'
+            && typeof eligibleTaskCount === 'number'
+            && typeof collectionBytes === 'number'
+        ) {
+            void logInfo('Android widget list rendered within parcel budget', {
+                scope: 'widget',
+                extra: {
+                    releaseCheck: ANDROID_WIDGET_LIST_BUDGET_RELEASE_CHECK,
+                    count: String(directCollectionCount),
+                    items: String(renderedTaskCount),
+                    totalItems: String(eligibleTaskCount),
+                    collectionBytes: String(collectionBytes),
+                },
+            });
+        }
         if (typeof hiddenCheckoffCount === 'number' && hiddenCheckoffCount > 0) {
             void logInfo('Android widget check-offs hidden after Undo', {
                 scope: 'widget',
@@ -377,6 +355,7 @@ async function updateIosShortcutsSnapshotFromData(snapshot: ShortcutsSnapshot): 
 // changed. Newly placed or resized Android widgets draw from the last stored
 // payload natively, so they never depend on this path.
 const WIDGET_FINGERPRINT_MAX_ITEMS = 50;
+const WIDGET_RENDER_SCHEMA_REVISION = 2;
 // Folded into the fingerprint (not just the storage key) so an app upgrade
 // that changes what a render writes without changing the payload data still
 // forces a render: a persisted fingerprint from an older build never matches
@@ -438,26 +417,25 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
     if (Platform.OS !== 'android' && Platform.OS !== 'ios') return false;
     await ensureLastRenderedWidgetFingerprintLoaded();
     const language = await resolvePayloadLanguage(data);
-    const iosProjection = Platform.OS === 'ios'
-        ? createPayloadProjectionFromData(data, language)
-        : null;
+    const projection = createPayloadProjectionFromData(data, language);
+    const iosProjection = Platform.OS === 'ios' ? projection : null;
 
     // Gate 1: the widget's own payload fingerprint, exactly as before #980 --
     // this is the #766 skip and must not fire on changes the widget doesn't
     // show.
-    const fingerprintPayload = iosProjection
-        ? iosProjection.build(WIDGET_FINGERPRINT_MAX_ITEMS)
-        : buildPayloadFromData(data, language, WIDGET_FINGERPRINT_MAX_ITEMS);
+    const fingerprintPayload = projection.build(
+        Platform.OS === 'android' ? ANDROID_WIDGET_MAX_ITEMS : WIDGET_FINGERPRINT_MAX_ITEMS,
+    );
     // Native capture reads only availability, never provider credentials or model paths.
     // Include it in the fingerprint so a setting-only change refreshes the dialog.
     const audioEnabled = data.settings.ai?.speechToText?.enabled === true;
     const nativeCaptureFingerprint = Platform.OS === 'android' ? `:audio=${audioEnabled}` : '';
-    const widgetFingerprint = `${WIDGET_RENDER_APP_VERSION}:${language}:${JSON.stringify(fingerprintPayload)}${nativeCaptureFingerprint}`;
+    const widgetFingerprint = `${WIDGET_RENDER_SCHEMA_REVISION}:${WIDGET_RENDER_APP_VERSION}:${language}:${JSON.stringify(fingerprintPayload)}${nativeCaptureFingerprint}`;
     let widgetUpdated = true;
     if (widgetFingerprint !== lastRenderedWidgetFingerprint) {
         widgetUpdated = Platform.OS === 'android'
             ? await updateAndroidWidgetsFromData(
-                buildPayloadFromData(data, language, ANDROID_WIDGET_MAX_ITEMS),
+                fingerprintPayload,
                 language,
                 audioEnabled,
             )

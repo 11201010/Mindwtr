@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { AppData, Task } from '@mindwtr/core';
+import type { AppData, Project, Task } from '@mindwtr/core';
 import { resetFocusWidgetFilter } from './focus-widget-filter';
 import { normalizeWidgetListDestinationId, resolveWidgetListDestination } from './widget-list-destination';
 
@@ -7,16 +7,37 @@ const task = (id: string, extra: Partial<Task> = {}): Task => ({
   id, title: id, status: 'next', tags: [], contexts: [],
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
 });
-const data = (tasks: Task[]): AppData => ({ tasks, projects: [], sections: [], areas: [], settings: {} });
+const project = (id: string, extra: Partial<Project> = {}): Project => ({
+  id, title: id, status: 'active', color: '#000000', order: 0, tagIds: [],
+  createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
+});
+const data = (tasks: Task[], projects: Project[] = []): AppData => ({ tasks, projects, sections: [], areas: [], settings: {} });
 
 describe('widget list destination', () => {
   beforeEach(resetFocusWidgetFilter);
   it('accepts exact Next and filter identifiers, not route or criteria payloads', () => {
     expect(normalizeWidgetListDestinationId('next')).toBe('next');
     expect(normalizeWidgetListDestinationId('filter:desk')).toBe('filter:desk');
-    for (const invalid of [undefined, ['next'], 'inbox', 'filter:', 'filter:  ', 'next/../settings', 'next?status=done', 'filter:a\u0000b', 'x'.repeat(1025)]) {
+    expect(normalizeWidgetListDestinationId('project:alpha')).toBe('project:alpha');
+    for (const invalid of [undefined, ['next'], 'inbox', 'filter:', 'filter:  ', 'project:', 'project:  ', 'next/../settings', 'next?status=done', 'filter:a\u0000b', 'project:a\u0000b', 'x'.repeat(1025)]) {
       expect(normalizeWidgetListDestinationId(invalid)).toBeNull();
     }
+  });
+  it('resolves a live project with the widget visibility predicate and rejects deleted or missing projects', () => {
+    const active = project('active-project', { title: 'Active project' });
+    const deleted = project('deleted-project', { deletedAt: '2026-01-02T00:00:00Z' });
+    const source = data([
+      task('included', { projectId: active.id }),
+      task('other-project', { projectId: 'other' }),
+      task('done', { projectId: active.id, status: 'done' }),
+      task('deleted-task', { projectId: active.id, deletedAt: '2026-01-02T00:00:00Z' }),
+    ], [active, deleted, project('other')]);
+
+    const result = resolveWidgetListDestination(source, 'en', `project:${active.id}`);
+    expect(result?.title).toBe('Active project');
+    expect(result?.tasks.map((item) => item.id)).toEqual(['included']);
+    expect(resolveWidgetListDestination(source, 'en', `project:${deleted.id}`)).toBeNull();
+    expect(resolveWidgetListDestination(source, 'en', 'project:missing')).toBeNull();
   });
   it('opens the full live Next list rather than the widget snapshot cap', () => {
     const tasks = Array.from({ length: 90 }, (_, i) => task(`next-${i}`));

@@ -1505,6 +1505,7 @@ export const en: Record<string, string> = {
         'settings.captureSettings': 'Capture defaults',
         'settings.reviewSettings': 'Review steps',
         'widget.capture': 'Quick capture',
+        'widget.viewAllTasks': 'View all {{count}} tasks',
         'obsidian.taskNotesDetectedTitle': 'TaskNotes mode is active',
         'obsidian.taskNotesDetectedBody': 'Mindwtr detected TaskNotes-style frontmatter in these files, so inline checklist tasks from other notes are ignored.',
         'obsidian.taskNotesDetectedHint': 'Look for a status field plus TaskNotes metadata like tags: [task], due, scheduled, contexts, projects, timeEstimate, recurrence, or completedDate.',

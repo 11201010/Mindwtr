@@ -1293,6 +1293,7 @@ export const frOverrides: Record<string, string> = {
         'settings.weeklyReviewIncludeContextsStep': 'Inclure l’étape des contextes',
         'settings.weeklyReviewIncludeContextsStepDesc': 'Afficher une étape dédiée à la revue des contextes entre En attente et Projets.',
         'widget.capture': 'Capture rapide',
+        'widget.viewAllTasks': 'Afficher les {{count}} tâches',
         'obsidian.taskNotesDetectedTitle': 'Mode TaskNotes actif',
         'obsidian.taskNotesDetectedBody': 'Mindwtr a détecté que vous utilisez TaskNotes dans Obsidian, les tâches / listes d’autres notes seront ignorées.',
         'obsidian.taskNotesDetectedHint': 'Recherche un champ de statut et des métadonnées TaskNotes comme les tags : [task], due, scheduled, contexts, projects, timeEstimate, recurrence ou completedDate.',

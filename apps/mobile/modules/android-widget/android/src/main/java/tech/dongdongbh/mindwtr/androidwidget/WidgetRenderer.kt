@@ -8,12 +8,23 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Parcel
 import android.view.View
 import android.widget.RemoteViews
+import java.util.IdentityHashMap
 
 /** Draws every widget kind from the payload in [WidgetPayloadStore]. */
 object WidgetRenderer {
-  data class RefreshResult(val legacyWidgetCount: Int = 0, val compactWidgetCount: Int = 0)
+  data class RefreshResult(
+    val legacyWidgetCount: Int = 0,
+    val compactWidgetCount: Int = 0,
+    val directCollectionCount: Int = 0,
+    val renderedTaskCount: Int = 0,
+    val eligibleTaskCount: Int = 0,
+    val collectionBytes: Int = 0,
+  )
+  data class CollectionStats(val renderedTasks: Int, val eligibleTasks: Int, val bytes: Int)
+  private data class RenderedViews(val views: RemoteViews, val collectionStats: CollectionStats?)
   data class Chrome(val title: String, val subtitle: String?, val emptyMessage: String, val isEmpty: Boolean)
   data class NavigationTarget(val requestCode: Int, val uri: String)
   data class HeaderActions(
@@ -35,16 +46,33 @@ object WidgetRenderer {
   private const val REQUEST_CHOOSER_BASE = 1 shl 20
   private const val REQUEST_NAVIGATION_BASE = 2 shl 20
   private const val REQUEST_HOME_BASE = 3 shl 20
+  internal const val DIRECT_COLLECTION_BUDGET_BYTES = 256 * 1024
 
   fun refreshAll(context: Context): RefreshResult {
     val app = context.applicationContext
     val manager = AppWidgetManager.getInstance(app) ?: return RefreshResult()
-    return refreshProviders(
+    var directCollectionCount = 0
+    var renderedTaskCount = 0
+    var eligibleTaskCount = 0
+    var collectionBytes = 0
+    val providerCounts = refreshProviders(
       context.packageName,
       idsForProvider = { className ->
         manager.getAppWidgetIds(ComponentName(context.packageName, className))
       },
-      renderProvider = { ids, kind -> render(app, manager, ids, kind) },
+      renderProvider = { ids, kind ->
+        val stats = render(app, manager, ids, kind)
+        directCollectionCount += stats.size
+        renderedTaskCount = maxOf(renderedTaskCount, stats.maxOfOrNull { it.renderedTasks } ?: 0)
+        eligibleTaskCount = maxOf(eligibleTaskCount, stats.maxOfOrNull { it.eligibleTasks } ?: 0)
+        collectionBytes = maxOf(collectionBytes, stats.maxOfOrNull { it.bytes } ?: 0)
+      },
+    )
+    return providerCounts.copy(
+      directCollectionCount = directCollectionCount,
+      renderedTaskCount = renderedTaskCount,
+      eligibleTaskCount = eligibleTaskCount,
+      collectionBytes = collectionBytes,
     )
   }
 
@@ -111,7 +139,7 @@ object WidgetRenderer {
     )
   }
 
-  fun render(context: Context, manager: AppWidgetManager, ids: IntArray, kind: WidgetKind) {
+  fun render(context: Context, manager: AppWidgetManager, ids: IntArray, kind: WidgetKind): List<CollectionStats> {
     // Commit check-offs whose undo window elapsed while nothing else ran.
     if (kind.hasTaskList) CheckoffStore.sweep(context)
     val rawPayload = WidgetPayloadStore.read(context)
@@ -123,12 +151,16 @@ object WidgetRenderer {
     } else {
       rawPayload
     }
+    val stats = ArrayList<CollectionStats>()
     for (id in ids) {
-      manager.updateAppWidget(id, buildViews(context, id, kind, payload))
+      val rendered = buildViews(context, id, kind, payload)
+      manager.updateAppWidget(id, rendered.views)
+      rendered.collectionStats?.let { stats.add(it) }
     }
     if (kind.hasTaskList && !usesDirectCollections(Build.VERSION.SDK_INT)) {
       manager.notifyAppWidgetViewDataChanged(ids, R.id.mindwtr_widget_list)
     }
+    return stats
   }
 
   private fun buildChromeViews(
@@ -144,7 +176,7 @@ object WidgetRenderer {
     }
   }
 
-  private fun buildViews(context: Context, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload): RemoteViews {
+  private fun buildViews(context: Context, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload): RenderedViews {
     val views = RemoteViews(context.packageName, kind.layoutRes)
     val palette = payload.palette?.takeUnless { payload.usesSystemColors }
     val captureIntent = Intent(context, QuickCaptureActivity::class.java).apply {
@@ -155,7 +187,7 @@ object WidgetRenderer {
       PendingIntent.getActivity(context, REQUEST_CAPTURE, captureIntent, immutableFlags()),
     )
 
-    when (kind) {
+    val collectionStats = when (kind) {
       WidgetKind.TASKS -> bindTasks(context, views, appWidgetId, payload, palette)
       WidgetKind.COMPACT -> bindCompact(context, views, appWidgetId, payload, palette)
       WidgetKind.QUICK_CAPTURE -> {
@@ -165,9 +197,10 @@ object WidgetRenderer {
           views.setTextColor(R.id.mindwtr_widget_capture_label, it.onAccent)
           views.setTextColor(R.id.mindwtr_widget_title, it.text)
         }
+        null
       }
     }
-    return views
+    return RenderedViews(views, collectionStats)
   }
 
   private fun bindCompact(
@@ -176,12 +209,12 @@ object WidgetRenderer {
     appWidgetId: Int,
     payload: WidgetPayload,
     palette: WidgetPayload.Palette?,
-  ) {
+  ): CollectionStats? {
     // The simple style prefers Focus, then automatically shows Next Actions
     // when Focus has no rows. It stays chooser-free like v1.2.8.
     bindCompactChrome(context, views, appWidgetId, payload)
     views.setTextViewText(R.id.mindwtr_widget_capture_label, payload.quickCapture.title)
-    bindCollection(context, views, appWidgetId, WidgetKind.COMPACT, payload)
+    val stats = bindCollection(context, views, appWidgetId, WidgetKind.COMPACT, payload)
     palette?.let {
       views.setInt(R.id.mindwtr_widget_surface, "setColorFilter", it.background)
       views.setTextColor(R.id.mindwtr_widget_title, it.text)
@@ -190,6 +223,7 @@ object WidgetRenderer {
       views.setInt(R.id.mindwtr_widget_capture_background, "setColorFilter", it.accent)
       views.setTextColor(R.id.mindwtr_widget_capture_label, it.onAccent)
     }
+    return stats
   }
 
   private fun bindTasks(
@@ -198,15 +232,15 @@ object WidgetRenderer {
     appWidgetId: Int,
     payload: WidgetPayload,
     palette: WidgetPayload.Palette?,
-  ) {
+  ): CollectionStats? {
     // Header: Focus shows the date plus the Inbox chip; any other list shows its
     // full title with a small count, so the header never reads as two lists. A
     // list picked in the chooser that the app has not published yet has no rows
     // to count, so it shows its bare title until the next publish.
-    val listId = WidgetListStore.read(context, appWidgetId)
+    val listId = payload.resolvedListId(WidgetListStore.read(context, appWidgetId))
     bindTasksChrome(context, views, appWidgetId, payload, listId)
 
-    bindCollection(context, views, appWidgetId, WidgetKind.TASKS, payload)
+    val stats = bindCollection(context, views, appWidgetId, WidgetKind.TASKS, payload)
     // Match the body surface; the divider and capture plus carry the accent.
     palette?.let {
       val theme = tasksTheme(it)
@@ -219,25 +253,94 @@ object WidgetRenderer {
       views.setInt(R.id.mindwtr_widget_header_divider, "setBackgroundColor", it.border)
       views.setTextColor(R.id.mindwtr_widget_empty, it.mutedText)
     }
+    return stats
   }
 
   internal fun usesDirectCollections(sdkInt: Int): Boolean = sdkInt >= 31
 
   @TargetApi(31)
-  private fun bindDirectCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload) {
+  private fun bindDirectCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload): CollectionStats {
     val factory = TasksWidgetFactory(context, kind, appWidgetId, payload)
-    val items = RemoteViews.RemoteCollectionItems.Builder()
-      // Keep the adapter's type capacity constant when the last section vanishes.
-      .setViewTypeCount(factory.getViewTypeCount())
-      .setHasStableIds(factory.hasStableIds())
-    for (position in 0 until factory.getCount()) {
-      items.addItem(factory.getItemId(position), factory.getViewAt(position))
-    }
-    views.setRemoteAdapter(R.id.mindwtr_widget_list, items.build())
+    val result = buildDirectCollection(factory)
+    views.setRemoteAdapter(R.id.mindwtr_widget_list, result.first)
+    return result.second
   }
 
-  private fun bindCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload) {
-    if (usesDirectCollections(Build.VERSION.SDK_INT)) {
+  @TargetApi(31)
+  internal fun buildDirectCollection(
+    factory: TasksWidgetFactory,
+    budgetBytes: Int = DIRECT_COLLECTION_BUDGET_BYTES,
+  ): Pair<RemoteViews.RemoteCollectionItems, CollectionStats> {
+    data class Candidate(
+      val collection: RemoteViews.RemoteCollectionItems,
+      val bytes: Int,
+      val taskCount: Int,
+    )
+
+    val prepared = IdentityHashMap<TasksWidgetFactory.Row, RemoteViews>()
+    factory.baseRows().forEach { row -> prepared[row] = factory.viewForRow(row) }
+    factory.rowsForTaskLimit(0).filterIsInstance<TasksWidgetFactory.Row.Footer>().firstOrNull()?.let { footer ->
+      prepared[footer] = factory.viewForRow(footer)
+    }
+    val cache = HashMap<Int, Candidate>()
+    fun candidate(taskLimit: Int): Candidate = cache.getOrPut(taskLimit) {
+      val rows = factory.rowsForTaskLimit(taskLimit)
+      val builder = RemoteViews.RemoteCollectionItems.Builder()
+        .setViewTypeCount(factory.getViewTypeCount())
+        .setHasStableIds(factory.hasStableIds())
+      rows.forEachIndexed { index, row ->
+        val rowViews = prepared[row] ?: factory.viewForRow(row).also { prepared[row] = it }
+        builder.addItem(index.toLong(), rowViews)
+      }
+      val collection = builder.build()
+      Candidate(collection, parcelSize(collection), rows.count { it is TasksWidgetFactory.Row.Task })
+    }
+
+    val published = factory.publishedTaskCount()
+    val full = candidate(published)
+    val selected = if (full.bytes <= budgetBytes || published == 0) {
+      full
+    } else {
+      val first = candidate(1)
+      if (first.bytes > budgetBytes) {
+        candidate(0)
+      } else {
+        var low = 1
+        var high = published - 1
+        var best = first
+        while (low <= high) {
+          val middle = low + (high - low) / 2
+          val measured = candidate(middle)
+          if (measured.bytes <= budgetBytes) {
+            best = measured
+            low = middle + 1
+          } else {
+            high = middle - 1
+          }
+        }
+        best
+      }
+    }
+    return selected.collection to CollectionStats(
+      renderedTasks = selected.taskCount,
+      eligibleTasks = factory.eligibleTaskCount(),
+      bytes = selected.bytes,
+    )
+  }
+
+  @TargetApi(31)
+  private fun parcelSize(collection: RemoteViews.RemoteCollectionItems): Int {
+    val parcel = Parcel.obtain()
+    return try {
+      collection.writeToParcel(parcel, 0)
+      parcel.dataSize()
+    } finally {
+      parcel.recycle()
+    }
+  }
+
+  private fun bindCollection(context: Context, views: RemoteViews, appWidgetId: Int, kind: WidgetKind, payload: WidgetPayload): CollectionStats? {
+    val stats = if (usesDirectCollections(Build.VERSION.SDK_INT)) {
       bindDirectCollection(context, views, appWidgetId, kind, payload)
     } else {
       val adapterIntent = Intent(context, TasksWidgetService::class.java).apply {
@@ -246,6 +349,7 @@ object WidgetRenderer {
         data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
       }
       views.setRemoteAdapter(R.id.mindwtr_widget_list, adapterIntent)
+      null
     }
     views.setEmptyView(R.id.mindwtr_widget_list, R.id.mindwtr_widget_empty)
     // Collection rows deliver clicks through a fill-in intent, which the
@@ -260,6 +364,7 @@ object WidgetRenderer {
       R.id.mindwtr_widget_list,
       PendingIntent.getActivity(context, REQUEST_ROW, rowTemplate, mutable),
     )
+    return stats
   }
 
   /** Focus alone owns the curated hidden-row count; chooser lists keep their existing count title. */
@@ -273,14 +378,15 @@ object WidgetRenderer {
   }
 
   internal fun tasksChrome(payload: WidgetPayload, listId: String): Chrome {
-    val list = payload.listFor(listId)
-    val isFocus = listId == WidgetListStore.DEFAULT_LIST || payload.titleFor(listId) == null
-    val counted = payload.lists[listId] != null
+    val resolvedListId = payload.resolvedListId(listId)
+    val list = payload.listFor(resolvedListId)
+    val isFocus = resolvedListId == WidgetListStore.DEFAULT_LIST
+    val counted = payload.lists[resolvedListId] != null
     val rowCount = if (list.sections.isEmpty()) list.items.size else list.sections.sumOf { it.items.size }
     return Chrome(
       title = when {
         isFocus -> list.dateLabel?.ifEmpty { null } ?: list.title
-        counted -> "${list.title} · $rowCount"
+        counted -> "${list.title} · ${list.eligibleTaskCount()}"
         else -> list.title
       },
       subtitle = taskSubtitle(payload, isFocus),
@@ -301,9 +407,10 @@ object WidgetRenderer {
   }
 
   internal fun tasksHeaderActions(payload: WidgetPayload, listId: String, appWidgetId: Int): HeaderActions {
-    val list = payload.listFor(listId)
+    val resolvedListId = payload.resolvedListId(listId)
+    val list = payload.listFor(resolvedListId)
     return HeaderActions(
-      openList = navigationTarget(appWidgetId, payload.openUriFor(listId)),
+      openList = navigationTarget(appWidgetId, payload.openUriFor(resolvedListId)),
       openTargetIds = listOf(R.id.mindwtr_widget_title_target),
       openHome = homeTarget(appWidgetId, payload),
       openHomeTargetIds = listOf(R.id.mindwtr_widget_root, R.id.mindwtr_widget_empty, R.id.mindwtr_widget_spacer),

@@ -20,6 +20,10 @@ class AndroidWidgetModule : Module() {
         "legacyWidgetCount" to result.legacyWidgetCount,
         "compactWidgetCount" to result.compactWidgetCount,
         "hiddenCheckoffCount" to hiddenCheckoffCount,
+        "directCollectionCount" to result.directCollectionCount,
+        "renderedTaskCount" to result.renderedTaskCount,
+        "eligibleTaskCount" to result.eligibleTaskCount,
+        "collectionBytes" to result.collectionBytes,
       )
     }
 

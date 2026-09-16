@@ -1,7 +1,7 @@
 import { type AppData, loadTranslations, resolveAreaFilterSelection } from '@mindwtr/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildWidgetPayload } from './widget-data';
+import { buildWidgetPayload, createWidgetPayloadProjection } from './widget-data';
 import { resetFocusWidgetFilter, setFocusWidgetFilter } from './focus-widget-filter';
 import { resetMobileWidgetRenderCache, updateMobileWidgetFromData, updateMobileWidgetFromStore } from './widget-service';
 
@@ -67,13 +67,14 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
     };
 });
 
-// Real buildWidgetPayload, wrapped so gate 0 (the store-level pre-check) can
+// Real projection, wrapped so gate 0 (the store-level pre-check) can
 // be asserted by call count instead of only by its native-render side effect.
 vi.mock('./widget-data', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./widget-data')>();
     return {
         ...actual,
         buildWidgetPayload: vi.fn(actual.buildWidgetPayload),
+        createWidgetPayloadProjection: vi.fn(actual.createWidgetPayloadProjection),
     };
 });
 
@@ -148,6 +149,7 @@ describe('widget-service', () => {
         // updateMobileWidgetFromStore (which overrides this per-test).
         mockUseTaskStoreGetState.mockReturnValue({ settings: {} });
         vi.mocked(buildWidgetPayload).mockClear();
+        vi.mocked(createWidgetPayloadProjection).mockClear();
         vi.mocked(resolveAreaFilterSelection).mockClear();
         resetFocusWidgetFilter();
         resetMobileWidgetRenderCache();
@@ -202,9 +204,9 @@ describe('widget-service', () => {
     });
 
     it('publishes an honestly capped Android Focus + Today payload, then refreshes', async () => {
-        const data = buildData(15);
+        const data = buildData(12);
         const now = new Date().toISOString();
-        data.tasks.push(...Array.from({ length: 15 }, (_, index) => ({
+        data.tasks.push(...Array.from({ length: 12 }, (_, index) => ({
             id: `today-${index + 1}`,
             title: `Today ${index + 1}`,
             status: 'next' as const,
@@ -220,15 +222,16 @@ describe('widget-service', () => {
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
         expect(mockAndroidWidgetUpdateWidgets).toHaveBeenCalledTimes(1);
         const payload = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
-        expect(payload.items).toHaveLength(20);
+        expect(payload.items).toHaveLength(24);
         expect(payload.items[0]).toMatchObject({ title: 'Focused 1', dueLabel: null, dueEmphasis: false });
         expect(payload.sections.map((section: { key: string; items: unknown[] }) => [section.key, section.items.length]))
-            .toEqual([['focus', 15], ['schedule', 5]]);
+            .toEqual([['focus', 12], ['schedule', 12]]);
         expect(payload.sections.flatMap((section: { items: { id: string }[] }) => section.items.map((item) => item.id)))
             .toEqual(payload.items.map((item: { id: string }) => item.id));
-        expect(payload.lists.focus.items).toHaveLength(20);
-        expect(payload.lists.focus.sections.flatMap((section: { items: unknown[] }) => section.items)).toHaveLength(20);
-        expect(payload.subtitle).toBe('Inbox: 0 · +10 More');
+        expect(payload.lists.focus.items).toHaveLength(24);
+        expect(payload.lists.focus.totalCount).toBe(24);
+        expect(payload.lists.focus.sections.flatMap((section: { items: unknown[] }) => section.items)).toHaveLength(24);
+        expect(payload.subtitle).toBe('Inbox: 0');
         expect(payload.inboxLabel).toBe('Inbox');
         expect(payload.inboxCount).toBe(0);
         expect(payload.focusUri).toBe('mindwtr:///focus');
@@ -244,9 +247,51 @@ describe('widget-service', () => {
             scope: 'widget',
             extra: {
                 releaseCheck: 'v1.3.0/widget-focus-today',
-                focusItems: '15',
-                todayItems: '5',
-                totalItems: '20',
+                focusItems: '12',
+                todayItems: '12',
+                totalItems: '24',
+            },
+        });
+    });
+
+    it('publishes 200 rows with the eligible total and fingerprints mutations beyond the old 50-row window', async () => {
+        const data = buildData(210);
+
+        expect(await updateMobileWidgetFromData(data)).toBe(true);
+        const first = JSON.parse(mockAndroidWidgetSetPayload.mock.calls[0][0] as string);
+        expect(first.items).toHaveLength(200);
+        expect(first.lists.focus.items).toHaveLength(200);
+        expect(first.lists.focus.totalCount).toBe(210);
+        expect(first.viewAllLabel).toBe('View all {{count}} tasks');
+
+        const changed = {
+            ...data,
+            tasks: data.tasks.map((task, index) => (index === 99 ? { ...task, title: 'Changed row 100' } : task)),
+        };
+        expect(await updateMobileWidgetFromData(changed)).toBe(true);
+        expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
+    });
+
+    it('records measured native collection budget counts without task data', async () => {
+        mockAndroidWidgetUpdateWidgets.mockReturnValue({
+            legacyWidgetCount: 0,
+            compactWidgetCount: 0,
+            hiddenCheckoffCount: 0,
+            directCollectionCount: 2,
+            renderedTaskCount: 87,
+            eligibleTaskCount: 240,
+            collectionBytes: 250000,
+        });
+
+        expect(await updateMobileWidgetFromData(buildData(3))).toBe(true);
+        expect(mockLogInfo).toHaveBeenCalledWith('Android widget list rendered within parcel budget', {
+            scope: 'widget',
+            extra: {
+                releaseCheck: 'v1.3.1/android-widget-list-budget',
+                count: '2',
+                items: '87',
+                totalItems: '240',
+                collectionBytes: '250000',
             },
         });
     });
@@ -321,7 +366,8 @@ describe('widget-service', () => {
         expect(payload.items).toEqual([]);
         expect(payload.sections).toEqual([]);
         expect(payload.lists.focus.items).toEqual([]);
-        expect(payload.lists.next.items).toHaveLength(20);
+        expect(payload.lists.next.items).toHaveLength(25);
+        expect(payload.lists.next.totalCount).toBe(25);
         expect(payload.lists.inbox.items.map((item: { id: string }) => item.id)).toEqual(['inbox-task']);
         expect(mockLogInfo).toHaveBeenCalledWith('Android widget fixed lists published', {
             scope: 'widget',
@@ -329,7 +375,7 @@ describe('widget-service', () => {
                 releaseCheck: 'v1.3.1/android-widget-lists',
                 count: '5',
                 focusItems: '0',
-                nextItems: '20',
+                nextItems: '25',
                 inboxItems: '1',
             },
         });
@@ -642,13 +688,13 @@ describe('widget-service', () => {
         mockUseTaskStoreGetState.mockReturnValue(storeState);
 
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
 
         // Repeated call, nothing changed: gate 0 must skip the payload build
         // entirely, before the JSON fingerprint gate even runs.
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
 
         // lastDataChangeAt moves and the content actually differs: gate 0 lets
@@ -664,7 +710,7 @@ describe('widget-service', () => {
             lastDataChangeAt: 2,
         });
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(4);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(2);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
     });
 
@@ -710,14 +756,14 @@ describe('widget-service', () => {
         mockAndroidWidgetSetPayload.mockImplementation(() => { throw new Error('widget host busy'); });
 
         expect(await updateMobileWidgetFromStore()).toBe(false);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
 
         // Retry with unchanged inputs (the immediate + 800ms pair callers
         // use): gate 0 must not have cached the failed render, so the
         // payload is built and the native call attempted again.
         mockAndroidWidgetSetPayload.mockReset();
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(4);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(2);
     }, 10_000);
 
     it('rebuilds the widget payload via updateMobileWidgetFromStore when only the system colour scheme changes (correction #2)', async () => {
@@ -737,13 +783,13 @@ describe('widget-service', () => {
         mockUseTaskStoreGetState.mockReturnValue(storeState);
 
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
 
         // Same store state, but the system flips to dark mode: gate 0's key
         // must include the colour scheme so this is not treated as unchanged.
         mockGetSystemColorSchemeForWidget.mockReturnValue('dark');
         expect(await updateMobileWidgetFromStore()).toBe(true);
-        expect(vi.mocked(buildWidgetPayload)).toHaveBeenCalledTimes(4);
+        expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(2);
     });
 
     it('renders again when a persisted fingerprint carries a different app version (correction #4)', async () => {

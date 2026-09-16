@@ -33,9 +33,15 @@ class TasksWidgetFactory(
   sealed class Row {
     data class Header(val title: String, val detail: String?) : Row()
     data class Task(val item: WidgetPayload.Item) : Row()
+    data class Footer(val label: String, val openUri: String) : Row()
   }
 
   private var payload: WidgetPayload = WidgetPayload.EMPTY
+  private var listPayload: WidgetPayload.ListPayload = WidgetPayload.EMPTY.listFor(WidgetListStore.DEFAULT_LIST)
+  private var listId: String = WidgetListStore.DEFAULT_LIST
+  private var compact = false
+  private var baseRows: List<Row> = emptyList()
+  private var footerRow: Row.Footer? = null
   private var rows: List<Row> = emptyList()
 
   init {
@@ -55,20 +61,28 @@ class TasksWidgetFactory(
   /** Direct collections and the legacy service share the exact same rows. */
   private fun setSnapshot(snapshot: WidgetPayload) {
     payload = snapshot
-    rows = when (kind) {
-      WidgetKind.TASKS -> buildRows(payload.listFor(WidgetListStore.read(context, appWidgetId)))
-      WidgetKind.COMPACT -> buildRows(payload.listFor(payload.compactListId()), compact = true)
-      WidgetKind.QUICK_CAPTURE -> emptyList()
+    val requestedListId = when (kind) {
+      WidgetKind.TASKS -> WidgetListStore.read(context, appWidgetId)
+      WidgetKind.COMPACT -> payload.compactListId()
+      WidgetKind.QUICK_CAPTURE -> WidgetListStore.DEFAULT_LIST
     }
+    listId = payload.resolvedListId(requestedListId)
+    compact = kind == WidgetKind.COMPACT
+    listPayload = payload.listFor(listId)
+    baseRows = if (kind.hasTaskList) buildBaseRows(listPayload, compact) else emptyList()
+    footerRow = Row.Footer(payload.formatViewAllLabel(listPayload.eligibleTaskCount()), payload.openUriFor(listId))
+    rows = rowsForTaskLimit(publishedTaskCount())
   }
 
   override fun onDestroy() {}
 
   override fun getCount(): Int = rows.size
 
-  override fun getViewAt(position: Int): RemoteViews {
+  override fun getViewAt(position: Int): RemoteViews = viewForRow(rows[position])
+
+  internal fun viewForRow(row: Row): RemoteViews {
     val palette = payload.palette?.takeUnless { payload.usesSystemColors }
-    return when (val row = rows[position]) {
+    return when (row) {
       is Row.Header -> RemoteViews(context.packageName, R.layout.mindwtr_widget_section).apply {
         // Section rows live inside the ListView, so the parent's blank-space
         // click cannot receive their taps. Use its existing explicit row template.
@@ -86,6 +100,15 @@ class TasksWidgetFactory(
         }
       }
       is Row.Task -> taskRow(row.item, palette)
+      is Row.Footer -> RemoteViews(context.packageName, R.layout.mindwtr_widget_footer).apply {
+        setTextViewText(R.id.mindwtr_widget_footer_label, row.label)
+        setContentDescription(R.id.mindwtr_widget_footer, row.label)
+        setOnClickFillInIntent(R.id.mindwtr_widget_footer, Intent().setData(Uri.parse(row.openUri)))
+        palette?.let {
+          setTextColor(R.id.mindwtr_widget_footer_label, it.text)
+          setInt(R.id.mindwtr_widget_footer_divider, "setBackgroundColor", it.border)
+        }
+      }
     }
   }
 
@@ -94,7 +117,8 @@ class TasksWidgetFactory(
     val views = RemoteViews(context.packageName, R.layout.mindwtr_widget_item)
     val mutedText = palette?.mutedText ?: context.getColor(R.color.mindwtr_widget_muted_text)
     val struck = item.id.isNotEmpty() && CheckoffStore.isStruck(context, item.id)
-    views.setTextViewText(R.id.mindwtr_widget_item_title, if (struck) struck(item.title) else item.title)
+    val title = boundedDisplayText(item.title)
+    views.setTextViewText(R.id.mindwtr_widget_item_title, if (struck) struck(title) else title)
     // Priority ring: the priority colour, grey when the task has none; filled
     // while a check-off waits for its undo window or for the app to ingest it.
     views.setImageViewResource(
@@ -109,7 +133,7 @@ class TasksWidgetFactory(
     if (item.id.isNotEmpty()) {
       views.setOnClickFillInIntent(R.id.mindwtr_widget_item_ring_target, Intent().setData(Uri.parse(WidgetTapActivity.checkoffUri(item.id))))
     }
-    val contextLabel = item.contextLabel
+    val contextLabel = item.contextLabel?.let(::boundedDisplayText)
     views.setViewVisibility(R.id.mindwtr_widget_item_context_row, if (contextLabel == null) View.GONE else View.VISIBLE)
     if (contextLabel != null) {
       views.setTextViewText(R.id.mindwtr_widget_item_context, contextLabel)
@@ -141,7 +165,7 @@ class TasksWidgetFactory(
 
   private fun compactTaskRow(item: WidgetPayload.Item, palette: WidgetPayload.Palette?): RemoteViews =
     RemoteViews(context.packageName, R.layout.mindwtr_compact_widget_item).apply {
-      val title = "• ${item.title}"
+      val title = "• ${boundedDisplayText(item.title)}"
       setTextViewText(R.id.mindwtr_widget_item_title, if (CheckoffStore.isStruck(context, item.id)) struck(title) else title)
       palette?.let { setTextColor(R.id.mindwtr_widget_item_title, it.text) }
       val uri = if (item.id.isNotEmpty()) WidgetTapActivity.peekUri(item.id) else payload.focusUri
@@ -154,19 +178,63 @@ class TasksWidgetFactory(
 
   override fun getLoadingView(): RemoteViews? = null
 
-  override fun getViewTypeCount(): Int = 2
+  override fun getViewTypeCount(): Int = 3
 
   override fun getItemId(position: Int): Long = position.toLong()
 
   override fun hasStableIds(): Boolean = false
 
   companion object {
+    private const val MAX_DISPLAY_TEXT = 512
+
+    private fun boundedDisplayText(value: String): String =
+      if (value.length <= MAX_DISPLAY_TEXT) value else value.take(MAX_DISPLAY_TEXT - 1) + "…"
+
     /** Sectioned rows when the list carries sections, else the flat list. */
-    fun buildRows(list: WidgetPayload.ListPayload, compact: Boolean = false): List<Row> {
+    fun buildBaseRows(list: WidgetPayload.ListPayload, compact: Boolean = false): List<Row> {
       if (list.sections.isEmpty()) return list.items.map { Row.Task(it) }
       return list.sections.flatMap { section ->
         (if (compact) emptyList() else listOf<Row>(Row.Header(section.title, section.detail))) + section.items.map { Row.Task(it) }
       }
     }
+
+    /** Legacy test/helper surface: old payloads have no total, so no synthetic footer. */
+    fun buildRows(list: WidgetPayload.ListPayload, compact: Boolean = false): List<Row> =
+      buildBaseRows(list, compact)
+
+    fun takeTaskRows(rows: List<Row>, taskLimit: Int): List<Row> {
+      if (taskLimit <= 0) return emptyList()
+      val result = ArrayList<Row>()
+      var pendingHeader: Row.Header? = null
+      var tasks = 0
+      for (row in rows) {
+        when (row) {
+          is Row.Header -> pendingHeader = row
+          is Row.Task -> {
+            if (tasks >= taskLimit) return result
+            pendingHeader?.let { result.add(it) }
+            pendingHeader = null
+            result.add(row)
+            tasks += 1
+          }
+          is Row.Footer -> Unit
+        }
+      }
+      return result
+    }
+  }
+
+  internal fun publishedTaskCount(): Int = baseRows.count { it is Row.Task }
+
+  internal fun eligibleTaskCount(): Int = listPayload.eligibleTaskCount()
+
+  internal fun baseRows(): List<Row> = baseRows
+
+  internal fun rowsForTaskLimit(taskLimit: Int): List<Row> {
+    val limited = takeTaskRows(baseRows, taskLimit.coerceAtMost(publishedTaskCount()))
+    val renderedCount = limited.count { it is Row.Task }
+    val totalCount = listPayload.eligibleTaskCount()
+    if (renderedCount >= totalCount) return limited
+    return limited + requireNotNull(footerRow)
   }
 }

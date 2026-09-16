@@ -1511,6 +1511,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.captureSettings': 'キャプチャの初期設定',
         'settings.reviewSettings': 'レビューのステップ',
         'widget.capture': 'クイックキャプチャ',
+        'widget.viewAllTasks': '{{count}}件のタスクをすべて表示',
         'obsidian.taskNotesDetectedTitle': 'TaskNotes モードが有効です',
         'obsidian.taskNotesDetectedBody': 'これらのファイルに TaskNotes 形式のフロントマターが見つかったため、他のノートに書かれたチェックボックス形式のタスクは読み込みません。',
         'obsidian.taskNotesDetectedHint': 'status の項目に加えて、tags: [task]、due、scheduled、contexts、projects、timeEstimate、recurrence、completedDate といった TaskNotes のメタデータがあるか確認してください。',

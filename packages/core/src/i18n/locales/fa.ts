@@ -1480,6 +1480,7 @@ export const faOverrides: Record<string, string> = {
         'settings.captureSettings': 'پیش‌فرض‌های ثبت',
         'settings.reviewSettings': 'مراحل مرور',
         'widget.capture': 'ثبت سریع',
+        'widget.viewAllTasks': 'مشاهده همه {{count}} وظیفه',
         'obsidian.taskNotesDetectedTitle': 'حالت TaskNotes فعال است',
         'obsidian.taskNotesDetectedBody': 'Mindwtr در این فایل‌ها Front matter به سبک TaskNotes شناسایی کرد، بنابراین کارهای چک‌لیست درون‌خطی از یادداشت‌های دیگر نادیده گرفته می‌شوند.',
         'obsidian.taskNotesDetectedHint': 'به دنبال یک فیلد وضعیت به‌همراه ابرداده TaskNotes مانند tags: [task]، due، scheduled، contexts، projects، timeEstimate، recurrence یا completedDate بگردید.',

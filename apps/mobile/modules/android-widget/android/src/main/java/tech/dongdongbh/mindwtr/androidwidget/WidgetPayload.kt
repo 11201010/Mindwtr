@@ -33,6 +33,7 @@ data class WidgetPayload(
   val quickCapture: QuickCaptureLabels,
   val taskPeek: TaskPeekLabels,
   val chooseListLabel: String = "Change",
+  val viewAllLabel: String = "View all {{count}} tasks",
 ) {
   data class DisplaySnapshot(val sourceTaskIds: Set<String>, val payload: WidgetPayload)
 
@@ -66,7 +67,20 @@ data class WidgetPayload(
     val sections: List<Section>,
     val items: List<Item>,
     val openUri: String? = null,
-  )
+    val totalCount: Int? = null,
+  ) {
+    fun taskIds(): Set<String> {
+      val ids = HashSet<String>()
+      items.forEach { if (it.id.isNotEmpty()) ids.add(it.id) }
+      sections.forEach { section -> section.items.forEach { if (it.id.isNotEmpty()) ids.add(it.id) } }
+      return ids
+    }
+
+    fun renderedTaskCount(): Int =
+      if (sections.isEmpty()) items.size else sections.sumOf { it.items.size }
+
+    fun eligibleTaskCount(): Int = totalCount ?: renderedTaskCount()
+  }
 
   data class SavedFilterOption(val id: String, val name: String)
 
@@ -132,10 +146,17 @@ data class WidgetPayload(
     fun visible(sections: List<Section>): List<Section> = sections.mapNotNull { section ->
       section.copy(items = visible(section.items)).takeIf { it.items.isNotEmpty() }
     }
-    fun visible(list: ListPayload): ListPayload = list.copy(
-      sections = visible(list.sections),
-      items = visible(list.items),
-    )
+    fun visible(list: ListPayload): ListPayload {
+      val hiddenInList = list.taskIds().count { it in hiddenTaskIds }
+      val visibleSections = visible(list.sections)
+      val visibleItems = visible(list.items)
+      val visibleRowCount = if (visibleSections.isEmpty()) visibleItems.size else visibleSections.sumOf { it.items.size }
+      return list.copy(
+        sections = visibleSections,
+        items = visibleItems,
+        totalCount = list.totalCount?.let { (it - hiddenInList).coerceAtLeast(visibleRowCount) },
+      )
+    }
     return DisplaySnapshot(
       sourceTaskIds = allTaskIds(),
       payload = copy(
@@ -164,6 +185,13 @@ data class WidgetPayload(
       ?: listTitles[listId]
       ?: savedFilters.firstOrNull { listId == WidgetListStore.FILTER_PREFIX + it.id }?.name
 
+  /** Unknown/retired selections draw and navigate as Focus; known legacy project payloads remain usable. */
+  fun resolvedListId(listId: String): String =
+    navigableListIdOrNull(listId)?.takeIf {
+      !it.startsWith(WidgetListStore.PROJECT_PREFIX) || titleFor(it) != null
+    }
+      ?: WidgetListStore.DEFAULT_LIST
+
   /**
    * The list a widget should draw. A selection the app has not published yet
    * (a project just picked in the chooser) draws under its own name and empty,
@@ -186,7 +214,7 @@ data class WidgetPayload(
   /** Safe app destination for a selected list; unknown legacy ids return Focus. */
   fun openUriFor(listId: String): String {
     val safeFocusUri = listAppUriOrNull(focusUri, WidgetListStore.DEFAULT_LIST) ?: DEFAULT_FOCUS_URI
-    val validListId = navigableListIdOrNull(listId) ?: return safeFocusUri
+    val validListId = resolvedListId(listId)
     lists[validListId]?.openUri?.let { return it }
     return when (validListId) {
       WidgetListStore.DEFAULT_LIST -> safeFocusUri
@@ -203,10 +231,14 @@ data class WidgetPayload(
 
   private fun ListPayload.hasRows(): Boolean = items.isNotEmpty() || sections.any { it.items.isNotEmpty() }
 
+  fun formatViewAllLabel(count: Int): String = viewAllLabel
+    .replace("{{count}}", count.toString())
+    .replace("{count}", count.toString())
+
   companion object {
     const val DEFAULT_FOCUS_URI = "mindwtr:///focus"
     const val NEXT_LIST_ID = "next"
-    const val MAX_ITEMS = 50
+    const val MAX_ITEMS = 200
     private const val MAX_LIST_ID_LENGTH = 1_024
     private val FIXED_LIST_IDS = setOf(WidgetListStore.DEFAULT_LIST, "inbox", NEXT_LIST_ID, "waiting", "someday")
 
@@ -262,12 +294,16 @@ data class WidgetPayload(
       root.optJSONObject("lists")?.let { listsJson ->
         for (key in listsJson.keys()) {
           val list = listsJson.optJSONObject(key) ?: continue
+          val listSections = parseSections(list.optJSONArray("sections"))
+          val listItems = parseItems(list.optJSONArray("items"))
+          val rowCount = if (listSections.isEmpty()) listItems.size else listSections.sumOf { it.items.size }
           lists[key] = ListPayload(
             title = list.stringOr("title", key),
             dateLabel = list.optString("dateLabel").trim().takeIf { it.isNotEmpty() && !list.isNull("dateLabel") },
-            sections = parseSections(list.optJSONArray("sections")),
-            items = parseItems(list.optJSONArray("items")),
+            sections = listSections,
+            items = listItems,
             openUri = listAppUriOrNull(list.optString("openUri"), key),
+            totalCount = list.optInt("totalCount", -1).takeIf { it >= 0 }?.coerceAtLeast(rowCount),
           )
         }
       }
@@ -331,25 +367,29 @@ data class WidgetPayload(
         palette = parsePalette(root.optJSONObject("palette")),
         quickCapture = quickCapture,
         taskPeek = taskPeek,
+        viewAllLabel = root.stringOr("viewAllLabel", defaults.viewAllLabel),
       )
     }
 
     private fun parseSections(json: JSONArray?): List<Section> {
       val sections = ArrayList<Section>()
       if (json == null) return sections
+      var remaining = MAX_ITEMS
       for (index in 0 until json.length()) {
+        if (remaining <= 0) break
         val section = json.optJSONObject(index) ?: continue
-        val sectionItems = parseItems(section.optJSONArray("items"))
+        val sectionItems = parseItems(section.optJSONArray("items"), remaining)
         if (sectionItems.isEmpty()) continue
         sections.add(Section(section.stringOr("title", ""), section.optString("detail").trim().takeIf { it.isNotEmpty() && !section.isNull("detail") }, sectionItems))
+        remaining -= sectionItems.size
       }
       return sections
     }
 
-    private fun parseItems(json: JSONArray?): List<Item> {
+    private fun parseItems(json: JSONArray?, maxItems: Int = MAX_ITEMS): List<Item> {
       val items = ArrayList<Item>()
       if (json == null) return items
-      for (index in 0 until minOf(json.length(), MAX_ITEMS)) {
+      for (index in 0 until minOf(json.length(), maxItems)) {
         val item = json.optJSONObject(index) ?: continue
         val title = item.optString("title").trim()
         if (title.isEmpty()) continue
@@ -430,7 +470,9 @@ data class WidgetPayload(
           } catch (_: IllegalArgumentException) {
             return null
           }
-          decoded.takeIf { it == NEXT_LIST_ID || it.startsWith(WidgetListStore.FILTER_PREFIX) }
+          decoded.takeIf {
+            it == NEXT_LIST_ID || it.startsWith(WidgetListStore.FILTER_PREFIX) || it.startsWith(WidgetListStore.PROJECT_PREFIX)
+          }
             ?: return null
         }
       }
@@ -464,6 +506,10 @@ data class WidgetPayload(
       listId.startsWith(WidgetListStore.FILTER_PREFIX) &&
         listId.length <= MAX_LIST_ID_LENGTH &&
         listId.removePrefix(WidgetListStore.FILTER_PREFIX).isNotBlank() &&
+        listId.none(Char::isISOControl) -> listId
+      listId.startsWith(WidgetListStore.PROJECT_PREFIX) &&
+        listId.length <= MAX_LIST_ID_LENGTH &&
+        listId.removePrefix(WidgetListStore.PROJECT_PREFIX).isNotBlank() &&
         listId.none(Char::isISOControl) -> listId
       else -> null
     }
