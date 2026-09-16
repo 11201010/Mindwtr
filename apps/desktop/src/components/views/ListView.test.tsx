@@ -1497,6 +1497,27 @@ describe('ListView', () => {
     expect(scrollIntoViewMock).not.toHaveBeenCalled();
   });
 
+  it('keeps the typed in-list capture text when the write is rejected', async () => {
+    const addTask = vi.fn(async () => ({ success: false, error: 'Archived project' }));
+    const showToast = vi.fn();
+    useTaskStore.setState({ addTask });
+    useUiStore.setState({ showToast });
+
+    const { container, getByRole } = renderListView('inbox', 'Inbox');
+    const input = getByRole('combobox', { name: 'Add Task' }) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Rejected capture' } });
+    });
+    const form = container.querySelector('form');
+    await act(async () => {
+      fireEvent.submit(form!);
+    });
+
+    expect(addTask).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe('Rejected capture');
+    expect(showToast).toHaveBeenCalledWith('Failed to add task', 'error');
+  });
+
   it('shows an error toast when loading archived tasks fails', () => {
     const showToast = vi.fn();
 

@@ -9,6 +9,7 @@ import { buildProjectOrderMap,
     createReferenceSearchPredicate,
     createTaskFilterPredicate,
     DEFAULT_AREA_COLOR,
+    executeCaptureTransaction,
     formatTimeEstimateLabel,
     getQuickAddProjectInitialProps,
     getTaskMetadataFilterVisibility,
@@ -946,50 +947,50 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         e.preventDefault();
         if (!newTaskTitle.trim()) return;
         try {
-            const { title: parsedTitle, props, projectTitle, invalidDateCommands, detectedDate } = parseQuickAdd(
+            const parsed = parseQuickAdd(
                 newTaskTitle,
                 projects,
                 new Date(),
                 areas,
                 quickAddParseOptions,
             );
-            if (invalidDateCommands && invalidDateCommands.length > 0) {
-                showToast(`${t('quickAdd.invalidDateCommand')}: ${invalidDateCommands.join(', ')}`, 'error');
+            // Shared capture transaction (same path as Quick Add and the mobile
+            // sheets) so the archived-project guard, Container exclusivity and
+            // the failure contract are identical on every surface.
+            const transaction = await executeCaptureTransaction(
+                {
+                    parsed,
+                    rawInput: newTaskTitle,
+                    projects,
+                    // The list's status is a default: a parsed status token wins.
+                    initialProps: statusFilter === 'all' ? undefined : { status: statusFilter },
+                    selectedAreaId: defaultNewTaskAreaId,
+                },
+                { addProject, addTask },
+                {
+                    transformProps: (props) => {
+                        if (copilotContext) {
+                            const existing = props.contexts ?? [];
+                            props.contexts = Array.from(new Set([...existing, copilotContext]));
+                        }
+                        if (copilotTags.length) {
+                            const existingTags = props.tags ?? [];
+                            props.tags = Array.from(new Set([...existingTags, ...copilotTags]));
+                        }
+                        return props;
+                    },
+                },
+            );
+            if (!transaction.success) {
+                // A rejected write keeps the typed text so the capture is never
+                // dropped; the user can fix the target and resubmit.
+                if (transaction.reason === 'invalid-date-command') {
+                    showToast(`${t('quickAdd.invalidDateCommand')}: ${transaction.invalidDateCommands.join(', ')}`, 'error');
+                } else if (transaction.reason !== 'empty-title') {
+                    showToast(tFallback(t, 'task.addFailed', 'Failed to add task'), 'error');
+                }
                 return;
             }
-            const initialProps: Partial<Task> = { ...props };
-            const shouldApplyDetectedDate = Boolean(detectedDate?.date && !initialProps.dueDate);
-            if (shouldApplyDetectedDate && detectedDate) {
-                initialProps.dueDate = detectedDate.date;
-            }
-            const finalTitle = shouldApplyDetectedDate && detectedDate
-                ? detectedDate.titleWithoutDate
-                : (parsedTitle || newTaskTitle);
-            if (!initialProps.projectId && projectTitle) {
-                const created = await addProject(
-                    projectTitle,
-                    DEFAULT_AREA_COLOR,
-                    getQuickAddProjectInitialProps(initialProps, defaultNewTaskAreaId),
-                );
-                if (!created) return;
-                initialProps.projectId = created.id;
-            }
-            if (!initialProps.projectId && !initialProps.areaId && defaultNewTaskAreaId) {
-                initialProps.areaId = defaultNewTaskAreaId;
-            }
-            // Only set status if we have an explicit filter and parser didn't set one
-            if (!initialProps.status && statusFilter !== 'all') {
-                initialProps.status = statusFilter;
-            }
-            if (copilotContext) {
-                const existing = initialProps.contexts ?? [];
-                initialProps.contexts = Array.from(new Set([...existing, copilotContext]));
-            }
-            if (copilotTags.length) {
-                const existingTags = initialProps.tags ?? [];
-                initialProps.tags = Array.from(new Set([...existingTags, ...copilotTags]));
-            }
-            const result = await addTask(finalTitle, initialProps);
             setNewTaskTitle('');
             resetCopilot();
             // Flash + scroll the freshly created row into view so a batch-entered
@@ -999,8 +1000,8 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             // the add input, so rapid entry is uninterrupted. If the task is
             // filtered out of the current view, useListSelection finds no row and
             // never scrolls (#916).
-            if (result?.success && result.id) {
-                setHighlightTask(result.id);
+            if (transaction.createdTaskId) {
+                setHighlightTask(transaction.createdTaskId);
             }
         } catch (error) {
             reportError('Failed to add task from quick add', error);
