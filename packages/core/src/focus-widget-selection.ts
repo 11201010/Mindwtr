@@ -18,8 +18,10 @@
  * in tests and one payload build sees one instant.
  */
 import { safeParseDate, safeParseDueDate } from './date';
-import { getFocusSequentialFirstTaskIds, sortTasksBy } from './task-utils';
+import { deriveFocusTaskLists, type FocusPools } from './focus-sections';
+import { shouldShowTaskForStart, sortTasksBy } from './task-utils';
 import type { Project, Section, Task, TaskSortBy } from './types';
+
 
 export interface TodayFocusSelectionInput {
     /**
@@ -47,6 +49,23 @@ export interface TodayFocusSelection {
  * Starred tasks first, then next actions due or starting today, then the rest
  * of today's actionable next actions -- with a sequential project contributing
  * at most the one step the Focus screen would show for it.
+ *
+ * The buckets come from the shared Focus derivation (`focus-sections.ts`); this
+ * function only shapes the widget's pools and flattens the result into the two
+ * lists the payload builders render. Three widget-only rules survive here
+ * because the widget shows ONE list where the screens show five sections:
+ *
+ * 1. The Today pool is not narrowed to today's starts. The widget has no
+ *    Upcoming section, so a task that is due today but deferred to a later day
+ *    would simply vanish; on the screens it moves to Upcoming instead.
+ * 2. A starred task planned for a future day is left out unless it is also due
+ *    or starting today. The screens keep every starred task because Today's
+ *    Focus is its own labelled section; a bare "Today" list must not lead with
+ *    a task that starts next week.
+ * 3. Review Due rejoins the one list, next actions only. The screens split a
+ *    next action that is also due for review into its own section; here that
+ *    would drop it from the widget altogether. Waiting and someday tasks stay
+ *    out of the list, as they always have.
  */
 export function computeTodayFocusTasks({
     activeTasks,
@@ -57,16 +76,6 @@ export function computeTodayFocusTasks({
 }: TodayFocusSelectionInput): TodayFocusSelection {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    const sequentialProjectIds = new Set(
-        projects.filter((project) => project.isSequential && !project.deletedAt).map((project) => project.id)
-    );
-    const sequentialWithinSectionProjectIds = new Set(
-        projects
-            .filter((project) => project.isSequential && project.sequentialScope === 'section' && !project.deletedAt)
-            .map((project) => project.id)
-    );
-
     const isPlannedForFuture = (task: Task) => {
         const start = safeParseDate(task.startTime);
         return Boolean(start && start > endOfToday);
@@ -78,52 +87,41 @@ export function computeTodayFocusTasks({
         return Boolean(due && due <= endOfToday) || startsToday;
     };
 
-    // The whole active pool goes in, exactly as the Focus screens hand over
-    // `baseActiveTasks`: the helper's own `isFocusSequentialCandidate` decides
-    // which tasks hold a slot (starred, next/waiting, or due for review), and
-    // its schedule ranking hands the slot to a later step that is due today or
-    // due for review.
-    const sequentialFirstTaskIds = getFocusSequentialFirstTaskIds(activeTasks, sequentialProjectIds, {
-        now,
-        sectionScopedProjectIds: sequentialWithinSectionProjectIds,
-        sections,
-    });
-    const isSequentialBlocked = (task: Task) => {
-        if (!task.projectId) return false;
-        if (!sequentialProjectIds.has(task.projectId)) return false;
-        return !sequentialFirstTaskIds.has(task.id);
+    const pools: FocusPools = {
+        focused: activeTasks.filter((task) => (
+            task.isFocusedToday === true
+            && (!isPlannedForFuture(task) || isScheduleCandidate(task))
+        )),
+        active: activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
+        schedule: activeTasks,
+        upcoming: [],
+        base: activeTasks,
     };
-
-    const scheduleTasks = activeTasks.filter((task) => {
-        if (task.status !== 'next') return false;
-        if (isSequentialBlocked(task)) return false;
-        return isScheduleCandidate(task);
-    });
-    const scheduleTaskIds = new Set(scheduleTasks.map((task) => task.id));
-
-    const nextTasks = activeTasks.filter((task) => {
-        if (task.status !== 'next') return false;
-        if (isPlannedForFuture(task)) return false;
-        if (isSequentialBlocked(task)) return false;
-        return !scheduleTaskIds.has(task.id);
+    const lists = deriveFocusTaskLists(pools, {
+        now,
+        projects,
+        sections,
+        // The widget applies its own flat sort below, so the sections' internal
+        // order never reaches the payload; only their membership does.
+        sortBy: 'default',
+        prioritiesEnabled: false,
     });
 
-    // Starred tasks mirror core's focusedTasks (the caller's pool already
-    // excludes done/reference/archived/deleted and inactive projects) and lead
-    // the list, so "current focused task" surfaces (lock widget, list head)
-    // show the task the user actually starred -- including starred
-    // waiting/someday tasks, which keep their status by design.
-    const starredTasks = activeTasks.filter((task) => (
-        task.isFocusedToday === true
-        && (!isPlannedForFuture(task) || isScheduleCandidate(task))
-    ));
-    const starredTaskIds = new Set(starredTasks.map((task) => task.id));
-
+    // Membership comes from the shared buckets; the ORDER is the payload's own
+    // flat sort over the caller's pool order. Reading the buckets' own order
+    // would leak the screens' section sort into every tie the widget's sort
+    // leaves open.
+    const scheduled = new Set(lists.schedule.map((task) => task.id));
+    const listed = new Set(
+        [...lists.reviewDue, ...lists.nextActions]
+            .filter((task) => task.status === 'next')
+            .map((task) => task.id),
+    );
     return {
-        starredTasks: sortTasksBy(starredTasks, sortBy),
-        focusTasks: sortTasksBy(
-            [...scheduleTasks, ...nextTasks].filter((task) => !starredTaskIds.has(task.id)),
-            sortBy,
-        ),
+        starredTasks: sortTasksBy(pools.focused, sortBy),
+        focusTasks: sortTasksBy([
+            ...activeTasks.filter((task) => scheduled.has(task.id)),
+            ...activeTasks.filter((task) => listed.has(task.id) && !scheduled.has(task.id)),
+        ], sortBy),
     };
 }

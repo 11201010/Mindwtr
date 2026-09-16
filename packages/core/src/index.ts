@@ -172,6 +172,7 @@ export * from './tasknotes-export';
 export * from './mind-sweep';
 export * from './focus-star';
 export * from './focus-grouping';
+export * from './focus-sections';
 export * from './focus-widget-selection';
 export * from './context-color';
 export * from './capture';

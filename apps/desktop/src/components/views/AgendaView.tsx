@@ -14,9 +14,10 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, TaskPriority, TimeEstimate, applyFilter, buildAdvancedFilterCriteriaChips, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
-    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, getFocusSequentialFirstTaskIds, getProjectDeadlineBoosts, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, safeParseDueDate, isDueForReview, SAVED_FILTER_NO_PROJECT_ID, getUpcomingDeferredTasks, shouldShowTaskForStart, sortFocusNextActions, sortTasksByFocusOrder, sortTasksBySavedPreference, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
-import type { MultiValueFilterMatchMode, ProjectDeadlineBoost, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
+import { shallow, useTaskStore, TaskPriority, TimeEstimate, buildFocusPools, buildAdvancedFilterCriteriaChips, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
+    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, SAVED_FILTER_NO_PROJECT_ID, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
+import { DEFAULT_FOCUS_SORT_BY } from '@mindwtr/core';
+import type { MultiValueFilterMatchMode, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
 import { useTaskFilterSelections } from '@mindwtr/core/task-filter-selections';
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
@@ -55,7 +56,6 @@ import { useFutureStartRevealTick, useLocalDayKey } from '../../hooks/useLocalDa
 const AGENDA_VIRTUALIZATION_THRESHOLD = 25;
 const NO_PROJECT_FILTER_ID = SAVED_FILTER_NO_PROJECT_ID;
 const AGENDA_ACTIVE_STATUSES: Task['status'][] = ['inbox', 'next', 'waiting', 'someday'];
-const DEFAULT_FOCUS_SORT_BY: SortField = 'default';
 const FOCUS_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:focus:v1';
 
 type FocusSectionKey = 'schedule' | 'nextActions' | 'upcoming' | 'reviewDue' | 'reviewProjects';
@@ -396,8 +396,6 @@ export function AgendaView() {
         activeTasksByStatus,
         focusedCount,
         projectMap,
-        sequentialProjectIds,
-        sequentialWithinSectionProjectIds,
         tasksById,
     } = getDerivedState();
     const { t } = useLanguage();
@@ -664,68 +662,42 @@ export function AgendaView() {
         + (activeSavedFilterId && filterSelections.activeCount === 0 && effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY ? 1 : 0);
     const saveFilterDefaultName = getSavedFilterDefaultName(activeFilterChips, resolveText('savedFilters.defaultName', 'Focus filter'));
 
-    const {
-        filteredActiveTasks, scheduleCandidates, reviewDueCandidates, upcomingCandidates, upcomingAppearsAtById, scheduleAppearsAtById,
-    } = useMemo(() => {
+    const { focusPools, upcomingAppearsAtById, scheduleAppearsAtById } = useMemo(() => {
         void localDayKey;
         // Next Actions and Review due hide a later-today start until its time
         // arrives, so their pools have to leave a row the moment that time hits
         // rather than waiting for midnight.
         void futureStartTick;
         const now = new Date();
-        const filtered = applyFilter(activeTasks, effectiveFilterCriteria, { projects, now, tokenMatchMode: 'all' })
-            .filter((task) => matchesSearchQuery(task.title));
-        // Today/schedule membership is decided at day granularity (a later-today
-        // start belongs there, by its time), so it draws from baseActiveTasks
-        // rather than the time-granularity activeTasks pool — with the same
-        // user criteria/search filteredActiveTasks applies. A task deferred to
-        // another day must still be excluded here (day-granularity), or a
-        // dueDate<=today row with a future-day start would double up in both
-        // Today and Upcoming.
-        const scheduleBase = applyFilter(
-            baseActiveTasks.filter((task) => shouldShowTaskForStart(task, { now })),
-            effectiveFilterCriteria,
-            { projects, now, tokenMatchMode: 'all' },
-        ).filter((task) => matchesSearchQuery(task.title));
-        const reviewDueBase = baseActiveTasks
-            .filter((task) => {
-                if (!shouldShowTaskForStart(task, { now, granularity: 'time' })) return false;
-                if (!isDueForReview(task.reviewAt, now)) return false;
-                if (!matchesSearchQuery(task.title)) return false;
-                return true;
-            });
-        const reviewDue = applyFilter(reviewDueBase, effectiveFilterCriteria, { projects, now, tokenMatchMode: 'all' });
-        // The Upcoming preview draws from baseActiveTasks: the deferral filter that
-        // produced activeTasks is exactly what hides these rows today (#1061).
-        // Starred tasks are excluded — they render in Today's Focus regardless of
-        // deferral, and one task must not appear in both sections.
-        const upcomingBase = applyFilter(
-            baseActiveTasks.filter((task) => !task.isFocusedToday && matchesSearchQuery(task.title)),
-            effectiveFilterCriteria,
-            { projects, now, tokenMatchMode: 'all' },
-        );
-        const upcomingEntries = getUpcomingDeferredTasks(upcomingBase, { now });
-        // A Today row whose timed start hasn't arrived yet gets the same
-        // appears-at treatment as Upcoming, formatted as a time (it's today) so
-        // it drops the moment the start passes — hence the futureStartTick dep.
-        const scheduleAppearsAtById = new Map(
-            scheduleBase
-                .filter((task) => !shouldShowTaskForStart(task, { now, granularity: 'time' }))
-                .map((task) => [task.id, safeFormatDate(task.startTime, 'p')]),
-        );
+        const pools = buildFocusPools({
+            // The starred pool must not inherit the area-visibility narrowing,
+            // so it reads the pre-visibility list; everything else reads the
+            // visible one.
+            tasks: derivedActiveTasks,
+            visibleTasks: baseActiveTasks,
+            projects,
+            criteria: effectiveFilterCriteria,
+            now,
+            keep: (task) => matchesSearchQuery(task.title),
+        });
         return {
-            filteredActiveTasks: filtered,
-            scheduleCandidates: scheduleBase,
-            reviewDueCandidates: reviewDue,
-            upcomingCandidates: upcomingEntries.map((entry) => entry.task),
+            focusPools: pools,
             // Showing the date is the whole point of the section, so it rides the
             // row rather than the metadata that "show list details" hides.
-            upcomingAppearsAtById: new Map(upcomingEntries.map((entry) => (
+            upcomingAppearsAtById: new Map(pools.upcoming.map((entry) => (
                 [entry.task.id, safeFormatDate(entry.appearsAt, 'P')]
             ))),
-            scheduleAppearsAtById,
+            // A Today row whose timed start hasn't arrived yet gets the same
+            // appears-at treatment as Upcoming, formatted as a time (it's today)
+            // so it drops the moment the start passes.
+            scheduleAppearsAtById: new Map(
+                pools.schedule
+                    .filter((task) => !shouldShowTaskForStart(task, { now, granularity: 'time' }))
+                    .map((task) => [task.id, safeFormatDate(task.startTime, 'p')]),
+            ),
         };
-    }, [activeTasks, baseActiveTasks, effectiveFilterCriteria, futureStartTick, localDayKey, matchesSearchQuery, projects]);
+    }, [baseActiveTasks, derivedActiveTasks, effectiveFilterCriteria, futureStartTick, localDayKey, matchesSearchQuery, projects]);
+
     const getUpcomingAppearsAtLabel = useCallback(
         (taskId: string) => upcomingAppearsAtById.get(taskId),
         [upcomingAppearsAtById],
@@ -837,16 +809,6 @@ export function AgendaView() {
         const timer = window.setTimeout(() => setHighlightTask(null), 4000);
         return () => window.clearTimeout(timer);
     }, [highlightTaskId, setHighlightTask]);
-    // Today's Focus: tasks marked as isFocusedToday.
-    const sortBySavedPerspective = useCallback((items: Task[]) => {
-        if (effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY) return items;
-        return sortTasksBySavedPreference(items, effectiveFocusSortBy, {
-            projects,
-            prioritizeByPriority: prioritiesEnabled,
-            sortOrder: activeSavedFilter?.sortOrder,
-        });
-    }, [activeSavedFilter?.sortOrder, effectiveFocusSortBy, prioritiesEnabled, projects]);
-
     // Manual drag order (focusOrder) is a full-list concept, so dragging is only
     // enabled when all three hold: the sort is the default (an explicit or saved
     // sort takes over and disables dragging), no search query is active, and no
@@ -855,136 +817,29 @@ export function AgendaView() {
     // focused tasks with stale positions that surprise-interleave once the filter
     // clears. Clearing the filter is the correction path.
     const focusDragEnabled = effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY && !hasTaskFilters;
-    const focusedTasks = useMemo(() => {
-        // Today's Focus shows every starred task the focus cap counts. It must
-        // not inherit the pool's area-visibility or start-time hiding: the star
-        // buttons enforce the store-wide count, so a starred task hidden by
-        // those rules silently eats a slot no filter change can reveal — the
-        // "I can only star 4 when the limit is 5" report. Saved filters and
-        // search still apply; the user can see those causes and undo them.
-        const focused = applyFilter(
-            derivedActiveTasks.filter((t) => t.isFocusedToday),
-            effectiveFilterCriteria,
-            { projects, now: new Date(), tokenMatchMode: 'all' },
-        ).filter((task) => matchesSearchQuery(task.title));
-        return focusDragEnabled ? sortTasksByFocusOrder(focused) : sortBySavedPerspective(focused);
-    }, [derivedActiveTasks, effectiveFilterCriteria, projects, matchesSearchQuery, focusDragEnabled, sortBySavedPerspective]);
 
-    // Categorize tasks
+    // Today's Focus, Today, Review Due, Next actions and Upcoming, from the one
+    // derivation the mobile screen and every widget payload also use.
     const sections = useMemo(() => {
         void localDayKey;
-        const now = new Date();
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-        const priorityRank: Record<TaskPriority, number> = {
-            low: 1,
-            medium: 2,
-            high: 3,
-            urgent: 4,
-        };
-        const sortWith = (items: Task[], getTime: (task: Task) => number) => {
-            return [...items].sort((a, b) => {
-                const timeDiff = getTime(a) - getTime(b);
-                if (timeDiff !== 0) return timeDiff;
-                if (prioritiesEnabled) {
-                    const priorityDiff = (priorityRank[b.priority as TaskPriority] || 0) - (priorityRank[a.priority as TaskPriority] || 0);
-                    if (priorityDiff !== 0) return priorityDiff;
-                }
-                const aCreated = safeParseDate(a.createdAt)?.getTime() ?? 0;
-                const bCreated = safeParseDate(b.createdAt)?.getTime() ?? 0;
-                return aCreated - bCreated;
-            });
-        };
-        const sequentialFirstTasks = getFocusSequentialFirstTaskIds(baseActiveTasks, sequentialProjectIds, {
-            now,
-            sectionScopedProjectIds: sequentialWithinSectionProjectIds,
+        return deriveFocusTaskLists(focusPools, {
+            now: new Date(),
+            projects,
             sections: projectSections,
+            sortBy: effectiveFocusSortBy,
+            prioritiesEnabled,
+            sortOrder: activeSavedFilter?.sortOrder,
         });
-        const isSequentialBlocked = (task: Task) => {
-            if (!task.projectId) return false;
-            if (!sequentialProjectIds.has(task.projectId)) return false;
-            return !sequentialFirstTasks.has(task.id);
-        };
-        const schedule = scheduleCandidates.filter((task) => {
-            if (task.isFocusedToday) return false;
-            if (task.status !== 'next') return false;
-            if (isSequentialBlocked(task)) return false;
-            const dueDate = safeParseDueDate(task.dueDate);
-            const startDate = safeParseDate(task.startTime);
-            const startsToday = Boolean(
-                startDate
-                && startDate >= startOfToday
-                && startDate <= endOfToday
-            );
-            return Boolean(dueDate && dueDate <= endOfToday)
-                || startsToday;
-        });
-        const scheduleIds = new Set(schedule.map((task) => task.id));
-        const reviewDue = reviewDueCandidates.filter((task) => (
-            !task.isFocusedToday && !scheduleIds.has(task.id)
-        ));
-        const reviewDueIds = new Set(reviewDue.map((task) => task.id));
-        const nextActions = filteredActiveTasks.filter((task) => {
-            if (task.status !== 'next' || task.isFocusedToday) return false;
-            if (isSequentialBlocked(task)) return false;
-            return !scheduleIds.has(task.id) && !reviewDueIds.has(task.id);
-        });
-        const projectDeadlineBoosts = effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY
-            ? getProjectDeadlineBoosts(nextActions, projects, { now })
-            : new Map<string, ProjectDeadlineBoost>();
-        const scheduleSortTime = (task: Task) => {
-            const due = safeParseDueDate(task.dueDate)?.getTime();
-            const start = safeParseDate(task.startTime)?.getTime();
-            if (typeof due === 'number' && typeof start === 'number') return Math.min(due, start);
-            if (typeof due === 'number') return due;
-            if (typeof start === 'number') return start;
-            return Number.POSITIVE_INFINITY;
-        };
-
-        const sortSchedule = (items: Task[]) => (
-            effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY
-                ? sortWith(items, scheduleSortTime)
-                : sortBySavedPerspective(items)
-        );
-        const sortNextActions = (items: Task[]) => (
-            effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY
-                ? sortFocusNextActions(items, {
-                    now,
-                    prioritizeByPriority: prioritiesEnabled,
-                    projectDeadlineBoosts,
-                })
-                : sortBySavedPerspective(items)
-        );
-        const sortReviewDue = (items: Task[]) => (
-            effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY
-                ? sortWith(items, (task) => safeParseDate(task.reviewAt)?.getTime() ?? Number.POSITIVE_INFINITY)
-                : sortBySavedPerspective(items)
-        );
-
-        return {
-            schedule: sortSchedule(schedule),
-            nextActions: sortNextActions(nextActions),
-            // The forecast keeps reveal-date order even under a custom sort — the
-            // date a task appears is the only ordering that means anything here.
-            upcoming: upcomingCandidates.filter((task) => !isSequentialBlocked(task)),
-            reviewDue: sortReviewDue(reviewDue),
-            projectDeadlineBoosts,
-        };
     }, [
-        baseActiveTasks,
+        activeSavedFilter?.sortOrder,
         effectiveFocusSortBy,
-        filteredActiveTasks,
+        focusPools,
         localDayKey,
         prioritiesEnabled,
         projects,
         projectSections,
-        reviewDueCandidates,
-        scheduleCandidates,
-        sequentialProjectIds,
-        sequentialWithinSectionProjectIds,
-        sortBySavedPerspective,
-        upcomingCandidates,
     ]);
+    const focusedTasks = sections.focusedTasks;
     const nextActionGroups = useMemo(() => (
         groupTasks(effectiveNextGroupBy, { tasks: sections.nextActions, areas, projectMap, t, theme: settings?.theme })
     ), [areas, effectiveNextGroupBy, projectMap, sections.nextActions, settings?.theme, t]);

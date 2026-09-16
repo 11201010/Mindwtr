@@ -29,9 +29,8 @@ import DraggableFlatList, {
 } from 'react-native-draggable-flatlist';
 
 import {
-  applyFilter,
-  getUpcomingDeferredTasks,
   buildAdvancedFilterCriteriaChips,
+  buildFocusPools,
   buildFocusTaskGroups,
   getProjectDeadlineBoostLabel,
   removeAdvancedFilterCriteriaChip,
@@ -43,7 +42,6 @@ import {
   resolveFeatureFlags,
   resolveTaskPerspectiveForFeatures,
   splitTodayTasksByStartTime,
-  sortTasksBySavedPreference,
   translateWithFallback,
   useTaskStore,
   getAdvancedReviewDate,
@@ -71,7 +69,7 @@ import { useTheme } from '../../../contexts/theme-context';
 import { useLanguage } from '../../../contexts/language-context';
 import { useToast } from '../../../contexts/toast-context';
 import { addHardwareBackPressListener } from '@/lib/hardware-back';
-import { buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists } from '@/lib/focus-sections';
+import { buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists } from '@mindwtr/core';
 import { setFocusWidgetFilter } from '@/lib/focus-widget-filter';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import type { TaskEditTab } from '@/components/task-edit/use-task-edit-state';
@@ -384,68 +382,25 @@ export default function FocusScreen() {
   const focusGroupByOptions = prioritiesEnabled
     ? FOCUS_GROUP_BY_OPTIONS
     : FOCUS_GROUP_BY_OPTIONS.filter((option) => option !== 'priority');
-  const filteredActiveTasks = useMemo(() => (
-    applyFilter(activeTasks, selections.criteria, { projects, tokenMatchMode: 'all' })
-  ), [
-    activeTasks,
-    selections.criteria,
-    projects,
-  ]);
-  // Today/schedule membership is decided at day granularity (a later-today
-  // start belongs there, by its time), so it draws from baseActiveTasks rather
-  // than the time-granularity activeTasks pool — with the same user criteria
-  // filteredActiveTasks applies. A task deferred to another day must still be
-  // excluded here (day-granularity), or a dueDate<=today row with a
-  // future-day start would double up in both Today and Upcoming.
-  const scheduleCandidates = useMemo(() => {
-    // Day granularity only cares which calendar day it is, not the clock
-    // time, so this does not need futureStartTick (unlike activeTasks above).
+  // Every Focus pool at once, from the shared core derivation: the starred
+  // pool (never area- or start-hidden, so a hidden star cannot eat one of the
+  // cap's slots), the time-granularity pool behind Next actions and Review
+  // Due, the day-granularity Today pool, and the Upcoming forecast.
+  // futureStartTick makes a later-today start leave the Next actions pool the
+  // moment its time arrives; localDayKey covers the day rollover.
+  const actionableTasks = useMemo(() => tasks.filter(isTaskActionable), [tasks]);
+  const focusPools = useMemo(() => {
     void localDayKey;
-    const now = new Date();
-    return applyFilter(
-      baseActiveTasks.filter((task) => shouldShowTaskForStart(task, { now })),
-      selections.criteria,
-      { projects, tokenMatchMode: 'all' },
-    );
-  }, [
-    baseActiveTasks,
-    localDayKey,
-    selections.criteria,
-    projects,
-  ]);
-  // Today's Focus shows every starred task the focus cap counts. It must not
-  // inherit the pool's area-visibility or start-time hiding: the star buttons
-  // enforce the store-wide count, so a starred task hidden by those rules
-  // silently eats a slot no filter change can reveal ("I can only star 4 when
-  // the limit is 5"). User filter criteria still apply — that cause is visible.
-  const focusedPool = useMemo(() => (
-    applyFilter(
-      tasks.filter((task) => isTaskActionable(task) && task.isFocusedToday === true),
-      selections.criteria,
-      { projects, tokenMatchMode: 'all' },
-    )
-  ), [tasks, selections.criteria, projects]);
-  // The Upcoming preview draws from baseActiveTasks: the deferral filter that
-  // produced activeTasks is exactly what hides these rows today (#1061).
-  // Starred tasks are excluded — they render in Today's Focus regardless of
-  // deferral, and one task must not appear in both sections. Membership is
-  // day-based (another-day deferrals only), so this doesn't need futureStartTick.
-  const upcomingEntries = useMemo(() => {
-    void localDayKey;
-    const now = new Date();
-    return getUpcomingDeferredTasks(
-      applyFilter(
-        baseActiveTasks.filter((task) => !task.isFocusedToday),
-        selections.criteria,
-        { projects, tokenMatchMode: 'all' },
-      ),
-      { now },
-    );
-  }, [baseActiveTasks, localDayKey, projects, selections.criteria]);
-  const upcomingCandidates = useMemo(
-    () => upcomingEntries.map((entry) => entry.task),
-    [upcomingEntries],
-  );
+    void futureStartTick;
+    return buildFocusPools({
+      tasks: actionableTasks,
+      visibleTasks: baseActiveTasks,
+      projects,
+      criteria: selections.criteria,
+      now: new Date(),
+    });
+  }, [actionableTasks, baseActiveTasks, futureStartTick, localDayKey, projects, selections.criteria]);
+  const upcomingEntries = focusPools.upcoming;
   // The date a deferred row surfaces on is the section's whole point, so it rides
   // the row itself rather than the meta line. Built once per list so the footer
   // node stays identity-stable and the row keeps its memo boundary (#766).
@@ -806,25 +761,6 @@ export default function FocusScreen() {
     };
   }, [highlightTaskId, setHighlightTask]);
 
-  const sequentialProjectIds = useMemo(() => {
-    return new Set(visibleProjects.filter((project) => project.isSequential).map((project) => project.id));
-  }, [visibleProjects]);
-  const sequentialWithinSectionProjectIds = useMemo(() => {
-    return new Set(
-      visibleProjects
-        .filter((project) => project.isSequential && project.sequentialScope === 'section')
-        .map((project) => project.id)
-    );
-  }, [visibleProjects]);
-  const sortBySavedPerspective = useCallback((items: Task[]) => {
-    if (effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY) return items;
-    return sortTasksBySavedPreference(items, effectiveFocusSortBy, {
-      projects,
-      prioritizeByPriority: prioritiesEnabled,
-      sortOrder: activeSavedFilter?.sortOrder,
-    });
-  }, [activeSavedFilter?.sortOrder, effectiveFocusSortBy, prioritiesEnabled, projects]);
-
   // The home-screen widget's Focus list shows what this screen shows, so hand
   // it the current selection and republish when it changes (#1173). Task edits
   // republish on their own; only a filter or sort change moves nothing else.
@@ -841,35 +777,22 @@ export default function FocusScreen() {
 
   const { focusedTasks, schedule, nextActions, upcoming, reviewDue, projectDeadlineBoosts } = useMemo(() => {
     void localDayKey;
-    return deriveFocusTaskLists({
+    return deriveFocusTaskLists(focusPools, {
       now: new Date(),
-      focusedPool,
-      filteredActiveTasks,
-      scheduleCandidates,
-      upcomingCandidates,
-      baseActiveTasks,
       projects,
       sections: projectSections,
-      sequentialProjectIds,
-      sequentialWithinSectionProjectIds,
       sortBy: effectiveFocusSortBy,
       prioritiesEnabled,
-      sortBySavedPerspective,
+      sortOrder: activeSavedFilter?.sortOrder,
     });
   }, [
-    baseActiveTasks,
+    activeSavedFilter?.sortOrder,
     effectiveFocusSortBy,
-    filteredActiveTasks,
-    focusedPool,
+    focusPools,
     localDayKey,
     prioritiesEnabled,
     projects,
     projectSections,
-    scheduleCandidates,
-    sequentialProjectIds,
-    sequentialWithinSectionProjectIds,
-    sortBySavedPerspective,
-    upcomingCandidates,
   ]);
   // A Today row whose timed start hasn't arrived yet gets the same appears-at
   // footer as Upcoming, formatted as a time (it's today) so it drops the
