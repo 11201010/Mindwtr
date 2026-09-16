@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(path, "utf8");
 
 const dockerfiles = ["docker/app/Dockerfile", "docker/cloud/Dockerfile"];
+const pinnedActionWorkflows = [
+  ".github/workflows/release-msstore-flight.yml",
+  ".github/workflows/msstore-flight-id.yml",
+];
 
 const externalDockerBases = (dockerfile) => {
   const stages = new Set();
@@ -20,6 +24,22 @@ const externalDockerBases = (dockerfile) => {
 
   return bases;
 };
+
+test("Microsoft Store workflows pin external actions to commit SHAs", () => {
+  let externalActionCount = 0;
+  for (const path of pinnedActionWorkflows) {
+    const workflow = read(path);
+    const actionReferences = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)]
+      .map((match) => match[1])
+      .filter((reference) => !reference.startsWith("./"));
+
+    for (const reference of actionReferences) {
+      externalActionCount += 1;
+      expect(reference, `${path}: ${reference}`).toMatch(/@[a-f0-9]{40}$/);
+    }
+  }
+  expect(externalActionCount).toBeGreaterThan(0);
+});
 
 test("Docker bases and Bun installs follow the repository release pins", () => {
   const bunVersion = read(".bun-version").trim();
