@@ -65,4 +65,48 @@ describe('SettingsManagePage Someday sections', () => {
             }));
         });
     });
+
+    it('counts assignment and exact person contexts once and opens a completed-inclusive person review', () => {
+        useTaskStore.setState({
+            _allPeople: [{
+                id: 'person-alex',
+                name: 'Alex',
+                createdAt: '2026-06-01T00:00:00.000Z',
+                updatedAt: '2026-06-01T00:00:00.000Z',
+            }, {
+                id: 'person-casey',
+                name: 'Casey',
+                createdAt: '2026-06-01T00:00:00.000Z',
+                updatedAt: '2026-06-01T00:00:00.000Z',
+            }],
+            _allTasks: [
+                { id: 'assigned', title: 'Assigned', status: 'waiting', assignedTo: 'Alex', tags: [], contexts: [], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+                { id: 'context', title: 'Context', status: 'next', tags: [], contexts: ['@alex'], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+                { id: 'both', title: 'Both', status: 'next', assignedTo: 'Alex', tags: [], contexts: ['@Alex'], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+                { id: 'done', title: 'Done', status: 'done', tags: [], contexts: ['@Alex'], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+                { id: 'hierarchical', title: 'Other', status: 'next', tags: [], contexts: ['@Alex/Office'], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+                { id: 'archived-only', title: 'Archived', status: 'archived', assignedTo: 'Casey', tags: [], contexts: [], createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z' },
+            ],
+        });
+        const onOpenSearch = vi.fn();
+        window.addEventListener('mindwtr:open-search', onOpenSearch);
+        const view = render(
+            <SettingsManagePage
+                t={{ manage: 'Manage' }}
+                translate={translate}
+                requestConfirmation={vi.fn(async () => true)}
+            />,
+        );
+
+        fireEvent.click(view.getByRole('button', { name: /People\s*2/ }));
+        expect(view.getByRole('button', { name: /Casey.*1.*tasks/ })).toBeInTheDocument();
+        fireEvent.click(view.getByRole('button', { name: /Alex.*4.*tasks/ }));
+
+        expect(onOpenSearch).toHaveBeenCalledTimes(1);
+        expect((onOpenSearch.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+            query: 'person:"Alex"',
+            includeCompleted: true,
+        });
+        window.removeEventListener('mindwtr:open-search', onOpenSearch);
+    });
 });

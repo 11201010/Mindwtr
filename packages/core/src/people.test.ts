@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildPersonSearchQuery,
     getPersonOptionNames,
     getPersonSuggestionNames,
+    getPersonTaskCounts,
     normalizePeopleForLoad,
+    taskMatchesPerson,
 } from './people';
 import { mergeAppDataWithStats } from './sync';
 import { validateMergedSyncData } from './sync-normalization';
@@ -37,6 +40,28 @@ const appDataWithPeople = (people: Person[]): AppData => ({
 });
 
 describe('people helpers', () => {
+    it('matches assignments and exact person contexts once with normalized names', () => {
+        const tasks = [
+            task({ id: 'assigned', assignedTo: '  Alex   Smith  ' }),
+            task({ id: 'context', contexts: ['@ALEX SMITH'] }),
+            task({ id: 'both', assignedTo: 'Alex Smith', contexts: ['@alex smith'] }),
+            task({ id: 'similar', assignedTo: 'Alex', contexts: ['@Alex Smith/Office', '@Alexandra Smith'] }),
+            task({ id: 'ordinary-context', contexts: ['Alex Smith'] }),
+            task({ id: 'deleted', assignedTo: 'Alex Smith', deletedAt: '2026-04-02T00:00:00.000Z' }),
+            task({ id: 'purged', contexts: ['@Alex Smith'], purgedAt: '2026-04-02T00:00:00.000Z' }),
+        ];
+
+        expect(tasks.map((item) => taskMatchesPerson(item, ' alex smith '))).toEqual([
+            true, true, true, false, false, false, false,
+        ]);
+        expect(getPersonTaskCounts(tasks).get('alex smith')).toBe(3);
+    });
+
+    it('builds an escaped quoted person search without accepting an empty match', () => {
+        expect(buildPersonSearchQuery('  Alex "OR" \\ Ops  ')).toBe('person:"Alex \\"OR\\" \\\\ Ops"');
+        expect(taskMatchesPerson(task({ assignedTo: '' }), '   ')).toBe(false);
+    });
+
     it('backfills unique people from task assignments and honors deleted-person tombstones', () => {
         const result = normalizePeopleForLoad(
             [

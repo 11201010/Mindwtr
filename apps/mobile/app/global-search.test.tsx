@@ -2,13 +2,17 @@ import React from 'react';
 import { FlatList, Text, TouchableOpacity } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildEntityMap, safeFormatDate, type Task } from '@mindwtr/core';
+import { buildEntityMap, buildPersonSearchQuery, safeFormatDate, type Task } from '@mindwtr/core';
+import SearchScreen from './global-search';
 
 const routerPushMock = vi.hoisted(() => vi.fn());
 const setHighlightTaskMock = vi.hoisted(() => vi.fn());
 const taskEditModalPropsSpy = vi.hoisted(() => vi.fn());
 const updateTaskMock = vi.hoisted(() => vi.fn());
-const routeParams = vi.hoisted(() => ({ q: 'Launch' as string | undefined }));
+const routeParams = vi.hoisted(() => ({
+    q: 'Launch' as string | undefined,
+    includeCompleted: undefined as string | undefined,
+}));
 const storageAdapterState = vi.hoisted(() => ({
     searchAll: undefined as undefined | ((query: string) => Promise<any>),
 }));
@@ -130,8 +134,6 @@ const makeTask = (id: string, title: string, overrides: Partial<Task> = {}): Tas
     ...overrides,
 });
 
-import SearchScreen from './global-search';
-
 describe('SearchScreen task results', () => {
     const mountedTrees: ReturnType<typeof create>[] = [];
     const trackTree = (tree: ReturnType<typeof create>) => {
@@ -142,6 +144,7 @@ describe('SearchScreen task results', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         routeParams.q = 'Launch';
+        routeParams.includeCompleted = undefined;
         storageAdapterState.searchAll = undefined;
         const tasks = [
             makeTask('task-1', 'Launch checklist'),
@@ -188,6 +191,91 @@ describe('SearchScreen task results', () => {
             visible: true,
             task: expect.objectContaining({ id: 'task-1' }),
         }));
+    });
+
+    it('includes completed tasks when requested by route params', () => {
+        routeParams.q = 'report';
+        routeParams.includeCompleted = 'true';
+        storeState._allTasks = [makeTask('done', 'Completed report', {
+            status: 'done',
+            completedAt: nowIso,
+        })];
+
+        let tree!: ReturnType<typeof create>;
+        act(() => {
+            tree = trackTree(create(<SearchScreen />));
+        });
+
+        expect(tree.root.findByType(FlatList).props.data.map((result: any) => result.item.id)).toEqual(['done']);
+    });
+
+    it('focuses blank searches but keeps the keyboard closed for prefilled reviews', () => {
+        vi.useFakeTimers();
+        const focus = vi.fn();
+        const blur = vi.fn();
+        let tree!: ReturnType<typeof create>;
+        act(() => {
+            tree = trackTree(create(<SearchScreen />, {
+                createNodeMock: () => ({ focus, blur }),
+            }));
+        });
+        act(() => {
+            vi.advanceTimersByTime(100);
+        });
+        expect(focus).not.toHaveBeenCalled();
+        expect(blur).toHaveBeenCalledTimes(1);
+
+        routeParams.q = '';
+        act(() => {
+            tree.update(<SearchScreen />);
+        });
+        act(() => {
+            vi.advanceTimersByTime(100);
+        });
+        expect(focus).toHaveBeenCalledTimes(1);
+    });
+
+    it('applies later query and completed-filter route changes', async () => {
+        storeState._allTasks = [
+            makeTask('launch', 'Launch checklist'),
+            makeTask('done', 'Completed report', { status: 'done', completedAt: nowIso }),
+        ];
+        let tree!: ReturnType<typeof create>;
+        act(() => {
+            tree = trackTree(create(<SearchScreen />));
+        });
+        expect(tree.root.findByType(FlatList).props.data.map((result: any) => result.item.id)).toEqual(['launch']);
+
+        routeParams.q = 'report';
+        routeParams.includeCompleted = 'true';
+        await act(async () => {
+            tree.update(<SearchScreen />);
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType(FlatList).props.data.map((result: any) => result.item.id)).toEqual(['done']);
+
+        routeParams.includeCompleted = undefined;
+        await act(async () => {
+            tree.update(<SearchScreen />);
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType(FlatList).props.data).toEqual([]);
+    });
+
+    it('preserves literal percent escapes in already-decoded Expo route params', () => {
+        const names = ['Sales%20Ops', 'Alex%22Ops', 'Budget%25Owner'];
+        storeState._allTasks = names.map((name, index) => makeTask(`percent-${index}`, name, { assignedTo: name }));
+
+        for (const [index, name] of names.entries()) {
+            routeParams.q = buildPersonSearchQuery(name);
+            let tree!: ReturnType<typeof create>;
+            act(() => {
+                tree = trackTree(create(<SearchScreen />));
+            });
+            expect(tree.root.findByType(FlatList).props.data.map((result: any) => result.item.id)).toEqual([
+                `percent-${index}`,
+            ]);
+        }
     });
 
     it('highlights every nonadjacent query term in a result title', () => {

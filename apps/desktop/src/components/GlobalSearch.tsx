@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useMemo, useRef } from 'react';
+import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { Search, FileText, CheckCircle, Save, SlidersHorizontal, X } from 'lucide-react';
 import { shallow,
     useTaskStore,
@@ -49,6 +49,11 @@ interface GlobalSearchProps {
      */
     defaultIncludeCompleted?: boolean;
 }
+
+export type OpenGlobalSearchDetail = {
+    query?: string;
+    includeCompleted?: boolean;
+};
 
 export const resolveGlobalSearchTaskView = resolveTaskNavigationView;
 
@@ -127,6 +132,26 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
     const futureStartDayKey = useLocalDayKey(isOpen && hideFutureTasks);
     const futureStartRevealTick = useFutureStartRevealTick(_allTasks, isOpen && hideFutureTasks);
 
+    const openSearch = useCallback((detail: OpenGlobalSearchDetail = {}) => {
+        const requestedQuery = typeof detail.query === 'string' ? detail.query : '';
+        setQuery(requestedQuery);
+        setSearchQuery(requestedQuery);
+        setSelectedIndex(0);
+        setShowSavePrompt(false);
+        setIncludeCompleted(detail.includeCompleted ?? defaultIncludeCompleted);
+        setIncludeReference(true);
+        setHideFutureTasks(false);
+        setFiltersOpen(false);
+        setSelectedStatuses([]);
+        setSelectedArea('all');
+        setSelectedTokens([]);
+        setLocationQuery('');
+        setDuePreset('any');
+        setScope('all');
+        setIsOpen(true);
+        setTimeout(() => inputRef.current?.focus(), 0);
+    }, [defaultIncludeCompleted]);
+
     // Toggle search with Cmd+K / Ctrl+K
     useEffect(() => {
         isOpenRef.current = isOpen;
@@ -136,7 +161,8 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
-                setIsOpen(prev => !prev);
+                if (isOpenRef.current) setIsOpen(false);
+                else openSearch();
             }
             if (e.key === 'Escape' && isOpenRef.current) {
                 setIsOpen(false);
@@ -145,13 +171,18 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [openSearch]);
 
     useEffect(() => {
-        const handleOpen: EventListener = () => setIsOpen(true);
+        const handleOpen: EventListener = (event) => {
+            const detail = event instanceof CustomEvent && event.detail && typeof event.detail === 'object'
+                ? event.detail as OpenGlobalSearchDetail
+                : {};
+            openSearch(detail);
+        };
         window.addEventListener('mindwtr:open-search', handleOpen);
         return () => window.removeEventListener('mindwtr:open-search', handleOpen);
-    }, []);
+    }, [openSearch]);
 
     // Auto-focus input when opened. Focus immediately so keys typed right
     // after "/" land in the query instead of nowhere; the delayed retry covers
@@ -160,20 +191,6 @@ export function GlobalSearch({ onNavigate, defaultIncludeCompleted = false }: Gl
         if (isOpen) {
             inputRef.current?.focus();
             setTimeout(() => inputRef.current?.focus(), 50);
-            setQuery('');
-            setSearchQuery('');
-            setSelectedIndex(0);
-            setShowSavePrompt(false);
-            setIncludeCompleted(defaultIncludeCompleted);
-            setIncludeReference(true);
-            setHideFutureTasks(false);
-            setFiltersOpen(false);
-            setSelectedStatuses([]);
-            setSelectedArea('all');
-            setSelectedTokens([]);
-            setLocationQuery('');
-            setDuePreset('any');
-            setScope('all');
         }
     }, [isOpen]);
 

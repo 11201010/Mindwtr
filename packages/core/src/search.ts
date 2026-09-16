@@ -2,6 +2,7 @@ import { addDays, addMonths, addWeeks, addYears, endOfDay, isAfter, isBefore, is
 import { safeParseDate, safeParseDueDate } from './date';
 import { matchesHierarchicalToken, normalizePrefixedToken } from './hierarchy-utils';
 import { normalizeTaskStatus, TASK_STATUS_SET } from './task-status';
+import { taskMatchesPerson } from './people';
 import { SEARCH_RESULT_LIMIT, type SearchResults } from './storage';
 import type { Project, Task } from './types';
 
@@ -27,8 +28,54 @@ const ASSIGNEE_FIELDS = new Set(['assigned', 'assignee', 'assignedto']);
 const LOCATION_FIELDS = new Set(['location', 'where']);
 
 function tokenize(query: string): string[] {
-    const tokens = query.match(/-?[^:\s]+:"[^"]+"|"[^"]+"|\S+/g) || [];
-    return tokens.map((t) => t.trim()).filter(Boolean);
+    const tokens: string[] = [];
+    let token = '';
+    let quoted = false;
+    let escaped = false;
+    for (const character of query) {
+        if (escaped) {
+            token += character;
+            escaped = false;
+            continue;
+        }
+        if (quoted && character === '\\') {
+            token += character;
+            escaped = true;
+            continue;
+        }
+        if (character === '"') {
+            quoted = !quoted;
+            token += character;
+            continue;
+        }
+        if (/\s/.test(character) && !quoted) {
+            if (token) tokens.push(token);
+            token = '';
+            continue;
+        }
+        token += character;
+    }
+    if (token) tokens.push(token);
+    return tokens.map((value) => value.trim()).filter(Boolean);
+}
+
+function decodeSearchValue(value: string): string {
+    if (value.startsWith('"') && value.endsWith('"')) {
+        const quoted = value.slice(1, -1);
+        let decoded = '';
+        for (let index = 0; index < quoted.length; index += 1) {
+            const character = quoted[index];
+            const next = quoted[index + 1];
+            if (character === '\\' && (next === '"' || next === '\\')) {
+                decoded += next;
+                index += 1;
+            } else {
+                decoded += character;
+            }
+        }
+        return decoded;
+    }
+    return value;
 }
 
 function parseComparator(value: string): { comparator: SearchComparator | null; rest: string } {
@@ -102,7 +149,7 @@ export function parseSearchQuery(query: string): SearchQuery {
             token = token.slice(1);
         }
 
-        token = token.replace(/^"|"$/g, '');
+        token = decodeSearchValue(token);
 
         const colonIndex = token.indexOf(':');
         if (colonIndex > 0) {
@@ -112,7 +159,7 @@ export function parseSearchQuery(query: string): SearchQuery {
             currentTerms.push({
                 field,
                 comparator,
-                value: rest.replace(/^"|"$/g, ''),
+                value: decodeSearchValue(rest),
                 negated,
             });
         } else {
@@ -187,7 +234,7 @@ function matchDueDateField(dateStr: string | undefined, comparator: SearchCompar
 }
 
 export function matchesTask(term: SearchTerm, task: Task, projectById: Map<string, Project> | null, now: Date): boolean {
-    if (task.deletedAt) return false;
+    if (task.deletedAt || task.purgedAt) return false;
 
     const field = term.field;
     const value = term.value;
@@ -221,6 +268,8 @@ export function matchesTask(term: SearchTerm, task: Task, projectById: Map<strin
         }
     } else if (ASSIGNEE_FIELDS.has(field)) {
         result = value.trim().length > 0 && matchesText(task.assignedTo, value);
+    } else if (field === 'person') {
+        result = taskMatchesPerson(task, value);
     } else if (LOCATION_FIELDS.has(field)) {
         result = value.trim().length > 0 && matchesText(task.location, value);
     } else if (DATE_FIELDS.has(field)) {
@@ -243,6 +292,7 @@ export function matchesProject(term: SearchTerm, project: Project, now: Date): b
 
     const field = term.field;
     const value = term.value;
+    if (field === 'person') return false;
     let result = false;
 
     if (!field) {
@@ -262,11 +312,11 @@ export function matchesProject(term: SearchTerm, project: Project, now: Date): b
 
 export function filterTasksBySearch(tasks: Task[], projects: Project[], query: string, now: Date = new Date()): Task[] {
     if (!query.trim()) {
-        return tasks.filter((task) => !task.deletedAt);
+        return tasks.filter((task) => !task.deletedAt && !task.purgedAt);
     }
     const ast = parseSearchQuery(query);
     if (ast.clauses.length === 0) {
-        return tasks.filter((task) => !task.deletedAt);
+        return tasks.filter((task) => !task.deletedAt && !task.purgedAt);
     }
     const requiresProjectLookup = ast.clauses.some((clause) =>
         clause.terms.some((term) => term.field === 'project')
@@ -276,7 +326,7 @@ export function filterTasksBySearch(tasks: Task[], projects: Project[], query: s
         : null;
 
     return tasks.filter((task) => {
-        if (task.deletedAt) return false;
+        if (task.deletedAt || task.purgedAt) return false;
         return ast.clauses.some((clause) => clause.terms.every((term) => matchesTask(term, task, projectById, now)));
     });
 }

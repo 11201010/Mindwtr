@@ -3,7 +3,7 @@ import { DndContext, type DragEndEvent, closestCenter, useSensor, useSensors, Po
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, ChevronDown, ChevronRight, Pencil, Check, X, ExternalLink } from 'lucide-react';
-import { DEFAULT_AREA_COLOR, formatI18nTemplate, getPersonNameKey, sortViewSectionDefinitions, translateWithFallback, useTaskStore, type Area, type Person, type ViewSectionDefinition,
+import { buildPersonSearchQuery, DEFAULT_AREA_COLOR, formatI18nTemplate, getPersonNameKey, getPersonTaskCounts, sortViewSectionDefinitions, translateWithFallback, useTaskStore, type Area, type Person, type ViewSectionDefinition,
     baseTextCollator,
 } from '@mindwtr/core';
 import { AreaColorPicker } from '../projects/AreaColorPicker';
@@ -274,6 +274,7 @@ function PersonRow({
     onDelete,
     onRename,
     onUpdate,
+    onReview,
     resolveText,
     translate,
 }: {
@@ -282,6 +283,7 @@ function PersonRow({
     onDelete: (id: string) => void;
     onRename: (id: string, name: string) => void;
     onUpdate: (id: string, updates: Partial<Person>) => void;
+    onReview: (person: Person) => void;
     resolveText: (key: string, fallback: string) => string;
     translate: (key: string) => string;
 }) {
@@ -337,9 +339,14 @@ function PersonRow({
                     aria-label={resolveText('people.name', 'Name')}
                     className="min-w-0 flex-1 bg-background border border-border rounded px-2 py-1 text-sm"
                 />
-                <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                <button
+                    type="button"
+                    onClick={() => onReview(person)}
+                    aria-label={`${person.name}: ${taskCount} ${translate('common.tasks')}`}
+                    className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
                     {taskCount} {translate('common.tasks')}
-                </span>
+                </button>
                 <button
                     type="button"
                     onClick={() => void openReferenceLink()}
@@ -423,7 +430,7 @@ function ManageSection({
 export function SettingsManagePage({ t: _t, translate, requestConfirmation }: SettingsManagePageProps) {
     const areas = useTaskStore((s) => s.areas);
     const people = useTaskStore((s) => s.people);
-    const tasks = useTaskStore((s) => s.tasks);
+    const allTasks = useTaskStore((s) => s._allTasks);
     const settings = useTaskStore((s) => s.settings);
     const addArea = useTaskStore((s) => s.addArea);
     const updateArea = useTaskStore((s) => s.updateArea);
@@ -446,13 +453,15 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
     const sortedAreas = [...areas].sort((a, b) => a.order - b.order);
     const sortedPeople = [...people].sort((a, b) => baseTextCollator.compare(a.name, b.name));
     const somedaySections = sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday);
-    const assignedTaskCountByPerson = new Map<string, number>();
-    tasks.forEach((task) => {
-        if (task.deletedAt) return;
-        const key = getPersonNameKey(task.assignedTo);
-        if (!key) return;
-        assignedTaskCountByPerson.set(key, (assignedTaskCountByPerson.get(key) ?? 0) + 1);
-    });
+    const personTaskCountByName = getPersonTaskCounts(allTasks);
+    const reviewPerson = (person: Person) => {
+        window.dispatchEvent(new CustomEvent('mindwtr:open-search', {
+            detail: {
+                query: buildPersonSearchQuery(person.name),
+                includeCompleted: true,
+            },
+        }));
+    };
 
     // New area form
     const [newAreaName, setNewAreaName] = useState('');
@@ -641,9 +650,10 @@ export function SettingsManagePage({ t: _t, translate, requestConfirmation }: Se
                     <PersonRow
                         key={person.id}
                         person={person}
-                        taskCount={assignedTaskCountByPerson.get(getPersonNameKey(person.name)) ?? 0}
+                        taskCount={personTaskCountByName.get(getPersonNameKey(person.name)) ?? 0}
                         onRename={(id, name) => void renamePerson(id, name, { updateTasks: true })}
                         onUpdate={(id, updates) => void updatePerson(id, updates)}
+                        onReview={reviewPerson}
                         onDelete={(id) => void confirmDelete('people.deleteConfirm', 'Delete this person? Tasks assigned to them will be kept and moved to unassigned.', () => void deletePerson(id))}
                         resolveText={resolveText}
                         translate={translate}

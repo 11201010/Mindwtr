@@ -25,6 +25,43 @@ export const normalizePersonName = (value: unknown): string => (
 
 export const getPersonNameKey = (value: unknown): string => normalizePersonName(value).toLowerCase();
 
+const getPersonContextNameKey = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('@')) return '';
+    return getPersonNameKey(trimmed.slice(1));
+};
+
+export function taskMatchesPerson(task: Task, personName: unknown): boolean {
+    if (task.deletedAt || task.purgedAt) return false;
+    const personKey = getPersonNameKey(personName);
+    if (!personKey) return false;
+    if (getPersonNameKey(task.assignedTo) === personKey) return true;
+    return (task.contexts ?? []).some((context) => getPersonContextNameKey(context) === personKey);
+}
+
+export function getPersonTaskCounts(tasks: readonly Task[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const task of tasks) {
+        if (task.deletedAt || task.purgedAt) continue;
+        const matchedPeople = new Set<string>();
+        const assignedKey = getPersonNameKey(task.assignedTo);
+        if (assignedKey) matchedPeople.add(assignedKey);
+        for (const context of task.contexts ?? []) {
+            const contextKey = getPersonContextNameKey(context);
+            if (contextKey) matchedPeople.add(contextKey);
+        }
+        for (const personKey of matchedPeople) {
+            counts.set(personKey, (counts.get(personKey) ?? 0) + 1);
+        }
+    }
+    return counts;
+}
+
+export function buildPersonSearchQuery(personName: unknown): string {
+    return `person:${JSON.stringify(normalizePersonName(personName))}`;
+}
+
 export const normalizePersonReferenceLink = (value: unknown): string | undefined => {
     const trimmed = normalizeOptionalString(value);
     if (!trimmed) return undefined;

@@ -7,14 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     AREA_PRESET_COLORS,
     DEFAULT_AREA_COLOR,
+    buildPersonSearchQuery,
     formatI18nTemplate,
     getPersonNameKey,
+    getPersonTaskCounts,
     sortViewSectionDefinitions,
     type Area,
     type Person,
     useTaskStore,
     baseTextCollator,
 } from '@mindwtr/core';
+import { useRouter } from 'expo-router';
 
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { CompactText } from '@/components/compact-text';
@@ -103,13 +106,14 @@ function CollapsibleSection({
 }
 
 export function ManageSettingsScreen() {
+    const router = useRouter();
     const tc = useThemeColors();
     const { t } = useSettingsLocalization();
     const scrollContentStyle = useSettingsScrollContent();
     const areas = useTaskStore((state) => state.areas);
     const people = useTaskStore((state) => state.people);
     const settings = useTaskStore((state) => state.settings);
-    const tasks = useTaskStore((state) => state.tasks);
+    const allTasks = useTaskStore((state) => state._allTasks);
     const derivedState = useTaskStore((state) => state.getDerivedState());
     const addArea = useTaskStore((state) => state.addArea);
     const deleteArea = useTaskStore((state) => state.deleteArea);
@@ -132,16 +136,7 @@ export function ManageSettingsScreen() {
         () => sortViewSectionDefinitions(settings.gtd?.viewSections?.someday),
         [settings.gtd?.viewSections?.someday],
     );
-    const assignedTaskCountByPerson = useMemo(() => {
-        const counts = new Map<string, number>();
-        tasks.forEach((task) => {
-            if (task.deletedAt) return;
-            const key = getPersonNameKey(task.assignedTo);
-            if (!key) return;
-            counts.set(key, (counts.get(key) ?? 0) + 1);
-        });
-        return counts;
-    }, [tasks]);
+    const personTaskCountByName = useMemo(() => getPersonTaskCounts(allTasks), [allTasks]);
     const { allContexts, allTags } = derivedState;
     const [editorTarget, setEditorTarget] = useState<
         | { type: 'area'; id: string; name: string; color?: string }
@@ -381,7 +376,7 @@ export function ManageSettingsScreen() {
     );
 
     const PersonRow = ({ person }: { person: Person }) => {
-        const taskCount = assignedTaskCountByPerson.get(getPersonNameKey(person.name)) ?? 0;
+        const taskCount = personTaskCountByName.get(getPersonNameKey(person.name)) ?? 0;
         const referenceLink = person.referenceLink?.trim();
         const canOpenReferenceLink = isSafePersonReferenceLink(referenceLink);
         const initial = person.name.trim().slice(0, 1).toUpperCase() || '?';
@@ -412,6 +407,24 @@ export function ManageSettingsScreen() {
                         {detail}
                     </Text>
                 </View>
+                <TouchableOpacity
+                    accessibilityLabel={`${person.name}: ${taskCount} ${t('common.tasks')}`}
+                    accessibilityRole="button"
+                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                    onPress={() => router.push({
+                        pathname: '/global-search',
+                        params: {
+                            q: buildPersonSearchQuery(person.name),
+                            includeCompleted: 'true',
+                        },
+                    })}
+                    style={{ padding: 8 }}
+                    testID={`manage-person-review-${person.id}`}
+                >
+                    <Text style={{ color: tc.secondaryText, fontSize: 13 }}>
+                        {taskCount} {t('common.tasks')}
+                    </Text>
+                </TouchableOpacity>
                 {canOpenReferenceLink ? (
                     <TouchableOpacity
                         accessibilityLabel={resolveText('people.openReference', 'Open reference link')}

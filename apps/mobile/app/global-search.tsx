@@ -59,16 +59,6 @@ const firstSearchParam = (value: string | string[] | undefined): string => {
     return typeof value === 'string' ? value : '';
 };
 
-const decodeSearchParam = (value: string | string[] | undefined): string => {
-    const raw = firstSearchParam(value);
-    if (!raw) return '';
-    try {
-        return decodeURIComponent(raw);
-    } catch {
-        return raw;
-    }
-};
-
 export default function SearchScreen() {
     const { _allTasks, _tasksById, projects, areas, settings, updateSettings, updateTask, setHighlightTask } = useTaskStore((state) => ({
         _allTasks: state._allTasks,
@@ -84,8 +74,9 @@ export default function SearchScreen() {
     const { t } = useLanguage();
     const { showToast } = useToast();
     const router = useRouter();
-  const params = useLocalSearchParams<{ q?: string }>();
-  const requestedQuery = decodeSearchParam(params.q);
+  const params = useLocalSearchParams<{ q?: string; includeCompleted?: string }>();
+  const requestedQuery = firstSearchParam(params.q);
+  const requestedIncludeCompleted = firstSearchParam(params.includeCompleted).toLowerCase() === 'true';
   const [query, setQuery] = useState(requestedQuery);
   const [ftsResults, setFtsResults] = useState<SearchResults | null>(null);
   // Which query the current ftsResults answer — stale answers must not merge
@@ -96,7 +87,7 @@ export default function SearchScreen() {
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [includeCompleted, setIncludeCompleted] = useState(false);
+    const [includeCompleted, setIncludeCompleted] = useState(requestedIncludeCompleted);
     const [includeReference, setIncludeReference] = useState(true);
     const [hideFutureTasks, setHideFutureTasks] = useState(false);
     const [selectedStatuses, setSelectedStatuses] = useState<TaskStatus[]>([]);
@@ -111,13 +102,17 @@ export default function SearchScreen() {
     const futureStartRevealTick = useFutureStartRevealTick(_allTasks, hideFutureTasks);
 
     useEffect(() => {
-        // Auto-focus after mounting
-        setTimeout(() => inputRef.current?.focus(), 100);
-    }, []);
+        const handle = setTimeout(() => {
+            if (requestedQuery.trim()) inputRef.current?.blur();
+            else inputRef.current?.focus();
+        }, 100);
+        return () => clearTimeout(handle);
+    }, [requestedQuery]);
 
     useEffect(() => {
         setQuery(requestedQuery);
-    }, [requestedQuery]);
+        setIncludeCompleted(requestedIncludeCompleted);
+    }, [requestedIncludeCompleted, requestedQuery]);
 
     const placeholderColor = tc.secondaryText;
 

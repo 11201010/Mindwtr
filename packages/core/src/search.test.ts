@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { filterTasksBySearch, searchAll } from './search';
+import { buildPersonSearchQuery } from './people';
+import { filterProjectsBySearch, filterTasksBySearch, searchAll } from './search';
 import type { Project, Task } from './types';
 
 describe('search', () => {
@@ -238,6 +239,72 @@ describe('search', () => {
 
         const results = filterTasksBySearch(tasks, [], 'assignee:"Tom Smith"');
         expect(results.map((task) => task.id)).toEqual(['t1']);
+    });
+
+    it('matches a person by exact assignment or exact context and deduplicates tasks', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const tasks: Task[] = [
+            { id: 'assigned', title: 'Assigned', status: 'waiting', assignedTo: ' Alex  Smith ', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'context', title: 'Context', status: 'next', tags: [], contexts: ['@ALEX SMITH'], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'both', title: 'Both', status: 'done', assignedTo: 'Alex Smith', tags: [], contexts: ['@alex smith'], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'reference', title: 'Reference', status: 'reference', tags: [], contexts: ['@Alex Smith'], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'similar', title: 'Similar', status: 'next', assignedTo: 'Alex', tags: [], contexts: ['@Alex Smith/Office', '@Alexandra Smith'], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'ordinary', title: 'Ordinary', status: 'reference', tags: [], contexts: ['Alex Smith'], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'deleted', title: 'Deleted', status: 'next', assignedTo: 'Alex Smith', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso, deletedAt: nowIso },
+            { id: 'purged', title: 'Purged', status: 'next', tags: [], contexts: ['@Alex Smith'], createdAt: nowIso, updatedAt: nowIso, purgedAt: nowIso },
+        ];
+
+        expect(filterTasksBySearch(tasks, [], 'person:"alex smith"').map((item) => item.id)).toEqual([
+            'assigned', 'context', 'both', 'reference',
+        ]);
+        expect(filterTasksBySearch(tasks, [], '-person:"alex smith"').map((item) => item.id)).toEqual([
+            'similar', 'ordinary',
+        ]);
+        expect(filterTasksBySearch(tasks, [], 'person:""')).toEqual([]);
+    });
+
+    it('keeps generated person queries safe for punctuation, quotes, backslashes, and operators', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const name = 'Alex: "OR" \\ Ops';
+        const tasks: Task[] = [
+            { id: 'exact', title: 'Exact', status: 'next', assignedTo: name, tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'injected', title: 'Injected', status: 'next', assignedTo: 'Someone else', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+        ];
+        const query = buildPersonSearchQuery(name);
+
+        expect(filterTasksBySearch(tasks, [], query).map((item) => item.id)).toEqual(['exact']);
+        expect(filterTasksBySearch(tasks, [], `${query} OR status:waiting`).map((item) => item.id)).toEqual(['exact']);
+    });
+
+    it('preserves literal backslashes in existing quoted searches', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const tasks: Task[] = [
+            { id: 'tab', title: String.raw`C:\temp`, status: 'next', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'newline', title: String.raw`folder\new`, status: 'next', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'backspace', title: String.raw`alpha\beta`, status: 'next', tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+            { id: 'location', title: 'Path', status: 'next', location: String.raw`C:\temp`, tags: [], contexts: [], createdAt: nowIso, updatedAt: nowIso },
+        ];
+
+        expect(filterTasksBySearch(tasks, [], String.raw`"C:\temp"`).map((item) => item.id)).toEqual(['tab']);
+        expect(filterTasksBySearch(tasks, [], String.raw`"folder\new"`).map((item) => item.id)).toEqual(['newline']);
+        expect(filterTasksBySearch(tasks, [], String.raw`"alpha\beta"`).map((item) => item.id)).toEqual(['backspace']);
+        expect(filterTasksBySearch(tasks, [], String.raw`location:"C:\temp"`).map((item) => item.id)).toEqual(['location']);
+    });
+
+    it('never matches projects by literal text for a person field', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const projects: Project[] = [{
+            id: 'project-person-text',
+            title: 'person:Alex',
+            color: '#000000',
+            status: 'active',
+            tagIds: [],
+            createdAt: nowIso,
+            updatedAt: nowIso,
+        }];
+
+        expect(filterProjectsBySearch(projects, 'person:"Alex"')).toEqual([]);
+        expect(filterProjectsBySearch(projects, '-person:"Alex"')).toEqual([]);
     });
 
     it('matches assigned people in unfielded task searches', () => {

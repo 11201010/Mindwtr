@@ -376,6 +376,48 @@ describe('GlobalSearch', () => {
         expect(screen.getByText((_, element) => element?.textContent === 'Archived report')).toBeInTheDocument();
     });
 
+    it('opens with a requested person query and completed tasks, then resets for a plain open', async () => {
+        useTaskStore.setState({
+            _allTasks: [
+                ...tasks,
+                {
+                    id: 'person-done',
+                    title: 'Alex completed follow-up',
+                    status: 'done',
+                    assignedTo: 'Alex',
+                    tags: [],
+                    contexts: [],
+                    createdAt: now,
+                    updatedAt: now,
+                    completedAt: now,
+                },
+            ],
+        });
+        render(
+            <LanguageProvider>
+                <GlobalSearch onNavigate={vi.fn()} />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:open-search', {
+                detail: { query: 'person:"Alex"', includeCompleted: true },
+            }));
+            await vi.advanceTimersByTimeAsync(250);
+        });
+
+        expect(screen.getByRole('textbox')).toHaveValue('person:"Alex"');
+        expect(screen.getByText((_, element) => element?.textContent === 'Alex completed follow-up')).toBeInTheDocument();
+
+        await act(async () => {
+            window.dispatchEvent(new Event('mindwtr:open-search'));
+            await vi.advanceTimersByTimeAsync(50);
+        });
+
+        expect(screen.getByRole('textbox')).toHaveValue('');
+        expect(screen.queryByText('Include Done and Archived tasks')).not.toBeInTheDocument();
+    });
+
     // A project workspace never lists archived tasks and hides done ones unless
     // that project has them switched on, so routing a finished task there sent
     // the user to a page that could not show it (#991).

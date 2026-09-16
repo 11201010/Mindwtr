@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ManageSettingsScreen } from './manage-settings-screen';
 
+const routerPushMock = vi.hoisted(() => vi.fn());
+
 const asyncStorageMocks = vi.hoisted(() => ({
   getItem: vi.fn(),
   setItem: vi.fn().mockResolvedValue(undefined),
@@ -26,7 +28,10 @@ const storeState = vi.hoisted(() => ({
   ],
   tasks: [
     { id: 'task-1', title: 'Review build', assignedTo: 'Alex' },
-  ],
+  ] as any[],
+  _allTasks: [
+    { id: 'task-1', title: 'Review build', assignedTo: 'Alex' },
+  ] as any[],
   settings: {
     appearance: {
       density: 'compact',
@@ -70,12 +75,32 @@ vi.mock('@mindwtr/core', () => ({
     template.replace(/{{(\w+)}}/g, (_match, key: string) => values[key] ?? '')
   ),
   getPersonNameKey: (value?: string) => value?.trim().toLowerCase() ?? '',
+  getPersonTaskCounts: (tasks: any[]) => {
+    const counts = new Map<string, number>();
+    for (const task of tasks) {
+      if (task.deletedAt || task.purgedAt) continue;
+      const keys = new Set<string>();
+      const assigned = task.assignedTo?.trim().toLowerCase();
+      if (assigned) keys.add(assigned);
+      for (const context of task.contexts ?? []) {
+        const trimmed = context.trim();
+        if (trimmed.startsWith('@') && trimmed.slice(1).trim()) keys.add(trimmed.slice(1).trim().toLowerCase());
+      }
+      keys.forEach((key) => counts.set(key, (counts.get(key) ?? 0) + 1));
+    }
+    return counts;
+  },
+  buildPersonSearchQuery: (value?: string) => `person:${JSON.stringify(value?.trim().replace(/\s+/g, ' ') ?? '')}`,
   sortViewSectionDefinitions: (definitions: any[] = []) => [...definitions].sort((a, b) => a.order - b.order),
   tFallback: (translate: (key: string) => string, key: string, fallback: string) => {
     const value = translate(key);
     return value && value !== key ? value : fallback;
   },
   useTaskStore: (selector?: (state: typeof storeState) => unknown) => (selector ? selector(storeState) : storeState),
+}));
+
+vi.mock('expo-router', () => ({
+  useRouter: () => ({ push: routerPushMock }),
 }));
 
 vi.mock('@/hooks/use-theme-colors', () => ({
@@ -141,6 +166,9 @@ describe('ManageSettingsScreen', () => {
     storeState.updatePerson.mockClear();
     storeState.renamePerson.mockClear();
     storeState.deletePerson.mockClear();
+    routerPushMock.mockClear();
+    storeState.tasks = [{ id: 'task-1', title: 'Review build', assignedTo: 'Alex' }];
+    storeState._allTasks = storeState.tasks;
   });
 
   it('restores persisted open sections on mount', async () => {
@@ -263,6 +291,49 @@ describe('ManageSettingsScreen', () => {
       note: 'Ops lead',
       referenceLink: 'obsidian://people/morgan',
     });
+  });
+
+  it('shows a review count beside person notes and opens completed-inclusive person search', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ people: true }));
+    storeState.tasks = [
+      { id: 'assigned', title: 'Assigned', assignedTo: 'Alex', contexts: [] },
+      { id: 'context', title: 'Context', contexts: ['@alex'] },
+      { id: 'both', title: 'Both', assignedTo: 'Alex', contexts: ['@Alex'] },
+      { id: 'done', title: 'Done', contexts: ['@Alex'], status: 'done' },
+      { id: 'other', title: 'Other', contexts: ['@Alex/Office'] },
+    ];
+    storeState._allTasks = storeState.tasks;
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+
+    expect(tree.root.findByProps({ accessibilityLabel: 'Alex: 4 tasks' })).toBeTruthy();
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'Text' && node.props.children === 'QA lead')).toHaveLength(1);
+
+    renderer.act(() => {
+      tree.root.findByProps({ testID: 'manage-person-review-person-1' }).props.onPress();
+    });
+    expect(routerPushMock).toHaveBeenCalledWith({
+      pathname: '/global-search',
+      params: { q: 'person:"Alex"', includeCompleted: 'true' },
+    });
+  });
+
+  it('counts an archived-only person task from the canonical task collection', async () => {
+    asyncStorageMocks.getItem.mockResolvedValue(JSON.stringify({ people: true }));
+    storeState.tasks = [];
+    storeState._allTasks = [{ id: 'archived', title: 'Archived', assignedTo: 'Alex', status: 'archived' }];
+
+    let tree!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+      tree = renderer.create(<ManageSettingsScreen />);
+      await flushEffects();
+    });
+
+    expect(tree.root.findByProps({ accessibilityLabel: 'Alex: 1 tasks' })).toBeTruthy();
   });
 
   it('creates a managed area from the areas section', async () => {
