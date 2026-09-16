@@ -32,7 +32,9 @@ const getFreePort = async (): Promise<number> =>
 
 const waitForHealth = async (baseUrl: string, token?: string) => {
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  // Up to 30 s: a loaded CI runner can take seconds to bind the port, and a
+  // readiness wait is not a performance budget.
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     try {
       const response = await fetch(`${baseUrl}/health`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
