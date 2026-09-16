@@ -248,6 +248,67 @@ describe('mobile background sync task', () => {
   // The task body runs in a headless RN instance that is destroyed as soon as this
   // promise settles. Deferred op-sqlite work left in flight resolves into a freed
   // Hermes heap and kills the process, so quiescing must happen on every exit path.
+  it('skips a background run while the failure cooldown is live and resumes after it', async () => {
+    const { BACKGROUND_SYNC_FAILURE_STATE_KEY } = await import('./sync-constants');
+    syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+    syncServiceMock.performMobileSync.mockResolvedValue({ success: false, error: 'auth failed' });
+    const module = await loadModule();
+    const intervalMs = module.MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES * 60_000;
+
+    const rewind = (intervals: number, consecutiveFailures: number) => {
+      asyncStorageMock.store.set(BACKGROUND_SYNC_FAILURE_STATE_KEY, JSON.stringify({
+        lastFailureAt: Date.now() - intervals * intervalMs, consecutiveFailures,
+      }));
+    };
+
+    // Two failures in a row: the second is recorded with an escalated cooldown.
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Failed);
+    expect(JSON.parse(asyncStorageMock.store.get(BACKGROUND_SYNC_FAILURE_STATE_KEY)!))
+      .toMatchObject({ consecutiveFailures: 1 });
+    rewind(1, 1);
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Failed);
+    expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(asyncStorageMock.store.get(BACKGROUND_SYNC_FAILURE_STATE_KEY)!))
+      .toMatchObject({ consecutiveFailures: 2 });
+
+    // The third invocation lands one interval later, inside the 2-interval cooldown.
+    rewind(1, 2);
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Success);
+    expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(2);
+    expect(storageAdapterMock.quiesceMobileStorage).toHaveBeenCalledTimes(2);
+    expect(appLogMock.logInfo).toHaveBeenCalledWith(
+      'Mobile background sync skipped during failure cooldown',
+      expect.objectContaining({ extra: expect.objectContaining({ consecutiveFailures: '2' }) }),
+    );
+
+    // Past the cooldown it runs again, and a success clears the record.
+    rewind(3, 2);
+    syncServiceMock.performMobileSync.mockResolvedValue({ success: true });
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Success);
+    expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(3);
+    expect(asyncStorageMock.store.has(BACKGROUND_SYNC_FAILURE_STATE_KEY)).toBe(false);
+  });
+
+  it('caps the background failure cooldown', async () => {
+    const { BACKGROUND_SYNC_FAILURE_STATE_KEY } = await import('./sync-constants');
+    syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+    const module = await loadModule();
+    const setRecord = (waitedMs: number) => {
+      asyncStorageMock.store.set(BACKGROUND_SYNC_FAILURE_STATE_KEY, JSON.stringify({
+        lastFailureAt: Date.now() - waitedMs, consecutiveFailures: 40,
+      }));
+    };
+
+    // Far more failures than the ceiling: the wait is the ceiling, never 2^40 intervals.
+    setRecord(module.MOBILE_BACKGROUND_SYNC_MAX_FAILURE_COOLDOWN_MS - 60_000);
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Success);
+    expect(syncServiceMock.performMobileSync).not.toHaveBeenCalled();
+
+    setRecord(module.MOBILE_BACKGROUND_SYNC_MAX_FAILURE_COOLDOWN_MS + 1);
+    expect(await taskManagerMock.state.executor?.()).toBe(backgroundTaskMock.BackgroundTaskResult.Success);
+    expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(1);
+  });
+
   it('quiesces deferred storage work on both the success and failure paths', async () => {
     syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
 

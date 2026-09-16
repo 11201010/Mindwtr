@@ -10,6 +10,7 @@ import { areJsTimersPaused } from './js-timers';
 import { quiesceMobileStorage } from './storage-adapter';
 import { abortMobileSync, getMobileSyncConfigurationStatus, performMobileSync, setMobileSyncRequestDeadline } from './sync-service';
 import {
+  BACKGROUND_SYNC_FAILURE_STATE_KEY,
   BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY,
   type LegacyBackgroundSyncInterval,
 } from './sync-constants';
@@ -34,6 +35,12 @@ export const MOBILE_BACKGROUND_SYNC_QUIESCE_DEADLINE_MS = 20 * 1000;
  *  that lives this long is what drained batteries in #1001, and the log a
  *  user shares is the only view into a background run. */
 export const MOBILE_BACKGROUND_SYNC_SLOW_RUN_MS = 60 * 1000;
+/** Ceiling for the failure cooldown below: eight scheduled intervals, i.e. two
+ *  hours. The foreground controller's ceiling (10 minutes) cannot be reused —
+ *  it is shorter than this task's own 15-minute interval, so it would never
+ *  skip a run. */
+export const MOBILE_BACKGROUND_SYNC_MAX_FAILURE_COOLDOWN_MS =
+  8 * MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES * 60 * 1000;
 
 type MobileBackgroundSyncRegistrationAction = 'registered' | 'unregistered' | 'unchanged';
 
@@ -116,6 +123,52 @@ const clearLastRegisteredBackgroundSyncInterval = async (): Promise<void> => {
   }
 };
 
+// A backend that cannot accept this device (a wrong password, a server that is
+// gone) otherwise costs a full failing cycle — wakelock, storage flush, network
+// — every 15 minutes forever. Each failure in a row doubles the wait from one
+// scheduled interval up to the ceiling above; one success clears the record.
+type BackgroundSyncFailureState = { lastFailureAt: number; consecutiveFailures: number };
+
+const backgroundSyncFailureCooldownMs = (consecutiveFailures: number): number => Math.min(
+  MOBILE_BACKGROUND_SYNC_MAX_FAILURE_COOLDOWN_MS,
+  MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES * 60 * 1000 * (2 ** (Math.max(1, consecutiveFailures) - 1)),
+);
+
+const readBackgroundSyncFailureState = async (): Promise<BackgroundSyncFailureState | null> => {
+  try {
+    const stored = await AsyncStorage.getItem(BACKGROUND_SYNC_FAILURE_STATE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<BackgroundSyncFailureState> | null;
+    const lastFailureAt = Number(parsed?.lastFailureAt);
+    const consecutiveFailures = Number(parsed?.consecutiveFailures);
+    if (!Number.isFinite(lastFailureAt) || !Number.isFinite(consecutiveFailures) || consecutiveFailures < 1) {
+      return null;
+    }
+    return { lastFailureAt, consecutiveFailures };
+  } catch (error) {
+    logBackgroundSyncWarning('Failed to read the background sync failure record', error);
+    return null;
+  }
+};
+
+const recordBackgroundSyncOutcome = async (
+  succeeded: boolean,
+  previous: BackgroundSyncFailureState | null,
+): Promise<void> => {
+  try {
+    if (succeeded) {
+      if (previous) await AsyncStorage.removeItem(BACKGROUND_SYNC_FAILURE_STATE_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(BACKGROUND_SYNC_FAILURE_STATE_KEY, JSON.stringify({
+      lastFailureAt: Date.now(),
+      consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,
+    } satisfies BackgroundSyncFailureState));
+  } catch (error) {
+    logBackgroundSyncWarning('Failed to persist the background sync failure record', error);
+  }
+};
+
 const withDeadline = <T>(work: Promise<T>, deadlineMs: number, onDeadline: () => T): Promise<T> => (
   new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => resolve(onDeadline()), deadlineMs);
@@ -152,6 +205,24 @@ const performBackgroundSyncWork = async (): Promise<BackgroundTask.BackgroundTas
 
 const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskResult> => {
   const startedAt = Date.now();
+  const failureState = await readBackgroundSyncFailureState();
+  if (failureState) {
+    const cooldownMs = backgroundSyncFailureCooldownMs(failureState.consecutiveFailures);
+    const waitedMs = startedAt - failureState.lastFailureAt;
+    // A clock that moved backwards reads as a negative wait; run rather than
+    // sit out a cooldown that can never expire.
+    if (waitedMs >= 0 && waitedMs < cooldownMs) {
+      void logInfo('Mobile background sync skipped during failure cooldown', {
+        scope: 'sync',
+        extra: {
+          consecutiveFailures: String(failureState.consecutiveFailures),
+          cooldownMs: String(cooldownMs),
+          waitedMs: String(waitedMs),
+        },
+      });
+      return BackgroundTask.BackgroundTaskResult.Success;
+    }
+  }
   // Kept on an object: the deadline callback below assigns it from a closure,
   // which control-flow narrowing on a plain `let` cannot see.
   const run: { outcome: 'success' | 'failed' | 'abandoned' | 'crashed' } = { outcome: 'crashed' };
@@ -187,6 +258,9 @@ const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskR
     await withDeadline(quiesceMobileStorage(), MOBILE_BACKGROUND_SYNC_QUIESCE_DEADLINE_MS, () => {
       logBackgroundSyncWarning('Mobile background sync storage quiesce did not finish before its deadline');
     });
+    // Written here for the same reason as the quiesce above: the headless
+    // instance is destroyed as soon as this promise settles.
+    await recordBackgroundSyncOutcome(run.outcome === 'success', failureState);
     const elapsedMs = Date.now() - startedAt;
     const extra = { outcome: run.outcome, elapsedMs: String(elapsedMs) };
     if (elapsedMs >= MOBILE_BACKGROUND_SYNC_SLOW_RUN_MS) {

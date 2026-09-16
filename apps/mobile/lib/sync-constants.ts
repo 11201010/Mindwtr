@@ -26,4 +26,9 @@ export const CLOUDKIT_ZONE_CREATED_KEY = '@mindwtr_cloudkit_zone_created';
  *  older registrations can be recognized and migrated safely. */
 export const BACKGROUND_SYNC_LAST_REGISTERED_INTERVAL_KEY = '@mindwtr_background_sync_last_registered_interval';
 
+/** Device-local record of consecutive background-sync failures, so a run that
+ *  cannot succeed (a wrong password) stops costing a full failing cycle every
+ *  15 minutes. Never synced; cleared by the first background run that works. */
+export const BACKGROUND_SYNC_FAILURE_STATE_KEY = '@mindwtr_background_sync_failure_state_v1';
+
 export type LegacyBackgroundSyncInterval = 'off' | '15m' | '1h' | '6h';
