@@ -31,6 +31,10 @@ import DraggableFlatList, {
 import {
   buildAdvancedFilterCriteriaChips,
   buildFocusPools,
+  buildFocusTaskSections,
+  DEFAULT_FOCUS_SORT_BY,
+  deriveFocusTaskLists,
+  FOCUS_SORT_OPTIONS,
   buildFocusTaskGroups,
   getProjectDeadlineBoostLabel,
   removeAdvancedFilterCriteriaChip,
@@ -69,7 +73,6 @@ import { useTheme } from '../../../contexts/theme-context';
 import { useLanguage } from '../../../contexts/language-context';
 import { useToast } from '../../../contexts/toast-context';
 import { addHardwareBackPressListener } from '@/lib/hardware-back';
-import { buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists } from '@mindwtr/core';
 import { setFocusWidgetFilter } from '@/lib/focus-widget-filter';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import type { TaskEditTab } from '@/components/task-edit/use-task-edit-state';
@@ -97,7 +100,6 @@ import {
 } from '@/components/focus/focus-list-layout';
 
 const FOCUS_GROUP_BY_OPTIONS: FocusGroupBy[] = ['none', 'context', 'project', 'area', 'energy', 'priority', 'person', 'tag'];
-const FOCUS_SORT_OPTIONS: SortField[] = ['default', 'due', 'start', 'priority', 'created', 'created-desc'];
 
 function resolveTaskRouteTab(value?: string | string[]): TaskEditTab {
   const routeValue = Array.isArray(value) ? value[0] : value;

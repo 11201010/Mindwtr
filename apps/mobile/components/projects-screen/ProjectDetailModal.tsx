@@ -29,6 +29,7 @@ import {
     type TaskSortBy,
     getSequentialProjectTaskCues,
     resolveTaskSortByForFeatures,
+    TASK_LIST_SORT_OPTIONS,
     safeFormatDate,
     safeParseDate,
     shallow,
@@ -58,7 +59,6 @@ import type { useProjectAttachments } from './use-project-attachments';
 import type { useProjectNotesEditor } from './use-project-notes-editor';
 import { getAndroidKeyboardFrame } from '../../lib/android-keyboard-frame';
 
-const PROJECT_TASK_SORT_OPTIONS: TaskSortBy[] = ['default', 'due', 'start', 'review', 'timeEstimate', 'title', 'created', 'created-desc'];
 const PROJECT_SHOW_COMPLETED_STORAGE_KEY = 'mindwtr:view:project-detail:show-completed:v1';
 
 type ProjectDetailPresentationStyle = 'pageSheet' | 'fullScreen';
@@ -1749,7 +1749,7 @@ export function ProjectDetailModal({
                                     onClose={() => setProjectSortModalVisible(false)}
                                     onSelect={handleProjectTaskSortSelect}
                                     sortBy={projectTaskSortBy}
-                                    sortOptions={PROJECT_TASK_SORT_OPTIONS}
+                                    sortOptions={TASK_LIST_SORT_OPTIONS}
                                     t={t}
                                     themeColors={tc}
                                     visible={projectSortModalVisible}

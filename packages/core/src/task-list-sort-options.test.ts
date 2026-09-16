@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppSettings } from './types';
 import {
     DONE_TASK_LIST_SORT_OPTIONS,
+    FOCUS_SORT_OPTIONS,
     TASK_LIST_SORT_OPTIONS,
     resolveDoneTaskSortBy,
     resolveNonDoneTaskSortBy,
@@ -22,6 +23,12 @@ describe('task list sort rosters', () => {
             'created-desc',
         ]);
         expect(DONE_TASK_LIST_SORT_OPTIONS).toEqual([...TASK_LIST_SORT_OPTIONS, 'completed']);
+    });
+
+    // Both Focus filter panels read this one; pinning the order keeps the two
+    // pickers showing the same choices in the same places.
+    it('keeps the Focus roster fixed', () => {
+        expect(FOCUS_SORT_OPTIONS).toEqual(['default', 'due', 'start', 'priority', 'created', 'created-desc']);
     });
 });
 

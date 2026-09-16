@@ -22,6 +22,7 @@ import {
     type AppTheme,
     type Language,
     computeTodayFocusTasks,
+    resolveWidgetTaskSort,
     getTranslationsSync,
     isTaskActionable,
     isTaskInActiveProject,
@@ -60,14 +61,10 @@ export interface MacWidgetPayload {
     palette: MacWidgetPalette;
 }
 
-const TASK_SORT_OPTIONS: TaskSortBy[] = ['default', 'due', 'start', 'review', 'timeEstimate', 'title', 'created', 'created-desc'];
-
-const resolveTaskSort = (data: AppData): TaskSortBy => {
-    const sortBy = data.settings?.taskSortBy;
-    const allowed = TASK_SORT_OPTIONS.includes(sortBy as TaskSortBy) ? (sortBy as TaskSortBy) : 'default';
+const resolveTaskSort = (data: AppData): TaskSortBy => (
     // Widgets follow the feature toggles too (#1107).
-    return resolveTaskSortByForFeatures(allowed, data.settings);
-};
+    resolveTaskSortByForFeatures(resolveWidgetTaskSort(data.settings?.taskSortBy), data.settings)
+);
 
 const LIGHT_PALETTE: MacWidgetPalette = {
     background: '#F8FAFC',

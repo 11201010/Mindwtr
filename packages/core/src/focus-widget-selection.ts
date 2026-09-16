@@ -19,6 +19,7 @@
  */
 import { safeParseDate, safeParseDueDate } from './date';
 import { deriveFocusTaskLists, type FocusPools } from './focus-sections';
+import { TASK_LIST_SORT_OPTIONS } from './task-list-sort-options';
 import { shouldShowTaskForStart, sortTasksBy } from './task-utils';
 import type { Project, Section, Task, TaskSortBy } from './types';
 
@@ -124,4 +125,14 @@ export function computeTodayFocusTasks({
             ...activeTasks.filter((task) => listed.has(task.id) && !scheduled.has(task.id)),
         ], sortBy),
     };
+}
+
+/**
+ * The widget payload builders' sort resolver: a stored widget sort that is not
+ * on the task-list roster falls back to the default. One home so a new sort key
+ * cannot reach one widget and miss the other. The caller still applies
+ * `resolveTaskSortByForFeatures` — widgets follow the feature toggles (#1107).
+ */
+export function resolveWidgetTaskSort(stored: unknown): TaskSortBy {
+    return TASK_LIST_SORT_OPTIONS.includes(stored as TaskSortBy) ? stored as TaskSortBy : 'default';
 }

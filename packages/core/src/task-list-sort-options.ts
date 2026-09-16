@@ -5,7 +5,7 @@
  * file because task-utils.ts is already large.
  */
 
-import type { AppSettings, TaskSortBy } from './types';
+import type { AppSettings, SortField, TaskSortBy } from './types';
 import { resolveTaskSortByForFeatures } from './task-utils';
 
 export const TASK_LIST_SORT_OPTIONS: readonly TaskSortBy[] = [
@@ -15,6 +15,17 @@ export const TASK_LIST_SORT_OPTIONS: readonly TaskSortBy[] = [
     'review',
     'timeEstimate',
     'title',
+    'created',
+    'created-desc',
+];
+
+// The Focus screens' own roster: no review/timeEstimate/title, plus priority.
+// Both screens hide 'priority' when the priority feature is off.
+export const FOCUS_SORT_OPTIONS: readonly SortField[] = [
+    'default',
+    'due',
+    'start',
+    'priority',
     'created',
     'created-desc',
 ];

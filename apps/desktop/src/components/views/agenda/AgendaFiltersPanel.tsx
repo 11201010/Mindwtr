@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
+import { FOCUS_SORT_OPTIONS, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, SortField, TaskEnergyLevel, TaskPriority, TimeEstimate } from '@mindwtr/core';
 import { Filter, Save, X } from 'lucide-react';
 
@@ -23,7 +23,6 @@ export type AgendaActiveFilterChip = {
     onRemove?: () => void;
 };
 
-const FOCUS_SORT_OPTIONS: SortField[] = ['default', 'due', 'start', 'priority', 'created', 'created-desc'];
 
 type AgendaFiltersPanelProps = {
     allTokens: string[];
