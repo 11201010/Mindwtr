@@ -58,6 +58,12 @@ Landed right after stable v1.1.0, in the staged commits this plan prescribed.
   (BackendIO), `SyncRunStorage` (Storage), `SyncRunNotifier` (Notifier),
   `now()` injection (Clock), plus `SyncRunStoreBridge` for shared-store access
   and `SyncRunPlatformHooks`/`SyncRunPolicy` for codified platform divergences.
+- `SyncEncryptionPosture` (added 2026-09-16) carries the WebDAV read's
+  encryption facts a platform genuinely owns: its key material, its
+  `[sync-encryption]` diagnostics sink, its durable discovery writes, its
+  no-key error class, and its weak-ETag compatibility line. The decision those
+  feed — which read outcome refuses, which line describes it, in what order the
+  marks are written — belongs to `createSyncBackendIO`, not the transports.
 - Deliberate divergences became explicit policy switches instead of being
   unified: mobile runs the attachment pre-sync before the fast-check and has a
   second read-and-compare skip; mobile fails the cycle on post-merge attachment

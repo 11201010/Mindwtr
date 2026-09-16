@@ -2751,7 +2751,6 @@ export class SyncService {
                 ctx.syncUrl = normalizedUrl;
                 const password = await resolveWebdavPassword(config);
                 const fetcher = await createFetchWithAbortForContext(context);
-                const material = (await getSyncEncryptionMaterial()) ?? undefined;
                 await assertRemoteMutationFenceHeld?.(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
                 return webdavPutSyncDocument(normalizedUrl, sanitized, {
                     allowInsecureHttp: config.allowInsecureHttp,
@@ -2759,7 +2758,7 @@ export class SyncService {
                     password,
                     fetcher,
                     signal: context.requestAbortController.signal,
-                    material,
+                    material: encryptionMaterial ?? undefined,
                     cryptoPrims: desktopSyncCryptoPrimitives,
                     expectedEtag,
                 });
@@ -2780,8 +2779,7 @@ export class SyncService {
                 }
                 const config = context.webdavConfig ?? await SyncService.getWebDavConfig();
                 const password = await resolveWebdavPassword(config);
-                const material = await getSyncEncryptionMaterial();
-                if (material) {
+                if (encryptionMaterial) {
                     throw new SyncEncryptionRemoteVersionUnavailableError('Encrypted WebDAV sync document');
                 }
                 const fetcher = await createFetchWithAbortForContext(context);

@@ -712,19 +712,28 @@ describe('createSyncBackendIO webdav encryption posture', () => {
         platform: 'desktop-native' | 'desktop-web' | 'mobile',
         material: SyncKeyMaterial | null,
     ) => {
+        // ONE interleaved log, not four counters: the machine's comment calls the
+        // order (diagnostics line, then the durable mark, then the throw) load-bearing,
+        // and separate arrays let a refactor swap them without failing anything.
         const calls = {
+            events: [] as string[],
             reads: [] as SyncEncryptionRemoteReadLogInput[],
-            plaintextDiscovered: 0,
             encryptionDiscovered: [] as { salt: Uint8Array; params: SyncCryptoKdfParams }[],
             weakEtag: [] as (string | null)[],
         };
         const posture: SyncEncryptionPosture = {
             material,
-            logRemoteRead: (input) => { calls.reads.push(input); },
-            onRemotePlaintextDiscovered: async () => { calls.plaintextDiscovered += 1; },
-            onRemoteEncryptionDiscovered: async (discovered) => { calls.encryptionDiscovered.push(discovered); },
-            noKeyError: () => (platform === 'mobile' ? new MobileNoKeyError() : new DesktopNoKeyError()),
-            onWeakEtagPlaintextRead: (etag) => { calls.weakEtag.push(etag); },
+            logRemoteRead: (input) => { calls.events.push('log'); calls.reads.push(input); },
+            onRemotePlaintextDiscovered: async () => { calls.events.push('mark-plaintext'); },
+            onRemoteEncryptionDiscovered: async (discovered) => {
+                calls.events.push('mark-encrypted');
+                calls.encryptionDiscovered.push(discovered);
+            },
+            noKeyError: () => {
+                calls.events.push('build-no-key-error');
+                return platform === 'mobile' ? new MobileNoKeyError() : new DesktopNoKeyError();
+            },
+            onWeakEtagPlaintextRead: (etag) => { calls.events.push('weak-etag'); calls.weakEtag.push(etag); },
         };
         return { posture, calls };
     };
@@ -753,7 +762,8 @@ describe('createSyncBackendIO webdav encryption posture', () => {
             );
 
             await expect(io.readRemote()).rejects.toBeInstanceOf(SyncEncryptionRemotePlaintextError);
-            expect(calls.plaintextDiscovered).toBe(1);
+            // The rejection proves the throw came last; this pins the two before it.
+            expect(calls.events).toEqual(['log', 'mark-plaintext']);
             expect(calls.reads).toEqual([{
                 artifact: 'data.json', exists: true, kind: 'plaintext',
                 version: 'strong', decision: 'plaintext-discovered',
@@ -777,6 +787,7 @@ describe('createSyncBackendIO webdav encryption posture', () => {
             expect((error as Error).name).toBe(
                 platform === 'mobile' ? 'SyncEncryptionNoKeyError' : 'SyncEncryptionTerminalError',
             );
+            expect(calls.events).toEqual(['log', 'mark-encrypted', 'build-no-key-error']);
             expect(calls.encryptionDiscovered).toEqual([{ salt: DISCOVERED_SALT, params: MATERIAL.params }]);
             expect(calls.reads[0]).toMatchObject({
                 artifact: 'data.json.enc', kind: 'encrypted', version: 'strong',
@@ -798,6 +809,9 @@ describe('createSyncBackendIO webdav encryption posture', () => {
             );
 
             await expect(io.readRemote()).rejects.toBeInstanceOf(SyncEncryptionRemoteVersionUnavailableError);
+            // Logged, then refused. A discovery persisted here would block the location
+            // on evidence this cycle could not act on.
+            expect(calls.events).toEqual(['log']);
             expect(calls.encryptionDiscovered).toEqual([]);
             expect(calls.reads[0]).toMatchObject({ version: 'weak', decision: 'version-unavailable' });
         });
@@ -834,6 +848,7 @@ describe('createSyncBackendIO webdav encryption posture', () => {
             expect(calls.reads[0]).toMatchObject({
                 artifact: 'data.json', kind: 'plaintext', version: 'none', decision: 'legacy-plaintext',
             });
+            expect(calls.events).toEqual(['log', 'weak-etag']);
             expect(calls.weakEtag).toEqual([null]);
             expect(ctx.allowLegacyWebdavPlaintext).toBe(true);
         });
@@ -858,6 +873,30 @@ describe('createSyncBackendIO webdav encryption posture', () => {
             expect(calls.weakEtag).toEqual([]);
         });
 
+        it('refuses a keyed cycle that resolved no material (difference 5: fail closed)', async () => {
+            // A locked keyring or an unresolved no-key discovery: encryption is not
+            // proven off, yet this device holds no key. Writing plaintext into a folder
+            // every other device believes is encrypted is the alternative, so refuse.
+            const { posture, calls } = makePosture(platform, null);
+            const ctx = webdavCtx({ syncEncryptionOff: false });
+            const io = createSyncBackendIO(
+                ctx,
+                makeTransport({
+                    webdavGet: vi.fn().mockResolvedValue({ data: APP_DATA, exists: true, strongEtag: null }),
+                }),
+                posture,
+            );
+
+            await expect(io.readRemote()).rejects.toBeInstanceOf(SyncEncryptionRemoteVersionUnavailableError);
+            expect(calls.reads[0]).toMatchObject({
+                artifact: 'data.json.enc', kind: 'encrypted', version: 'none',
+                decision: 'version-unavailable',
+            });
+            // Never degraded to the legacy plaintext write.
+            expect(calls.events).toEqual(['log']);
+            expect(ctx.allowLegacyWebdavPlaintext).toBeUndefined();
+        });
+
         it('refuses an encrypted cycle whose existing remote lost its strong ETag', async () => {
             const { posture } = makePosture(platform, MATERIAL);
             const io = createSyncBackendIO(
@@ -874,6 +913,29 @@ describe('createSyncBackendIO webdav encryption posture', () => {
         });
     });
 
+    it('works with a port that omits the optional compatibility-line member', async () => {
+        // The shape a new platform hands the machine first.
+        const reads: SyncEncryptionRemoteReadLogInput[] = [];
+        const ctx = webdavCtx({ syncEncryptionOff: true });
+        const io = createSyncBackendIO(
+            ctx,
+            makeTransport({
+                webdavGet: vi.fn().mockResolvedValue({ data: APP_DATA, exists: true, strongEtag: null }),
+            }),
+            {
+                material: null,
+                logRemoteRead: (input) => { reads.push(input); },
+                onRemotePlaintextDiscovered: () => {},
+                onRemoteEncryptionDiscovered: () => {},
+                noKeyError: () => new Error('no key'),
+            },
+        );
+
+        await expect(io.readRemote()).resolves.toBe(APP_DATA);
+        expect(reads[0]).toMatchObject({ decision: 'legacy-plaintext' });
+        expect(ctx.allowLegacyWebdavPlaintext).toBe(true);
+    });
+
     it('applies the same decision to the legacy write path reread', async () => {
         const { posture, calls } = makePosture('mobile', null);
         const webdavGet = vi.fn()
@@ -887,7 +949,8 @@ describe('createSyncBackendIO webdav encryption posture', () => {
 
         await expect(io.readRemote()).resolves.toBe(APP_DATA);
         await expect(io.writeRemote(APP_DATA)).rejects.toBeInstanceOf(SyncEncryptionRemotePlaintextError);
-        expect(calls.plaintextDiscovered).toBe(1);
+        // The write path's confirm reread runs the same decision, in the same order.
+        expect(calls.events).toEqual(['log', 'weak-etag', 'log', 'mark-plaintext']);
         expect(calls.reads).toHaveLength(2);
     });
 });

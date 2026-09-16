@@ -5,10 +5,9 @@ import { SyncRemoteWriteConflict, type SyncBackendIO, type SyncEncryptionPosture
 import {
     SyncEncryptionRemotePlaintextError,
     SyncEncryptionRemoteVersionUnavailableError,
-    SyncEncryptionTerminalError,
     syncEncryptedArtifactName,
 } from './sync-encryption';
-import { SyncCryptoUnsupportedError, type SyncCryptoKdfParams } from './sync-crypto';
+import type { SyncCryptoKdfParams } from './sync-crypto';
 import type { SyncEncryptionRemoteVersionKind } from './sync-encryption-diagnostics';
 import type { CloudProvider } from './sync-client-helpers';
 import { SYNC_FILE_NAME, type SyncBackend } from './sync-service-utils';
@@ -218,13 +217,15 @@ export function createSyncBackendIO(
             if (version !== 'strong') {
                 throw new SyncEncryptionRemoteVersionUnavailableError('WebDAV encrypted sync document');
             }
-            await posture?.onRemoteEncryptionDiscovered({ salt: remote.salt, params: remote.params });
-            // The fallback carries the Rust-mirrored sentinel, so a caller that supplied
-            // no posture port still raises an error string-form classification reads as
-            // no-key rather than as an ordinary transport failure.
-            throw posture?.noKeyError() ?? new SyncEncryptionTerminalError(
-                new SyncCryptoUnsupportedError('SYNC_ENCRYPTION_REMOTE_ENCRYPTED: the WebDAV remote is encrypted and this device has no key'),
-            );
+            // Only a posture port can name this refusal: desktop wraps the Rust-mirrored
+            // sentinel, mobile raises its own class. Spelling a fallback sentinel here
+            // would be a third copy of a string that already lives in two places, so a
+            // transport that can report ciphertext must come with a port.
+            if (!posture) {
+                throw new Error('WebDAV remote is encrypted; createSyncBackendIO needs a SyncEncryptionPosture to read it');
+            }
+            await posture.onRemoteEncryptionDiscovered({ salt: remote.salt, params: remote.params });
+            throw posture.noKeyError();
         }
 
         // `syncEncryptionOff` is the proven-plaintext posture for the whole cycle;
