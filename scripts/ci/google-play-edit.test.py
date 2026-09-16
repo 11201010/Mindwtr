@@ -18,6 +18,17 @@ if SPEC is None or SPEC.loader is None:
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+# Keep release-plan behavior in the existing Google Play governance suite.
+PLAN_TEST_PATH = Path(__file__).with_name("android-play-release-plan.test.py")
+PLAN_TEST_SPEC = importlib.util.spec_from_file_location(
+    "android_play_release_plan_test", PLAN_TEST_PATH
+)
+if PLAN_TEST_SPEC is None or PLAN_TEST_SPEC.loader is None:
+    raise RuntimeError(f"Unable to load {PLAN_TEST_PATH}")
+PLAN_TEST_MODULE = importlib.util.module_from_spec(PLAN_TEST_SPEC)
+PLAN_TEST_SPEC.loader.exec_module(PLAN_TEST_MODULE)
+AndroidPlayReleasePlanTest = PLAN_TEST_MODULE.AndroidPlayReleasePlanTest
+
 
 class FakeTransport:
     def __init__(self) -> None:
@@ -148,6 +159,11 @@ def make_plan(root: Path) -> dict[str, object]:
             {
                 "track": "beta",
                 "name": "1.2.6 stable beta",
+                "status": "completed",
+            },
+            {
+                "track": "internal",
+                "name": "1.2.6 stable internal",
                 "status": "completed",
             },
         ],
@@ -377,13 +393,17 @@ class GooglePlayEditTest(unittest.TestCase):
                     "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits/edit-1/tracks/beta",
                 ),
                 (
+                    "PUT",
+                    "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits/edit-1/tracks/internal",
+                ),
+                (
                     "POST",
                     "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits/edit-1:commit",
                 ),
             ],
         )
         self.assertEqual(result["versionCode"], 42)
-        self.assertEqual(result["tracks"], ["production", "beta"])
+        self.assertEqual(result["tracks"], ["production", "beta", "internal"])
         self.assertTrue(result["committed"])
 
         track_calls = [

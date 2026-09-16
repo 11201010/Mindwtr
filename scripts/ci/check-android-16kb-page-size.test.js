@@ -82,7 +82,6 @@ test("all release Android artifacts are checked before upload or signing", () =>
   );
   for (const [jobName, buildStepName] of [
     ["build-aab", "Build Android AAB (local EAS)"],
-    ["build-internal-test-aab", "Build Android internal profileable AAB (local EAS)"],
     ["build-apk", "Build Android APK (local EAS)"],
   ]) {
     const steps = android.jobs[jobName].steps;

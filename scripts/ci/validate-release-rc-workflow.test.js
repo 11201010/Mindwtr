@@ -482,13 +482,14 @@ test("stable release validates tags and committed versions before any build or p
   }
 });
 
-test("RC tag pushes publish Android builds to Play internal and open testing", () => {
+test("RC tag pushes one Android AAB to Play internal and open testing", () => {
   const workflow = parse(
     readFileSync(".github/workflows/release-rc.yml", "utf8"),
   );
   const playTrack = workflow.jobs.android.with.play_track;
 
   expect(playTrack).toContain("'internal,beta'");
+  expect(workflow.jobs.android.with.internal_test_release).toBe(false);
 });
 
 test("RC workflow dispatch defaults include Play open testing", () => {
@@ -497,6 +498,20 @@ test("RC workflow dispatch defaults include Play open testing", () => {
   );
 
   expect(workflow.on.workflow_dispatch.inputs.play_track.default).toBe("beta");
+});
+
+test("RC workflow dispatch maps additional none to internal-only Play testing", () => {
+  const workflow = parse(
+    readFileSync(".github/workflows/release-rc.yml", "utf8"),
+  );
+  const playTrack = workflow.jobs.android.with.play_track;
+  const description = workflow.on.workflow_dispatch.inputs.play_track.description;
+
+  expect(description).toContain("none for internal only");
+  expect(playTrack).toContain("inputs.run_play_testing");
+  expect(playTrack).toContain("inputs.play_track != 'none'");
+  expect(playTrack).toContain("|| 'internal'");
+  expect(playTrack).toContain("|| 'none'");
 });
 
 test("RC Android Play and FOSS builds share a parallel versionCode preflight", () => {
@@ -543,14 +558,17 @@ test("Android release centralizes Google Play edit transactions", () => {
   expect(text).not.toContain("/edits/");
   expect(text).toContain("scripts/ci/google-play-edit.py max-version-code");
   expect(text).toContain("scripts/ci/google-play-edit.py publish");
-  expect(production.run).toContain('"track": "production"');
-  expect(production.run).toContain('"track": "beta"');
+  expect(production.run).toContain(
+    "scripts/ci/android-play-release-plan.py create-plan",
+  );
+  expect(production.run).toContain('--tracks "$PLAY_TRACKS"');
+  expect(production.run).toContain("--stable-production");
   expect(
     production.run.match(/scripts\/ci\/google-play-edit\.py publish/g),
   ).toHaveLength(1);
   expect(
     text.match(/scripts\/ci\/google-play-edit\.py publish/g),
-  ).toHaveLength(3);
+  ).toHaveLength(2);
   expect(
     publishSteps.some(
       (step) =>
@@ -563,6 +581,55 @@ test("Android release centralizes Google Play edit transactions", () => {
   expect(packageJson.scripts["test:governance"]).toContain(
     "scripts/ci/google-play-edit.test.py",
   );
+});
+
+test("Android Play tracks share the standard AAB and versionCode", () => {
+  const text = readFileSync(".github/workflows/release-android.yml", "utf8");
+  const workflow = parse(text);
+  const preflight = workflow.jobs.preflight;
+  const publish = workflow.jobs.publish;
+
+  expect(workflow.jobs["build-internal-test-aab"]).toBeUndefined();
+  expect(text).not.toContain("ANDROID_PROFILEABLE");
+  expect(text).not.toContain("profileable");
+  expect(publish.needs).toEqual(["preflight", "build-aab", "build-apk"]);
+  expect(preflight.outputs.internal_version_code).toBe(
+    "${{ steps.internal_version_code.outputs.version_code }}",
+  );
+  const compatibilityStep = preflight.steps.find(
+    (step) => step.id === "internal_version_code",
+  );
+  expect(compatibilityStep.run).toContain(
+    'echo "version_code=$RELEASE_VERSION_CODE"',
+  );
+
+  const testing = publish.steps.find(
+    (step) => step.name === "Publish to Google Play testing tracks",
+  );
+  expect(testing.run).toContain('AAB_PATH="apps/mobile/build/mindwtr-${VERSION}.aab"');
+  expect(testing.run).toContain(
+    "scripts/ci/android-play-release-plan.py create-plan",
+  );
+  expect(testing.run).toContain("one standard AAB");
+});
+
+test("stable Android publication remains tagged-only and expands in the resolver", () => {
+  const android = parse(
+    readFileSync(".github/workflows/release-android.yml", "utf8"),
+  );
+  const stable = parse(readFileSync(".github/workflows/release.yml", "utf8"));
+  const production = android.jobs.publish.steps.find(
+    (step) => step.name === "Publish to Google Play Store (Production)",
+  );
+
+  expect(stable.jobs.android.with.play_track).toBe("production");
+  expect(android.jobs.publish.if).toContain(
+    "needs.preflight.outputs.stable_production_tag == 'true'",
+  );
+  expect(production.if).toContain(
+    "needs.preflight.outputs.stable_production_tag == 'true'",
+  );
+  expect(production.run).toContain("--stable-production");
 });
 
 test("RC validation checks the committed FOSS version before platform builds start", () => {

@@ -338,6 +338,8 @@ jobs:
     uses: ./.github/workflows/release-android.yml
     with:
       tag: ${{ needs.validate.outputs.tag }}
+      # Tagged stable requests expand inside the shared workflow to production,
+      # beta, and internal while retaining one standard AAB and versionCode.
       play_track: production
       version_code: ${{ needs['android-version-code'].outputs.version_code }}
     secrets: inherit

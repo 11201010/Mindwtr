@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       play_track:
-        description: 'Google Play track(s) to publish. Use production for stable, internal,beta for RCs, or none to skip Play upload. Internal track entries are published as profileable builds.'
+        description: 'Google Play track(s) to publish with the standard AAB. Use production for stable, internal,beta for RCs, or none to skip Play upload.'
         required: false
         default: 'production'
         type: string
@@ -18,7 +18,7 @@ on:
         default: ''
         type: string
       internal_test_release:
-        description: 'Publish a profileable build to the Google Play internal track'
+        description: 'Compatibility mode: publish the standard AAB only to the Google Play internal track'
         required: false
         default: false
         type: boolean
@@ -43,7 +43,7 @@ on:
         description: Highest versionCode found in Google Play tracks during preflight
         value: ${{ jobs.preflight.outputs.remote_max_version_code }}
       internal_version_code:
-        description: Android versionCode used for the profileable internal testing build, when produced
+        description: Compatibility output equal to version_code when the internal track is selected
         value: ${{ jobs.preflight.outputs.internal_version_code }}
   workflow_dispatch:
     inputs:
@@ -52,7 +52,7 @@ on:
         required: false
         type: string
       play_track:
-        description: 'Google Play track(s) to publish. Use production for stable, internal,beta for RCs, or none to skip Play upload. Internal track entries are published as profileable builds.'
+        description: 'Google Play track(s) to publish with the standard AAB. Use production for stable, internal,beta for RCs, or none to skip Play upload.'
         required: false
         default: 'production'
         type: string
@@ -62,7 +62,7 @@ on:
         default: ''
         type: string
       internal_test_release:
-        description: 'Publish a profileable build to the Google Play internal track'
+        description: 'Compatibility mode: publish the standard AAB only to the Google Play internal track'
         required: true
         default: false
         type: boolean
@@ -99,8 +99,10 @@ jobs:
       version_code: ${{ steps.provided_version_code.outputs.resolved_code || steps.version_code.outputs.resolved_code || steps.version_code.outputs.local_code }}
       local_version_code: ${{ steps.provided_version_code.outputs.local_code || steps.version_code.outputs.local_code }}
       remote_max_version_code: ${{ steps.version_code.outputs.remote_max_code }}
-      normal_play_track: ${{ steps.publish_plan.outputs.normal_play_track }}
-      internal_profileable: ${{ steps.publish_plan.outputs.internal_profileable }}
+      play_tracks: ${{ steps.publish_plan.outputs.play_tracks }}
+      has_internal: ${{ steps.publish_plan.outputs.has_internal }}
+      publishes_production: ${{ steps.publish_plan.outputs.publishes_production }}
+      stable_production_tag: ${{ steps.publish_plan.outputs.stable_production_tag }}
       internal_version_code: ${{ steps.internal_version_code.outputs.version_code }}
 
     steps:
@@ -109,21 +111,41 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.event.inputs.tag || github.ref }}
 
-      - name: Authenticate Google Play API
-        if: ${{ inputs.version_code == '' && (inputs.play_track != 'none' || inputs.internal_test_release) }}
-        id: play_auth
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-        with:
-          credentials_json: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
-          token_format: access_token
-          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
-
       - name: Resolve version
         id: version
         run: |
           INPUT_TAG="${{ inputs.tag || github.event.inputs.tag }}"
           GITHUB_EVENT_INPUTS_TAG="${{ github.event.inputs.tag }}"
           scripts/ci/resolve-release-version.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Android publish plan
+        id: publish_plan
+        env:
+          PLAY_TRACKS: ${{ inputs.play_track }}
+          INTERNAL_TEST_RELEASE: ${{ inputs.internal_test_release && 'true' || 'false' }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_VALUE: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          stable_production_tag=false
+          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [[ "$GITHUB_REF_VALUE" == refs/tags/* ]] && [[ "$REF_NAME" != *-* ]]; then
+            stable_production_tag=true
+          fi
+          python3 scripts/ci/android-play-release-plan.py resolve-tracks \
+            --play-tracks "${PLAY_TRACKS:-production}" \
+            --internal-test-release "$INTERNAL_TEST_RELEASE" \
+            --stable-production-tag "$stable_production_tag" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Authenticate Google Play API
+        if: ${{ inputs.version_code == '' && steps.publish_plan.outputs.play_tracks != 'none' }}
+        id: play_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          credentials_json: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
 
       - name: Use provided Android versionCode
         if: ${{ inputs.version_code != '' }}
@@ -134,7 +156,7 @@ jobs:
         run: node scripts/ci/android-version-code-policy.js
 
       - name: Ensure Android versionCode is unique
-        if: ${{ inputs.version_code == '' && (inputs.play_track != 'none' || inputs.internal_test_release) }}
+        if: ${{ inputs.version_code == '' && steps.publish_plan.outputs.play_tracks != 'none' }}
         id: version_code
         env:
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
@@ -155,77 +177,19 @@ jobs:
             ALLOW_UNTRACKED_VERSION_CODE=${{ (contains(inputs.tag || github.event.inputs.tag || github.ref_name, '-') || inputs.internal_test_release || inputs.play_track != 'production') && 'true' || 'false' }} \
             node scripts/ci/android-version-code-policy.js
 
-      - name: Resolve Android publish plan
-        id: publish_plan
-        env:
-          PLAY_TRACKS: ${{ inputs.play_track }}
-          INTERNAL_TEST_RELEASE: ${{ inputs.internal_test_release && 'true' || 'false' }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-          GITHUB_REF_VALUE: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-          internal_profileable=false
-          normal_tracks=()
-
-          stable_production_tag=false
-          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [[ "$GITHUB_REF_VALUE" == refs/tags/* ]] && [[ "$REF_NAME" != *-* ]]; then
-            stable_production_tag=true
-          fi
-
-          if [ "$INTERNAL_TEST_RELEASE" = "true" ]; then
-            internal_profileable=true
-          else
-            IFS=',' read -r -a raw_tracks <<< "${PLAY_TRACKS:-production}"
-            for raw_track in "${raw_tracks[@]}"; do
-              track="${raw_track//[[:space:]]/}"
-              [ -n "$track" ] || continue
-              if [ "$track" = "none" ]; then
-                normal_tracks=()
-                break
-              fi
-              if [ "$track" = "internal" ]; then
-                internal_profileable=true
-                continue
-              fi
-              normal_tracks+=("$track")
-            done
-
-            if [ "$stable_production_tag" = "true" ] && [ "${PLAY_TRACKS:-production}" = "production" ]; then
-              internal_profileable=true
-            fi
-          fi
-
-          if [ "${#normal_tracks[@]}" -eq 0 ]; then
-            normal_play_track=none
-          else
-            normal_play_track="$(IFS=,; echo "${normal_tracks[*]}")"
-          fi
-
-          echo "normal_play_track=$normal_play_track" >> "$GITHUB_OUTPUT"
-          echo "internal_profileable=$internal_profileable" >> "$GITHUB_OUTPUT"
-          echo "stable_production_tag=$stable_production_tag" >> "$GITHUB_OUTPUT"
-          echo "Normal Play track(s): $normal_play_track"
-          echo "Profileable internal track: $internal_profileable"
-
-      - name: Resolve profileable internal versionCode
-        if: ${{ steps.publish_plan.outputs.internal_profileable == 'true' }}
+      - name: Resolve compatibility internal versionCode
+        if: ${{ steps.publish_plan.outputs.has_internal == 'true' }}
         id: internal_version_code
         env:
           RELEASE_VERSION_CODE: ${{ steps.provided_version_code.outputs.resolved_code || steps.version_code.outputs.resolved_code || steps.version_code.outputs.local_code }}
-          NORMAL_PLAY_TRACK: ${{ steps.publish_plan.outputs.normal_play_track }}
         run: |
           set -euo pipefail
           if [ -z "$RELEASE_VERSION_CODE" ] || [ "$RELEASE_VERSION_CODE" = "null" ]; then
             echo "Missing release Android versionCode" >&2
             exit 1
           fi
-          internal_version_code="$RELEASE_VERSION_CODE"
-          if [ "$NORMAL_PLAY_TRACK" != "none" ]; then
-            internal_version_code=$((RELEASE_VERSION_CODE + 1))
-          fi
-          echo "version_code=$internal_version_code" >> "$GITHUB_OUTPUT"
-          echo "Profileable internal versionCode: $internal_version_code"
+          echo "version_code=$RELEASE_VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Internal track shares standard versionCode: $RELEASE_VERSION_CODE"
 
   build-aab:
     needs: preflight
@@ -235,7 +199,6 @@ jobs:
     env:
       DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
       DONATION_PROMPT_ENABLED: "true"
-      ANDROID_PROFILEABLE: "false"
 
     steps:
       - name: Checkout code
@@ -308,88 +271,6 @@ jobs:
         with:
           name: android-aab-build
           path: apps/mobile/build/*.aab
-          if-no-files-found: error
-          retention-days: ${{ inputs.retention_days }}
-
-  build-internal-test-aab:
-    if: ${{ needs.preflight.outputs.internal_profileable == 'true' }}
-    needs: preflight
-    runs-on: ubuntu-latest
-    name: Android Internal Profileable AAB Build
-    timeout-minutes: 75
-    env:
-      DROPBOX_APP_KEY: ${{ vars.DROPBOX_APP_KEY || secrets.DROPBOX_APP_KEY }}
-      DONATION_PROMPT_ENABLED: "true"
-      ANDROID_PROFILEABLE: "true"
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          ref: ${{ inputs.tag || github.event.inputs.tag || github.ref }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-
-      - name: Setup Java
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup Android SDK
-        run: bash scripts/ci/setup-android-sdk.sh
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: ".bun-version"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install repository-locked EAS CLI
-        run: |
-          set -euo pipefail
-          npm ci --prefix tools/eas-cli --ignore-scripts --legacy-peer-deps
-          tools/eas-cli/node_modules/.bin/eas --version
-
-      - name: Apply resolved Android internal versionCode
-        if: ${{ needs.preflight.outputs.internal_version_code != '' }}
-        env:
-          REQUESTED_VERSION_CODE: ${{ needs.preflight.outputs.internal_version_code }}
-          ALLOW_UNTRACKED_VERSION_CODE: "true"
-          WRITE_APP_JSON: "1"
-        run: node scripts/ci/android-version-code-policy.js
-
-      - name: Build Android internal profileable AAB (local EAS)
-        timeout-minutes: 60
-        run: |
-          set -euo pipefail
-          VERSION=${{ needs.preflight.outputs.version }}
-          cd apps/mobile
-          OUTPUT="./build/mindwtr-${VERSION}-internal-${GITHUB_RUN_NUMBER}.aab"
-          MINDWTR_ANDROID_ARCHS=arm64-v8a,armeabi-v7a "$GITHUB_WORKSPACE/tools/eas-cli/node_modules/.bin/eas" build --platform android --profile production --local --non-interactive --output "$OUTPUT"
-          ls -la ./build
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
-          ANALYTICS_HEARTBEAT_CHANNEL: android-internal-test
-          ANALYTICS_RELEASE_VERSION: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
-          FEEDBACK_ENDPOINT_URL: ${{ vars.FEEDBACK_ENDPOINT_URL || vars.VITE_FEEDBACK_ENDPOINT_URL || 'https://feedback.mindwtr.app' }}
-
-      - name: Verify 16 KB native library alignment
-        run: |
-          VERSION=${{ needs.preflight.outputs.version }}
-          bash scripts/ci/check-android-16kb-page-size.sh "apps/mobile/build/mindwtr-${VERSION}-internal-${GITHUB_RUN_NUMBER}.aab"
-
-      - name: Upload Android internal profileable AAB artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: android-internal-test-aab-build
-          path: apps/mobile/build/*-internal-*.aab
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}
 
@@ -491,8 +372,8 @@ jobs:
           retention-days: 28
 
   publish:
-    if: ${{ always() && needs.preflight.result == 'success' && needs.build-aab.result == 'success' && ((needs.preflight.outputs.normal_play_track != 'none' && !inputs.internal_test_release && needs.build-apk.result == 'success' && (needs.preflight.outputs.normal_play_track != 'production' || (startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' && !contains(github.ref_name, '-')))) || (needs.preflight.outputs.internal_profileable == 'true' && needs['build-internal-test-aab'].result == 'success')) }}
-    needs: [preflight, build-aab, build-internal-test-aab, build-apk]
+    if: ${{ always() && needs.preflight.result == 'success' && needs.build-aab.result == 'success' && needs.preflight.outputs.play_tracks != 'none' && ((inputs.internal_test_release && needs.build-apk.result == 'skipped') || (!inputs.internal_test_release && needs.build-apk.result == 'success')) && (needs.preflight.outputs.publishes_production != 'true' || needs.preflight.outputs.stable_production_tag == 'true') }}
+    needs: [preflight, build-aab, build-apk]
     runs-on: ubuntu-latest
     name: Android Publish
     timeout-minutes: 30
@@ -526,24 +407,8 @@ jobs:
           fi
           ls -la apps/mobile/build
 
-      - name: Download Android internal profileable AAB artifact
-        if: ${{ needs.preflight.outputs.internal_profileable == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          download_dir="$(mktemp -d)"
-          mkdir -p apps/mobile/build
-          gh run download "$GITHUB_RUN_ID" -n android-internal-test-aab-build -D "$download_dir"
-          find "$download_dir" -type f -name '*-internal-*.aab' -print -exec cp {} apps/mobile/build/ \;
-          if ! find apps/mobile/build -maxdepth 1 -name '*-internal-*.aab' -print -quit | grep -q .; then
-            echo "Downloaded android-internal-test-aab-build artifact did not contain an internal AAB." >&2
-            exit 1
-          fi
-          ls -la apps/mobile/build
-
       - name: Prepare Google Play release notes
-        if: ${{ !inputs.internal_test_release && needs.preflight.outputs.normal_play_track == 'production' }}
+        if: ${{ needs.preflight.outputs.publishes_production == 'true' }}
         run: |
           set -euo pipefail
           VERSION=${{ needs.preflight.outputs.version }}
@@ -605,7 +470,7 @@ jobs:
           ls -la "$OUT_DIR"
 
       - name: Prepare Google Play listing assets
-        if: ${{ !inputs.internal_test_release && needs.preflight.outputs.normal_play_track == 'production' }}
+        if: ${{ needs.preflight.outputs.publishes_production == 'true' }}
         run: |
           set -euo pipefail
           python3 scripts/ci/prepare-google-play-listing-assets.py \
@@ -614,7 +479,7 @@ jobs:
           cat apps/mobile/build/play-listing-assets.json
 
       - name: Prepare Google Play listing metadata
-        if: ${{ !inputs.internal_test_release && needs.preflight.outputs.normal_play_track == 'production' }}
+        if: ${{ needs.preflight.outputs.publishes_production == 'true' }}
         run: |
           set -euo pipefail
           python3 scripts/ci/prepare-google-play-listing-metadata.py \
@@ -623,9 +488,10 @@ jobs:
           cat apps/mobile/build/play-listing-metadata.json
 
       - name: Publish to Google Play Store (Production)
-        if: ${{ !inputs.internal_test_release && needs.preflight.outputs.normal_play_track == 'production' && startsWith(github.ref, 'refs/tags/') && github.event_name != 'workflow_dispatch' && !contains(github.ref_name, '-') }}
+        if: ${{ needs.preflight.outputs.publishes_production == 'true' && needs.preflight.outputs.stable_production_tag == 'true' }}
         env:
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
+          PLAY_TRACKS: ${{ needs.preflight.outputs.play_tracks }}
         run: |
           set -euo pipefail
           PACKAGE="tech.dongdongbh.mindwtr"
@@ -638,90 +504,35 @@ jobs:
           PLAN_FILE=$(mktemp)
           RESULT_FILE=$(mktemp)
 
-          python3 - \
-            "$PLAN_FILE" \
-            "$PACKAGE" \
-            "$VERSION" \
-            "$EXPECTED_VERSION_CODE" \
-            "$AAB_PATH" \
-            "$NOTES_DIR" \
-            "$LISTING_ASSETS_FILE" \
-            "$LISTING_METADATA_FILE" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          (
-              plan_file,
-              package_name,
-              version,
-              expected_version_code,
-              artifact_path,
-              notes_directory,
-              assets_file,
-              listings_file,
-          ) = sys.argv[1:]
-
-          def read_array(path_value):
-              path = pathlib.Path(path_value)
-              if not path.is_file():
-                  return []
-              value = json.loads(path.read_text(encoding="utf-8"))
-              if not isinstance(value, list):
-                  raise SystemExit(f"Expected a JSON array in {path}")
-              return value
-
-          release_notes = []
-          notes_path = pathlib.Path(notes_directory)
-          if notes_path.is_dir():
-              for path in sorted(notes_path.glob("whatsnew-*")):
-                  text = path.read_text(encoding="utf-8").strip()
-                  if text:
-                      release_notes.append({
-                          "language": path.name.replace("whatsnew-", "", 1),
-                          "text": text,
-                      })
-
-          production_release = {
-              "track": "production",
-              "name": version,
-              "status": "completed",
-          }
-          if release_notes:
-              production_release["releaseNotes"] = release_notes
-
-          plan = {
-              "package": package_name,
-              "artifactPath": artifact_path,
-              "expectedVersionCode": int(expected_version_code),
-              "tracks": [
-                  production_release,
-                  {
-                      "track": "beta",
-                      "name": f"{version} stable beta",
-                      "status": "completed",
-                  },
-              ],
-              "listingAssets": read_array(assets_file),
-              "listings": read_array(listings_file),
-          }
-          pathlib.Path(plan_file).write_text(
-              json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
+          python3 scripts/ci/android-play-release-plan.py create-plan \
+            --output "$PLAN_FILE" \
+            --package "$PACKAGE" \
+            --artifact "$AAB_PATH" \
+            --expected-version-code "$EXPECTED_VERSION_CODE" \
+            --version "$VERSION" \
+            --tracks "$PLAY_TRACKS" \
+            --stable-production \
+            --stable-release-notes-directory "$NOTES_DIR" \
+            --listing-assets-file "$LISTING_ASSETS_FILE" \
+            --listings-file "$LISTING_METADATA_FILE"
 
           python3 scripts/ci/google-play-edit.py publish \
             --plan "$PLAN_FILE" \
             --result "$RESULT_FILE"
           VERSION_CODE=$(jq -er '.versionCode | numbers' "$RESULT_FILE")
-          echo "Published versionCode $VERSION_CODE to Google Play production and beta."
+          TRACK_LIST=$(jq -er '.tracks | join(",")' "$RESULT_FILE")
+          echo "Published one standard AAB at versionCode $VERSION_CODE to Google Play tracks: $TRACK_LIST."
+          {
+            echo "### Google Play publication"
+            echo
+            echo "Published one standard AAB with versionCode \`$VERSION_CODE\` to \`$TRACK_LIST\` in one Play edit."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to Google Play testing tracks
-        if: ${{ !inputs.internal_test_release && needs.preflight.outputs.normal_play_track != 'production' && needs.preflight.outputs.normal_play_track != 'none' }}
+        if: ${{ needs.preflight.outputs.publishes_production != 'true' && needs.preflight.outputs.play_tracks != 'none' }}
         env:
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
-          PLAY_TRACKS: ${{ needs.preflight.outputs.normal_play_track }}
+          PLAY_TRACKS: ${{ needs.preflight.outputs.play_tracks }}
           RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           set -euo pipefail
@@ -732,145 +543,23 @@ jobs:
           PLAN_FILE=$(mktemp)
           RESULT_FILE=$(mktemp)
 
-          python3 - "$PLAN_FILE" "$PACKAGE" "$VERSION" "$EXPECTED_VERSION_CODE" "$AAB_PATH" <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          plan_file, package_name, version, expected_version_code, artifact_path = sys.argv[1:]
-          tracks = []
-          seen_tracks = set()
-          for raw_track in os.environ["PLAY_TRACKS"].split(","):
-              track = raw_track.strip()
-              if not track:
-                  continue
-              if track in {"production", "none"}:
-                  raise SystemExit(
-                      f"Production and none are not valid testing-track entries: {track}"
-                  )
-              if track in seen_tracks:
-                  continue
-              seen_tracks.add(track)
-              release = {
-                  "track": track,
-                  "name": f"{version} release candidate",
-                  "status": "completed",
-              }
-              release_notes = os.environ.get("RELEASE_NOTES", "").strip()
-              if release_notes:
-                  release["releaseNotes"] = [
-                      {"language": "en-US", "text": release_notes}
-                  ]
-              tracks.append(release)
-
-          if not tracks:
-              raise SystemExit("No Google Play testing tracks were configured.")
-
-          plan = {
-              "package": package_name,
-              "artifactPath": artifact_path,
-              "expectedVersionCode": int(expected_version_code),
-              "tracks": tracks,
-          }
-          pathlib.Path(plan_file).write_text(
-              json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
+          python3 scripts/ci/android-play-release-plan.py create-plan \
+            --output "$PLAN_FILE" \
+            --package "$PACKAGE" \
+            --artifact "$AAB_PATH" \
+            --expected-version-code "$EXPECTED_VERSION_CODE" \
+            --version "$VERSION" \
+            --tracks "$PLAY_TRACKS" \
+            --testing-release-notes "$RELEASE_NOTES"
 
           python3 scripts/ci/google-play-edit.py publish \
             --plan "$PLAN_FILE" \
             --result "$RESULT_FILE"
           VERSION_CODE=$(jq -er '.versionCode | numbers' "$RESULT_FILE")
           TRACK_LIST=$(jq -er '.tracks | join(",")' "$RESULT_FILE")
-          echo "Published versionCode $VERSION_CODE to Google Play testing tracks: $TRACK_LIST."
-
-      - name: Publish profileable build to Google Play internal track
-        if: ${{ needs.preflight.outputs.internal_profileable == 'true' }}
-        id: internal_publish
-        env:
-          GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
-          RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: |
-          set -euo pipefail
-          PACKAGE="tech.dongdongbh.mindwtr"
-          VERSION="${{ needs.preflight.outputs.version }}"
-          EXPECTED_VERSION_CODE="${{ needs.preflight.outputs.internal_version_code }}"
-          PLAN_FILE=$(mktemp)
-          RESULT_FILE=$(mktemp)
-
-          python3 - "$PLAN_FILE" "$PACKAGE" "$VERSION" "$EXPECTED_VERSION_CODE" <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          plan_file, package_name, version, expected_version_code = sys.argv[1:]
-          candidates = sorted(
-              pathlib.Path("apps/mobile/build").glob(
-                  f"mindwtr-{version}-internal-*.aab"
-              )
-          )
-          if len(candidates) != 1:
-              raise SystemExit(
-                  "Expected exactly one internal profileable AAB artifact, "
-                  f"found {len(candidates)}"
-              )
-
-          release = {
-              "track": "internal",
-              "name": f"{version} internal diagnostic {os.environ['GITHUB_RUN_NUMBER']}",
-              "status": "completed",
-          }
-          release_notes = os.environ.get("RELEASE_NOTES", "").strip()
-          if release_notes:
-              release["releaseNotes"] = [
-                  {"language": "en-US", "text": release_notes}
-              ]
-
-          plan = {
-              "package": package_name,
-              "artifactPath": str(candidates[0]),
-              "expectedVersionCode": int(expected_version_code),
-              "tracks": [release],
-          }
-          pathlib.Path(plan_file).write_text(
-              json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
-
-          python3 scripts/ci/google-play-edit.py publish \
-            --plan "$PLAN_FILE" \
-            --result "$RESULT_FILE"
-          VERSION_CODE=$(jq -er '.versionCode | numbers' "$RESULT_FILE")
-          echo "Published profileable versionCode $VERSION_CODE to Google Play internal track."
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-
-      - name: Collect Android internal test artifacts
-        if: ${{ needs.preflight.outputs.internal_profileable == 'true' }}
-        run: |
-          set -euo pipefail
-          mkdir -p android-internal-test-artifacts
-          VERSION="${{ needs.preflight.outputs.version }}"
-          cp apps/mobile/build/mindwtr-${VERSION}-internal-*.aab android-internal-test-artifacts/
+          echo "Published one standard AAB at versionCode $VERSION_CODE to Google Play testing tracks: $TRACK_LIST."
           {
-            echo "Mindwtr Android internal test release"
-            echo "Commit: ${GITHUB_SHA}"
-            echo "VersionCode: ${{ steps.internal_publish.outputs.version_code }}"
-            echo "Track: internal"
-            echo "Profileable: true"
+            echo "### Google Play publication"
             echo
-            echo "This Google Play internal build allows Android Studio/Perfetto profiling with shell access."
-          } > android-internal-test-artifacts/README.txt
-          ls -la android-internal-test-artifacts
-
-      - name: Upload Android internal test artifacts
-        if: ${{ needs.preflight.outputs.internal_profileable == 'true' }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: android-internal-test-release
-          path: android-internal-test-artifacts/*
-          if-no-files-found: error
-          retention-days: ${{ inputs.retention_days }}
+            echo "Published one standard AAB with versionCode \`$VERSION_CODE\` to \`$TRACK_LIST\` in one Play edit."
+          } >> "$GITHUB_STEP_SUMMARY"
