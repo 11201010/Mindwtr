@@ -474,6 +474,26 @@ describe('POST /v1/capture', () => {
         expect(await readStoredTasks()).toHaveLength(0);
     });
 
+    test('rejects audio whose bytes carry an executable signature', async () => {
+        const response = await postFormCapture({
+                transcription: 'Has an executable disguised as audio',
+                audio: { bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03]), type: 'audio/mpeg', name: 'tune.mp3' },
+            });
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as { error: string }).error).toBe('Blocked executable attachment signature: windows-pe');
+        expect(await readStoredTasks()).toHaveLength(0);
+    });
+
+    test('rejects an inherited Object key as an audio content type', async () => {
+        const response = await postFormCapture({
+                transcription: 'Prototype-chain content type',
+                audio: { bytes: AUDIO_BYTES, type: 'constructor', name: 'payload.bin' },
+            });
+        expect(response.status).toBe(415);
+        expect(((await response.json()) as { error: string }).error).toBe('Unsupported audio type');
+        expect(await readStoredTasks()).toHaveLength(0);
+    });
+
     test('rejects audio over the attachment byte limit', async () => {
         harness.stop();
         harness = await startHarness({ maxAttachmentBytes: 1024 });

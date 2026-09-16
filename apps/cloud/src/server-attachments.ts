@@ -339,7 +339,9 @@ const attachmentPathMissing = (filePath: string): boolean => {
 
 const normalizeAttachmentContentType = (value: string | null): string => value?.split(';', 1)[0]?.trim().toLowerCase() || '';
 
-const getBlockedAttachmentSignature = (bytes: Uint8Array): string | null => {
+/** Magic-byte admission check shared by PUT /v1/attachments and the capture
+ *  webhook: an executable must never be stored as a synced attachment. */
+export const getBlockedAttachmentSignature = (bytes: Uint8Array): string | null => {
     if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
         return 'windows-pe';
     }

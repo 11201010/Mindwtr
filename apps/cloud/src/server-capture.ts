@@ -28,6 +28,7 @@ import {
     type PreparedFilePublication,
 } from './server-storage';
 import { loadAppDataOrError, writeCloudData } from './server-data-cache';
+import { getBlockedAttachmentSignature } from './server-attachments';
 
 /** Generic capture webhook path. Deliberately vendor-neutral: any watch, phone
  *  shortcut, script, or automation that can post a transcription may use it. */
@@ -48,6 +49,14 @@ const AUDIO_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
 
 /** A recording clock may run slightly ahead of the server's. Anything further
  *  into the future than this is not a real capture time, so `now` is used. */
+/** Own-property lookup only: a bare index would accept inherited keys such as
+ *  `constructor` and store the bytes under an undefined extension. */
+const audioExtensionFor = (mimeType: string): string | undefined => (
+    Object.prototype.hasOwnProperty.call(AUDIO_EXTENSION_BY_MIME_TYPE, mimeType)
+        ? AUDIO_EXTENSION_BY_MIME_TYPE[mimeType]
+        : undefined
+);
+
 const RECORDED_AT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const MAX_ATTACHMENT_TITLE_LENGTH = 120;
@@ -252,7 +261,7 @@ export function buildCaptureAttachment(
     createdAt: string,
     updatedAt: string,
 ): Attachment {
-    const extension = AUDIO_EXTENSION_BY_MIME_TYPE[audio.mimeType];
+    const extension = audioExtensionFor(audio.mimeType);
     const baseName = sanitizeSingleLine(audio.fileName, MAX_ATTACHMENT_TITLE_LENGTH)
         || sanitizeSingleLine(fallbackTitle, MAX_ATTACHMENT_TITLE_LENGTH)
         || 'audio';
@@ -325,8 +334,16 @@ export async function handleCaptureRequest(
     if (!payload.transcription.trim() && !payload.audio) {
         return errorResponse('Missing transcription or audio', 400);
     }
-    if (payload.audio && !AUDIO_EXTENSION_BY_MIME_TYPE[payload.audio.mimeType]) {
+    if (payload.audio && !audioExtensionFor(payload.audio.mimeType)) {
         return errorResponse('Unsupported audio type', 415);
+    }
+    if (payload.audio) {
+        // Same admission check PUT /v1/attachments applies: these bytes become a
+        // synced file attachment on the owner's devices.
+        const blockedSignature = getBlockedAttachmentSignature(payload.audio.bytes);
+        if (blockedSignature) {
+            return errorResponse(`Blocked executable attachment signature: ${blockedSignature}`, 400);
+        }
     }
 
     const nowMs = Date.now();
