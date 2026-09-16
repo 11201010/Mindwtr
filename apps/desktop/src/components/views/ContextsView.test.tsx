@@ -152,6 +152,21 @@ describe('ContextsView', () => {
         expect(view.getByRole('heading', { name: '@Office' })).toBeInTheDocument();
     });
 
+    it('returns the compact token selector to all contexts', () => {
+        const view = renderContextsView();
+        const compactSelect = view.getByRole('combobox', { name: 'Contexts & Tags' });
+
+        fireEvent.change(compactSelect, { target: { value: '@Office' } });
+
+        expect(compactSelect).toHaveValue('@Office');
+
+        const clearOption = view.getByRole('option', { name: 'Clear' }) as HTMLOptionElement;
+        fireEvent.change(compactSelect, { target: { value: clearOption.value } });
+
+        expect(compactSelect).toHaveValue('');
+        expect(view.getByRole('heading', { name: 'Contexts & Tags' })).toBeInTheDocument();
+    });
+
     it('keeps the sort control labeled and visually scannable', () => {
         const { getByRole, getByTestId } = renderContextsView();
 

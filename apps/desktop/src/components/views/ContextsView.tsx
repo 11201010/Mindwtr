@@ -66,6 +66,7 @@ const hasContext = (task: Task) => (task.contexts?.length || 0) > 0 || (task.tag
 // rewrites that key from a fixed three-field shape, so any fold stored there would be
 // dropped the next time another view navigated to a token.
 const CONTEXTS_GROUP_COLLAPSE_STORAGE_KEY = 'mindwtr:view:contexts:groups:v1';
+const CLEAR_SELECTION_OPTION = '__clear__';
 
 export function ContextsView() {
     const perf = usePerformanceMonitor('ContextsView');
@@ -563,16 +564,22 @@ export function ContextsView() {
                                 <label htmlFor="contexts-token-select" className="sr-only">{allTokensLabel}</label>
                                 <select
                                     id="contexts-token-select"
-                                    value=""
+                                    value={noContextSelected
+                                        ? NO_CONTEXT_TOKEN
+                                        : selectedContexts.length === 1 ? selectedContexts[0] : ''}
                                     onChange={(event) => {
                                         const value = event.target.value;
-                                        if (value === NO_CONTEXT_TOKEN) setSelectedContext(NO_CONTEXT_TOKEN);
+                                        if (value === CLEAR_SELECTION_OPTION) setSelectedContext(null);
+                                        else if (value === NO_CONTEXT_TOKEN) setSelectedContext(NO_CONTEXT_TOKEN);
                                         else if (value) toggleSelectedContext(value);
                                         else setSelectedContext(null);
                                     }}
                                     className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 >
                                     <option value="">{allTokensLabel}</option>
+                                    {(selectedContexts.length > 0 || noContextSelected) && (
+                                        <option value={CLEAR_SELECTION_OPTION}>{t('filters.clear')}</option>
+                                    )}
                                     <option value={NO_CONTEXT_TOKEN}>{t('contexts.none')}</option>
                                     <optgroup label={contextsLabel}>
                                         {allContextTokens.map((token) => <option key={token} value={token}>{token}</option>)}
