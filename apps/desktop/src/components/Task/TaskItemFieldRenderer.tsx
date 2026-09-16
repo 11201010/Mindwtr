@@ -42,6 +42,7 @@ import { remove } from '@tauri-apps/plugin-fs';
 
 import { useMarkdownReferenceAutocomplete } from '../MarkdownReferenceAutocomplete';
 import { DateField } from '../ui/DateField';
+import { TimeInput } from '../ui/TimeInput';
 import { AttachmentsField } from './TaskForm/AttachmentsField';
 import { ChecklistField } from './TaskForm/ChecklistField';
 import { normalizeDateInputValue } from './task-item-helpers';
@@ -831,12 +832,11 @@ export function TaskItemFieldRenderer({
                             selectedDate: parsed,
                             onDateChange: handleDateChange,
                             timeInput: (
-                                <input
-                                    type="time"
+                                <TimeInput
                                     lang={nativeDateInputLocale}
                                     aria-label={t('task.aria.startTime')}
                                     value={timeValue}
-                                    onChange={(event) => handleTimeChange(event.target.value)}
+                                    onChange={handleTimeChange}
                                     className={timeInputClassName}
                                 />
                             ),
@@ -935,12 +935,11 @@ export function TaskItemFieldRenderer({
                             selectedDate: parsed,
                             onDateChange: handleDateChange,
                             timeInput: (
-                                <input
-                                    type="time"
+                                <TimeInput
                                     lang={nativeDateInputLocale}
                                     aria-label={t('task.aria.dueTime')}
                                     value={timeValue}
-                                    onChange={(event) => handleTimeChange(event.target.value)}
+                                    onChange={handleTimeChange}
                                     className={timeInputClassName}
                                 />
                             ),
@@ -1057,16 +1056,11 @@ export function TaskItemFieldRenderer({
                     selectedDate: parsed,
                     onDateChange: handleDateChange,
                     timeInput: (
-                        // The same native control Start and Due use (#896). It was the one
-                        // text field parsed on blur, with a mirrored draft and an effect to
-                        // keep that draft in step with the task — all of which the native
-                        // input does for free.
-                        <input
-                            type="time"
+                        <TimeInput
                             lang={nativeDateInputLocale}
                             aria-label={t('task.aria.reviewTime')}
                             value={timeValue}
-                            onChange={(event) => handleTimeChange(event.target.value)}
+                            onChange={handleTimeChange}
                             className={timeInputClassName}
                         />
                     ),

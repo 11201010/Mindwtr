@@ -7,9 +7,10 @@ import { TaskItem } from '../../TaskItem';
 import { Dialog, DialogBody } from '../../ui/Dialog';
 import { DateField } from '../../ui/DateField';
 import { QuickAddSyntaxHint } from '../../ui/QuickAddSyntaxHint';
+import { TimeInput } from '../../ui/TimeInput';
 import { cn } from '../../../lib/utils';
 import { useNativeDateInputLocale } from '../../../hooks/use-native-date-input-locale';
-import { DESKTOP_GRID_SNAP_MINUTES, combineDateAndTime } from './calendar-primitives';
+import { combineDateAndTime } from './calendar-primitives';
 import type { DesktopCalendarController } from './useDesktopCalendarController';
 
 type CalendarOpenTaskModalController = Pick<
@@ -268,21 +269,19 @@ export function CalendarTaskComposerModal({ controller }: CalendarTaskComposerMo
                         </div>
                         <label className="space-y-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
                             {resolveText('calendar.start', 'Start')}
-                            <input
-                                type="time"
-                                step={DESKTOP_GRID_SNAP_MINUTES * 60}
+                            <TimeInput
+                                lang={nativeDateInputLocale}
                                 value={taskComposer.startTimeValue}
-                                onChange={(event) => updateTaskComposerStart({ startTimeValue: event.target.value })}
+                                onChange={(startTimeValue) => updateTaskComposerStart({ startTimeValue })}
                                 className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                             />
                         </label>
                         <label className="space-y-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
                             {resolveText('calendar.end', 'End')}
-                            <input
-                                type="time"
-                                step={DESKTOP_GRID_SNAP_MINUTES * 60}
+                            <TimeInput
+                                lang={nativeDateInputLocale}
                                 value={taskComposer.endTimeValue}
-                                onChange={(event) => updateTaskComposerEndTime(event.target.value)}
+                                onChange={updateTaskComposerEndTime}
                                 className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                             />
                         </label>

@@ -35,6 +35,7 @@ import { normalizeDateInputValue } from './task-item-helpers';
 import { ContextsField } from './fields/TaskMetadataFields';
 import { PriorityFlag } from './PriorityFlag';
 import { DateField } from '../ui/DateField';
+import { TimeInput } from '../ui/TimeInput';
 
 const VIEWPORT_MARGIN_PX = 8;
 const PANEL_GAP_PX = 8;
@@ -681,7 +682,7 @@ export function TaskQuickActionMenu({
     // on Enter natively, and an open selector dropdown / suggestion list
     // consumes it one layer deeper (arriving here already default-prevented or
     // not at all), so both are left alone.
-    const handlePanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const handlePanelKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
         if (event.key !== 'Enter' || event.defaultPrevented || !activePanel) return;
         const target = event.target instanceof HTMLElement ? event.target : null;
         if (target?.closest('button, [data-selector-dropdown="true"]')) return;
@@ -966,13 +967,13 @@ export function TaskQuickActionMenu({
                                 nativeDateInputLocale={nativeDateInputLocale}
                                 dateInputClassName="rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 timeInput={
-                                    <input
-                                        type="time"
+                                    <TimeInput
                                         lang={nativeDateInputLocale}
                                         aria-label={t('task.aria.startTime')}
+                                        onKeyDown={handlePanelKeyDown}
                                         value={startTimeDraft}
                                         disabled={!startDateDraft}
-                                        onChange={(event) => setStartTimeDraft(event.target.value)}
+                                        onChange={setStartTimeDraft}
                                         className="w-24 shrink-0 rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 }
@@ -1023,13 +1024,13 @@ export function TaskQuickActionMenu({
                                 nativeDateInputLocale={nativeDateInputLocale}
                                 dateInputClassName="rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 timeInput={
-                                    <input
-                                        type="time"
+                                    <TimeInput
                                         lang={nativeDateInputLocale}
                                         aria-label={t('task.aria.dueTime')}
+                                        onKeyDown={handlePanelKeyDown}
                                         value={dueTimeDraft}
                                         disabled={!dueDateDraft}
-                                        onChange={(event) => setDueTimeDraft(event.target.value)}
+                                        onChange={setDueTimeDraft}
                                         className="w-24 shrink-0 rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 }
@@ -1080,13 +1081,13 @@ export function TaskQuickActionMenu({
                                 nativeDateInputLocale={nativeDateInputLocale}
                                 dateInputClassName="rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 timeInput={
-                                    <input
-                                        type="time"
+                                    <TimeInput
                                         lang={nativeDateInputLocale}
                                         aria-label={t('task.aria.reviewTime')}
+                                        onKeyDown={handlePanelKeyDown}
                                         value={reviewTimeDraft}
                                         disabled={!reviewDateDraft}
-                                        onChange={(event) => setReviewTimeDraft(event.target.value)}
+                                        onChange={setReviewTimeDraft}
                                         className="w-24 shrink-0 rounded border border-border bg-muted/50 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
                                     />
                                 }

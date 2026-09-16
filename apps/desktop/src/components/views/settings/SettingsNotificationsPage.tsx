@@ -3,6 +3,7 @@ import type { AppData } from '@mindwtr/core';
 import { reportError } from '../../../lib/report-error';
 import { requestDesktopNotificationPermission } from '../../../lib/notification-service';
 import { Switch } from '../../ui/Switch';
+import { TimeInput } from '../../ui/TimeInput';
 import { SettingRow } from './SettingRow';
 
 type Labels = {
@@ -162,12 +163,11 @@ export function SettingsNotificationsPage({
                 </SettingRow>
 
                 <SettingRow settingsKey="weeklyReviewTime" title={t.weeklyReviewTime}>
-                    <input
-                        type="time"
+                    <TimeInput
                         aria-label={t.weeklyReviewTime}
                         value={weeklyReviewTime}
                         disabled={!weeklyReviewEnabled}
-                        onChange={(e) => handleUpdate({ weeklyReviewTime: e.target.value })}
+                        onChange={(weeklyReviewTime) => handleUpdate({ weeklyReviewTime })}
                         className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                 </SettingRow>
@@ -182,12 +182,11 @@ export function SettingsNotificationsPage({
                 </div>
 
                 <SettingRow settingsKey="dailyDigestMorning" title={t.dailyDigestMorning}>
-                    <input
-                        type="time"
+                    <TimeInput
                         aria-label={t.dailyDigestMorning}
                         value={dailyDigestMorningTime}
                         disabled={!notificationsEnabled || !dailyDigestMorningEnabled}
-                        onChange={(e) => handleUpdate({ dailyDigestMorningTime: e.target.value })}
+                        onChange={(dailyDigestMorningTime) => handleUpdate({ dailyDigestMorningTime })}
                         className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <Switch
@@ -199,12 +198,11 @@ export function SettingsNotificationsPage({
                 </SettingRow>
 
                 <SettingRow settingsKey="dailyDigestEvening" title={t.dailyDigestEvening}>
-                    <input
-                        type="time"
+                    <TimeInput
                         aria-label={t.dailyDigestEvening}
                         value={dailyDigestEveningTime}
                         disabled={!notificationsEnabled || !dailyDigestEveningEnabled}
-                        onChange={(e) => handleUpdate({ dailyDigestEveningTime: e.target.value })}
+                        onChange={(dailyDigestEveningTime) => handleUpdate({ dailyDigestEveningTime })}
                         className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <Switch

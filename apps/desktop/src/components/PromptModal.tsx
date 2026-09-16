@@ -8,6 +8,7 @@ import {
     splitDateTimeLocal,
 } from '../lib/datetime-local-value';
 import { DateField } from './ui/DateField';
+import { TimeInput } from './ui/TimeInput';
 import { AutocompleteTextInput } from './ui/AutocompleteTextInput';
 import { Button } from './ui/Button';
 import { Dialog, DialogBody, DialogHeader } from './ui/Dialog';
@@ -169,16 +170,16 @@ export function PromptModal({
                             setValue(joinDateTimeLocal({ date: nextDate, time: dateParts.time }));
                         }}
                         timeInput={(
-                            <input
-                                type="time"
+                            <TimeInput
+                                lang={nativeDateInputLocale}
                                 aria-label={tFallback(t, 'calendar.time', 'Time')}
                                 value={dateParts.time}
                                 onKeyDown={handleFieldKeyDown}
-                                onChange={(event) => {
+                                onChange={(time) => {
                                     setHasInteracted(true);
                                     setValue(joinDateTimeLocal({
                                         date: dateParts.date,
-                                        time: event.target.value,
+                                        time,
                                     }));
                                 }}
                                 className="w-28 shrink-0 rounded-lg border border-border bg-card px-2 py-2 text-sm shadow-sm transition-colors focus:border-transparent focus:ring-2 focus:ring-primary"

@@ -382,6 +382,17 @@ describe('TaskQuickActionMenu', () => {
         expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
+    it('saves a cleared time as date-only when Enter submits the panel', async () => {
+        const user = userEvent.setup();
+        const onUpdateTask = vi.fn(async () => ({ success: true as const }));
+        renderMenu({ task: { ...task, startTime: '2026-02-04T09:30' }, onUpdateTask });
+        await user.click(screen.getByRole('menuitem', { name: /start date/i }));
+        const panel = screen.getByRole('dialog', { name: /start date/i });
+        await user.clear(within(panel).getByLabelText('Start time'));
+        await user.keyboard('{Enter}');
+        await waitFor(() => expect(onUpdateTask).toHaveBeenCalledWith({ startTime: '2026-02-04' }));
+    });
+
     it('closes without saving when Enter is pressed on an unchanged draft', () => {
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({ task: { ...task, dueDate: '2026-04-12' }, onUpdateTask });

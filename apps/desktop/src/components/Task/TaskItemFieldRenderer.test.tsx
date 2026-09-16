@@ -541,7 +541,7 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
         expect(queryByRole('group', { name: 'Repeat reminder' })).toBeNull();
     });
 
-    it('applies the configured locale to native date and time inputs', () => {
+    it('applies the configured locale to date and deterministic time inputs', () => {
         const { getByLabelText } = render(
             <TaskItemFieldRenderer
                 fieldId="dueDate"
@@ -556,7 +556,7 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
         expect(getByLabelText('Due time')).toHaveAttribute('lang', 'en-CA-u-hc-h23-fw-mon');
     });
 
-    it('gives the review date the same native time input as start and due', () => {
+    it('gives the review date the same deterministic time input as start and due', () => {
         const setField = vi.fn();
 
         const { getByLabelText } = render(
@@ -570,12 +570,10 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
             />
         );
 
-        // It was the one time field typed as text and parsed on blur, so it had no
-        // picker and no locale-aware display (#896).
         const reviewTime = getByLabelText('Review time');
-        expect(reviewTime).toHaveAttribute('type', 'time');
+        expect(reviewTime).toHaveAttribute('type', 'text');
         expect(reviewTime).toHaveAttribute('lang', 'en-CA-u-hc-h23-fw-mon');
-        expect(reviewTime).toHaveValue('11:45');
+        expect(reviewTime).toHaveValue('11:45 AM');
 
         fireEvent.change(reviewTime, { target: { value: '08:30' } });
         expect(setField).toHaveBeenCalledWith('reviewAt', '2026-04-19T08:30');

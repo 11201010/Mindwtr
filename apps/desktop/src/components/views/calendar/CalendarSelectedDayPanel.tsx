@@ -6,6 +6,7 @@ import { getTaskCalendarOccurrenceDate, hasTimeComponent, isProjectedRecurringTa
 import { cn } from '../../../lib/utils';
 import { reportError } from '../../../lib/report-error';
 import { setCalendarTaskDragData } from '../../../lib/calendar-task-drag';
+import { TimeInput } from '../../ui/TimeInput';
 import type { DesktopCalendarController } from './useDesktopCalendarController';
 
 type CalendarSelectedDayPanelController = Pick<
@@ -264,10 +265,10 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                                         )}
                                         {!projected && isEditing ? (
                                             <div className="flex shrink-0 items-center gap-1">
-                                                <input
-                                                    type="time"
+                                                <TimeInput
+                                            aria-label={t('calendar.time')}
                                                     value={editingTimeValue}
-                                                    onChange={(e) => updateEditingTimeValue(e.target.value)}
+                                                    onChange={updateEditingTimeValue}
                                                     className="h-8 rounded border border-border bg-background px-2 text-xs"
                                                 />
                                                 <button

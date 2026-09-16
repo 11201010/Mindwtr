@@ -97,7 +97,7 @@ describe('PromptModal datetime-local field', () => {
         render(<PromptModal {...dateTimeProps} onConfirm={onConfirm} />);
 
         const time = screen.getByLabelText('Time') as HTMLInputElement;
-        expect(time.value).toBe('09:30');
+        expect(time.value).toBe('9:30 AM');
 
         fireEvent.change(time, { target: { value: '17:45' } });
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
