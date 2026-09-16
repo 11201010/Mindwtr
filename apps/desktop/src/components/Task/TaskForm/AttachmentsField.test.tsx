@@ -1,9 +1,13 @@
-import { fireEvent, render } from '@testing-library/react';
-import { act } from 'react';
+import { fireEvent, render as rtlRender, type RenderOptions } from '@testing-library/react';
+import { act, type ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { globalProgressTracker } from '@mindwtr/core';
 
 import { AttachmentsField } from './AttachmentsField';
+import { LanguageProvider } from '../../../contexts/language-context';
+
+// The progress indicator reads its labels through the language context.
+const render = (ui: ReactElement, options?: RenderOptions) => rtlRender(ui, { wrapper: LanguageProvider, ...options });
 
 const renderField = (attachments: Parameters<typeof AttachmentsField>[0]['visibleEditAttachments']) => render(
     <AttachmentsField
