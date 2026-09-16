@@ -3968,6 +3968,7 @@ pub(crate) async fn save_data(
 
 pub(crate) const TASK_MUTATION_FOCUSED_COUNT_KEY: &str = "_localApiFocusedTaskCount";
 pub(crate) const TASK_MUTATION_PROJECT_NEXT_ORDERS_KEY: &str = "_localApiProjectNextOrders";
+pub(crate) const PROJECT_MUTATION_NEXT_ORDER_KEY: &str = "_localApiProjectNextOrder";
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TaskMutationReadScope {
@@ -4025,6 +4026,45 @@ impl TaskMutationReadScope {
             ..Self::default()
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProjectMutationReadScope {
+    project_id: Option<String>,
+    target_area_id: Option<String>,
+    target_area_supplied: bool,
+    include_children: bool,
+}
+
+impl ProjectMutationReadScope {
+    pub(crate) fn create(target_area_id: Option<&str>) -> Self {
+        Self {
+            target_area_id: TaskMutationReadScope::normalize_container_id(target_area_id),
+            target_area_supplied: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn patch(
+        project_id: &str,
+        target_area_id: Option<&str>,
+        target_area_supplied: bool,
+        include_children: bool,
+    ) -> Self {
+        Self {
+            project_id: Some(project_id.to_string()),
+            target_area_id: TaskMutationReadScope::normalize_container_id(target_area_id),
+            target_area_supplied,
+            include_children,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ProjectMutationRows {
+    pub(crate) projects: Vec<Value>,
+    pub(crate) tasks: Vec<Value>,
+    pub(crate) sections: Vec<Value>,
 }
 
 #[derive(Debug, Default)]
@@ -4156,11 +4196,14 @@ fn load_scoped_area(
     stats.statements += 1;
     let area = conn
         .query_row(
-            "SELECT id, deletedAt FROM areas WHERE id = ?1",
+            "SELECT id, name, deletedAt FROM areas WHERE id = ?1",
             [area_id],
             |row| {
                 let mut area = Map::new();
                 area.insert("id".to_string(), Value::String(row.get("id")?));
+                if let Some(name) = row.get::<_, Option<String>>("name")? {
+                    area.insert("name".to_string(), Value::String(name));
+                }
                 if let Some(deleted_at) = row.get::<_, Option<String>>("deletedAt")? {
                     area.insert("deletedAt".to_string(), Value::String(deleted_at));
                 }
@@ -4420,6 +4463,325 @@ fn read_task_mutation_data(
             );
     }
     Ok((data, stats))
+}
+
+fn read_project_mutation_data(
+    conn: &Connection,
+    scope: &ProjectMutationReadScope,
+) -> Result<(Value, TaskMutationReadStats), String> {
+    let mut stats = TaskMutationReadStats::default();
+    let mut projects = Vec::new();
+    let mut tasks = Vec::new();
+    let mut sections = Vec::new();
+    let mut areas = Vec::new();
+
+    if let Some(project_id) = scope.project_id.as_deref() {
+        load_scoped_project(conn, project_id, &mut projects, &mut stats)?;
+        if scope.include_children {
+            append_scoped_task_rows(
+                conn,
+                "SELECT * FROM tasks WHERE projectId = ?1",
+                [project_id],
+                &mut tasks,
+                &mut stats,
+            )?;
+            stats.statements += 1;
+            let mut statement = conn
+                .prepare("SELECT * FROM sections WHERE projectId = ?1")
+                .map_err(|e| e.to_string())?;
+            let rows = statement
+                .query_map([project_id], row_to_section_value)
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                sections.push(row.map_err(|e| e.to_string())?);
+                stats.rows += 1;
+            }
+        }
+    }
+
+    let current_area_id = projects
+        .first()
+        .and_then(|project| project.get("areaId"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let target_area_id = if scope.target_area_supplied {
+        scope.target_area_id.clone()
+    } else {
+        current_area_id
+    };
+    if let Some(area_id) = target_area_id.as_deref() {
+        load_scoped_area(conn, area_id, &mut areas, &mut stats)?;
+    }
+
+    stats.statements += 1;
+    let max_order: Option<f64> = if let Some(area_id) = target_area_id.as_deref() {
+        conn.query_row(
+            "SELECT MAX(orderNum) FROM projects WHERE areaId = ?1",
+            [area_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        conn.query_row(
+            "SELECT MAX(orderNum) FROM projects WHERE areaId IS NULL OR trim(areaId) = ''",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    stats.rows += 1;
+    let next_order = max_order.filter(|order| order.is_finite()).unwrap_or(-1.0) + 1.0;
+
+    stats.statements += 1;
+    let settings_raw: Option<String> = conn
+        .query_row("SELECT data FROM settings WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if settings_raw.is_some() {
+        stats.rows += 1;
+    }
+    let settings = parse_json_value(settings_raw)
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let order = serde_json::Number::from_f64(next_order)
+        .ok_or_else(|| "Invalid destination project order".to_string())?;
+
+    let mut data = serde_json::json!({
+        "tasks": tasks,
+        "projects": projects,
+        "sections": sections,
+        "areas": areas,
+        "people": [],
+        "settings": Value::Object(settings),
+    });
+    data.as_object_mut()
+        .expect("scoped project data is an object")
+        .insert(
+            PROJECT_MUTATION_NEXT_ORDER_KEY.to_string(),
+            Value::Number(order),
+        );
+    Ok((data, stats))
+}
+
+fn replace_project_row(conn: &Connection, project: &Value) -> Result<(), String> {
+    project
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Project id is required".to_string())?;
+    let tag_ids_json = json_str_or_default(project.get("tagIds"), "[]");
+    let attachments_json = json_str(project.get("attachments"));
+    let normalized_rev = normalized_revision_for_storage(project.get("rev"));
+    let normalized_rev_by = normalized_rev_by(project.get("revBy"));
+    conn.execute(
+        "INSERT INTO projects (id, title, status, color, orderNum, tagIds, isSequential, sequentialScope, taskSortBy, isFocused, supportNotes, attachments, dueDate, reviewAt, areaId, areaTitle, rev, revBy, createdAt, updatedAt, deletedAt, purgedAt, startDate, cancelledAt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+         ON CONFLICT(id) DO UPDATE SET
+           title=excluded.title, status=excluded.status, color=excluded.color, orderNum=excluded.orderNum,
+           tagIds=excluded.tagIds, isSequential=excluded.isSequential, sequentialScope=excluded.sequentialScope,
+           taskSortBy=excluded.taskSortBy, isFocused=excluded.isFocused, supportNotes=excluded.supportNotes,
+           attachments=excluded.attachments, dueDate=excluded.dueDate, reviewAt=excluded.reviewAt,
+           areaId=excluded.areaId, areaTitle=excluded.areaTitle, rev=excluded.rev, revBy=excluded.revBy,
+           createdAt=excluded.createdAt, updatedAt=excluded.updatedAt, deletedAt=excluded.deletedAt,
+           purgedAt=excluded.purgedAt, startDate=excluded.startDate, cancelledAt=excluded.cancelledAt",
+        params![
+            project.get("id").and_then(Value::as_str).unwrap_or_default(),
+            project.get("title").and_then(Value::as_str).unwrap_or_default(),
+            project.get("status").and_then(Value::as_str).unwrap_or("active"),
+            project
+                .get("color")
+                .and_then(Value::as_str)
+                .unwrap_or("#6B7280"),
+            project.get("order").and_then(Value::as_f64),
+            tag_ids_json,
+            project
+                .get("isSequential")
+                .and_then(Value::as_bool)
+                .unwrap_or(false) as i32,
+            project.get("sequentialScope").and_then(Value::as_str),
+            normalize_project_task_sort_by(project.get("taskSortBy").and_then(Value::as_str)),
+            project
+                .get("isFocused")
+                .and_then(Value::as_bool)
+                .unwrap_or(false) as i32,
+            project.get("supportNotes").and_then(Value::as_str),
+            attachments_json,
+            project.get("dueDate").and_then(Value::as_str),
+            project.get("reviewAt").and_then(Value::as_str),
+            project.get("areaId").and_then(Value::as_str),
+            project.get("areaTitle").and_then(Value::as_str),
+            normalized_rev,
+            normalized_rev_by.as_deref(),
+            project
+                .get("createdAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            project
+                .get("updatedAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            project.get("deletedAt").and_then(Value::as_str),
+            project.get("purgedAt").and_then(Value::as_str),
+            project.get("startDate").and_then(Value::as_str),
+            project.get("cancelledAt").and_then(Value::as_str),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn replace_project_mutation_section_row(conn: &Connection, section: &Value) -> Result<(), String> {
+    section
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Section id is required".to_string())?;
+    let normalized_rev = normalized_revision_for_storage(section.get("rev"));
+    let normalized_rev_by = normalized_rev_by(section.get("revBy"));
+    conn.execute(
+        "INSERT INTO sections (id, projectId, title, description, orderNum, isCollapsed, rev, revBy, createdAt, updatedAt, deletedAt, deletedAtBeforeProjectArchive, projectArchivedAt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+           projectId=excluded.projectId, title=excluded.title, description=excluded.description,
+           orderNum=excluded.orderNum, isCollapsed=excluded.isCollapsed, rev=excluded.rev,
+           revBy=excluded.revBy, createdAt=excluded.createdAt, updatedAt=excluded.updatedAt,
+           deletedAt=excluded.deletedAt, deletedAtBeforeProjectArchive=excluded.deletedAtBeforeProjectArchive,
+           projectArchivedAt=excluded.projectArchivedAt",
+        params![
+            section.get("id").and_then(Value::as_str).unwrap_or_default(),
+            section
+                .get("projectId")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            section
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            section.get("description").and_then(Value::as_str),
+            section.get("order").and_then(Value::as_f64),
+            section
+                .get("isCollapsed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false) as i32,
+            normalized_rev,
+            normalized_rev_by.as_deref(),
+            section
+                .get("createdAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            section
+                .get("updatedAt")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            section.get("deletedAt").and_then(Value::as_str),
+            section
+                .get("deletedAtBeforeProjectArchive")
+                .and_then(Value::as_str),
+            section.get("projectArchivedAt").and_then(Value::as_str),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn mutate_project_rows_with_retries<T, F>(
+    app: &tauri::AppHandle,
+    scope: ProjectMutationReadScope,
+    mut mutate: F,
+) -> Result<(T, Value), String>
+where
+    F: FnMut(&mut Value) -> Result<(T, ProjectMutationRows), String>,
+{
+    ensure_task_mutation_storage_ready(app)?;
+    let data_path = get_data_path(app);
+    for attempt in 0..STORAGE_RETRY_ATTEMPTS {
+        let conn = open_sqlite(app)?;
+        match commit_project_row_mutation(&conn, &scope, &mut mutate) {
+            Ok((result, fallback, _read_stats)) => {
+                let canonical = match stable_sqlite_snapshot_with_version(&conn) {
+                    Ok((canonical, data_version)) => {
+                        publish_task_data_json(&conn, &data_path, canonical, data_version)
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Project mutation committed but canonical recovery refresh failed: {error}"
+                        );
+                        fallback
+                    }
+                };
+                return Ok((result, canonical));
+            }
+            Err(error) => {
+                let can_retry =
+                    is_retryable_storage_error(&error) && attempt + 1 < STORAGE_RETRY_ATTEMPTS;
+                if can_retry {
+                    let delay = STORAGE_RETRY_BASE_DELAY_MS * (attempt as u64 + 1);
+                    std::thread::sleep(Duration::from_millis(delay));
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+    Err("Failed to mutate project rows".to_string())
+}
+
+fn commit_project_row_mutation<T, F>(
+    conn: &Connection,
+    scope: &ProjectMutationReadScope,
+    mutate: &mut F,
+) -> Result<(T, Value, TaskMutationReadStats), String>
+where
+    F: FnMut(&mut Value) -> Result<(T, ProjectMutationRows), String>,
+{
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        let (mut canonical, read_stats) = read_project_mutation_data(conn, scope)?;
+        let (result, changed) = mutate(&mut canonical)?;
+        let mut written_ids = HashSet::new();
+        for project in changed.projects {
+            let project_id = project
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Project id is required".to_string())?;
+            if written_ids.insert(project_id.to_string()) {
+                replace_project_row(conn, &project)?;
+            }
+        }
+        written_ids.clear();
+        for section in changed.sections {
+            let section_id = section
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Section id is required".to_string())?;
+            if written_ids.insert(section_id.to_string()) {
+                replace_project_mutation_section_row(conn, &section)?;
+            }
+        }
+        written_ids.clear();
+        for task in changed.tasks {
+            let task_id = task
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Task id is required".to_string())?;
+            if written_ids.insert(task_id.to_string()) {
+                replace_task_row(conn, &task)?;
+            }
+        }
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        Ok((result, canonical, read_stats))
+    })();
+    if result.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
+    result
 }
 
 fn ensure_task_mutation_storage_ready(app: &tauri::AppHandle) -> Result<(), String> {
@@ -8695,6 +9057,160 @@ mod tests {
         second
             .execute_batch("BEGIN IMMEDIATE; ROLLBACK;")
             .expect("writer lock released before recovery publication");
+    }
+
+    #[test]
+    fn project_row_mutation_preserves_fractional_order_and_fresh_partial_updates() {
+        let conn = Connection::open_in_memory().expect("database");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        replace_data_in_transaction(
+            &conn,
+            serde_json::json!({
+                "tasks": [],
+                "projects": [
+                    {
+                        "id": "project-1", "title": "Original", "status": "active",
+                        "color": "#000000", "order": 0, "tagIds": [], "isSequential": false,
+                        "rev": 1, "revBy": "old", "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    },
+                    {
+                        "id": "unrelated", "title": "Untouched", "status": "active",
+                        "color": "#ffffff", "order": 9, "tagIds": [], "isSequential": false,
+                        "rev": 4, "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    }
+                ],
+                "sections": [], "areas": [], "people": [],
+                "settings": { "deviceId": "desktop-local-api" }
+            }),
+        )
+        .expect("seed projects");
+        let unrelated_rowid: i64 = conn
+            .query_row(
+                "SELECT rowid FROM projects WHERE id = 'unrelated'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("unrelated rowid");
+        let scope = ProjectMutationReadScope::patch("project-1", None, false, false);
+
+        for patch in [
+            serde_json::json!({ "title": "Renamed", "order": 1.5 }),
+            serde_json::json!({ "color": "#123456" }),
+        ] {
+            let patch = patch.as_object().expect("project patch").clone();
+            let mut mutation = |data: &mut Value| {
+                let (project, tasks, sections) =
+                    crate::local_api::patch_project_in_data(data, "project-1", &patch)?;
+                Ok::<_, String>((
+                    (),
+                    ProjectMutationRows {
+                        projects: vec![project],
+                        tasks,
+                        sections,
+                    },
+                ))
+            };
+            commit_project_row_mutation(&conn, &scope, &mut mutation)
+                .expect("fresh partial project update");
+        }
+
+        let stored = conn
+            .query_row(
+                "SELECT title, color, orderNum, rev FROM projects WHERE id = 'project-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .expect("stored project");
+        assert_eq!(
+            stored,
+            ("Renamed".to_string(), "#123456".to_string(), 1.5, 3)
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT rowid FROM projects WHERE id = 'unrelated'",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
+            .expect("unrelated rowid after"),
+            unrelated_rowid
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT title FROM projects WHERE id = 'unrelated'",
+                [],
+                |row| { row.get::<_, String>(0) }
+            )
+            .expect("unrelated title"),
+            "Untouched"
+        );
+    }
+
+    #[test]
+    fn failed_project_row_mutation_rolls_back_without_partial_changes() {
+        let conn = Connection::open_in_memory().expect("database");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        replace_data_in_transaction(
+            &conn,
+            serde_json::json!({
+                "tasks": [],
+                "projects": [{
+                    "id": "project-1", "title": "Original", "status": "active",
+                    "color": "#000000", "order": 0, "tagIds": [], "isSequential": false,
+                    "rev": 1, "createdAt": "2026-09-01T00:00:00Z",
+                    "updatedAt": "2026-09-01T00:00:00Z"
+                }],
+                "sections": [], "areas": [], "people": [],
+                "settings": { "deviceId": "desktop-local-api" }
+            }),
+        )
+        .expect("seed project");
+        conn.execute_batch(
+            "CREATE TRIGGER reject_project_update BEFORE UPDATE ON projects
+             WHEN NEW.title = 'Rejected'
+             BEGIN SELECT RAISE(ABORT, 'injected project write failure'); END;",
+        )
+        .expect("failure trigger");
+        let patch = serde_json::json!({ "title": "Rejected" })
+            .as_object()
+            .expect("project patch")
+            .clone();
+        let scope = ProjectMutationReadScope::patch("project-1", None, false, false);
+        let mut mutation = |data: &mut Value| {
+            let (project, tasks, sections) =
+                crate::local_api::patch_project_in_data(data, "project-1", &patch)?;
+            Ok::<_, String>((
+                (),
+                ProjectMutationRows {
+                    projects: vec![project],
+                    tasks,
+                    sections,
+                },
+            ))
+        };
+
+        let error = commit_project_row_mutation(&conn, &scope, &mut mutation)
+            .expect_err("injected failure must abort the transaction");
+
+        assert!(error.contains("injected project write failure"));
+        assert!(conn.is_autocommit());
+        assert_eq!(
+            conn.query_row(
+                "SELECT title, rev FROM projects WHERE id = 'project-1'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("unchanged project"),
+            ("Original".to_string(), 1)
+        );
     }
 
     #[test]

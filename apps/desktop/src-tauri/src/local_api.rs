@@ -1,6 +1,8 @@
 use crate::storage::{
-    ensure_data_file, load_data_snapshot, mutate_task_rows_with_retries, TaskMutationReadScope,
-    TASK_MUTATION_FOCUSED_COUNT_KEY, TASK_MUTATION_PROJECT_NEXT_ORDERS_KEY,
+    ensure_data_file, load_data_snapshot, mutate_project_rows_with_retries,
+    mutate_task_rows_with_retries, ProjectMutationReadScope, ProjectMutationRows,
+    TaskMutationReadScope, PROJECT_MUTATION_NEXT_ORDER_KEY, TASK_MUTATION_FOCUSED_COUNT_KEY,
+    TASK_MUTATION_PROJECT_NEXT_ORDERS_KEY,
 };
 use crate::{
     get_config_path, get_secrets_path, lock_config_read_modify_write, read_config,
@@ -39,6 +41,7 @@ const LOCAL_API_REV_BY: &str = "desktop-local-api";
 const MAX_SYNC_REVISION: i64 = 2_147_483_647;
 const MAX_TASK_TITLE_LENGTH: usize = 500;
 const MAX_TASK_TOKEN_LENGTH: usize = MAX_TASK_TITLE_LENGTH;
+const DEFAULT_PROJECT_COLOR: &str = "#94a3b8";
 const RECURRENCE_REQUIRES_APP: &str = "recurrence_requires_app";
 
 #[derive(Debug, Serialize, Clone)]
@@ -650,12 +653,19 @@ fn is_request_authorized(request: &ApiRequest, token: &str) -> bool {
 }
 
 fn api_error_response(error: String) -> ApiResponse {
-    if error == "Task not found" {
+    if matches!(
+        error.as_str(),
+        "Task not found" | "Project not found" | "Area not found"
+    ) {
         return ApiResponse::error(404, error);
+    }
+    if error.starts_with("Task status conflict:") || error.starts_with("Project update conflict:") {
+        return ApiResponse::error(409, error);
     }
     if error.starts_with("Invalid ")
         || error.starts_with("Unsupported ")
         || error.starts_with("Task title")
+        || error.starts_with("Project title")
         || error.starts_with("Request ")
     {
         return ApiResponse::error(400, error);
@@ -687,6 +697,68 @@ fn route_api_request(
             .filter(|project| !has_string_field(project, "deletedAt"))
             .collect::<Vec<_>>();
         return Ok(ApiResponse::ok(json!({ "projects": projects })));
+    }
+
+    if request.method == "POST" && request.path == "/projects" {
+        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let body = parse_body_object(&request.body)?;
+        let target_area_id = body
+            .get("props")
+            .and_then(Value::as_object)
+            .and_then(|props| props.get("areaId"))
+            .and_then(Value::as_str);
+        let scope = ProjectMutationReadScope::create(target_area_id);
+        let (project_id, persisted) = mutate_project_rows_with_retries(app, scope, |data| {
+            let project = create_project_from_body(&body, data)?;
+            let project_id = project
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Project id is required".to_string())?
+                .to_string();
+            let project = Value::Object(project);
+            ensure_array_mut(data, "projects")?.push(project.clone());
+            Ok((
+                project_id,
+                ProjectMutationRows {
+                    projects: vec![project],
+                    ..ProjectMutationRows::default()
+                },
+            ))
+        })?;
+        log::info!(
+            "Desktop Local API project write persisted extra.releaseCheck=v1.3.1/local-api-project-write"
+        );
+        return Ok(ApiResponse::created(
+            json!({ "project": persisted_project(&persisted, &project_id)? }),
+        ));
+    }
+
+    if segments.len() == 2 && segments[0] == "projects" && request.method == "PATCH" {
+        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let body = parse_body_object(&request.body)?;
+        let scope = ProjectMutationReadScope::patch(
+            &segments[1],
+            body.get("areaId").and_then(Value::as_str),
+            body.contains_key("areaId"),
+            body.contains_key("status"),
+        );
+        let (_, persisted) = mutate_project_rows_with_retries(app, scope, |data| {
+            let (project, tasks, sections) = patch_project_in_data(data, &segments[1], &body)?;
+            Ok((
+                (),
+                ProjectMutationRows {
+                    projects: vec![project],
+                    tasks,
+                    sections,
+                },
+            ))
+        })?;
+        log::info!(
+            "Desktop Local API project write persisted extra.releaseCheck=v1.3.1/local-api-project-write"
+        );
+        return Ok(ApiResponse::ok(
+            json!({ "project": persisted_project(&persisted, &segments[1])? }),
+        ));
     }
 
     if request.method == "GET" && (request.path == "/areas" || request.path == "/v1/areas") {
@@ -748,6 +820,7 @@ fn route_api_request(
     if segments.len() == 2 && segments[0] == "tasks" && request.method == "PATCH" {
         let _guard = write_lock.lock().map_err(|e| e.to_string())?;
         let body = parse_body_object(&request.body)?;
+        let is_triage = body.contains_key("status");
         let scope = TaskMutationReadScope::patch(
             &segments[1],
             body.get("projectId").and_then(Value::as_str),
@@ -758,6 +831,11 @@ fn route_api_request(
             let task = patch_task_in_data(data, &segments[1], &body)?;
             Ok(((), vec![task]))
         })?;
+        if is_triage {
+            log::info!(
+                "Desktop Local API task triage persisted extra.releaseCheck=v1.3.1/local-api-task-triage"
+            );
+        }
         return Ok(ApiResponse::ok(
             json!({ "task": persisted_task(&persisted, &segments[1])? }),
         ));
@@ -1004,6 +1082,545 @@ fn persisted_task(data: &Value, task_id: &str) -> Result<Value, String> {
     find_task(data, task_id).ok_or_else(|| "Task not found after persistence".to_string())
 }
 
+fn find_project(data: &Value, project_id: &str) -> Option<Value> {
+    data.get("projects")?
+        .as_array()?
+        .iter()
+        .find(|project| project.get("id").and_then(Value::as_str) == Some(project_id))
+        .cloned()
+}
+
+fn persisted_project(data: &Value, project_id: &str) -> Result<Value, String> {
+    find_project(data, project_id).ok_or_else(|| "Project not found after persistence".to_string())
+}
+
+fn live_project_area<'a>(data: &'a Value, area_id: &str) -> Option<&'a Value> {
+    data.get("areas")?.as_array()?.iter().find(|area| {
+        area.get("id").and_then(Value::as_str) == Some(area_id)
+            && !has_string_field(area, "deletedAt")
+    })
+}
+
+fn sanitize_project_fields(
+    fields: &Map<String, Value>,
+    allow_title: bool,
+) -> Result<Map<String, Value>, String> {
+    if allow_title && fields.is_empty() {
+        return Err("Request patch must include at least one project field".to_string());
+    }
+    let mut sanitized = Map::new();
+    for (key, value) in fields {
+        let normalized = match key.as_str() {
+            "title" if allow_title => {
+                let title = value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                    .ok_or_else(|| "Invalid project field: title".to_string())?;
+                if js_string_length(title) > MAX_TASK_TITLE_LENGTH {
+                    return Err(format!(
+                        "Project title too long (max {MAX_TASK_TITLE_LENGTH} characters)"
+                    ));
+                }
+                Value::String(title.to_string())
+            }
+            "areaId" => {
+                if value.is_null() {
+                    Value::Null
+                } else {
+                    let area_id = value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|area_id| !area_id.is_empty())
+                        .ok_or_else(|| "Invalid project field: areaId".to_string())?;
+                    Value::String(area_id.to_string())
+                }
+            }
+            "color" => {
+                let color = value
+                    .as_str()
+                    .filter(|color| !color.trim().is_empty())
+                    .ok_or_else(|| "Invalid project field: color".to_string())?;
+                Value::String(color.to_string())
+            }
+            "status" => {
+                let status = value
+                    .as_str()
+                    .filter(|status| {
+                        matches!(*status, "active" | "someday" | "waiting" | "archived")
+                    })
+                    .ok_or_else(|| "Invalid project field: status".to_string())?;
+                Value::String(status.to_string())
+            }
+            "isSequential" => Value::Bool(
+                value
+                    .as_bool()
+                    .ok_or_else(|| "Invalid project field: isSequential".to_string())?,
+            ),
+            "sequentialScope" => {
+                let scope = value
+                    .as_str()
+                    .filter(|scope| matches!(*scope, "project" | "section"))
+                    .ok_or_else(|| "Invalid project field: sequentialScope".to_string())?;
+                Value::String(scope.to_string())
+            }
+            "order" => {
+                let order = value
+                    .as_f64()
+                    .filter(|order| order.is_finite())
+                    .and_then(serde_json::Number::from_f64)
+                    .ok_or_else(|| "Invalid project field: order".to_string())?;
+                Value::Number(order)
+            }
+            _ => return Err(format!("Unsupported project field: {key}")),
+        };
+        sanitized.insert(key.clone(), normalized);
+    }
+    Ok(sanitized)
+}
+
+fn create_project_from_body(
+    body: &Map<String, Value>,
+    data: &Value,
+) -> Result<Map<String, Value>, String> {
+    for key in body.keys() {
+        if !matches!(key.as_str(), "title" | "props") {
+            return Err(format!("Unsupported project field: {key}"));
+        }
+    }
+    let title = body
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .ok_or_else(|| "Project title is required".to_string())?;
+    if js_string_length(title) > MAX_TASK_TITLE_LENGTH {
+        return Err(format!(
+            "Project title too long (max {MAX_TASK_TITLE_LENGTH} characters)"
+        ));
+    }
+    let empty_props = Map::new();
+    let props = match body.get("props") {
+        None => &empty_props,
+        Some(Value::Object(props)) => props,
+        Some(_) => return Err("Invalid project props".to_string()),
+    };
+    let props = sanitize_project_fields(props, false)?;
+    let area_id = props.get("areaId").and_then(Value::as_str);
+    let area = match area_id {
+        Some(area_id) => Some(live_project_area(data, area_id).ok_or("Area not found")?),
+        None => None,
+    };
+    let default_sequential = data
+        .get("settings")
+        .and_then(|settings| settings.get("gtd"))
+        .and_then(|gtd| gtd.get("defaultProjectFlowMode"))
+        .and_then(Value::as_str)
+        == Some("sequential");
+    let now = now_iso();
+    let mut project = Map::new();
+    project.insert("id".to_string(), Value::String(generate_uuid_v4()));
+    project.insert("title".to_string(), Value::String(title.to_string()));
+    project.insert(
+        "status".to_string(),
+        props
+            .get("status")
+            .cloned()
+            .unwrap_or_else(|| Value::String("active".to_string())),
+    );
+    project.insert(
+        "color".to_string(),
+        props
+            .get("color")
+            .cloned()
+            .unwrap_or_else(|| Value::String(DEFAULT_PROJECT_COLOR.to_string())),
+    );
+    project.insert(
+        "order".to_string(),
+        props
+            .get("order")
+            .cloned()
+            .or_else(|| data.get(PROJECT_MUTATION_NEXT_ORDER_KEY).cloned())
+            .unwrap_or_else(|| Value::Number(0.into())),
+    );
+    project.insert("tagIds".to_string(), Value::Array(Vec::new()));
+    project.insert(
+        "isSequential".to_string(),
+        props
+            .get("isSequential")
+            .cloned()
+            .unwrap_or(Value::Bool(default_sequential)),
+    );
+    project.insert("isFocused".to_string(), Value::Bool(false));
+    if let Some(scope) = props.get("sequentialScope") {
+        project.insert("sequentialScope".to_string(), scope.clone());
+    }
+    if let Some(area_id) = area_id {
+        project.insert("areaId".to_string(), Value::String(area_id.to_string()));
+    }
+    if let Some(area_title) = area
+        .and_then(|area| area.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        project.insert(
+            "areaTitle".to_string(),
+            Value::String(area_title.to_string()),
+        );
+    }
+    project.insert("rev".to_string(), Value::Number(1.into()));
+    project.insert(
+        "revBy".to_string(),
+        Value::String(device_id_from_data(data)),
+    );
+    project.insert("createdAt".to_string(), Value::String(now.clone()));
+    project.insert("updatedAt".to_string(), Value::String(now));
+    Ok(project)
+}
+
+fn valid_cancellation_timestamp(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_str).is_some_and(|timestamp| {
+        timestamp.as_bytes().get(10) == Some(&b'T')
+            && OffsetDateTime::parse(timestamp, &Rfc3339).is_ok()
+    })
+}
+
+fn is_non_terminal_task_status(status: &str) -> bool {
+    matches!(
+        status,
+        "inbox" | "next" | "waiting" | "someday" | "reference"
+    )
+}
+
+fn apply_project_archive_to_task(
+    task: &mut Map<String, Value>,
+    archived_at: &str,
+    device_id: &str,
+    cancellation_at: Option<&str>,
+) {
+    let previous_status = task
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("inbox")
+        .to_string();
+    task.insert(
+        "statusBeforeProjectArchive".to_string(),
+        Value::String(previous_status),
+    );
+    if let Some(completed_at) = task.get("completedAt").cloned() {
+        task.insert("completedAtBeforeProjectArchive".to_string(), completed_at);
+    } else {
+        task.remove("completedAtBeforeProjectArchive");
+    }
+    if let Some(focused) = task.get("isFocusedToday").cloned() {
+        task.insert("isFocusedTodayBeforeProjectArchive".to_string(), focused);
+    } else {
+        task.remove("isFocusedTodayBeforeProjectArchive");
+    }
+    task.insert(
+        "projectArchivedAt".to_string(),
+        Value::String(archived_at.to_string()),
+    );
+    task.insert("isFocusedToday".to_string(), Value::Bool(false));
+    task.remove("focusOrder");
+    if let Some(cancelled_at) = cancellation_at {
+        task.insert("status".to_string(), Value::String("archived".to_string()));
+        task.insert(
+            "cancelledAt".to_string(),
+            Value::String(cancelled_at.to_string()),
+        );
+        task.remove("completedAt");
+    } else {
+        task.insert("status".to_string(), Value::String("done".to_string()));
+        task.insert(
+            "completedAt".to_string(),
+            Value::String(archived_at.to_string()),
+        );
+        task.remove("cancelledAt");
+    }
+    task.insert(
+        "updatedAt".to_string(),
+        Value::String(archived_at.to_string()),
+    );
+    bump_task_revision(task, device_id);
+}
+
+fn restore_task_from_project_archive(
+    task: &mut Map<String, Value>,
+    restored_at: &str,
+    device_id: &str,
+) -> bool {
+    let Some(previous_status) = task
+        .get("statusBeforeProjectArchive")
+        .and_then(Value::as_str)
+        .filter(|status| is_non_terminal_task_status(status))
+        .map(str::to_string)
+    else {
+        return false;
+    };
+    let Some(archived_at) = task
+        .get("projectArchivedAt")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return false;
+    };
+    if has_non_empty_string(task, "deletedAt")
+        || task.get("updatedAt").and_then(Value::as_str) != Some(archived_at.as_str())
+    {
+        return false;
+    }
+    let status = task
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("inbox");
+    let completed_by_project = status == "done"
+        && !valid_cancellation_timestamp(task.get("cancelledAt"))
+        && task.get("completedAt").and_then(Value::as_str) == Some(archived_at.as_str());
+    let cancelled_by_project = status == "archived"
+        && valid_cancellation_timestamp(task.get("cancelledAt"))
+        && !has_non_empty_string(task, "completedAt");
+    if !completed_by_project && !cancelled_by_project {
+        return false;
+    }
+    task.insert("status".to_string(), Value::String(previous_status));
+    if let Some(completed_at) = task.get("completedAtBeforeProjectArchive").cloned() {
+        task.insert("completedAt".to_string(), completed_at);
+    } else {
+        task.remove("completedAt");
+    }
+    task.remove("cancelledAt");
+    let focused = task
+        .get("isFocusedTodayBeforeProjectArchive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    task.insert("isFocusedToday".to_string(), Value::Bool(focused));
+    task.remove("statusBeforeProjectArchive");
+    task.remove("completedAtBeforeProjectArchive");
+    task.remove("isFocusedTodayBeforeProjectArchive");
+    task.remove("projectArchivedAt");
+    task.insert(
+        "updatedAt".to_string(),
+        Value::String(restored_at.to_string()),
+    );
+    bump_task_revision(task, device_id);
+    true
+}
+
+fn apply_project_lifecycle_to_children(
+    data: &mut Value,
+    project_id: &str,
+    previous_status: &str,
+    next_status: &str,
+    operation_at: &str,
+    device_id: &str,
+    cancellation_at: Option<&str>,
+) -> Result<(Vec<Value>, Vec<Value>), String> {
+    let entered_archive = previous_status != "archived" && next_status == "archived";
+    let reactivated = previous_status == "archived" && next_status != "archived";
+    if !entered_archive && !reactivated {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut changed_tasks = Vec::new();
+    for task in ensure_array_mut(data, "tasks")? {
+        let Some(task_object) = task.as_object_mut() else {
+            continue;
+        };
+        if task_object.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            continue;
+        }
+        if entered_archive {
+            if has_non_empty_string(task_object, "deletedAt") {
+                continue;
+            }
+            let status = task_object
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("inbox");
+            if !matches!(status, "inbox" | "next" | "waiting" | "someday") {
+                continue;
+            }
+            apply_project_archive_to_task(task_object, operation_at, device_id, cancellation_at);
+            changed_tasks.push(Value::Object(task_object.clone()));
+        } else if restore_task_from_project_archive(task_object, operation_at, device_id) {
+            changed_tasks.push(Value::Object(task_object.clone()));
+        }
+    }
+
+    let mut changed_sections = Vec::new();
+    for section in ensure_array_mut(data, "sections")? {
+        let Some(section_object) = section.as_object_mut() else {
+            continue;
+        };
+        if section_object.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            continue;
+        }
+        if entered_archive {
+            if has_non_empty_string(section_object, "deletedAt") {
+                continue;
+            }
+            section_object.remove("deletedAtBeforeProjectArchive");
+            section_object.insert(
+                "deletedAt".to_string(),
+                Value::String(operation_at.to_string()),
+            );
+            section_object.insert(
+                "projectArchivedAt".to_string(),
+                Value::String(operation_at.to_string()),
+            );
+        } else {
+            let Some(archived_at) = section_object
+                .get("projectArchivedAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let was_live = section_object
+                .get("deletedAtBeforeProjectArchive")
+                .map_or(true, Value::is_null);
+            if !was_live
+                || section_object.get("updatedAt").and_then(Value::as_str)
+                    != Some(archived_at.as_str())
+                || section_object.get("deletedAt").and_then(Value::as_str)
+                    != Some(archived_at.as_str())
+            {
+                continue;
+            }
+            section_object.remove("deletedAt");
+            section_object.remove("deletedAtBeforeProjectArchive");
+            section_object.remove("projectArchivedAt");
+        }
+        section_object.insert(
+            "updatedAt".to_string(),
+            Value::String(operation_at.to_string()),
+        );
+        bump_task_revision(section_object, device_id);
+        changed_sections.push(Value::Object(section_object.clone()));
+    }
+    Ok((changed_tasks, changed_sections))
+}
+
+pub(crate) fn patch_project_in_data(
+    data: &mut Value,
+    project_id: &str,
+    patch: &Map<String, Value>,
+) -> Result<(Value, Vec<Value>, Vec<Value>), String> {
+    let current = find_project(data, project_id).ok_or_else(|| "Project not found".to_string())?;
+    if has_string_field(&current, "purgedAt") {
+        return Err("Project update conflict: purged project cannot be updated".to_string());
+    }
+    if has_string_field(&current, "deletedAt") {
+        return Err(
+            "Project update conflict: restore the deleted project in the app before updating it"
+                .to_string(),
+        );
+    }
+    let mut project = current
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "Project is invalid".to_string())?;
+    let sanitized = sanitize_project_fields(patch, true)?;
+    let previous_status = project
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("active")
+        .to_string();
+    let next_status = sanitized
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or(&previous_status)
+        .to_string();
+    let previous_area_id = project
+        .get("areaId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let next_area_id = if sanitized.contains_key("areaId") {
+        sanitized
+            .get("areaId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    } else {
+        previous_area_id.clone()
+    };
+    let area_title = if sanitized.contains_key("areaId") {
+        match next_area_id.as_deref() {
+            Some(area_id) => live_project_area(data, area_id)
+                .ok_or("Area not found")?
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let area_changed = sanitized.contains_key("areaId") && next_area_id != previous_area_id;
+    let now = now_iso();
+    let device_id = device_id_from_data(data);
+
+    for (key, value) in sanitized {
+        if value.is_null() {
+            project.remove(&key);
+        } else {
+            project.insert(key, value);
+        }
+    }
+    if area_changed && !patch.contains_key("order") {
+        let order = data
+            .get(PROJECT_MUTATION_NEXT_ORDER_KEY)
+            .cloned()
+            .unwrap_or_else(|| Value::Number(0.into()));
+        project.insert("order".to_string(), order);
+    }
+    if patch.contains_key("areaId") {
+        if let Some(area_title) = area_title {
+            project.insert("areaTitle".to_string(), Value::String(area_title));
+        } else {
+            project.remove("areaTitle");
+        }
+    }
+    if next_status != previous_status && next_status != "active" {
+        project.insert("isFocused".to_string(), Value::Bool(false));
+    }
+    let cancellation_at =
+        if next_status == "archived" && valid_cancellation_timestamp(project.get("cancelledAt")) {
+            project
+                .get("cancelledAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        } else {
+            project.remove("cancelledAt");
+            None
+        };
+    if next_status == "archived" {
+        project.insert("isFocused".to_string(), Value::Bool(false));
+    }
+    let (changed_tasks, changed_sections) = apply_project_lifecycle_to_children(
+        data,
+        project_id,
+        &previous_status,
+        &next_status,
+        &now,
+        &device_id,
+        cancellation_at.as_deref(),
+    )?;
+    project.insert("updatedAt".to_string(), Value::String(now));
+    bump_task_revision(&mut project, &device_id);
+
+    let projects = ensure_array_mut(data, "projects")?;
+    let stored = projects
+        .iter_mut()
+        .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(project_id))
+        .ok_or_else(|| "Project not found".to_string())?;
+    *stored = Value::Object(project.clone());
+    Ok((Value::Object(project), changed_tasks, changed_sections))
+}
+
 /// Refuses `POST /tasks/{id}/complete` outright when the task's recurrence
 /// carries selectors this engine cannot compute (byDay/byMonthDay/rrule —
 /// see `recurrence_needs_core_engine`). A vanished recurring series is worse
@@ -1060,7 +1677,9 @@ where
 #[derive(Default)]
 struct LiveContainers {
     project_ids: std::collections::HashSet<String>,
+    archived_project_ids: std::collections::HashSet<String>,
     section_project_ids: std::collections::HashMap<String, String>,
+    section_owner_project_ids: std::collections::HashMap<String, String>,
     area_ids: std::collections::HashSet<String>,
     next_project_orders: std::collections::HashMap<String, f64>,
 }
@@ -1077,6 +1696,27 @@ impl LiveContainers {
                     .get("id")
                     .and_then(Value::as_str)
                     .map(str::to_string)
+            })
+            .collect();
+        let archived_project_ids = array_items(data, "projects")
+            .into_iter()
+            .filter(|project| project.get("status").and_then(Value::as_str) == Some("archived"))
+            .filter_map(|project| {
+                project
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect();
+        let section_owner_project_ids = array_items(data, "sections")
+            .into_iter()
+            .filter_map(|section| {
+                let id = section.get("id").and_then(Value::as_str)?.to_string();
+                let project_id = section
+                    .get("projectId")
+                    .and_then(Value::as_str)?
+                    .to_string();
+                Some((id, project_id))
             })
             .collect();
         let section_project_ids = array_items(data, "sections")
@@ -1143,7 +1783,9 @@ impl LiveContainers {
         }
         Self {
             project_ids,
+            archived_project_ids,
             section_project_ids,
+            section_owner_project_ids,
             area_ids,
             next_project_orders,
         }
@@ -1354,6 +1996,37 @@ fn normalize_task_container_patch(
             patch.insert("order".to_string(), Value::Number(order.clone()));
             patch.insert("orderNum".to_string(), Value::Number(order));
         }
+    }
+    Ok(())
+}
+
+fn reject_actionable_task_in_archived_project(
+    task: &Map<String, Value>,
+    patch: &Map<String, Value>,
+    live: &LiveContainers,
+) -> Result<(), String> {
+    let final_project_id = if patch.contains_key("projectId") {
+        normalize_optional_container_id(patch.get("projectId"))
+    } else {
+        normalize_optional_container_id(task.get("projectId"))
+    };
+    let final_section_id = if patch.contains_key("sectionId") {
+        normalize_optional_container_id(patch.get("sectionId"))
+    } else {
+        normalize_optional_container_id(task.get("sectionId"))
+    };
+    let archived_project_owner = final_project_id
+        .as_ref()
+        .is_some_and(|project_id| live.archived_project_ids.contains(project_id))
+        || final_section_id
+            .as_ref()
+            .and_then(|section_id| live.section_owner_project_ids.get(section_id))
+            .is_some_and(|project_id| live.archived_project_ids.contains(project_id));
+    if archived_project_owner {
+        return Err(
+            "Task status conflict: reactivate the archived project with PATCH /projects/:id status active, or move the task out in this patch"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -2543,11 +3216,52 @@ fn apply_task_patch_internal(
     device_id: &str,
     live_containers: Option<&LiveContainers>,
 ) -> Result<(), String> {
-    if patch.contains_key("status") {
-        return Err(
-            "Invalid task field: status; use the complete, archive, or restore action".to_string(),
-        );
-    }
+    let previous_status = task
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("inbox")
+        .to_string();
+    let requested_status = if let Some(status) = patch.get("status") {
+        let status = status
+            .as_str()
+            .ok_or_else(|| "Invalid task field: status".to_string())?;
+        if matches!(status, "done" | "archived") {
+            return Err(
+                "Invalid task field: status; use POST /tasks/:id/complete or /archive for terminal transitions"
+                    .to_string(),
+            );
+        }
+        if !is_non_terminal_task_status(status) {
+            return Err(format!("Invalid task field: status ({status})"));
+        }
+        if patch.get("cancelledAt").is_some_and(|value| {
+            value
+                .as_str()
+                .is_some_and(|timestamp| !timestamp.trim().is_empty())
+        }) {
+            return Err(
+                "Invalid task field: cancelledAt cannot be combined with a non-terminal status"
+                    .to_string(),
+            );
+        }
+        if has_non_empty_string(task, "purgedAt") {
+            return Err("Task status conflict: purged task cannot be triaged".to_string());
+        }
+        if has_non_empty_string(task, "deletedAt") {
+            return Err(
+                "Task status conflict: use POST /tasks/:id/restore before changing status"
+                    .to_string(),
+            );
+        }
+        if matches!(previous_status.as_str(), "done" | "archived") {
+            return Err(format!(
+                "Task status conflict: {previous_status} task must be reopened in the app before triage"
+            ));
+        }
+        Some(status.to_string())
+    } else {
+        None
+    };
     let mut sanitized = patch.clone();
     sanitize_task_patch_map(&mut sanitized)?;
     let explicit_order = if sanitized.contains_key("order") {
@@ -2561,6 +3275,12 @@ fn apply_task_patch_internal(
     }
     if let Some(live_containers) = live_containers {
         normalize_task_container_patch(task, &mut sanitized, live_containers)?;
+        if requested_status
+            .as_deref()
+            .is_some_and(|status| status != "reference")
+        {
+            reject_actionable_task_in_archived_project(task, &sanitized, live_containers)?;
+        }
     }
     resolve_relative_start_patch(task, &mut sanitized);
     let series_id = task
@@ -2590,6 +3310,15 @@ fn apply_task_patch_internal(
             _ => {}
         }
     }
+    if let Some(requested_status) = requested_status {
+        normalize_task_triage_patch(
+            task,
+            patch,
+            &mut sanitized,
+            &previous_status,
+            &requested_status,
+        );
+    }
     let cancelling = has_non_empty_string(&sanitized, "cancelledAt");
     for (key, value) in sanitized {
         if value.is_null() {
@@ -2607,6 +3336,69 @@ fn apply_task_patch_internal(
     task.insert("updatedAt".to_string(), Value::String(now));
     bump_task_revision(task, device_id);
     Ok(())
+}
+
+fn normalize_task_triage_patch(
+    task: &Map<String, Value>,
+    original_patch: &Map<String, Value>,
+    sanitized: &mut Map<String, Value>,
+    previous_status: &str,
+    requested_status: &str,
+) {
+    let old_focused = task.get("isFocusedToday").and_then(Value::as_bool) == Some(true);
+    let star_turning_on =
+        sanitized.get("isFocusedToday").and_then(Value::as_bool) == Some(true) && !old_focused;
+    if requested_status == "inbox" && requested_status != previous_status {
+        if star_turning_on {
+            sanitized.insert("status".to_string(), Value::String("next".to_string()));
+        } else {
+            let resolved_focused = sanitized
+                .get("isFocusedToday")
+                .and_then(Value::as_bool)
+                .unwrap_or(old_focused);
+            if resolved_focused {
+                sanitized.insert("isFocusedToday".to_string(), Value::Bool(false));
+            }
+        }
+    }
+
+    let final_status = sanitized
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or(requested_status)
+        .to_string();
+    if final_status != previous_status && !original_patch.contains_key("boardOrder") {
+        sanitized.insert("boardOrder".to_string(), Value::Null);
+    }
+
+    if final_status == "reference" {
+        for field in [
+            "startTime",
+            "dueDate",
+            "relativeStartOffset",
+            "reviewAt",
+            "recurrence",
+            "priority",
+            "timeEstimate",
+            "suppressMindwtrReminders",
+            "repeatReminderMinutes",
+            "showFutureRecurrence",
+            "focusOrder",
+            "boardOrder",
+        ] {
+            sanitized.insert(field.to_string(), Value::Null);
+        }
+        sanitized.insert("isFocusedToday".to_string(), Value::Bool(false));
+        sanitized.insert("pushCount".to_string(), Value::Number(0.into()));
+    }
+
+    let resolved_focused = sanitized
+        .get("isFocusedToday")
+        .and_then(Value::as_bool)
+        .unwrap_or(old_focused);
+    if old_focused && !resolved_focused && !original_patch.contains_key("focusOrder") {
+        sanitized.insert("focusOrder".to_string(), Value::Null);
+    }
 }
 
 fn sanitize_task_patch_map(patch: &mut Map<String, Value>) -> Result<(), String> {
@@ -2717,7 +3509,8 @@ fn valid_view_section_ids(value: &Value) -> bool {
     let Some(map) = value.as_object() else {
         return false;
     };
-    map.values().all(|entry| entry.as_str().is_some_and(|id| !id.trim().is_empty()))
+    map.values()
+        .all(|entry| entry.as_str().is_some_and(|id| !id.trim().is_empty()))
 }
 
 fn js_string_length(value: &str) -> usize {
@@ -2977,7 +3770,10 @@ fn valid_recurrence(value: &Value) -> bool {
                     .iter()
                     // -1 = RFC 5545 "last day of the month", the one negative
                     // ordinal the core engine supports.
-                    .all(|item| item.as_i64().is_some_and(|day| (1..=31).contains(&day) || day == -1))
+                    .all(|item| {
+                        item.as_i64()
+                            .is_some_and(|day| (1..=31).contains(&day) || day == -1)
+                    })
         }),
         "weekStart" => value.as_str().is_some_and(valid_recurrence_weekday),
         "count" => value.as_i64().is_some_and(|count| count > 0),
@@ -4278,9 +5074,8 @@ mod tests {
             "contentMtimeMs": 1750000000000_u64,
             "contentSize": 4096,
         }]);
-        let duplicated =
-            duplicate_attachment_value(Some(&original), "2026-01-02T00:00:00.000Z")
-                .expect("duplicated attachments");
+        let duplicated = duplicate_attachment_value(Some(&original), "2026-01-02T00:00:00.000Z")
+            .expect("duplicated attachments");
         let copy = duplicated[0].as_object().expect("attachment object");
         assert_eq!(copy.get("uri"), Some(&json!("file:///report.pdf")));
         assert!(!copy.contains_key("cloudKey"));
@@ -4292,7 +5087,7 @@ mod tests {
     }
 
     #[test]
-    fn local_api_patch_rejects_generic_status_transitions() {
+    fn local_api_patch_rejects_terminal_status_targets() {
         let mut task = json!({
             "id": "task-1", "title": "Lifecycle", "status": "next",
             "tags": [], "contexts": [], "rev": 1,
@@ -4310,9 +5105,9 @@ mod tests {
                 .expect("patch object"),
             "device-a",
         )
-        .expect_err("status changes require lifecycle actions");
+        .expect_err("terminal status changes require lifecycle actions");
 
-        assert!(error.contains("complete, archive, or restore"));
+        assert!(error.contains("/complete or /archive"));
         assert_eq!(task, original);
         assert_eq!(api_error_response(error).status, 400);
     }
@@ -5082,5 +5877,389 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn local_api_project_creation_matches_core_factory_defaults() {
+        let mut data = json!({
+            "tasks": [],
+            "projects": [],
+            "sections": [],
+            "areas": [{ "id": "area-1", "name": " Work ", "deletedAt": null }],
+            "people": [],
+            "settings": {
+                "deviceId": "device-project",
+                "gtd": { "defaultProjectFlowMode": "sequential" }
+            }
+        });
+        data[PROJECT_MUTATION_NEXT_ORDER_KEY] = json!(4.5);
+        let body = json!({
+            "title": "  Launch  ",
+            "props": { "areaId": " area-1 ", "sequentialScope": "section" }
+        });
+
+        let project = create_project_from_body(body.as_object().unwrap(), &data)
+            .expect("valid project creation");
+
+        assert_eq!(project["title"], "Launch");
+        assert_eq!(project["status"], "active");
+        assert_eq!(project["color"], DEFAULT_PROJECT_COLOR);
+        assert_eq!(project["order"], 4.5);
+        assert_eq!(project["tagIds"], json!([]));
+        assert_eq!(project["isSequential"], true);
+        assert_eq!(project["sequentialScope"], "section");
+        assert_eq!(project["isFocused"], false);
+        assert_eq!(project["areaId"], "area-1");
+        assert_eq!(project["areaTitle"], "Work");
+        assert_eq!(project["rev"], 1);
+        assert_eq!(project["revBy"], "device-project");
+        assert!(project["id"].as_str().is_some_and(|id| !id.is_empty()));
+        assert!(project["createdAt"].is_string());
+        assert_eq!(project["createdAt"], project["updatedAt"]);
+    }
+
+    #[test]
+    fn local_api_project_validation_is_strict_and_atomic() {
+        let mut data = json!({
+            "tasks": [], "sections": [], "areas": [], "people": [],
+            "projects": [{
+                "id": "project-1", "title": "Original", "status": "active",
+                "color": "#000", "order": 0, "tagIds": [], "isSequential": false,
+                "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-01T00:00:00Z",
+                "rev": 7, "revBy": "device-a"
+            }],
+            "settings": { "deviceId": "device-a" }
+        });
+        data[PROJECT_MUTATION_NEXT_ORDER_KEY] = json!(1);
+        let original = data.clone();
+
+        for patch in [
+            json!({ "title": null }),
+            json!({ "color": "" }),
+            json!({ "status": "done" }),
+            json!({ "isSequential": "yes" }),
+            json!({ "sequentialScope": "workspace" }),
+            json!({ "order": null }),
+            json!({ "areaId": "" }),
+            json!({ "rev": 99 }),
+            json!({}),
+        ] {
+            let error = patch_project_in_data(&mut data, "project-1", patch.as_object().unwrap())
+                .expect_err("invalid project patch");
+            assert_eq!(api_error_response(error).status, 400, "{patch}");
+            assert_eq!(data, original, "invalid patch must be atomic: {patch}");
+        }
+
+        data["projects"][0]["deletedAt"] = json!("2026-09-02T00:00:00Z");
+        let deleted = data.clone();
+        let error = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({ "title": "Changed" }).as_object().unwrap(),
+        )
+        .expect_err("deleted project cannot be updated");
+        assert_eq!(api_error_response(error).status, 409);
+        assert_eq!(data, deleted);
+    }
+
+    #[test]
+    fn local_api_project_archive_and_reactivation_match_core_child_lifecycle() {
+        let created_at = "2026-09-01T00:00:00Z";
+        let mut data = json!({
+            "tasks": [
+                {
+                    "id": "next", "title": "Next", "status": "next", "projectId": "project-1",
+                    "sectionId": "section-1", "isFocusedToday": true, "focusOrder": 1,
+                    "boardOrder": 8, "recurrence": { "rule": "daily", "seriesId": "next" },
+                    "tags": [], "contexts": [], "rev": 3, "revBy": "old",
+                    "createdAt": created_at, "updatedAt": created_at
+                },
+                {
+                    "id": "waiting", "title": "Waiting", "status": "waiting", "projectId": "project-1",
+                    "tags": [], "contexts": [], "rev": 2, "revBy": "old",
+                    "createdAt": created_at, "updatedAt": created_at
+                },
+                {
+                    "id": "reference", "title": "Reference", "status": "reference", "projectId": "project-1",
+                    "sectionId": "section-1", "tags": [], "contexts": [], "rev": 1,
+                    "createdAt": created_at, "updatedAt": created_at
+                }
+            ],
+            "projects": [{
+                "id": "project-1", "title": "Project", "status": "active", "color": "#000",
+                "order": 0, "tagIds": [], "isSequential": false, "isFocused": true,
+                "rev": 4, "revBy": "old", "createdAt": created_at, "updatedAt": created_at
+            }],
+            "sections": [{
+                "id": "section-1", "projectId": "project-1", "title": "Section", "order": 0,
+                "rev": 2, "revBy": "old", "createdAt": created_at, "updatedAt": created_at
+            }],
+            "areas": [], "people": [], "settings": { "deviceId": "device-a" }
+        });
+        data[PROJECT_MUTATION_NEXT_ORDER_KEY] = json!(1);
+        let original_reference = data["tasks"][2].clone();
+
+        let (_, archived_tasks, archived_sections) = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({ "status": "archived" }).as_object().unwrap(),
+        )
+        .expect("archive project");
+
+        assert_eq!(archived_tasks.len(), 2);
+        assert_eq!(archived_sections.len(), 1);
+        assert_eq!(
+            data["tasks"].as_array().unwrap().len(),
+            3,
+            "no recurrence follow-up"
+        );
+        assert_eq!(data["tasks"][0]["status"], "done");
+        assert_eq!(data["tasks"][0]["statusBeforeProjectArchive"], "next");
+        assert_eq!(data["tasks"][0]["recurrence"]["seriesId"], "next");
+        assert_eq!(data["tasks"][0]["boardOrder"], 8);
+        assert!(data["tasks"][0].get("focusOrder").is_none());
+        assert_eq!(data["tasks"][0]["isFocusedToday"], false);
+        assert_eq!(data["tasks"][2], original_reference);
+        let archived_at = data["projects"][0]["updatedAt"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(data["sections"][0]["deletedAt"], archived_at);
+        assert_eq!(data["sections"][0]["projectArchivedAt"], archived_at);
+
+        data["tasks"][1]["updatedAt"] = json!("2099-01-01T00:00:00Z");
+        data["tasks"][1]["rev"] = json!(99);
+        let (_, restored_tasks, restored_sections) = patch_project_in_data(
+            &mut data,
+            "project-1",
+            json!({ "status": "active" }).as_object().unwrap(),
+        )
+        .expect("reactivate project");
+
+        assert_eq!(
+            restored_tasks.len(),
+            1,
+            "edited archive child remains untouched"
+        );
+        assert_eq!(restored_sections.len(), 1);
+        assert_eq!(data["tasks"][0]["status"], "next");
+        assert_eq!(data["tasks"][0]["isFocusedToday"], true);
+        assert!(data["tasks"][0].get("projectArchivedAt").is_none());
+        assert_eq!(data["tasks"][1]["status"], "done");
+        assert_eq!(data["tasks"][1]["rev"], 99);
+        assert!(data["sections"][0].get("deletedAt").is_none());
+        assert!(data["sections"][0].get("projectArchivedAt").is_none());
+    }
+
+    #[test]
+    fn local_api_task_triage_accepts_non_terminal_statuses_and_normalizes_reference() {
+        for status in ["inbox", "next", "waiting", "someday"] {
+            let mut task = json!({
+                "id": "task-1", "title": "Triage", "status": "next",
+                "isFocusedToday": true, "focusOrder": 4, "boardOrder": 9,
+                "completedAt": "2026-01-01T00:00:00Z", "cancelledAt": "2026-01-02T00:00:00Z",
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+
+            apply_task_patch(
+                &mut task,
+                json!({ "status": status }).as_object().unwrap(),
+                "device-a",
+            )
+            .unwrap_or_else(|error| panic!("{status}: {error}"));
+
+            assert_eq!(task["status"], status);
+            assert!(task.get("completedAt").is_none(), "{status}");
+            assert!(task.get("cancelledAt").is_none(), "{status}");
+            if status != "next" {
+                assert!(task.get("boardOrder").is_none(), "{status}");
+            }
+            if status == "inbox" {
+                assert_eq!(task["isFocusedToday"], false);
+                assert!(task.get("focusOrder").is_none());
+            }
+        }
+
+        let mut reference = json!({
+            "id": "task-r", "title": "Reference", "status": "waiting",
+            "startTime": "2026-10-01", "dueDate": "2026-10-02", "reviewAt": "2026-10-03",
+            "relativeStartOffset": { "amount": -1, "unit": "day" },
+            "recurrence": { "rule": "daily", "seriesId": "task-r" },
+            "priority": "high", "timeEstimate": "15min", "suppressMindwtrReminders": true,
+            "repeatReminderMinutes": 15, "showFutureRecurrence": true,
+            "isFocusedToday": true, "focusOrder": 1, "boardOrder": 2, "pushCount": 3,
+            "tags": [], "contexts": [], "rev": 1,
+            "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        apply_task_patch(
+            &mut reference,
+            json!({ "status": "reference" }).as_object().unwrap(),
+            "device-a",
+        )
+        .expect("reference transition");
+        assert_eq!(reference["status"], "reference");
+        for field in [
+            "startTime",
+            "dueDate",
+            "reviewAt",
+            "relativeStartOffset",
+            "recurrence",
+            "priority",
+            "timeEstimate",
+            "suppressMindwtrReminders",
+            "repeatReminderMinutes",
+            "showFutureRecurrence",
+            "focusOrder",
+            "boardOrder",
+        ] {
+            assert!(
+                reference.get(field).is_none(),
+                "reference must clear {field}"
+            );
+        }
+        assert_eq!(reference["isFocusedToday"], false);
+        assert_eq!(reference["pushCount"], 0);
+    }
+
+    #[test]
+    fn local_api_task_triage_rejects_source_conflicts_and_contradictory_cancellation() {
+        for (label, extra) in [
+            ("deleted", json!({ "deletedAt": "2026-09-01T00:00:00Z" })),
+            ("purged", json!({ "purgedAt": "2026-09-01T00:00:00Z" })),
+        ] {
+            let mut task = json!({
+                "id": "task-1", "title": "Triage", "status": "next",
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            task.extend(extra.as_object().unwrap().clone());
+            let original = task.clone();
+            let error = apply_task_patch(
+                &mut task,
+                json!({ "status": "waiting" }).as_object().unwrap(),
+                "device-a",
+            )
+            .expect_err(label);
+            assert_eq!(api_error_response(error).status, 409, "{label}");
+            assert_eq!(task, original, "{label}");
+        }
+
+        for source in ["done", "archived"] {
+            let mut task = json!({
+                "id": "task-1", "title": "Triage", "status": source,
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            let original = task.clone();
+            let error = apply_task_patch(
+                &mut task,
+                json!({ "status": "next" }).as_object().unwrap(),
+                "device-a",
+            )
+            .expect_err(source);
+            assert_eq!(api_error_response(error).status, 409, "{source}");
+            assert_eq!(task, original, "{source}");
+        }
+
+        let mut task = json!({
+            "id": "task-1", "title": "Triage", "status": "next",
+            "tags": [], "contexts": [], "rev": 1,
+            "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z"
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let original = task.clone();
+        let error = apply_task_patch(
+            &mut task,
+            json!({
+                "status": "waiting",
+                "cancelledAt": "2026-09-01T00:00:00Z"
+            })
+            .as_object()
+            .unwrap(),
+            "device-a",
+        )
+        .expect_err("contradictory lifecycle patch");
+        assert_eq!(api_error_response(error).status, 400);
+        assert_eq!(task, original);
+    }
+
+    #[test]
+    fn local_api_task_triage_rejects_archived_project_owners_but_allows_move_out() {
+        let archived_at = "2026-09-01T00:00:00Z";
+        let base = json!({
+            "tasks": [{
+                "id": "task-1", "title": "Archived reference", "status": "reference",
+                "projectId": "project-1", "sectionId": "section-1",
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": archived_at, "updatedAt": archived_at
+            }],
+            "projects": [{
+                "id": "project-1", "title": "Archived", "status": "archived",
+                "color": "#000000", "order": 0, "tagIds": [], "isSequential": false,
+                "rev": 2, "createdAt": archived_at, "updatedAt": archived_at
+            }],
+            "sections": [{
+                "id": "section-1", "projectId": "project-1", "title": "Archived section",
+                "order": 0, "deletedAt": archived_at, "projectArchivedAt": archived_at,
+                "rev": 2, "createdAt": archived_at, "updatedAt": archived_at
+            }],
+            "areas": [], "people": [], "settings": { "deviceId": "device-a" }
+        });
+
+        let mut direct_owner = base.clone();
+        let original = direct_owner.clone();
+        let error = patch_task_in_data(
+            &mut direct_owner,
+            "task-1",
+            json!({ "status": "next" }).as_object().unwrap(),
+        )
+        .expect_err("archived project must be reactivated first");
+        assert_eq!(api_error_response(error).status, 409);
+        assert_eq!(direct_owner, original, "rejection must be atomic");
+
+        let mut hidden_section_owner = base.clone();
+        hidden_section_owner["tasks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("projectId");
+        let original = hidden_section_owner.clone();
+        let error = patch_task_in_data(
+            &mut hidden_section_owner,
+            "task-1",
+            json!({ "status": "waiting" }).as_object().unwrap(),
+        )
+        .expect_err("archived section ownership must also be rejected");
+        assert_eq!(api_error_response(error).status, 409);
+        assert_eq!(hidden_section_owner, original, "rejection must be atomic");
+
+        let mut moved_out = base;
+        let moved = patch_task_in_data(
+            &mut moved_out,
+            "task-1",
+            json!({ "status": "next", "projectId": null })
+                .as_object()
+                .unwrap(),
+        )
+        .expect("moving out in the same patch is safe");
+        assert_eq!(moved["status"], "next");
+        assert!(moved.get("projectId").is_none());
+        assert!(moved.get("sectionId").is_none());
+        assert_eq!(moved_out["projects"][0]["status"], "archived");
+        assert_eq!(moved_out["sections"][0]["deletedAt"], archived_at);
     }
 }
