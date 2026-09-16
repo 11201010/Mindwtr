@@ -1776,31 +1776,61 @@ describe('desktop sync attachment backends', () => {
             expect(result.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
         });
 
-        it('marks the attachment unrecoverable when a rewritten generation is still corrupt', async () => {
+        it('stops retrying a still-corrupt generation without tombstoning the attachment', async () => {
             const generationPath = `/candidate-sync/attachments/attachment-1.${BYTES_HASH}.txt`;
+            const removals = () => syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath).length;
             stageCorruptGeneration();
 
             await syncFileAttachments(makePendingData(), '/candidate-sync', depsFor(), postMergeHelpers());
-            const rewrites = syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath).length;
-            expect(rewrites).toBe(1);
+            expect(removals()).toBe(1);
 
-            const result = expectFoldedData(await syncFileAttachments(
+            const secondData = makePendingData();
+            const secondDeps = depsFor();
+            const second = await syncFileAttachments(secondData, '/candidate-sync', secondDeps, postMergeHelpers());
+
+            // One rewrite is the whole budget. Giving up must not touch the record: the local
+            // bytes are the good copy, so a tombstone here would lose them on every device.
+            expect(second).toBe(false);
+            expect(secondData.tasks[0].attachments?.[0]).toMatchObject({
+                cloudKey: 'attachments/attachment-1.txt',
+                localStatus: 'available',
+            });
+            expect(secondData.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+            expect(removals()).toBe(1);
+            expect(syncFsMocks.reserveAttachmentGeneration).toHaveBeenCalledTimes(1);
+            expect(secondDeps.logSyncWarning).toHaveBeenCalledWith(
+                'File Sync attachment generation stayed corrupt after a rewrite; leaving it alone until the next restart',
+            );
+
+            const settledReads = syncFsMocks.exists.mock.calls.length + syncFsMocks.stat.mock.calls.length;
+            const thirdDeps = depsFor();
+            expect(await syncFileAttachments(
                 makePendingData(),
                 '/candidate-sync',
-                depsFor(),
+                thirdDeps,
                 postMergeHelpers(),
-            ));
+            )).toBe(false);
 
-            // One rewrite is the whole budget: the second identical verdict is terminal, so
-            // the attachment stops being retried every cycle.
-            expect(syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath)).toHaveLength(1);
-            expect(syncFsMocks.reserveAttachmentGeneration).toHaveBeenCalledTimes(1);
-            expect(syncFsMocks.publishAttachmentGeneration).toHaveBeenCalledTimes(1);
-            expect(result.tasks[0].attachments?.[0]).toMatchObject({
-                cloudKey: undefined,
-                localStatus: 'missing',
-            });
-            expect(result.tasks[0].attachments?.[0]?.deletedAt).toBeTruthy();
+            // Nothing is read from or written to the sync folder for that generation again,
+            // and the warning is not repeated every cycle.
+            expect(syncFsMocks.exists.mock.calls.length + syncFsMocks.stat.mock.calls.length).toBe(settledReads);
+            expect(removals()).toBe(1);
+            expect(thirdDeps.logSyncWarning).not.toHaveBeenCalled();
+        });
+
+        it('grants one more rewrite after the attachment sync state is reset', async () => {
+            const generationPath = `/candidate-sync/attachments/attachment-1.${BYTES_HASH}.txt`;
+            const removals = () => syncFsMocks.remove.mock.calls.filter(([path]) => path === generationPath).length;
+            stageCorruptGeneration();
+
+            await syncFileAttachments(makePendingData(), '/candidate-sync', depsFor(), postMergeHelpers());
+            await syncFileAttachments(makePendingData(), '/candidate-sync', depsFor(), postMergeHelpers());
+            expect(removals()).toBe(1);
+
+            clearAttachmentSyncState();
+            await syncFileAttachments(makePendingData(), '/candidate-sync', depsFor(), postMergeHelpers());
+
+            expect(removals()).toBe(2);
         });
 
         it('never rewrites a healthy existing generation', async () => {
