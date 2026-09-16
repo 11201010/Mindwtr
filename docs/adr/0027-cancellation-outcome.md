@@ -19,7 +19,8 @@ archives are not reclassified.
 
 The task and project menus offer Cancel. Cancel recurring series archives the
 current occurrence without generating another one. Recurrence metadata stays
-available for deliberate reactivation; Skip occurrence keeps its existing meaning.
+available for deliberate reactivation. There is no separate skip-occurrence action
+today; adding one would be a new core action carrying the recurrence matrix.
 
 Cancelling a project preserves completed, archived, reference, and deleted tasks.
 Its unfinished actionable tasks are cancelled together, retaining their previous
