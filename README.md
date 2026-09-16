@@ -158,7 +158,11 @@ brew install --cask mindwtr
 # WinGet
 winget install dongdongbh.Mindwtr
 
-# Scoop
+# Scoop (our own bucket, updated automatically on every release)
+scoop bucket add mindwtr https://github.com/dongdongbh/homebrew-mindwtr
+scoop install mindwtr
+
+# Scoop alternative: the community-maintained Extras bucket
 scoop bucket add extras
 scoop install extras/mindwtr
 ```
