@@ -1,21 +1,37 @@
 import { describe, expect, test } from 'bun:test';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodTypeAny } from 'zod';
 
 import { NotFoundError } from './errors.js';
 import { addTaskSchema, parseArgs, parseBooleanFlag, registerMindwtrTools, resolveServerConfig, resolveServerModeFlags, updateTaskSchema } from './index.js';
+import { MAX_TASK_LIST_LIMIT } from './input-validation.js';
 import type { Area, Person, Project, Section, Task } from './queries.js';
 import type { MindwtrService } from './service.js';
 
 type RegisteredTool = {
   name: string;
+  inputSchema: ZodTypeAny;
+  /** Parses through the registered inputSchema first, like the SDK does. */
   handler: (input: any) => Promise<any>;
+  /** The handler on its own, for the tests that cover its runtime validators
+   *  directly with input the schema would already have rejected. */
+  rawHandler: (input: any) => Promise<any>;
 };
 
 const createMockServer = () => {
   const tools = new Map<string, RegisteredTool>();
   const server = {
-    registerTool: (name: string, _meta: any, handler: (input: any) => Promise<any>) => {
-      tools.set(name, { name, handler });
+    registerTool: (name: string, meta: any, handler: (input: any) => Promise<any>) => {
+      // The SDK validates each call against the registered inputSchema before the
+      // handler runs. Keep the schema and do the same here, so the caps it declares
+      // (search length, offset ceiling, limit range, enums, date shape) are covered.
+      const inputSchema = meta?.inputSchema as ZodTypeAny;
+      tools.set(name, {
+        name,
+        inputSchema,
+        handler: async (input: any) => handler(inputSchema.parse(input ?? {})),
+        rawHandler: handler,
+      });
     },
   } as unknown as McpServer;
   return { server, tools };
@@ -367,7 +383,8 @@ describe('mcp server index', () => {
   test('validates add_task title length', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
-    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    // The registered schema caps the title too; this covers the handler's own guard.
+    const addHandler = tools.get('mindwtr_add_task')?.rawHandler;
     expect(addHandler).toBeTruthy();
     const longTitle = 'x'.repeat(501);
     const result = await addHandler?.({ title: longTitle });
@@ -389,7 +406,7 @@ describe('mcp server index', () => {
   test('validates add_task rejects blank token values', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
-    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    const addHandler = tools.get('mindwtr_add_task')?.rawHandler;
     expect(addHandler).toBeTruthy();
     const result = await addHandler?.({ title: 'Task', contexts: ['   '] });
     expect(result?.isError).toBe(true);
@@ -399,7 +416,7 @@ describe('mcp server index', () => {
   test('validates update_task rejects overlong token values', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
-    const updateHandler = tools.get('mindwtr_update_task')?.handler;
+    const updateHandler = tools.get('mindwtr_update_task')?.rawHandler;
     expect(updateHandler).toBeTruthy();
     const result = await updateHandler?.({ id: 't1', tags: [`#${'x'.repeat(500)}`] });
     expect(result?.isError).toBe(true);
@@ -409,7 +426,7 @@ describe('mcp server index', () => {
   test('validates task recurrence inputs', async () => {
     const { server, tools } = createMockServer();
     registerMindwtrTools(server, createMockService(), false);
-    const addHandler = tools.get('mindwtr_add_task')?.handler;
+    const addHandler = tools.get('mindwtr_add_task')?.rawHandler;
     expect(addHandler).toBeTruthy();
 
     for (const recurrence of [
@@ -572,6 +589,53 @@ describe('mcp server index', () => {
 
     expect(result?.isError).toBe(true);
     expect(payload.code).toBe('not_found');
+  });
+});
+
+describe('registered tool input schemas', () => {
+  const registerTools = () => {
+    const { server, tools } = createMockServer();
+    registerMindwtrTools(server, createMockService(), false);
+    return tools;
+  };
+
+  test('every registered tool declares an input schema', () => {
+    const tools = registerTools();
+    expect(tools.size > 0).toBe(true);
+    for (const tool of tools.values()) {
+      expect(typeof tool.inputSchema?.parse).toBe('function');
+    }
+  });
+
+  test('rejects list_tasks inputs that break the documented caps', async () => {
+    const listTasks = registerTools().get('mindwtr_list_tasks')!.handler;
+
+    await expect(listTasks({ search: 'a'.repeat(513) })).rejects.toThrow();
+    expect((await listTasks({ search: 'a'.repeat(512) })).isError).toBeUndefined();
+
+    await expect(listTasks({ offset: 100_001 })).rejects.toThrow();
+    expect((await listTasks({ offset: 100_000 })).isError).toBeUndefined();
+
+    await expect(listTasks({ limit: 0 })).rejects.toThrow();
+    await expect(listTasks({ limit: MAX_TASK_LIST_LIMIT + 1 })).rejects.toThrow();
+    expect((await listTasks({ limit: MAX_TASK_LIST_LIMIT })).isError).toBeUndefined();
+
+    await expect(listTasks({ view: 'everything' })).rejects.toThrow();
+    await expect(listTasks({ sortBy: 'colour' })).rejects.toThrow();
+    await expect(listTasks({ dueDateFrom: 'next tuesday' })).rejects.toThrow();
+  });
+
+  test('rejects a malformed date and an empty token on task writes', async () => {
+    const tools = registerTools();
+    const addTask = tools.get('mindwtr_add_task')!.handler;
+
+    await expect(addTask({ title: 'Buy milk', dueDate: 'next tuesday' })).rejects.toThrow();
+    await expect(addTask({ title: 'Buy milk', dueDate: '2026/01/01' })).rejects.toThrow();
+    await expect(addTask({ title: 'Buy milk', tags: ['  '] })).rejects.toThrow();
+    expect((await addTask({ title: 'Buy milk', dueDate: '2026-01-01' })).isError).toBeUndefined();
+    // Known gap: the date schema checks shape only, so an impossible calendar date
+    // reaches the handler. Tightening it is a schema change, out of this test's scope.
+    expect((await addTask({ title: 'Buy milk', dueDate: '2026-13-45' })).isError).toBeUndefined();
   });
 });
 
