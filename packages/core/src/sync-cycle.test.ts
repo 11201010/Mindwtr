@@ -123,6 +123,107 @@ describe('performSyncCycle', () => {
         }
     });
 
+    // Sync bookkeeping (lastSyncAt/history) changes every cycle by design; the
+    // entity surface is what a rewrite loop would keep churning.
+    const stableDocument = (data: AppData) => JSON.stringify({
+        tasks: data.tasks, projects: data.projects, sections: data.sections,
+        areas: data.areas, people: data.people,
+    });
+
+    describe('expired archived-project section a 1.3.0 peer already purged', () => {
+        const archivedAt = '2026-01-01T12:00:00.000Z';
+        const peerAt = '2026-02-01T12:00:00.000Z';
+        const nowIso = '2026-04-20T12:00:00.000Z';
+        const buildArchive = () => {
+            const project: Project = {
+                id: 'project-record', title: 'Archived project', status: 'active', color: '#94a3b8',
+                order: 0, tagIds: [], createdAt: archivedAt, updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+            };
+            const section: Section = {
+                id: 'section-record', projectId: project.id, title: 'Archived section',
+                order: 4, createdAt: archivedAt, updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+            };
+            const task: Task = {
+                id: 'task-record', title: 'Archived task', status: 'next',
+                projectId: project.id, sectionId: section.id, tags: [], contexts: [],
+                createdAt: archivedAt, updatedAt: archivedAt, rev: 1, revBy: 'device-a',
+            };
+            const archived = applyProjectLifecycleTransition(
+                project, { status: 'archived' }, [task], [section], archivedAt, 'device-a',
+            );
+            const data: AppData = {
+                projects: [{ ...project, ...archived.projectUpdates, updatedAt: archivedAt, rev: 2 }],
+                tasks: archived.tasks, sections: archived.sections, areas: [], people: [],
+                settings: { deviceId: 'device-a' },
+            };
+            return { data, section: archived.sections[0] };
+        };
+
+        // What a <=1.3.0 peer publishes: it purges the expired section on load,
+        // then its dangling-reference repair clears the task's sectionId.
+        const peerPurgedRemote = (data: AppData): AppData => ({
+            ...structuredClone(data),
+            sections: [],
+            tasks: data.tasks.map((task) => ({
+                ...structuredClone(task),
+                sectionId: undefined,
+                updatedAt: peerAt,
+                rev: (task.rev ?? 0) + 1,
+                revBy: 'device-b',
+            })),
+        });
+
+        const runCycles = async (buildRemote: (data: AppData) => AppData | Record<string, never>) => {
+            const archive = buildArchive();
+            let local = structuredClone(archive.data);
+            let remote = structuredClone(buildRemote(archive.data)) as AppData;
+            const cycle = async () => {
+                const result = await performSyncCycle({
+                    readLocal: async () => structuredClone(local),
+                    readRemote: async () => structuredClone(remote),
+                    writeLocal: async (data) => { local = structuredClone(data); },
+                    writeRemote: async (data) => { remote = structuredClone(data); },
+                    now: () => nowIso,
+                });
+                expect(result.status).toBe('success');
+                return result.data;
+            };
+            const first = await cycle();
+            const remoteAfterFirst = stableDocument(remote);
+            const second = await cycle();
+            // The loop this guards against rewrites the remote document on every
+            // cycle, so convergence means an unchanged remote entity surface.
+            expect(stableDocument(remote)).toEqual(remoteAfterFirst);
+            return { archive, first, second, remote };
+        };
+
+        it('drops the section and converges when the remote still holds its project', async () => {
+            const { first, second, remote } = await runCycles(peerPurgedRemote);
+            expect(first.sections).toEqual([]);
+            expect(remote.sections).toEqual([]);
+            expect(second.sections).toEqual([]);
+            expect(first.tasks[0].sectionId).toBeUndefined();
+        });
+
+        it('keeps the section when the remote is empty or still holds it', async () => {
+            const empty = await runCycles(() => ({}));
+            expect(empty.first.sections).toEqual([empty.archive.section]);
+            expect(empty.remote.sections).toEqual([empty.archive.section]);
+            expect(empty.second.sections).toEqual([empty.archive.section]);
+
+            const shared = await runCycles((data) => structuredClone(data));
+            expect(shared.first.sections).toEqual([shared.archive.section]);
+            expect(shared.remote.sections).toEqual([shared.archive.section]);
+            expect(shared.second.sections).toEqual([shared.archive.section]);
+        });
+
+        it('keeps a peer-purged section a merged task still points at', async () => {
+            const kept = await runCycles((data) => ({ ...structuredClone(data), sections: [] }));
+            expect(kept.first.sections).toEqual([kept.archive.section]);
+            expect(kept.first.tasks[0].sectionId).toBe(kept.archive.section.id);
+        });
+    });
+
     it.each([false, true])('reports full merge timing only when computation ran (skip=%s)', async (skip) => {
         const logs: LogPayload[] = [];
         const local = mockAppData([createMockTask('private-id', '2026-06-01')]);

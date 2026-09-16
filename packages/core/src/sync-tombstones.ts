@@ -77,10 +77,24 @@ const pruneSavedFilterTombstones = (
     };
 };
 
+export type PurgeExpiredTombstonesOptions = {
+    /**
+     * Sections the remote document dropped while still holding their parent
+     * project. A <=1.3.0 peer has no archive-section retention exception, so it
+     * purges these on its own cycle; re-publishing them would rewrite the remote
+     * document forever. ADR 0008 (no delta log) gives no way to tell that apart
+     * from "never published", so the caller only fills this in when the remote
+     * still holds the parent project -- an empty or project-less remote keeps
+     * the section and the first sync still publishes it.
+     */
+    peerPurgedSectionIds?: ReadonlySet<string>;
+};
+
 export const purgeExpiredTombstones = (
     data: AppData,
     nowIso: string,
-    retentionDays?: number
+    retentionDays?: number,
+    options: PurgeExpiredTombstonesOptions = {}
 ): {
     data: AppData;
     removedTaskTombstones: number;
@@ -149,7 +163,9 @@ export const purgeExpiredTombstones = (
     const nextSections: Section[] = [];
     for (const section of data.sections) {
         if (isEntityTombstoneExpired('section', section, cutoffMs)) {
-            if (restorableArchivedProjectIds.has(section.projectId) && isRestorableProjectArchiveSection(section)) {
+            if (restorableArchivedProjectIds.has(section.projectId)
+                && isRestorableProjectArchiveSection(section)
+                && !options.peerPurgedSectionIds?.has(section.id)) {
                 retainedExpiredArchiveSections += 1;
                 nextSections.push(section);
                 continue;

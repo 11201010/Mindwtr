@@ -1421,7 +1421,29 @@ async function performSyncCycleUnlocked(io: SyncCycleIO): Promise<SyncCycleResul
             lastSyncHistory: nextHistory,
         },
     };
-    const pruned = purgeExpiredTombstones(nextMergedData, nowIso, io.tombstoneRetentionDays);
+    // The union above re-adds every local-only section, including expired
+    // archive tombstones a <=1.3.0 peer already purged from the remote (it has
+    // no retention exception). Agreeing with that peer is what terminates the
+    // rewrite-every-cycle loop; a remote without the parent project is instead
+    // treated as "never published" and keeps the section.
+    const remoteSectionIds = new Set(remoteData.sections.map((section) => section.id));
+    const remoteProjectIds = new Set(remoteData.projects.map((project) => project.id));
+    // A section a merged task still points at has to stay: dropping it would
+    // fail validateMergedSyncData below. The peer that purged it cleared those
+    // references first, so the real loop shape is already covered.
+    const referencedSectionIds = new Set(
+        nextMergedData.tasks.map((task) => task.sectionId).filter((id): id is string => Boolean(id)),
+    );
+    const peerPurgedSectionIds = new Set(
+        nextMergedData.sections
+            .filter((section) => !remoteSectionIds.has(section.id)
+                && !referencedSectionIds.has(section.id)
+                && remoteProjectIds.has(section.projectId))
+            .map((section) => section.id),
+    );
+    const pruned = purgeExpiredTombstones(nextMergedData, nowIso, io.tombstoneRetentionDays, {
+        peerPurgedSectionIds,
+    });
     if (
         pruned.removedTaskTombstones > 0
         || pruned.removedProjectTombstones > 0
