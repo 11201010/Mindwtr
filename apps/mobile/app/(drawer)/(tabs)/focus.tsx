@@ -20,7 +20,7 @@ import {
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
-import { BookmarkPlus, ChevronsDown, ChevronsUp, Folder, GripVertical, List, SlidersHorizontal } from 'lucide-react-native';
+import { BookmarkPlus, ChevronsDown, ChevronsUp, Folder, GripVertical, List, SlidersHorizontal, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DraggableFlatList, {
   ScaleDecorator,
@@ -1726,37 +1726,55 @@ export default function FocusScreen() {
                   const selected = selections.activeSavedFilterId === filter.id;
                   const deleteAccessibilityLabel = `${resolveText('common.delete', 'Delete')} ${resolveText('savedFilters.label', 'saved filter')} ${filter.name}`;
                   return (
-                    <TouchableOpacity
-                      key={filter.id}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      accessibilityActions={[{ name: 'delete', label: deleteAccessibilityLabel }]}
-                      onAccessibilityAction={(event) => {
-                        if (event.nativeEvent.actionName === 'delete') confirmDeleteSavedFilter(filter);
-                      }}
-                      onLongPress={() => confirmDeleteSavedFilter(filter)}
-                      onPress={() => {
-                        if (selected) {
-                          clearFilters();
-                          return;
-                        }
-                        applySavedFocusFilter(filter);
-                      }}
-                      style={[
-                        styles.savedFilterChip,
-                        {
-                          borderColor: selected ? tc.tint : tc.border,
-                          backgroundColor: selected ? tc.tint : tc.filterBg,
-                        },
-                      ]}
-                    >
-                      <CompactText
-                        style={[styles.savedFilterChipText, { color: selected ? tc.onTint : tc.text }]}
-                        numberOfLines={2}
+                    <View key={filter.id} style={styles.savedFilterChipGroup}>
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        accessibilityActions={[{ name: 'delete', label: deleteAccessibilityLabel }]}
+                        onAccessibilityAction={(event) => {
+                          if (event.nativeEvent.actionName === 'delete') confirmDeleteSavedFilter(filter);
+                        }}
+                        onLongPress={() => confirmDeleteSavedFilter(filter)}
+                        onPress={() => {
+                          if (selected) {
+                            clearFilters();
+                            return;
+                          }
+                          applySavedFocusFilter(filter);
+                        }}
+                        style={[
+                          styles.savedFilterChip,
+                          styles.savedFilterChipAttached,
+                          {
+                            borderColor: selected ? tc.tint : tc.border,
+                            backgroundColor: selected ? tc.tint : tc.filterBg,
+                          },
+                        ]}
                       >
-                        {filter.icon ? `${filter.icon} ` : ''}{filter.name}
-                      </CompactText>
-                    </TouchableOpacity>
+                        <CompactText
+                          style={[styles.savedFilterChipText, { color: selected ? tc.onTint : tc.text }]}
+                          numberOfLines={2}
+                        >
+                          {filter.icon ? `${filter.icon} ` : ''}{filter.name}
+                        </CompactText>
+                      </TouchableOpacity>
+                      {/* Mirrors the desktop chip's always-visible delete affordance:
+                          deletion must not depend on discovering a long press. */}
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={deleteAccessibilityLabel}
+                        onPress={() => confirmDeleteSavedFilter(filter)}
+                        style={[
+                          styles.savedFilterDeleteButton,
+                          {
+                            borderColor: selected ? tc.tint : tc.border,
+                            backgroundColor: selected ? tc.tint : tc.filterBg,
+                          },
+                        ]}
+                      >
+                        <Trash2 size={16} color={selected ? tc.onTint : tc.secondaryText} />
+                      </TouchableOpacity>
+                    </View>
                   );
                 })}
               </ScrollView>
@@ -2104,6 +2122,10 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 4,
   },
+  savedFilterChipGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   savedFilterChip: {
     maxWidth: 180,
     minWidth: 44,
@@ -2113,6 +2135,21 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    justifyContent: 'center',
+  },
+  savedFilterChipAttached: {
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  savedFilterDeleteButton: {
+    width: 44,
+    minHeight: 44,
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderTopRightRadius: 22,
+    borderBottomRightRadius: 22,
+    alignItems: 'center',
     justifyContent: 'center',
   },
   savedFilterChipText: {

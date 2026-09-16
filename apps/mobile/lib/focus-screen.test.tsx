@@ -1972,7 +1972,7 @@ describe('FocusScreen', () => {
       tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id),
     ).toEqual(['desk-task']);
     expect(findButtonByText(tree, 'Desk').props.accessibilityState.selected).toBe(true);
-    expect(() => findButtonByLabel(tree, 'Delete saved filter Desk')).toThrow();
+    expect(() => findButtonByLabel(tree, 'Delete saved filter Desk')).not.toThrow();
     expect(tree.root.findAllByType(ScrollView).filter((node) => (
       node.props.horizontal && textContent(node).includes('@desk')
     ))).toHaveLength(0);
@@ -2203,6 +2203,51 @@ describe('FocusScreen', () => {
     const deleteButton = alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive');
     await act(async () => {
       deleteButton?.onPress?.();
+    });
+    expect(storeState.updateSettings).toHaveBeenCalledWith({
+      savedFilters: [expect.objectContaining({
+        id: 'filter-desk',
+        deletedAt: expect.any(String),
+      })],
+    });
+  });
+
+  it('deletes a saved Focus filter from a visible chip control', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    storeState.updateSettings.mockResolvedValue(undefined);
+    storeState.settings = {
+      appearance: {},
+      features: {},
+      savedFilters: [{
+        id: 'filter-desk',
+        name: 'Desk',
+        view: 'focus',
+        criteria: { contexts: ['@desk'] },
+        createdAt: '2026-04-01T00:00:00.000Z',
+        updatedAt: '2026-04-01T00:00:00.000Z',
+      }],
+    } as any;
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    // Visible without selecting the chip, long-pressing it, or going through an
+    // accessibility action.
+    const deleteControl = findButtonByLabel(tree, 'Delete saved filter Desk');
+    act(() => {
+      deleteControl.props.onPress();
+    });
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    // Revealing the delete control must not apply the filter.
+    expect(findButtonByText(tree, 'All').props.accessibilityState.selected).toBe(true);
+
+    const confirmButton = alertSpy.mock.calls[0]?.[2]?.find((button) => button.style === 'destructive');
+    await act(async () => {
+      confirmButton?.onPress?.();
     });
     expect(storeState.updateSettings).toHaveBeenCalledWith({
       savedFilters: [expect.objectContaining({
