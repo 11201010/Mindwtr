@@ -36,7 +36,7 @@
 
 **In scope** (the only files you may modify):
 - `apps/cloud/src/server.ts` (`/ready` handler)
-- `apps/cloud/src/server-storage.ts` (probe memo) 
+- `apps/cloud/src/server-storage.ts` (probe memo)
 - `apps/cloud/src/server.test.ts`
 
 **Out of scope** (do NOT touch):
