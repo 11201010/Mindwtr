@@ -98,6 +98,60 @@ describe('ContextsView', () => {
         expect(getByText('Plan launch')).toBeInTheDocument();
     });
 
+    it('combines context and tag tokens with All or Any without duplicate rows', () => {
+        const tasks = [
+            makeTask('alice', { title: 'Alice only', contexts: ['@alice'] }),
+            makeTask('bob', { title: 'Bob only', tags: ['#bob'] }),
+            makeTask('both', { title: 'Alice and Bob', contexts: ['@alice'], tags: ['#bob'] }),
+            makeTask('other', { title: 'Other', contexts: ['@other'] }),
+            makeTask('none', { title: 'Untagged' }),
+        ];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        fireEvent.click(view.getByRole('button', { name: '@alice (2)' }));
+        expect(view.queryByRole('button', { name: 'Any' })).not.toBeInTheDocument();
+        fireEvent.click(view.getByRole('button', { name: '#bob (2)' }));
+
+        expect(view.getByRole('button', { name: '@alice (2)' })).toHaveAttribute('aria-pressed', 'true');
+        expect(view.getByRole('button', { name: '#bob (2)' })).toHaveAttribute('aria-pressed', 'true');
+        expect(view.getByText('Alice and Bob')).toBeInTheDocument();
+        expect(view.queryByText('Alice only')).not.toBeInTheDocument();
+        expect(view.queryByText('Bob only')).not.toBeInTheDocument();
+        expect(view.queryByText('Other')).not.toBeInTheDocument();
+        expect(view.getAllByRole('button', { name: 'All' }).find((button) => button.hasAttribute('aria-pressed')))
+            .toHaveAttribute('aria-pressed', 'true');
+
+        fireEvent.click(view.getByRole('button', { name: 'Any' }));
+        expect(view.getByText('Alice only')).toBeInTheDocument();
+        expect(view.getByText('Bob only')).toBeInTheDocument();
+        expect(view.getByText('Alice and Bob')).toBeInTheDocument();
+        expect(view.container.querySelectorAll('[data-task-id="both"]')).toHaveLength(1);
+        expect(view.queryByText('Other')).not.toBeInTheDocument();
+
+        fireEvent.click(view.getByRole('button', { name: /No context/ }));
+        expect(view.getByText('Untagged')).toBeInTheDocument();
+        expect(view.queryByRole('button', { name: 'Any' })).not.toBeInTheDocument();
+    });
+
+    it('migrates the old single persisted token and adds tokens from the compact selector', () => {
+        window.localStorage.setItem(CONTEXTS_VIEW_STATE_STORAGE_KEY,
+            JSON.stringify({ selectedContext: '@Office', statusFilters: [], groupBy: 'none' }));
+        const view = renderContextsView();
+        expect(view.getByRole('heading', { name: '@Office' })).toBeInTheDocument();
+        const compactSelect = view.getByRole('combobox', { name: 'Contexts & Tags' });
+        fireEvent.change(compactSelect, { target: { value: '#ERP' } });
+        expect(view.getByRole('button', { name: 'Remove #ERP' })).toBeInTheDocument();
+        expect(view.getByRole('button', { name: 'Any' })).toBeInTheDocument();
+        const state = JSON.parse(window.localStorage.getItem(CONTEXTS_VIEW_STATE_STORAGE_KEY) ?? '{}') as {
+            selectedContexts?: string[];
+            matchMode?: string;
+        };
+        expect(state.selectedContexts).toEqual(['@Office', '#ERP']);
+        expect(state.matchMode).toBe('all');
+        fireEvent.click(view.getByRole('button', { name: 'Remove #ERP' }));
+        expect(view.getByRole('heading', { name: '@Office' })).toBeInTheDocument();
+    });
+
     it('keeps the sort control labeled and visually scannable', () => {
         const { getByRole, getByTestId } = renderContextsView();
 
@@ -331,7 +385,7 @@ describe('ContextsView', () => {
 
         expect(getByRole('heading', { name: '#ERP' })).toBeInTheDocument();
         expect(getByText('Plan launch')).toBeInTheDocument();
-        expect(window.localStorage.getItem(CONTEXTS_VIEW_STATE_STORAGE_KEY)).toContain('"selectedContext":"#ERP"');
+        expect(window.localStorage.getItem(CONTEXTS_VIEW_STATE_STORAGE_KEY)).toContain('"selectedContexts":["#ERP"]');
     });
 
     it('selects and clears all visible tasks in context selection mode', () => {

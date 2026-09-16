@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { matchesHierarchicalToken, normalizePrefixedToken } from './hierarchy-utils';
+import { matchesHierarchicalToken, normalizePrefixedToken, taskMatchesContextOrTagSelection } from './hierarchy-utils';
+import type { Task } from './types';
 
 describe('hierarchy utils', () => {
     it('matches exact tokens and slash-delimited descendants', () => {
@@ -17,5 +18,19 @@ describe('hierarchy utils', () => {
     it('normalizes missing token prefixes', () => {
         expect(normalizePrefixedToken('work/meetings', '@')).toBe('@work/meetings');
         expect(normalizePrefixedToken('#ops/oncall', '#')).toBe('#ops/oncall');
+    });
+
+    it('matches combined contexts and tags once per task with All and Any', () => {
+        const tasks = [
+            { contexts: ['@alice'], tags: [] },
+            { contexts: [], tags: ['#bob'] },
+            { contexts: ['@alice/office'], tags: ['#bob/work'] },
+            { contexts: ['@other'], tags: [] },
+        ] as Task[];
+        const selected = ['@alice', '#bob'];
+        expect(tasks.map((task) => taskMatchesContextOrTagSelection(task, selected, 'all')))
+            .toEqual([false, false, true, false]);
+        expect(tasks.map((task) => taskMatchesContextOrTagSelection(task, selected, 'any')))
+            .toEqual([true, true, true, false]);
     });
 });

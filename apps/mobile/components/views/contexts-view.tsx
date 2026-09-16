@@ -19,6 +19,8 @@ import {
   collectBulkTaskTokens,
   isTaskFinished,
   tFallback,
+  taskMatchesContextOrTagSelection,
+  type ContextOrTagMatchMode,
   type Task,
   type TaskStatus,
 } from '@mindwtr/core';
@@ -74,6 +76,7 @@ export function ContextsView() {
   const { t } = useLanguage();
   const { token } = useLocalSearchParams<{ token?: string | string[] }>();
   const [selectedContexts, setSelectedContexts] = useState<string[]>([]);
+  const [matchMode, setMatchMode] = useState<ContextOrTagMatchMode>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [bulkTokenPicker, setBulkTokenPicker] = useState<BulkTokenPickerState>(null);
@@ -91,7 +94,10 @@ export function ContextsView() {
 
   useEffect(() => {
     if (requestedTokens.length === 0) return;
-    setSelectedContexts(requestedTokens);
+    setSelectedContexts(requestedTokens.includes(NO_CONTEXT_TOKEN)
+      ? [NO_CONTEXT_TOKEN]
+      : Array.from(new Set(requestedTokens)));
+    setMatchMode('all');
   }, [requestedTokens]);
 
   const contextSourceTasks = visibleTasks.filter((task) => !isTaskFinished(task));
@@ -135,10 +141,13 @@ export function ContextsView() {
   const hasContext = taskHasContextOrTag;
   const matchesSelected = taskMatchesContextOrTagFilter;
   const noContextSelected = selectedContexts.includes(NO_CONTEXT_TOKEN);
+  useEffect(() => {
+    if (selectedContexts.length === 0 && matchMode !== 'all') setMatchMode('all');
+  }, [selectedContexts.length, matchMode]);
   const filteredTasks = noContextSelected
     ? activeTasks.filter((t) => !hasContext(t))
     : selectedContexts.length > 0
-      ? activeTasks.filter((t) => selectedContexts.every((ctx) => matchesSelected(t, ctx)))
+      ? activeTasks.filter((t) => taskMatchesContextOrTagSelection(t, selectedContexts, matchMode))
       : activeTasks;
 
   const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
@@ -198,7 +207,10 @@ export function ContextsView() {
     remove: (task) => rowSourcesRef.current.handleDelete(task.id),
     toggleSelect: (task) => rowSourcesRef.current.toggleMultiSelect(task.id),
   }), []);
-  const focusToken = useCallback((token: string) => setSelectedContexts([token]), []);
+  const focusToken = useCallback((token: string) => {
+    setSelectedContexts([token]);
+    setMatchMode('all');
+  }, []);
 
   useEffect(() => {
     setMultiSelectedIds((prev) => {
@@ -286,7 +298,9 @@ export function ContextsView() {
                   borderColor: tc.border,
                 },
               ]}
-              onPress={() => setSelectedContexts([])}
+              onPress={() => { setSelectedContexts([]); setMatchMode('all'); }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: selectedContexts.length === 0 }}
             >
               <Text
                 style={[
@@ -323,7 +337,13 @@ export function ContextsView() {
                   borderColor: tc.border,
                 },
               ]}
-              onPress={() => setSelectedContexts(noContextSelected ? [] : [NO_CONTEXT_TOKEN])}
+              onPress={() => {
+                setSelectedContexts(noContextSelected ? [] : [NO_CONTEXT_TOKEN]);
+                setMatchMode('all');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('contexts.none')}
+              accessibilityState={{ selected: noContextSelected }}
             >
               <Text
                 style={[
@@ -352,6 +372,29 @@ export function ContextsView() {
             </Pressable>
           </ScrollView>
 
+          {selectedContexts.length > 1 && !noContextSelected ? (
+            <View style={styles.matchModeRow} accessibilityRole="radiogroup">
+              <Text style={[styles.matchModeLabel, { color: tc.secondaryText }]}>
+                {t('contexts.title')} & {t('tags.title')}
+              </Text>
+              <View style={[styles.matchModeControl, { backgroundColor: tc.filterBg, borderColor: tc.border }]}>
+                {(['all', 'any'] as const).map((mode) => (
+                  <Pressable
+                    key={mode}
+                    onPress={() => setMatchMode(mode)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: matchMode === mode }}
+                    style={[styles.matchModeButton, matchMode === mode && { backgroundColor: tc.tint }]}
+                  >
+                    <Text style={[styles.matchModeButtonText, { color: matchMode === mode ? tc.onTint : tc.text }]}>
+                      {mode === 'all' ? tFallback(t, 'common.all', 'All') : tFallback(t, 'filters.matchAny', 'Any')}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
           {filterSections.map((section) => (
             <View key={section.kind} style={styles.contextFilterSection}>
               <Text style={[styles.contextFilterSectionLabel, { color: tc.secondaryText }]}>
@@ -379,6 +422,9 @@ export function ContextsView() {
                         }
                         return prev.includes(context) ? prev.filter((item) => item !== context) : [...prev, context];
                       })}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${context} (${count})`}
+                      accessibilityState={{ selected: isActive }}
                     >
                       <Text
                         style={[
@@ -635,6 +681,35 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     paddingTop: 4,
     paddingBottom: 6,
+  },
+  matchModeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    gap: 8,
+  },
+  matchModeLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  matchModeControl: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 2,
+  },
+  matchModeButton: {
+    minWidth: 52,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  matchModeButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   contextFilterSection: {
     gap: 2,

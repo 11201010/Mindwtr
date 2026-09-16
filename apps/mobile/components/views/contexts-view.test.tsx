@@ -2,6 +2,8 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Task } from '@mindwtr/core';
+import { Pressable } from 'react-native';
+import { ContextsView } from './contexts-view';
 
 const now = '2026-06-11T00:00:00.000Z';
 
@@ -120,9 +122,39 @@ vi.mock('react-native', async (importOriginal) => {
   };
 });
 
-import { ContextsView } from './contexts-view';
-
 describe('ContextsView', () => {
+  it('shows All/Any for two combined tokens and keeps No context exclusive', async () => {
+    storeState.tasks = [
+      { ...makeTask('alice', 'Alice only'), contexts: ['@alice'], tags: [] },
+      { ...makeTask('bob', 'Bob only'), contexts: [], tags: ['#bob'] },
+      { ...makeTask('both', 'Alice and Bob'), contexts: ['@alice'], tags: ['#bob'] },
+      { ...makeTask('other', 'Other'), contexts: ['@other'], tags: [] },
+      { ...makeTask('none', 'Untagged'), contexts: [], tags: [] },
+    ];
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<ContextsView />); });
+    const pressToken = async (label: string) => {
+      const node = tree.root.find((item) => item.props.accessibilityLabel === label);
+      await act(async () => { node.props.onPress(); });
+    };
+    const titles = () => tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')
+      .map((node) => node.props.task.title);
+    await pressToken('@alice (2)');
+    expect(tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio')).toHaveLength(0);
+    await pressToken('#bob (2)');
+    expect(titles()).toEqual(['Alice and Bob']);
+    const modes = tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio');
+    expect(modes).toHaveLength(2);
+    expect(modes[0].props.accessibilityState).toEqual({ selected: true });
+    await act(async () => { modes[1].props.onPress(); });
+    expect(titles()).toEqual(['Alice only', 'Bob only', 'Alice and Bob']);
+    expect(new Set(titles()).size).toBe(3);
+    const none = tree.root.find((node) => node.props.accessibilityLabel === 'contexts.none');
+    await act(async () => { none.props.onPress(); });
+    expect(titles()).toEqual(['Untagged']);
+    expect(tree.root.findAllByType(Pressable).filter((node) => node.props.accessibilityRole === 'radio')).toHaveLength(0);
+  });
+
   // Rows carry the #766 memo boundary, which only holds while the screen hands
   // untouched rows the same references back.
   it('hands rows stable prop references across a re-render', async () => {

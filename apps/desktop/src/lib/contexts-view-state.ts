@@ -1,4 +1,4 @@
-import type { TaskStatus } from '@mindwtr/core';
+import type { ContextOrTagMatchMode, TaskStatus } from '@mindwtr/core';
 import { CONTEXTS_AXES, sanitizeAxis, type ContextsGroupBy } from '../components/views/list/next-grouping';
 import { getWorkspaceCache } from './workspace-cache';
 
@@ -14,13 +14,15 @@ const LEGACY_CONTEXT_STATUS_VALUES: Array<TaskStatus | 'all'> = ['all', ...CONTE
 export type ContextsViewGroupBy = ContextsGroupBy;
 
 export type ContextsPersistedViewState = {
-    selectedContext: string | null;
+    selectedContexts: string[];
+    matchMode: ContextOrTagMatchMode;
     statusFilters: TaskStatus[];
     groupBy: ContextsViewGroupBy;
 };
 
 export const DEFAULT_CONTEXTS_VIEW_STATE: ContextsPersistedViewState = {
-    selectedContext: null,
+    selectedContexts: [],
+    matchMode: 'all',
     statusFilters: [],
     groupBy: 'none',
 };
@@ -36,9 +38,17 @@ export function sanitizeContextsViewState(
     const parsed = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Partial<ContextsPersistedViewState> & { statusFilter?: unknown }
         : {};
-    const selectedContext = typeof parsed.selectedContext === 'string' && parsed.selectedContext.trim()
-        ? parsed.selectedContext
-        : null;
+    const legacySelected = typeof (parsed as { selectedContext?: unknown }).selectedContext === 'string'
+        ? (parsed as { selectedContext: string }).selectedContext.trim()
+        : '';
+    const selectedContexts = Array.isArray(parsed.selectedContexts)
+        ? Array.from(new Set(parsed.selectedContexts.filter((item): item is string =>
+            typeof item === 'string' && item.trim().length > 0)))
+        : legacySelected ? [legacySelected] : fallback.selectedContexts;
+    const exclusiveSelection = selectedContexts.includes(NO_CONTEXT_TOKEN)
+        ? [NO_CONTEXT_TOKEN]
+        : selectedContexts;
+    const matchMode = parsed.matchMode === 'any' ? 'any' : 'all';
     const normalizeStatusFilters = (candidate: unknown, defaultValue: TaskStatus[]): TaskStatus[] => {
         if (Array.isArray(candidate)) {
             const next = candidate.filter((item): item is TaskStatus => (
@@ -56,7 +66,8 @@ export function sanitizeContextsViewState(
         : normalizeStatusFilters(parsed.statusFilter, fallback.statusFilters);
     const groupBy = sanitizeAxis(CONTEXTS_AXES, parsed.groupBy, fallback.groupBy);
     return {
-        selectedContext,
+        selectedContexts: exclusiveSelection,
+        matchMode,
         statusFilters: normalizeStatusFilters(parsed.statusFilters, legacyFallback),
         groupBy,
     };
@@ -75,9 +86,10 @@ export function readContextsViewState(): ContextsPersistedViewState {
 }
 
 export function persistContextsViewSelection(selectedContext: string | null): ContextsPersistedViewState {
-    const nextState = {
+    const nextState: ContextsPersistedViewState = {
         ...readContextsViewState(),
-        selectedContext,
+        selectedContexts: selectedContext ? [selectedContext] : [],
+        matchMode: 'all',
     };
     const storage = getWorkspaceCache();
     if (storage) {

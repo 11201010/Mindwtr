@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     useTaskStore,
-    matchesHierarchicalToken,
+    taskMatchesContextOrTagSelection,
     shallow,
     sortTasksBy,
     TaskStatus,
@@ -11,6 +11,7 @@ import {
     collectBulkTaskTokens,
     tFallback,
     type Task,
+    type ContextOrTagMatchMode,
 } from '@mindwtr/core';
 import { AtSign, CheckSquare, ChevronDown, ChevronRight, Filter, Hash, Tag, type LucideIcon } from 'lucide-react';
 import { TokenPickerModal } from '../TokenPickerModal';
@@ -56,8 +57,7 @@ type BulkTokenPickerState = {
 // Module scope so the memos below can depend on them: as render-body closures
 // they were a fresh identity every render and would have defeated every memo.
 const matchesSelected = (task: Task, context: string) => {
-    const tokens = [...(task.contexts || []), ...(task.tags || [])];
-    return tokens.some(token => matchesHierarchicalToken(context, token));
+    return taskMatchesContextOrTagSelection(task, [context]);
 };
 
 const hasContext = (task: Task) => (task.contexts?.length || 0) > 0 || (task.tags?.length || 0) > 0;
@@ -95,7 +95,9 @@ export function ContextsView() {
         CONTEXTS_GROUP_COLLAPSE_STORAGE_KEY,
         CONTEXTS_AXES,
     );
-    const selectedContext = persistedViewState.selectedContext;
+    const selectedContexts = persistedViewState.selectedContexts;
+    const noContextSelected = selectedContexts.includes(NO_CONTEXT_TOKEN);
+    const matchMode = persistedViewState.matchMode;
     const statusFilters = persistedViewState.statusFilters;
     const selectedStatusSet = useMemo(() => new Set(statusFilters), [statusFilters]);
     const sortBy = resolveNonDoneTaskSortBy(settings?.taskSortBy, settings);
@@ -108,8 +110,20 @@ export function ContextsView() {
     const setSelectedContext = useCallback((value: string | null) => {
         setPersistedViewState((current) => ({
             ...current,
-            selectedContext: value,
+            selectedContexts: value ? [value] : [],
+            matchMode: 'all',
         }));
+    }, [setPersistedViewState]);
+    const toggleSelectedContext = useCallback((value: string) => {
+        setPersistedViewState((current) => {
+            const next = current.selectedContexts.includes(value)
+                ? current.selectedContexts.filter((token) => token !== value)
+                : [...current.selectedContexts.filter((token) => token !== NO_CONTEXT_TOKEN), value];
+            return { ...current, selectedContexts: next, matchMode: next.length === 0 ? 'all' : current.matchMode };
+        });
+    }, [setPersistedViewState]);
+    const setMatchMode = useCallback((value: ContextOrTagMatchMode) => {
+        setPersistedViewState((current) => ({ ...current, matchMode: value }));
     }, [setPersistedViewState]);
     const setStatusFilters = useCallback((updater: (current: TaskStatus[]) => TaskStatus[]) => {
         setPersistedViewState((current) => ({
@@ -171,15 +185,19 @@ export function ContextsView() {
     useEffect(() => {
         // Keep persisted context selections through the empty startup frame; reset only after active tasks expose tokens.
         if (allTokens.length === 0) return;
-        if (!selectedContext || selectedContext === NO_CONTEXT_TOKEN || allTokens.includes(selectedContext)) return;
-        setSelectedContext(null);
-    }, [allTokens, selectedContext, setSelectedContext]);
+        if (noContextSelected) return;
+        if (selectedContexts.every((token) => allTokens.includes(token))) return;
+        setPersistedViewState((current) => ({
+            ...current,
+            selectedContexts: current.selectedContexts.filter((token) => allTokens.includes(token)),
+        }));
+    }, [allTokens, noContextSelected, selectedContexts, setPersistedViewState]);
 
     const contextFilteredTasks = useMemo(() => {
-        if (selectedContext === NO_CONTEXT_TOKEN) return scopedTasks.filter((t) => !hasContext(t));
-        if (selectedContext) return scopedTasks.filter(t => matchesSelected(t, selectedContext));
+        if (noContextSelected) return scopedTasks.filter((t) => !hasContext(t));
+        if (selectedContexts.length > 0) return scopedTasks.filter(t => taskMatchesContextOrTagSelection(t, selectedContexts, matchMode));
         return scopedTasks.filter((t) => hasContext(t));
-    }, [scopedTasks, selectedContext]);
+    }, [scopedTasks, selectedContexts, noContextSelected, matchMode]);
     const normalizedSearchQuery = searchQuery.trim().toLowerCase();
     const filteredTasks = useMemo(() => (normalizedSearchQuery
         ? contextFilteredTasks.filter((task) => task.title.toLowerCase().includes(normalizedSearchQuery))
@@ -386,11 +404,12 @@ export function ContextsView() {
             <button
                 key={token}
                 type="button"
-                onClick={() => setSelectedContext(token)}
+                onClick={() => toggleSelectedContext(token)}
                 aria-label={`${token} (${taskCount})`}
+                aria-pressed={selectedContexts.includes(token)}
                 className={cn(
                     "flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition-colors",
-                    selectedContext === token ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                    selectedContexts.includes(token) ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                 )}
             >
                 <span className="w-4 text-center text-muted-foreground">{marker}</span>
@@ -472,7 +491,7 @@ export function ContextsView() {
                                 aria-label={`${allTokensLabel} (${scopedTasks.filter((t) => hasContext(t)).length})`}
                                 className={cn(
                                     "flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition-colors",
-                                    selectedContext === null ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                                    selectedContexts.length === 0 ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                                 )}
                             >
                                 <Tag className="w-4 h-4" />
@@ -488,7 +507,7 @@ export function ContextsView() {
                                 aria-label={`${t('contexts.none')} (${scopedTasks.filter((t) => !hasContext(t)).length})`}
                                 className={cn(
                                     "flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition-colors",
-                                    selectedContext === NO_CONTEXT_TOKEN ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                                    noContextSelected ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
                                 )}
                             >
                                 <Tag className="w-4 h-4" />
@@ -534,7 +553,7 @@ export function ContextsView() {
                             </div>
                             <div className="min-w-0 flex-1">
                                 <h2 className="truncate text-2xl font-bold">
-                                    {selectedContext === NO_CONTEXT_TOKEN ? t('contexts.none') : (selectedContext ?? allTokensLabel)}
+                                    {noContextSelected ? t('contexts.none') : (selectedContexts.length ? selectedContexts.join(' + ') : allTokensLabel)}
                                 </h2>
                                 <p className="text-muted-foreground text-sm">
                                     {filteredTasks.length} {t('common.tasks')}
@@ -544,8 +563,13 @@ export function ContextsView() {
                                 <label htmlFor="contexts-token-select" className="sr-only">{allTokensLabel}</label>
                                 <select
                                     id="contexts-token-select"
-                                    value={selectedContext ?? ''}
-                                    onChange={(event) => setSelectedContext(event.target.value || null)}
+                                    value=""
+                                    onChange={(event) => {
+                                        const value = event.target.value;
+                                        if (value === NO_CONTEXT_TOKEN) setSelectedContext(NO_CONTEXT_TOKEN);
+                                        else if (value) toggleSelectedContext(value);
+                                        else setSelectedContext(null);
+                                    }}
                                     className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                                 >
                                     <option value="">{allTokensLabel}</option>
@@ -557,7 +581,36 @@ export function ContextsView() {
                                         {allTagTokens.map((token) => <option key={token} value={token}>{token}</option>)}
                                     </optgroup>
                                 </select>
+                                {selectedContexts.length > 0 && !noContextSelected && (
+                                    <div className="mt-2 flex flex-wrap gap-2" aria-label={allTokensLabel}>
+                                        {selectedContexts.map((token) => (
+                                            <button
+                                                key={token}
+                                                type="button"
+                                                onClick={() => toggleSelectedContext(token)}
+                                                aria-label={`${tFallback(t, 'common.remove', 'Remove')} ${token}`}
+                                                className="rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                            >{token} ×</button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
+                            {selectedContexts.length > 1 && !noContextSelected && (
+                                <div className="order-3 w-full lg:order-none lg:w-auto" role="group" aria-label={`${allTokensLabel} ${tFallback(t, 'filters.matchAny', 'Any')}/${tFallback(t, 'common.all', 'All')}`}>
+                                    <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+                                        {(['all', 'any'] as const).map((mode) => (
+                                            <button
+                                                key={mode}
+                                                type="button"
+                                                aria-pressed={matchMode === mode}
+                                                onClick={() => setMatchMode(mode)}
+                                                className={cn('rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40',
+                                                    matchMode === mode ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted/40')}
+                                            >{mode === 'all' ? tFallback(t, 'common.all', 'All') : tFallback(t, 'filters.matchAny', 'Any')}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <div className="order-4 w-full lg:order-none lg:ml-auto lg:w-auto">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <ToolbarButton
