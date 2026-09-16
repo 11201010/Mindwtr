@@ -1,5 +1,39 @@
 # Plans index
 
+## Review loop from v1.2.8 — September 16, 2026
+
+Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = main `700c42184` + the 32 phase-1 review fixes). Phase-1 findings were fixed directly (see `.orchestrator/tasks/impl-20260916/LEDGER.md`, not tracked). This is the phase-2 improve set: every high-confidence, actionable finding from the product, reliability/security/tests and architecture audits became a plan; each plan is one commit. Root maintains status and integration.
+
+| Plan | Finding | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [088](088-cli-stdout-and-governance-glob.md) | ARCH-01: CLI stdout log leak + unwired scripts tests | P2 | S | None | TODO |
+| [089](089-capture-webhook-attachment-admission.md) | SEC-01: capture webhook skips attachment admission | P1 | S | None | TODO |
+| [090](090-mobile-managed-attachment-gate.md) | SEC-02: managed-attachments gate is a bare prefix | P1 | S | None | TODO |
+| [091](091-android-alarm-map-persistence.md) | REL-01: alarm map lost when a reschedule aborts | P2 | S | None | TODO |
+| [092](092-desktop-lenient-json-prefix-guard.md) | REL-02: lenient parse adopts a nested fragment | P2 | S | None | TODO |
+| [093](093-mcp-bootstrap-temp-rename.md) | REL-03: MCP bootstrap not atomic | P2 | S | None | TODO |
+| [094](094-cloud-ready-probe-throttle.md) | REL-04: /ready fsync per unauthenticated hit | P2 | S | None | TODO |
+| [095](095-core-store-write-contract-guard-test.md) | TEST-01: store write guard never fires in CI | P3 | S | None | TODO |
+| [096](096-core-load-idempotence-matrix.md) | TEST-02: load(load(x)) covers 3 of 18 migrations | P2 | M | None | TODO |
+| [097](097-mcp-exercise-tool-schemas.md) | TEST-03: MCP schemas never exercised | P3 | M | None | TODO |
+| [098](098-local-api-project-allowlist-parity.md) | TEST-04: project allowlist parity test | P3 | S | None | TODO |
+| [099](099-local-api-lock-poison-recovery.md) | REL-05: poisoned write lock = 500s until restart | P2 | S | None | TODO |
+| [100](100-mcp-logger-sanitizer.md) | SEC-03: MCP logger bypasses sanitizer | P3 | S | None | TODO |
+| [101](101-desktop-inlist-add-keeps-text.md) | PROD-01: in-list add drops rejected capture text | P2 | S | None | TODO |
+| [102](102-mind-sweep-honours-store-result.md) | PROD-02: Mind Sweep counts refused captures | P2 | S | None | TODO |
+| [103](103-capture-rejections-visible.md) | PROD-03: silent capture rejections | P2 | S | None | TODO |
+| [104](104-store-results-at-completion-and-star-sites.md) | PROD-04: six sites ignore the store result | P2 | M | None | TODO |
+| [105](105-docs-remove-skip-occurrence.md) | PROD-05: docs promise a Skip occurrence action | P3 | S | None | TODO |
+| [106](106-getting-started-deterministic-ids.md) | PROD-06: two devices seed two Getting Started projects | P2 | S | None | TODO |
+| [107](107-desktop-editor-attachment-status.md) | PROD-07: desktop editor hides attachment state | P3 | S | None | TODO |
+| [108](108-hardcoded-strings-existing-keys.md) | PROD-09: hardcoded English with existing keys | P3 | S | None | TODO |
+| [109](109-sync-setup-parity.md) | PROD-10: self-hosted Test connection / blank token | P3 | S | None | TODO |
+| [110](110-mobile-getting-started-guide-link.md) | PROD-11: mobile card lacks the guide link | P3 | S | None | TODO |
+
+Deferred (recorded, not planned): PROD-08 incubate question, PROD-12 Quick Add help tokens, the Dropbox-not-configured string, and the 65 `resolveText` keys with no English entry — all need locale edits, which were frozen this batch by a concurrent widget change; do them together once the tree is clean. ARCH-07 (44 unreferenced RN transitive deps) is MED confidence and lockfile-churning mid-RC. ARCH-08 quick-add token table and ARCH-09 settings descriptor are worth-exploring deepening candidates for a later loop. Architecture candidates selected for phase 3 (not plans): Focus derivation in core, WebDAV encryption-posture port, sort-roster unification. Direction notes (not planned): restore a hand-cancelled task to its previous status (needs a P18 field decision), a desktop "settle store action" helper (after plan 104 shows the sites).
+
+Considered and rejected: attachment remote/local ports (L effort, data-loss class, outside an RC); Rust sync.rs/storage.rs split (pure moves, large churn); vitest config triplicate (guarded); load-migration cost (single-digit ms); `task-utils.ts` split (namespace, fails the deletion test); a mobile folder-probe for File Sync (needs design).
+
 ## Review loop from v1.2.8 — September 15, 2026
 
 Planned against `51ac48c2f`. The comprehensive batch fixes archive-section retention, cloud attachment GC, revoked capture-token fallback, legacy capture-audio readability, project-title Escape, menu focus, and Shortcut diagnostic privacy; each remains its own implementation commit. The broad improve pass selects only the three supported opportunities below. Root maintains status and integration.
