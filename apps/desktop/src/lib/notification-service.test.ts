@@ -236,7 +236,8 @@ describe('desktop/mobile reminder-kind parity', () => {
                 dailyDigestEveningEnabled: true,
             },
         },
-        { label: 'notifications off, morning digest on (must not fire)', settings: { notificationsEnabled: false, dailyDigestMorningEnabled: true } },
+        { label: 'notifications off, morning digest on', settings: { notificationsEnabled: false, dailyDigestMorningEnabled: true } },
+        { label: 'notifications off, evening digest on', settings: { notificationsEnabled: false, dailyDigestEveningEnabled: true } },
         { label: 'notifications on, weekly review explicitly off', settings: { notificationsEnabled: true, weeklyReviewEnabled: false } },
     ];
 
@@ -250,11 +251,17 @@ describe('desktop/mobile reminder-kind parity', () => {
         expect(desktop.eveningDigestEnabled).toBe(mobile.requests.some((request) => request.key === 'digest:evening'));
     });
 
-    it('pins the fix: the weekly review stays on even though notificationsEnabled is off (#reminder-window)', () => {
-        const gates = resolveDesktopReminderGates({ notificationsEnabled: false, weeklyReviewEnabled: true });
+    it('keeps explicitly enabled digest notifications on when task reminders are off', () => {
+        const gates = resolveDesktopReminderGates({
+            notificationsEnabled: false,
+            weeklyReviewEnabled: true,
+            dailyDigestMorningEnabled: true,
+            dailyDigestEveningEnabled: true,
+        });
         expect(gates.weeklyReviewEnabled).toBe(true);
         expect(gates.taskRemindersEnabled).toBe(false);
-        expect(gates.morningDigestEnabled).toBe(false);
+        expect(gates.morningDigestEnabled).toBe(true);
+        expect(gates.eveningDigestEnabled).toBe(true);
     });
 });
 

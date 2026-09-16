@@ -241,7 +241,10 @@ export function isWeeklyReviewReminderEnabled(settings: NotificationSettings): b
  * a schedule.
  */
 export function hasActiveMobileNotificationFeature(settings: NotificationSettings): boolean {
-    return areTaskRemindersEnabled(settings) || isWeeklyReviewReminderEnabled(settings);
+    return areTaskRemindersEnabled(settings)
+        || settings.dailyDigestMorningEnabled === true
+        || settings.dailyDigestEveningEnabled === true
+        || isWeeklyReviewReminderEnabled(settings);
 }
 
 // --- Digest scheduling (the three defaults + the weekly-review-day clamp, previously
@@ -412,7 +415,7 @@ export function buildReminderSchedule(input: ReminderScheduleInput): ReminderSch
 
     const requests: ReminderScheduleRequest[] = [];
 
-    if (taskRemindersEnabled && digest.morning.enabled) {
+    if (digest.morning.enabled) {
         requests.push({
             key: 'digest:morning',
             title: translations['digest.morningTitle'],
@@ -423,7 +426,7 @@ export function buildReminderSchedule(input: ReminderScheduleInput): ReminderSch
         });
     }
 
-    if (taskRemindersEnabled && digest.evening.enabled) {
+    if (digest.evening.enabled) {
         requests.push({
             key: 'digest:evening',
             title: translations['digest.eveningTitle'],

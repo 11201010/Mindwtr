@@ -109,6 +109,7 @@ const NOTIFICATION_EVENT_RESCHEDULE_DEBOUNCE_MS = 250;
 const STORE_RESCHEDULE_DEBOUNCE_MS = 2_500;
 const TASK_REMINDER_SNOOZE_MINUTES = 10;
 const POMODORO_ALERT_DELIVERY_RELEASE_CHECK = 'v1.3.0/pomodoro-alert-delivery';
+const DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK = 'v1.3.1/daily-digest-independent';
 
 let started = false;
 let alarmApi: AlarmNotificationsApi | null = null;
@@ -794,6 +795,23 @@ async function runRescheduleCycle(api: AlarmNotificationsApi): Promise<void> {
 
   await cancelInactiveKeys(api, activeKeys);
   await saveAlarmMap();
+  if (!taskRemindersEnabled) {
+    const morningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:morning');
+    const eveningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:evening');
+    const requestedDailyDigestAlarmCount = Number(morningDigestEnabled) + Number(eveningDigestEnabled);
+    const dailyDigestAlarmCount = Number(morningDigestEnabled && alarmMap.has('digest:morning'))
+      + Number(eveningDigestEnabled && alarmMap.has('digest:evening'));
+    if (dailyDigestAlarmCount > 0 && dailyDigestAlarmCount === requestedDailyDigestAlarmCount) {
+      logNotificationInfo('Independent daily digest alarms reconciled', {
+        releaseCheck: DAILY_DIGEST_INDEPENDENT_RELEASE_CHECK,
+        taskRemindersEnabled,
+        morningDigestEnabled,
+        eveningDigestEnabled,
+        count: dailyDigestAlarmCount,
+        outcome: 'reconciled',
+      });
+    }
+  }
   logNotificationInfo('Reschedule cycle complete', {
     activeFeature,
     scheduledAlarmCount: alarmMap.size,

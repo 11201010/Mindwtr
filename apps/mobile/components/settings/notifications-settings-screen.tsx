@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { areDueDateRemindersEnabled,
     areStartDateRemindersEnabled,
     areTaskRemindersEnabled,
+    hasActiveMobileNotificationFeature,
     isWeeklyReviewReminderEnabled,
     normalizeDateFormatSetting,
     resolveDateLocaleTag,
@@ -38,7 +39,9 @@ export function NotificationsSettingsScreen() {
     const [weeklyReviewDayPickerOpen, setWeeklyReviewDayPickerOpen] = useState(false);
 
     const notificationsEnabled = areTaskRemindersEnabled(settings);
-    const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(notificationsEnabled);
+    const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(
+        hasActiveMobileNotificationFeature(settings),
+    );
     const startDateNotificationsEnabled = areStartDateRemindersEnabled(settings);
     const dueDateNotificationsEnabled = areDueDateRemindersEnabled(settings);
     const dailyDigestMorningEnabled = settings.dailyDigestMorningEnabled === true;

@@ -256,9 +256,11 @@ describe('reminder gating predicates', () => {
         expect(areDueDateRemindersEnabled({ notificationsEnabled: false })).toBe(false);
     });
 
-    it('keeps the weekly review independent of the task-reminder master switch', () => {
+    it('keeps explicitly enabled digests independent of the task-reminder master switch', () => {
         expect(isWeeklyReviewReminderEnabled({ notificationsEnabled: false, weeklyReviewEnabled: true })).toBe(true);
         expect(hasActiveMobileNotificationFeature({ notificationsEnabled: false, weeklyReviewEnabled: true })).toBe(true);
+        expect(hasActiveMobileNotificationFeature({ notificationsEnabled: false, dailyDigestMorningEnabled: true })).toBe(true);
+        expect(hasActiveMobileNotificationFeature({ notificationsEnabled: false, dailyDigestEveningEnabled: true })).toBe(true);
         expect(hasActiveMobileNotificationFeature({ notificationsEnabled: false, weeklyReviewEnabled: false })).toBe(false);
     });
 });
@@ -349,6 +351,49 @@ describe('buildReminderSchedule', () => {
         expect(morning!.fireAt.getDate()).not.toBe(now.getDate());
         expect(evening!.fireAt.getHours()).toBe(20);
         expect(evening!.fireAt.getDate()).toBe(now.getDate());
+    });
+
+    it.each([
+        {
+            label: 'morning only',
+            settings: { dailyDigestMorningEnabled: true },
+            expectedKeys: ['digest:morning'],
+        },
+        {
+            label: 'evening only',
+            settings: { dailyDigestEveningEnabled: true },
+            expectedKeys: ['digest:evening'],
+        },
+        {
+            label: 'both daily digests',
+            settings: { dailyDigestMorningEnabled: true, dailyDigestEveningEnabled: true },
+            expectedKeys: ['digest:morning', 'digest:evening'],
+        },
+        {
+            label: 'weekly review only',
+            settings: { weeklyReviewEnabled: true },
+            expectedKeys: ['digest:weekly-review'],
+        },
+        {
+            label: 'no digest enabled',
+            settings: {},
+            expectedKeys: [],
+        },
+    ])('keeps $label active while task reminders are disabled', ({ settings, expectedKeys }) => {
+        const { requests, diagnostics } = buildReminderSchedule({
+            settings: { notificationsEnabled: false, ...settings },
+            tasks: [
+                buildTask({ id: 'timed', dueDate: '2026-06-17T10:00:00.000Z' }),
+                buildTask({ id: 'date-only', dueDate: '2026-06-18' }),
+            ],
+            projects: [],
+            now: new Date('2026-06-17T08:00:00.000Z'),
+            translations,
+        });
+
+        expect(diagnostics.taskRemindersEnabled).toBe(false);
+        expect(requests.map((request) => request.key)).toEqual(expectedKeys);
+        expect(requests.some((request) => request.data.kind === 'task-reminder')).toBe(false);
     });
 
     it('schedules the weekly review independent of the task-reminder master switch', () => {

@@ -1,0 +1,100 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { View } from 'react-native';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { NotificationSettings } from '@mindwtr/core';
+
+import { NotificationsSettingsScreen } from './notifications-settings-screen';
+
+const { exactAlarmPermission, storeState } = vi.hoisted(() => ({
+  exactAlarmPermission: vi.fn(() => ({ showNotice: false })),
+  storeState: {
+    settings: { notificationsEnabled: false } as NotificationSettings,
+    updateSettings: vi.fn(async () => undefined),
+  },
+}));
+
+vi.mock('@mindwtr/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mindwtr/core')>();
+  return {
+    ...actual,
+    useTaskStore: () => storeState,
+  };
+});
+
+vi.mock('@react-native-community/datetimepicker', () => ({
+  default: () => null,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaView: (props: Record<string, unknown> & { children?: React.ReactNode }) => (
+    <View {...props}>{props.children}</View>
+  ),
+}));
+
+vi.mock('@/hooks/use-theme-colors', () => ({
+  useThemeColors: () => ({
+    bg: '#fff',
+    cardBg: '#fff',
+    border: '#ddd',
+    text: '#111',
+    secondaryText: '#666',
+    tint: '#06f',
+  }),
+}));
+
+vi.mock('@/lib/notification-service', () => ({
+  requestNotificationPermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
+  startMobileNotifications: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/lib/persistent-capture-notification', () => ({
+  applyPersistentCaptureNotification: vi.fn(),
+  isPersistentCaptureSupported: vi.fn(() => false),
+  readPersistentCaptureEnabled: vi.fn(async () => false),
+  writePersistentCaptureEnabled: vi.fn(async () => undefined),
+}));
+
+vi.mock('./exact-alarm-notice', () => ({
+  ExactAlarmNoticeRow: () => null,
+  useExactAlarmPermission: exactAlarmPermission,
+}));
+
+vi.mock('./setting-row', () => ({
+  SettingRow: ({ children }: { children?: React.ReactNode }) => <View>{children}</View>,
+  SettingToggleRow: ({ children }: { children?: React.ReactNode }) => <View>{children}</View>,
+}));
+
+vi.mock('./settings.hooks', () => ({
+  useSettingsLocalization: () => ({ language: 'en', t: (key: string) => key }),
+  useSettingsScrollContent: () => ({}),
+}));
+
+vi.mock('./settings.shell', () => ({
+  SettingsTopBar: () => null,
+}));
+
+describe('NotificationsSettingsScreen exact-alarm feature boundary', () => {
+  beforeEach(() => {
+    exactAlarmPermission.mockClear();
+    storeState.settings = { notificationsEnabled: false };
+  });
+
+  it.each([
+    { label: 'morning digest', settings: { dailyDigestMorningEnabled: true }, active: true },
+    { label: 'evening digest', settings: { dailyDigestEveningEnabled: true }, active: true },
+    { label: 'weekly review', settings: { weeklyReviewEnabled: true }, active: true },
+    { label: 'no notification feature', settings: {}, active: false },
+  ])('passes $active to exact-alarm permission for $label only', ({ settings, active }) => {
+    storeState.settings = { notificationsEnabled: false, ...settings };
+    let tree!: renderer.ReactTestRenderer;
+
+    act(() => {
+      tree = renderer.create(<NotificationsSettingsScreen />);
+    });
+
+    expect(exactAlarmPermission).toHaveBeenLastCalledWith(active);
+    act(() => tree.unmount());
+  });
+});

@@ -285,10 +285,8 @@ export type DesktopReminderGates = {
 /**
  * Which reminder categories are live for this poll, mirroring core's `buildReminderSchedule`
  * gating (the module mobile pre-arms alarms from): the weekly review nudge is deliberately
- * independent of the task-reminder master switch (schedule-utils.ts `isWeeklyReviewReminderEnabled`),
- * everything else -- start/due/review task reminders, project reviews, the morning/evening
- * digest -- requires it. Desktop used to hand-roll a single early return that killed all four
- * together, silently dropping the weekly review whenever notifications were off.
+ * independent of the task-reminder master switch, as are explicitly enabled morning/evening
+ * digests. Start/due/review task reminders and project reviews still require the master switch.
  */
 export function resolveDesktopReminderGates(
     settings: NotificationSettings,
@@ -298,8 +296,8 @@ export function resolveDesktopReminderGates(
     return {
         taskRemindersEnabled,
         weeklyReviewEnabled: digest.weekly.enabled,
-        morningDigestEnabled: taskRemindersEnabled && digest.morning.enabled,
-        eveningDigestEnabled: taskRemindersEnabled && digest.evening.enabled,
+        morningDigestEnabled: digest.morning.enabled,
+        eveningDigestEnabled: digest.evening.enabled,
     };
 }
 

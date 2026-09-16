@@ -761,6 +761,46 @@ describe('notification-service-local', () => {
     );
   });
 
+  it('schedules and logs daily digests even when task reminders are disabled', async () => {
+    mockStoreState.settings = {
+      notificationsEnabled: false,
+      dailyDigestMorningEnabled: true,
+      dailyDigestMorningTime: '08:15',
+      dailyDigestEveningEnabled: true,
+      dailyDigestEveningTime: '19:45',
+    };
+
+    await startLocalMobileNotifications();
+
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledTimes(2);
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: 'daily-digest', alarmKey: 'digest:morning' }),
+        repeat_interval: 'daily',
+      })
+    );
+    expect(mockAlarmScheduleAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: 'daily-digest', alarmKey: 'digest:evening' }),
+        repeat_interval: 'daily',
+      })
+    );
+    expect(mockLogInfo).toHaveBeenCalledWith(
+      '[Local Notifications] Independent daily digest alarms reconciled',
+      expect.objectContaining({
+        scope: 'notifications',
+        extra: {
+          releaseCheck: 'v1.3.1/daily-digest-independent',
+          taskRemindersEnabled: false,
+          morningDigestEnabled: true,
+          eveningDigestEnabled: true,
+          count: 2,
+          outcome: 'reconciled',
+        },
+      })
+    );
+  });
+
   it('reschedules current task reminders when startup is requested while already running', async () => {
     mockStoreState.tasks = [
       { id: 'recurring-original', title: 'Daily standup', description: '', dueDate: new Date(Date.now() + 5 * 60 * 1000).toISOString() },
@@ -801,7 +841,7 @@ describe('notification-service-local', () => {
       'digest:morning': { id: 42, signature },
     }));
     mockStoreState.settings = {
-      notificationsEnabled: true,
+      notificationsEnabled: false,
       dailyDigestMorningEnabled: true,
       dailyDigestMorningTime: '09:00',
     };
@@ -813,6 +853,33 @@ describe('notification-service-local', () => {
       id: 42,
       signature,
     });
+  });
+
+  it('cancels only the disabled daily digest alarm during reconciliation', async () => {
+    mockAlarmScheduleAlarm
+      .mockResolvedValueOnce({ id: 41 })
+      .mockResolvedValueOnce({ id: 42 });
+    mockStoreState.settings = {
+      notificationsEnabled: false,
+      dailyDigestMorningEnabled: true,
+      dailyDigestEveningEnabled: true,
+    };
+    await startLocalMobileNotifications();
+
+    mockAlarmDeleteAlarm.mockClear();
+    mockAlarmDeleteRepeatingAlarm.mockClear();
+    mockStoreState.settings = {
+      notificationsEnabled: false,
+      dailyDigestMorningEnabled: false,
+      dailyDigestEveningEnabled: true,
+    };
+    await startLocalMobileNotifications();
+
+    expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(41);
+    expect(mockAlarmDeleteRepeatingAlarm).toHaveBeenCalledWith(41);
+    expect(mockAlarmDeleteAlarm).not.toHaveBeenCalledWith(42);
+    expect(__localNotificationTestUtils.getAlarmMapSnapshot().has('digest:morning')).toBe(false);
+    expect(__localNotificationTestUtils.getAlarmMapSnapshot().get('digest:evening')?.id).toBe(42);
   });
 
   it('falls back to the title when sending an immediate notification without a message', async () => {
