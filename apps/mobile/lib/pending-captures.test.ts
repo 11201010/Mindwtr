@@ -437,6 +437,89 @@ describe('ingestPendingCaptures', () => {
         expect(outcomes).toEqual(['completed', 'already-done', 'missing']);
     });
 
+    it('stamps a queued check-off with the tap time and ignores a future or unparseable one', async () => {
+        fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a.json', 'b.json', 'c.json', 'd.json']);
+        fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
+            uri.includes('a.json')
+                ? { kind: 'complete', id: 'c1', taskId: 'tapped', completedAt: '2026-09-14T08:30:00.000Z', source: 'android-widget' }
+                : uri.includes('b.json')
+                    ? { kind: 'complete', id: 'c2', taskId: 'skewed', completedAt: '2099-01-01T00:00:00.000Z', source: 'android-widget' }
+                    : uri.includes('c.json')
+                        ? { kind: 'complete', id: 'c3', taskId: 'garbled', completedAt: 'not a timestamp', source: 'android-widget' }
+                        : { kind: 'complete', id: 'c4', taskId: 'watched', createdAt: '2026-09-15T07:15:00.000Z', source: 'apple-watch' },
+        ));
+        const tasks = ['tapped', 'skewed', 'garbled', 'watched']
+            .map((id) => ({ id, title: id, status: 'next' } as Task));
+
+        expect(await ingestPendingCaptures({
+            addTask: addTaskMock(), updateTask, addProject, projects: [], areas: [], tasks, people: [], settings: emptySettings,
+        })).toBe(4);
+
+        expect(updateTask).toHaveBeenCalledWith('tapped', { status: 'done', completedAt: '2026-09-14T08:30:00.000Z' });
+        expect(updateTask).toHaveBeenCalledWith('skewed', { status: 'done' });
+        expect(updateTask).toHaveBeenCalledWith('garbled', { status: 'done' });
+        // The Watch writes no completedAt; its command is created at the tap.
+        expect(updateTask).toHaveBeenCalledWith('watched', { status: 'done', completedAt: '2026-09-15T07:15:00.000Z' });
+    });
+
+    it('anchors after-completion recurrence on the queued tap time, not the drain time', async () => {
+        const dayOf = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+        const completedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+        const expectedDue = dayOf(new Date(completedAt.getTime() + 24 * 60 * 60 * 1000));
+        const recurring = {
+            id: 'fluid-task',
+            title: 'Private fluid task',
+            status: 'next',
+            dueDate: dayOf(completedAt),
+            recurrence: { rule: 'daily', strategy: 'fluid' },
+            tags: [],
+            contexts: [],
+            createdAt: '2026-09-11T12:00:00.000Z',
+            updatedAt: '2026-09-11T12:00:00.000Z',
+        } as Task;
+        const settings = { deviceId: 'fluid-recurrence-test' } as AppData['settings'];
+        const storage: StorageAdapter = {
+            getData: vi.fn(async () => ({
+                tasks: [recurring], projects: [], sections: [], areas: [], people: [], settings,
+            } as AppData)),
+            saveData: vi.fn(async () => undefined),
+        };
+        setStorageAdapter(storage);
+        useTaskStore.setState({
+            settings,
+            persistenceFailure: null,
+            _allTasks: [recurring],
+            _allProjects: [],
+            _allSections: [],
+            _allAreas: [],
+            _allPeople: [],
+        });
+        oneFile('complete.json', {
+            kind: 'complete', id: 'fluid-completion', taskId: recurring.id,
+            completedAt: completedAt.toISOString(), source: 'android-widget',
+        });
+
+        try {
+            await expect(ingestPendingCaptures({
+                addTask: addTaskMock(),
+                updateTask: useTaskStore.getState().updateTask,
+                addProject,
+                projects: [],
+                areas: [],
+                tasks: [],
+                getTasks: () => useTaskStore.getState()._allTasks,
+                people: [],
+                settings,
+                flushPendingSave: flushCorePendingSave,
+            })).resolves.toBe(1);
+
+            const next = useTaskStore.getState()._allTasks.find(({ status }) => status === 'next');
+            expect(next?.dueDate).toBe(expectedDue);
+        } finally {
+            resetCoreForTests();
+        }
+    });
+
     it('persists a recurring completion and its single follow-up before deleting a replayed native command', async () => {
         vi.useFakeTimers();
         const recurring = {

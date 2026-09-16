@@ -436,6 +436,19 @@ async function assembleCaptureTask(
     }
 }
 
+// A queued check-off can sit for days (widget ring, Watch, a phone that was
+// off), so the completion is stamped with the tap time rather than the moment
+// the app happened to drain the queue. Core anchors after-completion recurrence
+// on the same value. A missing, unparseable or future timestamp (clock skew)
+// falls back to core's "now" by omitting the field.
+function resolveQueuedCompletedAt(completion: PendingCompletion): string | undefined {
+    const raw = completion.completedAt ?? completion.createdAt;
+    if (!raw) return undefined;
+    const parsed = safeParseDate(raw);
+    if (!parsed || parsed.getTime() > Date.now()) return undefined;
+    return parsed.toISOString();
+}
+
 // At-least-once: a task already done, archived, deleted or unknown is a no-op and the
 // file still goes away. The success line is the phase-2 release check.
 export async function applyPendingCompletion(
@@ -451,7 +464,8 @@ export async function applyPendingCompletion(
                 ? 'terminal'
                 : 'completed';
     if (outcome === 'completed') {
-        const result = await updateTask(completion.taskId, { status: 'done' });
+        const completedAt = resolveQueuedCompletedAt(completion);
+        const result = await updateTask(completion.taskId, { status: 'done', ...(completedAt ? { completedAt } : {}) });
         if (isFailedResult(result)) return null;
     }
     return outcome;

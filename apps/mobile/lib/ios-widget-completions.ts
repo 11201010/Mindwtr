@@ -25,8 +25,14 @@ export async function ingestIosWidgetCompletions(deps: CompletionDeps): Promise<
             const stale = task && !task.deletedAt && !task.purgedAt
                 && task.status !== 'done' && task.status !== 'archived'
                 && buildWidgetCompletionToken(task) !== completion.token;
+            // The action carries the tap time; a garbage or future value is
+            // dropped here so the store falls back to "now".
+            const tappedAt = completion.createdAt > 0 && completion.createdAt <= Date.now()
+                ? new Date(completion.createdAt).toISOString()
+                : undefined;
             const outcome = stale ? 'stale' : await applyPendingCompletion({
                 kind: 'complete', id: completion.id, taskId: completion.taskId,
+                ...(tappedAt ? { completedAt: tappedAt } : {}),
             }, deps);
             if (!outcome) continue;
             if (isSandboxMode()) break;
