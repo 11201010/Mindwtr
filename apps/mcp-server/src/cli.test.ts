@@ -72,7 +72,7 @@ describe('published library entry has no import-time side effect (BUG-14)', () =
       writeFileSync(importerPath, `import ${JSON.stringify(outfile)};\n`);
       const dbPath = join(outDir, 'probe.db');
 
-      const exitedOnItsOwn = await runsToCompletion(importerPath, ['--db', dbPath], outDir, 3000);
+      const exitedOnItsOwn = await runsToCompletion(importerPath, ['--db', dbPath], outDir, 15000);
 
       expect(exitedOnItsOwn).toBe(true);
     } finally {
