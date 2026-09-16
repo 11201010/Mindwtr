@@ -2,6 +2,11 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Spanish.
 export const esOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Abrir tareas en',
+    'settings.gtdMobile.openTasksInDesc': 'Elige la pestaña que se usa al tocar una tarea normalmente en este dispositivo.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automático',
+    'settings.gtdMobile.taskOpenPreview': 'Vista previa',
+    'settings.gtdMobile.taskOpenEdit': 'Editar',
     'common.retry': "Volver a intentar",
 
     'viewSections.moveToSection': "Mover a sección…",

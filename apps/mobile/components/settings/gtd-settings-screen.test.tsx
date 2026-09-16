@@ -20,6 +20,15 @@ vi.mock('@/lib/exact-alarm-permission', () => ({
 
 const updateSettings = vi.fn().mockResolvedValue(undefined);
 const showToast = vi.fn();
+const taskOpenModeState = vi.hoisted(() => ({
+  mode: 'automatic' as 'automatic' | 'preview' | 'edit',
+  setMode: vi.fn(),
+}));
+
+vi.mock('@/lib/view-state/task-open-mode', () => ({
+  TASK_OPEN_MODES: ['automatic', 'preview', 'edit'],
+  useTaskOpenMode: () => ({ hydrated: true, mode: taskOpenModeState.mode, setMode: taskOpenModeState.setMode }),
+}));
 
 const flattenStyle = (style: unknown): Record<string, unknown> => {
   if (Array.isArray(style)) {
@@ -149,6 +158,11 @@ vi.mock('./settings.hooks', () => ({
     tr: (key: string) =>
       ({
         'settings.gtdMobile.pomodoroWillNowAdvancePhasesAutomatically': 'Pomodoro will now advance phases automatically.',
+        'settings.gtdMobile.openTasksIn': 'Open tasks in',
+        'settings.gtdMobile.openTasksInDesc': 'Choose the tab used for normal task taps on this device.',
+        'settings.gtdMobile.taskOpenAutomatic': 'Automatic',
+        'settings.gtdMobile.taskOpenPreview': 'Preview',
+        'settings.gtdMobile.taskOpenEdit': 'Edit',
       }[key] ?? key),
     t: (key: string) =>
       ({
@@ -188,6 +202,8 @@ vi.mock('@/components/task-edit/task-edit-modal.utils', () => ({
 describe('GtdSettingsScreen task editor layout', () => {
   beforeEach(() => {
     updateSettings.mockClear();
+    taskOpenModeState.setMode.mockClear();
+    taskOpenModeState.mode = 'automatic';
     showToast.mockClear();
     alarmPermission.relevant.mockReturnValue(true);
     alarmPermission.refresh.mockReset().mockResolvedValue(true);
@@ -225,6 +241,25 @@ describe('GtdSettingsScreen task editor layout', () => {
       }),
     }));
     expect(tree.root.findByType(Modal).props.visible).toBe(false);
+  });
+
+  it('shows the device-local task opening choices and publishes the selected mode', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<GtdSettingsScreen onNavigate={vi.fn()} screen="gtd-task-editor" />);
+    });
+
+    const automatic = tree.root.findByProps({ testID: 'task-open-mode-automatic' });
+    const preview = tree.root.findByProps({ testID: 'task-open-mode-preview' });
+    const edit = tree.root.findByProps({ testID: 'task-open-mode-edit' });
+    expect(automatic.props.accessibilityRole).toBe('radio');
+    expect(automatic.props.accessibilityState).toEqual({ selected: true });
+    expect(preview.props.accessibilityState).toEqual({ selected: false });
+    expect(edit.props.accessibilityState).toEqual({ selected: false });
+
+    renderer.act(() => { preview.props.onPress(); });
+    expect(taskOpenModeState.setMode).toHaveBeenCalledExactlyOnceWith('preview');
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 
   it('still opens the field sheet when the row body is tapped', () => {

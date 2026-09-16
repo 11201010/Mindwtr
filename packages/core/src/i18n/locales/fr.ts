@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Ouvrir les tâches dans',
+    'settings.gtdMobile.openTasksInDesc': 'Choisissez l’onglet utilisé lorsque vous touchez normalement une tâche sur cet appareil.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatique',
+    'settings.gtdMobile.taskOpenPreview': 'Aperçu',
+    'settings.gtdMobile.taskOpenEdit': 'Modifier',
     'common.retry': "Réessayer",
 
     'viewSections.noSection': "Aucune section",

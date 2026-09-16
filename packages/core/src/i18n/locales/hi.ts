@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'कार्य इसमें खोलें',
+    'settings.gtdMobile.openTasksInDesc': 'इस डिवाइस पर किसी कार्य को सामान्य रूप से टैप करने पर उपयोग होने वाला टैब चुनें।',
+    'settings.gtdMobile.taskOpenAutomatic': 'स्वचालित',
+    'settings.gtdMobile.taskOpenPreview': 'पूर्वावलोकन',
+    'settings.gtdMobile.taskOpenEdit': 'संपादित करें',
     'common.retry': "फिर से कोशिश करें",
 
     'viewSections.noSection': "कोई अनुभाग नहीं",

@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': '작업을 열 탭',
+    'settings.gtdMobile.openTasksInDesc': '이 기기에서 작업을 일반적으로 탭할 때 사용할 탭을 선택하세요.',
+    'settings.gtdMobile.taskOpenAutomatic': '자동',
+    'settings.gtdMobile.taskOpenPreview': '미리보기',
+    'settings.gtdMobile.taskOpenEdit': '편집',
     'common.retry': "다시 시도",
 
     'viewSections.noSection': "섹션 없음",

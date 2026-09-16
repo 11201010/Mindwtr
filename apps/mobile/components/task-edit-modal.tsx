@@ -71,6 +71,7 @@ import { useTaskTokenSuggestions } from './task-edit/use-task-token-suggestions'
 import { createSomedaySection } from '../lib/someday-section-actions';
 import { logInfo } from '../lib/app-log';
 import { SandboxWorkspaceCue } from './sandbox-workspace-cue';
+import { resolveTaskOpenTab, useTaskOpenMode } from '@/lib/view-state/task-open-mode';
 
 
 const EMPTY_COPILOT_TAGS: string[] = [];
@@ -149,6 +150,8 @@ interface TaskEditModalProps {
     onSave: (taskId: string, updates: Partial<Task>) => unknown;
     onFocusMode?: (taskId: string) => void;
     defaultTab?: 'task' | 'view';
+    /** Normal per-screen default used only when the device preference is Automatic. */
+    automaticDefaultTab?: 'task' | 'view';
     onProjectNavigate?: (projectId: string) => void;
     onContextNavigate?: (context: string) => void;
     onTagNavigate?: (tag: string) => void;
@@ -1426,13 +1429,26 @@ const areTaskEditModalPropsEqual = (prev: TaskEditModalProps, next: TaskEditModa
     prev.visible === next.visible && prev.task === next.task && prev.onClose === next.onClose && prev.onSave === next.onSave
     && prev.readOnly === next.readOnly
     && prev.onFocusMode === next.onFocusMode && prev.defaultTab === next.defaultTab
+    && prev.automaticDefaultTab === next.automaticDefaultTab
     && prev.onProjectNavigate === next.onProjectNavigate && prev.onContextNavigate === next.onContextNavigate && prev.onTagNavigate === next.onTagNavigate
 );
 
 const TaskEditModalWithBoundary = (props: TaskEditModalProps) => {
     const { t } = useLanguage();
     const tc = useThemeColors();
-    return <TaskEditModalErrorBoundary onClose={props.onClose} taskId={props.task?.id} t={t} tc={tc}><TaskEditModalInner {...props} /></TaskEditModalErrorBoundary>;
+    const taskOpenMode = useTaskOpenMode();
+    if (!taskOpenMode.hydrated) return null;
+    const resolvedDefaultTab = resolveTaskOpenTab({
+        mode: taskOpenMode.mode,
+        automaticTab: props.automaticDefaultTab ?? props.defaultTab ?? 'view',
+        explicitEdit: props.defaultTab === 'task',
+        readOnly: props.readOnly,
+    });
+    return (
+        <TaskEditModalErrorBoundary onClose={props.onClose} taskId={props.task?.id} t={t} tc={tc}>
+            <TaskEditModalInner {...props} defaultTab={resolvedDefaultTab} />
+        </TaskEditModalErrorBoundary>
+    );
 };
 
 export const TaskEditModal = React.memo(TaskEditModalWithBoundary, areTaskEditModalPropsEqual);

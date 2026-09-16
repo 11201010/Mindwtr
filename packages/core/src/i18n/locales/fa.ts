@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'باز کردن کارها در',
+    'settings.gtdMobile.openTasksInDesc': 'زبانه‌ای را انتخاب کنید که با لمس معمولی کارها در این دستگاه باز می‌شود.',
+    'settings.gtdMobile.taskOpenAutomatic': 'خودکار',
+    'settings.gtdMobile.taskOpenPreview': 'پیش‌نمایش',
+    'settings.gtdMobile.taskOpenEdit': 'ویرایش',
     'common.retry': "تلاش دوباره",
 
     'viewSections.moveToSection': "انتقال به بخش…",

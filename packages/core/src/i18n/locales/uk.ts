@@ -1,5 +1,10 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Відкривати завдання в режимі',
+    'settings.gtdMobile.openTasksInDesc': 'Виберіть вкладку, яка відкривається після звичайного натискання на завдання на цьому пристрої.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Автоматично',
+    'settings.gtdMobile.taskOpenPreview': 'Перегляд',
+    'settings.gtdMobile.taskOpenEdit': 'Редагування',
     "common.retry": "Спробувати ще раз",
     "viewSections.moveToSection": "Перемістити до розділу…",
     "viewSections.moved": "Переміщено до {section} ({count})",

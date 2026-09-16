@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Aufgaben öffnen in',
+    'settings.gtdMobile.openTasksInDesc': 'Wähle den Tab, der beim normalen Antippen einer Aufgabe auf diesem Gerät verwendet wird.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatisch',
+    'settings.gtdMobile.taskOpenPreview': 'Vorschau',
+    'settings.gtdMobile.taskOpenEdit': 'Bearbeiten',
     'common.retry': "Erneut versuchen",
 
     'viewSections.moveToSection': "In Abschnitt verschieben…",

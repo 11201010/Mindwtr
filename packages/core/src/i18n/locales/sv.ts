@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Öppna uppgifter i',
+    'settings.gtdMobile.openTasksInDesc': 'Välj vilken flik som används när du trycker på en uppgift på den här enheten.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatiskt',
+    'settings.gtdMobile.taskOpenPreview': 'Förhandsvisning',
+    'settings.gtdMobile.taskOpenEdit': 'Redigera',
     'common.retry': "Försök igen",
 
     'viewSections.moveToSection': "Flytta till sektion…",

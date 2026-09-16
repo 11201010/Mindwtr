@@ -50,6 +50,11 @@ import type { SettingsScreen } from './settings.constants';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
 import { SettingsTopBar } from './settings.shell';
 import { styles } from './settings.styles';
+import {
+    TASK_OPEN_MODES,
+    useTaskOpenMode,
+    type TaskOpenMode,
+} from '@/lib/view-state/task-open-mode';
 
 type GtdScreen =
     | 'gtd'
@@ -79,6 +84,7 @@ export function GtdSettingsScreen({
     const insets = useSafeAreaInsets();
     const { tr, t } = useSettingsLocalization();
     const { showToast } = useToast();
+    const { mode: taskOpenMode, setMode: setTaskOpenMode } = useTaskOpenMode();
     const { settings, updateSettings, areas } = useTaskStore((state) => ({
         areas: state.areas,
         settings: state.settings,
@@ -1129,6 +1135,13 @@ export function GtdSettingsScreen({
     const moveUpLabel = tr('projects.moveUp');
     const moveDownLabel = tr('projects.moveDown');
     const doneLabel = tFallback(t, 'common.done', tr('nav.done'));
+    const taskOpenModeLabel = tr('settings.gtdMobile.openTasksIn');
+    const taskOpenModeDescription = tr('settings.gtdMobile.openTasksInDesc');
+    const taskOpenModeLabels: Record<TaskOpenMode, string> = {
+        automatic: tr('settings.gtdMobile.taskOpenAutomatic'),
+        preview: tr('settings.gtdMobile.taskOpenPreview'),
+        edit: tr('settings.gtdMobile.taskOpenEdit'),
+    };
 
     const fieldLabel = (fieldId: TaskEditorFieldId) => {
         switch (fieldId) {
@@ -1343,6 +1356,41 @@ export function GtdSettingsScreen({
             <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                 <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.taskEditorLayoutDesc')}</Text>
                 <Text style={[styles.description, { color: tc.secondaryText, marginTop: -6 }]}>{taskEditorHelperText}</Text>
+
+                <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
+                    <View style={[styles.settingRowColumn, { gap: 12 }]}>
+                        <View>
+                            <Text style={[styles.settingLabel, { color: tc.text }]}>{taskOpenModeLabel}</Text>
+                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>{taskOpenModeDescription}</Text>
+                        </View>
+                        <View style={[styles.gtdSegmentedControl, { backgroundColor: tc.bg, borderColor: tc.border }]}>
+                            {TASK_OPEN_MODES.map((mode) => {
+                                const selected = taskOpenMode === mode;
+                                return (
+                                    <TouchableOpacity
+                                        key={mode}
+                                        testID={`task-open-mode-${mode}`}
+                                        accessibilityRole="radio"
+                                        accessibilityState={{ selected }}
+                                        style={[
+                                            styles.gtdSegmentedOption,
+                                            { backgroundColor: selected ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => setTaskOpenMode(mode)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <CompactText
+                                            style={[styles.gtdSegmentedOptionText, { color: selected ? tc.tint : tc.secondaryText }]}
+                                            numberOfLines={2}
+                                        >
+                                            {taskOpenModeLabels[mode]}
+                                        </CompactText>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
+                </View>
 
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg, overflow: 'visible' }]}>
                     <Text style={[styles.sectionHeaderText, { color: tc.secondaryText }]}>{taskEditorPresetLabel}</Text>

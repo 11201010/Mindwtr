@@ -16,6 +16,17 @@ import { MarkdownFormatToolbar } from './markdown-format-toolbar';
 import { syncTaskEditPagerPosition } from './task-edit/task-edit-modal.utils';
 
 const taskEditStore = vi.hoisted(() => ({ current: null as Record<string, any> | null }));
+const taskOpenPreference = vi.hoisted(() => ({
+  current: { hydrated: true, mode: 'automatic' as 'automatic' | 'preview' | 'edit' },
+}));
+
+vi.mock('@/lib/view-state/task-open-mode', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/view-state/task-open-mode')>();
+  return {
+    ...actual,
+    useTaskOpenMode: () => ({ ...taskOpenPreference.current, setMode: vi.fn() }),
+  };
+});
 
 vi.mock('@mindwtr/core', async () => {
   const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
@@ -171,6 +182,7 @@ describe('TaskEditModal', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.mocked(syncTaskEditPagerPosition).mockClear();
+    taskOpenPreference.current = { hydrated: true, mode: 'automatic' };
     if (taskEditStore.current) {
       const project = (taskEditStore.current._allProjects[0]
         ?? taskEditStore.current.projects[0]) as Project;
@@ -289,6 +301,66 @@ describe('TaskEditModal', () => {
         );
       });
     }).not.toThrow();
+  });
+
+  it('waits for the device-local opening preference before mounting a visible editor', () => {
+    taskOpenPreference.current = { hydrated: false, mode: 'automatic' };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(
+        <TaskEditModal
+          visible
+          task={{
+            id: 't1', title: 'Test task', status: 'next', tags: [], contexts: [],
+            createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+          }}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />,
+      );
+    });
+    expect(tree.toJSON()).toBeNull();
+
+    taskOpenPreference.current = { hydrated: true, mode: 'preview' };
+    act(() => {
+      tree.update(
+        <TaskEditModal
+          visible
+          task={{
+            id: 't1', title: 'Test task', status: 'next', tags: [], contexts: [],
+            createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+          }}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />,
+      );
+    });
+    expect(tree.root.findAll((node) => node.props.accessibilityRole === 'tab').length).toBeGreaterThan(0);
+  });
+
+  it('applies the Edit preference to a normal opening while preserving explicit Edit intent', () => {
+    const task = {
+      id: 't1', title: 'Test task', status: 'next' as const, tags: [], contexts: [],
+      createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    taskOpenPreference.current = { hydrated: true, mode: 'edit' };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(
+        <TaskEditModal visible task={task} defaultTab="view" onClose={vi.fn()} onSave={vi.fn()} />,
+      );
+    });
+    expect(tree.root.findAll((node) => node.props.accessibilityRole === 'tab')[0]?.props.accessibilityState)
+      .toEqual({ selected: true });
+
+    taskOpenPreference.current = { hydrated: true, mode: 'preview' };
+    act(() => {
+      tree.update(
+        <TaskEditModal visible task={task} defaultTab="task" onClose={vi.fn()} onSave={vi.fn()} />,
+      );
+    });
+    expect(tree.root.findAll((node) => node.props.accessibilityRole === 'tab')[0]?.props.accessibilityState)
+      .toEqual({ selected: true });
   });
 
   it.each(['done', 'reference'] as const)('does not offer cancellation for a %s task', (status) => {

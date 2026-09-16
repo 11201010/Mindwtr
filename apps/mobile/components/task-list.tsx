@@ -1903,7 +1903,7 @@ function TaskListComponent({
           readOnly={editingTaskReadOnly}
           onClose={handleCloseTaskEdit}
           onSave={onSaveTask}
-          defaultTab={defaultEditTab}
+          automaticDefaultTab={defaultEditTab}
           onProjectNavigate={projectId ? undefined : openProjectScreen}
           onContextNavigate={openContextsScreen}
           onTagNavigate={openContextsScreen}

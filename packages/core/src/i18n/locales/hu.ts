@@ -2,6 +2,11 @@
 // translation contributions easier. Every English key is translated here (mode: overrides,
 // floor: all), so new English UI copy cannot silently fall back in Hungarian.
 export const huOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Feladatok megnyitása itt',
+    'settings.gtdMobile.openTasksInDesc': 'Válaszd ki, melyik lap nyíljon meg, amikor ezen az eszközön egy feladatra koppintasz.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatikus',
+    'settings.gtdMobile.taskOpenPreview': 'Előnézet',
+    'settings.gtdMobile.taskOpenEdit': 'Szerkesztés',
     'common.retry': "Újrapróbálkozás",
 
     'viewSections.moveToSection': "Áthelyezés szakaszba…",

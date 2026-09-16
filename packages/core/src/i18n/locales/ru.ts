@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Открывать задачи в режиме',
+    'settings.gtdMobile.openTasksInDesc': 'Выберите вкладку, которая открывается при обычном нажатии на задачу на этом устройстве.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Автоматически',
+    'settings.gtdMobile.taskOpenPreview': 'Просмотр',
+    'settings.gtdMobile.taskOpenEdit': 'Изменение',
     'common.retry': "Повторить",
 
     'viewSections.noSection': "Без раздела",

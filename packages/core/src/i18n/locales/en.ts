@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const en: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Open tasks in',
+    'settings.gtdMobile.openTasksInDesc': 'Choose the tab used for normal task taps on this device.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatic',
+    'settings.gtdMobile.taskOpenPreview': 'Preview',
+    'settings.gtdMobile.taskOpenEdit': 'Edit',
     'common.retry': "Try again",
 
     'viewSections.moveToSection': "Move to section…",

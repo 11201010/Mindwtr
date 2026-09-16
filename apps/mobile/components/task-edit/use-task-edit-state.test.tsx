@@ -85,6 +85,38 @@ describe('useTaskEditState', () => {
         expect(state.isDirtyRef.current).toBe(true);
     });
 
+    it('does not reset an already-open tab or dirty draft when the opening default changes', () => {
+        let state!: ReturnType<typeof useTaskEditState>;
+        const shared = {
+            onClose: vi.fn(),
+            onSave: vi.fn(),
+            onSaveError: vi.fn(),
+            resetCopilotStateRef: { current: vi.fn() },
+            sections: [],
+            task,
+            tasks: [task],
+            visible: true,
+        };
+
+        function Probe({ defaultTab }: { defaultTab: 'task' | 'view' }) {
+            state = useTaskEditState({ ...shared, defaultTab });
+            return null;
+        }
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(<Probe defaultTab="view" />);
+        });
+        renderer.act(() => {
+            state.setDraftField('title', 'Unsaved title');
+            tree.update(<Probe defaultTab="task" />);
+        });
+
+        expect(state.editTab).toBe('view');
+        expect(state.taskEditDraft?.draft.title).toBe('Unsaved title');
+        expect(state.isDirtyRef.current).toBe(true);
+    });
+
     it('keeps the editor open until the draft write succeeds', async () => {
         let state!: ReturnType<typeof useTaskEditState>;
         const onClose = vi.fn();

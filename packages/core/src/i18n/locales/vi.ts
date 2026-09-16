@@ -1,4 +1,9 @@
 export const viOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Mở công việc trong',
+    'settings.gtdMobile.openTasksInDesc': 'Chọn thẻ được dùng khi bạn chạm vào công việc theo cách thông thường trên thiết bị này.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Tự động',
+    'settings.gtdMobile.taskOpenPreview': 'Xem trước',
+    'settings.gtdMobile.taskOpenEdit': 'Chỉnh sửa',
     'common.retry': "Thử lại",
 
     'viewSections.noSection': "Không có mục",

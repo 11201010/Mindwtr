@@ -384,6 +384,25 @@ describe('TaskList', () => {
     });
   });
 
+  it('passes the Inbox edit tab as an Automatic default rather than explicit Edit intent', async () => {
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <TaskList
+          defaultEditTab="task"
+          showHeader={false}
+          statusFilter="inbox"
+          title="Inbox"
+        />,
+      );
+    });
+
+    const modalProps = taskEditModalPropsSpy.mock.calls.at(-1)?.[0];
+    expect(modalProps).toEqual(expect.objectContaining({ automaticDefaultTab: 'task' }));
+    expect(modalProps).not.toHaveProperty('defaultTab');
+    act(() => tree.unmount());
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

@@ -276,7 +276,7 @@ export const LOCALES = {
         // (E-Ink, Material 3, Base URL, quick-add token syntax).
         // Include the newly translated sandbox and Reference strings; keep the native translation above
         // the mixed-English brand-name check threshold as the English dictionary grows.
-        translatedKeyFloor: 2350,
+        translatedKeyFloor: 2355,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),

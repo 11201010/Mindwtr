@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHant: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': '開啟任務時顯示',
+    'settings.gtdMobile.openTasksInDesc': '選擇在此裝置上一般點按任務時使用的分頁。',
+    'settings.gtdMobile.taskOpenAutomatic': '自動',
+    'settings.gtdMobile.taskOpenPreview': '預覽',
+    'settings.gtdMobile.taskOpenEdit': '編輯',
     'common.retry': "重試",
 
     'viewSections.moveToSection': "移至分區…",

@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Görevleri şurada aç',
+    'settings.gtdMobile.openTasksInDesc': 'Bu cihazda bir göreve normal şekilde dokunulduğunda kullanılacak sekmeyi seçin.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Otomatik',
+    'settings.gtdMobile.taskOpenPreview': 'Önizleme',
+    'settings.gtdMobile.taskOpenEdit': 'Düzenle',
     'common.retry': "Tekrar dene",
 
     'viewSections.noSection': "Bölüm yok",

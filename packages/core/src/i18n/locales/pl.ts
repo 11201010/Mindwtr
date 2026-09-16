@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Otwieraj zadania w',
+    'settings.gtdMobile.openTasksInDesc': 'Wybierz kartę używaną po zwykłym stuknięciu zadania na tym urządzeniu.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatycznie',
+    'settings.gtdMobile.taskOpenPreview': 'Podgląd',
+    'settings.gtdMobile.taskOpenEdit': 'Edycja',
     'common.retry': "Spróbuj ponownie",
 
     'viewSections.noSection': "Bez sekcji",

@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Taken openen in',
+    'settings.gtdMobile.openTasksInDesc': 'Kies welk tabblad wordt gebruikt wanneer je op dit apparaat normaal op een taak tikt.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatisch',
+    'settings.gtdMobile.taskOpenPreview': 'Voorbeeld',
+    'settings.gtdMobile.taskOpenEdit': 'Bewerken',
     'common.retry': "Opnieuw proberen",
 
     'viewSections.noSection': "Geen sectie",

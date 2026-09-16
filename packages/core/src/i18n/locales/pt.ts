@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Abrir tarefas em',
+    'settings.gtdMobile.openTasksInDesc': 'Escolha o separador usado ao tocar normalmente numa tarefa neste dispositivo.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automático',
+    'settings.gtdMobile.taskOpenPreview': 'Pré-visualização',
+    'settings.gtdMobile.taskOpenEdit': 'Editar',
     'common.retry': "Tentar novamente",
 
     'viewSections.noSection': "Sem seção",

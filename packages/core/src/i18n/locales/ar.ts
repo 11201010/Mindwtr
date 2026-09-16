@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'فتح المهام في',
+    'settings.gtdMobile.openTasksInDesc': 'اختر علامة التبويب المستخدمة عند النقر على مهمة بشكل عادي على هذا الجهاز.',
+    'settings.gtdMobile.taskOpenAutomatic': 'تلقائي',
+    'settings.gtdMobile.taskOpenPreview': 'معاينة',
+    'settings.gtdMobile.taskOpenEdit': 'تحرير',
     'common.retry': "حاول مجددًا",
 
     'viewSections.noSection': "بدون قسم",

@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const itOverrides: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': 'Apri attività in',
+    'settings.gtdMobile.openTasksInDesc': 'Scegli la scheda usata quando tocchi normalmente un’attività su questo dispositivo.',
+    'settings.gtdMobile.taskOpenAutomatic': 'Automatico',
+    'settings.gtdMobile.taskOpenPreview': 'Anteprima',
+    'settings.gtdMobile.taskOpenEdit': 'Modifica',
     'common.retry': "Riprova",
 
     'viewSections.noSection': "Nessuna sezione",

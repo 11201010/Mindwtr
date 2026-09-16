@@ -1,5 +1,10 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHans: Record<string, string> = {
+    'settings.gtdMobile.openTasksIn': '打开任务时显示',
+    'settings.gtdMobile.openTasksInDesc': '选择在此设备上正常点按任务时使用的标签页。',
+    'settings.gtdMobile.taskOpenAutomatic': '自动',
+    'settings.gtdMobile.taskOpenPreview': '预览',
+    'settings.gtdMobile.taskOpenEdit': '编辑',
     'common.retry': "重试",
 
     'viewSections.moveToSection': "移至分区…",
