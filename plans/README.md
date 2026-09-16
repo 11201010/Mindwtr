@@ -16,7 +16,7 @@ Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = mai
 | [095](095-core-store-write-contract-guard-test.md) | TEST-01: store write guard never fires in CI | P3 | S | None | TODO |
 | [096](096-core-load-idempotence-matrix.md) | TEST-02: load(load(x)) covers 3 of 18 migrations | P2 | M | None | TODO |
 | [097](097-mcp-exercise-tool-schemas.md) | TEST-03: MCP schemas never exercised | P3 | M | None | TODO |
-| [098](098-local-api-project-allowlist-parity.md) | TEST-04: project allowlist parity test | P3 | S | None | TODO |
+| [098](098-local-api-project-allowlist-parity.md) | TEST-04: project allowlist parity test | P3 | S | None | DONE |
 | [099](099-local-api-lock-poison-recovery.md) | REL-05: poisoned write lock = 500s until restart | P2 | S | None | DONE |
 | [100](100-mcp-logger-sanitizer.md) | SEC-03: MCP logger bypasses sanitizer | P3 | S | None | TODO |
 | [101](101-desktop-inlist-add-keeps-text.md) | PROD-01: in-list add drops rejected capture text | P2 | S | None | TODO |

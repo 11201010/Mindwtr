@@ -5573,6 +5573,67 @@ mod tests {
         );
     }
 
+    /// Companion to the task parity test below. Without it, adding a cloud-writable project
+    /// field to the schema silently leaves the local API answering 400 for it. Every
+    /// cloud-writable field must be either accepted or listed here with a reason.
+    #[test]
+    fn local_api_project_allowlist_matches_project_sync_schema() {
+        // Owned by the merge engine / tombstone lifecycle — never a client write.
+        const DELIBERATELY_DENIED: [&str; 5] = [
+            "deletedAt",
+            "purgedAt",
+            "cancelledAt",
+            "attachments",
+            "areaTitle",
+        ];
+        // Cloud-writable in the schema, but the local API project routes do not implement them
+        // yet. This is a known gap, not a decision: adding one to the allowlist is a deliberate
+        // change and must move the name out of this list.
+        const NOT_IMPLEMENTED: [&str; 7] = [
+            "tagIds",
+            "taskSortBy",
+            "isFocused",
+            "supportNotes",
+            "dueDate",
+            "reviewAt",
+            "startDate",
+        ];
+
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../../packages/core/src/project-sync-schema.fixture.json"
+        ))
+        .expect("valid project schema fixture");
+        let fixture = schema["fixture"].as_object().expect("fixture object");
+        for field in schema["fields"].as_array().expect("schema fields") {
+            let name = field["name"].as_str().expect("field name");
+            let cloud_write = field["cloudWrite"].as_str().expect("cloud write mode");
+            if !matches!(cloud_write, "create-patch" | "patch") {
+                continue;
+            }
+            let patch = Map::from_iter([(
+                name.to_string(),
+                fixture
+                    .get(name)
+                    .cloned()
+                    .expect("fixture covers every field"),
+            )]);
+            let expected = !DELIBERATELY_DENIED.contains(&name) && !NOT_IMPLEMENTED.contains(&name);
+            let result = sanitize_project_fields(&patch, true);
+            assert_eq!(
+                result.is_ok(),
+                expected,
+                "Local API project write parity for {name}"
+            );
+            if !expected {
+                let error = result.unwrap_err();
+                assert!(
+                    error.starts_with("Unsupported project field"),
+                    "{name}: {error}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn local_api_patch_allowlist_matches_task_sync_schema() {
         let schema: Value = serde_json::from_str(include_str!(
