@@ -722,10 +722,13 @@ fn data_json_publication_lock() -> &'static std::sync::Mutex<()> {
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
-fn lock_data_json_publication() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+// Poison-recovering: a panic anywhere inside a publication must not make every later
+// data.json refresh fail for the life of the process. The lock is a `Mutex<()>` — it
+// serializes the write, it holds no state a panic could half-mutate.
+fn lock_data_json_publication() -> std::sync::MutexGuard<'static, ()> {
     data_json_publication_lock()
         .lock()
-        .map_err(|error| format!("Failed to lock data.json publication: {error}"))
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn snapshot_operation_lock() -> &'static std::sync::Mutex<()> {
@@ -814,7 +817,7 @@ where
 }
 
 fn cleanup_stale_data_json_backup(data_path: &Path) -> Result<(), String> {
-    let _publication_guard = lock_data_json_publication()?;
+    let _publication_guard = lock_data_json_publication();
     cleanup_stale_data_json_backup_unlocked(data_path)
 }
 
@@ -823,7 +826,7 @@ fn write_data_json_file(data_path: &Path, data: &Value) -> Result<(), String> {
     // Windows backup dance and final rename serialized within this process;
     // every writer still uses a unique temp so no publisher can truncate or
     // rename another publisher's in-progress file.
-    let _publication_guard = lock_data_json_publication()?;
+    let _publication_guard = lock_data_json_publication();
     if let Some(parent) = data_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -863,7 +866,7 @@ fn write_data_json_file(data_path: &Path, data: &Value) -> Result<(), String> {
 }
 
 fn write_initial_data_json_file(data_path: &Path, data: &Value) -> Result<bool, String> {
-    let _publication_guard = lock_data_json_publication()?;
+    let _publication_guard = lock_data_json_publication();
     let parent = data_path
         .parent()
         .ok_or_else(|| "Failed to resolve data.json parent directory".to_string())?;
@@ -3940,7 +3943,7 @@ pub(crate) fn load_data_snapshot(app: &tauri::AppHandle) -> Result<Value, String
 pub(crate) async fn read_data_json(app: tauri::AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let data_path = get_data_path(&app);
-        let _publication_guard = lock_data_json_publication()?;
+        let _publication_guard = lock_data_json_publication();
         cleanup_stale_data_json_backup_unlocked(&data_path)?;
         read_json_with_retries(&data_path, 2).map_err(|e| e.to_string())
     })

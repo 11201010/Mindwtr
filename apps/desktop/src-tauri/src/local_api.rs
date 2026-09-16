@@ -90,6 +90,16 @@ pub(crate) struct LocalApiServerState {
     write_lock: Arc<Mutex<()>>,
 }
 
+/// Poison-recovering lock. A panic in one request thread must not permanently 500 every
+/// future write while reads keep working: the write lock is a `Mutex<()>` (no state a panic
+/// could half-mutate) and the runtime holds two `Option`s that are only ever replaced
+/// wholesale. Same shape as `config.rs`'s `lock_dropbox_credential_state`.
+fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Debug)]
 struct ApiRequest {
     method: String,
@@ -316,10 +326,7 @@ pub(crate) fn start_configured_local_api_server(
         }
     };
 
-    let mut runtime = state
-        .inner
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut runtime = lock_recovering(&state.inner);
     if runtime.handle.is_some() {
         return;
     }
@@ -346,7 +353,7 @@ pub(crate) fn get_local_api_server_status(
 ) -> Result<LocalApiServerStatus, String> {
     let config = read_local_api_config(&app);
     let config = ensure_local_api_token(&app, config.clone(), config.enabled)?;
-    let runtime = state.inner.lock().map_err(|e| e.to_string())?;
+    let runtime = lock_recovering(&state.inner);
     Ok(status_from_runtime(config, &runtime))
 }
 
@@ -360,7 +367,7 @@ pub(crate) fn set_local_api_server_config(
     let port = normalize_local_api_port(port)?;
     let current_config = ensure_local_api_token(&app, read_local_api_config(&app), enabled)?;
     let token = current_config.token.clone();
-    let mut runtime = state.inner.lock().map_err(|e| e.to_string())?;
+    let mut runtime = lock_recovering(&state.inner);
 
     if enabled {
         let token_for_runtime = token
@@ -700,7 +707,7 @@ fn route_api_request(
     }
 
     if request.method == "POST" && request.path == "/projects" {
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let body = parse_body_object(&request.body)?;
         let target_area_id = body
             .get("props")
@@ -734,7 +741,7 @@ fn route_api_request(
     }
 
     if segments.len() == 2 && segments[0] == "projects" && request.method == "PATCH" {
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let body = parse_body_object(&request.body)?;
         let scope = ProjectMutationReadScope::patch(
             &segments[1],
@@ -783,7 +790,7 @@ fn route_api_request(
     }
 
     if request.method == "POST" && request.path == "/tasks" {
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let body = parse_body_object(&request.body)?;
         let props = body.get("props").and_then(Value::as_object);
         let scope = TaskMutationReadScope::create(
@@ -818,7 +825,7 @@ fn route_api_request(
     }
 
     if segments.len() == 2 && segments[0] == "tasks" && request.method == "PATCH" {
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let body = parse_body_object(&request.body)?;
         let is_triage = body.contains_key("status");
         let scope = TaskMutationReadScope::patch(
@@ -842,7 +849,7 @@ fn route_api_request(
     }
 
     if segments.len() == 2 && segments[0] == "tasks" && request.method == "DELETE" {
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let scope = TaskMutationReadScope::existing(&segments[1], false);
         mutate_task_rows_with_retries(app, scope, |data| {
             let device_id = device_id_from_data(data);
@@ -863,7 +870,7 @@ fn route_api_request(
         if !matches!(action, "complete" | "archive" | "restore") {
             return Ok(ApiResponse::error(404, "Not found"));
         }
-        let _guard = write_lock.lock().map_err(|e| e.to_string())?;
+        let _guard = lock_recovering(write_lock);
         let scope = TaskMutationReadScope::existing(&segments[1], action == "restore");
         let mutation = mutate_task_rows_with_retries(app, scope, |data| {
             if action == "complete" && recurrence_completion_refusal(data, &segments[1]).is_some() {
@@ -4234,6 +4241,25 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every write route serializes on the same `Mutex<()>`, and requests run on their own
+    /// threads. One panic in a handler used to poison it for the life of the process: reads
+    /// kept working while every POST/PATCH/DELETE answered 500 until restart. A `Mutex<()>`
+    /// protects no state a panic could half-mutate, so recover instead of failing.
+    #[test]
+    fn a_poisoned_write_lock_still_hands_out_a_guard() {
+        let write_lock: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+        let poisoner = Arc::clone(&write_lock);
+        let panicked = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock succeeds");
+            panic!("handler panic while holding the write lock");
+        })
+        .join();
+        assert!(panicked.is_err(), "the poisoning thread must have panicked");
+        assert!(write_lock.lock().is_err(), "the lock must be poisoned");
+
+        let _guard = lock_recovering(&write_lock);
+    }
 
     fn empty_local_api_data() -> Value {
         json!({
