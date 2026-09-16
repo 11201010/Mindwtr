@@ -28,7 +28,7 @@ Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = mai
 | [107](107-desktop-editor-attachment-status.md) | PROD-07: desktop editor hides attachment state | P3 | S | None | TDONE |
 | [108](108-hardcoded-strings-existing-keys.md) | PROD-09: hardcoded English with existing keys | P3 | S | None | DONE |
 | [109](109-sync-setup-parity.md) | PROD-10: self-hosted Test connection / blank token | P3 | S | None | DONE |
-| [110](110-mobile-getting-started-guide-link.md) | PROD-11: mobile card lacks the guide link | P3 | S | None | TODO |
+| [110](110-mobile-getting-started-guide-link.md) | PROD-11: mobile card lacks the guide link | P3 | S | None | DONE |
 
 Blocked with evidence (needs a sync owner before it can ship): plan 106 was implemented and then withdrawn. With deterministic ids, a tombstone whose `deletedAt` precedes a newer live row's `createdAt` (device A deleted the tutorial, device B seeded it later) merges INCONSISTENTLY in `packages/core/src/sync.ts`: task tombstones at rev ≥ 2 beat the rev-1 live row (result is a hybrid: `deletedAt`/`rev` from the tombstone, `updatedAt` from the live row) while the project in the same merge comes back live — the user sees an empty Getting Started project on both devices. With `createdAt` before `deletedAt` (single-device history) both agree. Reproduction table: `.orchestrator/tasks/impl-20260916/result-p2-core.md` §8. Fixing the asymmetry is merge-engine work (ADR 0007 territory) and the next sync loop's first item; until then random seed ids stay (duplicate tutorial after pairing, harmless). Also recorded: `purge-expired-tombstones` reports itself applied even when it removed nothing (load-migration bookkeeping, harmless).
 

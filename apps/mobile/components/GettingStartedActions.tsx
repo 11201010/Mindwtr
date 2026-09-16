@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Inbox, Plus, Star } from 'lucide-react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ExternalLink, Inbox, Plus, Star } from 'lucide-react-native';
+import { getDocsGuideUrl } from '@mindwtr/core';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useLanguage } from '@/contexts/language-context';
 
@@ -8,7 +9,7 @@ export type GettingStartedAction = 'capture' | 'inbox' | 'focus';
 
 export function GettingStartedActions({ onAction }: { onAction: (action: GettingStartedAction) => void }) {
     const tc = useThemeColors();
-    const { t } = useLanguage();
+    const { t, language } = useLanguage();
     const actions = [
         { id: 'capture', label: 'onboarding.captureAction', Icon: Plus },
         { id: 'inbox', label: 'starter.processInbox.check1', Icon: Inbox },
@@ -24,6 +25,11 @@ export function GettingStartedActions({ onAction }: { onAction: (action: Getting
                 <Text style={[styles.label, { color: tc.text }]}>{t(label)}</Text>
             </Pressable>)}
         </View>
+        <Pressable accessibilityRole="link" style={styles.guideLink}
+            onPress={() => { void Linking.openURL(getDocsGuideUrl('start/getting-started', language, 'basic-workflow')); }}>
+            <Text style={[styles.guideLabel, { color: tc.tint }]}>{t('onboarding.readGuide')}</Text>
+            <ExternalLink size={14} color={tc.tint} />
+        </Pressable>
     </View>;
 }
 
@@ -33,4 +39,6 @@ const styles = StyleSheet.create({
     actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     action: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderRadius: 8, maxWidth: '100%' },
     label: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
+    guideLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
+    guideLabel: { fontSize: 14, fontWeight: '500', textDecorationLine: 'underline' },
 });
