@@ -1119,7 +1119,18 @@ export function QuickCaptureSheet({
       showInvalidDateCommandToast(showToast, t, result.invalidDateCommands);
       return null;
     }
-    if (!result.success) return null;
+    if (!result.success) {
+      // The sheet has no error banner, so a rejected write used to disappear
+      // with the draft still on screen and no reason given (capture-modal
+      // already says so on its own screen).
+      showToast({
+        title: t('common.notice'),
+        message: tFallback(t, 'task.addFailed', 'Failed to add task'),
+        tone: 'error',
+        durationMs: 4200,
+      });
+      return null;
+    }
     return {
       createdTaskId: result.createdTaskId ?? null,
       props: result.props,

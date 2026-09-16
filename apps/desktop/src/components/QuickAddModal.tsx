@@ -779,7 +779,13 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             const addTaskResult = await addTask(displayTitle, props);
             if (addTaskResult.success && addTaskResult.id) stoppedCaptureAdopted = true;
             if (!isSubmissionCurrent()) return;
-            if (addTaskResult.success && standaloneWindow) {
+            if (!addTaskResult.success) {
+                // Closing here would drop the recording with nothing said; keep
+                // the dialog so the capture can be retried.
+                showToast(tFallback(t, 'task.addFailed', 'Failed to add task'), 'error');
+                return;
+            }
+            if (standaloneWindow) {
                 await flushPendingSave().catch((error) => reportError('Failed to save quick add task', error));
                 if (!isSubmissionCurrent()) return;
                 await notifyStandaloneTaskSaved();
@@ -787,7 +793,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             }
             close();
 
-            if (!addTaskResult.success || !addTaskResult.id) return;
+            if (!addTaskResult.id) return;
             const taskId = addTaskResult.id;
 
             const runSpeech = async (bytes: Uint8Array) => {
@@ -878,6 +884,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
         recordingBusy,
         refreshStandaloneData,
         notifyStandaloneTaskSaved,
+        showToast,
         standaloneWindow,
         settings.ai,
         settings.gtd?.saveAudioAttachments,
@@ -1028,6 +1035,9 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             }
             const parsed = parseQuickAdd(value, currentProjects, new Date(), currentAreas, quickAddParseOptions);
             if (parsed.invalidDateCommands && parsed.invalidDateCommands.length > 0) {
+                // Save stays enabled for this case, so without the toast the
+                // dialog just looks frozen.
+                showToast(`${t('quickAdd.invalidDateCommand')}: ${parsed.invalidDateCommands.join(', ')}`, 'error');
                 return;
             }
             const result = await createTaskFromParsedQuickAdd({
@@ -1037,7 +1047,11 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                 input: value,
                 parsed,
             });
-            if (!submissionCoordinatorRef.current.isCurrent(session) || !result.success) return;
+            if (!submissionCoordinatorRef.current.isCurrent(session)) return;
+            if (!result.success) {
+                showToast(tFallback(t, 'task.addFailed', 'Failed to add task'), 'error');
+                return;
+            }
             if (standaloneWindow) {
                 await flushPendingSave().catch((error) => reportError('Failed to save quick add task', error));
                 if (!submissionCoordinatorRef.current.isCurrent(session)) return;

@@ -1267,6 +1267,129 @@ describe('QuickAddModal', () => {
         await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
     });
 
+    it('toasts an unreadable date command and keeps Quick Add open', async () => {
+        const addTask = vi.fn(async () => ({ success: true, id: 'task-id' }));
+        act(() => {
+            useUiStore.setState({ toasts: [] });
+            useTaskStore.setState((state) => ({ ...state, addTask }));
+        });
+        renderQuickAddModal();
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+                detail: { initialValue: 'Task /start:monx' },
+            }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+            await Promise.resolve();
+        });
+
+        expect(addTask).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        await waitFor(() => {
+            expect(useUiStore.getState().toasts.some((toast) => (
+                toast.message.startsWith('Invalid date command')
+            ))).toBe(true);
+        });
+    });
+
+    it('toasts a rejected capture and keeps Quick Add open', async () => {
+        const addTask = vi.fn(async () => ({ success: false, error: 'Archived project' }));
+        act(() => {
+            useUiStore.setState({ toasts: [] });
+            useTaskStore.setState((state) => ({ ...state, addTask }));
+        });
+        renderQuickAddModal();
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+                detail: { initialValue: 'Rejected capture' },
+            }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+            await Promise.resolve();
+        });
+
+        expect(addTask).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        await waitFor(() => {
+            expect(useUiStore.getState().toasts.some((toast) => (
+                toast.message === 'Failed to add task'
+            ))).toBe(true);
+        });
+    });
+
+    it('keeps the audio capture dialog open when the task write is rejected', async () => {
+        const stoppedCapture = createDeferred<{
+            path: string;
+            sampleRate: number;
+            channels: number;
+            size: number;
+        }>();
+        const addTask = vi.fn(async () => ({ success: false, error: 'Archived project' }));
+        (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+        tauriMocks.invoke.mockImplementation(async (command?: string) => {
+            if (command === 'start_audio_recording') return undefined;
+            if (command === 'stop_audio_recording') return stoppedCapture.promise;
+            return false;
+        });
+        act(() => {
+            useUiStore.setState({ toasts: [] });
+            useTaskStore.setState((state) => ({
+                ...state,
+                addTask,
+                settings: {
+                    ...state.settings,
+                    ai: {
+                        ...state.settings?.ai,
+                        speechToText: {
+                            enabled: true,
+                            provider: 'whisper',
+                            offlineModelPath: '/models/whisper.bin',
+                        },
+                    },
+                },
+            }));
+        });
+        renderQuickAddModal();
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add', { detail: { captureMode: 'audio' } }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            stoppedCapture.resolve({
+                path: '/data/audio-rejected.wav',
+                sampleRate: 16_000,
+                channels: 1,
+                size: 128,
+            });
+            await stoppedCapture.promise;
+        });
+
+        await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
+        // The recording is still in the dialog, so the user can retry instead of
+        // losing it to a close that never checked the write.
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        await waitFor(() => {
+            expect(useUiStore.getState().toasts.some((toast) => (
+                toast.message === 'Failed to add task'
+            ))).toBe(true);
+        });
+    });
+
     it('does not let an unmounted audio capture create into a reopened session', async () => {
         const stoppedCapture = createDeferred<{
             path: string;

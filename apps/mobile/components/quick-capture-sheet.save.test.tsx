@@ -1377,6 +1377,32 @@ describe('QuickCaptureSheet save handling', () => {
     });
   });
 
+  it('toasts a rejected capture instead of closing silently', async () => {
+    addTask.mockResolvedValue({ success: false, error: 'Archived project' });
+    const onClose = vi.fn();
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <QuickCaptureSheet visible openRequestId={1} initialValue="Rejected capture" onClose={onClose} />
+      );
+      await Promise.resolve();
+    });
+
+    const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
+    if (!body) throw new Error('QuickCaptureSheetBody not found');
+    await act(async () => {
+      body.props.handleSave();
+      await Promise.resolve();
+    });
+
+    expect(addTask).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Failed to add task',
+    }));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('queues a late failed capture without overwriting a newer draft and consumes it once', async () => {
     await withPlatform('android', async () => {
       activityConfigurationMock.changing = true;
