@@ -44,6 +44,7 @@ const fileSystemMocks = vi.hoisted(() => ({
   requestDirectoryPermissionsAsync: vi.fn(),
   createSafFileAsync: vi.fn(),
   writeSafFileAsync: vi.fn(),
+  deleteSafFileAsync: vi.fn(),
 }));
 
 const sharingMocks = vi.hoisted(() => ({
@@ -71,6 +72,7 @@ vi.mock('./file-system', () => ({
     requestDirectoryPermissionsAsync: fileSystemMocks.requestDirectoryPermissionsAsync,
     createFileAsync: fileSystemMocks.createSafFileAsync,
     writeAsStringAsync: fileSystemMocks.writeSafFileAsync,
+    deleteAsync: fileSystemMocks.deleteSafFileAsync,
   },
   documentDirectory: 'file://document/',
   cacheDirectory: 'file://cache/',
@@ -183,6 +185,7 @@ describe('mobile data transfer', () => {
       'content://com.android.providers.downloads.documents/document/downloads%3AMindwtr%20Backup.json'
     );
     fileSystemMocks.writeSafFileAsync.mockResolvedValue(undefined);
+    fileSystemMocks.deleteSafFileAsync.mockResolvedValue(undefined);
     sharingMocks.isAvailableAsync.mockResolvedValue(true);
     sharingMocks.shareAsync.mockResolvedValue(undefined);
     storeStateRef.current = {
@@ -237,6 +240,38 @@ describe('mobile data transfer', () => {
       })
     );
     expect(sharingMocks.shareAsync).not.toHaveBeenCalled();
+  });
+
+  it('removes the empty document when the Android SAF backup write fails', async () => {
+    Platform.OS = 'android';
+    const fileUri =
+      'content://com.android.providers.downloads.documents/document/downloads%3AMindwtr%20Backup.json';
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({
+      granted: true,
+      directoryUri: 'content://com.android.providers.downloads.documents/tree/downloads',
+    });
+    fileSystemMocks.createSafFileAsync.mockResolvedValue(fileUri);
+    fileSystemMocks.writeSafFileAsync.mockRejectedValueOnce(new Error('SAF write unavailable'));
+
+    await exportCurrentDataBackup(emptyData);
+
+    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenCalledWith(fileUri, { idempotent: true });
+    expect(fileSystemMocks.deleteSafFileAsync.mock.invocationCallOrder[0])
+      .toBeLessThan(sharingMocks.shareAsync.mock.invocationCallOrder[0]);
+    expect(sharingMocks.shareAsync).toHaveBeenCalledOnce();
+    const completion = logMocks.logInfo.mock.calls.find(([message]) => message === 'Backup export complete');
+    expect(completion?.[1]?.extra).not.toHaveProperty('releaseCheck');
+  });
+
+  it('leaves nothing to remove when the folder permission is refused', async () => {
+    Platform.OS = 'android';
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: false });
+
+    await exportCurrentDataBackup(emptyData);
+
+    expect(fileSystemMocks.createSafFileAsync).not.toHaveBeenCalled();
+    expect(fileSystemMocks.deleteSafFileAsync).not.toHaveBeenCalled();
+    expect(sharingMocks.shareAsync).toHaveBeenCalledOnce();
   });
 
   it('does not mark the share fallback as a completed SAF backup write', async () => {

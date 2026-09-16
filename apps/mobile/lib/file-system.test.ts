@@ -203,7 +203,7 @@ const legacyFileSystemMock = vi.hoisted(() => ({
   deleteAsync: vi.fn(),
   copyAsync: vi.fn(),
   moveAsync: vi.fn(),
-  StorageAccessFramework: {},
+  StorageAccessFramework: {} as { writeAsStringAsync?: (uri: string, contents: string, options?: unknown) => Promise<void> },
 }));
 
 vi.mock('expo-file-system', () => modernFileSystemMock);
@@ -268,6 +268,29 @@ describe('file-system wrapper', () => {
     expect(modernFileSystemMock.directoryDeletes).not.toHaveBeenCalled();
     expect(modernFileSystemMock.fileCreates).not.toHaveBeenCalled();
     expect(legacyFileSystemMock.writeAsStringAsync).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the legacy SAF writer for a content URI the generic writer cannot take', async () => {
+    const { StorageAccessFramework } = await import('./file-system');
+    const legacySafWrite = vi.fn(async () => undefined);
+    legacyFileSystemMock.StorageAccessFramework.writeAsStringAsync = legacySafWrite;
+    try {
+      const fileUri = await StorageAccessFramework.createFileAsync(
+        'content://com.android.providers.downloads.documents/tree/downloads',
+        'Mindwtr Backup.json',
+        'application/json'
+      );
+      modernFileSystemMock.fileWrites.mockImplementationOnce(() => {
+        throw new Error('Native provider write failed');
+      });
+
+      await StorageAccessFramework.writeAsStringAsync(fileUri, '{}');
+
+      expect(legacySafWrite).toHaveBeenCalledWith(fileUri, '{}', {});
+      expect(legacyFileSystemMock.writeAsStringAsync).not.toHaveBeenCalled();
+    } finally {
+      delete legacyFileSystemMock.StorageAccessFramework.writeAsStringAsync;
+    }
   });
 
   it('keeps the existing legacy fallback when a native content write fails', async () => {

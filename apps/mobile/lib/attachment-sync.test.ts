@@ -280,7 +280,14 @@ describe('attachment sync', () => {
     fileSystemMock.StorageAccessFramework.createFileAsync.mockImplementation(
       async (parentUri: string, name: string) => `${parentUri.replace(/\/$/, '')}/${encodeURIComponent(name)}`,
     );
-    fileSystemMock.StorageAccessFramework.writeAsStringAsync.mockResolvedValue(undefined);
+    // file-system.ts routes a SAF (`content://`) write to the legacy module's own
+    // SAF writer; the generic legacy writer cannot take those URIs. Both stand in
+    // for the same simulated filesystem here, so tests keep asserting one mock.
+    fileSystemMock.StorageAccessFramework.writeAsStringAsync.mockImplementation(
+      async (uri: string, contents: string, options?: unknown) => (
+        fileSystemMock.writeAsStringAsync(uri, contents, options)
+      ),
+    );
     attachmentFileInstallerMock.hashAttachmentFileGeneration.mockRejectedValue(
       new Error('Native hash fixture not configured'),
     );

@@ -481,6 +481,9 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
 
     try {
         if (Platform.OS === 'android' && StorageAccessFramework) {
+            // Tracked outside the try so a failed write can remove the document
+            // the picker already created in the user's folder.
+            let createdFileUri: string | null = null;
             try {
                 const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
                 const directoryUri = permissions.directoryUri;
@@ -490,6 +493,7 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                         snapshotName,
                         mimeType
                     );
+                    createdFileUri = fileUri;
                     if (base64Content !== null) {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, base64Content, {
                             encoding: FileSystem.EncodingType.Base64,
@@ -510,6 +514,16 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                 }
             } catch (error) {
                 void logError(error, { scope: 'transfer', extra: { operation: 'exportBackup' } });
+                // Otherwise an empty file stays behind in the chosen folder and
+                // looks like a finished backup. Best effort; the share fallback
+                // below still runs either way.
+                if (createdFileUri) {
+                    try {
+                        await StorageAccessFramework.deleteAsync(createdFileUri, { idempotent: true });
+                    } catch (cleanupError) {
+                        void logError(cleanupError, { scope: 'transfer', extra: { operation: 'exportBackup' } });
+                    }
+                }
             }
         }
 

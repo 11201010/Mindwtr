@@ -283,6 +283,25 @@ export const StorageAccessFramework = {
           ? () => LegacyFileSystem.readAsStringAsync(uri, options)
           : null
     ),
-  writeAsStringAsync,
+  // SAF documents are `content://` URIs, which the generic legacy writer cannot
+  // take; prefer the legacy module's own SAF writer, mirroring the read path
+  // above, so a failed native write still lands the bytes.
+  writeAsStringAsync: async (uri: string, contents: string, options: WriteOptions = {}): Promise<void> =>
+    withLegacyFallback(
+      canUseModernApi()
+        ? () => {
+            const file = new ModernFile(uri);
+            if (!file.exists) {
+              file.create({ overwrite: true });
+            }
+            file.write(contents, { encoding: options.encoding ?? EncodingType.UTF8 });
+          }
+        : null,
+      LegacyFileSystem.StorageAccessFramework?.writeAsStringAsync
+        ? () => LegacyFileSystem.StorageAccessFramework.writeAsStringAsync(uri, contents, options)
+        : LegacyFileSystem.writeAsStringAsync
+          ? () => LegacyFileSystem.writeAsStringAsync(uri, contents, options)
+          : null
+    ),
   deleteAsync,
 };
