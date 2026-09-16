@@ -14,7 +14,7 @@ Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = mai
 | [093](093-mcp-bootstrap-temp-rename.md) | REL-03: MCP bootstrap not atomic | P2 | S | None | TODO |
 | [094](094-cloud-ready-probe-throttle.md) | REL-04: /ready fsync per unauthenticated hit | P2 | S | None | TODO |
 | [095](095-core-store-write-contract-guard-test.md) | TEST-01: store write guard never fires in CI | P3 | S | None | DONE |
-| [096](096-core-load-idempotence-matrix.md) | TEST-02: load(load(x)) covers 3 of 18 migrations | P2 | M | None | TODO |
+| [096](096-core-load-idempotence-matrix.md) | TEST-02: load(load(x)) covers 3 of 18 migrations | P2 | M | None | DONE |
 | [097](097-mcp-exercise-tool-schemas.md) | TEST-03: MCP schemas never exercised | P3 | M | None | TODO |
 | [098](098-local-api-project-allowlist-parity.md) | TEST-04: project allowlist parity test | P3 | S | None | DONE |
 | [099](099-local-api-lock-poison-recovery.md) | REL-05: poisoned write lock = 500s until restart | P2 | S | None | DONE |

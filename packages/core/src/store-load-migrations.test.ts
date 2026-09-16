@@ -528,4 +528,155 @@ describe('runLoadMigrations', () => {
         expect(second.applied).toEqual([]);
         expect(second.data).toBe(first.data);
     });
+
+    // The narrow fixture above touches three migrations. This one carries a row
+    // for every shape the risky migrations rewrite, so a pass that re-stamps
+    // rev/updatedAt on every load (the sync rewrite-loop class) cannot hide.
+    it('idempotence: the pipeline settles on archive, tombstone, attachment and dedupe shapes', () => {
+        const ARCHIVED_AT = '2025-12-01T00:00:00.000Z';
+        const EXPIRED_AT = '2025-11-01T00:00:00.000Z';
+        const RECENT_AT = '2026-04-01T00:00:00.000Z';
+
+        const messyData: AppData = {
+            tasks: [
+                // recover-legacy-project-references: a reference child of an
+                // archived project still wearing the legacy completion markers.
+                {
+                    id: 't-legacy-reference', title: 'Reference child', status: 'done',
+                    tags: [], contexts: [], projectId: 'p-archived',
+                    statusBeforeProjectArchive: 'reference', projectArchivedAt: ARCHIVED_AT,
+                    completedAt: ARCHIVED_AT, createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Task,
+                // archive-descendants-of-archived-projects: a still-open child
+                // and (below) a still-live section under the archived project.
+                {
+                    id: 't-archive-child', title: 'Open child', status: 'next',
+                    tags: [], contexts: [], projectId: 'p-archived',
+                    createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Task,
+                // purge-expired-tombstones: an expired task tombstone.
+                {
+                    id: 't-tombstone', title: 'Deleted long ago', status: 'next',
+                    tags: [], contexts: [], deletedAt: EXPIRED_AT,
+                    createdAt: EXPIRED_AT, updatedAt: EXPIRED_AT,
+                } as unknown as Task,
+                // purge-expired-tombstones: attachment pruning inside a live task,
+                // plus normalize-people-for-load's assignedTo derivation.
+                {
+                    id: 't-attachment', title: 'Has a file', status: 'next',
+                    tags: [], contexts: [], assignedTo: 'Alex',
+                    attachments: [
+                        {
+                            id: 'att-live', kind: 'file', title: 'Spec.pdf', uri: 'file:///spec.pdf',
+                            createdAt: RECENT_AT, updatedAt: RECENT_AT,
+                        },
+                        {
+                            id: 'att-gone', kind: 'file', title: 'Old.pdf', uri: 'file:///old.pdf',
+                            createdAt: EXPIRED_AT, updatedAt: EXPIRED_AT, deletedAt: EXPIRED_AT,
+                        },
+                    ],
+                    createdAt: RECENT_AT, updatedAt: RECENT_AT,
+                } as unknown as Task,
+                // A cancelled task: archived, never completed.
+                {
+                    id: 't-cancelled', title: 'Called off', status: 'archived',
+                    tags: [], contexts: [], cancelledAt: RECENT_AT,
+                    createdAt: RECENT_AT, updatedAt: RECENT_AT,
+                } as unknown as Task,
+                // auto-archive-stale-tasks: a done task older than the window.
+                {
+                    id: 't-stale-done', title: 'Finished ages ago', status: 'done',
+                    tags: [], contexts: [], completedAt: ARCHIVED_AT,
+                    createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Task,
+                // promote-scheduled-tasks: an inbox task whose due date has passed.
+                {
+                    id: 't-scheduled', title: 'Was due', status: 'inbox',
+                    tags: [], contexts: [], dueDate: '2026-04-01',
+                    createdAt: RECENT_AT, updatedAt: RECENT_AT,
+                } as unknown as Task,
+            ],
+            projects: [
+                {
+                    id: 'p-archived', title: 'Archived', status: 'archived', color: '#000', tagIds: [],
+                    createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Project,
+                {
+                    id: 'p-live', title: 'Live', status: 'active', color: '#000', tagIds: [],
+                    areaId: 'area-work-b', areaTitle: 'Work',
+                    createdAt: RECENT_AT, updatedAt: RECENT_AT,
+                } as unknown as Project,
+            ],
+            sections: [
+                // An archived section: deletedAt == updatedAt == projectArchivedAt,
+                // expired but retained because its project can still be restored.
+                {
+                    id: 's-archived', projectId: 'p-archived', title: 'Archived section', order: 0,
+                    projectArchivedAt: ARCHIVED_AT, deletedAt: ARCHIVED_AT,
+                    createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Section,
+                {
+                    id: 's-live-under-archived', projectId: 'p-archived', title: 'Still live', order: 2,
+                    createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT,
+                } as unknown as Section,
+                // A plain expired section tombstone, which the purge does remove.
+                {
+                    id: 's-tombstone', projectId: 'p-live', title: 'Deleted section', order: 1,
+                    deletedAt: EXPIRED_AT, createdAt: EXPIRED_AT, updatedAt: EXPIRED_AT,
+                } as unknown as Section,
+            ],
+            // dedupe-areas-by-name: two live areas with the same name.
+            areas: [
+                { id: 'area-work-a', name: 'Work', order: 0, createdAt: RECENT_AT, updatedAt: RECENT_AT } as Area,
+                { id: 'area-work-b', name: 'work', order: 1, createdAt: RECENT_AT, updatedAt: RECENT_AT } as Area,
+            ],
+            people: [
+                { id: 'person-1', name: 'Alex', createdAt: RECENT_AT, updatedAt: RECENT_AT } as Person,
+            ],
+            settings: {
+                deviceId: 'device-a',
+                migrations: { version: 0 },
+                savedFilters: [
+                    { id: 'sf-live', name: 'Live', view: 'all', criteria: {}, createdAt: RECENT_AT, updatedAt: RECENT_AT },
+                    { id: 'sf-gone', name: 'Gone', view: 'all', criteria: {}, createdAt: EXPIRED_AT, updatedAt: EXPIRED_AT, deletedAt: EXPIRED_AT },
+                ],
+            } as unknown as AppSettings,
+        };
+
+        const first = runLoadMigrations(messyData, buildLoadContext(messyData.settings, false, NOW_ISO, NOW_MS));
+        // Every risky migration really ran, so the property below has something
+        // to prove. A name dropping out of this list means the fixture drifted.
+        for (const name of [
+            'recover-legacy-project-references',
+            'promote-scheduled-tasks',
+            'auto-archive-stale-tasks',
+            'dedupe-areas-by-name',
+            'archive-descendants-of-archived-projects',
+            'purge-expired-tombstones',
+        ]) {
+            expect(first.applied).toContain(name);
+        }
+        // The purge kept the restorable archive section and dropped the rest.
+        expect(first.data.sections.map((section) => section.id).sort()).toEqual(['s-archived', 's-live-under-archived']);
+        expect(first.data.tasks.map((task) => task.id)).not.toContain('t-tombstone');
+
+        const second = runLoadMigrations(first.data, buildLoadContext(first.data.settings, false, NOW_ISO, NOW_MS));
+        expect(second.applied).toEqual([]);
+        expect(second.data).toBe(first.data);
+
+        // Past the 24 h cleanup throttle only the two throttled steps run again,
+        // and neither may change a single row.
+        const laterIso = new Date(NOW_MS + 25 * 60 * 60 * 1000).toISOString();
+        const third = runLoadMigrations(
+            second.data,
+            buildLoadContext(second.data.settings, false, laterIso, NOW_MS + 25 * 60 * 60 * 1000)
+        );
+        expect(third.applied).toEqual(['bump-tombstone-cleanup-timestamp', 'purge-expired-tombstones']);
+        expect(third.data.tasks).toEqual(first.data.tasks);
+        expect(third.data.projects).toEqual(first.data.projects);
+        expect(third.data.sections).toEqual(first.data.sections);
+        expect(third.data.areas).toEqual(first.data.areas);
+        expect(third.data.people).toEqual(first.data.people);
+        expect(third.data.settings.savedFilters).toEqual(first.data.settings.savedFilters);
+    });
 });
