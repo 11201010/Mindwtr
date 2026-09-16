@@ -1373,6 +1373,13 @@ describe('useSyncSettingsTransportActions', () => {
         expect(latestHookResult?.cloudUrl).toBe('https://cloud.example.com');
         expect(mocked.setSecureConfigValue).not.toHaveBeenCalled();
         expect(mocked.asyncStorage.multiSet).not.toHaveBeenCalled();
+        // Save returned silently, so sync stayed off with no explanation.
+        // Desktop's equivalent case toasts settings.sync.readyToVerify.
+        expect(mocked.showToast).toHaveBeenCalledWith({
+            title: 'common.notice',
+            message: 'settings.sync.readyToVerify',
+            tone: 'info',
+        });
     });
 
     it('activates saved self-hosted settings without a manual Sync now tap', async () => {

@@ -708,8 +708,16 @@ export function useSyncSettingsTransportActions({
         setCloudProvider('selfhosted');
         setSyncBackend('cloud');
         hasPendingSyncConfiguration.current = true;
-        // An empty token passes validation but cannot activate; leave it staged.
-        if (!nextSettings.token.trim()) return;
+        // An empty token passes validation but cannot activate; leave it staged
+        // and say so, the way desktop does, instead of returning silently.
+        if (!nextSettings.token.trim()) {
+            showToast({
+                title: tr('common.notice'),
+                message: tr('settings.sync.readyToVerify'),
+                tone: 'info',
+            });
+            return;
+        }
         await handleSyncRef.current({
             backend: 'cloud',
             cloudProvider: 'selfhosted',
@@ -720,6 +728,8 @@ export function useSyncSettingsTransportActions({
             },
         });
     }, [
+        showToast,
+        tr,
         validateCloudToken,
         validateSyncHttpUrl,
     ]);

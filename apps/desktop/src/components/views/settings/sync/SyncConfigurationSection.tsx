@@ -17,6 +17,9 @@ type SyncConfigurationSectionProps = Pick<
     | 'isMacOS'
     | 'webdavUrlError'
     | 'cloudUrlError'
+    | 'isTestingCloud'
+    | 'cloudTestState'
+    | 'onTestCloudConnection'
     | 'syncBackend'
     | 'onSetSyncBackend'
     | 'syncPath'
@@ -261,9 +264,11 @@ const renderSelfHostedCloudPanel = ({
     cloudAllowInsecureHttp,
     cloudRememberToken,
     cloudToken,
+    cloudTestState,
     cloudUrl,
     cloudUrlError,
     isTauri,
+    isTestingCloud,
     onCloudAllowInsecureHttpChange,
     onCloudRememberTokenChange,
     onCloudTokenChange,
@@ -272,6 +277,7 @@ const renderSelfHostedCloudPanel = ({
     onGenerateCalendarFeed,
     onRevokeCalendarFeed,
     onSaveCloud,
+    onTestCloudConnection,
     t,
 }: Pick<
     SyncConfigurationSectionProps,
@@ -290,6 +296,9 @@ const renderSelfHostedCloudPanel = ({
     | 'onGenerateCalendarFeed'
     | 'onRevokeCalendarFeed'
     | 'onSaveCloud'
+    | 'onTestCloudConnection'
+    | 'isTestingCloud'
+    | 'cloudTestState'
     | 't'
 > & { cloudUrlError: boolean }) => (
     <div className="space-y-3">
@@ -348,7 +357,14 @@ const renderSelfHostedCloudPanel = ({
             </SettingRow>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+                onClick={onTestCloudConnection}
+                disabled={cloudUrlError || !cloudUrl.trim() || isTestingCloud}
+                className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/90 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {isTestingCloud ? t.syncing : t.testConnection}
+            </button>
             <button
                 onClick={onSaveCloud}
                 disabled={cloudUrlError}
@@ -356,7 +372,13 @@ const renderSelfHostedCloudPanel = ({
             >
                 {t.cloudSave}
             </button>
+            <ConnectionBadge
+                state={cloudTestState}
+                successLabel={t.dropboxTestReachable}
+                errorLabel={t.dropboxTestFailed}
+            />
         </div>
+        <p className="text-xs text-muted-foreground text-right">{t.cloudTestHint}</p>
 
         {renderCalendarFeedPanel({
             calendarFeedBusy,
@@ -495,6 +517,7 @@ export function SyncConfigurationSection({
     cloudAllowInsecureHttp,
     cloudRememberToken,
     cloudProvider,
+    cloudTestState,
     cloudToken,
     cloudUrl,
     cloudUrlError,
@@ -507,6 +530,7 @@ export function SyncConfigurationSection({
     isMacOS,
     isSavingWebDav,
     isTauri,
+    isTestingCloud,
     isTestingSyncPath,
     isTestingWebDav,
     onBrowseSyncPath,
@@ -521,6 +545,7 @@ export function SyncConfigurationSection({
     onGenerateCalendarFeed,
     onRevokeCalendarFeed,
     onSaveCloud,
+    onTestCloudConnection,
     onSaveSyncPath,
     onSaveWebDav,
     onSetSyncBackend,
@@ -737,10 +762,12 @@ export function SyncConfigurationSection({
                     calendarFeedUrl,
                     cloudAllowInsecureHttp,
                     cloudRememberToken,
+                    cloudTestState,
                     cloudToken,
                     cloudUrl,
                     cloudUrlError,
                     isTauri,
+                    isTestingCloud,
                     onCloudAllowInsecureHttpChange,
                     onCloudRememberTokenChange,
                     onCloudTokenChange,
@@ -749,6 +776,7 @@ export function SyncConfigurationSection({
                     onGenerateCalendarFeed,
                     onRevokeCalendarFeed,
                     onSaveCloud,
+                    onTestCloudConnection,
                     t,
                 })}
 

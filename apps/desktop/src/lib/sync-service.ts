@@ -2032,6 +2032,24 @@ export class SyncService {
         if (compatibility === 'strong-etag') rememberWebdavCapabilityProof(config);
     }
 
+    /** Reachability + credential check for the self-hosted server, the same read
+     *  the mobile panel's Test connection makes. A wrong URL or token surfaces
+     *  here instead of only in the verification sync that Save runs. */
+    static async testCloudConnection(config: { url: string; token?: string; allowInsecureHttp?: boolean }): Promise<void> {
+        const normalizedUrl = normalizeCloudUrl(config.url.trim());
+        if (!normalizedUrl) throw new Error('Self-hosted server URL is not configured.');
+        try {
+            await cloudGetJson<unknown>(normalizedUrl, {
+                allowInsecureHttp: config.allowInsecureHttp,
+                token: config.token,
+                fetcher: (await getTauriFetch()) ?? fetch,
+            });
+        } catch (error) {
+            logSyncWarning('Self-hosted connection test failed', error);
+            throw error;
+        }
+    }
+
     static async getCloudConfig(options?: { silent?: boolean }): Promise<CloudConfig> {
         return readCloudConfig(getSyncConfigDeps(), options);
     }

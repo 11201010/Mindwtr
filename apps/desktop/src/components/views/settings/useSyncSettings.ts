@@ -167,6 +167,8 @@ export const useSyncSettings = ({
     const [isSavingWebDav, setIsSavingWebDav] = useState(false);
     const [isTestingWebDav, setIsTestingWebDav] = useState(false);
     const [webdavTestState, setWebdavTestState] = useState<WebDavTestState>('idle');
+    const [isTestingCloud, setIsTestingCloud] = useState(false);
+    const [cloudTestState, setCloudTestState] = useState<WebDavTestState>('idle');
     const [cloudUrl, setCloudUrl] = useState(seed?.cloud.url ?? '');
     const [cloudToken, setCloudToken] = useState(seed?.cloud.token ?? '');
     const [cloudRememberToken, setCloudRememberToken] = useState(seed?.cloud.rememberToken === true);
@@ -786,6 +788,40 @@ export const useSyncSettings = ({
             setIsTestingWebDav(false);
         }
     }, [resolveText, showToast, validateSyncHttpUrl, webdavAllowInsecureHttp, webdavHasPassword, webdavPassword, webdavUrl, webdavUsername]);
+
+    // Dropbox, WebDAV and the sync folder each have a Test handler; without this
+    // one a wrong self-hosted URL or token only showed up in the verification
+    // sync that Save runs.
+    const handleTestCloudConnection = useCallback(async () => {
+        const trimmedUrl = cloudUrl.trim();
+        if (!trimmedUrl) {
+            const message = resolveText('settings.sync.readyToVerify', 'Settings ready. Sync now to verify and save them.');
+            setCloudTestState('error');
+            showToast(message, 'info');
+            return;
+        }
+        if (!validateSyncHttpUrl(trimmedUrl, cloudAllowInsecureHttp)) return;
+
+        setIsTestingCloud(true);
+        try {
+            await SyncService.testCloudConnection({
+                url: trimmedUrl,
+                token: cloudToken.trim(),
+                allowInsecureHttp: cloudAllowInsecureHttp,
+            });
+            setCloudTestState('success');
+            setSyncError(null);
+            showToast(resolveText('settings.syncMobile.selfHostedEndpointIsReachable', 'Self-hosted endpoint is reachable.'), 'success');
+        } catch (error) {
+            const message = resolveText('settings.syncMobile.connectionFailed', 'Connection failed');
+            void logError(error, { scope: 'sync', step: 'testCloudConnection' });
+            setCloudTestState('error');
+            setSyncError(message);
+            showToast(message, 'error');
+        } finally {
+            setIsTestingCloud(false);
+        }
+    }, [cloudAllowInsecureHttp, cloudToken, cloudUrl, resolveText, showToast, validateSyncHttpUrl]);
 
     const handleSaveCloud = useCallback(async () => {
         const trimmedUrl = cloudUrl.trim();
@@ -2027,7 +2063,7 @@ export const useSyncSettings = ({
         cloudProvider,
         persistedSyncBackend,
         persistedCloudProvider,
-        syncStatus.inFlight || isTestingSyncPath || isSavingWebDav || isTestingWebDav || dropboxBusy,
+        syncStatus.inFlight || isTestingSyncPath || isSavingWebDav || isTestingWebDav || isTestingCloud || dropboxBusy,
     );
     const isSyncTargetValid =
         syncBackend === 'file'
@@ -2110,6 +2146,9 @@ export const useSyncSettings = ({
             onCloudAllowInsecureHttpChange: handleCloudAllowInsecureHttpChange,
             onCloudProviderChange: handleSetCloudProvider,
             onSaveCloud: handleSaveCloud,
+            isTestingCloud,
+            cloudTestState,
+            onTestCloudConnection: handleTestCloudConnection,
             calendarFeedUrl,
             calendarFeedBusy,
             onCopyCalendarFeedUrl: handleCopyCalendarFeedUrl,

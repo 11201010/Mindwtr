@@ -161,6 +161,8 @@ const syncProps: Parameters<typeof SettingsSyncPage>[0] = {
     isSavingWebDav: false,
     isTestingWebDav: false,
     webdavTestState: 'idle',
+    isTestingCloud: false,
+    cloudTestState: 'idle',
     onWebdavUrlChange: noop,
     onWebdavUsernameChange: noop,
     onWebdavPasswordChange: noop,
@@ -193,6 +195,7 @@ const syncProps: Parameters<typeof SettingsSyncPage>[0] = {
     onConnectDropbox: noop,
     onDisconnectDropbox: noop,
     onTestDropboxConnection: noop,
+    onTestCloudConnection: noop,
     encryption: {
         state: 'off',
         stateUnavailable: false,

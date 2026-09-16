@@ -499,6 +499,7 @@ export const SETTINGS_LABEL_KEYS = [
     'webdavPassword',
     'webdavSave',
     'testConnection',
+    'cloudTestHint',
     'webdavTestHint',
     'webdavTestAccessibility',
     'webdavHint',

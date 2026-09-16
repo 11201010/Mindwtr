@@ -103,6 +103,7 @@ export type SettingsSyncLabels = {
     webdavPassword: string;
     webdavSave: string;
     testConnection: string;
+    cloudTestHint: string;
     webdavTestHint: string;
     webdavTestAccessibility: string;
     allowInsecureHttp: string;
@@ -294,6 +295,8 @@ export type SyncConfigurationProps = {
     isSavingWebDav: boolean;
     isTestingWebDav: boolean;
     webdavTestState: 'idle' | 'success' | 'error';
+    isTestingCloud: boolean;
+    cloudTestState: 'idle' | 'success' | 'error';
     onWebdavUrlChange: (value: string) => void;
     onWebdavUsernameChange: (value: string) => void;
     onWebdavPasswordChange: (value: string) => void;
@@ -327,6 +330,7 @@ export type SyncConfigurationProps = {
     onConnectDropbox: () => Promise<void> | void;
     onDisconnectDropbox: () => Promise<void> | void;
     onTestDropboxConnection: () => Promise<void> | void;
+    onTestCloudConnection: () => Promise<void> | void;
 };
 
 export type SyncStatusProps = {

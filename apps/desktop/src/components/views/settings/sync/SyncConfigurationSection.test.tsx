@@ -122,7 +122,10 @@ const baseProps: Parameters<typeof SyncConfigurationSection>[0] = {
     isMacOS: false,
     webdavUrlError: false,
     cloudUrlError: false,
-};
+    isTestingCloud: false,
+    cloudTestState: 'idle',
+    onTestCloudConnection: vi.fn(),
+} as any;
 
 describe('SyncConfigurationSection', () => {
     it('offers a folder test and explains document-portal paths', () => {
@@ -353,5 +356,24 @@ describe('SyncConfigurationSection', () => {
             <SyncConfigurationSection {...baseProps} syncBackend="webdav" webdavUrlError />
         );
         expect(webdav.getByText('Invalid URL. Use http/https.')).toBeInTheDocument();
+    });
+    // Dropbox, WebDAV and the sync folder all have a Test handler; the
+    // self-hosted panel had Save only, so a wrong token surfaced only after the
+    // full verification sync.
+    it('offers a self-hosted connection test', () => {
+        const onTestCloudConnection = vi.fn();
+        const { getByRole } = render(
+            <SyncConfigurationSection
+                {...baseProps}
+                syncBackend="cloud"
+                cloudProvider="selfhosted"
+                cloudUrl="https://sync.example.com"
+                onTestCloudConnection={onTestCloudConnection}
+            />
+        );
+
+        fireEvent.click(getByRole('button', { name: 'Test connection' }));
+
+        expect(onTestCloudConnection).toHaveBeenCalledTimes(1);
     });
 });
