@@ -131,6 +131,7 @@ vi.mock('./settings.hooks', () => ({
         'common.delete': 'Delete',
         'contexts.title': 'Contexts',
         'common.tasks': 'tasks',
+        'search.title': 'Search',
         'projects.changeColor': 'Change color',
         'projects.noArea': 'No area',
         'projects.noTags': 'No tags',
@@ -310,11 +311,13 @@ describe('ManageSettingsScreen', () => {
       await flushEffects();
     });
 
-    expect(tree.root.findByProps({ accessibilityLabel: 'Alex: 4 tasks' })).toBeTruthy();
+    const reviewButton = tree.root.findByProps({ testID: 'manage-person-review-person-1' });
+    expect(reviewButton.props.accessibilityLabel).toBe('Alex: 4 tasks');
+    expect(reviewButton.props.accessibilityHint).toBe('Search');
     expect(tree.root.findAll((node) => (node.type as unknown) === 'Text' && node.props.children === 'QA lead')).toHaveLength(1);
 
     renderer.act(() => {
-      tree.root.findByProps({ testID: 'manage-person-review-person-1' }).props.onPress();
+      reviewButton.props.onPress();
     });
     expect(routerPushMock).toHaveBeenCalledWith({
       pathname: '/global-search',

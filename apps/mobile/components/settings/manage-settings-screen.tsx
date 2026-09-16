@@ -409,6 +409,7 @@ export function ManageSettingsScreen() {
                 </View>
                 <TouchableOpacity
                     accessibilityLabel={`${person.name}: ${taskCount} ${t('common.tasks')}`}
+                    accessibilityHint={t('search.title')}
                     accessibilityRole="button"
                     hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
                     onPress={() => router.push({

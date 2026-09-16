@@ -12,6 +12,7 @@ const translations: Record<string, string> = {
     'contexts.tags': 'Tags',
     'contexts.title': 'Contexts',
     'people.title': 'People',
+    'search.title': 'Search',
     'viewSections.somedaySections': 'Someday sections',
 };
 
@@ -100,7 +101,7 @@ describe('SettingsManagePage Someday sections', () => {
 
         fireEvent.click(view.getByRole('button', { name: /People\s*2/ }));
         expect(view.getByRole('button', { name: /Casey.*1.*tasks/ })).toBeInTheDocument();
-        fireEvent.click(view.getByRole('button', { name: /Alex.*4.*tasks/ }));
+        fireEvent.click(view.getByRole('button', { name: /Alex.*4.*tasks.*Search/ }));
 
         expect(onOpenSearch).toHaveBeenCalledTimes(1);
         expect((onOpenSearch.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({

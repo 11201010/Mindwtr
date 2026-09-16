@@ -342,7 +342,7 @@ function PersonRow({
                 <button
                     type="button"
                     onClick={() => onReview(person)}
-                    aria-label={`${person.name}: ${taskCount} ${translate('common.tasks')}`}
+                    aria-label={`${person.name}: ${taskCount} ${translate('common.tasks')} · ${translate('search.title')}`}
                     className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                     {taskCount} {translate('common.tasks')}
