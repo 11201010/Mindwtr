@@ -140,7 +140,7 @@ describe('ContextsView', () => {
         expect(view.getByRole('heading', { name: '@Office' })).toBeInTheDocument();
         const compactSelect = view.getByRole('combobox', { name: 'Contexts & Tags' });
         fireEvent.change(compactSelect, { target: { value: '#ERP' } });
-        expect(view.getByRole('button', { name: 'Remove #ERP' })).toBeInTheDocument();
+        expect(view.getByRole('button', { name: 'Remove filter #ERP' })).toBeInTheDocument();
         expect(view.getByRole('button', { name: 'Any' })).toBeInTheDocument();
         const state = JSON.parse(window.localStorage.getItem(CONTEXTS_VIEW_STATE_STORAGE_KEY) ?? '{}') as {
             selectedContexts?: string[];
@@ -148,7 +148,7 @@ describe('ContextsView', () => {
         };
         expect(state.selectedContexts).toEqual(['@Office', '#ERP']);
         expect(state.matchMode).toBe('all');
-        fireEvent.click(view.getByRole('button', { name: 'Remove #ERP' }));
+        fireEvent.click(view.getByRole('button', { name: 'Remove filter #ERP' }));
         expect(view.getByRole('heading', { name: '@Office' })).toBeInTheDocument();
     });
 
