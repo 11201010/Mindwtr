@@ -33,7 +33,7 @@ npm install -g --allow-scripts=better-sqlite3 mindwtr-mcp
 In MCP client configurations using `npx`, add `"--allow-scripts=better-sqlite3"` before `"mindwtr-mcp"` in `args`. For an existing project-local install, run `npm install-scripts approve better-sqlite3`, then `npm rebuild better-sqlite3` from that project. Review the dependency before approving; do not enable all dependency scripts.
 
 Default database locations:
-- Linux: `~/.local/share/mindwtr/mindwtr.db`
+- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`)
 - macOS: `~/Library/Application Support/mindwtr/mindwtr.db`
 - Windows: `%APPDATA%\mindwtr\mindwtr.db`
 

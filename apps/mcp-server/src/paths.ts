@@ -7,12 +7,16 @@ const APP_DIR = 'mindwtr';
 const DB_FILE_NAME = 'mindwtr.db';
 const DATA_FILE_NAME = 'data.json';
 
+function getHomeDir() {
+  return process.env.HOME || homedir();
+}
+
 function getLinuxConfigHome() {
-  return process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  return process.env.XDG_CONFIG_HOME || join(getHomeDir(), '.config');
 }
 
 function getLinuxDataHome() {
-  return process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
+  return process.env.XDG_DATA_HOME || join(getHomeDir(), '.local', 'share');
 }
 
 function getWindowsAppDataHome() {
@@ -66,6 +70,12 @@ function getDefaultStorageDirs(): string[] {
     join(dataHome, APP_ID),
     join(configHome, APP_ID),
   ];
+
+  if (process.platform === 'linux') {
+    const flatpakHome = join(getHomeDir(), '.var', 'app', APP_ID);
+    dirs.push(join(flatpakHome, 'data', APP_DIR));
+    dirs.push(join(flatpakHome, 'config', APP_DIR));
+  }
 
   if (process.platform === 'darwin') {
     const sandboxHome = getMacSandboxAppSupportHome();
