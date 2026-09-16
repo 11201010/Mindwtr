@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { type AttachmentProgress, globalProgressTracker } from '@mindwtr/core';
 import { cn } from '../lib/utils';
+import { useLanguage } from '../contexts/language-context';
 
 type AttachmentProgressIndicatorProps = {
     attachmentId: string;
@@ -8,6 +9,7 @@ type AttachmentProgressIndicatorProps = {
 };
 
 export function AttachmentProgressIndicator({ attachmentId, className }: AttachmentProgressIndicatorProps) {
+    const { t } = useLanguage();
     const [progress, setProgress] = useState<AttachmentProgress | null>(null);
 
     useEffect(() => {
@@ -28,11 +30,11 @@ export function AttachmentProgressIndicator({ attachmentId, className }: Attachm
             <div
                 className="h-1 w-16 overflow-hidden rounded-full bg-muted"
                 role="progressbar"
-                aria-label="Attachment transfer progress"
+                aria-label={t('attachments.transferProgress')}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={percentage ?? undefined}
-                aria-valuetext={percentage !== null ? `${percentage}% complete` : 'Transfer in progress'}
+                aria-valuetext={percentage !== null ? `${percentage}%` : t('attachments.transferProgress')}
             >
                 {percentage !== null && (
                     <div className="h-full bg-primary" style={{ width: `${percentage}%` }} />

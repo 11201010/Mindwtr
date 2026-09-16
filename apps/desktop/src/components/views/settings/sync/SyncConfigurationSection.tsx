@@ -306,7 +306,7 @@ const renderSelfHostedCloudPanel = ({
             />
             <p className="text-xs text-muted-foreground">{t.cloudHint}</p>
             {cloudUrlError && (
-                <p className="text-xs text-destructive">Enter a valid http(s) URL.</p>
+                <p className="text-xs text-destructive">{t.invalidUrlHttp}</p>
             )}
         </SettingField>
 
@@ -420,7 +420,7 @@ const renderWebDavPanel = ({
             />
             <p className="text-xs text-muted-foreground">{t.webdavHint}</p>
             {webdavUrlError && (
-                <p className="text-xs text-destructive">Enter a valid http(s) URL.</p>
+                <p className="text-xs text-destructive">{t.invalidUrlHttp}</p>
             )}
         </SettingField>
 

@@ -69,6 +69,7 @@ const baseProps: Parameters<typeof SyncConfigurationSection>[0] = {
         calendarFeedGenerate: 'Generate URL',
         calendarFeedRegenerate: 'Regenerate',
         calendarFeedRevoke: 'Revoke',
+        invalidUrlHttp: 'Invalid URL. Use http/https.',
     } as any,
     isTauri: true,
     syncBackend: 'cloud',
@@ -338,5 +339,19 @@ describe('SyncConfigurationSection', () => {
 
         expect(getByText(/Redirect URI:/i)).toBeInTheDocument();
         expect(getByText(baseProps.dropboxRedirectUri)).toBeInTheDocument();
+    });
+    // Both URL errors were hardcoded English even though mobile already shows
+    // the translated `settings.invalidUrlHttp` for the same validation.
+    it('shows the translated URL error for the self-hosted and WebDAV fields', () => {
+        const selfHosted = render(
+            <SyncConfigurationSection {...baseProps} syncBackend="cloud" cloudProvider="selfhosted" cloudUrlError />
+        );
+        expect(selfHosted.getByText('Invalid URL. Use http/https.')).toBeInTheDocument();
+        selfHosted.unmount();
+
+        const webdav = render(
+            <SyncConfigurationSection {...baseProps} syncBackend="webdav" webdavUrlError />
+        );
+        expect(webdav.getByText('Invalid URL. Use http/https.')).toBeInTheDocument();
     });
 });

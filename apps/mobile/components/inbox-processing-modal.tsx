@@ -91,9 +91,7 @@ export function InboxProcessingModal({ visible, onClose }: InboxProcessingModalP
   );
 
   if (!currentTask) {
-    const loadingLabel = t('common.loading') !== 'common.loading'
-      ? t('common.loading')
-      : 'Loading next item...';
+    const loadingLabel = tFallback(t, 'common.loading', 'Loading next item...');
 
     return (
       <Modal
