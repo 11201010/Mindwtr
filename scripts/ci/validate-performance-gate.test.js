@@ -10,6 +10,8 @@ test("CI executes the production-path large-store performance budgets", () => {
 
   expect(corePackage.scripts["test:perf"]).toContain("performance-large-store.test.ts");
   expect(rootPackage.scripts["test:perf"]).toContain("--filter @mindwtr/core test:perf");
+  expect(rootPackage.scripts["test:perf"]).toContain("MINDWTR_PERF_TEST=1 bun --cwd apps/desktop");
+  expect(rootPackage.scripts["test:perf"]).toContain("MINDWTR_PERF_TEST=1 bun --cwd apps/mobile");
   expect(rootPackage.scripts["test:perf"]).toContain("ListView.performance.test.tsx");
   expect(rootPackage.scripts["test:perf"]).toContain("TimelineView.performance.test.tsx");
   expect(rootPackage.scripts["test:perf"]).toContain("tests/large-store-performance.test.tsx");

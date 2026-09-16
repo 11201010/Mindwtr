@@ -11,6 +11,7 @@ import { ListView } from './ListView';
 const LARGE_TASK_COUNT = 5_000;
 const LIST_VIEW_RENDER_BUDGET_MS = 500;
 const NOW = '2026-08-09T12:00:00.000Z';
+const describePerf = process.env.MINDWTR_PERF_TEST === '1' ? describe : describe.skip;
 
 const initialTaskState = useTaskStore.getState();
 const initialUiState = useUiStore.getState();
@@ -36,7 +37,7 @@ const renderListView = () => render(
   </LanguageProvider>,
 );
 
-describe('ListView large-store performance budget', () => {
+describePerf('ListView large-store performance budget', () => {
   beforeEach(() => {
     useTaskStore.setState(initialTaskState, true);
     useUiStore.setState(initialUiState, true);

@@ -31,6 +31,7 @@ import { TaskList } from '../components/task-list';
 const LARGE_TASK_COUNT = 5_000;
 const PROJECT_COUNT = 40;
 const SECTIONS_PER_PROJECT = 2;
+const describePerf = process.env.MINDWTR_PERF_TEST === '1' ? describe : describe.skip;
 const heavyEditorTabRenderCounts = vi.hoisted(() => ({
   form: 0,
   view: 0,
@@ -730,7 +731,7 @@ const expectWithinBudget = (label: string, actualMs: number, budgetMs: number) =
   ).toBeLessThanOrEqual(budgetMs);
 };
 
-describe('large-store mobile interaction performance', () => {
+describePerf('large-store mobile interaction performance', () => {
   afterEach(async () => {
     await flushPendingSave();
     resetForTests();

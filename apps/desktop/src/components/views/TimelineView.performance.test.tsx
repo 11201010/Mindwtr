@@ -10,6 +10,7 @@ const LARGE_TASK_COUNT = 5_000;
 const PROJECT_COUNT = 50;
 const TIMELINE_RENDER_BUDGET_MS = 500;
 const ROW_HEIGHT_PX = 30;
+const describePerf = process.env.MINDWTR_PERF_TEST === '1' ? describe : describe.skip;
 const DATASET_ANCHOR = new Date();
 DATASET_ANCHOR.setHours(12, 0, 0, 0);
 
@@ -53,7 +54,7 @@ const renderTimeline = () => render(
     </LanguageProvider>,
 );
 
-describe('TimelineView large-store performance budget', () => {
+describePerf('TimelineView large-store performance budget', () => {
     beforeEach(() => {
         window.localStorage.clear();
         useTaskStore.setState(initialTaskState, true);
