@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { buildPersonSearchQuery } from './people';
-import { filterProjectsBySearch, filterTasksBySearch, searchAll } from './search';
+import { filterProjectsBySearch, filterTasksBySearch, parseSearchQuery, searchAll } from './search';
 import type { Project, Task } from './types';
 
 describe('search', () => {
+    it('matches an unterminated quoted phrase while it is being typed', () => {
+        const values = (query: string) => parseSearchQuery(query).clauses[0]?.terms.map((term) => term.value) ?? [];
+
+        expect(values('foo "bar baz')).toEqual(['foo', 'bar baz']);
+        expect(values('foo "bar baz"')).toEqual(['foo', 'bar baz']);
+        expect(values('foo "')).toEqual(['foo']);
+    });
+
     it('caps global search results to the shared search limit', () => {
         const tasks: Task[] = Array.from({ length: 205 }, (_, index) => ({
             id: `task-${index}`,

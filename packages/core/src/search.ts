@@ -60,8 +60,8 @@ function tokenize(query: string): string[] {
 }
 
 function decodeSearchValue(value: string): string {
-    if (value.startsWith('"') && value.endsWith('"')) {
-        const quoted = value.slice(1, -1);
+    if (value.startsWith('"')) {
+        const quoted = value.endsWith('"') ? value.slice(1, -1) : value.slice(1);
         let decoded = '';
         for (let index = 0; index < quoted.length; index += 1) {
             const character = quoted[index];
@@ -150,6 +150,7 @@ export function parseSearchQuery(query: string): SearchQuery {
         }
 
         token = decodeSearchValue(token);
+        if (!token) continue;
 
         const colonIndex = token.indexOf(':');
         if (colonIndex > 0) {
