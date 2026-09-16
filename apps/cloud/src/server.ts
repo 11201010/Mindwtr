@@ -76,7 +76,7 @@ import {
     isRequestAbortError,
     readData,
     readJsonBody,
-    probeExistingWritableDir,
+    probeExistingWritableDirCached,
     prepareFilePublicationSafely,
     resolveAttachmentPath,
     throwIfRequestAborted,
@@ -1354,8 +1354,19 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                 }
 
                 if (req.method === 'GET' && pathname === '/ready') {
+                    // Unauthenticated like the calendar feed, and the probe below is a
+                    // synchronous write + fsync on the data volume: throttle it the same way.
+                    const readyRateLimitResponse = rateLimiter.check(
+                        `ready-client:${getAuthFailureRateKey(req, {
+                            trustProxyHeaders,
+                            trustedProxyIps,
+                            requestIpAddress: getRequestIpAddress(req),
+                        })}`,
+                        maxPerWindow,
+                    );
+                    if (readyRateLimitResponse) return readyRateLimitResponse;
                     const ready = isOriginalDataDirectory()
-                        && probeExistingWritableDir(dataDir)
+                        && probeExistingWritableDirCached(dataDir)
                         && isOriginalDataDirectory();
                     return jsonResponse({ ok: ready }, ready ? {} : { status: 503 });
                 }

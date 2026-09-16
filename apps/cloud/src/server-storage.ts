@@ -1028,6 +1028,26 @@ export function probeExistingWritableDir(
     return probeWritableDirectory(dirPath, false, options);
 }
 
+/** `/ready` is answered before auth, so every anonymous hit would otherwise run a
+ *  synchronous open + write + fsync + unlink on the data volume. The verdict is
+ *  cached for far less than the container healthcheck interval, and a cached
+ *  failure is re-probed once the entry expires. */
+export const READINESS_PROBE_TTL_MS = 5_000;
+
+const readinessProbeVerdicts = new Map<string, { checkedAtMs: number; writable: boolean }>();
+
+export function probeExistingWritableDirCached(
+    dirPath: string,
+    options: WritableDirectoryProbeOptions & { nowMs?: number } = {},
+): boolean {
+    const nowMs = options.nowMs ?? Date.now();
+    const cached = readinessProbeVerdicts.get(dirPath);
+    if (cached && nowMs - cached.checkedAtMs < READINESS_PROBE_TTL_MS) return cached.writable;
+    const writable = probeExistingWritableDir(dirPath, options);
+    readinessProbeVerdicts.set(dirPath, { checkedAtMs: nowMs, writable });
+    return writable;
+}
+
 export async function readRequestBytes(
     req: Request,
     maxBodyBytes: number,

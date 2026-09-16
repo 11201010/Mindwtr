@@ -71,7 +71,9 @@ import {
     isPathWithinRoot,
     normalizeAttachmentRelativePath,
     pathContainsSymlink,
+    probeExistingWritableDirCached,
     readJsonBody,
+    READINESS_PROBE_TTL_MS,
     resolveAttachmentPath,
     writeData,
     type DurableRemovalFileSystem,
@@ -2098,6 +2100,75 @@ describe('cloud server api', () => {
             route: '/ready',
             status: 503,
         });
+    });
+
+    test('probes the data volume at most once per readiness window and re-probes on expiry', () => {
+        const probeDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-ready-probe-'));
+        let opens = 0;
+        const probeFileSystem = {
+            openSync: (path: string, flags: 'wx', mode?: number) => {
+                opens += 1;
+                return openSync(path, flags, mode);
+            },
+            writeFileSync: (handle: number, data: string | Uint8Array) => writeFileSync(handle, data),
+            fsyncSync: (handle: number) => fsyncSync(handle),
+            closeSync: (handle: number) => closeSync(handle),
+            unlinkSync: (path: string) => unlinkSync(path),
+        };
+
+        try {
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+                expect(probeExistingWritableDirCached(probeDir, { probeFileSystem, nowMs: 1_000 })).toBe(true);
+            }
+            expect(opens).toBe(1);
+
+            // A cached failure must not stick: the entry expires and is probed again.
+            rmSync(probeDir, { recursive: true, force: true });
+            expect(probeExistingWritableDirCached(probeDir, { probeFileSystem, nowMs: 1_000 })).toBe(true);
+            expect(opens).toBe(1);
+            expect(probeExistingWritableDirCached(probeDir, {
+                probeFileSystem,
+                nowMs: 1_000 + READINESS_PROBE_TTL_MS,
+            })).toBe(false);
+            // A missing directory fails before any probe file is opened.
+            expect(opens).toBe(1);
+
+            mkdirSync(probeDir, { recursive: true });
+            expect(probeExistingWritableDirCached(probeDir, {
+                probeFileSystem,
+                nowMs: 1_000 + READINESS_PROBE_TTL_MS,
+            })).toBe(false);
+            expect(opens).toBe(1);
+            expect(probeExistingWritableDirCached(probeDir, {
+                probeFileSystem,
+                nowMs: 1_000 + (READINESS_PROBE_TTL_MS * 2),
+            })).toBe(true);
+            expect(opens).toBe(2);
+        } finally {
+            rmSync(probeDir, { recursive: true, force: true });
+        }
+    });
+
+    test('rate limits the unauthenticated readiness route while liveness stays open', async () => {
+        const isolatedDataDir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-ready-limit-'));
+        const isolatedServer = await startCloudServer({
+            host: '127.0.0.1',
+            port: 0,
+            dataDir: isolatedDataDir,
+            windowMs: 60_000,
+            maxPerWindow: 1,
+            allowedAuthTokens: new Set(['readiness-limit-token-1234567890']),
+        });
+        const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.port}`;
+
+        try {
+            expect((await fetch(`${isolatedBaseUrl}/ready`)).status).toBe(200);
+            expect((await fetch(`${isolatedBaseUrl}/ready`)).status).toBe(429);
+            expect((await fetch(`${isolatedBaseUrl}/health`)).status).toBe(200);
+        } finally {
+            isolatedServer.stop();
+            rmSync(isolatedDataDir, { recursive: true, force: true });
+        }
     });
 
     test('fails a large data merge when the configured storage root is replaced mid-write', async () => {
