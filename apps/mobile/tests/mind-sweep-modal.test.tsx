@@ -3,7 +3,7 @@ import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  addTask: vi.fn(async () => undefined),
+  addTask: vi.fn(async () => ({ success: true }) as { success: boolean }),
   back: vi.fn(),
 }));
 
@@ -48,6 +48,11 @@ import MindSweepModalScreen from '../app/mind-sweep-modal';
 const findByTestId = (tree: renderer.ReactTestRenderer, testID: string) =>
   tree.root.findByProps({ testID });
 
+// findAllByProps matches the composite component and its host element, so host
+// elements are counted directly to keep "one captured row" meaning one row.
+const countHostsByTestId = (tree: renderer.ReactTestRenderer, testID: string) =>
+  tree.root.findAll((node) => typeof node.type === 'string' && node.props.testID === testID).length;
+
 describe('MindSweepModalScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,6 +89,29 @@ describe('MindSweepModalScreen', () => {
     });
 
     expect(mocks.addTask).toHaveBeenCalledWith('Call the plumber', { status: 'inbox' });
+    expect(countHostsByTestId(tree, 'mind-sweep-captured-item')).toBe(1);
+  });
+
+  it('keeps a rejected item out of the captured list and shows the failure', async () => {
+    mocks.addTask.mockResolvedValueOnce({ success: false });
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<MindSweepModalScreen />);
+    });
+    renderer.act(() => {
+      findByTestId(tree, 'mind-sweep-start').props.onPress();
+    });
+
+    renderer.act(() => {
+      findByTestId(tree, 'mind-sweep-input').props.onChangeText('Call the plumber');
+    });
+    await renderer.act(async () => {
+      await findByTestId(tree, 'mind-sweep-add').props.onPress();
+    });
+
+    expect(findByTestId(tree, 'mind-sweep-add-failed')).toBeDefined();
+    expect(countHostsByTestId(tree, 'mind-sweep-captured-item')).toBe(0);
+    expect(findByTestId(tree, 'mind-sweep-input').props.value).toBe('Call the plumber');
   });
 
   it('walks work scope groups to the summary and closes', async () => {

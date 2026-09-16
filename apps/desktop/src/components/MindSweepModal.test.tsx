@@ -5,7 +5,7 @@ import { MindSweepLauncher } from './MindSweepModal';
 
 const t = (key: string) => key;
 
-const openFlow = (addTask = vi.fn().mockResolvedValue(undefined)) => {
+const openFlow = (addTask = vi.fn().mockResolvedValue({ success: true })) => {
     const utils = render(<MindSweepLauncher t={t} addTask={addTask} />);
     fireEvent.click(utils.getByRole('button', { name: 'mindSweep.launchButton' }));
     return { ...utils, addTask };
@@ -21,7 +21,7 @@ describe('MindSweepLauncher', () => {
 
     it('traps focus inside the modal and restores focus on close', async () => {
         const { getByRole, queryByRole } = render(
-            <MindSweepLauncher t={t} addTask={vi.fn().mockResolvedValue(undefined)} />,
+            <MindSweepLauncher t={t} addTask={vi.fn().mockResolvedValue({ success: true })} />,
         );
         const launcher = getByRole('button', { name: 'mindSweep.launchButton' });
         launcher.focus();
@@ -58,6 +58,20 @@ describe('MindSweepLauncher', () => {
         });
         expect(getByText('Fix the dripping tap')).toBeInTheDocument();
         expect((input as HTMLInputElement).value).toBe('');
+    });
+
+    it('keeps a rejected item out of the captured list and shows the failure', async () => {
+        const addTask = vi.fn().mockResolvedValue({ success: false, error: 'Write rejected' });
+        const { getByText, getByPlaceholderText, queryByText } = openFlow(addTask);
+        fireEvent.click(getByText('mindSweep.start'));
+
+        const input = getByPlaceholderText('mindSweep.inputPlaceholder');
+        fireEvent.change(input, { target: { value: 'Rejected sweep item' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+
+        await waitFor(() => expect(getByText('task.addFailed')).toBeInTheDocument());
+        expect(queryByText('mindSweep.groupCaptured')).toBeNull();
+        expect((input as HTMLInputElement).value).toBe('Rejected sweep item');
     });
 
     it('filters groups by scope and reaches the summary with a count', async () => {

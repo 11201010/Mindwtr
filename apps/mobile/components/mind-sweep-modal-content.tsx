@@ -33,6 +33,7 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
   const [stepIndex, setStepIndex] = useState(INTRO_STEP);
   const [draft, setDraft] = useState('');
   const [capturedByGroup, setCapturedByGroup] = useState<Record<string, string[]>>({});
+  const [addFailed, setAddFailed] = useState(false);
 
   const groups = getMindSweepGroups(scope);
   const isIntro = stepIndex === INTRO_STEP;
@@ -44,14 +45,23 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
     const title = draft.trim();
     if (!title || !group) return;
     try {
-      await addTask(title, { status: 'inbox' });
+      // Count the item only once the store accepted it, so the summary never
+      // claims more captures than exist. A rejected write keeps the draft and
+      // says so, instead of failing silently.
+      const result = await addTask(title, { status: 'inbox' });
+      if (!result?.success) {
+        setAddFailed(true);
+        return;
+      }
       setCapturedByGroup((current) => ({
         ...current,
         [group.id]: [...(current[group.id] ?? []), title],
       }));
       setDraft('');
+      setAddFailed(false);
     } catch {
       // Keep the draft so the capture is not lost; the user can retry.
+      setAddFailed(true);
     }
   };
 
@@ -164,13 +174,18 @@ export function MindSweepModalContent({ onClose }: MindSweepModalContentProps) {
                   <Text style={[styles.primaryButtonText, { color: filledButton.textColor ?? tc.onTint }]}>{t('mindSweep.add')}</Text>
                 </TouchableOpacity>
               </View>
+              {addFailed && (
+                <Text testID="mind-sweep-add-failed" style={[styles.addFailed, { color: tc.danger }]}>
+                  {t('task.addFailed')}
+                </Text>
+              )}
               {(capturedByGroup[group.id]?.length ?? 0) > 0 && (
                 <View style={styles.capturedBlock}>
                   <Text style={[styles.capturedLabel, { color: tc.secondaryText }]}>
                     {t('mindSweep.groupCaptured')}
                   </Text>
                   {capturedByGroup[group.id].map((item, index) => (
-                    <Text key={`${item}-${index}`} style={[styles.capturedItem, { color: tc.text }]} numberOfLines={1}>
+                    <Text testID="mind-sweep-captured-item" key={`${item}-${index}`} style={[styles.capturedItem, { color: tc.text }]} numberOfLines={1}>
                       {'•'} {item}
                     </Text>
                   ))}
@@ -285,6 +300,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   capturedBlock: { marginTop: 8, gap: 2 },
+  addFailed: { fontSize: 13, marginTop: 8 },
   capturedLabel: { fontSize: 12 },
   capturedItem: { fontSize: 14 },
   navRow: {

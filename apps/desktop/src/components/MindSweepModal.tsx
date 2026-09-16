@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Brain, X } from 'lucide-react';
-import { getMindSweepGroups, type MindSweepScope, type Task } from '@mindwtr/core';
+import { getMindSweepGroups, type MindSweepScope, type StoreActionResult, type Task } from '@mindwtr/core';
 import { Dialog, DialogBody } from './ui/Dialog';
 
 type MindSweepModalProps = {
     isOpen: boolean;
     onClose: () => void;
     t: (key: string) => string;
-    addTask: (title: string, initialProps?: Partial<Task>) => Promise<unknown>;
+    addTask: (title: string, initialProps?: Partial<Task>) => Promise<StoreActionResult>;
 };
 
 const INTRO_STEP = -1;
@@ -56,7 +56,14 @@ export function MindSweepModal({ isOpen, onClose, t, addTask }: MindSweepModalPr
         const title = draft.trim();
         if (!title || !group) return;
         try {
-            await addTask(title, { status: 'inbox' });
+            // Count the item only once the store accepted it, so the summary
+            // never claims more captures than exist and the draft survives a
+            // rejected write.
+            const result = await addTask(title, { status: 'inbox' });
+            if (!result?.success) {
+                setAddFailed(true);
+                return;
+            }
             setCapturedByGroup((current) => ({
                 ...current,
                 [group.id]: [...(current[group.id] ?? []), title],
@@ -228,7 +235,7 @@ export function MindSweepModal({ isOpen, onClose, t, addTask }: MindSweepModalPr
 
 type MindSweepLauncherProps = {
     t: (key: string) => string;
-    addTask: (title: string, initialProps?: Partial<Task>) => Promise<unknown>;
+    addTask: (title: string, initialProps?: Partial<Task>) => Promise<StoreActionResult>;
     variant?: 'primary' | 'secondary';
 };
 

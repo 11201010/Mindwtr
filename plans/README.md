@@ -20,7 +20,7 @@ Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = mai
 | [099](099-local-api-lock-poison-recovery.md) | REL-05: poisoned write lock = 500s until restart | P2 | S | None | DONE |
 | [100](100-mcp-logger-sanitizer.md) | SEC-03: MCP logger bypasses sanitizer | P3 | S | None | TODO |
 | [101](101-desktop-inlist-add-keeps-text.md) | PROD-01: in-list add drops rejected capture text | P2 | S | None | TDONE |
-| [102](102-mind-sweep-honours-store-result.md) | PROD-02: Mind Sweep counts refused captures | P2 | S | None | TODO |
+| [102](102-mind-sweep-honours-store-result.md) | PROD-02: Mind Sweep counts refused captures | P2 | S | None | TDONE |
 | [103](103-capture-rejections-visible.md) | PROD-03: silent capture rejections | P2 | S | None | TODO |
 | [104](104-store-results-at-completion-and-star-sites.md) | PROD-04: six sites ignore the store result | P2 | M | None | TODO |
 | [105](105-docs-remove-skip-occurrence.md) | PROD-05: docs promise a Skip occurrence action | P3 | S | None | DONE |
