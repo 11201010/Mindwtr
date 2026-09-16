@@ -122,6 +122,7 @@ describe('ContextsView', () => {
             .toHaveAttribute('aria-pressed', 'true');
 
         fireEvent.click(view.getByRole('button', { name: 'Any' }));
+        expect(view.getByRole('heading', { name: '@alice / #bob' })).toBeInTheDocument();
         expect(view.getByText('Alice only')).toBeInTheDocument();
         expect(view.getByText('Bob only')).toBeInTheDocument();
         expect(view.getByText('Alice and Bob')).toBeInTheDocument();

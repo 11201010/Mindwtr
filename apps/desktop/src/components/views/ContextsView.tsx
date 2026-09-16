@@ -554,7 +554,7 @@ export function ContextsView() {
                             </div>
                             <div className="min-w-0 flex-1">
                                 <h2 className="truncate text-2xl font-bold">
-                                    {noContextSelected ? t('contexts.none') : (selectedContexts.length ? selectedContexts.join(' + ') : allTokensLabel)}
+                                    {noContextSelected ? t('contexts.none') : (selectedContexts.length ? selectedContexts.join(matchMode === 'any' ? ' / ' : ' + ') : allTokensLabel)}
                                 </h2>
                                 <p className="text-muted-foreground text-sm">
                                     {filteredTasks.length} {t('common.tasks')}
