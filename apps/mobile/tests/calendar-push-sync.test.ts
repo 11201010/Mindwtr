@@ -802,7 +802,7 @@ describe('buildEventDetails — date-only calendar events stay on the intended d
         await runFullCalendarSync();
 
         expect(mockCreateEventAsync).toHaveBeenCalledWith('cal-1', expect.objectContaining({
-            notes: 'Status: Next\n\nBring notes',
+            notes: 'Status: Next\n\nBring notes\n\n[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-1\n[/Mindwtr Calendar Mirror]',
             location: 'Office 2A',
         }));
     });
@@ -836,6 +836,10 @@ describe('buildEventDetails — date-only calendar events stay on the intended d
                 'Bring notes',
                 '',
                 'Link: https://example.com/agenda',
+                '',
+                '[Mindwtr Calendar Mirror]',
+                'Mindwtr-Task-ID: task-1',
+                '[/Mindwtr Calendar Mirror]',
             ].join('\n'),
             url: 'https://example.com/agenda',
         }));
@@ -1261,6 +1265,11 @@ describe('runFullCalendarSync — startup reconciliation', () => {
 
         expect(mockDeleteEventAsync).not.toHaveBeenCalled();
         expect(mockUpdateEventAsync).toHaveBeenCalledOnce();
+        expect(mockUpdateEventAsync).toHaveBeenCalledWith('evt-active', expect.objectContaining({
+            title: 'My Task',
+            notes: expect.stringContaining('[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-1\n[/Mindwtr Calendar Mirror]'),
+        }));
+        expect(mockCreateEventAsync).not.toHaveBeenCalled();
     });
 });
 

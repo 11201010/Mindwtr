@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.
     // someday-section-move reuses releaseCheck, count, and operation below.
     // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
     // mcp-core-log-stderr: count of the first event actually forwarded.

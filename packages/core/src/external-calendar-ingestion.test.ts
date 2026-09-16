@@ -6,6 +6,34 @@ import {
 } from './external-calendar-ingestion';
 
 describe('external calendar ingestion', () => {
+    it('does not import a marked unprefixed task from an ordinary calendar', () => {
+        const result = mergeExternalCalendarSources([{
+            calendars: [{ id: 'work', name: 'Work', url: 'system://work', enabled: true }],
+            events: [{
+                id: 'exported-task', sourceId: 'work', title: 'Follow up',
+                start: '2026-09-15T10:00:00.000Z', end: '2026-09-15T10:30:00.000Z',
+                allDay: false,
+                description: 'Status: Next\n\n[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-123\n[/Mindwtr Calendar Mirror]',
+            }],
+        }]);
+        expect(result.events).toEqual([]);
+    });
+    it('keeps unmarked same-title events and malformed marker prose', () => {
+        const shared = {
+            sourceId: 'work', title: 'Follow up',
+            start: '2026-09-15T10:00:00.000Z', end: '2026-09-15T10:30:00.000Z',
+            allDay: false,
+        };
+        const result = mergeExternalCalendarSources([{
+            calendars: [{ id: 'work', name: 'Work', url: 'system://work', enabled: true }],
+            events: [
+                { ...shared, id: 'ordinary' },
+                { ...shared, id: 'bad-marker', description: '[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: %ZZ\n[/Mindwtr Calendar Mirror]' },
+                { ...shared, id: 'all-day', start: '2026-09-15T00:00:00.000Z', end: '2026-09-16T00:00:00.000Z', allDay: true },
+            ],
+        }]);
+        expect(result.events.map((event) => event.id).sort()).toEqual(['all-day', 'bad-marker', 'ordinary']);
+    });
     it('recognizes managed Mindwtr calendar names without matching unrelated names', () => {
         expect(isMindwtrMirrorCalendar({ name: ' Mindwtr Calendar ' })).toBe(true);
         expect(isMindwtrMirrorCalendar({ name: 'mindwtrcal' })).toBe(true);

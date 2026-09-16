@@ -188,6 +188,7 @@ describe('desktop calendar push sync', () => {
         expect(notes).toContain('Effort: 1 h');
         expect(notes).toContain('Discuss roadmap');
         expect(notes).toContain('Link: https://example.com/doc');
+        expect(notes).toContain('[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-1\n[/Mindwtr Calendar Mirror]');
     });
 
     it('sizes the pushed event by the estimate only while Time estimates is on', async () => {
@@ -296,6 +297,7 @@ describe('desktop calendar push sync', () => {
 
         expect(updateEvent).toHaveBeenCalledWith('event-old', expect.objectContaining({
             calendarId: 'cal-mindwtr',
+            notes: expect.stringContaining('[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-1\n[/Mindwtr Calendar Mirror]'),
         }));
         expect(createEvent).not.toHaveBeenCalled();
         expect(upsertSyncEntry).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ import {
     addCalendarMinutes,
     buildCalendarEventTaskDraft,
     buildCalendarPushEventFields,
+    hasCalendarPushTaskMarker,
     buildCalendarQuickAddTaskDraft,
     createCustomTimeEstimate,
     findFreeSlotForDay,
@@ -475,6 +476,28 @@ describe('buildCalendarPushEventFields (#743)', () => {
         expect(result.notes).toContain('Effort: 30 min');
         expect(result.notes).toContain('Draft the deck');
         expect(result.url).toBeNull();
+        expect(hasCalendarPushTaskMarker(result.notes)).toBe(true);
+    });
+
+    it('keeps task text and links while appending an encoded identity marker', () => {
+        const result = buildCalendarPushEventFields(task({
+            id: 'task:projected/one', description: 'Keep my notes',
+            attachments: [linkAttachment('https://example.com/doc')],
+        }));
+        expect(result.notes).toContain('Keep my notes');
+        expect(result.notes).toContain('Link: https://example.com/doc');
+        expect(result.notes).toMatch(/\n\n\[Mindwtr Calendar Mirror\]\nMindwtr-Task-ID: task%3Aprojected%2Fone\n\[\/Mindwtr Calendar Mirror\]$/);
+        expect(hasCalendarPushTaskMarker(result.notes.replace(/\n/g, '\r\n'))).toBe(true);
+    });
+
+    it('rejects malformed markers and incidental prose mentions', () => {
+        const marker = '[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-123\n[/Mindwtr Calendar Mirror]';
+        expect(hasCalendarPushTaskMarker(`Please read ${marker}`)).toBe(false);
+        expect(hasCalendarPushTaskMarker(marker.replace('task-123', ''))).toBe(false);
+        expect(hasCalendarPushTaskMarker(marker.replace('task-123', 'bad%ZZ'))).toBe(false);
+        expect(hasCalendarPushTaskMarker(marker.replace('task-123', 'bad%20id'))).toBe(true);
+        expect(hasCalendarPushTaskMarker(marker.replace('task-123', '%20'))).toBe(false);
+        expect(hasCalendarPushTaskMarker('Mindwtr-Task-ID: task-123')).toBe(false);
     });
 
     it('omits the effort line when the task has no estimate', () => {

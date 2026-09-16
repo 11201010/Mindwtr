@@ -4,6 +4,7 @@ import * as Calendar from 'expo-calendar';
 import {
     expandCategoryCalendars,
     generateUUID,
+    hasCalendarPushTaskMarker,
     isSandboxMode,
     isMindwtrMirrorCalendar,
     mergeExternalCalendarSources,
@@ -15,6 +16,7 @@ import {
 } from '@mindwtr/core';
 import * as FileSystem from './file-system';
 import { logInfo } from './app-log';
+import { getAllCalendarSyncEntries } from './storage-adapter';
 
 export const EXTERNAL_CALENDARS_KEY = 'mindwtr-external-calendars';
 export const SYSTEM_CALENDAR_SETTINGS_KEY = 'mindwtr-system-calendar-settings';
@@ -453,6 +455,25 @@ async function fetchSystemCalendarEvents(rangeStart: Date, rangeEnd: Date, signa
         signal,
     );
 
+    // Older exports did not carry a notes marker. Match only this device's
+    // persisted (calendar, native event) pair; a same-title event is unrelated.
+    let mappedEventIdsByCalendar = new Map<string, Set<string>>();
+    try {
+        const entries = await withAbortSignal(getAllCalendarSyncEntries(Platform.OS), signal);
+        for (const entry of entries) {
+            if (typeof entry.calendarId !== 'string' || !entry.calendarId
+                || typeof entry.calendarEventId !== 'string' || !entry.calendarEventId) continue;
+            const ids = mappedEventIdsByCalendar.get(entry.calendarId) ?? new Set<string>();
+            ids.add(entry.calendarEventId);
+            mappedEventIdsByCalendar.set(entry.calendarId, ids);
+        }
+    } catch {
+        // Optional local mapping storage may be unavailable during startup.
+        // Calendar reading must still work, including ordinary events.
+        throwIfAborted(signal);
+        mappedEventIdsByCalendar = new Map();
+    }
+
     const calendars: ExternalCalendarSubscription[] = selectedCalendars.map((calendar) => ({
         id: getSystemCalendarSourceId(calendar.id),
         name: getCalendarDisplayName(calendar),
@@ -464,10 +485,20 @@ async function fetchSystemCalendarEvents(rangeStart: Date, rangeEnd: Date, signa
     }));
 
     const events: ExternalCalendarEvent[] = [];
+    let mirroredNativeEventCount = 0;
     for (const event of rawEvents) {
-        const eventCalendarId = typeof event.calendarId === 'string' && event.calendarId.trim().length > 0
+        const nativeCalendarId = typeof event.calendarId === 'string' && event.calendarId.trim().length > 0
             ? event.calendarId
+            : null;
+        const eventCalendarId = nativeCalendarId
+            ? nativeCalendarId
             : selectedIds[0];
+        if (hasCalendarPushTaskMarker(event.notes)
+            || (nativeCalendarId && typeof event.id === 'string'
+                && mappedEventIdsByCalendar.get(nativeCalendarId)?.has(event.id))) {
+            mirroredNativeEventCount += 1;
+            continue;
+        }
 
         const sourceId = getSystemCalendarSourceId(eventCalendarId);
         const rawStart = toDateSafe(event.startDate);
@@ -506,6 +537,18 @@ async function fetchSystemCalendarEvents(rangeStart: Date, rangeEnd: Date, signa
             allDay: event.allDay === true,
             description: typeof event.notes === 'string' && event.notes.trim().length > 0 ? event.notes : undefined,
             location: typeof event.location === 'string' && event.location.trim().length > 0 ? event.location : undefined,
+        });
+    }
+
+    if (mirroredNativeEventCount > 0) {
+        void logInfo('Mirrored device calendar events excluded', {
+            scope: 'calendar',
+            extra: {
+                releaseCheck: 'v1.3.1/calendar-mirror-filter',
+                platform: Platform.OS,
+                stage: 'native-read',
+                count: String(mirroredNativeEventCount),
+            },
         });
     }
 

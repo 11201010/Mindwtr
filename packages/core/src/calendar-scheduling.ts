@@ -484,6 +484,43 @@ export function isSlotFreeForDay(options: IsSlotFreeOptions): boolean {
 // Only external schemes resolve from an external calendar (e.g. Outlook/Exchange);
 // internal `mindwtr://` links are dropped from pushed events.
 const CALENDAR_PUSH_LINK_SCHEME_RE = /^(?:https?|mailto):/i;
+const CALENDAR_PUSH_MIRROR_START = '[Mindwtr Calendar Mirror]';
+const CALENDAR_PUSH_MIRROR_END = '[/Mindwtr Calendar Mirror]';
+const CALENDAR_PUSH_MIRROR_RE = /(?:^|\n\n)\[Mindwtr Calendar Mirror\]\nMindwtr-Task-ID: ([A-Za-z0-9._~!%*'()-]{1,512})\n\[\/Mindwtr Calendar Mirror\](?=$|\n\n)/g;
+
+function hasCalendarPushControlCharacter(value: string): boolean {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code < 32 || code === 127) return true;
+    }
+    return false;
+}
+
+function formatCalendarPushTaskMarker(taskId: string): string {
+    if (!taskId || taskId.trim() !== taskId || hasCalendarPushControlCharacter(taskId)) return '';
+    try {
+        const encoded = encodeURIComponent(taskId);
+        if (encoded.length > 512) return '';
+        return `${CALENDAR_PUSH_MIRROR_START}\nMindwtr-Task-ID: ${encoded}\n${CALENDAR_PUSH_MIRROR_END}`;
+    } catch {
+        return '';
+    }
+}
+
+/** Exact, delimited marker emitted by the shared push builder; prose mentions do not count. */
+export function hasCalendarPushTaskMarker(description: unknown): boolean {
+    if (typeof description !== 'string') return false;
+    const normalized = description.replace(/\r\n?/g, '\n');
+    CALENDAR_PUSH_MIRROR_RE.lastIndex = 0;
+    for (const match of normalized.matchAll(CALENDAR_PUSH_MIRROR_RE)) {
+        try {
+            const decoded = decodeURIComponent(match[1]!);
+            if (decoded && decoded.trim() === decoded && !hasCalendarPushControlCharacter(decoded)
+                && encodeURIComponent(decoded) === match[1]) return true;
+        } catch { /* Malformed percent escapes are ordinary notes. */ }
+    }
+    return false;
+}
 
 function getCalendarPushLinkUris(attachments: Task['attachments']): string[] {
     const seen = new Set<string>();
@@ -547,7 +584,7 @@ export interface CalendarPushEventFields {
  * supported.
  */
 export function buildCalendarPushEventFields(
-    task: Pick<Task, 'attachments' | 'description' | 'status' | 'timeEstimate'>,
+    task: Pick<Task, 'id' | 'attachments' | 'description' | 'status' | 'timeEstimate'>,
     context: CalendarPushEventContext = {},
 ): CalendarPushEventFields {
     const links = getCalendarPushLinkUris(task.attachments);
@@ -572,6 +609,7 @@ export function buildCalendarPushEventFields(
         metaLines.join('\n'),
         task.description?.trim() || '',
         links.length > 0 ? links.map((link) => `Link: ${link}`).join('\n') : '',
+        formatCalendarPushTaskMarker(task.id),
     ].filter(Boolean);
 
     return {

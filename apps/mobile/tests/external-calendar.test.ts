@@ -11,6 +11,7 @@ const {
     mockEditEventInCalendarAsync,
     mockOpenEventInCalendarAsync,
     mockPlatform,
+    mockGetAllCalendarSyncEntries,
 } = vi.hoisted(() => ({
     mockGetItem: vi.fn<(key: string) => Promise<string | null>>(async () => null),
     mockSetItem: vi.fn<(key: string, value: string) => Promise<void>>(async () => {}),
@@ -36,6 +37,11 @@ const {
     mockEditEventInCalendarAsync: vi.fn(async () => ({ action: 'done', id: null })),
     mockOpenEventInCalendarAsync: vi.fn(async () => ({ action: 'done' })),
     mockPlatform: { OS: 'android' },
+    mockGetAllCalendarSyncEntries: vi.fn(async () => [] as { calendarId: string; calendarEventId: string }[]),
+}));
+
+vi.mock('@/lib/storage-adapter', () => ({
+    getAllCalendarSyncEntries: mockGetAllCalendarSyncEntries,
 }));
 
 vi.mock('expo-file-system/legacy', () => ({
@@ -85,6 +91,7 @@ import {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mockGetAllCalendarSyncEntries.mockResolvedValue([]);
     mockPlatform.OS = 'android';
     mockReadSafString.mockResolvedValue('');
     mockGetCalendarPermissionsAsync.mockResolvedValue({ status: 'granted' });
@@ -130,6 +137,50 @@ function countProjectedDays(event: { start: string; end: string } | undefined): 
 }
 
 describe('fetchExternalCalendarEvents', () => {
+    it.each(['android', 'ios'])('excludes legacy mapped events by exact calendar and native event ID on %s', async (platform) => {
+        mockPlatform.OS = platform;
+        const rangeStart = new Date('2026-04-20T00:00:00.000Z');
+        const rangeEnd = new Date('2026-04-22T00:00:00.000Z');
+        mockGetCalendarsAsync.mockResolvedValue([
+            { id: 'account-a', title: 'Account A' },
+            { id: 'account-b', title: 'Account B' },
+        ]);
+        mockGetAllCalendarSyncEntries.mockResolvedValue([
+            { calendarId: 'account-a', calendarEventId: 'legacy-export' },
+        ]);
+        mockGetEventsAsync.mockResolvedValue([
+            { id: 'legacy-export', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-20T10:00:00Z'), endDate: new Date('2026-04-20T10:30:00Z') },
+            { id: 'legacy-export', calendarId: 'account-b', title: 'Follow up', startDate: new Date('2026-04-20T11:00:00Z'), endDate: new Date('2026-04-20T11:30:00Z') },
+            { id: 'ordinary', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-21T00:00:00Z'), endDate: new Date('2026-04-22T00:00:00Z'), allDay: true },
+        ]);
+        const result = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
+        expect(mockGetAllCalendarSyncEntries).toHaveBeenCalledWith(platform);
+        expect(result.events.map((event) => `${event.sourceId}/${event.nativeEventId}`).sort()).toEqual([
+            'system:account-a/ordinary', 'system:account-b/legacy-export',
+        ]);
+    });
+
+    it.each(['android', 'ios'])('keeps ordinary device events when local mapping storage is unavailable on %s', async (platform) => {
+        mockPlatform.OS = platform;
+        mockGetCalendarsAsync.mockResolvedValue([{ id: 'account-a', title: 'Account A' }]);
+        mockGetAllCalendarSyncEntries.mockRejectedValue(new Error('unavailable'));
+        mockGetEventsAsync.mockResolvedValue([{ id: 'ordinary', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-20T10:00:00Z'), endDate: new Date('2026-04-20T10:30:00Z') }]);
+        const result = await fetchExternalCalendarEvents(new Date('2026-04-20T00:00:00Z'), new Date('2026-04-21T00:00:00Z'));
+        expect(result.events.map((event) => event.nativeEventId)).toEqual(['ordinary']);
+    });
+
+    it.each(['android', 'ios'])('excludes marked unprefixed timed and all-day exports on %s', async (platform) => {
+        mockPlatform.OS = platform;
+        mockGetCalendarsAsync.mockResolvedValue([{ id: 'account-a', title: 'Account A' }]);
+        const marker = '[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-1\n[/Mindwtr Calendar Mirror]';
+        mockGetEventsAsync.mockResolvedValue([
+            { id: 'timed-export', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-20T10:00:00Z'), endDate: new Date('2026-04-20T10:30:00Z'), notes: `Status: Next\n\n${marker}` },
+            { id: 'all-day-export', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-20T00:00:00Z'), endDate: new Date('2026-04-21T00:00:00Z'), allDay: true, notes: marker },
+            { id: 'ordinary', calendarId: 'account-a', title: 'Follow up', startDate: new Date('2026-04-20T11:00:00Z'), endDate: new Date('2026-04-20T11:30:00Z'), notes: 'Mindwtr-Task-ID: task-1' },
+        ]);
+        const result = await fetchExternalCalendarEvents(new Date('2026-04-20T00:00:00Z'), new Date('2026-04-21T00:00:00Z'));
+        expect(result.events.map((event) => event.nativeEventId)).toEqual(['ordinary']);
+    });
     it('loads Android local ICS files through content URIs', async () => {
         const rangeStart = new Date('2026-04-20T00:00:00.000Z');
         const rangeEnd = new Date('2026-04-21T00:00:00.000Z');

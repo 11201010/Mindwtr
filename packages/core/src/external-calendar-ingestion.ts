@@ -2,6 +2,7 @@ import type {
     ExternalCalendarEvent,
     ExternalCalendarSubscription,
 } from './ics';
+import { hasCalendarPushTaskMarker } from './calendar-scheduling';
 
 const MINDWTR_PUSHED_EVENT_PREFIX = 'mindwtr: ';
 const MINDWTR_MIRROR_CALENDAR_NAMES = new Set([
@@ -24,11 +25,12 @@ export function isMindwtrMirrorCalendar(
 }
 
 export function isMindwtrMirrorEvent(
-    event: Pick<ExternalCalendarEvent, 'sourceId' | 'title'>,
+    event: Pick<ExternalCalendarEvent, 'sourceId' | 'title' | 'description'>,
     calendarById: ReadonlyMap<string, ExternalCalendarSubscription>,
 ): boolean {
     const calendar = calendarById.get(event.sourceId);
     if (calendar && isMindwtrMirrorCalendar(calendar)) return true;
+    if (hasCalendarPushTaskMarker(event.description)) return true;
     return event.title.trim().toLowerCase().startsWith(
         MINDWTR_PUSHED_EVENT_PREFIX,
     );
