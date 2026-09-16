@@ -1679,6 +1679,7 @@ struct LiveContainers {
     project_ids: std::collections::HashSet<String>,
     archived_project_ids: std::collections::HashSet<String>,
     section_project_ids: std::collections::HashMap<String, String>,
+    archived_section_project_ids: std::collections::HashMap<String, String>,
     section_owner_project_ids: std::collections::HashMap<String, String>,
     area_ids: std::collections::HashSet<String>,
     next_project_orders: std::collections::HashMap<String, f64>,
@@ -1698,7 +1699,7 @@ impl LiveContainers {
                     .map(str::to_string)
             })
             .collect();
-        let archived_project_ids = array_items(data, "projects")
+        let archived_project_ids: std::collections::HashSet<String> = array_items(data, "projects")
             .into_iter()
             .filter(|project| project.get("status").and_then(Value::as_str) == Some("archived"))
             .filter_map(|project| {
@@ -1730,6 +1731,25 @@ impl LiveContainers {
                     .to_string();
                 project_ids
                     .contains(&project_id)
+                    .then_some((id, project_id))
+            })
+            .collect();
+        let archived_section_project_ids = array_items(data, "sections")
+            .into_iter()
+            .filter_map(|section| {
+                let archived_at = section
+                    .get("projectArchivedAt")
+                    .and_then(Value::as_str)
+                    .filter(|timestamp| !timestamp.is_empty())?;
+                if section.get("deletedAt").and_then(Value::as_str) != Some(archived_at) {
+                    return None;
+                }
+                let id = section.get("id").and_then(Value::as_str)?.to_string();
+                let project_id = section
+                    .get("projectId")
+                    .and_then(Value::as_str)?
+                    .to_string();
+                (project_ids.contains(&project_id) && archived_project_ids.contains(&project_id))
                     .then_some((id, project_id))
             })
             .collect();
@@ -1785,6 +1805,7 @@ impl LiveContainers {
             project_ids,
             archived_project_ids,
             section_project_ids,
+            archived_section_project_ids,
             section_owner_project_ids,
             area_ids,
             next_project_orders,
@@ -1860,6 +1881,22 @@ fn set_or_remove_string(task: &mut Map<String, Value>, key: &str, value: Option<
             task.remove(key);
         }
     }
+}
+
+fn archived_section_reference_project_id(
+    task: &Map<String, Value>,
+    section_id: &str,
+    live: &LiveContainers,
+) -> Option<String> {
+    if !matches!(
+        task.get("status").and_then(Value::as_str),
+        Some("done" | "archived" | "reference")
+    ) {
+        return None;
+    }
+    let task_project_id = normalize_optional_container_id(task.get("projectId"))?;
+    let section_project_id = live.archived_section_project_ids.get(section_id)?;
+    (section_project_id == &task_project_id).then(|| section_project_id.clone())
 }
 
 fn normalize_created_task_containers(
@@ -1947,10 +1984,15 @@ fn normalize_task_container_patch(
     {
         return Err("Invalid task projectId: Project not found".to_string());
     }
-    let section_project_id = candidate_section_id
+    let mut section_project_id = candidate_section_id
         .as_ref()
         .and_then(|id| live.section_project_ids.get(id))
         .cloned();
+    if section_project_id.is_none() && !has_section_update {
+        section_project_id = candidate_section_id
+            .as_ref()
+            .and_then(|id| archived_section_reference_project_id(task, id, live));
+    }
     if candidate_section_id.is_some() && section_project_id.is_none() {
         return Err("Invalid task sectionId: Section not found".to_string());
     }
@@ -4730,6 +4772,55 @@ mod tests {
         assert_eq!(area_task["areaId"], "area-a");
         assert!(area_task.get("order").is_none());
         assert!(area_task.get("orderNum").is_none());
+    }
+
+    #[test]
+    fn local_api_patch_route_preserves_implicit_archived_section_references() {
+        let archived_at = "2026-09-01T00:00:00Z";
+        let base = serde_json::json!({
+            "tasks": [{
+                "id": "task-1", "title": "Finished", "status": "done",
+                "projectId": "project-1", "sectionId": "section-1",
+                "completedAt": archived_at,
+                "tags": [], "contexts": [], "rev": 1,
+                "createdAt": archived_at, "updatedAt": archived_at
+            }],
+            "projects": [{
+                "id": "project-1", "title": "Archived", "status": "archived"
+            }],
+            "sections": [{
+                "id": "section-1", "projectId": "project-1", "title": "Archived section",
+                "deletedAt": archived_at, "projectArchivedAt": archived_at
+            }],
+            "areas": [{ "id": "area-1", "name": "Area" }],
+            "settings": { "deviceId": "desktop-local-api" }
+        });
+
+        let mut implicit = base.clone();
+        let patched = patch_task_in_data(
+            &mut implicit,
+            "task-1",
+            json!({ "areaId": "area-1" })
+                .as_object()
+                .expect("area patch"),
+        )
+        .expect("implicit archived section reference remains valid");
+        assert_eq!(patched["projectId"], "project-1");
+        assert_eq!(patched["sectionId"], "section-1");
+        assert!(patched.get("areaId").is_none());
+
+        let mut explicit = base;
+        let original = explicit.clone();
+        let error = patch_task_in_data(
+            &mut explicit,
+            "task-1",
+            json!({ "sectionId": "section-1" })
+                .as_object()
+                .expect("section patch"),
+        )
+        .expect_err("deleted sections cannot be explicitly assigned");
+        assert_eq!(error, "Invalid task sectionId: Section not found");
+        assert_eq!(explicit, original, "rejection must be atomic");
     }
 
     #[test]
