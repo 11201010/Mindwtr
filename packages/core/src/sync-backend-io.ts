@@ -1,9 +1,17 @@
 import { isDropboxUnauthorizedError, DropboxConflictError } from './dropbox';
 import { normalizeCloudUrl, normalizeWebdavUrl } from './sync-helpers';
 import { normalizeRemoteWriteResult } from './sync-run';
-import { SyncRemoteWriteConflict, type SyncBackendIO, type SyncRunAttachmentHelpers } from './sync-run-ports';
+import { SyncRemoteWriteConflict, type SyncBackendIO, type SyncEncryptionPosture, type SyncRunAttachmentHelpers } from './sync-run-ports';
+import {
+    SyncEncryptionRemotePlaintextError,
+    SyncEncryptionRemoteVersionUnavailableError,
+    SyncEncryptionTerminalError,
+    syncEncryptedArtifactName,
+} from './sync-encryption';
+import { SyncCryptoUnsupportedError, type SyncCryptoKdfParams } from './sync-crypto';
+import type { SyncEncryptionRemoteVersionKind } from './sync-encryption-diagnostics';
 import type { CloudProvider } from './sync-client-helpers';
-import type { SyncBackend } from './sync-service-utils';
+import { SYNC_FILE_NAME, type SyncBackend } from './sync-service-utils';
 import type { AppData } from './types';
 import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
 import {
@@ -56,7 +64,17 @@ type DropboxRevResult = { rev: string | null };
 type DropboxDownloadResult = { data: AppData | null; rev: string | null };
 type AttachmentSyncResult = Promise<AppData | boolean | null | undefined>;
 
-export type WebdavSyncReadResult = WebDavDocumentVersion & { data: AppData | null };
+/** An ordinary document read: the plaintext body, or the decrypted one. */
+export type WebdavSyncDocumentRead = WebDavDocumentVersion & { state?: 'data'; data: AppData | null };
+
+/** The RAW WebDAV read a transport returns. Transports no longer decide what a
+ *  non-`data` state means — `createSyncBackendIO` owns that (see
+ *  `SyncEncryptionPosture`). Desktop's Tauri path decrypts in Rust and therefore
+ *  never reports a state at all, which reads as `data`. */
+export type WebdavSyncReadResult =
+    | WebdavSyncDocumentRead
+    | (WebDavDocumentVersion & { state: 'encrypted-no-key'; salt: Uint8Array; params: SyncCryptoKdfParams })
+    | (WebDavDocumentVersion & { state: 'remote-plaintext' });
 
 export type FileSyncReadResult = {
     data: AppData;
@@ -141,15 +159,108 @@ const isFileSyncReadResult = (value: AppData | FileSyncReadResult): value is Fil
     && typeof value.fingerprint === 'string'
 );
 
-export function createSyncBackendIO(ctx: SyncBackendContext, transport: SyncTransport): SyncBackendIO {
+export function createSyncBackendIO(
+    ctx: SyncBackendContext,
+    transport: SyncTransport,
+    posture?: SyncEncryptionPosture,
+): SyncBackendIO {
     let fileRemoteFingerprint: string | null = null;
     let fileRemoteNeedsRepair = false;
     let webdavDocumentVersion: WebDavDocumentVersion | null = null;
     let webdavDocumentSnapshot: string | null = null;
-    const snapshotWebdavRead = (remote: WebdavSyncReadResult): string => JSON.stringify({
+    const snapshotWebdavRead = (remote: WebdavSyncDocumentRead): string => JSON.stringify({
         exists: remote.exists,
         data: remote.data,
     });
+
+    /**
+     * The WebDAV read encryption posture — one decision, previously copied into
+     * desktop's native path, desktop's web path, and mobile's transport.
+     *
+     * Order is load-bearing on every refusing branch: emit the `remote-read`
+     * diagnostics line first (a shared log must never show a refusal with no
+     * posture behind it), persist the durable discovery second (it has to
+     * survive a restart), throw last. Nothing on the remote is touched here.
+     */
+    const readWebdavDocument = async (): Promise<WebdavSyncDocumentRead> => {
+        const remote = await transport.webdavGet();
+        const material = posture?.material ?? null;
+        const version: SyncEncryptionRemoteVersionKind = normalizeStrongWebdavEtag(remote.strongEtag)
+            ? 'strong'
+            : remote.strongEtag ? 'weak' : 'none';
+        const logRemoteRead = posture?.logRemoteRead.bind(posture) ?? (() => {});
+
+        if (remote.state === 'remote-plaintext') {
+            logRemoteRead({
+                artifact: SYNC_FILE_NAME,
+                exists: true,
+                kind: 'plaintext',
+                version,
+                decision: 'plaintext-discovered',
+            });
+            await posture?.onRemotePlaintextDiscovered();
+            throw new SyncEncryptionRemotePlaintextError('the WebDAV remote is no longer encrypted');
+        }
+        if (remote.state === 'encrypted-no-key') {
+            logRemoteRead({
+                artifact: syncEncryptedArtifactName(SYNC_FILE_NAME),
+                exists: true,
+                kind: 'encrypted',
+                headerSalt: remote.salt,
+                headerKdf: remote.params,
+                version,
+                foreignSalt: material !== null,
+                decision: version === 'strong' ? 'no-key' : 'version-unavailable',
+            });
+            // The encrypted CAS depends on the strong ETag. Refuse before persisting
+            // anything: a discovery recorded here would block the location on evidence
+            // this cycle could not safely act on.
+            if (version !== 'strong') {
+                throw new SyncEncryptionRemoteVersionUnavailableError('WebDAV encrypted sync document');
+            }
+            await posture?.onRemoteEncryptionDiscovered({ salt: remote.salt, params: remote.params });
+            // The fallback carries the Rust-mirrored sentinel, so a caller that supplied
+            // no posture port still raises an error string-form classification reads as
+            // no-key rather than as an ordinary transport failure.
+            throw posture?.noKeyError() ?? new SyncEncryptionTerminalError(
+                new SyncCryptoUnsupportedError('SYNC_ENCRYPTION_REMOTE_ENCRYPTED: the WebDAV remote is encrypted and this device has no key'),
+            );
+        }
+
+        // `syncEncryptionOff` is the proven-plaintext posture for the whole cycle;
+        // `material` is what actually happened to these bytes. They agree except in the
+        // states that hold no usable key (a locked keyring, an unresolved no-key
+        // discovery), and those must fail closed rather than write plaintext. An
+        // unset `syncEncryptionOff` is a caller that models no encryption at all, so
+        // it reads as plaintext and this whole block stays inert for it.
+        const encryptedRead = material !== null || ctx.syncEncryptionOff === false;
+        logRemoteRead({
+            artifact: encryptedRead ? syncEncryptedArtifactName(SYNC_FILE_NAME) : SYNC_FILE_NAME,
+            exists: remote.exists,
+            kind: remote.exists ? (encryptedRead ? 'encrypted' : 'plaintext') : 'absent',
+            headerSalt: material?.salt,
+            headerKdf: material?.params,
+            version,
+            foreignSalt: false,
+            decision: !remote.exists
+                ? 'absent'
+                : encryptedRead
+                    ? (version === 'strong' ? 'decrypt' : 'version-unavailable')
+                    : (version === 'strong' ? 'plaintext' : 'legacy-plaintext'),
+        });
+        if (remote.exists && version !== 'strong') {
+            if (encryptedRead) {
+                throw new SyncEncryptionRemoteVersionUnavailableError('WebDAV encrypted sync document');
+            }
+            if (!ctx.allowLegacyWebdavPlaintext) {
+                // The ladder below degrades this cycle to the bounded legacy write.
+                // Log the validator the server actually sent so the next report says so.
+                posture?.onWeakEtagPlaintextRead?.(remote.strongEtag ?? null);
+            }
+        }
+        return remote;
+    };
+
     /** Dropbox token-retry policy: try with the current token; on an
      *  unauthorized response, force-refresh once and retry once; any other
      *  error, or a second unauthorized response, propagates. Outer transient
@@ -233,7 +344,7 @@ export function createSyncBackendIO(ctx: SyncBackendContext, transport: SyncTran
                 }
                 ctx.syncUrl = normalizeWebdavUrl(ctx.webdav.url);
                 try {
-                    const remote = await transport.webdavGet();
+                    const remote = await readWebdavDocument();
                     webdavDocumentVersion = { exists: remote.exists, strongEtag: remote.strongEtag };
                     webdavDocumentSnapshot = snapshotWebdavRead(remote);
                     // A plaintext endpoint that answered this read without a strong ETag cannot
@@ -318,7 +429,7 @@ export function createSyncBackendIO(ctx: SyncBackendContext, transport: SyncTran
                         // immediately before one non-retried plaintext PUT. Current-version
                         // cycles remain locally serialized, but peer races are unavoidable.
                         await assertRemoteMutationFenceHeld?.();
-                        const confirmed = await transport.webdavGet();
+                        const confirmed = await readWebdavDocument();
                         if (snapshotWebdavRead(confirmed) !== webdavDocumentSnapshot) {
                             throw new SyncRemoteWriteConflict();
                         }

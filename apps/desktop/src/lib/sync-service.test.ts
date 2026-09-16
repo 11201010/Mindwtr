@@ -3328,7 +3328,7 @@ describe('SyncService testability hooks', () => {
             invoke: invoke as unknown as <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
             isTauriRuntime: () => true,
         });
-        const io = (SyncService as any).createBackendIO({
+        const io = await (SyncService as any).createBackendIO({
             backend: 'file',
             usesConfigOverride: false,
             networkWentOffline: false,

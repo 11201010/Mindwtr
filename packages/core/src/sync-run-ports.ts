@@ -5,6 +5,8 @@ import type { CloudProvider } from './sync-client-helpers';
 import type { SyncBackend } from './sync-service-utils';
 import type { buildMergeSummaryLog } from './sync-log-utils';
 import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
+import type { SyncCryptoKdfParams, SyncKeyMaterial } from './sync-crypto';
+import type { SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
 
 /**
  * ADR 0014 — shared sync orchestration ports.
@@ -16,6 +18,34 @@ import type { SyncRemoteMutationFenceLease } from './sync-remote-fence';
  * skip/retry/pending-write policy, and conflict-diagnostics shaping; apps own
  * transports, platform storage, and UI notification behind these ports.
  */
+
+/**
+ * Encryption posture for one cycle's WebDAV document reads (#1056 / #1138).
+ *
+ * `createSyncBackendIO` owns the decision itself — which read outcome is a
+ * refusal, which diagnostics line describes it, and in what order the durable
+ * marks are written. This port carries only the parts that are genuinely
+ * platform truths: the key material this device holds, the platform's log and
+ * durable-state sinks (each already bound to that cycle's location scope), and
+ * the error class the platform raises for "the remote is encrypted and this
+ * device has no key" — desktop wraps the Rust-mirrored sentinel so string-form
+ * classification recognizes it, mobile has its own class.
+ */
+export type SyncEncryptionPosture = {
+    /** Key material for this cycle's artifacts, or null when this device holds none. */
+    material: SyncKeyMaterial | null;
+    /** One `remote-read` diagnostics line per document read seam. */
+    logRemoteRead(input: SyncEncryptionRemoteReadLogInput): void;
+    /** A peer disabled encryption at the sync location. Persisted before the cycle fails. */
+    onRemotePlaintextDiscovered(): void | Promise<void>;
+    /** Ciphertext this device has no key for. Persisted before the cycle fails. */
+    onRemoteEncryptionDiscovered(discovered: { salt: Uint8Array; params: SyncCryptoKdfParams }): void | Promise<void>;
+    /** The platform's no-key error, thrown after the discovery is persisted. */
+    noKeyError(): Error;
+    /** Optional: a plaintext read arrived without a strong ETag on a cycle not yet
+     *  proven legacy. Platforms log the validator the server actually sent. */
+    onWeakEtagPlaintextRead?(etag: string | null): void;
+};
 
 export type SyncRunSkipReason = 'offline' | 'requeued' | 'unchanged' | 'pendingRemoteWriteBackoff' | 'remoteFenceBusy' | 'fileSyncLockBusy' | 'disabled';
 

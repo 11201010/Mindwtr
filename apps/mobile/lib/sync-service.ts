@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { AppData, SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSyncEncryptionErrorExtra, buildSyncEncryptionRemoteReadExtra, buildSyncEncryptionStateExtra, type SyncEncryptionState, type SyncEncryptionStateDecision, acquireSyncRemoteMutationFence, clearIdleSyncCycleSnapshot, createDropboxSyncRemoteMutationFencePort, createSyncOrchestrator, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl, probeWebdavSyncCompatibility, runSerializedSyncDocumentOperation, runSharedSyncCycle, useTaskStore, isSandboxMode, isWorkspaceTransitionActive, webdavGetSyncDocument, webdavHeadFile, webdavPutSyncDocument, syncEncryptedArtifactName, markRemoteEncryptionDiscovered, markRemotePlaintextDiscovered, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, SyncFileLockUnavailableError, SyncRemoteWriteConflict, type SyncKeyMaterial, cloudGetJson, cloudHeadJson, cloudPutJson, flushPendingSave, performSyncCycle, withRetry, isRetryableError, isRetryableWebdavReadError, isWebdavInvalidJsonError, normalizeStrongWebdavEtag, normalizeWebdavUrl, normalizeCloudUrl, createSyncBackendIO, buildFastSyncScope, hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, getInMemoryAppDataSnapshot, createAbortableFetch, normalizeCloudProvider as normalizeCoreCloudProvider, isDropboxUnauthorizedError, parseFastSyncState, serializeFastSyncState, summarizeTaskLifecycleCounts, decodeUriSafe, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES, SYNC_FILE_NAME, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS, CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, type Attachment, type CloudProvider, type FastSyncState, type SyncBackendContext, type SyncBackendIO, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage, type SyncTransport } from '@mindwtr/core';
+import { AppData, SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSyncEncryptionErrorExtra, buildSyncEncryptionRemoteReadExtra, buildSyncEncryptionStateExtra, type SyncEncryptionState, type SyncEncryptionStateDecision, acquireSyncRemoteMutationFence, clearIdleSyncCycleSnapshot, createDropboxSyncRemoteMutationFencePort, createSyncOrchestrator, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl, probeWebdavSyncCompatibility, runSerializedSyncDocumentOperation, runSharedSyncCycle, useTaskStore, isSandboxMode, isWorkspaceTransitionActive, webdavGetSyncDocument, webdavHeadFile, webdavPutSyncDocument, syncEncryptedArtifactName, markRemoteEncryptionDiscovered, markRemotePlaintextDiscovered, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, SyncFileLockUnavailableError, SyncRemoteWriteConflict, type SyncKeyMaterial, cloudGetJson, cloudHeadJson, cloudPutJson, flushPendingSave, performSyncCycle, withRetry, isRetryableError, isRetryableWebdavReadError, isWebdavInvalidJsonError, normalizeWebdavUrl, normalizeCloudUrl, createSyncBackendIO, type SyncEncryptionPosture, buildFastSyncScope, hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, persistExternalCalendars as persistExternalCalendarsForSync, getInMemoryAppDataSnapshot, createAbortableFetch, normalizeCloudProvider as normalizeCoreCloudProvider, isDropboxUnauthorizedError, parseFastSyncState, serializeFastSyncState, summarizeTaskLifecycleCounts, decodeUriSafe, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES, SYNC_FILE_NAME, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS, CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, type Attachment, type CloudProvider, type FastSyncState, type SyncBackendContext, type SyncBackendIO, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage, type SyncTransport } from '@mindwtr/core';
 import { mobileStorage } from './storage-adapter';
 import { logInfo, logSyncError, logWarn, sanitizeLogMessage } from './app-log';
 import { readSyncFileVersioned, resolveSyncFileUri, writeSyncFile } from './storage-file';
@@ -1658,7 +1658,10 @@ class MobileSyncRun {
         };
         this.ensureWebdavSyncNotRateLimited();
         try {
-          const result = await withRetry(
+          // Raw read only. What an encrypted / plaintext / no-strong-ETag outcome
+          // MEANS is decided once by `createSyncBackendIO` through the encryption
+          // posture port (`createBackendIO` below).
+          return await withRetry(
             () => webdavGetSyncDocument<AppData>(webdavConfig.url, {
               ...requestOptions,
               material: this.encryptionMaterial ?? undefined,
@@ -1666,82 +1669,6 @@ class MobileSyncRun {
             }),
             WEBDAV_READ_RETRY_OPTIONS
           );
-          const webdavArtifact = this.encryptionMaterial
-            ? syncEncryptedArtifactName(SYNC_FILE_NAME)
-            : SYNC_FILE_NAME;
-          const webdavVersion = normalizeStrongWebdavEtag(result.strongEtag)
-            ? 'strong'
-            : result.strongEtag ? 'weak' : 'none';
-          if (result.state === 'remote-plaintext') {
-            // A peer disabled encryption at the sync location. Persist first (the state must
-            // survive a restart), then fail the cycle. Nothing on the remote is touched, and
-            // this device never follows the remote down to plaintext on its own.
-            this.logRemoteRead({
-              artifact: SYNC_FILE_NAME,
-              exists: true,
-              kind: 'plaintext',
-              version: webdavVersion,
-              decision: 'plaintext-discovered',
-            });
-            markRemotePlaintextDiscovered(syncEncryptionLocalState, this.locationScope);
-            await flushSyncEncryptionLocalState();
-            throw new SyncEncryptionRemotePlaintextError();
-          }
-          if (result.state === 'encrypted-no-key') {
-            this.logRemoteRead({
-              artifact: webdavArtifact,
-              exists: true,
-              kind: 'encrypted',
-              headerSalt: result.salt,
-              headerKdf: result.params,
-              version: webdavVersion,
-              foreignSalt: this.encryptionMaterial !== null,
-              decision: webdavVersion === 'strong' ? 'no-key' : 'version-unavailable',
-            });
-            if (!normalizeStrongWebdavEtag(result.strongEtag)) {
-              throw new SyncEncryptionRemoteVersionUnavailableError('WebDAV encrypted sync document');
-            }
-            // Persist first (decision #5: the state must survive a restart), then fail
-            // the cycle. Nothing on the remote is touched on this path.
-            markRemoteEncryptionDiscovered(syncEncryptionLocalState, result, this.locationScope);
-            await flushSyncEncryptionLocalState();
-            this.markCandidateEncryptedRemoteProven();
-            throw new SyncEncryptionNoKeyError();
-          }
-          this.logRemoteRead({
-            artifact: webdavArtifact,
-            exists: result.exists,
-            kind: result.exists ? (this.encryptionMaterial ? 'encrypted' : 'plaintext') : 'absent',
-            headerSalt: this.encryptionMaterial?.salt,
-            headerKdf: this.encryptionMaterial?.params,
-            version: webdavVersion,
-            foreignSalt: false,
-            decision: !result.exists
-              ? 'absent'
-              : this.encryptionMaterial
-                ? 'decrypt'
-                : webdavVersion === 'strong' ? 'plaintext' : 'legacy-plaintext',
-          });
-          if (result.exists && !normalizeStrongWebdavEtag(result.strongEtag)) {
-            if (!this.syncEncryptionOff) {
-              // Encrypted CAS depends on the strong ETag; refuse the cycle.
-              throw new SyncEncryptionRemoteVersionUnavailableError('WebDAV encrypted sync document');
-            }
-            if (!ctx.allowLegacyWebdavPlaintext) {
-              // Plaintext cycle: the ladder degrades to the bounded legacy write
-              // (packages/core/src/sync-backend-io.ts). Log the validator we actually
-              // saw so the next report says what the server sent.
-              void logInfo('WebDAV read returned no strong ETag; using the plaintext compatibility write', {
-                scope: 'sync',
-                extra: { etag: String(result.strongEtag ?? 'none') },
-              });
-            }
-          }
-          return {
-            data: result.data,
-            exists: result.exists,
-            strongEtag: result.strongEtag,
-          };
         } catch (error) {
           // The core machine maps invalid-JSON reads to the repair-write path;
           // only genuine transport failures count toward the rate limiter.
@@ -2052,7 +1979,36 @@ class MobileSyncRun {
    *  `createSyncBackendIO`; this only supplies mobile's transport truths. */
   private createBackendIO(): SyncBackendIO {
     const ctx = this.createBackendContext();
-    const io = createSyncBackendIO(ctx, this.createBackendTransport(ctx));
+    // The WebDAV read posture decision lives in the shared machine; this port
+    // carries only mobile's own truths — its key material, its diagnostics and
+    // durable-state sinks (already bound to this cycle's location scope), and
+    // its no-key error class.
+    const encryptionPosture: SyncEncryptionPosture = {
+      material: this.encryptionMaterial,
+      logRemoteRead: (input) => this.logRemoteRead(input),
+      // Persist first (decision #5: the state must survive a restart); the machine
+      // fails the cycle afterwards. Nothing on the remote is touched on this path.
+      onRemotePlaintextDiscovered: async () => {
+        markRemotePlaintextDiscovered(syncEncryptionLocalState, this.locationScope);
+        await flushSyncEncryptionLocalState();
+      },
+      onRemoteEncryptionDiscovered: async (discovered) => {
+        markRemoteEncryptionDiscovered(syncEncryptionLocalState, discovered, this.locationScope);
+        await flushSyncEncryptionLocalState();
+        this.markCandidateEncryptedRemoteProven();
+      },
+      noKeyError: () => new SyncEncryptionNoKeyError(),
+      onWeakEtagPlaintextRead: (etag) => {
+        // Plaintext cycle: the ladder degrades to the bounded legacy write
+        // (packages/core/src/sync-backend-io.ts). Log the validator we actually
+        // saw so the next report says what the server sent.
+        void logInfo('WebDAV read returned no strong ETag; using the plaintext compatibility write', {
+          scope: 'sync',
+          extra: { etag: String(etag ?? 'none') },
+        });
+      },
+    };
+    const io = createSyncBackendIO(ctx, this.createBackendTransport(ctx), encryptionPosture);
     return {
       ...io,
       // `this.syncUrl` is set during `resolveWebdavBackendConfig`/
