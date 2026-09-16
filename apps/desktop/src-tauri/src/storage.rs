@@ -5478,14 +5478,23 @@ fn parse_json_relaxed(raw: &str) -> Result<Value, serde_json::Error> {
     }
 
     // 1) Strict parse (fast path)
-    if let Ok(value) = serde_json::from_str::<Value>(&sanitized) {
-        return Ok(value);
-    }
+    let strict_error = match serde_json::from_str::<Value>(&sanitized) {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
 
     // 2) Lenient parse: parse the first JSON value and ignore any trailing bytes.
     // This makes sync resilient to "mid-write" files (e.g., Syncthing replacing data.json).
-    let start = sanitized.find(|c| c == '{' || c == '[').unwrap_or(0);
-    let mut de = serde_json::Deserializer::from_str(&sanitized[start..]);
+    // The document must still START where a document starts: a leading NUL/whitespace run is
+    // fine (sparse or partial writes), but real garbage before the first brace means the head
+    // of the file is gone. Scanning past it would parse an INTERIOR object (a single task) as
+    // the whole document, which normalizes into an empty remote and lets this device's
+    // snapshot overwrite peer edits. Fail closed and let the caller retry.
+    let body = sanitized.trim_start_matches(|c: char| c == '\u{0}' || c.is_whitespace());
+    if !body.starts_with('{') && !body.starts_with('[') {
+        return Err(strict_error);
+    }
+    let mut de = serde_json::Deserializer::from_str(body);
     Value::deserialize(&mut de)
 }
 
@@ -5494,6 +5503,28 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
     use std::sync::{Arc, Barrier};
+
+    /// A torn/NUL-headed `data.json` (VFS or network mount mid-write) can leave the file
+    /// starting inside the document. Scanning forward to the first `{` would parse an interior
+    /// task object as the whole document, which then reads as an empty remote and lets this
+    /// device overwrite peer edits. Refuse it instead.
+    #[test]
+    fn relaxed_parse_refuses_a_garbage_prefix_before_the_first_brace() {
+        let torn = "\u{0}\u{0}\u{0}sks\":[{\"id\":\"t1\",\"title\":\"Nested\"}]}";
+        assert!(
+            parse_json_relaxed(torn).is_err(),
+            "expected a torn prefix to be refused"
+        );
+    }
+
+    /// The lenient path exists for a COMPLETE document plus a stale tail (Syncthing replacing
+    /// data.json under us). That must keep working.
+    #[test]
+    fn relaxed_parse_still_accepts_a_complete_document_with_a_stale_tail() {
+        let raw = "{\"tasks\":[{\"id\":\"t1\"}],\"projects\":[]}{\"tasks\":[]}";
+        let value = parse_json_relaxed(raw).expect("complete document with a stale tail");
+        assert_eq!(value["tasks"][0]["id"], "t1");
+    }
 
     #[test]
     fn snapshot_append_preserves_unchanged_rows() {

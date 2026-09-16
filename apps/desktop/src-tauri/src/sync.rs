@@ -3765,6 +3765,19 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// A bare object with no recognised surface is not a sync document — it is what a torn
+    /// read leaves behind. Accepting it would normalize into an empty remote and let this
+    /// device's snapshot overwrite peer edits.
+    #[test]
+    fn a_payload_without_any_recognised_surface_is_invalid() {
+        assert!(sync_payload_is_valid(&serde_json::json!({})).is_err());
+        assert!(
+            sync_payload_is_valid(&serde_json::json!({"id": "t1", "title": "Nested"})).is_err()
+        );
+        assert!(sync_payload_is_valid(&serde_json::json!({"tasks": []})).is_ok());
+        assert!(sync_payload_is_valid(&serde_json::json!({"version": 1})).is_ok());
+    }
+
     const WEBDAV_TEST_SCOPE: &str =
         r#"["webdav","https://dav.example.com/remote.php/dav/","alice"]"#;
 
@@ -16443,6 +16456,20 @@ fn sync_payload_is_valid(value: &Value) -> Result<(), String> {
         let Some(object) = value.as_object() else {
             return Err("Invalid sync payload shape: expected an object".to_string());
         };
+        // A document with no recognised surface at all is what a torn read leaves behind (an
+        // interior fragment, or an empty object from a zero-length file). Normalizing it would
+        // fabricate an empty remote and let this device's snapshot overwrite peer edits.
+        let recognised_surfaces = [
+            "tasks", "projects", "sections", "areas", "people", "settings", "version",
+        ];
+        if !recognised_surfaces
+            .iter()
+            .any(|key| object.contains_key(*key))
+        {
+            return Err(
+                "Invalid sync payload shape: no recognised sync surface is present".to_string(),
+            );
+        }
         for surface in ["tasks", "projects", "sections", "areas", "people"] {
             let Some(entities) = object.get(surface) else {
                 continue;
