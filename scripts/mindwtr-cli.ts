@@ -1,7 +1,26 @@
 #!/usr/bin/env bun
-import { type Task } from '@mindwtr/core';
+import { type LogPayload, sanitizeForLog, sanitizeLogContext, setLogger, type Task } from '@mindwtr/core';
 
 import { asTaskStatus, createMindwtrAutomationService } from './mindwtr-automation-core';
+
+// Core's default logger sink writes to stdout; stdout here is the machine-readable
+// contract (`ok`, ids, JSON). Route core log lines to stderr as JSON, like the MCP server.
+setLogger((event: LogPayload) => {
+    const context = sanitizeLogContext({
+        ...event.context,
+        ...(event.error !== undefined ? { error: event.error } : {}),
+    });
+    process.stderr.write(
+        `${JSON.stringify({
+            ts: new Date().toISOString(),
+            level: event.level,
+            scope: sanitizeForLog(event.scope ?? 'core'),
+            ...(event.category ? { category: sanitizeForLog(event.category) } : {}),
+            message: sanitizeForLog(event.message),
+            ...(context ? { context } : {}),
+        })}\n`,
+    );
+});
 
 type Flags = Record<string, string | boolean>;
 

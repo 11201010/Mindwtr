@@ -138,7 +138,8 @@ describe('mindwtr-cli', () => {
 
         const deleted = runCli(dataPath, ['delete', taskId]);
         expect(deleted.exitCode).toBe(0);
-        expect(deleted.stdout.trim()).toBe('ok');
+        // stdout is the machine-readable contract: core log lines must go to stderr.
+        expect(deleted.stdout).toBe('ok\n');
 
         const listedDeleted = runCli(dataPath, ['list', '--all', '--deleted']);
         expect(listedDeleted.exitCode).toBe(0);

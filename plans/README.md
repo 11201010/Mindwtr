@@ -6,7 +6,7 @@ Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = mai
 
 | Plan | Finding | Priority | Effort | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
-| [088](088-cli-stdout-and-governance-glob.md) | ARCH-01: CLI stdout log leak + unwired scripts tests | P2 | S | None | TODO |
+| [088](088-cli-stdout-and-governance-glob.md) | ARCH-01: CLI stdout log leak + unwired scripts tests | P2 | S | None | DONE |
 | [089](089-capture-webhook-attachment-admission.md) | SEC-01: capture webhook skips attachment admission | P1 | S | None | TODO |
 | [090](090-mobile-managed-attachment-gate.md) | SEC-02: managed-attachments gate is a bare prefix | P1 | S | None | TODO |
 | [091](091-android-alarm-map-persistence.md) | REL-01: alarm map lost when a reschedule aborts | P2 | S | None | TODO |
