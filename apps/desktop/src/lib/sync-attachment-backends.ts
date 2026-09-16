@@ -1960,27 +1960,38 @@ export async function syncFileAttachments(
         ) continue;
         const rawUri = attachment.uri ? stripFileScheme(attachment.uri) : '';
         if (!rawUri || /^https?:\/\//i.test(rawUri)) continue;
-        const localPresence = await localFilePresence(rawUri, attachment);
-        if (localPresence === 'unreadable') {
+        if (await localFilePresence(rawUri, attachment) === 'unreadable') {
             attachmentsById.delete(attachment.id);
-            continue;
-        }
-        if (localPresence !== 'present' || !reconcilePresence) continue;
-        try {
-            const remotePath = await resolveFileBackendPath(join, baseSyncDir, attachment.cloudKey);
-            if (!(await syncFsExists(remotePath))) {
-                const patched: Attachment = { ...attachment, cloudKey: undefined };
-                allPatches.set(patched.id, patched);
-                attachmentsById.set(patched.id, patched);
-            }
-        } catch (error) {
-            logAttachmentWarning(deps, 'Failed to check sync-folder attachment presence', error);
         }
     }
 
+    // The remote half is the same proof the other three backends run, with the sync folder
+    // as the remote: a `false` from the folder clears the cloud reference so the lifecycle
+    // re-uploads, and a probe that threw is a "don't know" that clears nothing.
+    const presenceProven = !reconcilePresence || await reconcileRemoteAttachmentPresence({
+        label: 'File Sync',
+        attachmentsById,
+        localFilePresence,
+        recordPatch: (attachment) => {
+            allPatches.set(attachment.id, attachment);
+            attachmentsById.set(attachment.id, attachment);
+        },
+        deps,
+        createProbe: async () => async (attachment) => {
+            try {
+                return await syncFsExists(
+                    await resolveFileBackendPath(join, baseSyncDir, attachment.cloudKey ?? ''),
+                );
+            } catch (error) {
+                logAttachmentWarning(deps, 'Failed to check sync-folder attachment presence', error);
+                return null;
+            }
+        },
+    });
+
     // Only a completed proof advances the stamp; an activation probe never stamps, since the
     // scope names the committed folder rather than the candidate one.
-    if (reconcilePresence && helpers?.activationProbe !== true) {
+    if (reconcilePresence && presenceProven && helpers?.activationProbe !== true) {
         markAttachmentPresenceReconciled(deps.presenceScope, deps.logSyncWarning);
     }
 

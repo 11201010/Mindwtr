@@ -2704,6 +2704,7 @@ describe('desktop sync attachment backends', () => {
     describe('remote attachment presence repair (#1119 follow-up)', () => {
         const CLOUD_SCOPE = JSON.stringify(['cloud', 'selfhosted', 'https://cloud.example']);
         const DROPBOX_SCOPE = JSON.stringify(['cloud', 'dropbox']);
+        const FILE_SCOPE = JSON.stringify(['file', '/candidate-sync']);
 
         /** cloudKey set, bytes readable here, nothing pending: the one shape the repair may act on. */
         const uploadedData = (): AppData => {
@@ -2734,6 +2735,9 @@ describe('desktop sync attachment backends', () => {
         ));
         const methodsOf = (fetcher: ReturnType<typeof vi.fn>): string[] =>
             fetcher.mock.calls.map(([, init]) => (init as RequestInit | undefined)?.method ?? 'GET');
+
+        const runFile = (appData: AppData, deps: AttachmentBackendDeps) =>
+            syncFileAttachments(appData, '/candidate-sync', deps);
 
         const runCloud = (appData: AppData, deps: AttachmentBackendDeps) => syncCloudAttachments(
             appData,
@@ -2881,6 +2885,58 @@ describe('desktop sync attachment backends', () => {
 
             expect(dropboxMocks.listDropboxFolderFiles).toHaveBeenCalledTimes(1);
             expect(hasCompletedAttachmentPresenceReconciliation(DROPBOX_SCOPE)).toBe(false);
+        });
+
+        it('file: a sync-folder probe that throws leaves every cloud reference alone and does not stamp', async () => {
+            const deps = depsWith(FILE_SCOPE, vi.fn());
+            const appData = uploadedData();
+            syncFsMocks.exists.mockRejectedValue(new Error('sync mount unavailable'));
+
+            const result = await runFile(appData, deps);
+
+            const folded = typeof result === 'object' && result !== null ? result : appData;
+            expect(cloudKeyOf(folded)).toBe('attachments/attachment-1.txt');
+            expect(syncFsMocks.reserveAttachmentGeneration).not.toHaveBeenCalled();
+            expect(hasCompletedAttachmentPresenceReconciliation(FILE_SCOPE)).toBe(false);
+        });
+
+        it('file: a file missing from the sync folder is cleared, re-uploaded, and stamps', async () => {
+            const deps = depsWith(FILE_SCOPE, vi.fn());
+            syncFsMocks.exists.mockResolvedValue(false);
+
+            const result = expectFoldedData(await runFile(uploadedData(), deps));
+
+            expect(syncFsMocks.publishAttachmentGeneration).toHaveBeenCalledTimes(1);
+            expect(cloudKeyOf(result)).toBe(`attachments/attachment-1.${DOWNLOAD_BYTES_HASH}.txt`);
+            expect(hasCompletedAttachmentPresenceReconciliation(FILE_SCOPE)).toBe(true);
+        });
+
+        it('file: clears a proven-missing file but does not stamp after a later unknown', async () => {
+            const appData = uploadedData();
+            appData.tasks.push({
+                ...appData.tasks[0],
+                id: 'task-2',
+                attachments: [{
+                    ...appData.tasks[0].attachments![0],
+                    id: 'attachment-2',
+                    title: 'second.txt',
+                    uri: '/app-data/mindwtr/attachments/second.txt',
+                    cloudKey: 'attachments/attachment-2.txt',
+                }],
+            });
+            const deps = depsWith(FILE_SCOPE, vi.fn());
+            syncFsMocks.exists.mockImplementation(async (path: string) => {
+                if (path === '/candidate-sync/attachments/attachment-2.txt') {
+                    throw new Error('sync mount unavailable');
+                }
+                return false;
+            });
+
+            const result = expectFoldedData(await runFile(appData, deps));
+
+            expect(cloudKeyOf(result)).toBe(`attachments/attachment-1.${DOWNLOAD_BYTES_HASH}.txt`);
+            expect(result.tasks[1].attachments?.[0]?.cloudKey).toBe('attachments/attachment-2.txt');
+            expect(hasCompletedAttachmentPresenceReconciliation(FILE_SCOPE)).toBe(false);
         });
 
         it('never clears a cloud reference for an attachment whose bytes are not readable here', async () => {
