@@ -20,6 +20,10 @@ const makeTempDir = () => {
     return dir;
 };
 
+// Every test here spawns the script as a subprocess, which costs seconds on a
+// loaded runner. Bun's 5 s default is not enough now that CI runs this file.
+const SPAWN_TEST_TIMEOUT_MS = 60_000;
+
 const runCli = (dataPath: string, args: string[]): CliResult => {
     const result = Bun.spawnSync({
         cmd: [BUN_BIN, 'scripts/mindwtr-cli.ts', '--', '--data', dataPath, ...args],
@@ -77,7 +81,7 @@ describe('mindwtr-cli', () => {
         const row = db.prepare('SELECT title FROM tasks WHERE id = ?').get('json-only-task') as { title: string } | null;
         db.close();
         expect(row?.title).toBe('JSON only task');
-    });
+    }, SPAWN_TEST_TIMEOUT_MS);
 
     test('preserves projectId when repairing JSON-only project tasks', () => {
         const dir = makeTempDir();
@@ -122,7 +126,7 @@ describe('mindwtr-cli', () => {
         const row = db.prepare('SELECT projectId FROM tasks WHERE id = ?').get(taskId) as { projectId: string } | null;
         db.close();
         expect(row?.projectId).toBe(projectId);
-    });
+    }, SPAWN_TEST_TIMEOUT_MS);
 
     test('supports lifecycle commands and reference status updates', () => {
         const dir = makeTempDir();
@@ -168,7 +172,7 @@ describe('mindwtr-cli', () => {
         const completedTask = runCli(dataPath, ['get', secondId]);
         expect(completedTask.exitCode).toBe(0);
         expect(completedTask.stdout).toContain('"status": "done"');
-    });
+    }, SPAWN_TEST_TIMEOUT_MS);
 
     // list --query used to route through core searchAll, which caps at SEARCH_RESULT_LIMIT
     // (200) for the UI palette — so a CLI list silently stopped at 200 matches.
@@ -195,7 +199,7 @@ describe('mindwtr-cli', () => {
         const listed = runCli(dataPath, ['list', '--all', '--query', 'Report']);
         expect(listed.exitCode).toBe(0);
         expect(listed.stdout.trim().split('\n')).toHaveLength(250);
-    });
+    }, SPAWN_TEST_TIMEOUT_MS);
 
     test('rejects invalid task statuses', () => {
         const dir = makeTempDir();
@@ -208,5 +212,5 @@ describe('mindwtr-cli', () => {
         const invalid = runCli(dataPath, ['update', taskId, '{"status":"todo"}']);
         expect(invalid.exitCode).toBe(1);
         expect(invalid.stderr).toContain('Invalid status: todo');
-    });
+    }, SPAWN_TEST_TIMEOUT_MS);
 });

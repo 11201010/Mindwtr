@@ -52,6 +52,10 @@ type SpawnApiOptions = {
   token?: string;
 };
 
+// Every test here spawns the script as a subprocess, which costs seconds on a
+// loaded runner. Bun's 5 s default is not enough now that CI runs this file.
+const SPAWN_TEST_TIMEOUT_MS = 60_000;
+
 const spawnApi = (
   port: number,
   dataPath: string,
@@ -111,7 +115,7 @@ describe('mindwtr-api', () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain('MINDWTR_API_TOKEN');
     expect(stderr).toContain('--dangerously-disable-auth');
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('refuses wildcard CORS configuration', async () => {
     const dir = makeTempDir();
@@ -132,7 +136,7 @@ describe('mindwtr-api', () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain('MINDWTR_API_CORS_ORIGIN');
     expect(stderr).toContain('exact http(s) origin');
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('requires the configured bearer token for API requests', async () => {
     const dir = makeTempDir();
@@ -159,7 +163,7 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('does not expose CORS headers unless an origin is configured', async () => {
     const dir = makeTempDir();
@@ -188,7 +192,7 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('returns CORS headers only to the exact configured origin', async () => {
     const dir = makeTempDir();
@@ -228,7 +232,7 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('lists active areas from the Local API', async () => {
     const dir = makeTempDir();
@@ -302,7 +306,7 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('filters tasks by isFocusedToday from the Local API', async () => {
     const dir = makeTempDir();
@@ -355,7 +359,7 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 
   test('manages project sections and task sectionId from the Local API', async () => {
     const dir = makeTempDir();
@@ -457,5 +461,5 @@ describe('mindwtr-api', () => {
       server.kill();
       await server.exited.catch(() => undefined);
     }
-  });
+  }, SPAWN_TEST_TIMEOUT_MS);
 });
