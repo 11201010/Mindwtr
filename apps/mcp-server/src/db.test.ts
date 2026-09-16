@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -86,6 +86,36 @@ describe('mcp db bootstrap', () => {
       expect(warnSpy).toHaveBeenCalledWith(`[mindwtr-mcp] Bootstrapping SQLite database from fallback data.json: ${dataPath}`);
       expect(warnSpy).toHaveBeenCalledWith(`[mindwtr-mcp] Bootstrapped SQLite database at: ${dbPath}`);
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('never exposes the canonical database path while the bootstrap is still running', async () => {
+    const dir = createTempDir();
+    const dbPath = join(dir, 'mindwtr.db');
+    const dataPath = join(dir, 'data.json');
+    writeFileSync(
+      dataPath,
+      JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} })
+    );
+
+    const core = await import('@mindwtr/core');
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    let canonicalPathDuringSave: boolean | null = null;
+    const saveSpy = spyOn(core.SqliteAdapter.prototype, 'saveData').mockImplementation(async () => {
+      // A SIGKILL or host startup timeout here runs no cleanup at all, so the
+      // canonical path must not hold a schema-only database yet.
+      canonicalPathDuringSave = existsSync(dbPath);
+      throw new Error('interrupted mid-bootstrap');
+    });
+
+    try {
+      await expect(ensureMindwtrDbPath({ dbPath })).rejects.toThrow('interrupted mid-bootstrap');
+      expect(canonicalPathDuringSave).toBe(false);
+      expect(existsSync(dbPath)).toBe(false);
+      expect(readdirSync(dir)).toEqual(['data.json']);
+    } finally {
+      saveSpy.mockRestore();
       warnSpy.mockRestore();
     }
   });

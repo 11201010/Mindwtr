@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { dirname } from 'path';
 
@@ -98,21 +98,38 @@ async function bootstrapMindwtrDbFromJson(dbPath: string, dataJsonPath: string):
   const data = normalizeBootstrapData(core, parsed);
 
   mkdirSync(dirname(dbPath), { recursive: true });
-  const createdDb = !existsSync(dbPath);
-  const { client, close } = await createBootstrapSqliteClient(dbPath);
+  // Build at a temp path and rename into place. A SIGKILL, a host startup timeout,
+  // or the server's own SIGINT handler partway through must never leave a
+  // schema-only database at the canonical path: the next start would see the file,
+  // skip the bootstrap, and serve an empty library forever.
+  const tempPath = `${dbPath}.bootstrap-tmp`;
+  const removeTemp = () => {
+    rmSync(tempPath, { force: true });
+    rmSync(`${tempPath}-shm`, { force: true });
+    rmSync(`${tempPath}-wal`, { force: true });
+  };
+  // A temp left by an interrupted earlier start is never reused. Two first starts
+  // at once would still collide, exactly as the previous in-place build did.
+  removeTemp();
+  const { client, close } = await createBootstrapSqliteClient(tempPath);
+  let closed = false;
+  const closeOnce = () => {
+    if (closed) return;
+    closed = true;
+    close();
+  };
   try {
     const adapter = new core.SqliteAdapter(client);
     await adapter.ensureSchema();
     await adapter.saveData(data);
-  } catch (error) {
-    if (createdDb) {
-      rmSync(dbPath, { force: true });
-      rmSync(`${dbPath}-shm`, { force: true });
-      rmSync(`${dbPath}-wal`, { force: true });
-    }
-    throw error;
+    // Fold the WAL into the database file before the rename: the -wal sibling is
+    // left behind at the temp path, so the renamed file has to be self-contained.
+    await client.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    closeOnce();
+    renameSync(tempPath, dbPath);
   } finally {
-    close();
+    closeOnce();
+    removeTemp();
   }
 }
 
