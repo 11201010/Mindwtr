@@ -224,11 +224,14 @@ const validateStoredAppData = (
     const parsed = parseSyncDocument(rawData, 'local');
     const validated = parsed.ok ? validateAppData(parsed.data) : parsed;
     if (!validated.ok) {
+        // Field paths only (indexes, never record content), so an operator can
+        // find the offending record instead of bisecting the whole namespace.
+        const sample = 'errors' in validated ? validated.errors.slice(0, 3).join('; ') : validated.error;
         logFailureWarn('Stored cloud data failed validation', {
             failureClass: 'validation',
             failureCode: 'stored_data_invalid',
         });
-        return { error: errorResponse('Stored data failed validation', 500) };
+        return { error: errorResponse(`Stored data failed validation: ${sample}`, 500) };
     }
     const legacyAttachmentsChanged = parsed.ok && parsed.legacyAttachmentsChanged;
     // Repaired in-memory records do not prove that the bytes on disk are safe

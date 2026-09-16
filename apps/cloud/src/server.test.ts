@@ -5570,7 +5570,12 @@ describe('cloud server api', () => {
 
             expect(response.status).toBe(500);
             const body = await response.json();
-            expect(body.error).toBe('Stored data failed validation');
+            // The body names the failing field so an operator can find the
+            // record, and still carries no stored content.
+            expect(body.error).toBe(
+                'Stored data failed validation: Invalid data: project createdAt/updatedAt must be valid ISO timestamps',
+            );
+            expect(body.error).not.toContain('broken-project');
 
             const serializedLogs = captured.join('');
             expect(serializedLogs).toContain('"failureClass":"validation"');

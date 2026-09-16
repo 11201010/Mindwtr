@@ -166,6 +166,46 @@ describe('legacy Cloud attachment URL recovery (#1205)', () => {
         expect(JSON.parse(readFileSync(filePath, 'utf8'))).toEqual(repaired);
     });
 
+    test('serves and repairs a partial attachment entry stored by an older REST client', async () => {
+        const data = legacyData() as unknown as { tasks: Record<string, unknown>[]; projects: Record<string, unknown>[] };
+        data.tasks[0].attachments = [{ id: 'attachment-1', kind: 'link', title: 'Ticket', uri: LINK }];
+        data.projects[0].attachments = [{ url: LINK }];
+        writeFileSync(filePath, JSON.stringify(data));
+
+        const response = await fetch(`${baseUrl}/v1/data`, { headers });
+        expect(response.status).toBe(200);
+        const body = await response.text();
+        const repaired = JSON.parse(body) as AppData;
+        expect(repaired.tasks[0].attachments?.[0]).toEqual({
+            id: 'attachment-1', kind: 'link', title: 'Ticket', uri: LINK,
+            createdAt: STAMP, updatedAt: STAMP,
+        });
+        expect(repaired.projects[0].attachments?.[0].kind).toBe('link');
+        expect(repaired.projects[0].attachments?.[0].uri).toBe(LINK);
+        expect(repaired.projects[0].attachments?.[0].title).toBe(LINK);
+        expect(JSON.parse(readFileSync(filePath, 'utf8'))).toEqual(repaired);
+
+        // The repair is published once; a second GET must not rewrite the file.
+        const before = statSync(filePath);
+        const reread = await fetch(`${baseUrl}/v1/data`, { headers });
+        expect(await reread.text()).toBe(body);
+        const after = statSync(filePath);
+        expect([after.ino, after.mtimeMs, after.ctimeMs]).toEqual([before.ino, before.mtimeMs, before.ctimeMs]);
+    });
+
+    test('names the offending field path when a stored attachment stays unreadable', async () => {
+        const data = legacyData() as unknown as { tasks: Record<string, unknown>[]; projects: Record<string, unknown>[] };
+        data.tasks[0].attachments = [{ id: 'attachment-1', kind: 'file', title: 'Report' }];
+        data.projects[0].attachments = LINK;
+        writeFileSync(filePath, JSON.stringify(data));
+
+        const response = await fetch(`${baseUrl}/v1/data`, { headers });
+        expect(response.status).toBe(500);
+        const body = await response.text();
+        expect(body).toContain('tasks[0].attachments[0]');
+        expect(body).not.toContain(LINK);
+    });
+
     test('does not replace an unsupported malformed document or trust it after rejection', async () => {
         const malformed = legacyData();
         malformed.tasks[0].attachments = 'not a URL';

@@ -249,6 +249,60 @@ describe('Sync document lifecycle', () => {
         expect(parsed.errors).toContain(expectedError);
     });
 
+    it('recovers partial legacy attachment entries instead of rejecting the document', () => {
+        const uri = 'https://example.test/issue/9';
+        const legacyUrl = 'https://example.test/wiki/9';
+        const input = createData();
+        input.projects = [{
+            id: 'project-1', title: 'Project', status: 'active', color: '#000000', order: 0,
+            tagIds: [], createdAt: '2026-07-01T10:00:00.000Z', updatedAt: '2026-07-02T11:00:00.000Z',
+            attachments: [
+                { id: 'a1', kind: 'link', title: 'Ticket', uri },
+                { url: legacyUrl },
+            ],
+        } as unknown as Project];
+        const original = structuredClone(input);
+
+        const first = parseSyncDocument(input, 'remote');
+        const second = parseSyncDocument(structuredClone(input), 'remote');
+        expect(first.ok).toBe(true);
+        if (!first.ok || !second.ok) throw new Error('Expected partial attachment entries to be recovered');
+
+        expect(input).toEqual(original);
+        expect(first.legacyAttachmentsChanged).toBe(true);
+        expect(first.data.projects[0].attachments).toEqual([
+            {
+                id: 'a1', kind: 'link', title: 'Ticket', uri,
+                createdAt: '2026-07-01T10:00:00.000Z', updatedAt: '2026-07-02T11:00:00.000Z',
+            },
+            {
+                id: generateDeterministicUUID(JSON.stringify([
+                    'legacy-attachment-link', 'project', 'project-1', legacyUrl,
+                ])),
+                kind: 'link', title: legacyUrl, uri: legacyUrl,
+                createdAt: '2026-07-01T10:00:00.000Z', updatedAt: '2026-07-02T11:00:00.000Z',
+            },
+        ]);
+        // Two peers repairing the same raw document must publish the same bytes.
+        expect(second.data).toEqual(first.data);
+        expect(() => toRemoteSyncDocument(first.data)).not.toThrow();
+        expect(parseSyncDocument(structuredClone(first.data), 'remote')).toEqual({ ok: true, data: first.data });
+    });
+
+    it.each([
+        ['no usable URI', { id: 'a1', kind: 'link', title: 'x' }, 'tasks[0].attachments[0].uri'],
+        ['a relative URI', { id: 'a1', kind: 'link', title: 'x', uri: '/local/path' }, 'tasks[0].attachments[0].createdAt'],
+        ['a file record', { id: 'a1', kind: 'file', uri: 'https://example.test/f' }, 'tasks[0].attachments[0].title'],
+    ])('still rejects an attachment entry with %s', (_label, attachment, expectedPath) => {
+        const input = createData();
+        input.tasks[0] = { ...input.tasks[0], attachments: [attachment] } as unknown as Task;
+
+        const parsed = parseSyncDocument(input, 'remote');
+        expect(parsed.ok).toBe(false);
+        if (parsed.ok) throw new Error('Expected the unrecoverable entry to be rejected');
+        expect(parsed.errors.some((error) => error.includes(expectedPath))).toBe(true);
+    });
+
     it('rejects id/kind-valid records with missing or malformed required fields', () => {
         const validAttachment = {
             id: 'attachment-valid',

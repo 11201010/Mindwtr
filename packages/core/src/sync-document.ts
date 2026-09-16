@@ -37,6 +37,63 @@ const parseAbsoluteHttpUrl = (value: string): string | null => {
 
 type LegacyAttachmentOwnerKind = 'task' | 'project';
 
+/**
+ * Timestamps a recovered attachment inherits from its owner, so two peers
+ * repairing the same raw document produce byte-identical records.
+ */
+const legacyAttachmentTimestamps = (owner: Record<string, unknown>): { createdAt: string; updatedAt: string } => {
+    const createdAt = isValidTimestamp(owner.createdAt)
+        ? owner.createdAt
+        : isValidTimestamp(owner.updatedAt)
+            ? owner.updatedAt
+            : LEGACY_ATTACHMENT_TIMESTAMP_SENTINEL;
+    const updatedAt = isValidTimestamp(owner.updatedAt) ? owner.updatedAt : createdAt;
+    return { createdAt, updatedAt };
+};
+
+/**
+ * A pre-1.3.0 REST client could store an attachment array entry with fields
+ * missing (`attachments: [{ kind: 'link', uri }]`, or a bare `{ url }`), and
+ * rejecting it made the whole namespace unreadable for every client. Repair
+ * only what an absolute HTTP(S) URL makes unambiguous; a `file` record is never
+ * invented from one, because its bytes are not addressable this way.
+ * Returns null when the entry stays a hard error.
+ */
+const repairLegacyAttachmentEntry = (
+    attachment: Record<string, unknown>,
+    owner: Record<string, unknown>,
+    ownerKind: LegacyAttachmentOwnerKind,
+): Attachment | null => {
+    if (attachment.kind === 'file') return null;
+    const uri = (typeof attachment.uri === 'string' ? parseAbsoluteHttpUrl(attachment.uri) : null)
+        ?? (typeof attachment.url === 'string' ? parseAbsoluteHttpUrl(attachment.url) : null);
+    if (!uri) return null;
+    let id: string;
+    if (isNonEmptyString(attachment.id)) {
+        id = attachment.id;
+    } else if (isNonEmptyString(owner.id)) {
+        id = generateDeterministicUUID(JSON.stringify([
+            'legacy-attachment-link',
+            ownerKind,
+            owner.id,
+            uri,
+        ]));
+    } else {
+        return null;
+    }
+    const ownerTimestamps = legacyAttachmentTimestamps(owner);
+    const { url: _legacyUrl, ...rest } = attachment;
+    return {
+        ...rest,
+        id,
+        kind: 'link',
+        title: typeof attachment.title === 'string' ? attachment.title : uri,
+        uri,
+        createdAt: isValidTimestamp(attachment.createdAt) ? attachment.createdAt : ownerTimestamps.createdAt,
+        updatedAt: isValidTimestamp(attachment.updatedAt) ? attachment.updatedAt : ownerTimestamps.updatedAt,
+    } as Attachment;
+};
+
 type LegacyAttachmentRecoveryResult = {
     data: unknown;
     errors: string[];
@@ -87,14 +144,7 @@ const recoverLegacyAttachmentUrls = (
                 if (isNonEmptyString(owner.purgedAt)) {
                     delete nextOwner.attachments;
                 } else {
-                    const createdAt = isValidTimestamp(owner.createdAt)
-                        ? owner.createdAt
-                        : isValidTimestamp(owner.updatedAt)
-                            ? owner.updatedAt
-                            : LEGACY_ATTACHMENT_TIMESTAMP_SENTINEL;
-                    const updatedAt = isValidTimestamp(owner.updatedAt)
-                        ? owner.updatedAt
-                        : createdAt;
+                    const { createdAt, updatedAt } = legacyAttachmentTimestamps(owner);
                     const attachment: Attachment = {
                         id: generateDeterministicUUID(JSON.stringify([
                             'legacy-attachment-link',
@@ -121,31 +171,48 @@ const recoverLegacyAttachmentUrls = (
                 return;
             }
 
+            let nextAttachments: unknown[] | undefined;
             attachments.forEach((attachment, attachmentIndex) => {
                 const attachmentPath = `${fieldPath}[${attachmentIndex}]`;
                 if (!isObjectRecord(attachment)) {
                     errors.push(`${source} payload field "${attachmentPath}" must be an object`);
                     return;
                 }
+                const entryErrors: string[] = [];
                 if (!isNonEmptyString(attachment.id)) {
-                    errors.push(`${source} payload field "${attachmentPath}.id" must be a non-empty string`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.id" must be a non-empty string`);
                 }
                 if (attachment.kind !== 'file' && attachment.kind !== 'link') {
-                    errors.push(`${source} payload field "${attachmentPath}.kind" must be "file" or "link"`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.kind" must be "file" or "link"`);
                 }
                 if (typeof attachment.title !== 'string') {
-                    errors.push(`${source} payload field "${attachmentPath}.title" must be a string`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.title" must be a string`);
                 }
                 if (typeof attachment.uri !== 'string') {
-                    errors.push(`${source} payload field "${attachmentPath}.uri" must be a string`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.uri" must be a string`);
                 }
                 if (!isValidTimestamp(attachment.createdAt)) {
-                    errors.push(`${source} payload field "${attachmentPath}.createdAt" must be a valid ISO timestamp`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.createdAt" must be a valid ISO timestamp`);
                 }
                 if (!isValidTimestamp(attachment.updatedAt)) {
-                    errors.push(`${source} payload field "${attachmentPath}.updatedAt" must be a valid ISO timestamp`);
+                    entryErrors.push(`${source} payload field "${attachmentPath}.updatedAt" must be a valid ISO timestamp`);
                 }
+                // A record that already validates is published untouched; only a
+                // broken one is rebuilt, and only when it stays unambiguous.
+                if (entryErrors.length === 0) return;
+                const repaired = repairLegacyAttachmentEntry(attachment, owner, ownerKind);
+                if (!repaired) {
+                    errors.push(...entryErrors);
+                    return;
+                }
+                nextAttachments = nextAttachments ?? attachments.slice();
+                nextAttachments[attachmentIndex] = repaired;
             });
+
+            if (!nextAttachments) return;
+            nextOwners = nextOwners ?? owners.slice();
+            nextOwners[ownerIndex] = { ...owner, attachments: nextAttachments };
+            repairedOwners += 1;
         });
 
         if (!nextOwners) return;
