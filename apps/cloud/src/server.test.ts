@@ -3784,6 +3784,21 @@ describe('cloud server api', () => {
         const explicitProject = (await explicitResponse.json()).project;
         expect(explicitProject.color).toBe('#123456');
         expect(explicitProject.isSequential).toBe(false);
+
+        // The factory's lifecycle normalization must win over raw props: a someday
+        // project cannot be focused, exactly as in-app addProject would refuse it.
+        const somedayResponse = await fetch(`${baseUrl}/v1/projects`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                title: 'Someday project',
+                props: { status: 'someday', isFocused: true },
+            }),
+        });
+        expect(somedayResponse.status).toBe(201);
+        const somedayProject = (await somedayResponse.json()).project;
+        expect(somedayProject.status).toBe('someday');
+        expect(somedayProject.isFocused).not.toBe(true);
     });
 
     test('purges deleted REST projects with refcounted remote attachment cleanup', async () => {

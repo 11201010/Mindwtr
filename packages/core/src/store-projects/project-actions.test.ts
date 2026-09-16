@@ -72,6 +72,18 @@ describe('project actions', () => {
             updatedAt: BASE_NOW,
         };
 
+        const somedayProject = buildNewProject({
+            title: 'Parked',
+            initialProps: { status: 'someday', isFocused: true },
+            existingProjects: [],
+            existingAreas: [],
+            settings: {},
+            deviceId: 'device-1',
+            now: BASE_NOW,
+        });
+        expect(somedayProject.status).toBe('someday');
+        expect(somedayProject.isFocused).toBe(false);
+
         const project = buildNewProject({
             title: '  Launch  ',
             color: '#3b82f6',

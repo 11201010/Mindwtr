@@ -144,7 +144,7 @@ export const buildNewProject = ({
     const useSequentialDefault = !hasExplicitFlowMode
         && settings.gtd?.defaultProjectFlowMode === 'sequential';
 
-    const project: Project = {
+    const baseProject: Project = {
         id: id ?? uuidv4(),
         title: trimmedTitle,
         color: color ?? DEFAULT_PROJECT_COLOR,
@@ -159,12 +159,18 @@ export const buildNewProject = ({
         isSequential: false,
         isFocused: false,
         ...(useSequentialDefault ? { isSequential: true } : {}),
+        tagIds: [],
+    };
+    const project: Project = {
+        ...baseProject,
         ...initialProps,
         tagIds: initialProps?.tagIds ?? [],
     };
+    // Normalize the initial props as an update to the defaults, so entering a
+    // non-active status at creation clears focus exactly like a later edit.
     const lifecycleProject = normalizeProjectLifecycleFields({
         ...project,
-        ...normalizeProjectUpdate(project, initialProps ?? {}),
+        ...normalizeProjectUpdate(baseProject, initialProps ?? {}),
     });
     // Resolved from the FINAL areaId, which initialProps may have supplied.
     const areaTitle = lifecycleProject.areaId

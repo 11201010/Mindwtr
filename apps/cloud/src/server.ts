@@ -875,7 +875,7 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 now: nowIso,
                 id: generateUUID(),
             });
-            const cloudProject: Project = { ...project, ...restProps };
+            const cloudProject: Project = { ...project };
             if (!Object.prototype.hasOwnProperty.call(props, 'isFocused')) delete cloudProject.isFocused;
             if (!Object.prototype.hasOwnProperty.call(props, 'areaTitle')) delete cloudProject.areaTitle;
             return normalizeProjectLifecycleFields({
