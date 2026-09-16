@@ -809,10 +809,21 @@ export async function ingestPendingCaptures({
         }
 
         const assembled = await assembleCaptureTask(capture, { addProject, projects, areas, tasks, people, settings });
+        // Every native writer emits a UUID id, so it doubles as the capture id:
+        // core makes it the task id and returns the existing one on replay, so a
+        // crash between the store write and the queue delete cannot duplicate the
+        // task. Non-UUID ids (the iOS Shortcut) keep the legacy path.
+        const captureId = UUID_PATTERN.test(capture.id) ? capture.id.toLowerCase() : undefined;
+        const captureOptions: [{ captureId: string }?] = captureId ? [{ captureId }] : [];
         const result = assembled
-            ? await addTask(assembled.title, assembled.props)
-            : await addTask(capture.title, buildPendingCaptureTaskProps(capture, projects));
-        if (isFailedResult(result)) continue;
+            ? await addTask(assembled.title, assembled.props, ...captureOptions)
+            : await addTask(capture.title, buildPendingCaptureTaskProps(capture, projects), ...captureOptions);
+        // A different id back means the capture id did not take; retain the file
+        // rather than risk a second task, exactly like the audio branch.
+        if (
+            isFailedResult(result)
+            || (captureId && resultId(result)?.toLowerCase() !== captureId)
+        ) continue;
 
         // Delete only after the store write resolved; a crash in between at
         // worst re-ingests one capture.

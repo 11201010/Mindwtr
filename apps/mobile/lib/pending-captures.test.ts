@@ -437,6 +437,44 @@ describe('ingestPendingCaptures', () => {
         expect(outcomes).toEqual(['completed', 'already-done', 'missing']);
     });
 
+    it('replays a native text capture as the same task when the queue file survives the write', async () => {
+        const captureId = '33333333-3333-4333-8333-333333333333';
+        oneFile(`${captureId}.json`, {
+            kind: 'text', id: captureId, title: 'Dictated once', source: 'android-capture-intent',
+        });
+        // First pass creates the task but the queue delete fails, so the file replays.
+        fileSystemMocks.deleteAsync.mockRejectedValueOnce(new Error('disk busy'));
+        const created: Task[] = [];
+        const addTask = vi.fn(async (title: string, _props?: Partial<Task>, options?: { captureId: string }) => {
+            const id = options?.captureId ?? `generated-${created.length}`;
+            const existing = created.find((task) => task.id === id);
+            if (!existing) created.push({ id, title, status: 'inbox' } as Task);
+            return { success: true, id };
+        });
+        const deps = {
+            addTask, updateTask, addProject, projects: [], areas: [], tasks: [], people: [], settings: emptySettings,
+        };
+
+        expect(await ingestPendingCaptures(deps)).toBe(0);
+        expect(await ingestPendingCaptures(deps)).toBe(1);
+
+        expect(created).toHaveLength(1);
+        expect(addTask).toHaveBeenCalledTimes(2);
+        expect(addTask.mock.calls[0][2]).toEqual({ captureId });
+        expect(addTask.mock.calls[1][2]).toEqual({ captureId });
+    });
+
+    it('creates a non-UUID queued capture without a capture id', async () => {
+        oneFile('shortcut.json', { id: 'shortcut-1', title: 'From the Shortcut' });
+        const addTask = addTaskMock();
+
+        expect(await ingestPendingCaptures({
+            addTask, updateTask, addProject, projects: [], areas: [], tasks: [], people: [], settings: emptySettings,
+        })).toBe(1);
+
+        expect(addTask).toHaveBeenCalledWith('From the Shortcut', { status: 'inbox' });
+    });
+
     it('stamps a queued check-off with the tap time and ignores a future or unparseable one', async () => {
         fileSystemMocks.readDirectoryAsync.mockResolvedValue(['a.json', 'b.json', 'c.json', 'd.json']);
         fileSystemMocks.readAsStringAsync.mockImplementation(async (uri: string) => JSON.stringify(
