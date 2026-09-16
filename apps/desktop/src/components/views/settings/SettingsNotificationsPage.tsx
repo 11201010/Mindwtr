@@ -185,7 +185,7 @@ export function SettingsNotificationsPage({
                     <TimeInput
                         aria-label={t.dailyDigestMorning}
                         value={dailyDigestMorningTime}
-                        disabled={!notificationsEnabled || !dailyDigestMorningEnabled}
+                        disabled={!dailyDigestMorningEnabled}
                         onChange={(dailyDigestMorningTime) => handleUpdate({ dailyDigestMorningTime })}
                         className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
@@ -193,7 +193,6 @@ export function SettingsNotificationsPage({
                         checked={dailyDigestMorningEnabled}
                         onCheckedChange={(checked) => handleUpdate({ dailyDigestMorningEnabled: checked })}
                         aria-label={t.dailyDigestMorning}
-                        disabled={!notificationsEnabled}
                     />
                 </SettingRow>
 
@@ -201,7 +200,7 @@ export function SettingsNotificationsPage({
                     <TimeInput
                         aria-label={t.dailyDigestEvening}
                         value={dailyDigestEveningTime}
-                        disabled={!notificationsEnabled || !dailyDigestEveningEnabled}
+                        disabled={!dailyDigestEveningEnabled}
                         onChange={(dailyDigestEveningTime) => handleUpdate({ dailyDigestEveningTime })}
                         className="bg-muted px-2 py-1 rounded text-sm border border-border disabled:opacity-50 disabled:cursor-not-allowed"
                     />
@@ -209,7 +208,6 @@ export function SettingsNotificationsPage({
                         checked={dailyDigestEveningEnabled}
                         onCheckedChange={(checked) => handleUpdate({ dailyDigestEveningEnabled: checked })}
                         aria-label={t.dailyDigestEvening}
-                        disabled={!notificationsEnabled}
                     />
                 </SettingRow>
             </div>
