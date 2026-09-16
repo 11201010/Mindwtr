@@ -31,6 +31,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 // full-suite run even though it passed reliably alone.
 // eslint-disable-next-line import/first
 import {
+  attachmentNeedsManagedLocalCopy,
+  canUploadAttachmentFrom,
   cleanupAttachmentTempFiles,
   deleteManagedAttachmentFile,
   getLocalAttachmentPresence,
@@ -171,5 +173,33 @@ describe('deleteManagedAttachmentFile', () => {
     await expect(deleteManagedAttachmentFile({ ...base, uri: 'file:///documents/attachments-old/draft-1.txt' })).resolves.toBe(false);
     await expect(deleteManagedAttachmentFile({ ...base, uri: 'file:///documents/attachments/other.txt' })).resolves.toBe(false);
     expect(fileSystemMock.deleteAsync).not.toHaveBeenCalled();
+  });
+});
+
+// SEC-07 follow-up: the upload gate was a bare `startsWith(managedDir)`, so a uri
+// like `<managedDir>/../../databases/mindwtr.db` passed it and the next sync
+// uploaded a sandbox file to the remote.
+describe('canUploadAttachmentFrom', () => {
+  it('accepts only the id-named file directly inside the managed directory', () => {
+    expect(canUploadAttachmentFrom('file:///documents/attachments/4b28a96e.m4a')).toBe(true);
+    expect(canUploadAttachmentFrom('file:///documents/attachments/../../databases/mindwtr.db')).toBe(false);
+    expect(canUploadAttachmentFrom('file:///documents/attachments/%2e%2e/%2e%2e/databases/mindwtr.db')).toBe(false);
+    expect(canUploadAttachmentFrom('file:///documents/attachments/sub/4b28a96e.m4a')).toBe(false);
+    expect(canUploadAttachmentFrom('file:///documents/attachments/')).toBe(false);
+    expect(canUploadAttachmentFrom('file:///user/notes.txt')).toBe(false);
+  });
+
+  it('never routes a traversal uri into the migrate-then-upload path', () => {
+    const base = {
+      id: 'att-1',
+      kind: 'file' as const,
+      title: 'db',
+      createdAt: '2026-08-27T00:00:00.000Z',
+      updatedAt: '2026-08-27T00:00:00.000Z',
+    };
+
+    expect(attachmentNeedsManagedLocalCopy({ ...base, uri: 'file:///documents/attachments/../../databases/mindwtr.db' })).toBe(false);
+    expect(attachmentNeedsManagedLocalCopy({ ...base, uri: 'content://provider/document/picked' })).toBe(true);
+    expect(attachmentNeedsManagedLocalCopy({ ...base, uri: 'file:///documents/attachments/att-1.pdf' })).toBe(false);
   });
 });

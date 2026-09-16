@@ -28,6 +28,7 @@ import {
   resolveDefaultNewTaskAreaId,
   formatQuickAddHelp,
   resolveFeatureFlags,
+  sanitizeAttachmentUriForSyncMerge,
   shallow,
   splitQuickAddBulkLines,
   tFallback,
@@ -40,7 +41,7 @@ import {
   type TimeEstimate,
   useTaskStore,
 } from '@mindwtr/core';
-import { getAttachmentsDir } from '@/lib/attachment-sync-utils';
+import { canUploadAttachmentFrom, getAttachmentsDir } from '@/lib/attachment-sync-utils';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useToast } from '@/contexts/toast-context';
 import { useLanguage } from '../contexts/language-context';
@@ -138,7 +139,7 @@ const sanitizeInitialAttachments = (value: unknown): Attachment[] | undefined =>
     const record = item as Record<string, unknown>;
     if (record.kind !== 'file') continue;
     const id = typeof record.id === 'string' ? record.id.trim() : '';
-    const uri = typeof record.uri === 'string' ? record.uri.trim() : '';
+    const uri = sanitizeAttachmentUriForSyncMerge(record.uri) ?? '';
     if (!id || !uri) continue;
     const now = new Date().toISOString();
     const createdAt = typeof record.createdAt === 'string' && record.createdAt ? record.createdAt : now;
@@ -165,7 +166,7 @@ const sanitizeInitialAttachments = (value: unknown): Attachment[] | undefined =>
 const filterManagedAttachments = async (attachments: Attachment[]): Promise<Attachment[]> => {
   const dir = await getAttachmentsDir();
   if (!dir) return [];
-  return attachments.filter((attachment) => attachment.uri.startsWith(dir));
+  return attachments.filter((attachment) => canUploadAttachmentFrom(attachment.uri));
 };
 
 const sanitizeInitialPropsParam = (

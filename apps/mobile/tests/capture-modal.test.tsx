@@ -104,6 +104,7 @@ vi.mock('@mindwtr/core', async () => {
   },
   getUsedTaskTokens: vi.fn(() => []),
   isSandboxMode: () => false,
+  sanitizeAttachmentUriForSyncMerge: actual.sanitizeAttachmentUriForSyncMerge,
   isNaturalLanguageDatesEnabled: (settings?: { gtd?: { naturalLanguageDates?: boolean } } | null) =>
     settings?.gtd?.naturalLanguageDates !== false,
   isSelectableProjectForTaskAssignment: vi.fn((project: any) => (
@@ -208,6 +209,12 @@ vi.mock('@/lib/task-meta-navigation', () => ({
 
 vi.mock('@/lib/attachment-sync-utils', () => ({
   getAttachmentsDir: vi.fn(async () => 'file:///data/mindwtr/attachments/'),
+  // Mirrors the real gate: the flat, id-named managed layout only.
+  canUploadAttachmentFrom: (uri: string) => {
+    if (!uri.startsWith('file:///data/mindwtr/attachments/')) return false;
+    const leaf = uri.slice('file:///data/mindwtr/attachments/'.length);
+    return leaf.length > 0 && !leaf.includes('/');
+  },
 }));
 
 const findTouchableByText = (tree: ReturnType<typeof create>, label: string) => {
@@ -1139,6 +1146,16 @@ describe('CaptureScreen', () => {
             createdAt: '2026-07-12T00:00:00.000Z',
             updatedAt: '2026-07-12T00:00:00.000Z',
           },
+          {
+            // A deep link is attacker-reachable, and this uri passes a bare
+            // startsWith(managedDir) check while pointing at the app database.
+            id: 'att-3',
+            kind: 'file',
+            title: 'mindwtr.db',
+            uri: 'file:///data/mindwtr/attachments/../../databases/mindwtr.db',
+            createdAt: '2026-07-12T00:00:00.000Z',
+            updatedAt: '2026-07-12T00:00:00.000Z',
+          },
         ],
       })),
     };
@@ -1151,6 +1168,7 @@ describe('CaptureScreen', () => {
 
     // The pending attachment is visible on the sheet before saving.
     expect(tree.root.findAllByType(Text).some((node) => node.props.children === 'report.pdf')).toBe(true);
+    expect(tree.root.findAllByType(Text).some((node) => node.props.children === 'mindwtr.db')).toBe(false);
 
     const saveButton = findTouchableByText(tree, 'Save');
 

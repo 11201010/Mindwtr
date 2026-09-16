@@ -16,6 +16,7 @@ import {
   isSandboxMode,
   markAttachmentUnrecoverable,
   reportProgress,
+  sanitizeAttachmentUriForSyncMerge,
   sleep,
   validateAttachmentHash,
   type AppData,
@@ -642,11 +643,12 @@ export const persistAttachmentLocallyDetailed = async (attachment: Attachment): 
   if (attachment.kind !== 'file') return { attachment, status: 'not-applicable' };
   const uri = attachment.uri || '';
   if (!uri || isHttpAttachmentUri(uri)) return { attachment, status: 'not-applicable' };
+  if (!isTraversalFreeAttachmentUri(uri)) return { attachment, status: 'not-applicable' };
 
   const attachmentsDir = await getAttachmentsDir();
   if (!attachmentsDir) return { attachment, status: 'not-applicable' };
 
-  if (uri.startsWith(attachmentsDir)) return { attachment, status: 'already-local' };
+  if (canUploadAttachmentFrom(uri)) return { attachment, status: 'already-local' };
 
   const ext = extractExtension(attachment.title) || extractExtension(uri);
   const filename = `${attachment.id}${ext}`;
@@ -731,9 +733,22 @@ export const ensureAttachmentStoredLocally = async (attachment: Attachment): Pro
  */
 export const canUploadAttachmentFrom = (uri: string): boolean => {
   const attachmentsDir = getManagedAttachmentsDir();
-  if (!attachmentsDir) return false;
-  return uri.startsWith(attachmentsDir);
+  if (!attachmentsDir || !uri.startsWith(attachmentsDir)) return false;
+  if (!isTraversalFreeAttachmentUri(uri)) return false;
+  // The managed layout is flat and id-named (see deleteManagedAttachmentFile), so
+  // anything with a further separator is not a file this device owns.
+  const leaf = uri.slice(attachmentsDir.length).split(/[?#]/, 1)[0];
+  return leaf.length > 0 && !leaf.includes('/');
 };
+
+/**
+ * A local uri whose bytes we may read at all. `migrateAttachmentsLocallyBeforeSync`
+ * copies legitimate outside picks (content:// / SAF) into the managed dir, so a uri
+ * that fails here must be refused by both the upload gate and that migration —
+ * otherwise a traversal uri simply gets copied in and uploaded anyway.
+ */
+const isTraversalFreeAttachmentUri = (uri: string): boolean =>
+  Boolean(sanitizeAttachmentUriForSyncMerge(uri));
 
 /**
  * A uri is task content — the file name is the user's (#854: ids and field names only).
@@ -752,9 +767,9 @@ export const attachmentNeedsManagedLocalCopy = (attachment: Attachment): boolean
   if (attachment.deletedAt) return false;
   const uri = attachment.uri || '';
   if (!uri || isHttpAttachmentUri(uri)) return false;
-  const attachmentsDir = getManagedAttachmentsDir();
-  if (!attachmentsDir) return false;
-  return !uri.startsWith(attachmentsDir);
+  if (!isTraversalFreeAttachmentUri(uri)) return false;
+  if (!getManagedAttachmentsDir()) return false;
+  return !canUploadAttachmentFrom(uri);
 };
 
 export const createAttachmentLocalMigrationLimiter = (
@@ -948,14 +963,9 @@ export const hasPendingAttachmentSyncWork = async (
     }
   }
 
-  const attachmentsDir = shouldCheckManagedStorage ? getManagedAttachmentsDir() : null;
-  if (attachmentsDir) {
+  if (shouldCheckManagedStorage) {
     for (const attachment of attachmentsById.values()) {
-      if (attachment.kind !== 'file') continue;
-      if (attachment.deletedAt) continue;
-      const uri = attachment.uri || '';
-      if (!uri || isHttpAttachmentUri(uri)) continue;
-      if (!uri.startsWith(attachmentsDir)) {
+      if (attachmentNeedsManagedLocalCopy(attachment)) {
         return true;
       }
     }
