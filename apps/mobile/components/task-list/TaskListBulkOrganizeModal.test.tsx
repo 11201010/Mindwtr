@@ -1,12 +1,32 @@
 import React from 'react';
-import { Pressable, Text, TextInput, TouchableOpacity } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
 import { act, create } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Area, Project } from '@mindwtr/core';
 import { resetForTests, setStorageAdapter, useTaskStore } from '../../../../packages/core/src/store';
 
 import { TaskListBulkOrganizeModal } from './TaskListBulkOrganizeModal';
 import { TaskEditProjectPicker } from '../task-edit/TaskEditProjectPicker';
+
+// The lightweight Vitest React Native shim only implements StyleSheet.create.
+// Supply the real API shape locally so touch-target assertions flatten arrays
+// the same way React Native does without widening the global test shim.
+if (typeof StyleSheet.flatten !== 'function') {
+  const flattenStyle = (style: unknown): Record<string, unknown> => {
+    if (!Array.isArray(style)) return (style ?? {}) as Record<string, unknown>;
+    return style.reduce<Record<string, unknown>>(
+      (flattened, item) => ({ ...flattened, ...flattenStyle(item) }),
+      {},
+    );
+  };
+  Object.assign(StyleSheet, {
+    flatten: flattenStyle,
+  });
+}
+
+vi.mock('@react-native-community/datetimepicker', () => ({
+  default: (props: Record<string, unknown>) => React.createElement('DateTimePicker', props),
+}));
 
 const createBulkOrganizeProjectMock = vi.hoisted(() => vi.fn());
 const createBulkOrganizeAreaMock = vi.hoisted(() => vi.fn());
@@ -31,6 +51,7 @@ vi.mock('lucide-react-native', () => {
   return {
     __esModule: true,
     Check: Icon,
+    Calendar: Icon,
     ChevronRight: Icon,
     ClipboardCheck: Icon,
     X: Icon,
@@ -167,7 +188,68 @@ beforeEach(() => {
   ensureDestinationSavedMock.mockReset().mockResolvedValue(undefined);
 });
 
+const originalOS = Platform.OS;
+afterEach(() => {
+  Platform.OS = originalOS;
+  vi.useRealTimers();
+});
+
 describe('TaskListBulkOrganizeModal', () => {
+  it('stages Today/Tomorrow as local date-only values and leaves untouched dates unchanged', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 30, 23, 30));
+    const onApply = vi.fn();
+    const tree = renderModal({ onApply });
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Start: Today' }).props.onPress(); });
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Tomorrow' }).props.onPress(); });
+    expect(onApply).not.toHaveBeenCalled();
+    act(() => { buttonWithText(tree, 'Apply to selected').props.onPress(); });
+    expect(onApply).toHaveBeenCalledWith({ contexts: [], tags: [], startTime: '2026-09-30', dueDate: '2026-10-01' });
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Tomorrow' }).props.onPress(); });
+    act(() => { buttonWithText(tree, 'Apply to selected').props.onPress(); });
+    expect(onApply.mock.lastCall?.[0]).not.toHaveProperty('dueDate');
+  });
+
+  it.each(['android', 'ios'] as const)('selects and dismisses the native date picker on %s without applying tasks', (os) => {
+    Platform.OS = os;
+    const onApply = vi.fn();
+    const tree = renderModal({ onApply });
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' }).props.onPress(); });
+    let picker = tree.root.findByType('DateTimePicker' as any);
+    expect(picker.props.mode).toBe('date');
+    expect(picker.props.display).toBe(os === 'ios' ? 'spinner' : 'default');
+    act(() => { picker.props.onChange({ type: 'set' }, new Date(2026, 9, 5, 23, 30)); });
+    expect(onApply).not.toHaveBeenCalled();
+    const dueInput = tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Due');
+    expect(dueInput?.props.value).toBe('2026-10-05');
+    if (os === 'ios') {
+      act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Done' }).props.onPress(); });
+    }
+    expect(tree.root.findAllByType('DateTimePicker' as any)).toHaveLength(0);
+    act(() => { tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' }).props.onPress(); });
+    picker = tree.root.findByType('DateTimePicker' as any);
+    act(() => { picker.props.onChange({ type: 'dismissed' }); });
+    expect(dueInput?.props.value).toBe('2026-10-05');
+    act(() => { buttonWithText(tree, 'Apply to selected').props.onPress(); });
+    expect(onApply).toHaveBeenCalledWith({ contexts: [], tags: [], dueDate: '2026-10-05' });
+  });
+
+  it('disables date entry and shortcuts while applying', () => {
+    const tree = renderModal({ isApplying: true });
+    expect(tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' }).props.disabled).toBe(true);
+    expect(tree.root.findByProps({ accessibilityLabel: 'Due: Today' }).props.disabled).toBe(true);
+    expect(tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Due')?.props.editable).toBe(false);
+  });
+
+  it('keeps bulk date shortcuts and calendar controls at least 44 points tall', () => {
+    const tree = renderModal();
+    const calendar = tree.root.findByProps({ accessibilityLabel: 'Due: Calendar' });
+    const today = tree.root.findByProps({ accessibilityLabel: 'Due: Today' });
+
+    expect(StyleSheet.flatten(calendar.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    expect(StyleSheet.flatten(today.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  });
+
   it('names the three date inputs distinctly, including after a date is filled', () => {
     const tree = renderModal();
     const dateInputs = () => tree.root.findAllByType(TextInput)

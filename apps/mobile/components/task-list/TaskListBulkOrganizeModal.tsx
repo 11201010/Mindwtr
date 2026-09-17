@@ -17,6 +17,7 @@ import {
 
 import { TaskEditAreaPicker } from '../task-edit/TaskEditAreaPicker';
 import { TaskEditProjectPicker } from '../task-edit/TaskEditProjectPicker';
+import { TaskListBulkDateField } from './TaskListBulkDateField';
 import { useAndroidKeyboardInset } from '../../lib/use-android-keyboard-inset';
 import { styles } from './task-list.styles';
 import { useFilledButtonColors } from '@/hooks/use-filled-button-colors';
@@ -72,6 +73,7 @@ export function TaskListBulkOrganizeModal({
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [reviewDate, setReviewDate] = useState('');
+  const [datePicker, setDatePicker] = useState<'start' | 'due' | 'review' | null>(null);
   const [delegateWho, setDelegateWho] = useState('');
   const [showValidation, setShowValidation] = useState(false);
   const [isCreatingDestination, setIsCreatingDestination] = useState(false);
@@ -84,6 +86,7 @@ export function TaskListBulkOrganizeModal({
     destinationCreatePendingRef.current = false;
     setIsCreatingDestination(false);
     setDestinationError(null);
+    setDatePicker(null);
     if (!visible) {
       setProjectPickerVisible(false);
       setAreaPickerVisible(false);
@@ -399,54 +402,24 @@ export function TaskListBulkOrganizeModal({
             )}
 
             <View style={styles.bulkOrganizeDateGrid}>
-              <View style={styles.bulkOrganizeDateField}>
-                <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {startDateLabel}
-                </Text>
-                <TextInput
-                  accessibilityLabel={startDateLabel}
-                  value={startDate}
-                  onChangeText={setStartDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={themeColors.secondaryText}
-                  style={[
-                    styles.bulkOrganizeInput,
-                    { backgroundColor: themeColors.inputBg, borderColor: themeColors.border, color: themeColors.text },
-                  ]}
+              {([
+                ['start', startDateLabel, startDate, setStartDate],
+                ['due', dueDateLabel, dueDate, setDueDate],
+                ['review', reviewDateLabel, reviewDate, setReviewDate],
+              ] as const).map(([field, label, value, onChange]) => (
+                <TaskListBulkDateField
+                  key={field}
+                  label={label}
+                  value={value}
+                  onChange={onChange}
+                  pickerVisible={visible && datePicker === field}
+                  onOpenPicker={() => setDatePicker(field)}
+                  onClosePicker={() => setDatePicker(null)}
+                  disabled={isBusy}
+                  t={t}
+                  tc={themeColors}
                 />
-              </View>
-              <View style={styles.bulkOrganizeDateField}>
-                <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {dueDateLabel}
-                </Text>
-                <TextInput
-                  accessibilityLabel={dueDateLabel}
-                  value={dueDate}
-                  onChangeText={setDueDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={themeColors.secondaryText}
-                  style={[
-                    styles.bulkOrganizeInput,
-                    { backgroundColor: themeColors.inputBg, borderColor: themeColors.border, color: themeColors.text },
-                  ]}
-                />
-              </View>
-              <View style={styles.bulkOrganizeDateField}>
-                <Text style={[styles.bulkOrganizeLabel, { color: themeColors.secondaryText }]}>
-                  {reviewDateLabel}
-                </Text>
-                <TextInput
-                  accessibilityLabel={reviewDateLabel}
-                  value={reviewDate}
-                  onChangeText={setReviewDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={themeColors.secondaryText}
-                  style={[
-                    styles.bulkOrganizeInput,
-                    { backgroundColor: themeColors.inputBg, borderColor: themeColors.border, color: themeColors.text },
-                  ]}
-                />
-              </View>
+              ))}
             </View>
 
             <View style={styles.bulkOrganizeSection}>

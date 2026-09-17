@@ -23,7 +23,8 @@ const QUICK_DATE_LABELS: Record<QuickDatePreset, { key: string; fallback: string
 
 type QuickDateChipsProps = {
   t: (key: string) => string;
-  tc: ThemeColors;
+  tc: Pick<ThemeColors, 'tint' | 'onTint' | 'filterBg' | 'border' | 'secondaryText'>;
+  disabled?: boolean;
   accessibilityLabelPrefix?: string;
   selectedDate?: Date | null;
   selectedPreset?: QuickDatePreset | null;
@@ -34,11 +35,13 @@ type QuickDateChipsProps = {
   trailing?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   contentContainerStyle?: StyleProp<ViewStyle>;
+  chipStyle?: StyleProp<ViewStyle>;
 };
 
 export function QuickDateChips({
   t,
   tc,
+  disabled = false,
   accessibilityLabelPrefix,
   selectedDate,
   selectedPreset,
@@ -47,6 +50,7 @@ export function QuickDateChips({
   trailing,
   style,
   contentContainerStyle,
+  chipStyle,
 }: QuickDateChipsProps) {
   const now = new Date();
 
@@ -64,7 +68,8 @@ export function QuickDateChips({
           <Pressable
             key={preset}
             accessibilityRole="button"
-            accessibilityState={{ selected: active }}
+            accessibilityState={{ selected: active, disabled }}
+            disabled={disabled}
             accessibilityLabel={accessibilityLabelPrefix ? `${accessibilityLabelPrefix}: ${label}` : label}
             // Tapping the active chip clears the date (replaces the standalone "No date" chip).
             onPress={() => onSelect(active ? null : getQuickDate(preset, now), preset)}
@@ -74,6 +79,7 @@ export function QuickDateChips({
                 backgroundColor: active ? tc.tint : tc.filterBg,
                 borderColor: active ? tc.tint : tc.border,
               },
+              chipStyle,
             ]}
           >
             <CompactText
