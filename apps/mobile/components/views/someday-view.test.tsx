@@ -232,20 +232,19 @@ describe('SomedayView section grouping', () => {
     expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
   });
 
-  it('shows the list New section action and the single/bulk move wiring', async () => {
+  it('keeps New section in the summary bar without a separate list row', async () => {
     setState([makeTask('one')], [{ id: 'books', title: 'Books to read', order: 0 }]);
     renderSomedayView();
     expect(mocked.taskListProps.onMoveTaskToSection).toEqual(expect.any(Function));
     expect(mocked.taskListProps.onMoveSelectionToSection).toEqual(expect.any(Function));
 
-    let headerRenderer: ReactTestRenderer;
-    act(() => { headerRenderer = create(mocked.taskListProps.ListHeaderComponent); });
-    const newSection = headerRenderer!.root.findAllByProps({ accessibilityLabel: 'New section…' })[0];
+    const newSection = renderer!.root.findAllByProps({ accessibilityLabel: 'New section…' })[0];
+    expect(newSection.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+    expect(mocked.taskListProps.ListHeaderComponent.props).not.toHaveProperty('children');
     await act(async () => { newSection.props.onPress(); });
     const picker = renderer!.root.findAllByType('SomedaySectionPicker' as never)
       .find((node) => node.props.createOnly);
     expect(picker).toBeDefined();
     expect(picker?.props.sections).toEqual([{ id: 'books', title: 'Books to read', order: 0 }]);
-    act(() => headerRenderer!.unmount());
   });
 });

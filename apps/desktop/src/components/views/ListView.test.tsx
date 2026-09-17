@@ -422,7 +422,7 @@ describe('ListView', () => {
     expect(queryByText('Try a pottery class')).not.toBeInTheDocument();
   });
 
-  it('renders area-filtered Someday projects as rows with open and reactivate actions', async () => {
+  it.each(['someday', 'waiting'] as const)('renders collapsible, area-filtered %s projects with open and reactivate actions', async (status) => {
     const workArea = {
       id: 'area-work',
       name: 'Work',
@@ -440,7 +440,7 @@ describe('ListView', () => {
     const workProject = {
       id: 'project-work-someday',
       title: 'Plan Japan trip',
-      status: 'someday' as const,
+      status,
       color: '#8b5cf6',
       order: 0,
       tagIds: [],
@@ -465,10 +465,19 @@ describe('ListView', () => {
       updateProject,
     });
 
-    const view = renderListView('someday', 'Someday');
+    const view = renderListView(status, status);
 
     expect(view.getByRole('button', { name: 'Projects: Plan Japan trip' })).toBeInTheDocument();
     expect(view.queryByText('Remodel kitchen')).not.toBeInTheDocument();
+
+    const disclosure = view.getByRole('button', { name: 'Projects (1)' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(view.queryByRole('button', { name: 'Projects: Plan Japan trip' })).not.toBeInTheDocument();
+    expect(updateProject).not.toHaveBeenCalled();
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 
     fireEvent.click(view.getByRole('button', { name: 'Projects: Plan Japan trip' }));
     expect(useUiStore.getState().projectView.selectedProjectId).toBe(workProject.id);

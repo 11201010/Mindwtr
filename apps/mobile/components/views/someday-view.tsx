@@ -210,6 +210,14 @@ export function SomedayView() {
           </Text>
           <Text style={styles.statLabel}>{t('someday.inProjects')}</Text>
         </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={tFallback(t, 'viewSections.add', 'New section…')}
+          onPress={() => setNewSectionOpen(true)}
+          style={styles.newSectionButton}
+        >
+          <Text style={{ color: tc.tint }}>{tFallback(t, 'viewSections.add', 'New section…')}</Text>
+        </TouchableOpacity>
       </View>
 
       <TaskListView
@@ -229,26 +237,14 @@ export function SomedayView() {
         bulkStatusOptions={bulkMoveStatusOptions}
         contentContainerStyle={taskListContentStyle}
         ListHeaderComponent={(
-          <View>
-            <View style={styles.newSectionRow}>
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel={tFallback(t, 'viewSections.add', 'New section…')}
-                onPress={() => setNewSectionOpen(true)}
-                style={[styles.newSectionButton, { borderColor: tc.border }]}
-              >
-                <Text style={{ color: tc.tint }}>{tFallback(t, 'viewSections.add', 'New section…')}</Text>
-              </TouchableOpacity>
-            </View>
-            <DeferredProjectsSection
-              projects={deferredProjects}
-              areaById={areaById}
-              themeColors={tc}
-              t={t}
-              onActivateProject={handleActivateProject}
-              onOpenProject={handleOpenProject}
-            />
-          </View>
+          <DeferredProjectsSection
+            projects={deferredProjects}
+            areaById={areaById}
+            themeColors={tc}
+            t={t}
+            onActivateProject={handleActivateProject}
+            onOpenProject={handleOpenProject}
+          />
         )}
         ListEmptyComponent={deferredProjects.length === 0 ? (
           <View style={styles.emptyState}>
@@ -371,11 +367,14 @@ const styles = StyleSheet.create({
   },
   stats: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     backgroundColor: '#FFFFFF',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    gap: 24,
+    columnGap: 24,
+    rowGap: 4,
   },
   statItem: {
     alignItems: 'center',
@@ -393,8 +392,7 @@ const styles = StyleSheet.create({
   taskListContent: {
     padding: 16,
   },
-  newSectionButton: { borderRadius: 8, borderWidth: 1, justifyContent: 'center', minHeight: 44, paddingHorizontal: 12, marginLeft: 'auto' },
-  newSectionRow: { alignItems: 'flex-end', paddingTop: 8 },
+  newSectionButton: { justifyContent: 'center', minHeight: 44, minWidth: 44, flexShrink: 1, paddingHorizontal: 4, marginLeft: 'auto' },
   pickerOverlay: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)', flex: 1, justifyContent: 'center' },
   pickerCard: { borderRadius: 14, borderWidth: 1, gap: 12, maxHeight: '80%', padding: 16, width: '88%' },
   pickerTitle: { fontSize: 17, fontWeight: '700' },

@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Folder } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Folder } from 'lucide-react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { projectMatchesAreaFilterSelection, tFallback } from '@mindwtr/core';
 import type { Area, AreaFilterSelection, Project } from '@mindwtr/core';
@@ -50,14 +50,24 @@ export function DeferredProjectsSection({
   onActivateProject,
   onOpenProject,
 }: DeferredProjectsSectionProps) {
+  const [expanded, setExpanded] = useState(true);
   if (projects.length === 0) return null;
 
   return (
-    <View style={[styles.projectSection, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-      <Text style={[styles.sectionLabel, { color: tc.secondaryText }]}>
-        {tFallback(t, 'projects.title', 'Projects')}
-      </Text>
-      {projects.map((project) => {
+    <View style={[styles.projectSection, !expanded && styles.collapsedProjectSection, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`${tFallback(t, 'projects.title', 'Projects')} (${projects.length})`}
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        style={styles.sectionHeader}
+      >
+        {expanded ? <ChevronDown size={18} color={tc.secondaryText} /> : <ChevronRight size={18} color={tc.secondaryText} />}
+        <Text style={[styles.sectionLabel, { color: tc.secondaryText }]}>
+          {tFallback(t, 'projects.title', 'Projects')} ({projects.length})
+        </Text>
+      </TouchableOpacity>
+      {expanded && projects.map((project) => {
         const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
         return (
           <Swipeable
@@ -101,10 +111,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sectionLabel: {
+    flexShrink: 1,
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+  },
+  collapsedProjectSection: {
+    paddingVertical: 0,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    gap: 8,
   },
   projectRow: {
     borderWidth: 1,

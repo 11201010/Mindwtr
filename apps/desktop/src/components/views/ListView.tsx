@@ -1,6 +1,6 @@
 import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, Folder, HelpCircle } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Folder, HelpCircle } from 'lucide-react';
 import { buildProjectOrderMap,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
@@ -203,6 +203,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     // every render would invalidate every list memo downstream.
     const { areaById, resolvedAreaFilter } = useAreaVisibility();
     const [newTaskTitle, setNewTaskTitle] = useState('');
+    const [collapsedProjectLists, setCollapsedProjectLists] = useState<Partial<Record<TaskStatus, boolean>>>({});
     const [quickAddSyntaxOpen, setQuickAddSyntaxOpen] = useState(false);
     const [mindSweepOpen, setMindSweepOpen] = useState(false);
     const [somedayMoveTargetIds, setSomedayMoveTargetIds] = useState<string[] | null>(null);
@@ -1266,10 +1267,16 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
 
                     {showDeferredProjectSection && (
                         <div className="rounded-lg border border-border bg-card/50 p-4">
-                            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                {tFallback(t, 'projects.title', 'Projects')}
-                            </div>
-                            <div className="mt-3 space-y-2">
+                            <button
+                                type="button"
+                                aria-expanded={!collapsedProjectLists[statusFilter]}
+                                onClick={() => setCollapsedProjectLists((current) => ({ ...current, [statusFilter]: !current[statusFilter] }))}
+                                className="flex min-h-8 w-full items-center gap-2 rounded text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                                {collapsedProjectLists[statusFilter] ? <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" /> : <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />}
+                                {tFallback(t, 'projects.title', 'Projects')} ({deferredProjects.length})
+                            </button>
+                            {!collapsedProjectLists[statusFilter] && <div className="mt-3 space-y-2">
                                 {deferredProjects.map((project) => {
                                     const projectArea = project.areaId ? areaById.get(project.areaId) : undefined;
                                     return (
@@ -1305,7 +1312,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                         </div>
                                     );
                                 })}
-                            </div>
+                            </div>}
                         </div>
                     )}
 

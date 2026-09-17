@@ -8,6 +8,8 @@ import { DeferredProjectsSection, selectDeferredProjects } from './deferred-proj
 
 vi.mock('lucide-react-native', () => ({
   Folder: () => null,
+  ChevronDown: () => null,
+  ChevronRight: () => null,
 }));
 
 vi.mock('react-native-gesture-handler', () => ({
@@ -133,7 +135,7 @@ describe('DeferredProjectsSection', () => {
     const tree = render([project], { onOpenProject, onActivateProject });
 
     act(() => {
-      tree.root.findByType('TouchableOpacity' as never).props.onPress();
+      tree.root.findAllByType('TouchableOpacity' as never).find((node) => !node.props.accessibilityState)!.props.onPress();
     });
     expect(onOpenProject).toHaveBeenCalledWith('someday-1');
 
@@ -141,5 +143,24 @@ describe('DeferredProjectsSection', () => {
       tree.root.findByType('Swipeable' as never).props.onSwipeableLeftOpen();
     });
     expect(onActivateProject).toHaveBeenCalledWith('someday-1');
+  });
+
+  it.each(['someday', 'waiting'] as const)('collapses %s projects without changing them and keeps the count visible', (status) => {
+    const onOpenProject = vi.fn();
+    const onActivateProject = vi.fn();
+    const tree = render([makeProject('one', { status }), makeProject('two', { status })], { onOpenProject, onActivateProject });
+    const header = () => tree.root.findAllByType('TouchableOpacity' as never).find((node) => node.props.accessibilityState)!;
+    expect(header().props.accessibilityLabel).toBe('Projects (2)');
+    expect(header().props.accessibilityState.expanded).toBe(true);
+    expect(header().props.style.minHeight).toBe(44);
+    act(() => header().props.onPress());
+    expect(header().props.accessibilityState.expanded).toBe(false);
+    expect(header().props.accessibilityLabel).toBe('Projects (2)');
+    expect(tree.root.findAllByType('Swipeable' as never)).toHaveLength(0);
+    act(() => header().props.onPress());
+    expect(tree.root.findAllByType('Swipeable' as never)).toHaveLength(2);
+    expect(onOpenProject).not.toHaveBeenCalled();
+    expect(onActivateProject).not.toHaveBeenCalled();
+    act(() => tree.unmount());
   });
 });
