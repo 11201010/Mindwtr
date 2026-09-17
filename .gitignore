@@ -89,6 +89,7 @@ aur/src/
 build-dir/
 
 # Agent files
+/CONTEXT.md
 AGENT.md
 AGENTS.md
 .codex
