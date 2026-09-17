@@ -4037,9 +4037,19 @@ pub(crate) struct ProjectMutationReadScope {
     target_area_id: Option<String>,
     target_area_supplied: bool,
     include_children: bool,
+    include_section_tasks: bool,
 }
 
 impl ProjectMutationReadScope {
+    pub(crate) fn lifecycle(project_id: &str) -> Self {
+        Self {
+            project_id: Some(project_id.to_string()),
+            include_children: true,
+            include_section_tasks: true,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn create(target_area_id: Option<&str>) -> Self {
         Self {
             target_area_id: TaskMutationReadScope::normalize_container_id(target_area_id),
@@ -4059,6 +4069,7 @@ impl ProjectMutationReadScope {
             target_area_id: TaskMutationReadScope::normalize_container_id(target_area_id),
             target_area_supplied,
             include_children,
+            ..Self::default()
         }
     }
 }
@@ -4483,7 +4494,12 @@ fn read_project_mutation_data(
         if scope.include_children {
             append_scoped_task_rows(
                 conn,
-                "SELECT * FROM tasks WHERE projectId = ?1",
+                if scope.include_section_tasks {
+                    "SELECT * FROM tasks WHERE projectId = ?1 OR sectionId IN
+                     (SELECT id FROM sections WHERE projectId = ?1)"
+                } else {
+                    "SELECT * FROM tasks WHERE projectId = ?1"
+                },
                 [project_id],
                 &mut tasks,
                 &mut stats,
@@ -9245,6 +9261,169 @@ mod tests {
             .expect("unchanged project"),
             ("Original".to_string(), 1)
         );
+    }
+
+    #[test]
+    fn failed_project_lifecycle_rolls_back_project_section_and_task_rows() {
+        let conn = Connection::open_in_memory().expect("database");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        replace_data_in_transaction(
+            &conn,
+            serde_json::json!({
+                "tasks": [
+                    {
+                        "id": "direct-task", "title": "Direct", "status": "next",
+                        "projectId": "project-1", "tags": [], "contexts": [], "rev": 1,
+                        "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    },
+                    {
+                        "id": "section-task", "title": "Section owned", "status": "waiting",
+                        "sectionId": "section-1", "tags": [], "contexts": [], "rev": 2,
+                        "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    }
+                ],
+                "projects": [{
+                    "id": "project-1", "title": "Original", "status": "active",
+                    "color": "#000000", "order": 0, "tagIds": [], "isSequential": false,
+                    "rev": 1, "createdAt": "2026-09-01T00:00:00Z",
+                    "updatedAt": "2026-09-01T00:00:00Z"
+                }],
+                "sections": [{
+                    "id": "section-1", "projectId": "project-1", "title": "Section",
+                    "order": 0, "rev": 1, "createdAt": "2026-09-01T00:00:00Z",
+                    "updatedAt": "2026-09-01T00:00:00Z"
+                }],
+                "areas": [], "people": [],
+                "settings": { "deviceId": "desktop-local-api" }
+            }),
+        )
+        .expect("seed project lifecycle");
+        let before = read_sqlite_data(&conn).expect("baseline");
+        conn.execute_batch(
+            "CREATE TRIGGER reject_lifecycle_task_update BEFORE INSERT ON tasks
+             WHEN NEW.id = 'section-task'
+             BEGIN SELECT RAISE(ABORT, 'injected lifecycle task failure'); END;",
+        )
+        .expect("failure trigger");
+        let scope = ProjectMutationReadScope::lifecycle("project-1");
+        let mut mutation = |data: &mut Value| {
+            let rows = crate::local_api::apply_project_delete_or_restore(data, "project-1", false)?;
+            Ok::<_, String>(((), rows))
+        };
+
+        let error = commit_project_row_mutation(&conn, &scope, &mut mutation)
+            .expect_err("late task failure must abort the whole lifecycle transaction");
+
+        assert!(error.contains("injected lifecycle task failure"));
+        assert!(conn.is_autocommit());
+        let after = read_sqlite_data(&conn).expect("rolled-back data");
+        assert_eq!(after["projects"], before["projects"]);
+        assert_eq!(after["sections"], before["sections"]);
+        assert_eq!(after["tasks"], before["tasks"]);
+    }
+
+    #[test]
+    fn project_lifecycle_delete_and_restore_survive_sqlite_reopen() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("project-lifecycle.sqlite");
+        let conn = open_sqlite_path(&db_path).expect("database");
+        replace_data_in_transaction(
+            &conn,
+            serde_json::json!({
+                "tasks": [
+                    {
+                        "id": "direct-task", "title": "Direct", "status": "next",
+                        "projectId": "project-1", "tags": [], "contexts": [], "rev": 1,
+                        "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    },
+                    {
+                        "id": "section-task", "title": "Section owned", "status": "waiting",
+                        "sectionId": "section-1", "tags": [], "contexts": [], "rev": 2,
+                        "createdAt": "2026-09-01T00:00:00Z",
+                        "updatedAt": "2026-09-01T00:00:00Z"
+                    }
+                ],
+                "projects": [{
+                    "id": "project-1", "title": "Original", "status": "active",
+                    "color": "#000000", "order": 0, "tagIds": [], "isSequential": false,
+                    "rev": 1, "createdAt": "2026-09-01T00:00:00Z",
+                    "updatedAt": "2026-09-01T00:00:00Z"
+                }],
+                "sections": [{
+                    "id": "section-1", "projectId": "project-1", "title": "Section",
+                    "order": 0, "rev": 1, "createdAt": "2026-09-01T00:00:00Z",
+                    "updatedAt": "2026-09-01T00:00:00Z"
+                }],
+                "areas": [], "people": [],
+                "settings": { "deviceId": "desktop-local-api" }
+            }),
+        )
+        .expect("seed project lifecycle");
+        let scope = ProjectMutationReadScope::lifecycle("project-1");
+        let mut delete = |data: &mut Value| {
+            let rows = crate::local_api::apply_project_delete_or_restore(data, "project-1", false)?;
+            Ok::<_, String>(((), rows))
+        };
+        commit_project_row_mutation(&conn, &scope, &mut delete).expect("delete project");
+        drop(conn);
+
+        let reopened = open_sqlite_path(&db_path).expect("reopen deleted lifecycle");
+        let deleted = read_sqlite_data(&reopened).expect("deleted lifecycle data");
+        let project = deleted["projects"]
+            .as_array()
+            .expect("projects")
+            .iter()
+            .find(|value| value["id"] == "project-1")
+            .expect("project");
+        let deleted_at = project["deletedAt"]
+            .as_str()
+            .expect("project tombstone")
+            .to_string();
+        let section = deleted["sections"]
+            .as_array()
+            .expect("sections")
+            .iter()
+            .find(|value| value["id"] == "section-1")
+            .expect("section");
+        assert_eq!(section["deletedAt"], deleted_at);
+        for task in deleted["tasks"].as_array().expect("tasks") {
+            assert!(task.get("projectId").is_none());
+            assert!(task.get("sectionId").is_none());
+            assert!(task.get("deletedAt").is_none());
+        }
+
+        let scope = ProjectMutationReadScope::lifecycle("project-1");
+        let mut restore = |data: &mut Value| {
+            let rows = crate::local_api::apply_project_delete_or_restore(data, "project-1", true)?;
+            Ok::<_, String>(((), rows))
+        };
+        commit_project_row_mutation(&reopened, &scope, &mut restore).expect("restore project");
+        drop(reopened);
+
+        let reopened = open_sqlite_path(&db_path).expect("reopen restored lifecycle");
+        let restored = read_sqlite_data(&reopened).expect("restored lifecycle data");
+        let project = restored["projects"]
+            .as_array()
+            .expect("projects")
+            .iter()
+            .find(|value| value["id"] == "project-1")
+            .expect("project");
+        let section = restored["sections"]
+            .as_array()
+            .expect("sections")
+            .iter()
+            .find(|value| value["id"] == "section-1")
+            .expect("section");
+        assert!(project.get("deletedAt").is_none());
+        assert!(section.get("deletedAt").is_none());
+        for task in restored["tasks"].as_array().expect("tasks") {
+            assert!(task.get("projectId").is_none());
+            assert!(task.get("sectionId").is_none());
+            assert!(task.get("deletedAt").is_none());
+        }
     }
 
     #[test]

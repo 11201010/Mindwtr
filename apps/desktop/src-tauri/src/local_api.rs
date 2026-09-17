@@ -740,6 +740,38 @@ fn route_api_request(
         ));
     }
 
+    if segments.len() == 2 && segments[0] == "projects" && request.method == "GET" {
+        let data = load_data_snapshot(app)?;
+        let project =
+            find_project(&data, &segments[1]).ok_or_else(|| "Project not found".to_string())?;
+        return Ok(ApiResponse::ok(json!({ "project": project })));
+    }
+
+    let delete_project =
+        segments.len() == 2 && segments[0] == "projects" && request.method == "DELETE";
+    let restore_project = segments.len() == 3
+        && segments[0] == "projects"
+        && segments[2] == "restore"
+        && request.method == "POST";
+    if delete_project || restore_project {
+        let _guard = lock_recovering(write_lock);
+        let scope = ProjectMutationReadScope::lifecycle(&segments[1]);
+        let (changed, persisted) = mutate_project_rows_with_retries(app, scope, |data| {
+            let rows = apply_project_delete_or_restore(data, &segments[1], restore_project)?;
+            Ok((!rows.projects.is_empty(), rows))
+        })?;
+        let operation = if restore_project { "restore" } else { "delete" };
+        let outcome = if changed { "persisted" } else { "unchanged" };
+        log::info!(
+            "Desktop Local API project lifecycle completed extra.releaseCheck=v1.3.1/local-api-project-lifecycle operation={operation} outcome={outcome}"
+        );
+        return Ok(ApiResponse::ok(if restore_project {
+            json!({ "project": persisted_project(&persisted, &segments[1])? })
+        } else {
+            json!({ "ok": true })
+        }));
+    }
+
     if segments.len() == 2 && segments[0] == "projects" && request.method == "PATCH" {
         let _guard = lock_recovering(write_lock);
         let body = parse_body_object(&request.body)?;
@@ -1521,7 +1553,7 @@ pub(crate) fn patch_project_in_data(
     }
     if has_string_field(&current, "deletedAt") {
         return Err(
-            "Project update conflict: restore the deleted project in the app before updating it"
+            "Project update conflict: use POST /projects/:id/restore before updating it"
                 .to_string(),
         );
     }
@@ -1626,6 +1658,129 @@ pub(crate) fn patch_project_in_data(
         .ok_or_else(|| "Project not found".to_string())?;
     *stored = Value::Object(project.clone());
     Ok((Value::Object(project), changed_tasks, changed_sections))
+}
+
+/// Mirrors core project delete/restore: delete detaches live tasks instead of
+/// deleting them; restore only revives children from the same legacy cascade.
+/// Called on fresh transaction-scoped rows, never a stale whole-app snapshot.
+pub(crate) fn apply_project_delete_or_restore(
+    data: &mut Value,
+    project_id: &str,
+    restore: bool,
+) -> Result<ProjectMutationRows, String> {
+    let current = find_project(data, project_id).ok_or("Project not found")?;
+    if has_string_field(&current, "purgedAt") {
+        return Err("Project update conflict: purged project cannot be changed".to_string());
+    }
+    let deleted_at = current
+        .get("deletedAt")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if restore != deleted_at.is_some() {
+        return Ok(ProjectMutationRows::default());
+    }
+    let mut project = current.as_object().cloned().ok_or("Project is invalid")?;
+    let now = now_iso();
+    let device_id = device_id_from_data(data);
+    if restore {
+        project.remove("deletedAt");
+        project.remove("purgedAt");
+        let area = project
+            .get("areaId")
+            .and_then(Value::as_str)
+            .and_then(|id| live_project_area(data, id));
+        if let Some(area) = area {
+            if !has_string_field(&Value::Object(project.clone()), "areaTitle") {
+                if let Some(name) = area.get("name") {
+                    project.insert("areaTitle".to_string(), name.clone());
+                }
+            }
+        } else {
+            project.remove("areaId");
+            project.remove("areaTitle");
+        }
+    } else {
+        project.insert("deletedAt".to_string(), json!(now));
+    }
+    project.insert("updatedAt".to_string(), json!(now));
+    bump_task_revision(&mut project, &device_id);
+    let mut changed = ProjectMutationRows::default();
+    let mut section_ids = HashSet::new();
+    let mut live_section_ids = HashSet::new();
+    for section in ensure_array_mut(data, "sections")? {
+        if section.get("projectId").and_then(Value::as_str) != Some(project_id) {
+            continue;
+        }
+        if let Some(id) = section.get("id").and_then(Value::as_str) {
+            section_ids.insert(id.to_string());
+        }
+        let matches_cascade =
+            restore && section.get("deletedAt").and_then(Value::as_str) == deleted_at.as_deref();
+        if !has_string_field(section, "purgedAt")
+            && (matches_cascade || (!restore && !has_string_field(section, "deletedAt")))
+        {
+            if let Some(object) = section.as_object_mut() {
+                if restore {
+                    object.remove("deletedAt");
+                } else {
+                    object.insert("deletedAt".to_string(), json!(now));
+                }
+                object.insert("updatedAt".to_string(), json!(now));
+                bump_task_revision(object, &device_id);
+                changed.sections.push(section.clone());
+            }
+        }
+        if !has_string_field(section, "deletedAt") && !has_string_field(section, "purgedAt") {
+            if let Some(id) = section.get("id").and_then(Value::as_str) {
+                live_section_ids.insert(id.to_string());
+            }
+        }
+    }
+    for task in ensure_array_mut(data, "tasks")? {
+        if has_string_field(task, "purgedAt") {
+            continue;
+        }
+        let owns_project = task.get("projectId").and_then(Value::as_str) == Some(project_id);
+        let owns_section = task
+            .get("sectionId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| section_ids.contains(id));
+        let should_change = if restore {
+            owns_project && task.get("deletedAt").and_then(Value::as_str) == deleted_at.as_deref()
+        } else {
+            !has_string_field(task, "deletedAt") && (owns_project || owns_section)
+        };
+        if !should_change {
+            continue;
+        }
+        if let Some(object) = task.as_object_mut() {
+            if restore {
+                object.remove("deletedAt");
+                if !object
+                    .get("sectionId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| live_section_ids.contains(id))
+                {
+                    object.remove("sectionId");
+                }
+            } else {
+                object.remove("projectId");
+                object.remove("sectionId");
+            }
+            object.insert("updatedAt".to_string(), json!(now));
+            bump_task_revision(object, &device_id);
+            changed.tasks.push(task.clone());
+        }
+    }
+    let updated = Value::Object(project);
+    let stored = ensure_array_mut(data, "projects")?
+        .iter_mut()
+        .find(|project| project.get("id").and_then(Value::as_str) == Some(project_id))
+        .ok_or("Project not found")?;
+    *stored = updated.clone();
+    changed.projects.push(updated);
+    Ok(changed)
 }
 
 /// Refuses `POST /tasks/{id}/complete` outright when the task's recurrence
@@ -4270,6 +4425,130 @@ mod tests {
             "people": [],
             "settings": { "deviceId": "device-a" }
         })
+    }
+
+    fn project_lifecycle_fixture() -> Value {
+        json!({
+            "projects": [{"id":"p", "title":"Keep metadata", "status":"active", "rev":7,
+                "areaId":"a", "areaTitle":"Area", "updatedAt":"2026-09-01T00:00:00Z"}],
+            "sections": [
+                {"id":"s", "projectId":"p", "title":"Live", "rev":3},
+                {"id":"old", "projectId":"p", "title":"Previously deleted", "rev":4,
+                    "deletedAt":"2026-09-01T00:00:00Z"},
+                {"id":"purged-section", "projectId":"p", "title":"Purged", "rev":6,
+                    "deletedAt":"2026-09-01T00:00:00Z", "purgedAt":"2026-09-01T00:00:00Z"}
+            ],
+            "tasks": [
+                {"id":"direct", "projectId":"p", "status":"next", "rev":2},
+                {"id":"indirect", "sectionId":"s", "status":"waiting", "rev":5},
+                {"id":"old-section", "sectionId":"old", "status":"someday", "rev":1},
+                {"id":"deleted", "projectId":"p", "status":"next", "rev":8,
+                    "deletedAt":"2026-09-01T00:00:00Z"},
+                {"id":"unrelated", "status":"next", "rev":6},
+                {"id":"purged", "projectId":"p", "status":"next", "rev":9,
+                    "deletedAt":"2026-09-01T00:00:00Z", "purgedAt":"2026-09-01T00:00:00Z"}
+            ],
+            "areas":[{"id":"a", "name":"Area"}], "settings":{"deviceId":"local-api-test"}
+        })
+    }
+
+    #[test]
+    fn project_delete_detaches_live_tasks_and_restore_does_not_reattach_them() {
+        let mut data = project_lifecycle_fixture();
+        let before = data.clone();
+        let changed = apply_project_delete_or_restore(&mut data, "p", false).unwrap();
+        assert_eq!(changed.projects.len(), 1);
+        assert_eq!(changed.sections.len(), 1);
+        assert_eq!(changed.tasks.len(), 3);
+        assert_eq!(data["projects"][0]["rev"], json!(8));
+        assert_eq!(data["projects"][0]["revBy"], json!("local-api-test"));
+        assert_eq!(
+            data["sections"][0]["deletedAt"],
+            data["projects"][0]["deletedAt"]
+        );
+        assert_eq!(data["sections"][0]["rev"], json!(4));
+        for index in 0..3 {
+            assert!(data["tasks"][index].get("projectId").is_none());
+            assert!(data["tasks"][index].get("sectionId").is_none());
+            assert!(data["tasks"][index].get("deletedAt").is_none());
+            assert_eq!(
+                data["tasks"][index]["status"],
+                before["tasks"][index]["status"]
+            );
+            assert_eq!(
+                data["tasks"][index]["rev"].as_i64(),
+                before["tasks"][index]["rev"].as_i64().map(|r| r + 1)
+            );
+        }
+        assert_eq!(data["tasks"][3], before["tasks"][3]);
+        assert_eq!(data["tasks"][4], before["tasks"][4]);
+        assert_eq!(data["tasks"][5], before["tasks"][5]);
+        assert_eq!(data["sections"][2], before["sections"][2]);
+        let deleted = data.clone();
+        assert!(apply_project_delete_or_restore(&mut data, "p", false)
+            .unwrap()
+            .projects
+            .is_empty());
+        assert_eq!(data, deleted);
+        let restored = apply_project_delete_or_restore(&mut data, "p", true).unwrap();
+        assert_eq!(restored.projects.len(), 1);
+        assert_eq!(restored.sections.len(), 1);
+        assert!(restored.tasks.is_empty());
+        assert!(data["projects"][0].get("deletedAt").is_none());
+        assert_eq!(data["projects"][0]["rev"], json!(9));
+        assert_eq!(data["projects"][0]["areaId"], json!("a"));
+        assert!(data["sections"][0].get("deletedAt").is_none());
+        assert_eq!(data["sections"][1], before["sections"][1]);
+        assert_eq!(data["sections"][2], before["sections"][2]);
+        assert_eq!(data["tasks"], deleted["tasks"]);
+        let live = data.clone();
+        assert!(apply_project_delete_or_restore(&mut data, "p", true)
+            .unwrap()
+            .projects
+            .is_empty());
+        assert_eq!(data, live);
+    }
+
+    #[test]
+    fn project_restore_sanitizes_area_and_restores_only_matching_legacy_cascade() {
+        let mut data = project_lifecycle_fixture();
+        let deleted_at = "2026-09-02T00:00:00Z";
+        data["projects"][0]["deletedAt"] = json!(deleted_at);
+        data["areas"][0]["deletedAt"] = json!(deleted_at);
+        data["sections"][0]["deletedAt"] = json!(deleted_at);
+        data["sections"][2]["deletedAt"] = json!(deleted_at);
+        data["tasks"][0]["deletedAt"] = json!(deleted_at);
+        data["tasks"][0]["sectionId"] = json!("s");
+        data["tasks"][5]["deletedAt"] = json!(deleted_at);
+        let before = data.clone();
+        let changed = apply_project_delete_or_restore(&mut data, "p", true).unwrap();
+        assert_eq!(changed.tasks.len(), 1);
+        assert_eq!(changed.sections.len(), 1);
+        assert!(data["projects"][0].get("areaId").is_none());
+        assert!(data["projects"][0].get("areaTitle").is_none());
+        assert!(data["tasks"][0].get("deletedAt").is_none());
+        assert_eq!(data["tasks"][0]["sectionId"], json!("s"));
+        assert!(has_string_field(&data["tasks"][3], "deletedAt"));
+        assert_eq!(data["sections"][1], before["sections"][1]);
+        assert_eq!(data["sections"][2], before["sections"][2]);
+        assert_eq!(data["tasks"][3], before["tasks"][3]);
+        assert_eq!(data["tasks"][5], before["tasks"][5]);
+    }
+
+    #[test]
+    fn project_lifecycle_missing_and_purged_are_atomic_errors() {
+        for restore in [false, true] {
+            let mut data = project_lifecycle_fixture();
+            let before = data.clone();
+            let error = apply_project_delete_or_restore(&mut data, "missing", restore).unwrap_err();
+            assert_eq!(api_error_response(error).status, 404);
+            assert_eq!(data, before);
+            data["projects"][0]["purgedAt"] = json!("2026-09-02T00:00:00Z");
+            let before = data.clone();
+            let error = apply_project_delete_or_restore(&mut data, "p", restore).unwrap_err();
+            assert_eq!(api_error_response(error).status, 409);
+            assert_eq!(data, before);
+        }
     }
 
     #[test]
