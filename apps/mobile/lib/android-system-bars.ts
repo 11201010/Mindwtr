@@ -1,10 +1,11 @@
 import { requireOptionalNativeModule, type NativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
-import { logWarn } from './app-log';
+import { logInfo, logWarn } from './app-log';
 
 interface MindwtrSystemBarsModule extends NativeModule {
   setNavigationBarColorAsync(color: string, darkButtons: boolean): Promise<boolean>;
+  applyNavigationBarStyleAsync?(color: string, darkButtons: boolean): Promise<string>;
 }
 
 type AndroidSystemBarStyle = {
@@ -61,11 +62,25 @@ export async function applyAndroidSystemBars(colors: Pick<ThemeColors, 'bg'>, is
 
   const style = resolveAndroidSystemBarStyle(colors, isDark);
   try {
-    await systemBarsModule.setNavigationBarColorAsync(style.navigationBarColor, style.darkNavigationButtons);
-  } catch (error) {
+    // Older development clients can still run this JS bundle; only the new
+    // native method can prove that the version-aware path actually ran.
+    if (!systemBarsModule.applyNavigationBarStyleAsync) {
+      await systemBarsModule.setNavigationBarColorAsync(style.navigationBarColor, style.darkNavigationButtons);
+      return;
+    }
+    const backend = await systemBarsModule.applyNavigationBarStyleAsync(style.navigationBarColor, style.darkNavigationButtons);
+    // A startup call can precede hydration of the logging preference. Do not
+    // suppress later theme acknowledgements just because that first log was gated.
+    if (backend === 'edge-to-edge' || backend === 'legacy-color') {
+      void logInfo('Android navigation bar style applied', {
+        scope: 'theme',
+        extra: { releaseCheck: 'v1.3.1/android-system-bars', backend, outcome: 'applied' },
+      });
+    }
+  } catch {
     void logWarn('Failed to apply Android system bar colors', {
       scope: 'theme',
-      extra: { error: error instanceof Error ? error.message : String(error) },
+      extra: { releaseCheck: 'v1.3.1/android-system-bars', outcome: 'failed' },
     });
   }
 }

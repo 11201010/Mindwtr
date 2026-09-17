@@ -432,9 +432,9 @@ jobs:
           readelf --dyn-syms --wide "$RUNNER_TEMP/libattachment-file-installer.so" \
             | grep -F 'Java_tech_dongdongbh_mindwtr_attachmentfileinstaller_ExactAttachmentPublisherNative_retireReservedPrivateStage'
 
-      - name: Run Android native recovery tests
+      - name: Run Android native recovery and system bar tests
         working-directory: apps/mobile/android
-        run: ./gradlew :attachment-file-installer:testDebugUnitTest :sync-file-lock:testDebugUnitTest :android-widget:testDebugUnitTest --no-daemon
+        run: ./gradlew :attachment-file-installer:testDebugUnitTest :sync-file-lock:testDebugUnitTest :android-widget:testDebugUnitTest :system-bars:testDebugUnitTest --no-daemon
 
   ios-native:
     if: needs.changes.outputs.ios == 'true'

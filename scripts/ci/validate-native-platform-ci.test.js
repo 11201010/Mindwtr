@@ -66,9 +66,10 @@ test("native CI generates clean projects and compiles Android and iOS sources", 
   expect(androidJob).toContain(
     "Java_tech_dongdongbh_mindwtr_attachmentfileinstaller_ExactAttachmentPublisherNative_retireReservedPrivateStage",
   );
-  expect(androidJob).toContain("name: Run Android native recovery tests");
+  expect(androidJob).toContain("name: Run Android native recovery and system bar tests");
   expect(androidJob).toContain(":attachment-file-installer:testDebugUnitTest");
   expect(androidJob).toContain(":sync-file-lock:testDebugUnitTest");
+  expect(androidJob).toContain(":system-bars:testDebugUnitTest");
 
   expect(workflow).toContain("name: iOS Swift compile");
   expect(workflow).toContain("gem install cocoapods --version 1.16.2 --no-document");

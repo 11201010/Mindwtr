@@ -1289,7 +1289,9 @@ function RootLayoutContentInner() {
         </MobileAppLockGate>
         <StatusBar
           barStyle={sandboxMode ? 'dark-content' : (isDark ? 'light-content' : 'dark-content')}
-          backgroundColor={sandboxMode ? '#FEF3C7' : tc.bg}
+          backgroundColor={Platform.OS === 'android' && Number(Platform.Version) < 35
+            ? (sandboxMode ? '#FEF3C7' : tc.bg)
+            : undefined}
         />
       </NavigationThemeProvider>
     </QuickCaptureProvider>
