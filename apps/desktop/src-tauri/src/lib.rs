@@ -46,6 +46,7 @@ mod email_capture;
 mod file_sync_attachment_publication;
 mod install;
 mod linux_calendar;
+mod linux_notification;
 mod local_api;
 mod logging;
 mod macos_widget;
@@ -86,6 +87,7 @@ use linux_calendar::{
     get_linux_calendar_events, get_linux_calendar_permission_status, get_linux_writable_calendars,
     request_linux_calendar_permission, update_linux_calendar_event,
 };
+use linux_notification::LinuxNotificationState;
 use local_api::{
     get_local_api_server_status, set_local_api_server_config, start_configured_local_api_server,
     LocalApiServerState,
@@ -258,12 +260,12 @@ fn flatpak_notification_id() -> String {
 #[tauri::command]
 async fn send_flatpak_notification(title: String, body: Option<String>) -> Result<(), String> {
     if !is_flatpak() {
-        return Err("Flatpak notification portal is only available inside Flatpak".to_string());
+        return Err("unsupported_install".to_string());
     }
 
     let trimmed_title = title.trim();
     if trimmed_title.is_empty() {
-        return Err("Notification title is required".to_string());
+        return Err("invalid_title".to_string());
     }
 
     let mut notification = ashpd::desktop::notification::Notification::new(trimmed_title)
@@ -276,19 +278,32 @@ async fn send_flatpak_notification(title: String, body: Option<String>) -> Resul
         notification = notification.body(body);
     }
 
-    let proxy = ashpd::desktop::notification::NotificationProxy::new()
-        .await
-        .map_err(|error| format!("Failed to connect to notification portal: {error}"))?;
-    proxy
-        .add_notification(&flatpak_notification_id(), notification)
-        .await
-        .map_err(|error| format!("Failed to send notification through portal: {error}"))
+    tokio::time::timeout(Duration::from_secs(5), async move {
+        let proxy = ashpd::desktop::notification::NotificationProxy::new()
+            .await
+            .map_err(|_| "portal_unavailable".to_string())?;
+        proxy
+            .add_notification(&flatpak_notification_id(), notification)
+            .await
+            .map_err(|_| "portal_rejected".to_string())
+    })
+    .await
+    .map_err(|_| "delivery_timeout".to_string())?
 }
 
 #[cfg(not(target_os = "linux"))]
 #[tauri::command]
 async fn send_flatpak_notification(_title: String, _body: Option<String>) -> Result<(), String> {
-    Err("Flatpak notification portal is only available on Linux".to_string())
+    Err("unsupported_platform".to_string())
+}
+
+#[tauri::command]
+async fn send_linux_notification(
+    state: tauri::State<'_, LinuxNotificationState>,
+    title: String,
+    body: Option<String>,
+) -> Result<(), String> {
+    linux_notification::send_notification(state.inner(), title, body).await
 }
 
 /// Sends a Windows toast through the process's own package identity.
@@ -1722,6 +1737,7 @@ pub fn run() {
             Ok(())
         })
         .manage(AudioRecorderState::default())
+        .manage(LinuxNotificationState::default())
         .manage(ObsidianWatcherState::default())
         .invoke_handler(tauri::generate_handler![
             notify_ui_ready,
@@ -1866,6 +1882,7 @@ pub fn run() {
             get_launch_at_startup_enabled,
             set_launch_at_startup_enabled,
             send_flatpak_notification,
+            send_linux_notification,
             send_windows_packaged_notification,
             get_local_api_server_status,
             set_local_api_server_config,

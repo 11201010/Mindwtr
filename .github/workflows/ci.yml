@@ -237,6 +237,7 @@ jobs:
             -o Acquire::https::Timeout=30
           )
           APT_PACKAGES=(
+            dbus-daemon
             libwebkit2gtk-4.1-dev
             libappindicator3-dev
             librsvg2-dev
@@ -330,6 +331,11 @@ jobs:
       - name: Run Rust tests
         timeout-minutes: 20
         run: bun run native:test
+
+      - name: Test Linux notification delivery on an isolated session bus
+        timeout-minutes: 5
+        run: |
+          dbus-run-session -- env MINDWTR_TEST_ISOLATED_DBUS=1 cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml linux_notification:: -- --ignored
 
       - name: Build Tauri app (debug, no bundle)
         timeout-minutes: 20

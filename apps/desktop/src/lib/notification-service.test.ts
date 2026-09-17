@@ -6,6 +6,7 @@ import { buildReminderSchedule, getNextScheduledAt, useTaskStore } from '@mindwt
 const runtimeMock = vi.hoisted(() => ({
     isTauriRuntime: vi.fn(() => false),
     isFlatpakRuntime: vi.fn(() => false),
+    isLinuxRuntime: vi.fn(() => false),
     isWindowsRuntime: vi.fn(() => false),
 }));
 const pluginMock = vi.hoisted(() => ({
@@ -304,6 +305,119 @@ describe('startDesktopNotifications sends the weekly review while notificationsE
     });
 });
 
+// #1232: Linux bypasses the notification plugin because its sync notify-rust call nests a Tokio
+// runtime after the IPC request has already returned success. Native delivery is awaited, and a
+// failed or ambiguously timed-out request must not be blindly resent through another backend.
+describe('Linux native notification path (#1232)', () => {
+    const initialStoreState = useTaskStore.getState();
+
+    beforeEach(() => {
+        runtimeMock.isTauriRuntime.mockReturnValue(true);
+        runtimeMock.isFlatpakRuntime.mockReturnValue(false);
+        runtimeMock.isLinuxRuntime.mockReturnValue(true);
+        runtimeMock.isWindowsRuntime.mockReturnValue(false);
+        useTaskStore.setState({ settings: { notificationsEnabled: true } });
+    });
+
+    afterEach(() => {
+        setNativeInvokeTransport(null);
+        vi.clearAllMocks();
+        runtimeMock.isTauriRuntime.mockReturnValue(false);
+        runtimeMock.isFlatpakRuntime.mockReturnValue(false);
+        runtimeMock.isLinuxRuntime.mockReturnValue(false);
+        useTaskStore.setState(initialStoreState, true);
+    });
+
+    function captureInvokes(reject?: string) {
+        const commands: string[] = [];
+        setNativeInvokeTransport(async (command: string) => {
+            commands.push(command);
+            if (reject && command === reject) {
+                throw new Error(`${command}: service_unavailable; private title must stay out`);
+            }
+            return undefined as never;
+        });
+        return commands;
+    }
+
+    it('awaits the direct D-Bus command for native Linux and skips the plugin', async () => {
+        const commands = captureInvokes();
+
+        await sendDesktopImmediateNotification('Prepare report', 'Due date reminders');
+
+        expect(commands).toContain('send_linux_notification');
+        expect(commands).not.toContain('send_flatpak_notification');
+        expect(pluginMock.sendNotification).not.toHaveBeenCalled();
+        expect(logMock.logInfo).toHaveBeenCalledWith(
+            'Linux desktop notification submitted',
+            expect.objectContaining({
+                extra: {
+                    releaseCheck: 'v1.3.1/linux-notification-delivery',
+                    backend: 'linux-dbus',
+                    outcome: 'submitted',
+                },
+            }),
+        );
+    });
+
+    it('preserves the portal command in Flatpak and skips direct D-Bus', async () => {
+        runtimeMock.isFlatpakRuntime.mockReturnValue(true);
+        const commands = captureInvokes();
+
+        await sendDesktopImmediateNotification('Prepare report', 'Due date reminders');
+
+        expect(commands).toContain('send_flatpak_notification');
+        expect(commands).not.toContain('send_linux_notification');
+        expect(pluginMock.sendNotification).not.toHaveBeenCalled();
+        expect(logMock.logInfo).toHaveBeenCalledWith(
+            'Linux desktop notification submitted',
+            expect.objectContaining({
+                extra: expect.objectContaining({ backend: 'linux-portal' }),
+            }),
+        );
+    });
+
+    it('does not fall back or log private native error text after direct delivery fails', async () => {
+        const commands = captureInvokes('send_linux_notification');
+
+        await sendDesktopImmediateNotification('Prepare report', 'Due date reminders');
+
+        expect(commands).toContain('send_linux_notification');
+        expect(pluginMock.sendNotification).not.toHaveBeenCalled();
+        expect(logMock.logWarn).toHaveBeenCalledWith(
+            'Linux desktop notification delivery failed',
+            expect.objectContaining({
+                extra: {
+                    releaseCheck: 'v1.3.1/linux-notification-delivery',
+                    backend: 'linux-dbus',
+                    outcome: 'failed',
+                    errorType: 'service_unavailable',
+                },
+            }),
+        );
+        expect(JSON.stringify(logMock.logWarn.mock.calls)).not.toContain('private title');
+    });
+
+    it('does not fall back to the plugin when the Flatpak portal rejects delivery', async () => {
+        runtimeMock.isFlatpakRuntime.mockReturnValue(true);
+        const commands = captureInvokes('send_flatpak_notification');
+
+        await sendDesktopImmediateNotification('Prepare report', 'Due date reminders');
+
+        expect(commands).toContain('send_flatpak_notification');
+        expect(pluginMock.sendNotification).not.toHaveBeenCalled();
+        expect(logMock.logWarn).toHaveBeenCalledWith(
+            'Linux desktop notification delivery failed',
+            expect.objectContaining({
+                extra: expect.objectContaining({
+                    backend: 'linux-portal',
+                    outcome: 'failed',
+                }),
+            }),
+        );
+    });
+});
+
 // #1146: on a Microsoft Store (MSIX) install the notification plugin passes a foreign
 // application id, Windows rejects the notifier and the plugin discards the error, so no toast
 // ever appears. The renderer must try the packaged Rust command first on Windows and fall back
@@ -314,6 +428,7 @@ describe('Windows packaged notification path (#1146)', () => {
     beforeEach(() => {
         runtimeMock.isTauriRuntime.mockReturnValue(true);
         runtimeMock.isFlatpakRuntime.mockReturnValue(false);
+        runtimeMock.isLinuxRuntime.mockReturnValue(false);
         runtimeMock.isWindowsRuntime.mockReturnValue(false);
         useTaskStore.setState({ settings: { notificationsEnabled: true } });
     });
@@ -322,6 +437,7 @@ describe('Windows packaged notification path (#1146)', () => {
         setNativeInvokeTransport(null);
         vi.clearAllMocks();
         runtimeMock.isTauriRuntime.mockReturnValue(false);
+        runtimeMock.isLinuxRuntime.mockReturnValue(false);
         runtimeMock.isWindowsRuntime.mockReturnValue(false);
         useTaskStore.setState(initialStoreState, true);
     });

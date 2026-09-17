@@ -63,3 +63,30 @@ describe('getDesktopTimerHost', () => {
         }
     });
 });
+
+describe('desktop platform detection', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+    });
+
+    it('recognizes the Linux WebKit user agent used by native packages', async () => {
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15',
+        });
+        const runtimeModule = await import(pathToFileURL(resolve(process.cwd(), 'src/lib/runtime.ts')).href);
+
+        expect(runtimeModule.isLinuxRuntime()).toBe(true);
+        expect(runtimeModule.isWindowsRuntime()).toBe(false);
+    });
+
+    it('does not classify Windows WebView2 as Linux', async () => {
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        });
+        const runtimeModule = await import(pathToFileURL(resolve(process.cwd(), 'src/lib/runtime.ts')).href);
+
+        expect(runtimeModule.isLinuxRuntime()).toBe(false);
+        expect(runtimeModule.isWindowsRuntime()).toBe(true);
+    });
+});

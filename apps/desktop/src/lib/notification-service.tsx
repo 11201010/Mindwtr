@@ -18,7 +18,7 @@ import {
     getSystemDefaultLanguage,
 } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
-import { isFlatpakRuntime, isTauriRuntime, isWindowsRuntime } from './runtime';
+import { isFlatpakRuntime, isLinuxRuntime, isTauriRuntime, isWindowsRuntime } from './runtime';
 import { invokeNative } from './tauri-invoke';
 import { logInfo, logWarn } from './app-log';
 
@@ -44,6 +44,19 @@ let tauriNotificationApi: TauriNotificationApi | null = null;
 
 const CHECK_INTERVAL_MS = 15_000;
 const REPEAT_CATCH_UP_MS = CHECK_INTERVAL_MS;
+const LINUX_NOTIFICATION_RELEASE_CHECK = 'v1.3.1/linux-notification-delivery';
+const LINUX_NOTIFICATION_ERROR_TYPES = [
+    'invalid_title',
+    'session_bus_unavailable',
+    'service_unavailable',
+    'daemon_rejected',
+    'protocol_error',
+    'delivery_timeout',
+    'portal_unavailable',
+    'portal_rejected',
+    'unsupported_install',
+    'unsupported_platform',
+] as const;
 /**
  * Furthest back a poll will look for reminders it slept through. Browsers throttle
  * a hidden tab's timers to roughly one a minute, and a laptop that suspends stops
@@ -186,19 +199,57 @@ function logNotificationFailed(path: string, error: unknown): void {
     });
 }
 
-async function sendFlatpakPortalNotification(title: string, body?: string): Promise<boolean> {
-    if (!isTauriRuntime() || !isFlatpakRuntime()) return false;
+function classifyLinuxNotificationError(error: unknown): string {
+    const detail = error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+            ? error
+            : error && typeof error === 'object' && 'kind' in error
+                ? String((error as { kind?: unknown }).kind ?? '')
+                : '';
+    return LINUX_NOTIFICATION_ERROR_TYPES.find((candidate) => detail.includes(candidate)) ?? 'unknown';
+}
+
+/**
+ * Linux never reaches the notification plugin: its sync notify-rust call can nest a Tokio
+ * runtime and panic after IPC already reported success (#1232). Flatpak keeps the portal;
+ * native packages await org.freedesktop.Notifications.Notify on the existing runtime.
+ */
+async function handleLinuxNotification(title: string, body?: string): Promise<boolean> {
+    if (!isTauriRuntime() || (!isLinuxRuntime() && !isFlatpakRuntime())) return false;
+
+    const flatpak = isFlatpakRuntime();
+    const backend = flatpak ? 'linux-portal' : 'linux-dbus';
+    const command = flatpak ? 'send_flatpak_notification' : 'send_linux_notification';
 
     try {
-        await invokeNative('send_flatpak_notification', {
+        await invokeNative(command, {
             title,
             body: body?.trim() ? body : undefined,
         });
-        return true;
+        void logInfo('Linux desktop notification submitted', {
+            scope: 'notification',
+            extra: {
+                releaseCheck: LINUX_NOTIFICATION_RELEASE_CHECK,
+                backend,
+                outcome: 'submitted',
+            },
+        });
     } catch (error) {
-        logNotificationFailed('flatpak', error);
-        return false;
+        void logWarn('Linux desktop notification delivery failed', {
+            scope: 'notification',
+            extra: {
+                releaseCheck: LINUX_NOTIFICATION_RELEASE_CHECK,
+                backend,
+                outcome: 'failed',
+                errorType: classifyLinuxNotificationError(error),
+            },
+        });
     }
+
+    // A timeout may mean the daemon accepted Notify but its reply was lost. Never resend through
+    // the plugin (or the web API) after any Linux native attempt.
+    return true;
 }
 
 /**
@@ -224,8 +275,7 @@ async function sendWindowsPackagedNotification(title: string, body?: string): Pr
 }
 
 async function sendNotification(title: string, body?: string) {
-    if (await sendFlatpakPortalNotification(title, body)) {
-        logNotificationSent('flatpak');
+    if (await handleLinuxNotification(title, body)) {
         return;
     }
 
