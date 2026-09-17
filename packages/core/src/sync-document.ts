@@ -285,7 +285,6 @@ export const parseSyncDocument = (
         logInfo('Legacy attachment URL normalized for sync', {
             scope: 'sync',
             context: {
-                releaseCheck: 'v1.3.0/legacy-attachment-link',
                 count: recovery.repairedOwners,
             },
         });

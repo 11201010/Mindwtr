@@ -98,7 +98,6 @@ describe('useTaskQuickActionMenuProps project creation', () => {
         expect(logInfo).toHaveBeenCalledExactlyOnceWith('Task menu project creation saved', {
             scope: 'project',
             extra: {
-                releaseCheck: 'v1.3.0/task-menu-project-create',
                 outcome: 'created',
             },
         });

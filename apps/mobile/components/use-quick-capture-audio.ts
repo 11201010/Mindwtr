@@ -1162,7 +1162,6 @@ export function useQuickCaptureAudio({
       automaticStartAttemptedRef.current = true;
       void logInfo('Quick capture audio automatic start attempted', {
         scope: 'capture',
-        extra: { releaseCheck: 'v1.3.0/capture-audio-auto-start-once' },
       });
       void startRecording();
     }, 150);

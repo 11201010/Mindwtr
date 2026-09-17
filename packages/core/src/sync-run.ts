@@ -1600,7 +1600,6 @@ class SharedSyncRunMachine {
                 this.notifier.logInfo(
                     'Sync activation proved attachments across transfer batches',
                     {
-                        releaseCheck: 'v1.3.0/webdav-activation-batches',
                         backend: this.backend,
                         total: String(activationSnapshot.count),
                         batches: String(transferCalls),

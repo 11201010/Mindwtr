@@ -459,11 +459,8 @@ const logLocalAttachmentLinkReplacement = (
   const preservedExistingNetworkLink = preservedNetworkLinkCount > 0;
   logInfo?.('MCP attachment link replacement committed', {
     ...(preservedExistingNetworkLink ? {
-      releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
       count: preservedNetworkLinkCount,
-    } : {
-      releaseCheck: 'v1.3.0/mcp-decoded-network-link-guard',
-    }),
+    } : {}),
     backend: 'local',
     entity,
   });

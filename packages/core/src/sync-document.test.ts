@@ -407,7 +407,6 @@ describe('Sync document lifecycle', () => {
                 message: 'Legacy attachment URL normalized for sync',
                 scope: 'sync',
                 context: {
-                    releaseCheck: 'v1.3.0/legacy-attachment-link',
                     count: 1,
                 },
             }]);

@@ -24,8 +24,6 @@ import { deleteAsync, documentDirectory, getInfoAsync, readAsStringAsync, readDi
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const ANDROID_QUICK_CAPTURE_SOURCE = 'android-quick-capture';
 export const ANDROID_CAPTURE_INTENT_SOURCE = 'android-capture-intent';
-const ANDROID_QUICK_CAPTURE_RELEASE_CHECK = 'v1.3.0/android-quick-capture-dialog';
-const ANDROID_CAPTURE_INTENT_RELEASE_CHECK = 'v1.3.0/android-capture-intent';
 const ANDROID_WIDGET_CHECKOFF_RELEASE_CHECK = 'v1.3.0/android-widget-checkoff';
 
 // A new task to add (the iOS Shortcut and the Android dialog; `kind` absent).
@@ -256,7 +254,6 @@ const WATCH_CAPTURE_RELEASE_CHECK = 'v1.3.0/watch-capture';
 const WATCH_AUDIO_READY_RELEASE_CHECK = 'v1.3.0/watch-audio-ready';
 const WATCH_COMMAND_RELEASE_CHECK = 'v1.3.0/watch-command';
 const WATCH_OUTBOX_RETRY_RELEASE_CHECK = 'v1.3.0/watch-outbox-retry';
-const ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK = 'v1.3.0/android-quick-capture-audio';
 const APPLE_WATCH_SOURCE = 'apple-watch';
 const QUICK_CAPTURE_AUDIO_DIRECTORY = 'quick-capture-audio';
 const UUID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
@@ -631,7 +628,7 @@ export async function ingestPendingCaptures({
                 if (isAndroidQuickCapture) {
                     void logWarn('Discarding Android quick capture audio with invalid contract', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'invalid-path' },
+                        extra: { kind: 'audio', outcome: 'invalid-path' },
                     });
                 } else {
                     void logWarn('Discarding Watch audio capture with invalid path', {
@@ -661,7 +658,7 @@ export async function ingestPendingCaptures({
                 } catch {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                        extra: { kind: 'audio', outcome: 'task-save-failed' },
                     });
                     continue;
                 }
@@ -671,7 +668,7 @@ export async function ingestPendingCaptures({
                 ) {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                        extra: { kind: 'audio', outcome: 'task-save-failed' },
                     });
                     continue;
                 }
@@ -681,7 +678,7 @@ export async function ingestPendingCaptures({
                 } catch {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'cleanup-failed' },
+                        extra: { kind: 'audio', outcome: 'cleanup-failed' },
                     });
                     continue;
                 }
@@ -689,7 +686,7 @@ export async function ingestPendingCaptures({
                 ingested += 1;
                 void logInfo('Android quick capture audio ingested', {
                     scope: 'capture',
-                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'already-created' },
+                    extra: { kind: 'audio', outcome: 'already-created' },
                 });
                 continue;
             }
@@ -697,7 +694,7 @@ export async function ingestPendingCaptures({
             if (isAndroidQuickCapture) {
                 void logInfo('Android quick capture audio ready for transcription', {
                     scope: 'capture',
-                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'validated' },
+                    extra: { kind: 'audio', outcome: 'validated' },
                 });
             } else {
                 void logInfo('Watch audio ready for transcription', {
@@ -713,7 +710,7 @@ export async function ingestPendingCaptures({
                 if (isAndroidQuickCapture) {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-failed' },
+                        extra: { kind: 'audio', outcome: 'transcription-failed' },
                     });
                 } else {
                     void logWarn('Watch audio capture retained for retry', {
@@ -727,7 +724,7 @@ export async function ingestPendingCaptures({
                 if (isAndroidQuickCapture) {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'transcription-unavailable' },
+                        extra: { kind: 'audio', outcome: 'transcription-unavailable' },
                     });
                 } else {
                     void logWarn('Watch audio capture retained for retry', {
@@ -756,7 +753,7 @@ export async function ingestPendingCaptures({
                 } catch {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                        extra: { kind: 'audio', outcome: 'task-save-failed' },
                     });
                     continue;
                 }
@@ -772,7 +769,7 @@ export async function ingestPendingCaptures({
                 if (isAndroidQuickCapture) {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'task-save-failed' },
+                        extra: { kind: 'audio', outcome: 'task-save-failed' },
                     });
                 }
                 continue;
@@ -784,7 +781,7 @@ export async function ingestPendingCaptures({
                 if (isAndroidQuickCapture) {
                     void logWarn('Android quick capture audio retained for retry', {
                         scope: 'capture',
-                        extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'cleanup-failed' },
+                        extra: { kind: 'audio', outcome: 'cleanup-failed' },
                     });
                 }
                 continue;
@@ -796,7 +793,7 @@ export async function ingestPendingCaptures({
             if (isAndroidQuickCapture) {
                 void logInfo('Android quick capture audio ingested', {
                     scope: 'capture',
-                    extra: { releaseCheck: ANDROID_QUICK_CAPTURE_AUDIO_RELEASE_CHECK, kind: 'audio', outcome: 'created' },
+                    extra: { kind: 'audio', outcome: 'created' },
                 });
             } else {
                 void logInfo('Watch capture ingested', {
@@ -837,12 +834,10 @@ export async function ingestPendingCaptures({
         if (capture.source === ANDROID_QUICK_CAPTURE_SOURCE) {
             void logInfo('Quick capture dialog item ingested', {
                 scope: 'capture',
-                extra: { releaseCheck: ANDROID_QUICK_CAPTURE_RELEASE_CHECK },
             });
         } else if (capture.source === ANDROID_CAPTURE_INTENT_SOURCE) {
             void logInfo('Android automation capture ingested', {
                 scope: 'capture',
-                extra: { releaseCheck: ANDROID_CAPTURE_INTENT_RELEASE_CHECK },
             });
         } else if (capture.source === 'apple-watch') {
             void logInfo('Watch capture ingested', {

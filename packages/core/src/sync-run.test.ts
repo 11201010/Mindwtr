@@ -803,7 +803,6 @@ describe('runSharedSyncCycle', () => {
         expect(harness.infos).toContainEqual({
             message: 'Sync activation proved attachments across transfer batches',
             extra: {
-                releaseCheck: 'v1.3.0/webdav-activation-batches',
                 backend: 'cloud',
                 total: '100',
                 batches: '10',
@@ -840,7 +839,7 @@ describe('runSharedSyncCycle', () => {
         expect(syncAttachments).toHaveBeenCalledTimes(1);
         expect(io.writeRemote).not.toHaveBeenCalled();
         expect(harness.infos.some((entry) => (
-            entry.extra?.releaseCheck === 'v1.3.0/webdav-activation-batches'
+            entry.message === 'Sync activation proved attachments across transfer batches'
         ))).toBe(false);
     });
 

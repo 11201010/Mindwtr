@@ -487,7 +487,6 @@ describe('useQuickCaptureAudio', () => {
         'Quick capture audio automatic start attempted',
         {
           scope: 'capture',
-          extra: { releaseCheck: 'v1.3.0/capture-audio-auto-start-once' },
         }
       );
 

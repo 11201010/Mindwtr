@@ -1584,7 +1584,6 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                                 assertStorageRoot();
                                 writeCloudData(filePath, validated.data, { assertStorageRoot });
                                 logInfo('Legacy Cloud attachment data repaired', {
-                                    releaseCheck: 'v1.3.0/cloud-legacy-attachment-link',
                                     outcome: 'persisted',
                                 });
                                 assertStorageRoot();

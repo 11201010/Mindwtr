@@ -463,7 +463,6 @@ describe('mcp service', () => {
     expect(logs).toEqual([{
       message: 'MCP attachment link replacement committed',
       context: {
-        releaseCheck: 'v1.3.0/mcp-decoded-network-link-guard',
         backend: 'local',
         entity: 'task',
       },
@@ -926,7 +925,6 @@ describe('mcp service', () => {
         {
           message: 'MCP attachment link replacement committed',
           context: {
-            releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
             backend: 'local',
             entity: 'task',
             count: 1,
@@ -935,7 +933,6 @@ describe('mcp service', () => {
         {
           message: 'MCP attachment link replacement committed',
           context: {
-            releaseCheck: 'v1.3.0/mcp-existing-network-link-preserved',
             backend: 'local',
             entity: 'project',
             count: 1,

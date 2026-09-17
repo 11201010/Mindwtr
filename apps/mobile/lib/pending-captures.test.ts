@@ -358,7 +358,6 @@ describe('ingestPendingCaptures', () => {
         expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1);
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Quick capture dialog item ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-quick-capture-dialog' },
         });
     });
 
@@ -388,7 +387,6 @@ describe('ingestPendingCaptures', () => {
         expect(flushPendingSave).toHaveBeenCalledOnce();
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Android automation capture ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-capture-intent' },
         });
         expect(flushPendingSave.mock.invocationCallOrder[0])
             .toBeLessThan(appLogMocks.logInfo.mock.invocationCallOrder[0]);
@@ -957,11 +955,11 @@ describe('ingestPendingCaptures', () => {
             .toBeLessThan(fileSystemMocks.deleteAsync.mock.invocationCallOrder[1]);
         expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(1, 'Android quick capture audio ready for transcription', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'validated' },
+            extra: { kind: 'audio', outcome: 'validated' },
         });
         expect(appLogMocks.logInfo).toHaveBeenNthCalledWith(2, 'Android quick capture audio ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'created' },
+            extra: { kind: 'audio', outcome: 'created' },
         });
     });
 
@@ -1015,7 +1013,7 @@ describe('ingestPendingCaptures', () => {
         );
         expect(appLogMocks.logInfo).toHaveBeenCalledWith('Android quick capture audio ingested', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'already-created' },
+            extra: { kind: 'audio', outcome: 'already-created' },
         });
     });
 
@@ -1080,7 +1078,7 @@ describe('ingestPendingCaptures', () => {
         expect(fileSystemMocks.deleteAsync).not.toHaveBeenCalled();
         expect(appLogMocks.logWarn).toHaveBeenCalledWith('Android quick capture audio retained for retry', {
             scope: 'capture',
-            extra: { releaseCheck: 'v1.3.0/android-quick-capture-audio', kind: 'audio', outcome: 'task-save-failed' },
+            extra: { kind: 'audio', outcome: 'task-save-failed' },
         });
     });
 
