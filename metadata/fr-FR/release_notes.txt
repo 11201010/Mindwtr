@@ -1,5 +1,5 @@
-- Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.
-- Les widgets iPhone et iPad suivent Focus et les filtres enregistrés, avec achèvement interactif.
-- Apple Watch ajoute la capture texte et audio, des actions et les commandes Pomodoro.
-- Raccourcis, partage, Focus, Revue, Référence, création de projets et édition sont enrichis.
-- iCloud, WebDAV, Dropbox, pièces jointes, recherche et stockage sont plus fiables.
+- Organisez les tâches Un jour en sections et modifiez aussitôt les nouvelles actions de projet.
+- Les widgets améliorent navigation, annulation d'achèvement, remplissage et filtres enregistrés.
+- L'édition groupée des dates et les listes au-dessus du clavier sont simplifiées.
+- Partage et Raccourcis évitent les erreurs de routage avec des diagnostics plus sûrs.
+- Sync, pièces jointes, récupération d'archives, rappels et stockage sont plus fiables.

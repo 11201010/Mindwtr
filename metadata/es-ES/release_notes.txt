@@ -1,5 +1,5 @@
-- Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.
-- Los widgets de iPhone y iPad siguen Enfoque y los filtros guardados, con finalización interactiva.
-- Apple Watch añade captura de texto y audio, acciones y controles Pomodoro.
-- Se amplían atajos, compartir, Enfoque, Revisión, Referencia, creación de proyectos y edición.
-- iCloud, WebDAV, Dropbox, adjuntos, búsqueda y almacenamiento son más fiables.
+- Organiza tareas de Algún día en secciones y edita de inmediato las nuevas acciones de proyecto.
+- Los widgets mejoran navegación, Deshacer al completar, rellenado y filtros guardados.
+- La edición masiva de fechas y las listas sobre el teclado son más fáciles.
+- Compartir y Atajos evitan errores de ruta y usan diagnósticos más seguros.
+- Sincronización, adjuntos, recuperación de archivados, recordatorios y almacenamiento son más fiables.

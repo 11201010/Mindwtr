@@ -1,5 +1,5 @@
 - Organisiere Irgendwann-Aufgaben in Abschnitten und bearbeite neue Projekt-Folgeaktionen sofort.
-- Widgets verbessern Listennavigation, Rueckgaengig beim Erledigen, Auffuellen und gespeicherte Filter.
+- Android-Widgets handhaben groessere Listen, Rueckgaengig, Filter und sicheren Ueberlauf.
 - Massendatumsbearbeitung und Checklisten ueber der Tastatur sind einfacher.
-- Teilen und Kurzbefehle vermeiden Routingfehler und nutzen sichere Diagnosen.
+- Teilen vermeidet Routingfehler; Android-Systemleisten folgen der Betriebssystemversion.
 - Sync, Anhaenge, Archivwiederherstellung, Erinnerungen und Speicher sind zuverlaessiger.

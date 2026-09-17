@@ -1,0 +1,5 @@
+- Organiza tareas de Algún día en secciones y edita de inmediato las nuevas acciones de proyecto.
+- Los widgets Android admiten listas mayores, Deshacer, filtros y desbordamiento seguro.
+- La edición masiva de fechas y las listas sobre el teclado son más fáciles.
+- Compartir evita errores de ruta y las barras Android se adaptan a la versión del sistema.
+- Sincronización, adjuntos, recuperación, recordatorios y almacenamiento son más fiables.

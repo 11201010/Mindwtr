@@ -30,7 +30,7 @@
           "列表、日历与看板视图，支持提醒与重复任务",
           "免费开源、无广告"
         ],
-        "ReleaseNotes": "• 可取消任务、项目和重复系列，并在归档中区分“已取消”和“已完成”。\n• 顺序项目会按照可见的分区与任务顺序显示下一步行动。\n• 扩展了聚焦、回顾、参考资料、项目创建、任务编辑和所选任务 CSV 导出。\n• WebDAV、文件同步、Dropbox、附件、搜索和存储更加可靠。\n• 改进了日历、项目笔记、通知、导航和性能。",
+        "ReleaseNotes": "• 可将“将来/也许”任务整理到分区，并立即编辑新建的项目后续行动。\n• 改进了项目键盘导航、聚焦筛选、搜索高亮和人员快速添加。\n• 保存失败会明确提示，并保留尚未保存的输入内容。\n• 本地 API 新增完整的项目生命周期和任务整理操作。\n• 同步、附件、归档项目恢复、通知、Cloud 和 MCP 更加可靠。",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -82,7 +82,7 @@
           "List, calendar, and kanban views with reminders and repeating tasks",
           "Free and open source, no ads"
         ],
-        "ReleaseNotes": "• Cancel tasks, projects, and recurring series while keeping cancelled and completed outcomes distinct.\n• Sequential projects follow their visible section and task order.\n• Focus, Review, Reference, project creation, task editing, and selected-task CSV export are expanded.\n• WebDAV, File Sync, Dropbox, attachments, search, and storage are more reliable.\n• Calendar, project notes, notifications, navigation, and performance are improved.",
+        "ReleaseNotes": "• Organize Someday tasks into sections and edit new project follow-ups immediately.\n• Project keyboard navigation, Focus filters, search highlighting, and People Quick Add are improved.\n• Failed writes are visible and unsaved capture text is retained.\n• The Local API adds durable project lifecycle and task-triage operations.\n• Sync, attachments, archived-project recovery, notifications, Cloud, and MCP are more reliable.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",
@@ -131,7 +131,7 @@
           "Listen-, Kalender- und Kanban-Ansichten mit Erinnerungen und Wiederholungen",
           "Kostenlos und Open Source, ohne Werbung"
         ],
-        "ReleaseNotes": "• Aufgaben, Projekte und Serien lassen sich abbrechen; abgebrochene und erledigte Ergebnisse bleiben unterscheidbar.\n• Sequenzielle Projekte folgen der sichtbaren Abschnitts- und Aufgabenfolge.\n• Fokus, Review, Referenz, Projekterstellung, Aufgabenbearbeitung und CSV-Export wurden erweitert.\n• WebDAV, Dateisync, Dropbox, Anhänge, Suche und Speicher sind zuverlässiger.\n• Kalender, Projektnotizen, Mitteilungen, Navigation und Leistung wurden verbessert.",
+        "ReleaseNotes": "• Organisiere Irgendwann-Aufgaben in Abschnitten und bearbeite neue Projekt-Folgeaktionen sofort.\n• Projektnavigation, Fokusfilter, Suchmarkierung und Personen-Schnellerfassung wurden verbessert.\n• Fehlgeschlagene Speicherungen sind sichtbar und Erfassungstext bleibt erhalten.\n• Die lokale API erweitert Projektlebenszyklus und Aufgaben-Triage.\n• Sync, Anhänge, Archivwiederherstellung, Mitteilungen, Cloud und MCP sind zuverlässiger.",
         "Images": [],
         "RecommendedHardware": [],
         "MinimumHardware": [],
@@ -161,7 +161,7 @@
           "Vues liste, calendrier et kanban, rappels et tâches répétées",
           "Gratuit et open source, sans publicité"
         ],
-        "ReleaseNotes": "• Annulez tâches, projets et séries tout en distinguant les résultats annulés et terminés.\n• Les projets séquentiels suivent l’ordre visible des sections et des tâches.\n• Focus, Revue, Référence, création de projets, édition et export CSV sont enrichis.\n• WebDAV, synchro de fichiers, Dropbox, pièces jointes, recherche et stockage sont plus fiables.\n• Calendrier, notes de projet, notifications, navigation et performances sont améliorés.",
+        "ReleaseNotes": "• Organisez les tâches Un jour en sections et modifiez aussitôt les nouvelles actions de projet.\n• Navigation des projets, filtres Focus, surlignage et ajout rapide de personnes sont améliorés.\n• Les échecs d’écriture sont visibles et le texte non enregistré est conservé.\n• L’API locale couvre le cycle de vie des projets et le triage des tâches.\n• Sync, pièces jointes, récupération, notifications, Cloud et MCP sont plus fiables.",
         "Images": [],
         "RecommendedHardware": [],
         "MinimumHardware": [],
@@ -190,7 +190,7 @@
           "Vistas de lista, calendario y kanban, con recordatorios y tareas repetidas",
           "Gratis y de código abierto, sin anuncios"
         ],
-        "ReleaseNotes": "• Cancela tareas, proyectos y series sin confundir los resultados cancelados con los completados.\n• Los proyectos secuenciales siguen el orden visible de secciones y tareas.\n• Se amplían Enfoque, Revisión, Referencia, creación de proyectos, edición y exportación CSV.\n• WebDAV, sincronización de archivos, Dropbox, adjuntos, búsqueda y almacenamiento son más fiables.\n• Mejoras en calendario, notas de proyecto, notificaciones, navegación y rendimiento.",
+        "ReleaseNotes": "• Organiza tareas de Algún día en secciones y edita de inmediato las nuevas acciones de proyecto.\n• Mejoran navegación de proyectos, filtros de Enfoque, resaltado y captura rápida de personas.\n• Los fallos de escritura son visibles y se conserva el texto sin guardar.\n• La API local amplía el ciclo de vida de proyectos y el triaje de tareas.\n• Sincronización, adjuntos, recuperación, notificaciones, Cloud y MCP son más fiables.",
         "Images": [
           {
             "FileName": "2026-01-27_22-59-40.png",

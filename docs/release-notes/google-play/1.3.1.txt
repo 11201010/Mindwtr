@@ -1,0 +1,35 @@
+<en-US>
+- Organize Someday tasks into sections and edit new project follow-ups immediately.
+- Android widgets handle larger lists, completion Undo, saved filters, and safer overflow.
+- Bulk date editing and checklist input above the keyboard are easier to use.
+- Share capture avoids routing failures, and Android system bars follow the OS version.
+- Sync, attachments, archived-project recovery, reminders, and storage are more reliable.
+</en-US>
+<de-DE>
+- Organisiere Irgendwann-Aufgaben in Abschnitten und bearbeite neue Projekt-Folgeaktionen sofort.
+- Android-Widgets handhaben groessere Listen, Rueckgaengig, Filter und sicheren Ueberlauf.
+- Massendatumsbearbeitung und Checklisten ueber der Tastatur sind einfacher.
+- Teilen vermeidet Routingfehler; Android-Systemleisten folgen der Betriebssystemversion.
+- Sync, Anhaenge, Archivwiederherstellung, Erinnerungen und Speicher sind zuverlaessiger.
+</de-DE>
+<es-ES>
+- Organiza tareas de Algún día en secciones y edita de inmediato las nuevas acciones de proyecto.
+- Los widgets Android admiten listas mayores, Deshacer, filtros y desbordamiento seguro.
+- La edición masiva de fechas y las listas sobre el teclado son más fáciles.
+- Compartir evita errores de ruta y las barras Android se adaptan a la versión del sistema.
+- Sincronización, adjuntos, recuperación, recordatorios y almacenamiento son más fiables.
+</es-ES>
+<fr-FR>
+- Organisez les tâches Un jour en sections et modifiez aussitôt les nouvelles actions de projet.
+- Les widgets Android gèrent de plus grandes listes, l'annulation, les filtres et le débordement.
+- L'édition groupée des dates et les listes au-dessus du clavier sont simplifiées.
+- Le partage évite les erreurs de routage et les barres Android suivent la version du système.
+- Sync, pièces jointes, récupération, rappels et stockage sont plus fiables.
+</fr-FR>
+<zh-CN>
+- 可将“将来/也许”任务整理到分区，并立即编辑新建的项目后续行动。
+- Android 小组件支持更大列表、完成撤销、已保存筛选和安全溢出。
+- 批量日期编辑和键盘上方的清单输入更加易用。
+- 分享捕捉可避免路由错误，Android 系统栏会适配系统版本。
+- 同步、附件、归档项目恢复、提醒和存储更加可靠。
+</zh-CN>

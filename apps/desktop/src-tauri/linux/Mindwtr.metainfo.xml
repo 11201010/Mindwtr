@@ -88,37 +88,22 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
-    <release version="1.3.1-rc.2" date="2026-09-16">
-      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.1-rc.2</url>
+    <release version="1.3.1" date="2026-09-17">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.1</url>
       <description>
-        <p>Mindwtr 1.3.1-rc.2 makes failed writes visible and strengthens Linux notifications, local APIs, sync, and attachments.</p>
-        <p xml:lang="de">Mindwtr 1.3.1-rc.2 macht fehlgeschlagene Schreibvorgaenge sichtbar und verbessert Linux-Mitteilungen, lokale APIs, Synchronisierung und Anhaenge.</p>
+        <p>Mindwtr 1.3.1 improves Someday organization, project follow-ups, Linux notifications, local APIs, sync, and recovery.</p>
+        <p xml:lang="de">Mindwtr 1.3.1 verbessert Irgendwann-Organisation, Projekt-Folgeaktionen, Linux-Mitteilungen, lokale APIs, Synchronisierung und Wiederherstellung.</p>
         <ul>
+          <li>Move Someday tasks between sections with Undo and edit newly saved project follow-ups immediately.</li>
+          <li xml:lang="de">Verschiebe Irgendwann-Aufgaben mit Rueckgaengig zwischen Abschnitten und bearbeite neue Projekt-Folgeaktionen sofort.</li>
           <li>Keep capture text when saving fails and report rejected completion, Focus, restore, and Mind Sweep writes.</li>
           <li xml:lang="de">Behalte Erfassungstext bei Speicherfehlern und melde abgelehnte Schreibvorgaenge beim Erledigen, Fokussieren, Wiederherstellen und Gedankenleeren.</li>
           <li>Await Linux notification delivery through the portal or notification daemon with bounded, privacy-safe diagnostics.</li>
           <li xml:lang="de">Warte die Linux-Mitteilungszustellung ueber Portal oder Benachrichtigungsdienst mit begrenzter, datenschutzfreundlicher Diagnose ab.</li>
-          <li>Recover poisoned Local API and publication locks and validate project and task writes before committing them.</li>
-          <li xml:lang="de">Stelle blockierte lokale API- und Veroeffentlichungssperren wieder her und pruefe Projekt- und Aufgabenaenderungen vor dem Speichern.</li>
-          <li>Preserve recoverable attachment generations and make missing or downloading attachments clear in the editor.</li>
-          <li xml:lang="de">Bewahre wiederherstellbare Anhanggenerationen und zeige fehlende oder heruntergeladene Anhaenge im Editor klar an.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.3.1-rc.1" date="2026-09-15">
-      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.1-rc.1</url>
-      <description>
-        <p>Mindwtr 1.3.1-rc.1 improves Someday organization, project navigation, search, and recovery for Linux testers.</p>
-        <p xml:lang="de">Mindwtr 1.3.1-rc.1 verbessert die Organisation von Irgendwann-Aufgaben, die Projektnavigation, Suche und Wiederherstellung fuer Linux-Testende.</p>
-        <ul>
-          <li>Move one or several Someday tasks between sections with Undo; area pickers follow custom ordering.</li>
-          <li xml:lang="de">Verschiebe einzelne oder mehrere Irgendwann-Aufgaben zwischen Abschnitten mit Rueckgaengig; Bereichsauswahlen folgen der eigenen Reihenfolge.</li>
           <li>Navigate Projects with the keyboard, toggle saved Focus filters safely, and see highlighted global search matches.</li>
           <li xml:lang="de">Navigiere Projekte per Tastatur, schalte gespeicherte Fokusfilter sicher um und sieh hervorgehobene Suchtreffer.</li>
-          <li>Recover legacy archived-project references and retain restorable archived sections and referenced attachments.</li>
-          <li xml:lang="de">Stelle alte Referenzen aus archivierten Projekten wieder her und bewahre wiederherstellbare Abschnitte und referenzierte Anhaenge.</li>
-          <li>Update the desktop TLS dependency to include the rustls security fix.</li>
-          <li xml:lang="de">Aktualisiere die Desktop-TLS-Abhaengigkeit mit der Sicherheitskorrektur von rustls.</li>
+          <li>Use durable Local API project lifecycle and task-triage operations, with safer attachment and archive recovery.</li>
+          <li xml:lang="de">Nutze dauerhafte lokale API-Aktionen fuer Projektlebenszyklus und Aufgaben-Triage sowie sicherere Anhang- und Archivwiederherstellung.</li>
         </ul>
       </description>
     </release>

@@ -1,0 +1,5 @@
+- Organisez les tâches Un jour en sections et modifiez aussitôt les nouvelles actions de projet.
+- Les widgets Android gèrent de plus grandes listes, l'annulation, les filtres et le débordement.
+- L'édition groupée des dates et les listes au-dessus du clavier sont simplifiées.
+- Le partage évite les erreurs de routage et les barres Android suivent la version du système.
+- Sync, pièces jointes, récupération, rappels et stockage sont plus fiables.
