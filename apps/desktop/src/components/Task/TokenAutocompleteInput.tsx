@@ -124,10 +124,21 @@ export function TokenAutocompleteInput({
     const applyToken = (token: string) => {
         const active = resolveSegment();
         if (!active) return;
+        const input = mergedRef.current;
+        const restoreInputFocus = (caret?: number) => {
+            requestAnimationFrame(() => {
+                if (!input || mergedRef.current !== input) return;
+                if (document.activeElement !== input && document.activeElement !== document.body) return;
+                input.focus();
+                if (caret !== undefined) {
+                    input.setSelectionRange(caret, caret);
+                }
+            });
+        };
         if (onAcceptToken) {
             onAcceptToken(token);
             closeOptions();
-            requestAnimationFrame(() => mergedRef.current?.focus());
+            restoreInputFocus();
             return;
         }
 
@@ -135,10 +146,7 @@ export function TokenAutocompleteInput({
         valueRef.current = next.value;
         onChange(next.value);
         closeOptions();
-        requestAnimationFrame(() => {
-            mergedRef.current?.focus();
-            mergedRef.current?.setSelectionRange(next.caret, next.caret);
-        });
+        restoreInputFocus(next.caret);
     };
 
     const handleKeyDown: KeyboardEventHandler<HTMLInputElement> = (event) => {
