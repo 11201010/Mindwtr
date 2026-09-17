@@ -464,6 +464,14 @@ jobs:
             failures.push(`apps/mcp-server/server.json: expected ${version}, got ${serverJson.version || '<missing>'}`);
           }
 
+          if (typeof serverJson.description !== 'string' || serverJson.description.length > 100) {
+            failures.push(
+              `apps/mcp-server/server.json: description must be a string of at most 100 characters, got ${
+                typeof serverJson.description === 'string' ? serverJson.description.length : '<missing>'
+              }`
+            );
+          }
+
           if (!Array.isArray(serverJson.packages)) {
             failures.push('apps/mcp-server/server.json: missing packages array');
           } else {
@@ -477,7 +485,7 @@ jobs:
           }
 
           if (failures.length) {
-            console.error('MCP npm package and registry metadata versions must match.');
+            console.error('MCP npm package and registry metadata are invalid.');
             console.error(failures.join('\n'));
             process.exit(1);
           }
