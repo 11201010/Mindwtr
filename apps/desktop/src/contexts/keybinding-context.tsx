@@ -385,6 +385,26 @@ export function KeybindingProvider({
         return focusTaskSelection();
     }, [currentView, focusTaskSelection]);
 
+    const focusPreviousPane = useCallback((): boolean => {
+        const active = document.activeElement;
+        const projectScope = projectScopeRef.current;
+        if (
+            currentView === 'projects'
+            && projectScope
+            && !projectScope.ownsFocus()
+            && active instanceof HTMLElement
+            && (
+                active.closest('[data-project-workspace], [data-task-id]') !== null
+                // Empty projects enter the main-content container instead of a task.
+                || active.matches('[data-main-content]')
+            )
+            && projectScope.focusSelected()
+        ) {
+            return true;
+        }
+        return focusSidebarCurrentView(currentView);
+    }, [currentView]);
+
     const openHelp = useCallback(() => setIsHelpOpen(true), []);
     const toggleFullscreen = useCallback(async () => {
         if (!isTauriRuntime()) return;
@@ -508,7 +528,7 @@ export function KeybindingProvider({
                     navigationScope?.selectPrev();
                     break;
                 case 'h':
-                    if (focusSidebarCurrentView(currentView)) {
+                    if (focusPreviousPane()) {
                         e.preventDefault();
                     }
                     break;
@@ -618,7 +638,7 @@ export function KeybindingProvider({
                     navigationScope?.selectPrev();
                     break;
                 case 'h':
-                    if (focusSidebarCurrentView(currentView)) {
+                    if (focusPreviousPane()) {
                         e.preventDefault();
                     }
                     break;
@@ -900,7 +920,7 @@ export function KeybindingProvider({
                     return;
                 }
                 if (style !== 'emacs' && e.key === 'ArrowLeft') {
-                    if (focusSidebarCurrentView(currentView)) {
+                    if (focusPreviousPane()) {
                         e.preventDefault();
                         return;
                     }
@@ -974,6 +994,7 @@ export function KeybindingProvider({
         toggleDensity,
         currentView,
         focusActiveSelection,
+        focusPreviousPane,
         applyAreaFilterShortcut,
     ]);
 

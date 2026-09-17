@@ -2,6 +2,25 @@ import { expect, test } from '@playwright/test';
 import { dismissOnboarding, seedAppData } from './seed';
 
 for (const style of ['standard', 'vim'] as const) {
+  test(`Projects empty workspace keyboard return (${style})`, async ({ page }) => {
+    await dismissOnboarding(page);
+    await seedAppData(page, {
+      projects: [{ id: 'empty', title: 'Empty project' }],
+      tasks: [],
+      settings: { keybindingStyle: style },
+    });
+    await page.goto('/?view=projects');
+    const project = page.locator('[data-project-navigation-item][data-project-id="empty"]');
+    await expect(project).toBeVisible();
+    await project.focus();
+    await page.keyboard.press(style === 'vim' ? 'l' : 'ArrowRight');
+    await expect(page.locator('[data-main-content]')).toBeFocused();
+    await page.keyboard.press(style === 'vim' ? 'h' : 'ArrowLeft');
+    await expect(project).toBeFocused();
+    await page.keyboard.press(style === 'vim' ? 'h' : 'ArrowLeft');
+    await expect(page.locator('[data-sidebar-item][data-view="projects"]')).toBeFocused();
+  });
+
   test(`Projects keyboard navigation (${style})`, async ({ page }, testInfo) => {
     await dismissOnboarding(page);
     await seedAppData(page, {
@@ -41,7 +60,8 @@ for (const style of ['standard', 'vim'] as const) {
     await expect(alpha).toBeFocused();
     await page.keyboard.press(style === 'vim' ? 'l' : 'ArrowRight');
     await expect(page.locator('[data-project-workspace] :focus')).toHaveCount(1);
-    await alpha.focus();
+    await page.keyboard.press(style === 'vim' ? 'h' : 'ArrowLeft');
+    await expect(alpha).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(alpha).not.toBeFocused();
     await alpha.focus();
@@ -92,7 +112,11 @@ for (const style of ['standard', 'vim'] as const) {
     await expect(page.locator('[data-project-workspace] [data-task-id="beta-task"]')).toBeVisible();
     await expect(projectNavigation).toBeHidden();
 
-    await nav.focus();
+    await page.keyboard.press(style === 'vim' ? 'h' : 'ArrowLeft');
+    await expect(projectNavigation).toBeVisible();
+    await expect(beta).toBeFocused();
+    await page.keyboard.press(style === 'vim' ? 'h' : 'ArrowLeft');
+    await expect(nav).toBeFocused();
     await page.keyboard.press(entryKey);
     await expect(projectNavigation).toBeVisible();
     await expect(beta).toBeFocused();
