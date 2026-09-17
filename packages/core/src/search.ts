@@ -178,8 +178,10 @@ export function parseSearchQuery(query: string): SearchQuery {
     return { clauses };
 }
 
-function matchesText(haystack: string | undefined, needle: string): boolean {
-    if (!haystack) return false;
+function matchesText(haystack: unknown, needle: string): boolean {
+    // Persisted/API data can predate validation. Ignore malformed text without
+    // coercing arrays/objects into searchable content or mutating the record.
+    if (typeof haystack !== 'string' || !haystack) return false;
     return haystack.toLowerCase().includes(needle.toLowerCase());
 }
 

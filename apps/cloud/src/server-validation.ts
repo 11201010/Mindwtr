@@ -33,6 +33,7 @@ import {
     CLOUD_TASK_PATCH_ALLOWED_PROP_KEYS,
     MAX_ITEMS_PER_COLLECTION,
     MAX_PENDING_REMOTE_DELETE_ATTEMPTS,
+    logInfo,
 } from './server-config';
 import { normalizeAttachmentRelativePath } from './server-storage';
 
@@ -516,6 +517,12 @@ export function validateEntityProps<K extends EntityPropsKind>(
     const noun = ENTITY_PROPS_NOUN[mode];
     if (!isRecord(value)) return { ok: false, error: `Invalid ${kind} ${noun}` };
     const config = ENTITY_PROPS_CONFIG[kind];
+    // REST mutations must follow Task's single free-text assignee contract.
+    // Keep legacy document reads tolerant so existing malformed data remains
+    // accessible and repairable; do not silently coerce or rewrite it on read.
+    if (kind === 'task' && value.assignedTo != null && typeof value.assignedTo !== 'string') {
+        return { ok: false, error: 'Invalid task assignedTo: expected a string or null' };
+    }
     const invalidKeys = Object.keys(value).filter((key) => !config.allowedKeys[mode].has(key));
     if (invalidKeys.length > 0) {
         return {
@@ -526,6 +533,17 @@ export function validateEntityProps<K extends EntityPropsKind>(
     const valueError = config.validateValues?.(value);
     if (valueError) return { ok: false, error: valueError };
     return { ok: true, props: value as Partial<EntityPropsMap[K]> };
+}
+
+export function filterCloudTasksBySearch(tasks: Task[], projects: Project[], query: string): Task[] {
+    const matches = filterTasksBySearch(tasks, projects, query);
+    if (query.trim() && tasks.some((task) => task.assignedTo != null && typeof task.assignedTo !== 'string')) {
+        logInfo('Cloud search tolerated malformed assignee text', {
+            releaseCheck: 'v1.3.1/cloud-assignee-search',
+            outcome: 'completed',
+        });
+    }
+    return matches;
 }
 
 export function pickTaskList(
@@ -545,7 +563,7 @@ export function pickTaskList(
     if (opts.query && opts.query.trim()) {
         // filterTasksBySearch, not searchAll: searchAll slices to SEARCH_RESULT_LIMIT (200)
         // before this route paginates, silently capping totals — same fix as /v1/search.
-        const matchingTaskIds = new Set(filterTasksBySearch(tasks, filterNotDeleted(data.projects), opts.query).map((task) => task.id));
+        const matchingTaskIds = new Set(filterCloudTasksBySearch(tasks, filterNotDeleted(data.projects), opts.query).map((task) => task.id));
         tasks = tasks.filter((task) => matchingTaskIds.has(task.id));
     }
     return tasks;

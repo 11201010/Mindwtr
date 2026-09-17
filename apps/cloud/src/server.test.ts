@@ -1991,6 +1991,80 @@ describe('cloud server api', () => {
         baseUrl = '';
     });
 
+    test('search tolerates stored malformed assignees without rewriting data (#1233)', async () => {
+        const now = '2026-09-16T12:00:00.000Z';
+        const data = {
+            tasks: [
+                { id: 'array-assignee', title: 'Buy milk', assignedTo: ['person-abc123'] },
+                { id: 'string-assignee', title: 'Call supplier', assignedTo: 'Alex' },
+                { id: 'empty-assignee', title: 'Empty assignment', assignedTo: [] },
+                { id: 'null-assignee', title: 'No assignment', assignedTo: null },
+            ].map((task) => ({ ...task, status: 'inbox', tags: [], contexts: [], createdAt: now, updatedAt: now })),
+            projects: [], sections: [], areas: [], settings: {},
+        };
+        const filePath = join(dataDir, `${tokenToKey(integrationToken)}.json`);
+        const original = JSON.stringify(data);
+        writeFileSync(filePath, original);
+        const captured: string[] = [];
+        const stdout = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        try {
+            for (const route of ['/v1/tasks', '/v1/search']) {
+                for (const [query, expected] of [
+                    ['milk', ['array-assignee']], ['unmatched', []],
+                    ['assignee:alex', ['string-assignee']], ['assigned:alex', ['string-assignee']],
+                    ['assignedto:alex', ['string-assignee']], ['Alex', ['string-assignee']],
+                    ['assignee:person-abc123', []],
+                ] as const) {
+                    const response = await fetch(`${baseUrl}${route}?query=${encodeURIComponent(query)}`, { headers: authHeaders });
+                    expect(response.status).toBe(200);
+                    const body = await response.json() as { tasks: Task[] };
+                    expect(body.tasks.map((task) => task.id)).toEqual([...expected]);
+                }
+            }
+            expect(readFileSync(filePath, 'utf8')).toBe(original);
+            const output = captured.join('');
+            expect(output).toContain('v1.3.1/cloud-assignee-search');
+            expect(output).not.toContain('person-abc123');
+            expect(output).not.toContain('Buy milk');
+        } finally {
+            stdout.mockRestore();
+        }
+    });
+
+    test('rejects malformed assignees in REST writes but accepts string and cleared assignments (#1233)', async () => {
+        const create = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Assignee validation', props: { assignedTo: 'Alex' } }),
+        });
+        expect(create.status).toBe(201);
+        const { task } = await create.json() as { task: Task };
+        for (const assignedTo of [['person-abc123'], [], { name: 'Alex' }, 42, true]) {
+            const post = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST', headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ title: 'Invalid assignment', props: { assignedTo } }),
+            });
+            expect(post.status).toBe(400);
+            expect((await post.json()).error).toBe('Invalid task assignedTo: expected a string or null');
+            const patch = await fetch(`${baseUrl}/v1/tasks/${task.id}`, {
+                method: 'PATCH', headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ assignedTo }),
+            });
+            expect(patch.status).toBe(400);
+        }
+        const read = await fetch(`${baseUrl}/v1/tasks/${task.id}`, { headers: authHeaders });
+        expect((await read.json()).task.assignedTo).toBe('Alex');
+        for (const assignedTo of [null, '', 'Sam']) {
+            const patch = await fetch(`${baseUrl}/v1/tasks/${task.id}`, {
+                method: 'PATCH', headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ assignedTo }),
+            });
+            expect(patch.status).toBe(200);
+        }
+    });
+
     test('handles CORS preflight without requiring auth or returning JSON', async () => {
         const response = await fetch(`${baseUrl}/v1/tasks`, {
             method: 'OPTIONS',

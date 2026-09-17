@@ -42,6 +42,7 @@ export const CLOUD_LOG_MESSAGES = [
     'Capture webhook request accepted',
     'Cloud task Focus write policy applied',
     'Cloud task reopened archived project',
+    'Cloud search tolerated malformed assignee text',
     'Failed to clone cloud app data cache entry',
     'Failed to start server',
     'Legacy Cloud attachment data repaired',

@@ -4,6 +4,19 @@ import { filterProjectsBySearch, filterTasksBySearch, parseSearchQuery, searchAl
 import type { Project, Task } from './types';
 
 describe('search', () => {
+    it.each([['person-abc123'], [], null, { name: 'Alex' }, 42, true].map((assignedTo) => ({ assignedTo })))('ignores malformed assignee text without breaking search: %j', ({ assignedTo }) => {
+        const task = {
+            id: 'milk', title: 'Buy milk', status: 'inbox', tags: [], contexts: [],
+            createdAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:00Z', assignedTo,
+        } as unknown as Task;
+        expect(filterTasksBySearch([task], [], 'milk')).toEqual([task]);
+        for (const query of ['unmatched', 'assigned:person', 'assignee:person', 'assignedto:person']) {
+            expect(filterTasksBySearch([task], [], query)).toEqual([]);
+        }
+        expect(filterTasksBySearch([task], [], '-assignee:person')).toEqual([task]);
+        expect(task.assignedTo).toEqual(assignedTo);
+    });
+
     it('matches an unterminated quoted phrase while it is being typed', () => {
         const values = (query: string) => parseSearchQuery(query).clauses[0]?.terms.map((term) => term.value) ?? [];
 

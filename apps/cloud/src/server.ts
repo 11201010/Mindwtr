@@ -13,7 +13,6 @@ import {
     compactPurgedProjectTombstone,
     filterNotDeleted,
     filterProjectsBySearch,
-    filterTasksBySearch,
     generateUUID,
     getNextProjectOrder,
     getTaskOrder,
@@ -92,6 +91,7 @@ import { CAPTURE_ROUTE_PATH, handleCaptureRequest } from './server-capture';
 import { CAPTURE_TOKENS_ROUTE_PATH, handleCaptureTokensRequest } from './server-capture-tokens';
 import {
     asStatus,
+    filterCloudTasksBySearch,
     pickTaskList,
     validateAppData,
     validateEntityProps,
@@ -1466,7 +1466,7 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                             // taskOffset/projectOffset past 200 always return empty. This
                             // endpoint does its own offset/limit slicing below (bounded by
                             // LIST_MAX_LIMIT), so it doesn't need searchAll's fixed 200 cap.
-                            const matchedTasks = filterTasksBySearch(tasks, projects, query);
+                            const matchedTasks = filterCloudTasksBySearch(tasks, projects, query);
                             const matchedProjects = filterProjectsBySearch(projects, query);
                             const taskTotal = matchedTasks.length;
                             const projectTotal = matchedProjects.length;
