@@ -346,11 +346,9 @@ function RootLayoutContent() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: tc.bg }}>
       <ToastProvider>
         <ThemedAlertProvider>
-          <ProjectNextActionPromptProvider>
-            <RootAdaptiveWindowHost>
-              <RootLayoutContentInner />
-            </RootAdaptiveWindowHost>
-          </ProjectNextActionPromptProvider>
+          <RootAdaptiveWindowHost>
+            <RootLayoutContentInner />
+          </RootAdaptiveWindowHost>
         </ThemedAlertProvider>
       </ToastProvider>
     </GestureHandlerRootView>
@@ -1207,6 +1205,7 @@ function RootLayoutContentInner() {
     >
       <NavigationThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
           <MobileAppLockGate enabled={mobileAppLockEnabled}>
+          <ProjectNextActionPromptProvider>
           <StartupReadinessContext.Provider value={startupReadiness}>
             <PersistenceFailureBanner />
           <SandboxWorkspaceBanner />
@@ -1286,6 +1285,7 @@ function RootLayoutContentInner() {
             onDismiss={dismissUpdateReminder}
           />
           </StartupReadinessContext.Provider>
+          </ProjectNextActionPromptProvider>
         </MobileAppLockGate>
         <StatusBar
           barStyle={sandboxMode ? 'dark-content' : (isDark ? 'light-content' : 'dark-content')}

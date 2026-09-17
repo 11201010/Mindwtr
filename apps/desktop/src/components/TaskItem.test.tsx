@@ -1,5 +1,6 @@
 import { Profiler } from 'react';
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import * as core from '@mindwtr/core';
 import { act, render, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TaskItem } from '../components/TaskItem';
@@ -40,6 +41,7 @@ const setCompletionDateTime = (dialog: HTMLElement, localIso: string) => {
 };
 
 describe('TaskItem', () => {
+    afterEach(() => vi.restoreAllMocks());
     beforeEach(() => {
         act(() => {
             useTaskStore.setState(initialTaskState, true);
@@ -2090,6 +2092,288 @@ describe('TaskItem', () => {
                 projectId: 'project-1',
             });
         });
+    });
+
+    it.each([
+        { retarget: false, failFlush: false },
+        { retarget: true, failFlush: false },
+        { retarget: false, failFlush: true },
+    ])('opens the saved Inbox task with retarget=$retarget and persistence retry=$failFlush', async ({ retarget, failFlush }) => {
+        const flush = createDeferred<void>();
+        const flushSave = vi.spyOn(core, 'flushPendingSave').mockResolvedValue(undefined);
+        if (failFlush) flushSave.mockImplementationOnce(() => flush.promise.then(() => { throw new Error('Disk unavailable'); }));
+        const persistSnapshot = vi.fn().mockResolvedValue(undefined);
+        const project: Project = {
+            id: 'project-save-edit',
+            title: 'Launch plan',
+            status: 'active',
+            color: '#3b82f6',
+            order: 0,
+            tagIds: [],
+            createdAt: mockTask.createdAt,
+            updatedAt: mockTask.updatedAt,
+        };
+        const section: Section = {
+            id: 'section-save-edit',
+            projectId: project.id,
+            title: 'Release',
+            order: 0,
+            createdAt: mockTask.createdAt,
+            updatedAt: mockTask.updatedAt,
+        };
+        const projectTask: Task = {
+            ...mockTask,
+            id: 'project-save-edit-owner',
+            title: 'Finish current step',
+            status: 'next',
+            projectId: project.id,
+            sectionId: section.id,
+        };
+        const otherProject: Project = { ...project, id: 'other-project', title: 'OtherProject' };
+        const targetProject = retarget ? otherProject : project;
+        const addTask = vi.fn().mockResolvedValue({ success: true, id: 'fresh-next-action' });
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [projectTask],
+                _allTasks: [projectTask],
+                _tasksById: new Map([[projectTask.id, projectTask]]),
+                projects: [project, otherProject],
+                _allProjects: [project, otherProject],
+                _projectsById: new Map([[project.id, project], [otherProject.id, otherProject]]),
+                sections: [section],
+                _allSections: [section],
+                _sectionsById: new Map([[section.id, section]]),
+                areas: [],
+                _allAreas: [],
+                addTask,
+                persistSnapshot,
+            }));
+        });
+
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={projectTask} project={project} />
+            </LanguageProvider>
+        );
+        fireEvent.click(view.getByRole('button', { name: 'Done' }));
+        await waitFor(() => {
+            expect(view.getByRole('dialog', { name: /what's the next action/i })).toBeInTheDocument();
+        });
+        fireEvent.change(view.getByPlaceholderText('New next action...'), {
+            target: { value: `Clarify launch /inbox${retarget ? ' +OtherProject' : ''}` },
+        });
+        fireEvent.click(view.getByRole('button', { name: /save & edit/i }));
+
+        if (failFlush) {
+            await waitFor(() => expect(flushSave).toHaveBeenCalledOnce());
+            expect(useUiStore.getState().editingTaskId).toBeNull();
+            await act(async () => { flush.resolve(); });
+            await waitFor(() => expect(view.getByRole('button', { name: /save & edit/i })).toBeEnabled());
+            expect(view.getByPlaceholderText('New next action...')).toBeDisabled();
+            expect(useUiStore.getState().editingTaskId).toBeNull();
+            fireEvent.click(view.getByRole('button', { name: /save & edit/i }));
+        }
+
+        await waitFor(() => {
+            expect(addTask).toHaveBeenCalledWith('Clarify launch', {
+                projectId: targetProject.id,
+                ...(retarget ? {} : { sectionId: section.id }),
+                status: 'inbox',
+            });
+            expect(useUiStore.getState().editingTaskId).toBe('fresh-next-action');
+        });
+        expect(useTaskStore.getState().highlightTaskId).toBe('fresh-next-action');
+        expect(useUiStore.getState().projectView.selectedProjectId).toBe(targetProject.id);
+        expect(view.queryByRole('dialog', { name: /what's the next action/i })).not.toBeInTheDocument();
+        expect(addTask).toHaveBeenCalledOnce();
+        if (failFlush) expect(persistSnapshot).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the next-action draft and editor closed when Save & edit fails', async () => {
+        const projectTask: Task = {
+            ...mockTask,
+            id: 'project-save-edit-failure-owner',
+            title: 'Finish current step',
+            status: 'next',
+            projectId: 'project-save-edit-failure',
+        };
+        const project: Project = {
+            id: 'project-save-edit-failure',
+            title: 'Launch plan',
+            status: 'active',
+            color: '#3b82f6',
+            order: 0,
+            tagIds: [],
+            createdAt: mockTask.createdAt,
+            updatedAt: mockTask.updatedAt,
+        };
+        const addTask = vi.fn().mockResolvedValue({ success: false, error: 'Disk unavailable' });
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [projectTask],
+                _allTasks: [projectTask],
+                _tasksById: new Map([[projectTask.id, projectTask]]),
+                projects: [project],
+                _allProjects: [project],
+                _projectsById: new Map([[project.id, project]]),
+                sections: [],
+                _allSections: [],
+                areas: [],
+                _allAreas: [],
+                addTask,
+            }));
+        });
+
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={projectTask} project={project} />
+            </LanguageProvider>
+        );
+        fireEvent.click(view.getByRole('button', { name: 'Done' }));
+        await waitFor(() => {
+            expect(view.getByRole('dialog', { name: /what's the next action/i })).toBeInTheDocument();
+        });
+        const input = view.getByPlaceholderText('New next action...');
+        fireEvent.change(input, { target: { value: 'Keep this draft' } });
+        fireEvent.click(view.getByRole('button', { name: /save & edit/i }));
+
+        await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
+        expect(input).toHaveValue('Keep this draft');
+        expect(view.getByRole('dialog', { name: /what's the next action/i })).toBeInTheDocument();
+        expect(useUiStore.getState().editingTaskId).toBeNull();
+    });
+
+    it('prevents duplicate next-action saves while the first request is pending', async () => {
+        const projectTask: Task = {
+            ...mockTask,
+            id: 'project-save-edit-pending-owner',
+            status: 'next',
+            projectId: 'project-save-edit-pending',
+        };
+        const project: Project = {
+            id: 'project-save-edit-pending',
+            title: 'Launch plan',
+            status: 'active',
+            color: '#3b82f6',
+            order: 0,
+            tagIds: [],
+            createdAt: mockTask.createdAt,
+            updatedAt: mockTask.updatedAt,
+        };
+        const pending = createDeferred<{ success: boolean; id: string }>();
+        const addTask = vi.fn().mockReturnValue(pending.promise);
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [projectTask],
+                _allTasks: [projectTask],
+                _tasksById: new Map([[projectTask.id, projectTask]]),
+                projects: [project],
+                _allProjects: [project],
+                _projectsById: new Map([[project.id, project]]),
+                sections: [],
+                _allSections: [],
+                areas: [],
+                _allAreas: [],
+                addTask,
+            }));
+        });
+
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={projectTask} project={project} />
+            </LanguageProvider>
+        );
+        fireEvent.click(view.getByRole('button', { name: 'Done' }));
+        await waitFor(() => {
+            expect(view.getByRole('dialog', { name: /what's the next action/i })).toBeInTheDocument();
+        });
+        fireEvent.change(view.getByPlaceholderText('New next action...'), {
+            target: { value: 'Create once' },
+        });
+        const saveAndEdit = view.getByRole('button', { name: /save & edit/i });
+        fireEvent.click(saveAndEdit);
+        fireEvent.click(saveAndEdit);
+        fireEvent.click(view.getByRole('button', { name: /add next action/i }));
+
+        expect(addTask).toHaveBeenCalledTimes(1);
+        expect(saveAndEdit).toBeDisabled();
+        await act(async () => {
+            pending.resolve({ success: true, id: 'created-once' });
+            await pending.promise;
+        });
+    });
+
+    it('does not open a saved task after its Save & edit prompt becomes stale', async () => {
+        const projectTask: Task = {
+            ...mockTask,
+            id: 'project-save-edit-stale-owner',
+            status: 'next',
+            projectId: 'project-save-edit-stale',
+        };
+        const project: Project = {
+            id: 'project-save-edit-stale',
+            title: 'Launch plan',
+            status: 'active',
+            color: '#3b82f6',
+            order: 0,
+            tagIds: [],
+            createdAt: mockTask.createdAt,
+            updatedAt: mockTask.updatedAt,
+        };
+        const pending = createDeferred<{ success: boolean; id: string }>();
+        const addTask = vi.fn().mockReturnValue(pending.promise);
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [projectTask],
+                _allTasks: [projectTask],
+                _tasksById: new Map([[projectTask.id, projectTask]]),
+                projects: [project],
+                _allProjects: [project],
+                _projectsById: new Map([[project.id, project]]),
+                sections: [],
+                _allSections: [],
+                areas: [],
+                _allAreas: [],
+                addTask,
+            }));
+        });
+
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={projectTask} project={project} />
+            </LanguageProvider>
+        );
+        fireEvent.click(view.getByRole('button', { name: 'Done' }));
+        await waitFor(() => {
+            expect(view.getByRole('dialog', { name: /what's the next action/i })).toBeInTheDocument();
+        });
+        fireEvent.change(view.getByPlaceholderText('New next action...'), {
+            target: { value: 'Do not reopen' },
+        });
+        fireEvent.click(view.getByRole('button', { name: /save & edit/i }));
+
+        const archivedProject = { ...project, status: 'archived' as const };
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                projects: [],
+                _allProjects: [archivedProject],
+                _projectsById: new Map([[archivedProject.id, archivedProject]]),
+            }));
+        });
+        expect(view.queryByRole('dialog', { name: /what's the next action/i })).not.toBeInTheDocument();
+
+        await act(async () => {
+            pending.resolve({ success: true, id: 'stale-created-task' });
+            await pending.promise;
+        });
+
+        expect(useUiStore.getState().editingTaskId).toBeNull();
+        expect(useTaskStore.getState().highlightTaskId).not.toBe('stale-created-task');
     });
 
     it('closes the project next-action prompt and rejects a stale add after archive', async () => {

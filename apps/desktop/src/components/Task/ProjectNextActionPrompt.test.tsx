@@ -11,6 +11,7 @@ const labels: Record<string, string> = {
     'projects.nextActionPromptPlaceholder': 'New next action...',
     'projects.nextActionPromptAddButton': 'Add next action',
     'projects.nextActionPromptComplete': 'Complete project',
+    'quickAdd.saveAndEdit': 'Save & edit',
     'common.skip': 'Skip',
 };
 
@@ -24,6 +25,7 @@ const renderPrompt = (overrides: Partial<React.ComponentProps<typeof ProjectNext
             newTitle=""
             projectTitle="Launch plan"
             onAddTask={vi.fn()}
+            onAddTaskAndEdit={vi.fn()}
             onCancel={vi.fn()}
             onChooseTask={vi.fn()}
             onCompleteProject={vi.fn()}
@@ -45,14 +47,27 @@ describe('ProjectNextActionPrompt', () => {
 
     it('keeps adding the next action as the primary path', () => {
         const onAddTask = vi.fn();
+        const onAddTaskAndEdit = vi.fn();
         const onCancel = vi.fn();
-        renderPrompt({ newTitle: 'Draft the brief', onAddTask, onCancel });
+        renderPrompt({ newTitle: 'Draft the brief', onAddTask, onAddTaskAndEdit, onCancel });
 
         fireEvent.click(screen.getByRole('button', { name: /add next action/i }));
+        expect(onAddTask).toHaveBeenCalledTimes(1);
+        expect(onAddTaskAndEdit).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: /save & edit/i }));
+        expect(onAddTaskAndEdit).toHaveBeenCalledTimes(1);
         expect(onAddTask).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: /^skip$/i }));
         expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('prevents another save while a next action is being created', () => {
+        renderPrompt({ newTitle: 'Draft the brief', isAddingTask: true });
+
+        expect(screen.getByRole('button', { name: /add next action/i })).toBeDisabled();
+        expect(screen.getByRole('button', { name: /save & edit/i })).toBeDisabled();
     });
 
     it('lets an existing candidate be chosen as the next action', () => {

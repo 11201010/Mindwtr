@@ -20,6 +20,7 @@ import {
     resolveFocusStarAction,
     parseQuickAddDateCommands,
     parseProjectNextActionInput,
+    flushPendingSave,
     buildQuickAddParseOptions,
     getPersonOptionNames,
     normalizeTimeSpentMinutes,
@@ -253,6 +254,10 @@ export const TaskItem = memo(function TaskItem({
     const [projectNextActionPrompt, setProjectNextActionPrompt] = useState<ProjectNextActionPromptState | null>(null);
     const projectNextActionPromptRef = useRef<ProjectNextActionPromptState | null>(null);
     projectNextActionPromptRef.current = projectNextActionPrompt;
+    const projectNextActionAddInFlightRef = useRef<ProjectNextActionPromptState | null>(null);
+    const [isAddingProjectNextAction, setIsAddingProjectNextAction] = useState(false);
+    const createdNextActionRef = useRef<string | null>(null);
+    const [nextActionTitleLocked, setNextActionTitleLocked] = useState(false);
     const mutationPromptOwnerTaskIdRef = useRef(task.id);
     const [projectNextActionTitle, setProjectNextActionTitle] = useState('');
     const resolvedFeatureFlags = resolveFeatureFlags(settings);
@@ -852,6 +857,8 @@ export const TaskItem = memo(function TaskItem({
     }, [setHighlightTask, task.id]);
     const undoLabel = useMemo(() => tFallback(t, 'common.undo', 'Undo'), [t]);
     const closeProjectNextActionPrompt = useCallback(() => {
+        createdNextActionRef.current = null;
+        setNextActionTitleLocked(false);
         projectNextActionPromptRef.current = null;
         setProjectNextActionPrompt(null);
         setProjectNextActionTitle('');
@@ -937,12 +944,13 @@ export const TaskItem = memo(function TaskItem({
             })
             .catch((error) => reportError('Failed to choose project next action', error));
     }, [closeProjectNextActionPrompt, getLiveMutableTask, moveTask, projectNextActionPrompt, task.id]);
-    const handleAddProjectNextAction = useCallback(() => {
+    const runAddProjectNextAction = useCallback((openEditor: boolean) => {
         const prompt = projectNextActionPrompt;
         const liveOwner = getLiveMutableTask(task.id, { allowCompleted: true });
         if (
             !prompt
             || projectNextActionPromptRef.current !== prompt
+            || projectNextActionAddInFlightRef.current
             || !liveOwner
             || liveOwner.projectId !== prompt.projectId
         ) {
@@ -967,20 +975,82 @@ export const TaskItem = memo(function TaskItem({
         ) {
             return;
         }
-        void addTask(title, props)
+        projectNextActionAddInFlightRef.current = prompt;
+        setIsAddingProjectNextAction(true);
+        void (async () => {
+            if (createdNextActionRef.current) {
+                const id = createdNextActionRef.current;
+                await useTaskStore.getState().persistSnapshot();
+                await flushPendingSave();
+                return { success: true as const, id };
+            }
+            const result = await addTask(title, props);
+            if (result.success && openEditor && result.id) {
+                if (projectNextActionPromptRef.current === prompt) {
+                    createdNextActionRef.current = result.id;
+                    setNextActionTitleLocked(true);
+                }
+                await flushPendingSave();
+            }
+            return result;
+        })()
             .then((result) => {
                 if (!result.success) {
                     throw new Error(result.error || 'Failed to add next action');
+                }
+                if (openEditor && !result.id) {
+                    throw new Error('The new next action did not return an id');
                 }
                 if (
                     projectNextActionPromptRef.current === prompt
                     && getLiveMutableTask(task.id, { allowCompleted: true })
                 ) {
+                    if (openEditor && result.id) {
+                        void import('../lib/app-log').then(({ logInfo }) => logInfo('Project next action saved for editing', {
+                            scope: 'project-next-action',
+                            extra: { releaseCheck: 'v1.3.1/next-action-save-edit', stage: 'persisted' },
+                        })).catch(() => undefined);
+                        setHighlightTask(result.id);
+                        setProjectView({ selectedProjectId: props.projectId || prompt.projectId });
+                        setTaskExpanded(result.id, false);
+                        setEditingTaskId(result.id);
+                    }
                     closeProjectNextActionPrompt();
+                    if (openEditor) {
+                        dispatchNavigateEvent('projects');
+                    }
                 }
             })
-            .catch((error) => reportError('Failed to add project next action', error));
-    }, [addTask, closeProjectNextActionPrompt, getLiveMutableTask, projectNextActionPrompt, projectNextActionTitle, task.id]);
+            .catch((error) => {
+                reportError('Failed to add project next action', error);
+                showToast(t('task.addFailed'), 'error');
+            })
+            .finally(() => {
+                if (projectNextActionAddInFlightRef.current === prompt) {
+                    projectNextActionAddInFlightRef.current = null;
+                    setIsAddingProjectNextAction(false);
+                }
+            });
+    }, [
+        addTask,
+        closeProjectNextActionPrompt,
+        getLiveMutableTask,
+        projectNextActionPrompt,
+        projectNextActionTitle,
+        setEditingTaskId,
+        setHighlightTask,
+        setProjectView,
+        setTaskExpanded,
+        showToast,
+        t,
+        task.id,
+    ]);
+    const handleAddProjectNextAction = useCallback(() => {
+        runAddProjectNextAction(false);
+    }, [runAddProjectNextAction]);
+    const handleAddProjectNextActionAndEdit = useCallback(() => {
+        runAddProjectNextAction(true);
+    }, [runAddProjectNextAction]);
     const handleCompleteProjectNextAction = useCallback(() => {
         const prompt = projectNextActionPrompt;
         const liveOwner = getLiveMutableTask(task.id, { allowCompleted: true });
@@ -1623,7 +1693,10 @@ export const TaskItem = memo(function TaskItem({
                     scope={projectNextActionPrompt.scope}
                     sectionTitle={projectNextActionPrompt.sectionTitle}
                     newTitle={projectNextActionTitle}
+                    isAddingTask={isAddingProjectNextAction}
+                    titleLocked={nextActionTitleLocked}
                     onAddTask={handleAddProjectNextAction}
+                    onAddTaskAndEdit={handleAddProjectNextActionAndEdit}
                     onCancel={closeProjectNextActionPrompt}
                     onChooseTask={handlePromoteProjectNextAction}
                     onCompleteProject={handleCompleteProjectNextAction}

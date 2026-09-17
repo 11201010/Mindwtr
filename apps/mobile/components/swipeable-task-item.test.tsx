@@ -4,6 +4,9 @@ import renderer from 'react-test-renderer';
 import { Alert, Text } from 'react-native';
 
 import { SwipeableTaskItem, readTaskRowRenderCount, type TaskRowActions } from './swipeable-task-item';
+import { TaskEditModal } from './task-edit-modal';
+
+vi.mock('./task-edit-modal', () => ({ TaskEditModal: vi.fn(() => null) }));
 
 const { addTask, updateTask, restoreTask, undoTaskCompletion, showToast, getChecklistProgress, getTaskAgeLabel, getTaskStaleness, safeFormatDate, safeParseDate, storeState } = vi.hoisted(() => ({
   addTask: vi.fn(),
@@ -1954,7 +1957,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     }));
   });
 
-  it('can add a new project next action from the completion prompt', async () => {
+  it.each(['Add next action', 'Save & edit'])('can %s from the row completion prompt', async (actionLabel) => {
     const project = { id: 'project-1', title: 'Launch plan', status: 'active' };
     const task = {
       id: 'task-1',
@@ -2009,7 +2012,12 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       input.props.onChangeText('Call Alex');
     });
 
-    const addButton = tree.root.find((node) => node.props.accessibilityLabel === 'Add next action' && typeof node.props.onPress === 'function');
+    const createdTask = { ...task, id: 'created-task', title: 'Call Alex' };
+    addTask.mockImplementationOnce(async () => {
+      storeState._tasksById.set(createdTask.id, createdTask);
+      return { success: true, id: createdTask.id };
+    });
+    const addButton = tree.root.find((node) => node.props.accessibilityLabel === actionLabel && typeof node.props.onPress === 'function');
     await renderer.act(async () => {
       addButton.props.onPress();
       await Promise.resolve();
@@ -2020,6 +2028,13 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       projectId: 'project-1',
       sectionId: undefined,
     });
+    await renderer.act(async () => { await vi.dynamicImportSettled(); });
+    if (actionLabel === 'Save & edit') {
+      expect(tree.root.findByType(TaskEditModal).props.task.id).toBe('created-task');
+    } else {
+      expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+    }
+    await renderer.act(async () => { tree.unmount(); });
   });
 
   it('cancels pending checklist flushes when deleting a task', () => {

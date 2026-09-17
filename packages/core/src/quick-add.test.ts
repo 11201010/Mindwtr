@@ -1410,6 +1410,14 @@ describe('quick-add', () => {
             expect(result.props.projectId).toBe('p1');
         });
 
+        it('an explicit Inbox choice keeps the prompt project and section for clarification', () => {
+            const result = parseProjectNextActionInput('Clarify the follow-up /inbox', {
+                projectId: 'p1', sectionId: 's1', projects, now,
+            });
+            expect(result.title).toBe('Clarify the follow-up');
+            expect(result.props).toEqual({ status: 'inbox', projectId: 'p1', sectionId: 's1' });
+        });
+
         it('context and date tokens apply like in the quick-add box', () => {
             const result = parseProjectNextActionInput('Call plumber @phone /due:2025-01-05', {
                 projectId: 'p1',

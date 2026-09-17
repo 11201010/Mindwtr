@@ -12,10 +12,13 @@ type ProjectNextActionPromptModalProps = {
     scope?: 'project' | 'section';
     sectionTitle?: string;
     submitting?: boolean;
+    titleLocked?: boolean;
     tc: ThemeColors;
     t: (key: string) => string;
     visible: boolean;
+    onDismiss?: () => void;
     onAddTask: () => void;
+    onSaveAndEdit?: () => void;
     onCancel: () => void;
     onChooseTask: (taskId: string) => void;
     onCompleteProject: () => void;
@@ -29,10 +32,13 @@ export function ProjectNextActionPromptModal({
     scope = 'project',
     sectionTitle,
     submitting = false,
+    titleLocked = false,
     tc,
     t,
     visible,
+    onDismiss,
     onAddTask,
+    onSaveAndEdit,
     onCancel,
     onChooseTask,
     onCompleteProject,
@@ -58,6 +64,7 @@ export function ProjectNextActionPromptModal({
             transparent
             animationType="fade"
             onRequestClose={onCancel}
+            onDismiss={onDismiss}
             accessibilityViewIsModal
         >
             <Pressable style={styles.modalOverlay} onPress={onCancel}>
@@ -118,7 +125,7 @@ export function ProjectNextActionPromptModal({
                             placeholder={tFallback(t, 'projects.nextActionPromptPlaceholder', 'New next action...')}
                             placeholderTextColor={tc.secondaryText}
                             accessibilityLabel={tFallback(t, 'projects.nextActionPromptAddNew', 'Add a new next action')}
-                            editable={!submitting}
+                            editable={!submitting && !titleLocked}
                             style={[
                                 styles.nextActionInput,
                                 { color: tc.text, backgroundColor: tc.inputBg, borderColor: tc.border },
@@ -128,6 +135,20 @@ export function ProjectNextActionPromptModal({
                                 if (!addDisabled) onAddTask();
                             }}
                         />
+                        {onSaveAndEdit ? (
+                            <Pressable
+                                onPress={onSaveAndEdit}
+                                disabled={addDisabled}
+                                style={styles.nextActionEditButton}
+                                accessibilityRole="button"
+                                accessibilityLabel={tFallback(t, 'quickAdd.saveAndEdit', 'Save & edit')}
+                                accessibilityState={{ disabled: addDisabled }}
+                            >
+                                <Text style={[styles.nextActionSecondaryText, { color: addDisabled ? tc.secondaryText : tc.tint }]}>
+                                    {tFallback(t, 'quickAdd.saveAndEdit', 'Save & edit')}
+                                </Text>
+                            </Pressable>
+                        ) : null}
                     </View>
 
                     <View style={styles.nextActionActions}>

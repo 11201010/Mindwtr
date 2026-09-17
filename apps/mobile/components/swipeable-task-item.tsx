@@ -9,6 +9,9 @@ import {
     isTaskActionable,
     isTaskFinished,
     normalizeFocusTaskLimit,
+    buildQuickAddParseOptions,
+    flushPendingSave,
+    parseProjectNextActionInput,
     resolveFeatureFlags,
     safeFormatDate,
     safeParseDate,
@@ -21,13 +24,14 @@ import {
 import type { Area, Project, ProjectSequenceTaskCue, Section, Task, TaskStatus } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { ArrowRight, Check, RotateCcw, Trash2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { ThemeColors } from '../hooks/use-theme-colors';
 import { useStatusColors } from '../hooks/use-status-colors';
 import { useToast } from '../contexts/toast-context';
 import { AppPressable } from './app-pressable';
-import { presentProjectNextActionPrompt } from './project-next-action-prompt';
+import { logNextActionSavedForEditing, presentProjectNextActionPrompt, ProjectNextActionEditor } from './project-next-action-prompt';
 import { SwipeableTaskItemContent } from './swipeable-task-item/SwipeableTaskItemContent';
 import { ProjectNextActionPromptModal } from './swipeable-task-item/ProjectNextActionPromptModal';
 import { SwipeableTaskItemStatusMenu } from './swipeable-task-item/SwipeableTaskItemStatusMenu';
@@ -299,11 +303,23 @@ function SwipeableTaskItemInner({
     const [projectNextActionPrompt, setProjectNextActionPrompt] = useState<ProjectNextActionPromptState | null>(null);
     const [projectNextActionTitle, setProjectNextActionTitle] = useState('');
     const [isProjectNextActionSubmitting, setIsProjectNextActionSubmitting] = useState(false);
+    const [nextActionEditorId, setNextActionEditorId] = useState<string | null>(null);
+    const [pendingNextActionEditorId, setPendingNextActionEditorId] = useState<string | null>(null);
+    const addingNextActionRef = useRef(false);
+    const nextActionOwnerRef = useRef(0);
+    const createdNextActionRef = useRef<string | null>(null);
+    const [nextActionTitleLocked, setNextActionTitleLocked] = useState(false);
+
+    useEffect(() => () => { nextActionOwnerRef.current += 1; }, []);
 
     const closeProjectNextActionPrompt = useCallback(() => {
+        nextActionOwnerRef.current += 1;
+        createdNextActionRef.current = null;
+        setNextActionTitleLocked(false);
         setProjectNextActionPrompt(null);
         setProjectNextActionTitle('');
         setIsProjectNextActionSubmitting(false);
+        setPendingNextActionEditorId(null);
     }, []);
 
     const openProjectNextActionPromptIfNeeded = useCallback((completedTaskId: string) => {
@@ -439,24 +455,58 @@ function SwipeableTaskItemInner({
             .finally(() => setIsProjectNextActionSubmitting(false));
     }, [closeProjectNextActionPrompt, interactionDisabled, isProjectNextActionSubmitting, projectNextActionPrompt, showActionFailure]);
 
-    const handleAddProjectNextAction = useCallback(() => {
-        if (interactionDisabled || !projectNextActionPrompt || isProjectNextActionSubmitting) return;
-        const title = projectNextActionTitle.trim();
-        if (!title) return;
+    const handleAddProjectNextAction = useCallback((editAfterSave = false) => {
+        if (interactionDisabled || !projectNextActionPrompt || isProjectNextActionSubmitting || addingNextActionRef.current) return;
+        const rawTitle = projectNextActionTitle.trim();
+        if (!rawTitle) return;
+        addingNextActionRef.current = true;
+        const owner = nextActionOwnerRef.current;
         setIsProjectNextActionSubmitting(true);
-        void settleStoreAction(() => addTask(title, {
-            status: 'next',
+        const state = useTaskStore.getState();
+        const { title, props } = parseProjectNextActionInput(rawTitle, {
             projectId: projectNextActionPrompt.projectId,
             sectionId: projectNextActionPrompt.sectionId,
-        }))
+            projects: state.projects,
+            areas: state.areas,
+            parseOptions: buildQuickAddParseOptions(state.settings, state),
+        });
+        void settleStoreAction(async () => {
+            if (createdNextActionRef.current) {
+                await useTaskStore.getState().persistSnapshot();
+                await flushPendingSave();
+                return { success: true, id: createdNextActionRef.current };
+            }
+            const result = await addTask(title, props);
+            if (result.success && editAfterSave && result.id) {
+                if (nextActionOwnerRef.current === owner) {
+                    createdNextActionRef.current = result.id;
+                    setNextActionTitleLocked(true);
+                }
+                await flushPendingSave();
+            }
+            return result;
+        })
             .then((outcome) => {
+                if (nextActionOwnerRef.current !== owner) return;
                 if (!outcome.ok) {
                     showActionFailure(outcome.message);
                     return;
                 }
-                closeProjectNextActionPrompt();
+                if (editAfterSave && outcome.result?.id && Platform.OS === 'ios') {
+                    logNextActionSavedForEditing();
+                    setPendingNextActionEditorId(outcome.result.id);
+                } else {
+                    closeProjectNextActionPrompt();
+                    if (editAfterSave && outcome.result?.id) {
+                        logNextActionSavedForEditing();
+                        setNextActionEditorId(outcome.result.id);
+                    }
+                }
             })
-            .finally(() => setIsProjectNextActionSubmitting(false));
+            .finally(() => {
+                addingNextActionRef.current = false;
+                setIsProjectNextActionSubmitting(false);
+            });
     }, [
         addTask,
         closeProjectNextActionPrompt,
@@ -831,22 +881,30 @@ function SwipeableTaskItemInner({
             ) : null}
             {!interactionDisabled && projectNextActionPrompt ? (
                 <ProjectNextActionPromptModal
-                    visible={Boolean(projectNextActionPrompt)}
+                    visible={!pendingNextActionEditorId}
+                    onDismiss={() => {
+                        if (!pendingNextActionEditorId) return;
+                        setNextActionEditorId(pendingNextActionEditorId);
+                        closeProjectNextActionPrompt();
+                    }}
                     candidates={projectNextActionPrompt.candidates}
                     projectTitle={projectNextActionPrompt.projectTitle}
                     scope={projectNextActionPrompt.scope}
                     sectionTitle={projectNextActionPrompt.sectionTitle}
                     newTitle={projectNextActionTitle}
                     submitting={isProjectNextActionSubmitting}
+                    titleLocked={nextActionTitleLocked}
                     tc={tc}
                     t={t}
-                    onAddTask={handleAddProjectNextAction}
+                    onAddTask={() => handleAddProjectNextAction()}
+                    onSaveAndEdit={() => handleAddProjectNextAction(true)}
                     onCancel={closeProjectNextActionPrompt}
                     onChooseTask={handlePromoteProjectNextAction}
                     onCompleteProject={handleCompleteProjectNextAction}
                     onNewTitleChange={setProjectNextActionTitle}
                 />
             ) : null}
+            {nextActionEditorId ? <ProjectNextActionEditor taskId={nextActionEditorId} onClose={() => setNextActionEditorId(null)} /> : null}
         </>
     );
 }

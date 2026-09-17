@@ -283,6 +283,12 @@ export const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '500',
     },
+    nextActionEditButton: {
+        minHeight: 44,
+        justifyContent: 'center',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 8,
+    },
     nextActionActions: {
         flexDirection: 'row',
         // Three buttons don't fit a 375pt screen (or long locales) on one

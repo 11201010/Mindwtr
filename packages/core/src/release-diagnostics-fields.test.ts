@@ -20,6 +20,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'forwardedEventCount',
     // shortcut-failure-privacy reuses releaseCheck and stage below.
     // share-handoff-route reuses releaseCheck, stage, and delivery below.
+    // next-action-save-edit reuses releaseCheck and stage below.
     // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
     'method',
     // capture-token-revocation reuses releaseCheck and outcome below.

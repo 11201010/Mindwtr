@@ -10,7 +10,10 @@ type ProjectNextActionPromptProps = {
     projectTitle: string;
     scope?: 'project' | 'section';
     sectionTitle?: string;
+    isAddingTask?: boolean;
+    titleLocked?: boolean;
     onAddTask: () => void;
+    onAddTaskAndEdit: () => void;
     onCancel: () => void;
     onChooseTask: (taskId: string) => void;
     onCompleteProject: () => void;
@@ -25,7 +28,10 @@ export function ProjectNextActionPrompt({
     projectTitle,
     scope = 'project',
     sectionTitle,
+    isAddingTask = false,
+    titleLocked = false,
     onAddTask,
+    onAddTaskAndEdit,
     onCancel,
     onChooseTask,
     onCompleteProject,
@@ -80,7 +86,8 @@ export function ProjectNextActionPrompt({
                                 <button
                                     key={candidate.id}
                                     type="button"
-                                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                    disabled={isAddingTask}
+                                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                     onClick={() => onChooseTask(candidate.id)}
                                 >
                                     <span className="block text-sm font-medium">{candidate.title}</span>
@@ -102,13 +109,14 @@ export function ProjectNextActionPrompt({
                         autoFocus
                         type="text"
                         value={newTitle}
+                        disabled={isAddingTask || titleLocked}
                         onChange={(event) => onNewTitleChange(event.target.value)}
                         onKeyDown={(event) => {
                             if (event.key === 'Escape') {
                                 event.preventDefault();
                                 onCancel();
                             }
-                            if (event.key === 'Enter' && canAddTask) {
+                            if (event.key === 'Enter' && canAddTask && !isAddingTask) {
                                 event.preventDefault();
                                 onAddTask();
                             }
@@ -118,17 +126,24 @@ export function ProjectNextActionPrompt({
                     />
                 </div>
 
-                <div className="flex justify-between items-center gap-2">
+                <div className="flex flex-wrap justify-between items-center gap-2">
                     {scope === 'section' ? <span /> : (
-                        <Button variant="ghost" onClick={onCompleteProject}>
+                        <Button variant="ghost" onClick={onCompleteProject} disabled={isAddingTask}>
                             {resolveText('projects.nextActionPromptComplete', 'Complete project')}
                         </Button>
                     )}
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button variant="secondary" onClick={onCancel}>
                             {resolveText('common.skip', 'Skip')}
                         </Button>
-                        <Button onClick={onAddTask} disabled={!canAddTask}>
+                        <Button
+                            variant="secondary"
+                            onClick={onAddTaskAndEdit}
+                            disabled={!canAddTask || isAddingTask}
+                        >
+                            {resolveText('quickAdd.saveAndEdit', 'Save & edit')}
+                        </Button>
+                        <Button onClick={onAddTask} disabled={!canAddTask || isAddingTask}>
                             {resolveText('projects.nextActionPromptAddButton', 'Add next action')}
                         </Button>
                     </div>

@@ -1,19 +1,24 @@
 import React from 'react';
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer from 'react-test-renderer';
-import { Text } from 'react-native';
+import { Modal, Platform, Text } from 'react-native';
+import { TaskEditModal } from './task-edit-modal';
 
 import {
     buildProjectNextActionPromptState,
     presentProjectNextActionPrompt,
     ProjectNextActionPromptProvider,
+    ProjectNextActionEditor,
 } from './project-next-action-prompt';
 
-const { addTask, updateTask, updateProject, showToast, parseNextActionInput, storeState } = vi.hoisted(() => ({
+const { addTask, updateTask, updateProject, showToast, flushSave, persistSnapshot, logInfo, parseNextActionInput, storeState } = vi.hoisted(() => ({
     addTask: vi.fn(),
     updateTask: vi.fn(),
     updateProject: vi.fn(),
     showToast: vi.fn(),
+    flushSave: vi.fn(),
+    persistSnapshot: vi.fn(),
+    logInfo: vi.fn().mockResolvedValue(undefined),
     parseNextActionInput: vi.fn((input: string, context: { projectId: string; sectionId?: string | null }) => ({
         title: `parsed:${input}`,
         props: { status: 'waiting', projectId: context.projectId, sectionId: context.sectionId },
@@ -22,6 +27,7 @@ const { addTask, updateTask, updateProject, showToast, parseNextActionInput, sto
         addTask: vi.fn(),
         updateTask: vi.fn(),
         updateProject: vi.fn(),
+        persistSnapshot: vi.fn(),
         projects: [] as any[],
         _allProjects: [] as any[],
         tasks: [] as any[],
@@ -52,10 +58,12 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
     storeState.addTask = addTask;
     storeState.updateTask = updateTask;
     storeState.updateProject = updateProject;
+    storeState.persistSnapshot = persistSnapshot;
     // Real `getProjectNextActionPromptData` on purpose: the stub this replaced
     // dropped `scope` and the whole section-scoped branch, so #911 was untestable.
     return mockCore(importOriginal, () => storeState, {
         parseProjectNextActionInput: parseNextActionInput,
+        flushPendingSave: flushSave,
     });
 });
 
@@ -83,7 +91,13 @@ vi.mock('../contexts/toast-context', () => ({
     }),
 }));
 
+vi.mock('./task-edit-modal', () => ({
+    TaskEditModal: vi.fn(() => null),
+}));
+vi.mock('../lib/app-log', () => ({ logInfo }));
+
 describe('ProjectNextActionPromptProvider', () => {
+    afterEach(async () => { await vi.dynamicImportSettled(); });
     const flattenText = (value: unknown): string => {
         if (typeof value === 'string' || typeof value === 'number') return String(value);
         if (Array.isArray(value)) return value.map((item) => flattenText(item)).join('');
@@ -136,6 +150,8 @@ describe('ProjectNextActionPromptProvider', () => {
         addTask.mockResolvedValue({ success: true, id: 'created-task' });
         updateTask.mockResolvedValue({ success: true });
         updateProject.mockResolvedValue({ success: true });
+        flushSave.mockResolvedValue(undefined);
+        persistSnapshot.mockResolvedValue(undefined);
     });
 
     it('builds prompt data from an optimistic completed task snapshot', () => {
@@ -146,6 +162,128 @@ describe('ProjectNextActionPromptProvider', () => {
 
         expect(promptState?.projectId).toBe('project-1');
         expect(promptState?.candidates.map((task) => task.id)).toEqual(['candidate']);
+    });
+
+    it('releases the editor when the task has disappeared', async () => {
+        const onClose = vi.fn();
+        let tree!: renderer.ReactTestRenderer;
+        await renderer.act(async () => {
+            tree = renderer.create(<ProjectNextActionEditor taskId="missing" onClose={onClose} />);
+        });
+        expect(onClose).toHaveBeenCalledOnce();
+        expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+        await renderer.act(async () => { tree.unmount(); });
+    });
+
+    const openFilledPrompt = async () => {
+        let tree!: renderer.ReactTestRenderer;
+        await renderer.act(async () => {
+            tree = renderer.create(<ProjectNextActionPromptProvider><Text>App</Text></ProjectNextActionPromptProvider>);
+        });
+        await renderer.act(async () => {
+            presentProjectNextActionPrompt({ ...currentTask, status: 'done', sectionId: 'section-1' } as any);
+        });
+        await renderer.act(async () => {
+            tree.root.findByType('TextInput' as any).props.onChangeText('Follow up /inbox');
+        });
+        return tree;
+    };
+
+    it('saves once before opening the new task in the full editor', async () => {
+        const created = { ...currentTask, id: 'created-task', sectionId: 'section-1', status: 'inbox' };
+        let resolveSave!: (value: any) => void;
+        addTask.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve; }));
+        const tree = await openFilledPrompt();
+        const button = tree.root.find((node) => node.props.accessibilityLabel === 'Save & edit');
+        await renderer.act(async () => {
+            button.props.onPress();
+            button.props.onPress();
+        });
+        expect(addTask).toHaveBeenCalledTimes(1);
+        expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+        await renderer.act(async () => {
+            storeState.tasks = [...storeState.tasks, created];
+            storeState._tasksById.set(created.id, created);
+            resolveSave({ success: true, id: created.id });
+        });
+        const editor = tree.root.findByType(TaskEditModal);
+        expect(editor.props.task).toEqual(created);
+        expect(editor.props.defaultTab).toBe('task');
+        expect(addTask).toHaveBeenCalledWith('parsed:Follow up /inbox', expect.objectContaining({ projectId: 'project-1', sectionId: 'section-1' }));
+        await renderer.act(async () => {
+            await editor.props.onSave(created.id, { status: 'inbox', dueDate: '2026-09-20', priority: 'high' });
+        });
+        expect(updateTask).toHaveBeenCalledWith(created.id, { status: 'inbox', dueDate: '2026-09-20', priority: 'high' });
+        await renderer.act(async () => { tree.unmount(); });
+    });
+
+    it('keeps the title and does not open the editor after failed creation', async () => {
+        addTask.mockResolvedValueOnce({ success: false, error: 'Storage unavailable' });
+        const tree = await openFilledPrompt();
+        await renderer.act(async () => {
+            tree.root.find((node) => node.props.accessibilityLabel === 'Save & edit').props.onPress();
+        });
+        expect(tree.root.findByType('TextInput' as any).props.value).toBe('Follow up /inbox');
+        expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+        expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ message: 'Storage unavailable' }));
+        await renderer.act(async () => { tree.unmount(); });
+    });
+
+    it('waits for disk persistence and retries the same optimistic task after a flush failure', async () => {
+        const created = { ...currentTask, id: 'created-task' };
+        let rejectFlush!: (error: Error) => void;
+        flushSave.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFlush = reject; }));
+        addTask.mockImplementationOnce(async () => {
+            storeState._tasksById.set(created.id, created);
+            return { success: true, id: created.id };
+        });
+        const tree = await openFilledPrompt();
+        await renderer.act(async () => {
+            tree.root.find((node) => node.props.accessibilityLabel === 'Save & edit').props.onPress();
+        });
+        expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+        await renderer.act(async () => { rejectFlush(new Error('Disk unavailable')); });
+        expect(tree.root.findByType('TextInput' as any).props.editable).toBe(false);
+        expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+        expect(showToast).toHaveBeenCalledWith(expect.objectContaining({ message: 'Disk unavailable' }));
+        expect(logInfo).not.toHaveBeenCalled();
+        await renderer.act(async () => {
+            tree.root.find((node) => node.props.accessibilityLabel === 'Save & edit').props.onPress();
+        });
+        expect(addTask).toHaveBeenCalledOnce();
+        expect(persistSnapshot).toHaveBeenCalledOnce();
+        expect(flushSave).toHaveBeenCalledTimes(2);
+        expect(tree.root.findByType(TaskEditModal).props.task.id).toBe(created.id);
+        await vi.dynamicImportSettled();
+        expect(logInfo).toHaveBeenCalledWith('Project next action saved for editing', {
+            scope: 'project-next-action',
+            extra: { releaseCheck: 'v1.3.1/next-action-save-edit', stage: 'persisted' },
+        });
+        await renderer.act(async () => { tree.unmount(); });
+    });
+
+    it('waits for iOS prompt dismissal before presenting the editor', async () => {
+        const originalOS = Platform.OS;
+        Platform.OS = 'ios';
+        try {
+            const created = { ...currentTask, id: 'created-task' };
+            addTask.mockImplementationOnce(async () => {
+                storeState._tasksById.set(created.id, created);
+                return { success: true, id: created.id };
+            });
+            const tree = await openFilledPrompt();
+            await renderer.act(async () => {
+                tree.root.find((node) => node.props.accessibilityLabel === 'Save & edit').props.onPress();
+            });
+            expect(tree.root.findAllByType(TaskEditModal)).toHaveLength(0);
+            const promptModal = tree.root.findByType(Modal);
+            expect(promptModal.props.visible).toBe(false);
+            await renderer.act(async () => { promptModal.props.onDismiss(); });
+            expect(tree.root.findByType(TaskEditModal).props.task.id).toBe(created.id);
+            await renderer.act(async () => { tree.unmount(); });
+        } finally {
+            Platform.OS = originalOS;
+        }
     });
 
     it('keeps the prompt mounted after the triggering row unmounts', async () => {
