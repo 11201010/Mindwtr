@@ -731,7 +731,7 @@ function matchQuickAddQuotedName(working: string, marker: '+' | '!' | '%'): { ra
     // the pair), so accept the common quote styles and mixed pairs — a name
     // that parses when pasted must also parse as typed (#849):
     //   "..."  straight doubles, with backslash escapes (canonical form)
-    //   “...”  or mixed “..."  curly/straight doubles — macOS also produces a
+    //   “...”, “...“, or mixed “..." curly/straight doubles — macOS also produces a
     //          CLOSING glyph as the opener (”...”), since the marker character
     //          before the quote reads as "not a word start" to smart
     //          punctuation (#1094)
@@ -739,7 +739,7 @@ function matchQuickAddQuotedName(working: string, marker: '+' | '!' | '%'): { ra
     //   '...'  straight singles
     //   ‘...’  or ’...’  smart singles
     const match = working.match(new RegExp(
-        String.raw`(?:^|\s)${escapedMarker}(?:"((?:\\.|[^"\\])*)"|[“”]([^"”]*)["”]|„([^"“”]*)["“”]|'([^']*)'|[‘’]([^’]*)’)`,
+        String.raw`(?:^|\s)${escapedMarker}(?:"((?:\\.|[^"\\])*)"|[“”]([^"“”]*)["“”]|„([^"“”]*)["“”]|'([^']*)'|[‘’]([^’]*)’)`,
         'u',
     ));
     if (!match) return null;

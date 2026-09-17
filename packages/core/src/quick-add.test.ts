@@ -1097,6 +1097,7 @@ describe('quick-add', () => {
             'Task %"Jim Smith" /next',
             'Task %“Jim Smith” /next',
             'Task %“Jim Smith" /next',
+            'Task %“Jim Smith“ /next',
             'Task %„Jim Smith" /next',
             "Task %'Jim Smith' /next",
             'Task %’Jim Smith’ /next',
