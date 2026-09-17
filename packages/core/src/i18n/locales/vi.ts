@@ -1879,7 +1879,7 @@ export const viOverrides: Record<string, string> = {
         'settings.syncStatusFailedSuffix': ' (thất bại)',
         'settings.syncStatusConflictsSuffix': ' (xung đột)',
         'settings.fileSyncHowToIos': '1. Đầu tiên, nhấn "Xuất sao lưu" và lưu vào iCloud Drive, hoặc dùng WebDAV để đồng bộ nhiều thiết bị\n2. Nhấn "Chọn thư mục" và chọn thư mục iCloud Drive có thể ghi\n3. Sau đó nhấn "Đồng bộ" để hợp nhất dữ liệu\n\nLưu ý: Các nhà cung cấp Tệp bên thứ ba như Google Drive và OneDrive hiện trả về các bản sao tạm thời trong iOS, vì vậy chúng chưa đáng tin cậy để đồng bộ tệp',
-        'settings.fileSyncHowToAndroid': '1. Đầu tiên, nhấn "Xuất sao lưu" và lưu vào thư mục đồng bộ của bạn (vd. Google Drive)\n2. Nhấn "Chọn thư mục" để cấp quyền truy cập vào thư mục đó\n3. Sau đó nhấn "Đồng bộ" để hợp nhất dữ liệu',
+        'settings.fileSyncHowToAndroid': '1. Chọn hoặc tạo một thư mục đồng bộ cục bộ trên thiết bị. Nếu cần, hãy sao chiếu thư mục đó bằng một ứng dụng đồng bộ thư mục riêng\n2. Nhấn "Xuất sao lưu" để lưu vào đó, rồi nhấn "Chọn thư mục" và chọn chính thư mục cục bộ này\n3. Nhấn "Đồng bộ" để hợp nhất dữ liệu\n\nLưu ý: Không chọn trực tiếp vị trí đám mây Google Drive. Thay vào đó, hãy dùng thư mục cục bộ được sao chiếu; Dropbox và WebDAV là các lựa chọn khác',
         'settings.fileSyncTip': 'Mẹo: Để chỉnh sửa nhiều thiết bị thường xuyên, WebDAV được khuyến nghị. Nếu dùng Syncthing, bật Gửi & Nhận + Theo dõi thay đổi và nhấn Đồng bộ trước khi chuyển thiết bị.',
         'settings.syncReadMergeFolder': 'Đọc và hợp nhất thư mục đồng bộ',
         'settings.syncReadMergeWebdav': 'Đọc và hợp nhất dữ liệu WebDAV',

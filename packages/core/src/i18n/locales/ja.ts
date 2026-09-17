@@ -1888,7 +1888,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.syncStatusFailedSuffix': '（失敗）',
         'settings.syncStatusConflictsSuffix': '（競合あり）',
         'settings.fileSyncHowToIos': '1. まず「バックアップを書き出す」をタップして、同期用フォルダに保存します（iCloud Drive が最も確実です）\n2.「フォルダを選択」をタップして、そのフォルダを選びます\n3.「同期」をタップしてデータを統合します\n\n注意：一部のプロバイダ（Google ドライブ、OneDrive、ownCloud など）は iOS でフォルダを選択できません。フォルダ画面をキャンセルすると、代わりにそのアプリ内の書き出したバックアップファイルを選ぶよう Mindwtr が案内し、同期はそのファイルを通して行われます。Nextcloud や ownCloud などのサーバーには WebDAV 同期が最も確実です',
-        'settings.fileSyncHowToAndroid': '1. まず「バックアップを書き出す」をタップして、同期フォルダ（Google ドライブなど）に保存します\n2.「フォルダを選択」をタップして、そのフォルダへのアクセスを許可します\n3.「同期」をタップしてデータを統合します',
+        'settings.fileSyncHowToAndroid': '1. 端末内の同期フォルダを選ぶか作成します。必要に応じて、別のフォルダ同期アプリでそのフォルダをミラーリングします\n2.「バックアップを書き出す」をタップしてそこに保存し、「フォルダを選択」で同じローカルフォルダを選びます\n3.「同期」をタップしてデータを統合します\n\n注意：Google ドライブのクラウド上の場所を直接選ばないでください。代わりにミラーリングされたローカルフォルダを使います。Dropbox や WebDAV も選択肢です',
         'settings.fileSyncTip': 'ヒント：複数の端末で頻繁に編集するなら WebDAV がおすすめです。Syncthing を使う場合は「Send & Receive」と「Watch for Changes」を有効にし、端末を切り替える前に同期しておきましょう。',
         'settings.syncReadMergeFolder': '同期フォルダを読み込んで統合',
         'settings.syncReadMergeWebdav': 'WebDAV のデータを読み込んで統合',

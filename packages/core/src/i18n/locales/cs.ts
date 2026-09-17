@@ -1661,7 +1661,7 @@ export const csOverrides: Record<string, string> = {
         'settings.syncStatusFailedSuffix': ' (selhalo)',
         'settings.syncStatusConflictsSuffix': ' (konflikty)',
         'settings.fileSyncHowToIos': '1. Nejprve klepněte na „Exportovat zálohu“ a uložte na iCloud Drive, nebo pro vícezařízenovou synchronizaci použijte WebDAV\n2. Klepněte na „Vybrat složku“ a zvolte zapisovatelnou složku na iCloud Drive\n3. Pak klepněte na „Synchronizovat“ pro sloučení dat\n\nPozn.: Poskytovatelé třetích stran v aplikaci Soubory jako Google Drive a OneDrive zatím v iOS vracejí dočasné kopie, takže pro souborovou synchronizaci nejsou spolehliví',
-        'settings.fileSyncHowToAndroid': '1. Nejprve klepněte na „Exportovat zálohu“ a uložte do synchronizační složky (např. Google Drive)\n2. Klepnutím na „Vybrat složku“ udělte přístup k této složce\n3. Pak klepněte na „Synchronizovat“ pro sloučení dat',
+        'settings.fileSyncHowToAndroid': '1. Vyberte nebo vytvořte místní synchronizační složku v zařízení. V případě potřeby ji zrcadlete pomocí samostatné aplikace pro synchronizaci složek\n2. Klepněte na „Exportovat zálohu“ a uložte ji tam. Potom klepněte na „Vybrat složku“ a vyberte tutéž místní složku\n3. Klepněte na „Synchronizovat“ pro sloučení dat\n\nPoznámka: Nevybírejte přímo cloudové umístění Google Drive. Místo něj použijte zrcadlenou místní složku; alternativou jsou Dropbox nebo WebDAV',
         'settings.fileSyncTip': 'Tip: Pro časté úpravy z více zařízení doporučujeme WebDAV. Se Syncthingem zapněte Send & Receive + Watch for Changes a před přepnutím zařízení klepněte na Synchronizovat.',
         'settings.syncReadMergeFolder': 'Načíst a sloučit synchronizační složku',
         'settings.syncReadMergeWebdav': 'Načíst a sloučit data WebDAV',

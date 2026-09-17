@@ -1742,7 +1742,7 @@ export const koOverrides: Record<string, string> = {
         'settings.syncStatusFailedSuffix': ' (실패)',
         'settings.syncStatusConflictsSuffix': ' (충돌)',
         'settings.fileSyncHowToIos': '1. 먼저 "백업 내보내기"를 탭하여 iCloud Drive에 저장하거나 다중 기기 동기화를 위해 WebDAV를 사용하세요\n2. "폴더 선택"을 탭하고 쓰기 가능한 iCloud Drive 폴더를 선택하세요\n3. 그런 다음 "동기화"를 탭하여 데이터를 병합하세요\n\n참고: Google Drive 및 OneDrive와 같은 타사 파일 제공업체는 현재 iOS에서 임시 복사본을 반환하므로 아직 파일 동기화에 안정적이지 않습니다',
-        'settings.fileSyncHowToAndroid': '1. 먼저 "백업 내보내기"를 탭하여 동기화 폴더(예: Google Drive)에 저장하세요\n2. "폴더 선택"을 탭하여 해당 폴더에 대한 액세스 권한을 부여하세요\n3. 그런 다음 "동기화"를 탭하여 데이터를 병합하세요',
+        'settings.fileSyncHowToAndroid': '1. 기기에 로컬 동기화 폴더를 선택하거나 만드세요. 필요하면 별도의 폴더 동기화 앱으로 이 폴더를 미러링하세요\n2. "백업 내보내기"를 탭하여 그곳에 저장한 다음, "폴더 선택"을 탭하고 같은 로컬 폴더를 선택하세요\n3. "동기화"를 탭하여 데이터를 병합하세요\n\n참고: Google Drive의 클라우드 위치를 직접 선택하지 마세요. 대신 미러링된 로컬 폴더를 사용하세요. Dropbox나 WebDAV도 사용할 수 있습니다',
         'settings.fileSyncTip': '팁: 잦은 다중 기기 편집의 경우 WebDAV를 권장합니다. Syncthing을 사용하는 경우 \'보내기 및 받기\' + \'변경 사항 감시\'를 활성화하고 기기를 전환하기 전에 동기화를 탭하세요.',
         'settings.syncReadMergeFolder': '동기화 폴더 읽기 및 병합',
         'settings.syncReadMergeWebdav': 'WebDAV 데이터 읽기 및 병합',

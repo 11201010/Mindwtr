@@ -1849,7 +1849,7 @@ export const svOverrides: Record<string, string> = {
         'settings.syncStatusFailedSuffix': ' (misslyckades)',
         'settings.syncStatusConflictsSuffix': ' (konflikter)',
         'settings.fileSyncHowToIos': '1. Tryck först på "Exportera säkerhetskopia" och spara den i synkmappen (iCloud Drive är säkrast)\n2. Tryck på "Välj mapp" och välj den mappen\n3. Tryck sedan på "Synka" för att slå ihop data\n\nObs: vissa leverantörer (Google Drive, OneDrive, ownCloud …) tillåter inte mappval i iOS. Avbryt mappvyn så erbjuder Mindwtr att i stället välja den exporterade säkerhetskopian i den appen — synken går då via den filen. För servrar som Nextcloud eller ownCloud är WebDAV-synk det mest pålitliga valet',
-        'settings.fileSyncHowToAndroid': '1. Tryck först på "Exportera säkerhetskopia" och spara till din synkmapp (t.ex. Google Drive)\n2. Tryck på "Välj mapp" för att bevilja åtkomst till den mappen\n3. Tryck sedan på "Synka" för att slå ihop data',
+        'settings.fileSyncHowToAndroid': '1. Välj eller skapa en lokal synkmapp på enheten. Spegla den vid behov med en separat app för mappsynkronisering\n2. Tryck på "Exportera säkerhetskopia" för att spara där. Tryck sedan på "Välj mapp" och välj samma lokala mapp\n3. Tryck på "Synka" för att slå ihop data\n\nObs: Välj inte Google Drives molnplats direkt. Använd i stället den speglade lokala mappen; Dropbox och WebDAV är alternativ',
         'settings.fileSyncTip': 'Tips: För frekventa redigeringar på flera enheter rekommenderas WebDAV. Om du använder Syncthing, aktivera Skicka och ta emot + Bevaka ändringar och tryck på Synka innan du byter enhet.',
         'settings.syncReadMergeFolder': 'Läs och slå ihop synkmapp',
         'settings.syncReadMergeWebdav': 'Läs och slå ihop WebDAV-data',

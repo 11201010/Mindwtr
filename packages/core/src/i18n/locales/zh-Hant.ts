@@ -1741,7 +1741,7 @@ export const zhHant: Record<string, string> = {
         'settings.syncStatusFailedSuffix': '（失敗）',
         'settings.syncStatusConflictsSuffix': '（有衝突）',
         'settings.fileSyncHowToIos': '1. 先點選「導出備份」，把備份儲存到同步資料夾（iCloud Drive 最穩妥）\n2. 點選「選擇資料夾」，選擇該資料夾\n3. 之後點選「同步」即可合併資料\n\n注意：部分提供者（Google Drive、OneDrive、ownCloud 等）在 iOS 中無法選擇資料夾。取消資料夾畫面後，Mindwtr 會提示改為在該應用中選擇已導出的備份檔案，同步將透過該檔案進行。對於 Nextcloud、ownCloud 等伺服器，WebDAV 同步最為可靠',
-        'settings.fileSyncHowToAndroid': '1. 先點選「導出備份」並儲存到同步資料夾（例如 Google Drive）\n2. 點選「選擇資料夾」授權該資料夾\n3. 之後點選「同步」即可合併資料',
+        'settings.fileSyncHowToAndroid': '1. 在裝置上選取或建立本機同步資料夾；如有需要，請使用獨立的資料夾同步應用程式鏡像該資料夾\n2. 點選「匯出備份」將備份儲存到該資料夾，再點選「選擇資料夾」並選取同一個本機資料夾\n3. 點選「同步」合併資料\n\n注意：請勿直接選取 Google Drive 雲端位置。應選取其鏡像的本機資料夾；也可以改用 Dropbox 或 WebDAV',
         'settings.fileSyncTip': '建議：若常在多裝置頻繁編輯，優先使用 WebDAV。若使用 Syncthing，請開啟 Send & Receive 與 Watch for Changes，並在切換裝置前手動點選「同步」。',
         'settings.syncReadMergeFolder': '讀取並合併同步資料夾',
         'settings.syncReadMergeWebdav': '讀取並合併 WebDAV 資料',

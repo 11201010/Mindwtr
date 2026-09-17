@@ -1741,7 +1741,7 @@ export const zhHans: Record<string, string> = {
         'settings.syncStatusFailedSuffix': '（失败）',
         'settings.syncStatusConflictsSuffix': '（有冲突）',
         'settings.fileSyncHowToIos': '1. 先点击"导出备份"，把备份保存到同步文件夹（iCloud Drive 最稳妥）\n2. 点击"选择文件夹"，选择该文件夹\n3. 之后点击"同步"即可合并数据\n\n注意：部分提供商（Google Drive、OneDrive、ownCloud 等）在 iOS 中无法选择文件夹。取消文件夹界面后，Mindwtr 会提示改为在该应用中选择已导出的备份文件，同步将通过该文件进行。对于 Nextcloud、ownCloud 等服务器，WebDAV 同步最为可靠',
-        'settings.fileSyncHowToAndroid': '1. 先点击"导出备份"保存文件到同步文件夹（如 Google Drive）\n2. 点击"选择文件夹"授权该文件夹\n3. 之后点击"同步"即可合并数据',
+        'settings.fileSyncHowToAndroid': '1. 在设备上选择或创建本地同步文件夹；如有需要，请使用单独的文件夹同步应用镜像该文件夹\n2. 点击“导出备份”将备份保存到该文件夹，再点击“选择文件夹”并选择同一个本地文件夹\n3. 点击“同步”合并数据\n\n注意：请勿直接选择 Google Drive 云端位置。应选择其镜像的本地文件夹；也可以改用 Dropbox 或 WebDAV',
         'settings.fileSyncTip': '建议：高频多设备编辑优先使用 WebDAV。若使用 Syncthing，请开启 Send & Receive 和 Watch for Changes，并在切换设备前手动点“同步”。',
         'settings.syncReadMergeFolder': '读取并合并同步文件夹',
         'settings.syncReadMergeWebdav': '读取并合并 WebDAV 数据',
