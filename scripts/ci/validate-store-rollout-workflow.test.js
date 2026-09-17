@@ -70,18 +70,25 @@ test('Apple stable metadata enables phasing while TestFlight-only metadata remai
   expect(rc.jobs['macos-appstore'].with.submit_for_review).toBe(false);
 });
 
-test('rollout workflow manages explicit existing releases without building or uploading', () => {
+test('rollout workflow schedules one automatic stage per day and retains explicit controls', () => {
   const rollout = workflow('rollout');
-  expect(Object.keys(rollout.on)).toEqual(['workflow_dispatch']);
+  expect(Object.keys(rollout.on)).toEqual(['schedule', 'workflow_dispatch']);
+  expect(rollout.on.schedule).toEqual([{ cron: '17 15 * * *' }]);
   expect(rollout.on.workflow_dispatch.inputs.action.default).toBe('status');
   expect(rollout.permissions).toEqual({ contents: 'read' });
   expect(rollout.jobs.play.concurrency.group).toBe('google-play-production');
   expect(rollout.jobs.msstore.concurrency.group).toBe('msstore-production');
+  expect(rollout.jobs.play.if).toContain("github.event_name == 'schedule'");
+  expect(rollout.jobs.msstore.if).toContain("github.event_name == 'schedule'");
   const play = rollout.jobs.play.steps.find((step) => step.env?.VERSION_CODE);
   expect(play.run).toContain('--version-code "$VERSION_CODE"');
+  expect(play.run).toContain('auto-rollout --package tech.dongdongbh.mindwtr');
+  expect(play.env.ROLLOUT_ACTION).toContain("github.event_name == 'schedule'");
   expect(play.run).toContain('google-play-edit.py "${args[@]}"');
   const msstore = rollout.jobs.msstore.steps.find((step) => step.env?.SUBMISSION_ID);
   expect(msstore.run).toContain('--submission-id "$SUBMISSION_ID"');
+  expect(msstore.run).toContain('args=(--action auto)');
+  expect(msstore.env.ROLLOUT_ACTION).toContain("github.event_name == 'schedule'");
   expect(msstore.env.MS_STORE_APP_ID).toBe("${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}");
   for (const job of Object.values(rollout.jobs)) {
     expect(job.concurrency['cancel-in-progress']).toBe(false);

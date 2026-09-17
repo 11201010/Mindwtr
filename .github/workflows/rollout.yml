@@ -1,6 +1,9 @@
 name: Manage Store Rollout
 
 on:
+  schedule:
+    # Advance at most one stage per day. Paused/completed/non-staged releases are no-ops.
+    - cron: '17 15 * * *'
   workflow_dispatch:
     inputs:
       store:
@@ -30,7 +33,7 @@ permissions:
 
 jobs:
   play:
-    if: inputs.store == 'play'
+    if: github.event_name == 'schedule' || inputs.store == 'play'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -48,14 +51,18 @@ jobs:
       - name: Manage existing Play production release
         env:
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
-          ROLLOUT_ACTION: ${{ inputs.action }}
+          ROLLOUT_ACTION: ${{ github.event_name == 'schedule' && 'auto' || inputs.action }}
           VERSION_CODE: ${{ inputs.version_code }}
           ROLLOUT_PERCENTAGE: ${{ inputs.percentage }}
         run: |
           set -euo pipefail
-          args=(rollout --package tech.dongdongbh.mindwtr --version-code "$VERSION_CODE" --action "$ROLLOUT_ACTION")
-          if [ "$ROLLOUT_ACTION" = increase ]; then
-            args+=(--percentage "$ROLLOUT_PERCENTAGE")
+          if [ "$ROLLOUT_ACTION" = auto ]; then
+            args=(auto-rollout --package tech.dongdongbh.mindwtr)
+          else
+            args=(rollout --package tech.dongdongbh.mindwtr --version-code "$VERSION_CODE" --action "$ROLLOUT_ACTION")
+            if [ "$ROLLOUT_ACTION" = increase ]; then
+              args+=(--percentage "$ROLLOUT_PERCENTAGE")
+            fi
           fi
           python3 scripts/ci/google-play-edit.py "${args[@]}" --result "$RUNNER_TEMP/play-rollout.json"
           {
@@ -66,7 +73,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   msstore:
-    if: inputs.store == 'msstore'
+    if: github.event_name == 'schedule' || inputs.store == 'msstore'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -83,13 +90,17 @@ jobs:
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
-          ROLLOUT_ACTION: ${{ inputs.action }}
+          ROLLOUT_ACTION: ${{ github.event_name == 'schedule' && 'auto' || inputs.action }}
           SUBMISSION_ID: ${{ inputs.submission_id }}
           ROLLOUT_PERCENTAGE: ${{ inputs.percentage }}
         run: |
           set -euo pipefail
-          args=(--submission-id "$SUBMISSION_ID" --action "$ROLLOUT_ACTION")
-          if [ "$ROLLOUT_ACTION" = increase ]; then
-            args+=(--percentage "$ROLLOUT_PERCENTAGE")
+          if [ "$ROLLOUT_ACTION" = auto ]; then
+            args=(--action auto)
+          else
+            args=(--submission-id "$SUBMISSION_ID" --action "$ROLLOUT_ACTION")
+            if [ "$ROLLOUT_ACTION" = increase ]; then
+              args+=(--percentage "$ROLLOUT_PERCENTAGE")
+            fi
           fi
           node scripts/ci/msstore-rollout.mjs "${args[@]}"

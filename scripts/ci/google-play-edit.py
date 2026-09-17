@@ -37,6 +37,7 @@ IMAGE_TYPES = {
 RELEASE_STATUSES = {"completed", "draft", "halted", "inProgress"}
 ROLLOUT_ACTIONS = {"status", "increase", "halt", "resume", "finalize"}
 ROLLOUT_STATES = {"completed", "halted", "inProgress"}
+AUTO_ROLLOUT_PERCENTAGES = (5.0, 20.0, 50.0)
 MAX_VERSION_CODE = 2_100_000_000
 
 
@@ -480,7 +481,7 @@ def _commit_edit(package_name: str, edit_id: str, transport: Transport) -> None:
 
 def control_rollout(
     package_name: str,
-    version_code: int,
+    version_code: int | None,
     action: str,
     percentage: float | None,
     transport: Transport,
@@ -488,12 +489,19 @@ def control_rollout(
     """Inspect or mutate one exact production rollout without uploading artifacts."""
 
     validated_package = _package_name(package_name)
-    validated_version_code = _version_code(version_code, "versionCode")
     normalized_action = _string(action, "action").lower()
-    if normalized_action not in ROLLOUT_ACTIONS:
+    if normalized_action not in ROLLOUT_ACTIONS | {"auto"}:
         raise ValueError(
-            "Google Play rollout action must be status, increase, halt, resume, or finalize"
+            "Google Play rollout action must be status, increase, halt, resume, finalize, or auto"
         )
+    if normalized_action == "auto":
+        if version_code is not None:
+            raise ValueError("Google Play automatic rollout discovers the production versionCode")
+        validated_version_code: int | None = None
+    else:
+        if version_code is None:
+            raise ValueError("Google Play rollout versionCode is required")
+        validated_version_code = _version_code(version_code, "versionCode")
     requested_percentage: float | None = None
     if normalized_action == "increase":
         if percentage is None:
@@ -541,7 +549,7 @@ def control_rollout(
                 )
                 for code_index, code in enumerate(codes)
             ]
-            if validated_version_code in normalized_codes:
+            if validated_version_code is not None and validated_version_code in normalized_codes:
                 if normalized_codes != [validated_version_code]:
                     raise GooglePlayApiError(
                         "Google Play production rollout target is ambiguous"
@@ -550,6 +558,31 @@ def control_rollout(
             if normalized_codes:
                 maximum_version_code = max(maximum_version_code, *normalized_codes)
             releases.append(release)
+
+        if normalized_action == "auto":
+            if maximum_version_code == 0:
+                raise GooglePlayApiError("Google Play production contains no release to advance")
+            matching_indexes = []
+            for release_index, release in enumerate(releases):
+                normalized_codes = [
+                    _version_code(
+                        code,
+                        f"production releases[{release_index}].versionCodes[{code_index}]",
+                    )
+                    for code_index, code in enumerate(
+                        _sequence(
+                            release.get("versionCodes", []),
+                            f"production releases[{release_index}].versionCodes",
+                        )
+                    )
+                ]
+                if maximum_version_code in normalized_codes:
+                    if normalized_codes != [maximum_version_code]:
+                        raise GooglePlayApiError(
+                            "Google Play production rollout target is ambiguous"
+                        )
+                    matching_indexes.append(release_index)
+            validated_version_code = maximum_version_code
 
         if not matching_indexes:
             raise GooglePlayApiError(
@@ -560,7 +593,9 @@ def control_rollout(
             raise GooglePlayApiError(
                 "Google Play production rollout target is ambiguous"
             )
-        if maximum_version_code > validated_version_code:
+        if validated_version_code is None:
+            raise GooglePlayApiError("Google Play production rollout target is missing")
+        if normalized_action != "auto" and maximum_version_code > validated_version_code:
             raise GooglePlayApiError(
                 "Google Play production rollout target is superseded by "
                 f"versionCode {maximum_version_code}"
@@ -569,6 +604,18 @@ def control_rollout(
         target_index = matching_indexes[0]
         target = releases[target_index]
         status = _string(target.get("status"), "production rollout status")
+        if status == "draft" and normalized_action == "auto":
+            _cleanup_edit(validated_package, edit_id, transport)
+            return {
+                "package": validated_package,
+                "track": "production",
+                "versionCode": validated_version_code,
+                "action": normalized_action,
+                "decision": "waiting",
+                "status": status,
+                "percentage": None,
+                "committed": False,
+            }
         if status not in ROLLOUT_STATES:
             raise GooglePlayApiError(
                 f"Google Play production rollout has unsupported state: {status}"
@@ -579,6 +626,39 @@ def control_rollout(
                 target.get("userFraction"),
                 "production rollout userFraction",
             )
+
+        if normalized_action == "auto" and status in {"completed", "halted"}:
+            _cleanup_edit(validated_package, edit_id, transport)
+            return {
+                "package": validated_package,
+                "track": "production",
+                "versionCode": validated_version_code,
+                "action": normalized_action,
+                "decision": "complete" if status == "completed" else "paused",
+                "status": status,
+                "percentage": None if current_fraction is None else current_fraction * 100,
+                "committed": False,
+            }
+
+        mutation_action = normalized_action
+        if normalized_action == "auto":
+            if status != "inProgress" or current_fraction is None:
+                raise GooglePlayApiError(
+                    f"Google Play automatic rollout is unsupported from state {status}"
+                )
+            current_percentage = current_fraction * 100
+            if math.isclose(current_percentage, AUTO_ROLLOUT_PERCENTAGES[0], abs_tol=1e-6):
+                mutation_action = "increase"
+                requested_percentage = AUTO_ROLLOUT_PERCENTAGES[1]
+            elif math.isclose(current_percentage, AUTO_ROLLOUT_PERCENTAGES[1], abs_tol=1e-6):
+                mutation_action = "increase"
+                requested_percentage = AUTO_ROLLOUT_PERCENTAGES[2]
+            elif math.isclose(current_percentage, AUTO_ROLLOUT_PERCENTAGES[2], abs_tol=1e-6):
+                mutation_action = "finalize"
+            else:
+                raise GooglePlayApiError(
+                    "Google Play rollout percentage is outside the automatic 5, 20, 50 schedule"
+                )
 
         if normalized_action == "status":
             _cleanup_edit(validated_package, edit_id, transport)
@@ -592,7 +672,7 @@ def control_rollout(
                 "committed": False,
             }
 
-        if normalized_action == "increase":
+        if mutation_action == "increase":
             if status != "inProgress" or current_fraction is None:
                 raise GooglePlayApiError(
                     f"Google Play rollout increase is unsupported from state {status}"
@@ -603,13 +683,13 @@ def control_rollout(
                     "Google Play rollout increase must be greater than the current percentage"
                 )
             target["userFraction"] = requested_fraction
-        elif normalized_action == "halt":
+        elif mutation_action == "halt":
             if status != "inProgress" or current_fraction is None:
                 raise GooglePlayApiError(
                     f"Google Play rollout halt is unsupported from state {status}"
                 )
             target["status"] = "halted"
-        elif normalized_action == "resume":
+        elif mutation_action == "resume":
             if status != "halted" or current_fraction is None:
                 raise GooglePlayApiError(
                     f"Google Play rollout resume is unsupported from state {status}"
@@ -639,6 +719,7 @@ def control_rollout(
         "track": "production",
         "versionCode": validated_version_code,
         "action": normalized_action,
+        "decision": mutation_action if normalized_action == "auto" else normalized_action,
         "status": updated_status,
         "percentage": (
             None
@@ -861,6 +942,10 @@ def _parser() -> argparse.ArgumentParser:
     rollout.add_argument("--action", required=True, choices=sorted(ROLLOUT_ACTIONS))
     rollout.add_argument("--percentage", type=float)
     rollout.add_argument("--result", type=Path)
+
+    automatic = subparsers.add_parser("auto-rollout")
+    automatic.add_argument("--package", required=True)
+    automatic.add_argument("--result", type=Path)
     return parser
 
 
@@ -884,7 +969,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = {"package": args.package, "maxVersionCode": maximum}
         elif args.command == "publish":
             result = publish_release(_load_json(args.plan, "publish plan"), transport)
-        else:
+        elif args.command == "rollout":
             result = control_rollout(
                 args.package,
                 args.version_code,
@@ -892,6 +977,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.percentage,
                 transport,
             )
+        else:
+            result = control_rollout(args.package, None, "auto", None, transport)
     except Exception as error:
         print(f"Google Play release failed: {_format_error(error)}", file=sys.stderr)
         return 1
@@ -905,6 +992,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "publish": "publication",
                 "max-version-code": "version lookup",
                 "rollout": "rollout operation",
+                "auto-rollout": "automatic rollout operation",
             }[args.command]
             print(
                 f"Google Play {completed_operation} succeeded, but recording the local "

@@ -3,9 +3,11 @@ import { pathToFileURL } from 'node:url';
 
 const API = 'https://manage.devcenter.microsoft.com/v1.0/my';
 const API_BASE = new URL(`${API}/`);
-const ACTIONS = new Set(['status', 'increase', 'halt', 'finalize']);
+const ACTIONS = new Set(['status', 'increase', 'halt', 'finalize', 'auto']);
 const IN_PROGRESS = 'PackageRolloutInProgress';
 const STOPPED = 'PackageRolloutStopped';
+const COMPLETE = 'PackageRolloutComplete';
+const AUTO_ROLLOUT_PERCENTAGES = [5, 20, 50];
 
 function requiredValue(argv, index, flag) {
   const value = argv[index + 1];
@@ -33,12 +35,15 @@ export function parseArgs(argv) {
   }
 
   const submissionId = values.get('--submission-id');
-  if (!submissionId) throw new Error('--submission-id is required.');
-  if (!/^\d+$/.test(submissionId)) throw new Error('--submission-id must be a numeric Store submission ID.');
-
   const action = values.get('--action');
   if (!action) throw new Error('--action is required.');
-  if (!ACTIONS.has(action)) throw new Error('--action must be one of status, increase, halt, or finalize.');
+  if (!ACTIONS.has(action)) throw new Error('--action must be one of status, increase, halt, finalize, or auto.');
+  if (action === 'auto') {
+    if (submissionId) throw new Error('--submission-id is not supported when --action is auto.');
+  } else {
+    if (!submissionId) throw new Error('--submission-id is required.');
+    if (!/^\d+$/.test(submissionId)) throw new Error('--submission-id must be a numeric Store submission ID.');
+  }
 
   const rawPercentage = values.get('--percentage');
   if (action === 'increase' && rawPercentage === undefined) {
@@ -182,6 +187,78 @@ export async function manageRollout({
   return updated;
 }
 
+function automaticDecision(percentage) {
+  const matches = value => Math.abs(percentage - value) < 1e-6;
+  if (matches(AUTO_ROLLOUT_PERCENTAGES[0])) return { action: 'increase', percentage: AUTO_ROLLOUT_PERCENTAGES[1] };
+  if (matches(AUTO_ROLLOUT_PERCENTAGES[1])) return { action: 'increase', percentage: AUTO_ROLLOUT_PERCENTAGES[2] };
+  if (matches(AUTO_ROLLOUT_PERCENTAGES[2])) return { action: 'finalize' };
+  throw new Error('Microsoft Store rollout percentage is outside the automatic 5, 20, 50 schedule.');
+}
+
+export async function autoAdvanceRollout({ appId, request, log = console.log }) {
+  if (!/^[A-Z0-9]+$/.test(appId)) throw new Error('Invalid Microsoft Store application ID.');
+  const appPath = `applications/${appId}`;
+  const app = await request('GET', appPath);
+  if (!app || String(app.id) !== appId) {
+    throw new Error('Microsoft Store returned the wrong application identity.');
+  }
+
+  const submissionId = String(app.lastPublishedApplicationSubmission?.id ?? '');
+  if (!/^\d+$/.test(submissionId)) {
+    throw new Error('Microsoft Store returned no numeric last-published submission ID.');
+  }
+  if (app.pendingApplicationSubmission?.id) {
+    const result = {
+      submissionId,
+      action: 'auto',
+      decision: 'waiting',
+      isPackageRollout: false,
+      percentage: 0,
+      status: 'PendingApplicationSubmission',
+      fallbackSubmissionId: '',
+      committed: false,
+    };
+    log(`Microsoft Store has pending submission ${app.pendingApplicationSubmission.id}; automatic rollout is waiting.`);
+    return result;
+  }
+
+  const submissionPath = `${appPath}/submissions/${submissionId}`;
+  const submission = await request('GET', submissionPath);
+  if (String(submission?.id ?? '') !== submissionId || submission.status !== 'Published') {
+    throw new Error(`Submission ${submissionId} must be Published before its package rollout can be managed.`);
+  }
+
+  const rolloutPath = `${submissionPath}/packagerollout`;
+  const current = rolloutResult(submissionId, 'auto', await request('GET', rolloutPath));
+  if (current.status === STOPPED) {
+    const result = { ...current, decision: 'paused', committed: false };
+    log(`Microsoft Store submission ${submissionId} is halted; automatic rollout will not resume it.`);
+    return result;
+  }
+  if (!current.isPackageRollout) {
+    const result = { ...current, decision: 'not-staged', committed: false };
+    log(`Microsoft Store submission ${submissionId} is not staged; no automatic rollout action is needed.`);
+    return result;
+  }
+  if (current.status === COMPLETE) {
+    const result = { ...current, decision: 'complete', committed: false };
+    log(`Microsoft Store submission ${submissionId} rollout is complete.`);
+    return result;
+  }
+  if (current.status !== IN_PROGRESS) {
+    throw new Error(`Automatic rollout requires ${IN_PROGRESS}; current state is ${current.status}.`);
+  }
+
+  const decision = automaticDecision(current.percentage);
+  const actionPath = decision.action === 'increase'
+    ? `${submissionPath}/updatepackagerolloutpercentage?percentage=${encodeURIComponent(decision.percentage)}`
+    : `${submissionPath}/finalizepackagerollout`;
+  const updated = rolloutResult(submissionId, 'auto', await request('POST', actionPath));
+  const result = { ...updated, decision: decision.action, committed: true };
+  log(`Microsoft Store submission ${submissionId}: ${updated.status}, ${updated.percentage}% rollout after automatic ${decision.action}.`);
+  return result;
+}
+
 async function accessToken({ env, fetchImpl }) {
   const response = await fetchImpl(
     `https://login.microsoftonline.com/${encodeURIComponent(env.MS_TENANT_ID)}/oauth2/token`,
@@ -220,16 +297,18 @@ export async function runCli({
     tenantId: env.MS_TENANT_ID,
     fetchImpl,
   });
-  const result = await manageRollout({
-    appId: env.MS_STORE_APP_ID,
-    ...args,
-    request,
-    log,
-  });
+  const result = args.action === 'auto'
+    ? await autoAdvanceRollout({ appId: env.MS_STORE_APP_ID, request, log })
+    : await manageRollout({
+      appId: env.MS_STORE_APP_ID,
+      ...args,
+      request,
+      log,
+    });
   if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
       env.GITHUB_STEP_SUMMARY,
-      `\n## Microsoft Store package rollout\n\n- Submission: \`${result.submissionId}\`\n- Action: **${result.action}**\n- State: **${result.status}**\n- Percentage: **${result.percentage}%**\n`,
+      `\n## Microsoft Store package rollout\n\n- Submission: \`${result.submissionId}\`\n- Action: **${result.action}**\n- Decision: **${result.decision ?? result.action}**\n- State: **${result.status}**\n- Percentage: **${result.percentage}%**\n`,
     );
   }
   return result;

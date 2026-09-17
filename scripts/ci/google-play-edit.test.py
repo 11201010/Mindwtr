@@ -715,6 +715,81 @@ class GooglePlayEditTest(unittest.TestCase):
                     self.assertEqual(updated["userFraction"], expected_fraction)
                     self.assertEqual(result["percentage"], expected_fraction * 100)
 
+    def test_automatic_rollout_advances_one_stage_and_discovers_latest_production_version(self) -> None:
+        cases = (
+            (0.05, "increase", 20.0, "inProgress"),
+            (0.20, "increase", 50.0, "inProgress"),
+            (0.50, "finalize", None, "completed"),
+        )
+        for initial_fraction, decision, expected_percentage, expected_status in cases:
+            with self.subTest(initial_fraction=initial_fraction):
+                transport = FakeTransport()
+                target = transport.production_track["releases"][1]
+                target["userFraction"] = initial_fraction
+
+                result = MODULE.control_rollout(
+                    "tech.dongdongbh.mindwtr",
+                    None,
+                    "auto",
+                    None,
+                    transport,
+                )
+
+                self.assertEqual(result["versionCode"], 42)
+                self.assertEqual(result["decision"], decision)
+                self.assertEqual(result["percentage"], expected_percentage)
+                self.assertEqual(result["status"], expected_status)
+                self.assertTrue(result["committed"])
+                self.assertEqual(
+                    len([call for call in transport.calls if call["method"] == "PUT"]),
+                    1,
+                )
+
+    def test_automatic_rollout_treats_paused_complete_and_waiting_states_as_no_ops(self) -> None:
+        cases = (
+            ("halted", 0.20, "paused"),
+            ("completed", None, "complete"),
+            ("draft", None, "waiting"),
+        )
+        for status, fraction, decision in cases:
+            with self.subTest(status=status):
+                transport = FakeTransport()
+                target = transport.production_track["releases"][1]
+                target["status"] = status
+                if fraction is None:
+                    target.pop("userFraction", None)
+                else:
+                    target["userFraction"] = fraction
+
+                result = MODULE.control_rollout(
+                    "tech.dongdongbh.mindwtr",
+                    None,
+                    "auto",
+                    None,
+                    transport,
+                )
+
+                self.assertEqual(result["decision"], decision)
+                self.assertFalse(result["committed"])
+                self.assertFalse(any(call["method"] == "PUT" for call in transport.calls))
+                self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
+    def test_automatic_rollout_rejects_unexpected_percentage_without_mutation(self) -> None:
+        transport = FakeTransport()
+        transport.production_track["releases"][1]["userFraction"] = 0.10
+
+        with self.assertRaisesRegex(MODULE.GooglePlayApiError, "automatic 5, 20, 50"):
+            MODULE.control_rollout(
+                "tech.dongdongbh.mindwtr",
+                None,
+                "auto",
+                None,
+                transport,
+            )
+
+        self.assertFalse(any(call["method"] == "PUT" for call in transport.calls))
+        self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
     def test_rollout_rejects_invalid_or_decreasing_mutations_before_put(self) -> None:
         cases = (
             ("increase", None, "percentage is required", False),
@@ -806,6 +881,31 @@ class GooglePlayEditTest(unittest.TestCase):
         self.assertEqual(result["versionCode"], 42)
         self.assertEqual(result["status"], "inProgress")
         self.assertFalse(result["committed"])
+        self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
+
+    def test_automatic_rollout_cli_discovers_and_advances_without_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result_path = Path(temp_dir) / "rollout.json"
+            transport = FakeTransport()
+
+            with patch.object(MODULE, "GooglePlayTransport", return_value=transport):
+                with patch.dict(os.environ, {"GOOGLE_PLAY_ACCESS_TOKEN": "top-secret"}):
+                    exit_code = MODULE.main(
+                        [
+                            "auto-rollout",
+                            "--package",
+                            "tech.dongdongbh.mindwtr",
+                            "--result",
+                            str(result_path),
+                        ]
+                    )
+
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["versionCode"], 42)
+        self.assertEqual(result["decision"], "increase")
+        self.assertEqual(result["percentage"], 20.0)
         self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
 
     def test_rollout_unknown_commit_is_not_retried_and_cleanup_is_attempted(self) -> None:

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import {
+  autoAdvanceRollout,
   createStoreRequest,
   manageRollout,
   parseArgs,
@@ -61,7 +62,7 @@ function fixture({ app = {}, submission = {}, rollout = {}, postResponse } = {})
     log: () => {},
     ...options,
   });
-  return { calls, run };
+  return { calls, request, run };
 }
 
 test('CLI requires an explicit submission, a supported action, and a bounded percentage', () => {
@@ -75,6 +76,11 @@ test('CLI requires an explicit submission, a supported action, and a bounded per
     action: 'increase',
     percentage: 20,
   });
+  expect(parseArgs(['--action', 'auto'])).toEqual({
+    submissionId: undefined,
+    action: 'auto',
+    percentage: undefined,
+  });
   for (const argv of [
     ['--action', 'status'],
     ['--submission-id', submissionId],
@@ -86,6 +92,8 @@ test('CLI requires an explicit submission, a supported action, and a bounded per
     ['--submission-id', submissionId, '--action', 'increase', '--percentage', '100'],
     ['--submission-id', submissionId, '--action', 'halt', '--percentage', '20'],
     ['--submission-id', submissionId, '--action', 'status', '--unknown', 'x'],
+    ['--submission-id', submissionId, '--action', 'auto'],
+    ['--action', 'auto', '--percentage', '20'],
   ]) {
     expect(() => parseArgs(argv)).toThrow();
   }
@@ -207,6 +215,74 @@ test('halt and finalize use their dedicated endpoints exactly once', async () =>
       { method: 'POST', path: `${submissionPath}/${suffix}` },
     ]);
   }
+});
+
+test('automatic rollout discovers the latest published submission and advances one stage', async () => {
+  for (const [percentage, expectedPath, expectedDecision] of [
+    [5, `${submissionPath}/updatepackagerolloutpercentage?percentage=20`, 'increase'],
+    [20, `${submissionPath}/updatepackagerolloutpercentage?percentage=50`, 'increase'],
+    [50, `${submissionPath}/finalizepackagerollout`, 'finalize'],
+  ]) {
+    const { calls, request } = fixture({
+      rollout: { packageRolloutPercentage: percentage },
+      postResponse: {
+        isPackageRollout: true,
+        packageRolloutPercentage: expectedDecision === 'finalize' ? 100 : percentage === 5 ? 20 : 50,
+        packageRolloutStatus: expectedDecision === 'finalize' ? 'PackageRolloutComplete' : 'PackageRolloutInProgress',
+        fallbackSubmissionId: '1152921504621000000',
+      },
+    });
+    const advanced = await autoAdvanceRollout({
+      appId,
+      request,
+      log: () => {},
+    });
+
+    expect(advanced.submissionId).toBe(submissionId);
+    expect(advanced.decision).toBe(expectedDecision);
+    expect(advanced.committed).toBe(true);
+    expect(calls.at(-1)).toEqual({ method: 'POST', path: expectedPath });
+  }
+});
+
+test('automatic rollout treats pending, halted, complete, and unstaged states as no-ops', async () => {
+  const cases = [
+    {
+      app: { pendingApplicationSubmission: { id: '777' } },
+      expectedDecision: 'waiting',
+      expectedCalls: 1,
+    },
+    {
+      rollout: { packageRolloutPercentage: 20, packageRolloutStatus: 'PackageRolloutStopped' },
+      expectedDecision: 'paused',
+      expectedCalls: 3,
+    },
+    {
+      rollout: { packageRolloutPercentage: 100, packageRolloutStatus: 'PackageRolloutComplete' },
+      expectedDecision: 'complete',
+      expectedCalls: 3,
+    },
+    {
+      rollout: { isPackageRollout: false, packageRolloutPercentage: 0, packageRolloutStatus: 'PackageRolloutNotStarted' },
+      expectedDecision: 'not-staged',
+      expectedCalls: 3,
+    },
+  ];
+  for (const { app = {}, rollout = {}, expectedDecision, expectedCalls } of cases) {
+    const { calls, request } = fixture({ app, rollout });
+
+    const result = await autoAdvanceRollout({ appId, request, log: () => {} });
+    expect(result.decision).toBe(expectedDecision);
+    expect(result.committed).toBe(false);
+    expect(calls).toHaveLength(expectedCalls);
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
+  }
+});
+
+test('automatic rollout fails closed on an unexpected percentage', async () => {
+  const { calls, request } = fixture({ rollout: { packageRolloutPercentage: 10 } });
+  await expect(autoAdvanceRollout({ appId, request, log: () => {} })).rejects.toThrow('automatic 5, 20, 50');
+  expect(calls.every(call => call.method === 'GET')).toBe(true);
 });
 
 test('stale, pending, unpublished, disabled, and halted rollouts fail before mutation', async () => {

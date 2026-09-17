@@ -11,8 +11,8 @@ Rollout promotion does not change the version or rebuild a package.
 | Channel | Stable release behavior |
 | --- | --- |
 | iOS and macOS App Store | Apple phased release, automatic after approval |
-| Google Play production | 5%, `inProgress` |
-| Microsoft Store production | 5%, gradual package rollout |
+| Google Play production | 5%, then scheduled 20% → 50% → 100% |
+| Microsoft Store production | 5%, then scheduled 20% → 50% → 100% |
 | Play beta/internal | Completed, same standard AAB and versionCode |
 | RC TestFlight, Play testing, Microsoft Beta flight | Existing beta distribution |
 | GitHub downloads and other package channels | Existing distribution, no staging |
@@ -23,18 +23,22 @@ release-to-all in App Store Connect, independently for iOS and macOS.
 See [Apple phased releases](https://developer.apple.com/help/app-store-connect/update-your-app/release-a-version-update-in-phases)
 and [Fastlane's phased_release option](https://docs.fastlane.tools/actions/deliver/#phased_release).
 
-Play and Microsoft require explicit promotion. After each store actually starts
-distribution, aim for 5% → 20% → 50% → 100% over roughly three to seven days.
-Review crash/ANR reports, launch failures, storage/migration and sync errors,
-feedback, and reviews before each increase. Time elapsed alone is insufficient.
-Pause expansion for a credible data-loss report. Small cohorts or delayed
-telemetry can mean there is insufficient evidence to promote yet.
+The **Manage Store Rollout** workflow runs daily at 15:17 UTC. For each active
+Play and Microsoft production rollout, it discovers the current production
+release and advances at most one exact stage: 5% → 20% → 50% → 100%. A delayed
+store approval does not make one run skip multiple stages. Completed,
+non-staged, pending, or halted releases are successful no-ops.
+
+Monitor crash/ANR reports, launch failures, storage/migration and sync errors,
+feedback, and reviews while the schedule progresses. Halt promptly for a
+critical regression, especially a credible data-loss report. The scheduled
+controller never resumes a halted rollout.
 
 ## Operate an existing rollout
 
-Use GitHub Actions **Manage Store Rollout** (`rollout.yml`) from `main` once this
-workflow is published. It uses the existing Store credentials and uploads no
-packages. The default action is `status`.
+Use GitHub Actions **Manage Store Rollout** (`rollout.yml`) from `main` for
+status checks, overrides, or emergency halts. It uses the existing Store
+credentials and uploads no packages. The default manual action is `status`.
 
 - `store=play`: supply the exact production `version_code` from the release
   summary. Actions: `status`, `increase`, `halt`, `resume`, `finalize`.
@@ -62,6 +66,13 @@ see [Google's edit lifecycle](https://developers.google.com/android-publisher/ed
 If a request loses its response, inspect current
 status before any retry; a failed workflow can still have changed the store.
 Never rerun the build/release workflow merely to increase a rollout.
+
+For a critical regression, prefer the manual `halt` action because its exact
+target and result remain in Actions history. Halting directly in Play Console
+or Partner Center is also safe: the next scheduled run reads the live halted
+state and exits successfully without continuing. Play can later be resumed
+manually. Microsoft cannot resume a halted rollout through these API controls;
+publish a corrected submission instead.
 
 On Microsoft, even 100% selection is not the same as finalizing: finalization
 stops distribution of older packages. A halted rollout cannot be resumed or
