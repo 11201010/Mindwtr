@@ -3,7 +3,7 @@
   "name": "io.github.dongdongbh/mindwtr",
   "title": "Mindwtr",
   "description": "Task and project automation for local Mindwtr data and self-hosted Mindwtr Cloud; read-only by default, writes enabled with --write.",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "websiteUrl": "https://docs.mindwtr.app/power-users/mcp",
   "repository": {
     "url": "https://github.com/dongdongbh/Mindwtr",
@@ -15,7 +15,7 @@
     {
       "registryType": "npm",
       "identifier": "mindwtr-mcp",
-    "version": "1.1.8",
+      "version": "1.1.9",
       "transport": {
         "type": "stdio"
       },
