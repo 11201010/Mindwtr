@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
     getCapability: ReturnType<typeof vi.fn>;
     clarifyInbox: ReturnType<typeof vi.fn>;
     cancel: ReturnType<typeof vi.fn>;
+    getPccEvaluationFixtures: ReturnType<typeof vi.fn>;
+    getPccEvaluationCapability: ReturnType<typeof vi.fn>;
+    runPccEvaluation: ReturnType<typeof vi.fn>;
+    cancelPccEvaluation: ReturnType<typeof vi.fn>;
   },
 }));
 
@@ -32,6 +36,21 @@ describe('Apple Foundation Models optional module wrapper', () => {
       })),
       clarifyInbox: vi.fn(async () => ({ cleanedTitle: 'Call the dentist' })),
       cancel: vi.fn(async () => undefined),
+      getPccEvaluationFixtures: vi.fn(async () => ([
+        { fixtureId: 'smoke', text: 'Synthetic smoke fixture.' },
+        { fixtureId: 'project_planning', text: 'Synthetic planning fixture.' },
+      ])),
+      getPccEvaluationCapability: vi.fn(async () => ({
+        available: true,
+        backend: 'private_cloud_compute',
+        contextSize: 32_000,
+      })),
+      runPccEvaluation: vi.fn(async () => ({
+        outcome: 'completed',
+        summary: 'A bounded summary.',
+        nextActions: ['Confirm the room.'],
+      })),
+      cancelPccEvaluation: vi.fn(async () => undefined),
     };
   });
 
@@ -96,5 +115,38 @@ describe('Apple Foundation Models optional module wrapper', () => {
 
     expect(source).not.toMatch(/SQLite|CoreData|CloudKit|URLSession|fetch\(/);
     expect(source).toContain('LanguageModelSession');
+  });
+
+  it('returns stable unavailable metadata when PCC optional APIs are absent', async () => {
+    mocks.nativeModule = null;
+    const { getNativeApplePccEvaluationCapability, getNativeApplePccEvaluationFixtures } = await load();
+
+    await expect(getNativeApplePccEvaluationCapability('private_cloud_compute')).resolves.toEqual({
+      available: false,
+      backend: 'private_cloud_compute',
+      reason: 'native_module_missing',
+    });
+    await expect(getNativeApplePccEvaluationFixtures()).resolves.toEqual([]);
+  });
+
+  it('passes only fixed PCC request fields and forwards namespaced cancellation', async () => {
+    const {
+      cancelNativeApplePccEvaluation,
+      requestNativeApplePccEvaluation,
+    } = await load();
+    const request = {
+      requestId: 'pcc-1',
+      backend: 'private_cloud_compute',
+      fixtureId: 'smoke',
+      consent: true,
+    } as const;
+
+    await expect(requestNativeApplePccEvaluation(request)).resolves.toMatchObject({ outcome: 'completed' });
+    await cancelNativeApplePccEvaluation(request.requestId);
+
+    expect(mocks.nativeModule?.runPccEvaluation).toHaveBeenCalledWith(request);
+    expect(mocks.nativeModule?.cancelPccEvaluation).toHaveBeenCalledWith('pcc-1');
+    expect(mocks.nativeModule?.runPccEvaluation.mock.calls[0][0]).not.toHaveProperty('text');
+    expect(mocks.nativeModule?.cancel).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@ import { isTaskVisible, useTaskStore } from '@mindwtr/core';
 
 import { AppleSearchEvaluation } from '@/components/AppleSearchEvaluation';
 import { AppleImageCaptureEvaluation } from '@/components/AppleImageCaptureEvaluation';
+import { ApplePccEvaluation } from '@/components/ApplePccEvaluation';
+import { isApplePccEvaluationEnabled } from '@/lib/apple-pcc-evaluation';
 import { TaskEditModal } from '@/components/task-edit-modal';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { useToast } from '@/contexts/toast-context';
@@ -20,7 +22,8 @@ function AppleEvaluationScreen() {
   const router = useRouter();
   const tc = useThemeColors();
   const { showToast } = useToast();
-  const [mode, setMode] = useState<'search' | 'image'>('search');
+  const pccEnabled = isApplePccEvaluationEnabled();
+  const [mode, setMode] = useState<'search' | 'image' | 'pcc'>('search');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const editingTask = useTaskStore((state) => (
     editingTaskId ? state._tasksById.get(editingTaskId) ?? null : null
@@ -48,7 +51,7 @@ function AppleEvaluationScreen() {
         </Pressable>
       </View>
       <View style={styles.tabs}>
-        {(['search', 'image'] as const).map((value) => (
+        {(['search', 'image', ...(pccEnabled ? ['pcc' as const] : [])] as const).map((value) => (
           <Pressable
             key={value}
             accessibilityRole="tab"
@@ -57,15 +60,19 @@ function AppleEvaluationScreen() {
             style={[styles.button, { borderBottomWidth: mode === value ? 2 : 0, borderColor: tc.tint }]}
           >
             <Text style={{ color: mode === value ? tc.tint : tc.secondaryText }}>
-              {value === 'search' ? 'Task search' : 'Image capture'}
+              {value === 'search' ? 'Task search' : value === 'image' ? 'Image capture' : 'PCC comparison'}
             </Text>
           </Pressable>
         ))}
       </View>
       <View style={styles.body}>
-        {mode === 'search'
-          ? <AppleSearchEvaluation onOpenTask={openTask} />
-          : <AppleImageCaptureEvaluation onClose={close} onSaved={openTask} />}
+        {mode === 'search' ? (
+          <AppleSearchEvaluation onOpenTask={openTask} />
+        ) : mode === 'image' ? (
+          <AppleImageCaptureEvaluation onClose={close} onSaved={openTask} />
+        ) : pccEnabled ? (
+          <ApplePccEvaluation />
+        ) : null}
       </View>
       {editingTask && isTaskVisible(editingTask) && (
         <TaskEditModal

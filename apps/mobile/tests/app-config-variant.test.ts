@@ -63,4 +63,48 @@ describe('app.config APP_VARIANT', () => {
     expect(config.extra?.analyticsHeartbeatUrl).toBe('');
     expect(widgetLabels(config)).toEqual(['Mindwtr Benchmark']);
   });
+
+  it.each([
+    ['', '1'],
+    ['benchmark', '1'],
+    ['development', ''],
+    ['development', '0'],
+  ])('keeps PCC evaluation and its entitlement off for variant=%s flag=%s', async (variant, flag) => {
+    vi.stubEnv('APP_VARIANT', variant);
+    vi.stubEnv('MINDWTR_PCC_EVALUATION_ENABLED', flag);
+    const config = await loadConfig();
+    expect(config.extra?.applePccEvaluationEnabled).toBe(false);
+    expect(config.ios?.infoPlist?.MindwtrPccEvaluationEnabled).toBe(false);
+    expect(config.ios?.entitlements?.['com.apple.developer.private-cloud-compute']).toBeUndefined();
+  });
+
+  it('adds the managed PCC entitlement only to an explicitly opted-in development build', async () => {
+    vi.stubEnv('APP_VARIANT', 'development');
+    vi.stubEnv('MINDWTR_PCC_EVALUATION_ENABLED', '1');
+    const config = await loadConfig();
+    expect(config.extra?.applePccEvaluationEnabled).toBe(true);
+    expect(config.ios?.infoPlist?.MindwtrPccEvaluationEnabled).toBe(true);
+    expect(config.ios?.entitlements?.['com.apple.developer.private-cloud-compute']).toBe(true);
+  });
+
+  it('preserves unrelated iOS entitlements while stripping inherited PCC access when disabled', async () => {
+    vi.stubEnv('APP_VARIANT', 'development');
+    vi.stubEnv('MINDWTR_PCC_EVALUATION_ENABLED', '0');
+    vi.resetModules();
+    const mod = await import('../app.config');
+    const base = {
+      ...(appJson.expo as ExpoConfig),
+      ios: {
+        ...(appJson.expo.ios as ExpoConfig['ios']),
+        entitlements: {
+          'com.apple.developer.associated-domains': ['applinks:example.invalid'],
+          'com.apple.developer.private-cloud-compute': true,
+        },
+      },
+    } as ExpoConfig;
+    const config = mod.default({ config: base, projectRoot: '', staticConfigPath: null, packageJsonPath: null });
+    expect(config.ios?.entitlements).toEqual({
+      'com.apple.developer.associated-domains': ['applinks:example.invalid'],
+    });
+  });
 });

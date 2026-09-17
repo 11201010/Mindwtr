@@ -2,8 +2,9 @@
 
 Tracks the local implementation gates for #915, #1194, #1214, and #1195.
 These are iOS prototypes and investigations. Passing JavaScript checks or an
-unsigned archive does not establish Siri understanding or model quality.
-No Private Cloud Compute integration is included.
+unsigned archive does not establish Siri understanding or model quality. The
+PCC work is a development-only synthetic comparison harness. It has no task
+content or production workflow integration.
 
 ## Build matrix
 
@@ -11,8 +12,10 @@ No Private Cloud Compute integration is included.
 | --- | --- | --- |
 | Existing Xcode 26 / iOS 26 SDK | Compile optional-module fallbacks and the on-device clarification APIs | Native Platform CI, existing App Intents/plugin checks |
 | Xcode 27 / iOS 27 SDK | Compile search/image APIs and validate Release metadata extraction | Explicit iOS 27 native CI run and unsigned Release archive |
+| Xcode 27 PCC API preflight | Compile the real standalone PCC engine for ARM64 simulator/device and the unavailable Intel path | Explicit `platform=apple-api` or full iOS native CI run |
 | Older supported iOS runtime | Preserve capture, queries, manual Inbox processing, and startup | Simulator/device smoke test at the existing deployment floor |
 | Apple Intelligence-capable iPhone and iPad | Establish availability, quality, cancellation, and performance | Recorded hardware, OS/model version, corpus results, and diagnostics |
+| Signed PCC-enabled development App ID | Establish provisioning and one minimal PCC request | Inspected signed entitlement/profile plus physical-device smoke record |
 
 No row is satisfied merely by adding its workflow or test command. Record the
 exact revision and run URL when it actually runs. This Linux development host
@@ -53,6 +56,12 @@ AppIntentsTesting against the built app, and App Store acceptance require
 separate checks. A release archive also disables JavaScript development-only
 entry points; use a development client to exercise the evaluations.
 
+The PCC engine lives in
+`modules/apple-foundation-models/ios/ApplePccEvaluationEngine.swift`. The Apple
+API preflight typechecks that file for ARM64 simulator/device and the guarded
+Intel fallback. A full iOS job also compiles it through the module podspec.
+Neither check proves that Apple granted the signed App ID access.
+
 ## Open the prototypes
 
 Use an iOS development client built with `APP_VARIANT=development` and a
@@ -60,6 +69,11 @@ JavaScript development session. Open the `/apple-evaluation` route for Search
 and Image capture. For Inbox clarification, choose the on-device backend in
 Settings > AI, then use Clarify while processing an Inbox item. Apply changes
 only the editable draft; the normal Inbox Save action persists it.
+
+Add `MINDWTR_PCC_EVALUATION_ENABLED=1` to the development build to expose the
+PCC comparison tab and request the managed entitlement. The tab uses synthetic
+native-owned fixtures and explicit consent for each PCC request. Follow
+`apple-pcc-evaluation.md` for signing and device evidence.
 
 The unsigned Release CI archive intentionally has no development entry points.
 Use separate evaluator data and record actual hardware results in the feature
@@ -85,6 +99,9 @@ reports; the checked-in search result fixture only tests the scoring harness.
    operation must not claim a completed durable mutation.
 7. Share only privacy-safe diagnostics and aggregate evaluation results.
    Do not include private task text, images, prompts, responses, or credentials.
+8. For PCC, run the on-device synthetic baseline without consent or network,
+   then complete the signed-device PCC smoke before the PCC planning fixture.
+   Inspect the signed entitlement and profile separately from runtime readiness.
 
 ## Shipping decision
 
@@ -92,4 +109,6 @@ Search and image capture require a separate production scope after the
 evaluation. Clarification requires successful native and community/device
 testing. Unsupported Siri action contracts remain deferred until their
 entity and durable mutation-completion requirements are satisfied. Keep
-the issues open while these gates are outstanding.
+the issues open while these gates are outstanding. PCC also remains an
+evaluation until signed provisioning, device smoke, and the predeclared
+quality and performance thresholds pass.

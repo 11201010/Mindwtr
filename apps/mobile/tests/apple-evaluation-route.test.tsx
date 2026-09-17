@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   tasks: new Map<string, { id: string; deletedAt?: string }>(),
   showToast: vi.fn(),
   updateTask: vi.fn(),
+  pccEnabled: true,
 }));
 
 vi.mock('@mindwtr/core', () => ({
@@ -30,6 +31,12 @@ vi.mock('@/components/AppleSearchEvaluation', () => ({
 vi.mock('@/components/AppleImageCaptureEvaluation', () => ({
   AppleImageCaptureEvaluation: (props: object) => React.createElement('ImageEvaluation', { ...props, testID: 'image' }),
 }));
+vi.mock('@/components/ApplePccEvaluation', () => ({
+  ApplePccEvaluation: () => React.createElement('PccEvaluation', { testID: 'pcc' }),
+}));
+vi.mock('@/lib/apple-pcc-evaluation', () => ({
+  isApplePccEvaluationEnabled: () => state.pccEnabled,
+}));
 vi.mock('@/components/task-edit-modal', () => ({
   TaskEditModal: (props: object) => React.createElement('TaskEditor', { ...props, testID: 'editor' }),
 }));
@@ -47,6 +54,7 @@ beforeEach(() => {
   vi.stubGlobal('__DEV__', true);
   Platform.OS = 'ios';
   state.tasks = new Map();
+  state.pccEnabled = true;
 });
 afterEach(() => {
   if (tree) act(() => tree!.unmount());
@@ -64,7 +72,23 @@ it.each([
   await act(async () => { tree = create(<AppleEvaluationRoute />); });
   expect(tree!.root.findAllByProps({ testID: 'search' })).toHaveLength(0);
   expect(tree!.root.findAllByProps({ testID: 'image' })).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ testID: 'pcc' })).toHaveLength(0);
   expect(tree!.root.findByProps({ testID: 'redirect' }).props.href).toBe('/inbox');
+});
+
+it('shows PCC as an explicit development-only tab only when the build opt-in is enabled', async () => {
+  await act(async () => { tree = create(<AppleEvaluationRoute />); });
+  expect(tree!.root.findAllByProps({ testID: 'pcc' })).toHaveLength(0);
+  const pccTab = tree!.root.findByProps({ children: 'PCC comparison' }).parent;
+  await act(async () => { pccTab?.props.onPress(); });
+  expect(tree!.root.findAllByProps({ testID: 'pcc' })).toHaveLength(1);
+});
+
+it('omits the PCC tab when the build-time opt-in is disabled', async () => {
+  state.pccEnabled = false;
+  await act(async () => { tree = create(<AppleEvaluationRoute />); });
+  expect(tree!.root.findAllByProps({ children: 'PCC comparison' })).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ testID: 'pcc' })).toHaveLength(0);
 });
 
 it('opens the current task by ID and refuses a result deleted after search', async () => {

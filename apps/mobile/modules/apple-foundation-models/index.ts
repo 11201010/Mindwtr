@@ -43,10 +43,81 @@ export type AppleFoundationModelsNativeSuggestion = Readonly<{
   dueDateEvidence?: string | null;
 }>;
 
+export type ApplePccEvaluationBackend = 'on_device' | 'private_cloud_compute';
+export type ApplePccEvaluationFixtureId = 'smoke' | 'project_planning';
+export type ApplePccEvaluationUnavailableReason =
+  | 'evaluation_disabled'
+  | 'unsupported_platform'
+  | 'native_module_missing'
+  | 'unsupported_sdk'
+  | 'unsupported_os'
+  | 'unsupported_device'
+  | 'system_not_ready'
+  | 'locale_unsupported'
+  | 'quota_exhausted'
+  | 'network_failure'
+  | 'service_unavailable'
+  | 'timeout'
+  | 'unknown';
+
+export type ApplePccEvaluationFixture = Readonly<{
+  fixtureId: ApplePccEvaluationFixtureId;
+  text: string;
+}>;
+
+export type ApplePccEvaluationCapability = Readonly<{
+  available: boolean;
+  backend: ApplePccEvaluationBackend;
+  reason?: ApplePccEvaluationUnavailableReason;
+  contextSize?: number;
+}>;
+
+export type ApplePccEvaluationNativeRequest = Readonly<{
+  requestId: string;
+  backend: ApplePccEvaluationBackend;
+  fixtureId: ApplePccEvaluationFixtureId;
+  consent: boolean;
+}>;
+
+export type ApplePccEvaluationNativeOutcome =
+  | 'completed'
+  | 'evaluation_disabled'
+  | 'invalid_request'
+  | 'consent_required'
+  | 'duplicate_request'
+  | 'cancelled'
+  | 'timeout'
+  | 'unsupported_sdk'
+  | 'unsupported_os'
+  | 'unsupported_device'
+  | 'system_not_ready'
+  | 'locale_unsupported'
+  | 'quota_exhausted'
+  | 'network_failure'
+  | 'service_unavailable'
+  | 'refused'
+  | 'malformed_output'
+  | 'unknown';
+
+export type ApplePccEvaluationNativeResult = Readonly<{
+  outcome: ApplePccEvaluationNativeOutcome;
+  summary?: string;
+  nextActions?: readonly string[];
+  contextSize?: number;
+}>;
+
 interface AppleFoundationModelsNativeModule extends NativeModule {
   getCapability?: (locale: string) => Promise<AppleFoundationModelsCapability>;
   clarifyInbox?: (request: AppleFoundationModelsNativeRequest) => Promise<AppleFoundationModelsNativeSuggestion>;
   cancel?: (requestId: string) => Promise<void>;
+  getPccEvaluationFixtures?: () => Promise<readonly ApplePccEvaluationFixture[]>;
+  getPccEvaluationCapability?: (
+    backend: ApplePccEvaluationBackend,
+  ) => Promise<ApplePccEvaluationCapability>;
+  runPccEvaluation?: (
+    request: ApplePccEvaluationNativeRequest,
+  ) => Promise<ApplePccEvaluationNativeResult>;
+  cancelPccEvaluation?: (requestId: string) => Promise<void>;
 }
 
 const nativeModule = Platform.OS === 'ios'
@@ -88,4 +159,54 @@ export async function cancelNativeAppleInboxClarification(requestId: string): Pr
   const cancel = nativeModule?.cancel;
   if (typeof cancel !== 'function') return;
   await cancel.call(nativeModule, requestId);
+}
+
+export async function getNativeApplePccEvaluationFixtures(): Promise<readonly ApplePccEvaluationFixture[]> {
+  if (Platform.OS !== 'ios') return [];
+  const getFixtures = nativeModule?.getPccEvaluationFixtures;
+  if (typeof getFixtures !== 'function') return [];
+  try {
+    return await getFixtures.call(nativeModule);
+  } catch {
+    return [];
+  }
+}
+
+export async function getNativeApplePccEvaluationCapability(
+  backend: ApplePccEvaluationBackend,
+): Promise<ApplePccEvaluationCapability> {
+  if (Platform.OS !== 'ios') return { available: false, backend, reason: 'unsupported_platform' };
+  const getCapability = nativeModule?.getPccEvaluationCapability;
+  if (typeof getCapability !== 'function') {
+    return { available: false, backend, reason: 'native_module_missing' };
+  }
+  try {
+    return await getCapability.call(nativeModule, backend);
+  } catch {
+    return { available: false, backend, reason: 'unknown' };
+  }
+}
+
+export async function requestNativeApplePccEvaluation(
+  request: ApplePccEvaluationNativeRequest,
+): Promise<ApplePccEvaluationNativeResult> {
+  if (Platform.OS !== 'ios') return { outcome: 'unsupported_os' };
+  const run = nativeModule?.runPccEvaluation;
+  if (typeof run !== 'function') return { outcome: 'unsupported_sdk' };
+  try {
+    return await run.call(nativeModule, request);
+  } catch {
+    return { outcome: 'unknown' };
+  }
+}
+
+export async function cancelNativeApplePccEvaluation(requestId: string): Promise<void> {
+  if (Platform.OS !== 'ios') return;
+  const cancel = nativeModule?.cancelPccEvaluation;
+  if (typeof cancel !== 'function') return;
+  try {
+    await cancel.call(nativeModule, requestId);
+  } catch {
+    // Cancellation is best-effort. The JS request lease still rejects late output.
+  }
 }

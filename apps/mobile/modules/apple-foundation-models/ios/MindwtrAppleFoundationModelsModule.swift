@@ -61,6 +61,7 @@ private final class AppleClarificationDuplicateRequestException: Exception {
 
 public final class MindwtrAppleFoundationModelsModule: Module {
     private let requests = AppleClarificationRequestRegistry<Task<[String: Any], Error>>()
+    private let pccRequests = AppleClarificationRequestRegistry<Task<ApplePccEvaluationResult, Never>>()
 
     public func definition() -> ModuleDefinition {
         Name("MindwtrAppleFoundationModels")
@@ -103,6 +104,74 @@ public final class MindwtrAppleFoundationModelsModule: Module {
             self.cancelRequest(requestId)
         }
 
+        AsyncFunction("getPccEvaluationFixtures") { () -> [[String: String]] in
+            ApplePccEvaluationEngine.fixtures.map(\.dictionary)
+        }
+
+        AsyncFunction("getPccEvaluationCapability") { (backendValue: String) async -> [String: Any] in
+            guard let backend = ApplePccEvaluationBackend(rawValue: backendValue) else {
+                return ApplePccEvaluationCapability.unavailable(
+                    .privateCloudCompute,
+                    reason: "unknown"
+                ).dictionary
+            }
+            return await ApplePccEvaluationEngine.capability(
+                backend: backend,
+                evaluationEnabled: self.pccEvaluationEnabled
+            ).dictionary
+        }
+
+        AsyncFunction("runPccEvaluation") { (request: [String: Any]) async -> [String: Any] in
+            let allowedFields = Set(["requestId", "backend", "fixtureId", "consent"])
+            guard Set(request.keys).isSubset(of: allowedFields),
+                  request.keys.count == allowedFields.count,
+                  let rawRequestId = request["requestId"] as? String,
+                  let backendValue = request["backend"] as? String,
+                  let fixtureValue = request["fixtureId"] as? String,
+                  let consent = request["consent"] as? Bool,
+                  let backend = ApplePccEvaluationBackend(rawValue: backendValue),
+                  let fixtureId = ApplePccEvaluationFixtureId(rawValue: fixtureValue) else {
+                return ApplePccEvaluationResult.stopped("invalid_request").dictionary
+            }
+            let requestId = rawRequestId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !requestId.isEmpty, requestId.count <= 128 else {
+                return ApplePccEvaluationResult.stopped("invalid_request").dictionary
+            }
+            guard self.pccEvaluationEnabled else {
+                return ApplePccEvaluationResult.stopped("evaluation_disabled").dictionary
+            }
+            guard backend != .privateCloudCompute || consent else {
+                return ApplePccEvaluationResult.stopped("consent_required").dictionary
+            }
+
+            let task: Task<ApplePccEvaluationResult, Never>
+            let reservationToken: UUID
+            switch self.pccRequests.reserve(for: requestId, createValue: {
+                Task {
+                    await ApplePccEvaluationEngine.evaluate(
+                        backend: backend,
+                        fixtureId: fixtureId,
+                        consent: consent,
+                        evaluationEnabled: true
+                    )
+                }
+            }) {
+            case .reserved(let token, let value):
+                reservationToken = token
+                task = value
+            case .duplicate:
+                return ApplePccEvaluationResult.stopped("duplicate_request").dictionary
+            case .cancelledBeforeReservation:
+                return ApplePccEvaluationResult.stopped("cancelled").dictionary
+            }
+            defer { self.pccRequests.remove(requestId, token: reservationToken) }
+            return await task.value.dictionary
+        }
+
+        AsyncFunction("cancelPccEvaluation") { (requestId: String) async -> Void in
+            self.cancelPccRequest(requestId)
+        }
+
         OnDestroy {
             self.cancelAllRequests()
         }
@@ -114,6 +183,15 @@ public final class MindwtrAppleFoundationModelsModule: Module {
 
     private func cancelAllRequests() {
         requests.removeAll().forEach { $0.cancel() }
+        pccRequests.removeAll().forEach { $0.cancel() }
+    }
+
+    private var pccEvaluationEnabled: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "MindwtrPccEvaluationEnabled") as? NSNumber)?.boolValue == true
+    }
+
+    private func cancelPccRequest(_ requestId: String) {
+        pccRequests.cancel(requestId)?.cancel()
     }
 
     private func capability(localeIdentifier: String) -> [String: Any] {

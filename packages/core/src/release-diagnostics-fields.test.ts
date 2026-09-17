@@ -26,6 +26,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // archive-section-retention: number of restorable sections kept during timed cleanup.
     'retainedSectionCount',
     // Apple development evaluations (#915, #1194, #1214, #1195).
+    // apple-pcc-evaluation: fixed synthetic fixture identifier and elapsed request time.
+    'fixtureId', 'durationMs',
     'statusIncluded', 'associationCount', 'dateCount', 'failureClass',
     'matchCount', 'acceptedCount', 'droppedCount',
     'snapshotVersion', 'publishedCount', 'omittedCount', 'exactLinkCount',

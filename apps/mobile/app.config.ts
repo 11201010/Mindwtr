@@ -44,6 +44,9 @@ const promptTestControlsEnabled = process.env.PROMPT_TEST_CONTROLS_ENABLED === '
 // hits CloudKit's Development environment anyway, only widget payloads collide.
 const isDevVariant = (process.env.APP_VARIANT ?? '').trim() === 'development';
 const isBenchmarkVariant = (process.env.APP_VARIANT ?? '').trim() === 'benchmark';
+const pccEvaluationOptIn = (process.env.MINDWTR_PCC_EVALUATION_ENABLED ?? '').trim() === '1';
+const applePccEvaluationEnabled = isDevVariant && pccEvaluationOptIn;
+const PCC_ENTITLEMENT = 'com.apple.developer.private-cloud-compute';
 // RC workflows and development/preview profiles opt in. Stable is off by default.
 const watchEnabledValue = (process.env.MINDWTR_WATCH_ENABLED ?? '').trim().toLowerCase();
 const watchEnabled = watchEnabledValue === '1' || watchEnabledValue === 'true'
@@ -98,6 +101,11 @@ const withAppVariant = (base: ExpoConfig): ExpoConfig => {
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const base = config as ExpoConfig;
+  const inheritedIosEntitlements = { ...(base.ios?.entitlements ?? {}) };
+  delete inheritedIosEntitlements[PCC_ENTITLEMENT];
+  const iosEntitlements = applePccEvaluationEnabled
+    ? { ...inheritedIosEntitlements, [PCC_ENTITLEMENT]: true }
+    : inheritedIosEntitlements;
   const extra = {
     ...(base.extra ?? {}),
     isFossBuild,
@@ -112,6 +120,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     // #1214 is an evaluation prototype. Store/preview builds omit every JS
     // route to the compiled optional module until device quality gates pass.
     appleClarificationPrototypeEnabled: isDevVariant,
+    // PCC is a separate signed-device evaluation. It is absent unless both
+    // the development identity and a deliberate build-time opt-in are set.
+    applePccEvaluationEnabled,
   };
 
   return withAppVariant({
@@ -119,7 +130,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra,
     ios: {
       ...base.ios,
-      infoPlist: { ...base.ios?.infoPlist, MindwtrWatchEnabled: watchEnabled },
+      infoPlist: {
+        ...base.ios?.infoPlist,
+        MindwtrWatchEnabled: watchEnabled,
+        MindwtrPccEvaluationEnabled: applePccEvaluationEnabled,
+      },
+      entitlements: Object.keys(iosEntitlements).length > 0 ? iosEntitlements : undefined,
     },
     plugins: [
       ...withIosSceneLifecyclePlugin(
