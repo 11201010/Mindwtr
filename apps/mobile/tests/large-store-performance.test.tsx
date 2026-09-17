@@ -353,6 +353,7 @@ vi.mock('lucide-react-native', () => {
     Pencil: Icon,
     BookOpen: Icon,
     BookmarkPlus: Icon,
+    Calendar: Icon,
     CalendarDays: Icon,
     Check: Icon,
     ChevronDown: Icon,
