@@ -229,6 +229,61 @@ describe('useRootLayoutExternalCapture', () => {
     expect(resetShareIntent).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false])('preserves the share payload and opens once per delivery after route interception (initial=%s)', async (initial) => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    const incomingUrl = 'mindwtr://dataUrl=mindwtrShareKey/';
+    const shareWebUrl = 'https://example.com/private-article';
+    const resetShareIntent = vi.fn();
+    let currentRoute: unknown = '/focus';
+    const routeHandoff = (cold: boolean) => {
+      const route = redirectSystemPath({ path: incomingUrl, initial: cold });
+      // Matches Expo Router's subscription: an empty result skips navigation.
+      if (route) currentRoute = route;
+    };
+    routeHandoff(initial);
+    await vi.dynamicImportSettled();
+    expect(currentRoute).toBe(initial ? '/inbox' : '/focus');
+    router.replace.mockImplementation((route) => { currentRoute = route; });
+    let tree!: ReturnType<typeof create>;
+    const render = (hasShareIntent: boolean, dataReady: boolean, delivery = 1) => (
+      <TestHarness
+        dataReady={dataReady} hasShareIntent={hasShareIntent}
+        incomingUrl={incomingUrl} incomingUrlKey={delivery}
+        resetShareIntent={resetShareIntent} router={router}
+        shareWebUrl={hasShareIntent ? shareWebUrl : null} showToast={showToast}
+      />
+    );
+    act(() => { tree = create(render(true, false)); });
+    expect(router.replace).not.toHaveBeenCalled();
+    act(() => { tree.update(render(true, true)); });
+    const captureRoute = {
+      pathname: '/capture-modal',
+      params: { initialValue: encodeURIComponent(shareWebUrl), origin: 'share' },
+    };
+    expect(currentRoute).toEqual(captureRoute);
+    expect(router.replace).toHaveBeenCalledOnce();
+    expect(resetShareIntent).toHaveBeenCalledOnce();
+    act(() => { tree.update(render(false, true)); });
+    act(() => { tree.update(render(false, true)); });
+    expect(router.replace).toHaveBeenCalledOnce();
+
+    // A delayed Router callback must not overwrite the populated modal.
+    routeHandoff(false);
+    expect(currentRoute).toEqual(captureRoute);
+    // Sharing the same URL again is a new payload, not a suppressed duplicate.
+    act(() => { tree.update(render(true, true, 2)); });
+    act(() => { tree.update(render(false, true, 2)); });
+    expect(router.replace).toHaveBeenCalledTimes(2);
+    expect(resetShareIntent).toHaveBeenCalledTimes(2);
+    expect(currentRoute).toEqual(captureRoute);
+    expect(showToast).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(vi.mocked(logInfo).mock.calls.filter(
+      ([message]) => message === 'Share handoff routed',
+    )).toHaveLength(2));
+    expect(JSON.stringify(vi.mocked(logInfo).mock.calls)).not.toContain('private-article');
+    act(() => tree.unmount());
+  });
+
   it('uses shared text as the task title and preserves a distinct URL in the note', () => {
     act(() => {
       create(

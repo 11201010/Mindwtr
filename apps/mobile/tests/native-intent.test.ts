@@ -11,7 +11,57 @@ vi.mock('@/lib/app-log', () => appLogMocks);
 describe('redirectSystemPath', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        appLogMocks.logInfo.mockResolvedValue(null);
+        appLogMocks.logInfo.mockReset().mockResolvedValue(null);
+    });
+
+    it.each([true, false])('routes share-extension handoffs without a competing capture screen (initial=%s)', async (initial) => {
+        for (const scheme of ['mindwtr', 'mindwtr-dev']) {
+            for (const suffix of ['', '/', '#weburl', '/#text', '#file', '#media']) {
+                const path = `${scheme}://dataUrl=${scheme}ShareKey${suffix}`;
+                // Warm deliveries must not navigate over a capture modal that
+                // the independent share provider may already have opened.
+                expect(redirectSystemPath({ path, initial })).toBe(initial ? '/inbox' : '');
+                await vi.dynamicImportSettled();
+            }
+        }
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledTimes(12));
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Share handoff routed', {
+            scope: 'routing',
+            extra: {
+                releaseCheck: 'v1.3.1/share-handoff-route',
+                stage: 'handoff-routed',
+                delivery: initial ? 'cold' : 'warm',
+            },
+            force: true,
+        });
+        expect(JSON.stringify(appLogMocks.logInfo.mock.calls)).not.toMatch(/dataUrl|ShareKey|mindwtr:\/\//);
+    });
+
+    it.each([true, false])('leaves share handoff lookalikes untouched (initial=%s)', (initial) => {
+        for (const path of [
+            'https://dataUrl=mindwtrShareKey/',
+            'other://dataUrl=mindwtrShareKey/',
+            'mindwtr://dataUrl=',
+            'mindwtr://dataUrl=otherShareKey/',
+            'mindwtr://dataUrl=mindwtrShareKey/extra',
+            'mindwtr://dataUrl=mindwtrShareKey@example.com/',
+            'mindwtr://dataUrl=mindwtrShareKey:443/',
+            'mindwtr://dataUrl=mindwtrShareKey/?secret=value',
+            'mindwtr://unrelated?dataUrl=mindwtrShareKey',
+            '/dataUrl=mindwtrShareKey/',
+        ]) {
+            expect(redirectSystemPath({ path, initial })).toBe(path);
+        }
+        expect(appLogMocks.logInfo).not.toHaveBeenCalled();
+    });
+
+    it.each(['throw', 'reject'] as const)('routes shares even when diagnostics %s', async (failure) => {
+        appLogMocks.logInfo.mockImplementationOnce(() => {
+            if (failure === 'throw') throw new Error('logger unavailable');
+            return Promise.reject(new Error('logger unavailable'));
+        });
+        expect(redirectSystemPath({ path: 'mindwtr://dataUrl=mindwtrShareKey/', initial: true })).toBe('/inbox');
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledOnce());
     });
 
     it.each([true, false])('routes the Dropbox host callback to Sync settings without exposing OAuth data (initial=%s)', async (initial) => {

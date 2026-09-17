@@ -19,6 +19,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // mcp-core-log-stderr: count of the first event actually forwarded.
     'forwardedEventCount',
     // shortcut-failure-privacy reuses releaseCheck and stage below.
+    // share-handoff-route reuses releaseCheck, stage, and delivery below.
     // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
     'method',
     // capture-token-revocation reuses releaseCheck and outcome below.

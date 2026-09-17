@@ -1,6 +1,24 @@
 import { isEntityOpenUrl, isOpenFeatureUrl, isShortcutCaptureUrl, parseOpenFeatureUrl, resolveOpenFeaturePath } from '@/lib/capture-deeplink';
 import { DROPBOX_CALLBACK_SETTINGS_PATH, isDropboxAuthCallbackUrl } from '@/lib/dropbox-auth-callback';
 
+const logShareHandoffRouted = (initial: boolean): void => {
+    try {
+        void import('@/lib/app-log')
+            .then(({ logInfo }) => logInfo('Share handoff routed', {
+                scope: 'routing',
+                extra: {
+                    releaseCheck: 'v1.3.1/share-handoff-route',
+                    stage: 'handoff-routed',
+                    delivery: initial ? 'cold' : 'warm',
+                },
+                force: true,
+            }))
+            .catch(() => undefined);
+    } catch {
+        // Optional diagnostics must not block a share handoff.
+    }
+};
+
 const logDropboxCallbackRouted = (): void => {
     try {
         void import('@/lib/app-log')
@@ -33,8 +51,18 @@ const isQuickCaptureUrl = (path: string): boolean => {
 // useRootLayoutExternalCapture's incoming-URL effect (which still sees the
 // original URL via Linking.useURL()) resolves the real entity once data is
 // ready and re-navigates.
-export function redirectSystemPath({ path }: { path: string; initial: boolean }): string {
+export function redirectSystemPath({ path, initial }: { path: string; initial: boolean }): string {
     try {
+        // expo-share-intent uses the scheme-derived App Group entry name, not
+        // an application route. Keep its original Linking URL intact for the
+        // provider; only intercept Expo Router's navigation interpretation.
+        if (/^(mindwtr(?:-dev)?):\/\/dataUrl=\1ShareKey\/?(?:#(?:text|weburl|file|media))?$/.test(path)) {
+            logShareHandoffRouted(initial);
+            // A cold launch needs a valid base route. On a warm delivery Expo
+            // Router ignores an empty result: don't race the provider's
+            // populated capture modal with an independent Inbox navigation.
+            return initial ? '/inbox' : '';
+        }
         if (isDropboxAuthCallbackUrl(path)) {
             logDropboxCallbackRouted();
             return DROPBOX_CALLBACK_SETTINGS_PATH;
