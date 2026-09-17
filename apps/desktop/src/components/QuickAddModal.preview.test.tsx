@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useTaskStore } from '@mindwtr/core';
 
 import { LanguageProvider } from '../contexts/language-context';
@@ -73,6 +74,49 @@ beforeEach(() => {
 });
 
 describe('QuickAddModal live preview', () => {
+    it.each(
+        ['"John Smith"', '“John Smith”', '”John Smith”', '„John Smith"'].flatMap((quotedName) => (
+            [false, true].flatMap((knownPerson) => [false, true].map((trailingSpace) => ({
+                quotedName, knownPerson, trailingSpace,
+            })))
+        )),
+    )(
+        'keeps the previewed person on section capture: $quotedName, known=$knownPerson, trailingSpace=$trailingSpace (#849)',
+        async ({ quotedName, knownPerson, trailingSpace }) => {
+            const user = userEvent.setup();
+            if (knownPerson) {
+                useTaskStore.setState({ _allPeople: [{
+                    id: 'person-849', name: 'John Smith',
+                    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+                }] });
+            }
+            render(<LanguageProvider><QuickAddModal /></LanguageProvider>);
+            await act(async () => {
+                window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
+                    detail: { initialProps: { projectId: 'project-849', sectionId: 'section-849', status: 'next' } },
+                }));
+            });
+            await user.type(screen.getByRole('combobox'), `Taskname %${quotedName} /waiting${trailingSpace ? ' ' : ''}`);
+            const previewCall = coreSpies.parseQuickAdd.mock.calls[coreSpies.parseQuickAdd.mock.calls.length - 1];
+            expect(previewCall[4].knownPeople).toEqual(knownPerson ? ['John Smith'] : []);
+            expect(screen.getByTestId('quick-add-preview')).toHaveTextContent('John Smith');
+            // Without a trailing space, the first Enter accepts /waiting.
+            if (!trailingSpace) {
+                await user.keyboard('{Enter}');
+                expect(addTask).not.toHaveBeenCalled();
+                expect(screen.getByTestId('quick-add-preview')).toHaveTextContent('John Smith');
+            }
+            await user.keyboard('{Enter}');
+            await waitFor(() => expect(addTask).toHaveBeenCalledWith('Taskname', expect.objectContaining({
+                assignedTo: 'John Smith',
+                status: 'waiting',
+                projectId: 'project-849',
+                sectionId: 'section-849',
+            })));
+            expect(addTask).toHaveBeenCalledTimes(1);
+        },
+    );
+
     it('shows what the parser found in the draft', async () => {
         await openModalWithDraft();
 
