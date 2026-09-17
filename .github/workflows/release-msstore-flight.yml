@@ -17,7 +17,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: msstore-beta-flight
+  # Share the app lock with stable publication, which can also update this flight.
+  group: msstore-production
   cancel-in-progress: false
 
 jobs:

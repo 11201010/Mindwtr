@@ -16,6 +16,23 @@ on:
         required: false
         default: false
         type: boolean
+      rollout_mode:
+        description: "Public Microsoft Store package delivery: staged or immediate"
+        required: false
+        default: staged
+        type: string
+      rollout_percentage:
+        description: "Initial public Microsoft Store rollout percentage when rollout_mode is staged"
+        required: false
+        default: 5
+        type: number
+    outputs:
+      msstore_submission_id:
+        description: "Created public Microsoft Store submission ID, when publication ran"
+        value: ${{ jobs.standalone.outputs.msstore_submission_id }}
+      msstore_rollout_policy:
+        description: "Intended public Microsoft Store rollout policy"
+        value: ${{ jobs.standalone.outputs.msstore_rollout_policy }}
   workflow_dispatch:
     inputs:
       tag:
@@ -31,6 +48,16 @@ on:
         required: false
         default: false
         type: boolean
+      rollout_mode:
+        description: "Public Microsoft Store package delivery: staged or immediate"
+        required: false
+        default: staged
+        type: string
+      rollout_percentage:
+        description: "Initial public Microsoft Store rollout percentage when rollout_mode is staged"
+        required: false
+        default: 5
+        type: number
 
 permissions:
   contents: read
@@ -53,8 +80,11 @@ jobs:
     timeout-minutes: 120
     concurrency:
       # A job must not acquire its parent workflow's tag lock (#1197).
-      group: ${{ inputs.run_msstore_flight && 'msstore-beta-flight' || format('release-windows-build-{0}', inputs.tag || github.ref_name) }}
+      group: ${{ (inputs.run_msstore || inputs.run_msstore_flight || github.event_name == 'push') && 'msstore-production' || format('release-windows-build-{0}', inputs.tag || github.ref_name) }}
       cancel-in-progress: false
+    outputs:
+      msstore_submission_id: ${{ steps.msstore_publish.outputs.submission_id }}
+      msstore_rollout_policy: ${{ steps.msstore_publish.outputs.rollout_policy }}
     env:
       VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY || secrets.VITE_DROPBOX_APP_KEY }}
       VITE_FEEDBACK_ENDPOINT_URL: ${{ vars.VITE_FEEDBACK_ENDPOINT_URL || 'https://feedback.mindwtr.app' }}
@@ -119,6 +149,8 @@ jobs:
           RUN_MSSTORE: ${{ inputs.run_msstore }}
           RUN_MSSTORE_FLIGHT: ${{ inputs.run_msstore_flight }}
           MSSTORE_FLIGHT_ID: ${{ vars.MSSTORE_FLIGHT_ID }}
+          ROLLOUT_MODE: ${{ inputs.rollout_mode }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
         run: |
           $env:GITHUB_EVENT_INPUTS_TAG = "${{ github.event.inputs.tag }}"
           $lines = & scripts/ci/resolve-release-version.ps1 -InputTag "${{ inputs.tag }}"
@@ -133,11 +165,34 @@ jobs:
           }
           $stable = -not $isRc -and (($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF.StartsWith('refs/tags/')) -or $env:RUN_MSSTORE -eq 'true')
           $flight = $env:RUN_MSSTORE_FLIGHT -eq 'true'
+          $rolloutMode = if ([string]::IsNullOrWhiteSpace([string]$env:ROLLOUT_MODE)) {
+            'staged'
+          } else {
+            ([string]$env:ROLLOUT_MODE).Trim().ToLowerInvariant()
+          }
+          $rolloutPercentageInput = if ([string]::IsNullOrWhiteSpace([string]$env:ROLLOUT_PERCENTAGE)) { '5' } else { [string]$env:ROLLOUT_PERCENTAGE }
+          [double]$rolloutPercentage = 0
+          $rolloutPercentageValid = [double]::TryParse(
+            $rolloutPercentageInput,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$rolloutPercentage
+          )
+          if ($stable) {
+            if (@('staged', 'immediate') -notcontains $rolloutMode) {
+              throw "rollout_mode must be staged or immediate before Microsoft Store publication."
+            }
+            if (-not $rolloutPercentageValid -or [double]::IsNaN($rolloutPercentage) -or [double]::IsInfinity($rolloutPercentage) -or $rolloutPercentage -le 0 -or $rolloutPercentage -ge 100) {
+              throw "rollout_percentage must be finite and greater than 0 and less than 100 before Microsoft Store publication."
+            }
+          }
           if ($flight -and $env:MSSTORE_FLIGHT_ID -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') {
             throw "Set repository variable MSSTORE_FLIGHT_ID to the Mindwtr Beta flight UUID."
           }
           "store_stable=$($stable.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "store_package=$(($stable -or $flight).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "rollout_mode=$rolloutMode" >> $env:GITHUB_OUTPUT
+          "rollout_percentage=$($rolloutPercentage.ToString([System.Globalization.CultureInfo]::InvariantCulture))" >> $env:GITHUB_OUTPUT
           if ($stable -or $flight) {
             $msixVersion = node scripts/ci/msstore-version.mjs $tag
             if ($LASTEXITCODE -ne 0) { throw "Invalid Microsoft Store package version" }
@@ -502,7 +557,10 @@ jobs:
             "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
-          $headers = @{ 'Authorization' = "Bearer $($tokenResponse.access_token)" }
+          $headers = @{
+            'Authorization' = "Bearer $($tokenResponse.access_token)"
+            'TenantId' = $env:MS_TENANT_ID
+          }
 
           try {
             $appsResponse = Invoke-RestMethod -Method Get `
@@ -552,6 +610,7 @@ jobs:
 
       - name: Publish to Microsoft Store (metadata + package)
         if: steps.version.outputs.store_stable == 'true' && steps.msstore_status.outputs.skip != 'true' && env.MSSTORE_SKIP_PUBLISH != 'true'
+        id: msstore_publish
         timeout-minutes: 40
         shell: pwsh
         env:
@@ -561,9 +620,31 @@ jobs:
           MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
           APP_VERSION: ${{ steps.version.outputs.version }}
           MSIX_VERSION: ${{ steps.version.outputs.msix_version }}
+          ROLLOUT_MODE: ${{ steps.version.outputs.rollout_mode }}
+          ROLLOUT_PERCENTAGE: ${{ steps.version.outputs.rollout_percentage }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
+
+          $rolloutMode = ([string]$env:ROLLOUT_MODE).Trim().ToLowerInvariant()
+          [double]$rolloutPercentage = 0
+          $rolloutPercentageValid = [double]::TryParse(
+            [string]$env:ROLLOUT_PERCENTAGE,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$rolloutPercentage
+          )
+          if (@('staged', 'immediate') -notcontains $rolloutMode) {
+            throw "rollout_mode must be staged or immediate before Microsoft Store publication."
+          }
+          if (-not $rolloutPercentageValid -or [double]::IsNaN($rolloutPercentage) -or [double]::IsInfinity($rolloutPercentage) -or $rolloutPercentage -le 0 -or $rolloutPercentage -ge 100) {
+            throw "rollout_percentage must be finite and greater than 0 and less than 100 before Microsoft Store publication."
+          }
+          $rolloutPolicy = if ($rolloutMode -eq 'staged') {
+            "staged:$($rolloutPercentage.ToString([System.Globalization.CultureInfo]::InvariantCulture))%"
+          } else {
+            'immediate'
+          }
 
           $msixPath = (Resolve-Path "mindwtr_$($env:APP_VERSION)_x64.msix").Path
           $msixFileName = [System.IO.Path]::GetFileName($msixPath)
@@ -856,6 +937,7 @@ jobs:
           }
           $headers = @{
             'Authorization' = "Bearer $accessToken"
+            'TenantId'      = $env:MS_TENANT_ID
             'Content-Type'  = 'application/json'
           }
 
@@ -959,6 +1041,21 @@ jobs:
             }
             exit 0
           }
+
+          "submission_id=$submissionId" >> $env:GITHUB_OUTPUT
+          "rollout_policy=$rolloutPolicy" >> $env:GITHUB_OUTPUT
+          $rolloutSummary = if ($rolloutMode -eq 'staged') {
+            "staged at $($rolloutPercentage.ToString([System.Globalization.CultureInfo]::InvariantCulture))%"
+          } else {
+            'immediate (gradual rollout disabled)'
+          }
+          @(
+            '',
+            '## Microsoft Store production submission',
+            '',
+            "- Submission: ``$submissionId``",
+            "- Intended package rollout: **$rolloutSummary**"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
           $packages = [System.Collections.ArrayList]::new()
           if ($submission.applicationPackages) {
@@ -1068,6 +1165,36 @@ jobs:
             }
           }
 
+          function Set-RequiredSubmissionProperty {
+            param(
+              [Parameter(Mandatory = $true)]$Object,
+              [Parameter(Mandatory = $true)][string]$Name,
+              [Parameter(Mandatory = $false)]$Value
+            )
+            if ($Object.PSObject.Properties.Name -contains $Name) {
+              $Object.$Name = $Value
+            } else {
+              $Object | Add-Member -MemberType NoteProperty -Name $Name -Value $Value
+            }
+          }
+
+          if (-not ($submission.PSObject.Properties.Name -contains 'packageDeliveryOptions') -or -not $submission.packageDeliveryOptions) {
+            $submission | Add-Member -MemberType NoteProperty -Name packageDeliveryOptions -Value ([pscustomobject]@{}) -Force
+          }
+          if (-not ($submission.packageDeliveryOptions.PSObject.Properties.Name -contains 'packageRollout') -or -not $submission.packageDeliveryOptions.packageRollout) {
+            $submission.packageDeliveryOptions | Add-Member -MemberType NoteProperty -Name packageRollout -Value ([pscustomobject]@{}) -Force
+          }
+          $packageRollout = $submission.packageDeliveryOptions.packageRollout
+          if ($rolloutMode -eq 'staged') {
+            Set-RequiredSubmissionProperty -Object $packageRollout -Name isPackageRollout -Value $true
+            Set-RequiredSubmissionProperty -Object $packageRollout -Name packageRolloutPercentage -Value $rolloutPercentage
+            Write-Host "Public Microsoft Store package rollout: staged at $($rolloutPercentage.ToString([System.Globalization.CultureInfo]::InvariantCulture))%."
+          } else {
+            Set-RequiredSubmissionProperty -Object $packageRollout -Name isPackageRollout -Value $false
+            Set-RequiredSubmissionProperty -Object $packageRollout -Name packageRolloutPercentage -Value 0.0
+            Write-Host "Public Microsoft Store package rollout: immediate (gradual rollout disabled)."
+          }
+
           function Apply-PublicSupportPropertiesIfPresent {
             param([Parameter(Mandatory = $false)]$Object)
             if (-not $Object) { return }
@@ -1134,10 +1261,15 @@ jobs:
             -ContentType 'application/octet-stream'
 
           Write-Host "Committing submission..."
-          Invoke-RestMethodWithRetry -Method Post `
-            -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId/commit" `
-            -Headers @{ 'Authorization' = "Bearer $accessToken"; 'Content-Type' = 'application/json' } `
-            -Body '{}'
+          try {
+            Invoke-RestMethodWithRetry -Method Post `
+              -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId/commit" `
+              -Headers @{ 'Authorization' = "Bearer $accessToken"; 'TenantId' = $env:MS_TENANT_ID; 'Content-Type' = 'application/json' } `
+              -Body '{}' `
+              -MaxAttempts 1
+          } catch {
+            throw "Microsoft Store submission commit failed; outcome may be unknown. Inspect submission status before retrying. Submission: $submissionId."
+          }
 
           Write-Host "Polling submission status..."
           $deadline = (Get-Date).AddMinutes(30)
@@ -1146,7 +1278,7 @@ jobs:
             try {
               $statusResponse = Invoke-RestMethodWithRetry -Method Get `
                 -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/$applicationId/submissions/$submissionId/status" `
-                -Headers @{ 'Authorization' = "Bearer $accessToken" } `
+                -Headers @{ 'Authorization' = "Bearer $accessToken"; 'TenantId' = $env:MS_TENANT_ID } `
                 -MaxAttempts 3
             } catch {
               $statusCode = Get-HttpStatusCodeFromError -ErrorRecord $_

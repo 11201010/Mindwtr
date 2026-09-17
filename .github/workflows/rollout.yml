@@ -1,0 +1,95 @@
+name: Manage Store Rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      store:
+        description: Production store to manage (Apple uses App Store Connect)
+        required: true
+        type: choice
+        options: [play, msstore]
+      action:
+        description: Operation on the existing release (resume is Play only)
+        required: true
+        type: choice
+        options: [status, increase, halt, resume, finalize]
+        default: status
+      version_code:
+        description: Exact Play production versionCode (required for Play)
+        type: string
+      submission_id:
+        description: Exact published production submission ID (required for Microsoft)
+        type: string
+      percentage:
+        description: New percentage for increase only (greater than current, less than 100); use finalize for 100%
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+jobs:
+  play:
+    if: inputs.store == 'play'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: google-play-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Authenticate Google Play API
+        id: play_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          credentials_json: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - name: Manage existing Play production release
+        env:
+          GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
+          ROLLOUT_ACTION: ${{ inputs.action }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.percentage }}
+        run: |
+          set -euo pipefail
+          args=(rollout --package tech.dongdongbh.mindwtr --version-code "$VERSION_CODE" --action "$ROLLOUT_ACTION")
+          if [ "$ROLLOUT_ACTION" = increase ]; then
+            args+=(--percentage "$ROLLOUT_PERCENTAGE")
+          fi
+          python3 scripts/ci/google-play-edit.py "${args[@]}" --result "$RUNNER_TEMP/play-rollout.json"
+          {
+            echo '### Google Play production rollout'
+            echo '```json'
+            cat "$RUNNER_TEMP/play-rollout.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  msstore:
+    if: inputs.store == 'msstore'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: msstore-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Manage existing Microsoft production submission
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_STORE_APP_ID: ${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}
+          ROLLOUT_ACTION: ${{ inputs.action }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.percentage }}
+        run: |
+          set -euo pipefail
+          args=(--submission-id "$SUBMISSION_ID" --action "$ROLLOUT_ACTION")
+          if [ "$ROLLOUT_ACTION" = increase ]; then
+            args+=(--percentage "$ROLLOUT_PERCENTAGE")
+          fi
+          node scripts/ci/msstore-rollout.mjs "${args[@]}"

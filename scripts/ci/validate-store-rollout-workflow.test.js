@@ -1,0 +1,139 @@
+import { expect, test } from 'bun:test';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { parse } from 'yaml';
+
+const workflow = (name) => parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
+
+test('stable policy is validated before publishing and forwarded to every production store', () => {
+  const stable = workflow('release');
+  const inputs = stable.on.workflow_dispatch.inputs;
+  expect(inputs.rollout_mode.default).toBe('staged');
+  expect(inputs.rollout_percentage.default).toBe(5);
+  const gate = stable.jobs.validate.steps.find((step) => step.id === 'rollout');
+  expect(gate.env.ROLLOUT_MODE).toContain("vars.RELEASE_ROLLOUT_MODE || 'staged'");
+  for (const job of ['android', 'windows']) {
+    expect(stable.jobs[job].with.rollout_mode).toBe('${{ needs.validate.outputs.rollout_mode }}');
+    expect(stable.jobs[job].with.rollout_percentage).toBe('${{ fromJSON(needs.validate.outputs.rollout_percentage) }}');
+  }
+  expect(stable.jobs.windows.with.run_msstore).toBe(true);
+  for (const job of ['ios-appstore', 'macos-appstore']) {
+    expect(stable.jobs[job].with.phased_release).toBe("${{ needs.validate.outputs.rollout_mode == 'staged' }}");
+  }
+});
+
+test('release policy shell accepts valid modes and rejects unsafe percentages and unknown modes', () => {
+  const gate = workflow('release').jobs.validate.steps.find((step) => step.id === 'rollout');
+  const directory = mkdtempSync(join(tmpdir(), 'mindwtr-rollout-policy-'));
+  try {
+    for (const [mode, percentage, valid] of [
+      ['staged', '5', true], ['staged', '20.5', true], ['immediate', '5', true],
+      ['oops', '5', false], ['staged', '0', false], ['staged', '-1', false],
+      ['staged', '100', false], ['staged', 'nan', false], ['staged', 'inf', false],
+      ['staged', '', false],
+    ]) {
+      const outputPath = join(directory, `${mode}-${percentage}.txt`);
+      const result = spawnSync('bash', ['-e', '-c', gate.run], {
+        encoding: 'utf8',
+        env: { ...process.env, ROLLOUT_MODE: mode, ROLLOUT_PERCENTAGE: percentage,
+          GITHUB_OUTPUT: outputPath, GITHUB_STEP_SUMMARY: join(directory, 'summary.md') },
+      });
+      expect(result.status === 0).toBe(valid);
+      if (valid) expect(readFileSync(outputPath, 'utf8')).toContain(`mode=${mode}\n`);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Apple stable metadata enables phasing while TestFlight-only metadata remains untouched', () => {
+  for (const [name, job, upload] of [
+    ['release-ios-appstore', 'ios-appstore', 'Upload IPA to App Store Connect'],
+    ['release-macos-appstore', 'macos-appstore', 'Upload to App Store Connect'],
+  ]) {
+    const apple = workflow(name);
+    for (const trigger of ['workflow_call', 'workflow_dispatch']) {
+      expect(apple.on[trigger].inputs.phased_release.default).toBe(true);
+    }
+    const step = apple.jobs[job].steps.find((item) => item.name === upload)
+      ?? apple.jobs[job].steps.find((item) => item.run?.includes('deliver_options = {'));
+    expect(step.env.PHASED_RELEASE).toBe("${{ inputs.phased_release && 'true' || 'false' }}");
+    expect(step.run).toContain('automatic_release: true');
+    expect(step.run).toContain('unless ENV.fetch("SKIP_METADATA", "false") == "true"\n');
+    expect(step.run).toContain('deliver_options[:phased_release] = ENV.fetch("PHASED_RELEASE", "true") == "true"');
+  }
+  const rc = workflow('release-rc');
+  expect(rc.jobs['ios-appstore'].with.testflight_only).toBe(true);
+  expect(rc.jobs['ios-appstore'].with.submit_for_review).toBe(false);
+  expect(rc.jobs['macos-appstore'].with.submit_for_review).toBe(false);
+});
+
+test('rollout workflow manages explicit existing releases without building or uploading', () => {
+  const rollout = workflow('rollout');
+  expect(Object.keys(rollout.on)).toEqual(['workflow_dispatch']);
+  expect(rollout.on.workflow_dispatch.inputs.action.default).toBe('status');
+  expect(rollout.permissions).toEqual({ contents: 'read' });
+  expect(rollout.jobs.play.concurrency.group).toBe('google-play-production');
+  expect(rollout.jobs.msstore.concurrency.group).toBe('msstore-production');
+  const play = rollout.jobs.play.steps.find((step) => step.env?.VERSION_CODE);
+  expect(play.run).toContain('--version-code "$VERSION_CODE"');
+  expect(play.run).toContain('google-play-edit.py "${args[@]}"');
+  const msstore = rollout.jobs.msstore.steps.find((step) => step.env?.SUBMISSION_ID);
+  expect(msstore.run).toContain('--submission-id "$SUBMISSION_ID"');
+  expect(msstore.env.MS_STORE_APP_ID).toBe("${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}");
+  for (const job of Object.values(rollout.jobs)) {
+    expect(job.concurrency['cancel-in-progress']).toBe(false);
+    for (const step of job.steps) {
+      expect(step.run ?? '').not.toMatch(/(?:upload|create-plan|build-aab|tauri build)/);
+    }
+  }
+});
+
+test('generated Fastlane code passes the requested phase policy and omits it for skipped metadata', () => {
+  for (const [name, job] of [
+    ['release-ios-appstore', 'ios-appstore'],
+    ['release-macos-appstore', 'macos-appstore'],
+  ]) {
+    const step = workflow(name).jobs[job].steps.find((item) => item.run?.includes('deliver_options = {'));
+    const fastfile = step.run.match(/cat <<'EOF' > fastlane\/Fastfile\n([\s\S]*?)\nEOF/)[1];
+    const stubs = `require 'json'
+def opt_out_usage; end
+def default_platform(*); end
+def platform(*); yield; end
+def lane(*); yield; end
+def app_store_connect_api_key(**); nil; end
+def deliver(options); puts JSON.generate(options); end
+`;
+    for (const [phased, skipMetadata] of [['true', 'false'], ['false', 'false'], ['true', 'true']]) {
+      const result = spawnSync('ruby', ['-'], {
+        input: stubs + fastfile,
+        encoding: 'utf8',
+        env: { ...process.env, PHASED_RELEASE: phased, SKIP_METADATA: skipMetadata,
+          EXPECTED_BUNDLE_ID: 'tech.dongdongbh.mindwtr', APP_VERSION: '1.0.5',
+          IPA_PATH: 'fixture.ipa', PKG_PATH: 'fixture.pkg', FASTLANE_METADATA_PATH: 'fixture',
+          FASTLANE_ASC_KEY_ID: 'fixture', FASTLANE_ASC_ISSUER_ID: 'fixture', ASC_KEY_PATH: 'fixture',
+        },
+      });
+      expect(result.status).toBe(0);
+      const options = JSON.parse(result.stdout);
+      expect(options.automatic_release).toBe(true);
+      expect(options.phased_release).toBe(skipMetadata === 'true' ? undefined : phased === 'true');
+    }
+  }
+});
+
+test('all Play edit sessions share the rollout lock, including RC and version lookups', () => {
+  const expected = workflow('rollout').jobs.play.concurrency;
+  for (const [name, jobs] of [
+    ['release', ['android-version-code']],
+    ['release-rc', ['android-version-code']],
+    ['release-android', ['preflight', 'publish']],
+  ]) {
+    const release = workflow(name);
+    for (const job of jobs) expect(release.jobs[job].concurrency).toEqual(expected);
+    // The enclosing workflow never reacquires a child's lock.
+    expect(release.concurrency.group).not.toBe(expected.group);
+  }
+});

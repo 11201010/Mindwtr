@@ -3,6 +3,11 @@ name: Release macOS App Store
 on:
   workflow_call:
     inputs:
+      phased_release:
+        description: Release App Store updates gradually over seven days
+        required: false
+        type: boolean
+        default: true
       tag:
         description: Release tag (e.g., v1.0.5 or v1.0.5-rc.1)
         required: false
@@ -34,6 +39,11 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      phased_release:
+        description: Release App Store updates gradually over seven days
+        required: false
+        type: boolean
+        default: true
       tag:
         description: Release tag (e.g., v1.0.5 or v1.0.5-rc.1)
         required: false
@@ -854,6 +864,7 @@ jobs:
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
           IOS_ASC_PRIVATE_KEY: ${{ secrets.IOS_ASC_PRIVATE_KEY }}
           SUBMIT_FOR_REVIEW: ${{ env.EFFECTIVE_SUBMIT_FOR_REVIEW || 'false' }}
+          PHASED_RELEASE: ${{ inputs.phased_release && 'true' || 'false' }}
           SKIP_APP_VERSION_UPDATE: ${{ env.SKIP_APP_VERSION_UPDATE_FOR_UPLOAD || 'false' }}
           SKIP_METADATA: ${{ env.SKIP_METADATA_FOR_UPLOAD || 'false' }}
           SKIP_SCREENSHOTS: ${{ env.SKIP_SCREENSHOTS_FOR_UPLOAD || 'true' }}
@@ -897,6 +908,9 @@ jobs:
                 submit_for_review: ENV.fetch("SUBMIT_FOR_REVIEW", "false") == "true",
                 automatic_release: true
               }
+              unless ENV.fetch("SKIP_METADATA", "false") == "true"
+                deliver_options[:phased_release] = ENV.fetch("PHASED_RELEASE", "true") == "true"
+              end
               if screenshots_path && !screenshots_path.empty?
                 deliver_options[:screenshots_path] = screenshots_path
                 deliver_options[:overwrite_screenshots] = true unless skip_screenshots

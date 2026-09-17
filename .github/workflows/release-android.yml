@@ -22,6 +22,16 @@ on:
         required: false
         default: false
         type: boolean
+      rollout_mode:
+        description: 'Stable production rollout mode: staged or immediate'
+        required: false
+        default: 'staged'
+        type: string
+      rollout_percentage:
+        description: 'Initial stable production rollout percentage when rollout_mode is staged'
+        required: false
+        default: 5
+        type: number
       release_notes:
         description: 'Testing-track release notes'
         required: false
@@ -66,6 +76,16 @@ on:
         required: true
         default: false
         type: boolean
+      rollout_mode:
+        description: 'Stable production rollout mode: staged or immediate'
+        required: false
+        default: 'staged'
+        type: string
+      rollout_percentage:
+        description: 'Initial stable production rollout percentage when rollout_mode is staged'
+        required: false
+        default: 5
+        type: number
       release_notes:
         description: 'Testing-track release notes'
         required: false
@@ -93,6 +113,10 @@ jobs:
     runs-on: ubuntu-latest
     name: Android Release Preflight
     timeout-minutes: 10
+    concurrency:
+      # Even a version lookup opens an edit and can invalidate another edit.
+      group: google-play-production
+      cancel-in-progress: false
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
@@ -103,6 +127,8 @@ jobs:
       has_internal: ${{ steps.publish_plan.outputs.has_internal }}
       publishes_production: ${{ steps.publish_plan.outputs.publishes_production }}
       stable_production_tag: ${{ steps.publish_plan.outputs.stable_production_tag }}
+      rollout_mode: ${{ steps.publish_plan.outputs.rollout_mode }}
+      rollout_percentage: ${{ steps.publish_plan.outputs.rollout_percentage }}
       internal_version_code: ${{ steps.internal_version_code.outputs.version_code }}
 
     steps:
@@ -126,16 +152,29 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           GITHUB_REF_VALUE: ${{ github.ref }}
+          RESOLVED_TAG: ${{ steps.version.outputs.tag }}
+          ROLLOUT_MODE: ${{ inputs.rollout_mode }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
         run: |
           set -euo pipefail
           stable_production_tag=false
-          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [[ "$GITHUB_REF_VALUE" == refs/tags/* ]] && [[ "$REF_NAME" != *-* ]]; then
-            stable_production_tag=true
+          if [[ "$RESOLVED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            tag_commit=$(git rev-list -n 1 "$RESOLVED_TAG" 2>/dev/null || true)
+            checkout_commit=$(git rev-parse HEAD)
+            if [ -n "$tag_commit" ] && [ "$tag_commit" = "$checkout_commit" ]; then
+              if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+                stable_production_tag=true
+              elif [[ "$GITHUB_REF_VALUE" == refs/tags/* ]] && [ "$REF_NAME" = "$RESOLVED_TAG" ]; then
+                stable_production_tag=true
+              fi
+            fi
           fi
           python3 scripts/ci/android-play-release-plan.py resolve-tracks \
             --play-tracks "${PLAY_TRACKS:-production}" \
             --internal-test-release "$INTERNAL_TEST_RELEASE" \
             --stable-production-tag "$stable_production_tag" \
+            --rollout-mode "${ROLLOUT_MODE:-staged}" \
+            --rollout-percentage "${ROLLOUT_PERCENTAGE:-5}" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Authenticate Google Play API
@@ -377,6 +416,10 @@ jobs:
     runs-on: ubuntu-latest
     name: Android Publish
     timeout-minutes: 30
+    concurrency:
+      # Play edits are app-wide, including beta/internal and read-only lookups.
+      group: google-play-production
+      cancel-in-progress: false
 
     steps:
       - name: Checkout code
@@ -492,6 +535,8 @@ jobs:
         env:
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
           PLAY_TRACKS: ${{ needs.preflight.outputs.play_tracks }}
+          ROLLOUT_MODE: ${{ needs.preflight.outputs.rollout_mode }}
+          ROLLOUT_PERCENTAGE: ${{ needs.preflight.outputs.rollout_percentage }}
         run: |
           set -euo pipefail
           PACKAGE="tech.dongdongbh.mindwtr"
@@ -512,6 +557,8 @@ jobs:
             --version "$VERSION" \
             --tracks "$PLAY_TRACKS" \
             --stable-production \
+            --rollout-mode "$ROLLOUT_MODE" \
+            --rollout-percentage "$ROLLOUT_PERCENTAGE" \
             --stable-release-notes-directory "$NOTES_DIR" \
             --listing-assets-file "$LISTING_ASSETS_FILE" \
             --listings-file "$LISTING_METADATA_FILE"
@@ -525,7 +572,13 @@ jobs:
           {
             echo "### Google Play publication"
             echo
-            echo "Published one standard AAB with versionCode \`$VERSION_CODE\` to \`$TRACK_LIST\` in one Play edit."
+            if [ "$ROLLOUT_MODE" = "staged" ]; then
+              echo "Started production versionCode \`$VERSION_CODE\` at \`${ROLLOUT_PERCENTAGE}%\`; beta and internal completed in the same Play edit."
+            else
+              echo "Completed production, beta, and internal for versionCode \`$VERSION_CODE\` in one Play edit."
+            fi
+            echo
+            echo "Use \`.github/workflows/rollout.yml\` to inspect, increase, halt, resume, or finalize the production rollout."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to Google Play testing tracks

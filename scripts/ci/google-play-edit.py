@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import http.client
 import json
+import math
 import os
 import re
 import sys
@@ -33,6 +35,8 @@ IMAGE_TYPES = {
     "wearScreenshots",
 }
 RELEASE_STATUSES = {"completed", "draft", "halted", "inProgress"}
+ROLLOUT_ACTIONS = {"status", "increase", "halt", "resume", "finalize"}
+ROLLOUT_STATES = {"completed", "halted", "inProgress"}
 MAX_VERSION_CODE = 2_100_000_000
 
 
@@ -443,6 +447,271 @@ def read_max_version_code(package_name: str, transport: Transport) -> int:
     return maximum
 
 
+def _rollout_percentage(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Google Play rollout percentage must be a number")
+    percentage = float(value)
+    if not math.isfinite(percentage):
+        raise ValueError("Google Play rollout percentage must be finite")
+    if not 0 < percentage < 100:
+        raise ValueError("Google Play rollout percentage must be between 0 and 100")
+    return percentage
+
+
+def _rollout_fraction(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GooglePlayApiError(f"{label} must be a number")
+    fraction = float(value)
+    if not math.isfinite(fraction) or not 0 < fraction < 1:
+        raise GooglePlayApiError(f"{label} must be between 0 and 1")
+    return fraction
+
+
+def _commit_edit(package_name: str, edit_id: str, transport: Transport) -> None:
+    try:
+        transport.request("POST", f"{_edit_root(package_name, edit_id)}:commit")
+    except GooglePlayApiError:
+        raise
+    except (OSError, http.client.HTTPException) as error:
+        raise CommitOutcomeUnknown(
+            "Google Play edit commit outcome is unknown; do not retry automatically"
+        ) from error
+
+
+def control_rollout(
+    package_name: str,
+    version_code: int,
+    action: str,
+    percentage: float | None,
+    transport: Transport,
+) -> dict[str, object]:
+    """Inspect or mutate one exact production rollout without uploading artifacts."""
+
+    validated_package = _package_name(package_name)
+    validated_version_code = _version_code(version_code, "versionCode")
+    normalized_action = _string(action, "action").lower()
+    if normalized_action not in ROLLOUT_ACTIONS:
+        raise ValueError(
+            "Google Play rollout action must be status, increase, halt, resume, or finalize"
+        )
+    requested_percentage: float | None = None
+    if normalized_action == "increase":
+        if percentage is None:
+            raise ValueError("Google Play rollout percentage is required for increase")
+        requested_percentage = _rollout_percentage(percentage)
+    elif percentage is not None:
+        raise ValueError("Google Play rollout percentage is only valid for increase")
+
+    edit_id = _edit_id(
+        transport.request("POST", _edit_root(validated_package), json_body={})
+    )
+    try:
+        track_path = f"{_edit_root(validated_package, edit_id)}/tracks/production"
+        track_response = _mapping(
+            transport.request("GET", track_path),
+            "production track response",
+        )
+        returned_track = _string(
+            track_response.get("track"),
+            "production track response.track",
+            maximum=100,
+        )
+        if returned_track != "production":
+            raise GooglePlayApiError(
+                "Google Play returned a mismatched track for production rollout control"
+            )
+
+        releases: list[dict[str, object]] = []
+        matching_indexes: list[int] = []
+        maximum_version_code = 0
+        for release_index, release_value in enumerate(
+            _sequence(track_response.get("releases", []), "production releases")
+        ):
+            release = copy.deepcopy(
+                dict(_mapping(release_value, f"production releases[{release_index}]"))
+            )
+            codes = _sequence(
+                release.get("versionCodes", []),
+                f"production releases[{release_index}].versionCodes",
+            )
+            normalized_codes = [
+                _version_code(
+                    code,
+                    f"production releases[{release_index}].versionCodes[{code_index}]",
+                )
+                for code_index, code in enumerate(codes)
+            ]
+            if validated_version_code in normalized_codes:
+                if normalized_codes != [validated_version_code]:
+                    raise GooglePlayApiError(
+                        "Google Play production rollout target is ambiguous"
+                    )
+                matching_indexes.append(release_index)
+            if normalized_codes:
+                maximum_version_code = max(maximum_version_code, *normalized_codes)
+            releases.append(release)
+
+        if not matching_indexes:
+            raise GooglePlayApiError(
+                "Google Play production rollout target is mismatched: exact "
+                f"versionCode {validated_version_code} was not found"
+            )
+        if len(matching_indexes) != 1:
+            raise GooglePlayApiError(
+                "Google Play production rollout target is ambiguous"
+            )
+        if maximum_version_code > validated_version_code:
+            raise GooglePlayApiError(
+                "Google Play production rollout target is superseded by "
+                f"versionCode {maximum_version_code}"
+            )
+
+        target_index = matching_indexes[0]
+        target = releases[target_index]
+        status = _string(target.get("status"), "production rollout status")
+        if status not in ROLLOUT_STATES:
+            raise GooglePlayApiError(
+                f"Google Play production rollout has unsupported state: {status}"
+            )
+        current_fraction: float | None = None
+        if status in {"inProgress", "halted"}:
+            current_fraction = _rollout_fraction(
+                target.get("userFraction"),
+                "production rollout userFraction",
+            )
+
+        if normalized_action == "status":
+            _cleanup_edit(validated_package, edit_id, transport)
+            return {
+                "package": validated_package,
+                "track": "production",
+                "versionCode": validated_version_code,
+                "action": normalized_action,
+                "status": status,
+                "percentage": None if current_fraction is None else current_fraction * 100,
+                "committed": False,
+            }
+
+        if normalized_action == "increase":
+            if status != "inProgress" or current_fraction is None:
+                raise GooglePlayApiError(
+                    f"Google Play rollout increase is unsupported from state {status}"
+                )
+            requested_fraction = requested_percentage / 100
+            if requested_fraction <= current_fraction:
+                raise ValueError(
+                    "Google Play rollout increase must be greater than the current percentage"
+                )
+            target["userFraction"] = requested_fraction
+        elif normalized_action == "halt":
+            if status != "inProgress" or current_fraction is None:
+                raise GooglePlayApiError(
+                    f"Google Play rollout halt is unsupported from state {status}"
+                )
+            target["status"] = "halted"
+        elif normalized_action == "resume":
+            if status != "halted" or current_fraction is None:
+                raise GooglePlayApiError(
+                    f"Google Play rollout resume is unsupported from state {status}"
+                )
+            target["status"] = "inProgress"
+        else:
+            if status not in {"inProgress", "halted"} or current_fraction is None:
+                raise GooglePlayApiError(
+                    f"Google Play rollout finalize is unsupported from state {status}"
+                )
+            target["status"] = "completed"
+            target.pop("userFraction", None)
+
+        # Track updates name only the changed release; Google Play retains the others.
+        # https://developers.google.com/android-publisher/tracks#staged_rollouts
+        track_update = {"track": "production", "releases": [target]}
+        transport.request("PUT", track_path, json_body=track_update)
+        _commit_edit(validated_package, edit_id, transport)
+    except Exception as primary:
+        _cleanup_after_failure(validated_package, edit_id, transport, primary)
+        raise
+
+    updated_status = str(target["status"])
+    updated_fraction = target.get("userFraction")
+    return {
+        "package": validated_package,
+        "track": "production",
+        "versionCode": validated_version_code,
+        "action": normalized_action,
+        "status": updated_status,
+        "percentage": (
+            None
+            if updated_fraction is None
+            else float(updated_fraction) * 100
+        ),
+        "committed": True,
+    }
+
+
+def _validate_staged_production_state(
+    package_name: str,
+    edit_id: str,
+    expected_version_code: int,
+    transport: Transport,
+) -> None:
+    """Reject a conflicting production state before uploading a staged release."""
+
+    track_path = f"{_edit_root(package_name, edit_id)}/tracks/production"
+    track_response = _mapping(
+        transport.request("GET", track_path),
+        "production track response",
+    )
+    returned_track = _string(
+        track_response.get("track"),
+        "production track response.track",
+        maximum=100,
+    )
+    if returned_track != "production":
+        raise GooglePlayApiError(
+            "Google Play returned a mismatched track before staged production publication"
+        )
+
+    for release_index, release_value in enumerate(
+        _sequence(track_response.get("releases", []), "production releases")
+    ):
+        release = copy.deepcopy(
+            dict(_mapping(release_value, f"production releases[{release_index}]"))
+        )
+        status = _string(
+            release.get("status"),
+            f"production releases[{release_index}].status",
+        )
+        codes = [
+            _version_code(
+                code,
+                f"production releases[{release_index}].versionCodes[{code_index}]",
+            )
+            for code_index, code in enumerate(
+                _sequence(
+                    release.get("versionCodes", []),
+                    f"production releases[{release_index}].versionCodes",
+                )
+            )
+        ]
+        if any(code >= expected_version_code for code in codes):
+            raise GooglePlayApiError(
+                "Google Play production already contains a mismatched versionCode "
+                f"at or above {expected_version_code}"
+            )
+        if status in {"completed", "halted"}:
+            continue
+        elif status in {"draft", "inProgress"}:
+            raise GooglePlayApiError(
+                "Google Play has an unfinished production rollout; halt or finalize it "
+                "explicitly before publishing another staged release"
+            )
+        else:
+            raise GooglePlayApiError(
+                f"Google Play production has unsupported prior release state: {status}"
+            )
+
+
 def publish_release(plan: object, transport: Transport) -> dict[str, object]:
     """Validate and publish one AAB and all requested mutations in one edit."""
 
@@ -456,6 +725,18 @@ def publish_release(plan: object, transport: Transport) -> dict[str, object]:
 
     edit_id = _edit_id(transport.request("POST", _edit_root(package_name), json_body={}))
     try:
+        if any(
+            track_plan["track"] == "production"
+            and track_plan["release"].get("status") == "inProgress"
+            for track_plan in tracks
+        ):
+            _validate_staged_production_state(
+                package_name,
+                edit_id,
+                expected_version_code,
+                transport,
+            )
+
         upload_path = (
             f"/upload/androidpublisher/v3/applications/{_component(package_name)}"
             f"/edits/{_component(edit_id)}/bundles?uploadType=media"
@@ -511,18 +792,14 @@ def publish_release(plan: object, transport: Transport) -> dict[str, object]:
             transport.request(
                 "PUT",
                 f"{_edit_root(package_name, edit_id)}/tracks/{_component(track)}",
+                # Google keeps prior releases untouched when only the changed
+                # release is supplied. This also avoids resubmitting a fallback.
+                # https://developers.google.com/android-publisher/tracks
                 json_body={"track": track, "releases": [release]},
             )
             published_tracks.append(track)
 
-        try:
-            transport.request("POST", f"{_edit_root(package_name, edit_id)}:commit")
-        except GooglePlayApiError:
-            raise
-        except (OSError, http.client.HTTPException) as error:
-            raise CommitOutcomeUnknown(
-                "Google Play edit commit outcome is unknown; do not retry automatically"
-            ) from error
+        _commit_edit(package_name, edit_id, transport)
     except Exception as primary:
         _cleanup_after_failure(package_name, edit_id, transport, primary)
         raise
@@ -577,6 +854,13 @@ def _parser() -> argparse.ArgumentParser:
     publish = subparsers.add_parser("publish")
     publish.add_argument("--plan", required=True, type=Path)
     publish.add_argument("--result", required=True, type=Path)
+
+    rollout = subparsers.add_parser("rollout")
+    rollout.add_argument("--package", required=True)
+    rollout.add_argument("--version-code", required=True, type=int)
+    rollout.add_argument("--action", required=True, choices=sorted(ROLLOUT_ACTIONS))
+    rollout.add_argument("--percentage", type=float)
+    rollout.add_argument("--result", type=Path)
     return parser
 
 
@@ -598,31 +882,53 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "max-version-code":
             maximum = read_max_version_code(args.package, transport)
             result = {"package": args.package, "maxVersionCode": maximum}
-        else:
+        elif args.command == "publish":
             result = publish_release(_load_json(args.plan, "publish plan"), transport)
+        else:
+            result = control_rollout(
+                args.package,
+                args.version_code,
+                args.action,
+                args.percentage,
+                transport,
+            )
     except Exception as error:
         print(f"Google Play release failed: {_format_error(error)}", file=sys.stderr)
         return 1
 
-    try:
-        _write_result(args.result, result)
-    except Exception as error:
-        completed_operation = (
-            "publication" if args.command == "publish" else "version lookup"
-        )
-        print(
-            f"Google Play {completed_operation} succeeded, but recording the local "
-            f"result failed: {_format_error(error)}",
-            file=sys.stderr,
-        )
-        return 1
+    result_path = getattr(args, "result", None)
+    if result_path is not None:
+        try:
+            _write_result(result_path, result)
+        except Exception as error:
+            completed_operation = {
+                "publish": "publication",
+                "max-version-code": "version lookup",
+                "rollout": "rollout operation",
+            }[args.command]
+            print(
+                f"Google Play {completed_operation} succeeded, but recording the local "
+                f"result failed: {_format_error(error)}",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.command == "max-version-code":
         print(f"Highest Google Play versionCode: {result['maxVersionCode']}")
-    else:
+    elif args.command == "publish":
         print(
             f"Published versionCode {result['versionCode']} to "
             f"{', '.join(result['tracks'])}."
+        )
+    else:
+        percentage_text = (
+            ""
+            if result["percentage"] is None
+            else f" at {result['percentage']:g}%"
+        )
+        print(
+            f"Google Play production versionCode {result['versionCode']}: "
+            f"{result['status']}{percentage_text} ({result['action']})."
         )
     return 0
 

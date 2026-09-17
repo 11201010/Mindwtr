@@ -103,7 +103,80 @@ class AndroidPlayReleasePlanTest(unittest.TestCase):
             [release["track"] for release in plan["tracks"]],
             ["production", "beta", "internal"],
         )
+        self.assertEqual(plan["tracks"][0]["status"], "inProgress")
+        self.assertEqual(plan["tracks"][0]["userFraction"], 0.05)
+        for release in plan["tracks"][1:]:
+            self.assertEqual(release["status"], "completed")
+            self.assertNotIn("userFraction", release)
         self.assertEqual(plan["tracks"][0]["releaseNotes"][0]["text"], "Stable notes")
+
+    def test_immediate_stable_plan_completes_every_track_without_fraction(self) -> None:
+        plan = MODULE.build_plan(
+            package="tech.dongdongbh.mindwtr",
+            artifact_path="mindwtr-1.4.0.aab",
+            expected_version_code=200,
+            version="1.4.0",
+            tracks=["production", "beta", "internal"],
+            stable_production=True,
+            rollout_mode="immediate",
+            rollout_percentage=99,
+        )
+
+        for release in plan["tracks"]:
+            self.assertEqual(release["status"], "completed")
+            self.assertNotIn("userFraction", release)
+
+    def test_rollout_inputs_are_validated(self) -> None:
+        common = {
+            "package": "tech.dongdongbh.mindwtr",
+            "artifact_path": "mindwtr-1.4.0.aab",
+            "expected_version_code": 200,
+            "version": "1.4.0",
+            "tracks": ["production", "beta", "internal"],
+            "stable_production": True,
+        }
+        for mode, percentage in (
+            ("unknown", 5),
+            ("staged", 0),
+            ("staged", 100),
+            ("staged", float("nan")),
+            ("staged", float("inf")),
+        ):
+            with self.subTest(mode=mode, percentage=percentage):
+                with self.assertRaises(ValueError):
+                    MODULE.build_plan(
+                        **common,
+                        rollout_mode=mode,
+                        rollout_percentage=percentage,
+                    )
+
+    def test_immediate_resolver_keeps_percentage_available_for_plan_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "github-output"
+            exit_code = MODULE.main(
+                [
+                    "resolve-tracks",
+                    "--play-tracks",
+                    "production",
+                    "--stable-production-tag",
+                    "true",
+                    "--rollout-mode",
+                    "immediate",
+                    "--rollout-percentage",
+                    "99",
+                    "--github-output",
+                    str(output),
+                ]
+            )
+
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(values["rollout_mode"], "immediate")
+        self.assertEqual(values["rollout_percentage"], "99")
 
     def test_testing_plan_uses_same_release_notes_for_every_track(self) -> None:
         plan = MODULE.build_plan(
@@ -121,6 +194,8 @@ class AndroidPlayReleasePlanTest(unittest.TestCase):
             ["internal", "beta"],
         )
         for release in plan["tracks"]:
+            self.assertEqual(release["status"], "completed")
+            self.assertNotIn("userFraction", release)
             self.assertEqual(release["releaseNotes"][0]["text"], "Test this release")
 
 

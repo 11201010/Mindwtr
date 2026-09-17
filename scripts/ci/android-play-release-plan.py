@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -12,6 +13,30 @@ from typing import Any
 
 TRACK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 STABLE_TRACKS = ("production", "beta", "internal")
+ROLLOUT_MODES = {"staged", "immediate"}
+
+
+def resolve_rollout(
+    rollout_mode: str,
+    rollout_percentage: float,
+) -> tuple[str, float | None]:
+    """Validate the stable production rollout and return its user fraction."""
+
+    mode = rollout_mode.strip().lower()
+    if mode not in ROLLOUT_MODES:
+        raise ValueError("Google Play rollout mode must be staged or immediate")
+    if mode == "immediate":
+        return mode, None
+    if isinstance(rollout_percentage, bool) or not isinstance(
+        rollout_percentage, (int, float)
+    ):
+        raise ValueError("Google Play rollout percentage must be a number")
+    percentage = float(rollout_percentage)
+    if not math.isfinite(percentage):
+        raise ValueError("Google Play rollout percentage must be finite")
+    if not 0 < percentage < 100:
+        raise ValueError("Google Play staged rollout percentage must be between 0 and 100")
+    return mode, percentage / 100
 
 
 def resolve_tracks(
@@ -91,12 +116,19 @@ def build_plan(
     version: str,
     tracks: Sequence[str],
     stable_production: bool,
+    rollout_mode: str = "staged",
+    rollout_percentage: float = 5,
     testing_release_notes: str = "",
     stable_release_notes_directory: str | None = None,
     listing_assets_file: str | None = None,
     listings_file: str | None = None,
 ) -> dict[str, Any]:
     """Build the publisher payload for one artifact and one versionCode."""
+
+    normalized_rollout_mode, rollout_fraction = resolve_rollout(
+        rollout_mode,
+        rollout_percentage,
+    )
 
     unique_tracks = list(dict.fromkeys(tracks))
     if not unique_tracks:
@@ -123,6 +155,9 @@ def build_plan(
                 "name": f"{version}{suffix}",
                 "status": "completed",
             }
+            if track == "production" and normalized_rollout_mode == "staged":
+                release["status"] = "inProgress"
+                release["userFraction"] = rollout_fraction
             if track == "production" and stable_notes:
                 release["releaseNotes"] = stable_notes
         else:
@@ -158,6 +193,10 @@ def _parse_bool(value: str) -> bool:
 
 
 def _resolve_command(args: argparse.Namespace) -> int:
+    rollout_mode, _ = resolve_rollout(
+        args.rollout_mode,
+        args.rollout_percentage,
+    )
     tracks = resolve_tracks(
         args.play_tracks,
         internal_test_release=args.internal_test_release,
@@ -172,6 +211,8 @@ def _resolve_command(args: argparse.Namespace) -> int:
         stream.write(
             f"stable_production_tag={'true' if args.stable_production_tag else 'false'}\n"
         )
+        stream.write(f"rollout_mode={rollout_mode}\n")
+        stream.write(f"rollout_percentage={args.rollout_percentage:g}\n")
     print(f"Google Play track(s): {rendered}")
     return 0
 
@@ -185,6 +226,8 @@ def _plan_command(args: argparse.Namespace) -> int:
         version=args.version,
         tracks=tracks,
         stable_production=args.stable_production,
+        rollout_mode=args.rollout_mode,
+        rollout_percentage=args.rollout_percentage,
         testing_release_notes=args.testing_release_notes,
         stable_release_notes_directory=args.stable_release_notes_directory,
         listing_assets_file=args.listing_assets_file,
@@ -205,6 +248,8 @@ def _parser() -> argparse.ArgumentParser:
     resolve.add_argument("--play-tracks", default="production")
     resolve.add_argument("--internal-test-release", type=_parse_bool, default=False)
     resolve.add_argument("--stable-production-tag", type=_parse_bool, default=False)
+    resolve.add_argument("--rollout-mode", default="staged")
+    resolve.add_argument("--rollout-percentage", type=float, default=5)
     resolve.add_argument("--github-output", required=True)
     resolve.set_defaults(handler=_resolve_command)
 
@@ -216,6 +261,8 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--version", required=True)
     plan.add_argument("--tracks", required=True)
     plan.add_argument("--stable-production", action="store_true")
+    plan.add_argument("--rollout-mode", default="staged")
+    plan.add_argument("--rollout-percentage", type=float, default=5)
     plan.add_argument("--testing-release-notes", default="")
     plan.add_argument("--stable-release-notes-directory")
     plan.add_argument("--listing-assets-file")

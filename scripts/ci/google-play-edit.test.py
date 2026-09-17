@@ -39,6 +39,26 @@ class FakeTransport:
         self.reject_commit = False
         self.uploaded_version_code = "42"
         self.cleanup_message = "cleanup failure"
+        self.production_track: dict[str, object] = {
+            "track": "production",
+            "releases": [
+                {
+                    "name": "1.3.1",
+                    "versionCodes": ["41"],
+                    "status": "completed",
+                    "releaseNotes": [{"language": "en-US", "text": "Previous"}],
+                },
+                {
+                    "name": "1.4.0",
+                    "versionCodes": ["42"],
+                    "status": "inProgress",
+                    "userFraction": 0.05,
+                    "releaseNotes": [{"language": "en-US", "text": "Current"}],
+                    "countryTargeting": {"countries": ["US"], "includeRestOfWorld": True},
+                    "inAppUpdatePriority": 3,
+                },
+            ],
+        }
 
     def request(
         self,
@@ -67,6 +87,8 @@ class FakeTransport:
                     {"releases": [{"versionCodes": ["11"]}]},
                 ]
             }
+        if method == "GET" and path.endswith("/tracks/production"):
+            return json.loads(json.dumps(self.production_track))
         if method == "POST" and "/bundles?" in path:
             return {"versionCode": self.uploaded_version_code}
         if method == "PUT" and "/tracks/" in path:
@@ -418,6 +440,109 @@ class GooglePlayEditTest(unittest.TestCase):
         )
         self.assertEqual(listing_call["json_body"]["language"], "en-US")
 
+    def test_staged_publish_validates_existing_state_but_sends_only_new_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan = make_plan(Path(temp_dir))
+            plan["tracks"][0]["status"] = "inProgress"
+            plan["tracks"][0]["userFraction"] = 0.05
+            transport = FakeTransport()
+            previous_release = {
+                "name": "1.3.1",
+                "versionCodes": ["41"],
+                "status": "completed",
+                "releaseNotes": [{"language": "en-US", "text": "Previous"}],
+                "countryTargeting": {"countries": ["US"], "includeRestOfWorld": True},
+            }
+            transport.production_track = {
+                "track": "production",
+                "releases": [json.loads(json.dumps(previous_release))],
+            }
+
+            MODULE.publish_release(plan, transport)
+
+        operations = [(call["method"], call["path"]) for call in transport.calls]
+        self.assertEqual(operations[0][0], "POST")
+        self.assertEqual(operations[1][0], "GET")
+        self.assertTrue(operations[1][1].endswith("/tracks/production"))
+        bundle_index = next(
+            index for index, (_, path) in enumerate(operations) if "/bundles?" in path
+        )
+        self.assertGreater(bundle_index, 1)
+        production_call = next(
+            call
+            for call in transport.calls
+            if call["method"] == "PUT" and str(call["path"]).endswith("/tracks/production")
+        )
+        releases = production_call["json_body"]["releases"]
+        self.assertEqual(releases[0]["versionCodes"], ["42"])
+        self.assertEqual(releases[0]["status"], "inProgress")
+        self.assertEqual(releases[0]["userFraction"], 0.05)
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(transport.production_track["releases"], [previous_release])
+
+    def test_staged_publish_rejects_unfinished_prior_rollout_before_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan = make_plan(Path(temp_dir))
+            plan["tracks"][0]["status"] = "inProgress"
+            plan["tracks"][0]["userFraction"] = 0.05
+            transport = FakeTransport()
+            transport.production_track = {
+                "track": "production",
+                "releases": [
+                    {
+                        "name": "1.3.1",
+                        "versionCodes": ["41"],
+                        "status": "inProgress",
+                        "userFraction": 0.25,
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(MODULE.GooglePlayApiError, "unfinished"):
+                MODULE.publish_release(plan, transport)
+
+        self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
+        self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
+    def test_staged_publish_accepts_halted_predecessor_without_resubmitting_prior_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan = make_plan(Path(temp_dir))
+            plan["tracks"][0]["status"] = "inProgress"
+            plan["tracks"][0]["userFraction"] = 0.05
+            transport = FakeTransport()
+            completed_fallback = {
+                "name": "1.3.0",
+                "versionCodes": ["40"],
+                "status": "completed",
+                "releaseNotes": [{"language": "en-US", "text": "Fallback"}],
+            }
+            transport.production_track = {
+                "track": "production",
+                "releases": [
+                    json.loads(json.dumps(completed_fallback)),
+                    {
+                        "name": "1.3.1",
+                        "versionCodes": ["41"],
+                        "status": "halted",
+                        "userFraction": 0.25,
+                        "releaseNotes": [{"language": "en-US", "text": "Stopped"}],
+                    },
+                ],
+            }
+            original_track = json.loads(json.dumps(transport.production_track))
+
+            MODULE.publish_release(plan, transport)
+
+        self.assertTrue(any("/bundles" in str(call["path"]) for call in transport.calls))
+        production_call = next(
+            call
+            for call in transport.calls
+            if call["method"] == "PUT" and str(call["path"]).endswith("/tracks/production")
+        )
+        releases = production_call["json_body"]["releases"]
+        self.assertEqual([release["versionCodes"] for release in releases], [["42"]])
+        self.assertEqual(transport.production_track, original_track)
+
     def test_pre_commit_failure_deletes_the_edit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             transport = FakeTransport()
@@ -498,6 +623,211 @@ class GooglePlayEditTest(unittest.TestCase):
         maximum = MODULE.read_max_version_code("tech.dongdongbh.mindwtr", transport)
 
         self.assertEqual(maximum, 19)
+        self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
+    def test_rollout_status_is_read_only_and_deletes_the_edit(self) -> None:
+        transport = FakeTransport()
+
+        result = MODULE.control_rollout(
+            "tech.dongdongbh.mindwtr",
+            42,
+            "status",
+            None,
+            transport,
+        )
+
+        operations = [(call["method"], call["path"]) for call in transport.calls]
+        self.assertEqual(
+            operations,
+            [
+                ("POST", "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits"),
+                (
+                    "GET",
+                    "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits/edit-1/tracks/production",
+                ),
+                ("DELETE", "/androidpublisher/v3/applications/tech.dongdongbh.mindwtr/edits/edit-1"),
+            ],
+        )
+        self.assertEqual(result["status"], "inProgress")
+        self.assertEqual(result["percentage"], 5.0)
+        self.assertFalse(result["committed"])
+        self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
+
+    def test_rollout_increase_preserves_target_metadata_and_omits_unrelated_releases(self) -> None:
+        transport = FakeTransport()
+        original_releases = json.loads(json.dumps(transport.production_track["releases"]))
+
+        result = MODULE.control_rollout(
+            "tech.dongdongbh.mindwtr",
+            42,
+            "increase",
+            25,
+            transport,
+        )
+
+        track_call = next(
+            call
+            for call in transport.calls
+            if call["method"] == "PUT" and str(call["path"]).endswith("/tracks/production")
+        )
+        releases = track_call["json_body"]["releases"]
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(
+            {key: value for key, value in releases[0].items() if key != "userFraction"},
+            {key: value for key, value in original_releases[1].items() if key != "userFraction"},
+        )
+        self.assertEqual(releases[0]["userFraction"], 0.25)
+        self.assertEqual(transport.production_track["releases"], original_releases)
+        self.assertEqual(result["percentage"], 25.0)
+        self.assertTrue(result["committed"])
+        self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
+
+    def test_rollout_halt_resume_and_finalize_state_transitions(self) -> None:
+        cases = (
+            ("halt", "inProgress", 0.05, "halted", 0.05),
+            ("resume", "halted", 0.05, "inProgress", 0.05),
+            ("finalize", "halted", 0.05, "completed", None),
+        )
+        for action, initial_status, initial_fraction, expected_status, expected_fraction in cases:
+            with self.subTest(action=action):
+                transport = FakeTransport()
+                target = transport.production_track["releases"][1]
+                target["status"] = initial_status
+                target["userFraction"] = initial_fraction
+
+                result = MODULE.control_rollout(
+                    "tech.dongdongbh.mindwtr",
+                    42,
+                    action,
+                    None,
+                    transport,
+                )
+
+                track_call = next(
+                    call for call in transport.calls if call["method"] == "PUT"
+                )
+                updated = track_call["json_body"]["releases"][0]
+                self.assertEqual(updated["status"], expected_status)
+                if expected_fraction is None:
+                    self.assertNotIn("userFraction", updated)
+                    self.assertIsNone(result["percentage"])
+                else:
+                    self.assertEqual(updated["userFraction"], expected_fraction)
+                    self.assertEqual(result["percentage"], expected_fraction * 100)
+
+    def test_rollout_rejects_invalid_or_decreasing_mutations_before_put(self) -> None:
+        cases = (
+            ("increase", None, "percentage is required", False),
+            ("increase", 5, "greater than", True),
+            ("increase", float("nan"), "finite", False),
+            ("halt", 20, "only valid for increase", False),
+        )
+        for action, percentage, message, opened_edit in cases:
+            with self.subTest(action=action, percentage=percentage):
+                transport = FakeTransport()
+                with self.assertRaisesRegex(ValueError, message):
+                    MODULE.control_rollout(
+                        "tech.dongdongbh.mindwtr",
+                        42,
+                        action,
+                        percentage,
+                        transport,
+                    )
+                self.assertFalse(any(call["method"] == "PUT" for call in transport.calls))
+                if opened_edit:
+                    self.assertEqual(transport.calls[-1]["method"], "DELETE")
+                else:
+                    self.assertEqual(transport.calls, [])
+
+    def test_rollout_rejects_mismatched_ambiguous_superseded_and_unsupported_targets(self) -> None:
+        cases = (
+            ("mismatched", "mismatched"),
+            ("ambiguous", "ambiguous"),
+            ("multi-code ambiguous", "ambiguous"),
+            ("superseded", "superseded"),
+            ("unsupported", "unsupported"),
+        )
+        for case, expected_message in cases:
+            with self.subTest(case=case):
+                transport = FakeTransport()
+                if case == "mismatched":
+                    transport.production_track["track"] = "beta"
+                elif case == "ambiguous":
+                    transport.production_track["releases"].append(
+                        {"versionCodes": ["42"], "status": "inProgress", "userFraction": 0.05}
+                    )
+                elif case == "multi-code ambiguous":
+                    transport.production_track["releases"][1]["versionCodes"] = ["42", "44"]
+                elif case == "superseded":
+                    transport.production_track["releases"].append(
+                        {"versionCodes": ["43"], "status": "completed"}
+                    )
+                else:
+                    transport.production_track["releases"][1]["status"] = "draft"
+
+                with self.assertRaisesRegex(
+                    (ValueError, MODULE.GooglePlayApiError),
+                    expected_message,
+                ):
+                    MODULE.control_rollout(
+                        "tech.dongdongbh.mindwtr",
+                        42,
+                        "increase",
+                        25,
+                        transport,
+                    )
+                self.assertFalse(any(call["method"] == "PUT" for call in transport.calls))
+                self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
+    def test_rollout_cli_writes_status_result_without_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result_path = Path(temp_dir) / "rollout.json"
+            transport = FakeTransport()
+
+            with patch.object(MODULE, "GooglePlayTransport", return_value=transport):
+                with patch.dict(os.environ, {"GOOGLE_PLAY_ACCESS_TOKEN": "top-secret"}):
+                    exit_code = MODULE.main(
+                        [
+                            "rollout",
+                            "--package",
+                            "tech.dongdongbh.mindwtr",
+                            "--version-code",
+                            "42",
+                            "--action",
+                            "status",
+                            "--result",
+                            str(result_path),
+                        ]
+                    )
+
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["versionCode"], 42)
+        self.assertEqual(result["status"], "inProgress")
+        self.assertFalse(result["committed"])
+        self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
+
+    def test_rollout_unknown_commit_is_not_retried_and_cleanup_is_attempted(self) -> None:
+        transport = FakeTransport()
+        transport.timeout_commit = True
+
+        with self.assertRaisesRegex(
+            MODULE.CommitOutcomeUnknown,
+            "unknown; do not retry automatically",
+        ):
+            MODULE.control_rollout(
+                "tech.dongdongbh.mindwtr",
+                42,
+                "increase",
+                25,
+                transport,
+            )
+
+        commit_calls = [
+            call for call in transport.calls if str(call["path"]).endswith(":commit")
+        ]
+        self.assertEqual(len(commit_calls), 1)
         self.assertEqual(transport.calls[-1]["method"], "DELETE")
 
     def test_publish_cli_writes_a_non_secret_result_file(self) -> None:

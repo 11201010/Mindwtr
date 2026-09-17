@@ -319,7 +319,7 @@ test("tag-accepting release workflows queue by effective tag or shared Store fli
     ["release-linux.yml", `release-linux-${effectiveTag}`],
     ["release-macos-appstore.yml", `release-macos-appstore-${effectiveTag}`],
     ["release-macos.yml", `release-macos-${effectiveTag}`],
-    ["release-msstore-flight.yml", 'msstore-beta-flight'],
+    ["release-msstore-flight.yml", 'msstore-production'],
     ["release-rc.yml", `release-rc-${effectiveTag}`],
     ["release-windows.yml", `release-windows-${effectiveTag}`],
     ["release.yml", `\${{ github.workflow }}-${effectiveTag}`],
@@ -362,12 +362,16 @@ test("Windows release jobs never reacquire the workflow lock and serialize Store
   const jobGroup = windows.jobs.standalone.concurrency.group;
   for (const workflow of ["Release Windows", "Release", "Release RC"]) {
     for (const tag of [undefined, "1.3.0-rc.2a"]) {
-      for (const run_msstore_flight of [undefined, false, true]) {
-        const inputs = { tag, run_msstore_flight };
-        const github = { workflow, ref_name: "main" };
+      for (const [run_msstore, run_msstore_flight, event_name] of [
+        [false, false, 'workflow_dispatch'], [true, false, 'workflow_dispatch'],
+        [false, true, 'workflow_dispatch'], [true, true, 'workflow_dispatch'],
+        [false, false, 'push'], [false, true, 'push'],
+      ]) {
+        const inputs = { tag, run_msstore, run_msstore_flight };
+        const github = { workflow, ref_name: "main", event_name };
         const jobLock = resolve(jobGroup, inputs, github);
         expect(jobLock.toLowerCase()).not.toBe(resolve(workflowGroup, inputs, github).toLowerCase());
-        if (run_msstore_flight) {
+        if (run_msstore || run_msstore_flight || event_name === 'push') {
           expect(jobLock).toBe(flight.concurrency.group);
         } else {
           expect(jobLock).not.toBe(flight.concurrency.group);
@@ -621,6 +625,9 @@ test("stable Android publication remains tagged-only and expands in the resolver
   const production = android.jobs.publish.steps.find(
     (step) => step.name === "Publish to Google Play Store (Production)",
   );
+  const resolver = android.jobs.preflight.steps.find(
+    (step) => step.name === "Resolve Android publish plan",
+  );
 
   expect(stable.jobs.android.with.play_track).toBe("production");
   expect(android.jobs.publish.if).toContain(
@@ -630,6 +637,12 @@ test("stable Android publication remains tagged-only and expands in the resolver
     "needs.preflight.outputs.stable_production_tag == 'true'",
   );
   expect(production.run).toContain("--stable-production");
+  expect(resolver.env.RESOLVED_TAG).toBe("${{ steps.version.outputs.tag }}");
+  expect(resolver.run).toContain('^v[0-9]+\\.[0-9]+\\.[0-9]+$');
+  expect(resolver.run).toContain('git rev-list -n 1 "$RESOLVED_TAG"');
+  expect(resolver.run).toContain('git rev-parse HEAD');
+  expect(resolver.run).toContain('[ "$EVENT_NAME" = "workflow_dispatch" ]');
+  expect(resolver.run).not.toContain('[ "$EVENT_NAME" != "workflow_dispatch" ]');
 });
 
 test("RC validation checks the committed FOSS version before platform builds start", () => {

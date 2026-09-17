@@ -11,6 +11,17 @@ on:
         description: 'Release tag (e.g., v0.2.3)'
         required: true
         type: string
+      rollout_mode:
+        description: 'Production stores: staged by default; immediate for corrective hotfixes'
+        required: true
+        type: choice
+        options: [staged, immediate]
+        default: staged
+      rollout_percentage:
+        description: 'Initial Play/MS Store percentage for staged mode (greater than 0, less than 100)'
+        required: true
+        type: number
+        default: 5
       run_linux:
         description: 'Run Linux release job'
         required: false
@@ -98,12 +109,38 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       release_notes_path: ${{ steps.release_notes.outputs.body_path }}
+      rollout_mode: ${{ steps.rollout.outputs.mode }}
+      rollout_percentage: ${{ steps.rollout.outputs.percentage }}
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           fetch-depth: 0
+
+      - name: Validate store rollout policy
+        id: rollout
+        env:
+          # Tag pushes stage by default. Set the repository variable before an
+          # emergency tag only when immediate distribution is intended.
+          ROLLOUT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.rollout_mode || vars.RELEASE_ROLLOUT_MODE || 'staged' }}
+          ROLLOUT_PERCENTAGE: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.rollout_percentage) || '5' }}
+        run: |
+          python3 - <<'PY'
+          import math
+          import os
+          mode = os.environ['ROLLOUT_MODE']
+          percentage = float(os.environ['ROLLOUT_PERCENTAGE'])
+          if mode not in ('staged', 'immediate'):
+              raise SystemExit('rollout_mode must be staged or immediate')
+          if not math.isfinite(percentage) or not 0 < percentage < 100:
+              raise SystemExit('rollout_percentage must be greater than 0 and less than 100')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'mode={mode}\npercentage={percentage}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### Store rollout policy\n\nMode: **{mode}**. ')
+              summary.write(f'Play/MS initial rollout: **{percentage:g}%**; Apple: **7-day phased release**.\n' if mode == 'staged' else 'All production stores release immediately after approval.\n')
+          PY
 
       - name: Resolve version
         id: version
@@ -247,6 +284,9 @@ jobs:
     with:
       tag: ${{ needs.validate.outputs.tag }}
       run_msstore_flight: ${{ vars.MSSTORE_FLIGHT_ID != '' }}
+      run_msstore: true
+      rollout_mode: ${{ needs.validate.outputs.rollout_mode }}
+      rollout_percentage: ${{ fromJSON(needs.validate.outputs.rollout_percentage) }}
     secrets: inherit
 
   android-version-code:
@@ -255,6 +295,9 @@ jobs:
     runs-on: ubuntu-latest
     name: Android VersionCode Preflight
     timeout-minutes: 10
+    concurrency:
+      group: google-play-production
+      cancel-in-progress: false
     permissions:
       contents: read
     outputs:
@@ -341,6 +384,8 @@ jobs:
       # Tagged stable requests expand inside the shared workflow to production,
       # beta, and internal while retaining one standard AAB and versionCode.
       play_track: production
+      rollout_mode: ${{ needs.validate.outputs.rollout_mode }}
+      rollout_percentage: ${{ fromJSON(needs.validate.outputs.rollout_percentage) }}
       version_code: ${{ needs['android-version-code'].outputs.version_code }}
     secrets: inherit
 
@@ -362,6 +407,7 @@ jobs:
       upload: true
       submit_for_review: true
       include_watch: true
+      phased_release: ${{ needs.validate.outputs.rollout_mode == 'staged' }}
       testflight_only: false
       distribute_testflight: true
       force_appstore_upload: ${{ github.event_name == 'workflow_dispatch' && inputs.force_ios_appstore_upload || false }}
@@ -376,6 +422,7 @@ jobs:
       tag: ${{ needs.validate.outputs.tag }}
       upload: true
       submit_for_review: true
+      phased_release: ${{ needs.validate.outputs.rollout_mode == 'staged' }}
       distribute_testflight: true
       testflight_group: 'external_testing'
     secrets: inherit

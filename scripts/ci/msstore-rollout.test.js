@@ -1,0 +1,388 @@
+import { expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import {
+  createStoreRequest,
+  manageRollout,
+  parseArgs,
+  runCli,
+} from './msstore-rollout.mjs';
+
+const appId = '9N0V5B0B6FRX';
+const submissionId = '1152921504621225621';
+const api = 'https://manage.devcenter.microsoft.com/v1.0/my';
+const appPath = `applications/${appId}`;
+const submissionPath = `${appPath}/submissions/${submissionId}`;
+const rolloutPath = `${submissionPath}/packagerollout`;
+
+function fixture({ app = {}, submission = {}, rollout = {}, postResponse } = {}) {
+  const calls = [];
+  const request = async (method, path) => {
+    calls.push({ method, path });
+    if (method === 'GET' && path === appPath) {
+      return {
+        id: appId,
+        lastPublishedApplicationSubmission: { id: submissionId },
+        ...app,
+      };
+    }
+    if (method === 'GET' && path === submissionPath) {
+      return { id: submissionId, status: 'Published', ...submission };
+    }
+    if (method === 'GET' && path === rolloutPath) {
+      return {
+        isPackageRollout: true,
+        packageRolloutPercentage: 5,
+        packageRolloutStatus: 'PackageRolloutInProgress',
+        fallbackSubmissionId: '1152921504621000000',
+        ...rollout,
+      };
+    }
+    if (method === 'POST') {
+      return postResponse ?? {
+        isPackageRollout: true,
+        packageRolloutPercentage: path.includes('percentage=')
+          ? Number(new URL(`${api}/${path}`).searchParams.get('percentage'))
+          : 0,
+        packageRolloutStatus: path.endsWith('/haltpackagerollout')
+          ? 'PackageRolloutStopped'
+          : 'PackageRolloutComplete',
+        fallbackSubmissionId: '1152921504621000000',
+      };
+    }
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  };
+  const run = options => manageRollout({
+    appId,
+    submissionId,
+    action: 'status',
+    request,
+    log: () => {},
+    ...options,
+  });
+  return { calls, run };
+}
+
+test('CLI requires an explicit submission, a supported action, and a bounded percentage', () => {
+  expect(parseArgs(['--submission-id', submissionId, '--action', 'status'])).toEqual({
+    submissionId,
+    action: 'status',
+    percentage: undefined,
+  });
+  expect(parseArgs(['--submission-id', submissionId, '--action', 'increase', '--percentage', '20'])).toEqual({
+    submissionId,
+    action: 'increase',
+    percentage: 20,
+  });
+  for (const argv of [
+    ['--action', 'status'],
+    ['--submission-id', submissionId],
+    ['--submission-id', '../old', '--action', 'status'],
+    ['--submission-id', submissionId, '--action', 'resume'],
+    ['--submission-id', submissionId, '--action', 'increase'],
+    ['--submission-id', submissionId, '--action', 'increase', '--percentage', '5e309'],
+    ['--submission-id', submissionId, '--action', 'increase', '--percentage', '0'],
+    ['--submission-id', submissionId, '--action', 'increase', '--percentage', '100'],
+    ['--submission-id', submissionId, '--action', 'halt', '--percentage', '20'],
+    ['--submission-id', submissionId, '--action', 'status', '--unknown', 'x'],
+  ]) {
+    expect(() => parseArgs(argv)).toThrow();
+  }
+});
+
+test('Store transport is fixed-origin, bodyless, authenticated, and never uploads', async () => {
+  const calls = [];
+  const request = createStoreRequest({
+    token: 'fixture-token',
+    tenantId: '11111111-2222-3333-4444-555555555555',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+  });
+  await request('GET', appPath);
+  await request('POST', `${submissionPath}/haltpackagerollout`);
+  expect(calls.map(call => call.url)).toEqual([
+    `${api}/${appPath}`,
+    `${api}/${submissionPath}/haltpackagerollout`,
+  ]);
+  for (const { options } of calls) {
+    expect(options.headers).toEqual({
+      Authorization: 'Bearer fixture-token',
+      TenantId: '11111111-2222-3333-4444-555555555555',
+    });
+    expect(options.body).toBeUndefined();
+    expect(['GET', 'POST']).toContain(options.method);
+    expect(options.redirect).toBe('error');
+  }
+  await expect(request('PUT', submissionPath)).rejects.toThrow('GET and POST');
+  await expect(request('GET', 'https://example.blob.core.windows.net/upload')).rejects.toThrow('fixed Microsoft Store origin');
+  await expect(request('GET', '../applications/other')).rejects.toThrow('fixed Microsoft Store origin');
+});
+
+test('CLI authentication and Store reads reject redirects', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (url.startsWith('https://login.microsoftonline.com/')) {
+      return new Response(JSON.stringify({ access_token: 'fixture-token' }), { status: 200 });
+    }
+    if (url === `${api}/${appPath}`) {
+      return new Response(JSON.stringify({ id: appId, lastPublishedApplicationSubmission: { id: submissionId } }), { status: 200 });
+    }
+    if (url === `${api}/${submissionPath}`) {
+      return new Response(JSON.stringify({ id: submissionId, status: 'Published' }), { status: 200 });
+    }
+    if (url === `${api}/${rolloutPath}`) {
+      return new Response(JSON.stringify({
+        isPackageRollout: true,
+        packageRolloutPercentage: 5,
+        packageRolloutStatus: 'PackageRolloutInProgress',
+        fallbackSubmissionId: '1152921504621000000',
+      }), { status: 200 });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+  await runCli({
+    argv: ['--submission-id', submissionId, '--action', 'status'],
+    env: {
+      MS_TENANT_ID: '11111111-2222-3333-4444-555555555555',
+      MS_CLIENT_ID: 'fixture-client',
+      MS_CLIENT_SECRET: 'fixture-secret',
+      MS_STORE_APP_ID: appId,
+    },
+    fetchImpl,
+    log: () => {},
+  });
+  expect(calls).toHaveLength(4);
+  expect(calls.every(call => call.options.redirect === 'error')).toBe(true);
+});
+
+test('status is read-only and reports the current published rollout', async () => {
+  const { calls, run } = fixture();
+  const result = await run({ action: 'status' });
+  expect(result).toEqual({
+    submissionId,
+    action: 'status',
+    isPackageRollout: true,
+    percentage: 5,
+    status: 'PackageRolloutInProgress',
+    fallbackSubmissionId: '1152921504621000000',
+  });
+  expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'GET']);
+});
+
+test('increase is monotonic and uses the documented query endpoint without a body', async () => {
+  const { calls, run } = fixture({
+    postResponse: {
+      isPackageRollout: true,
+      packageRolloutPercentage: 20,
+      packageRolloutStatus: 'PackageRolloutInProgress',
+      fallbackSubmissionId: '1152921504621000000',
+    },
+  });
+  const result = await run({ action: 'increase', percentage: 20 });
+  expect(result.percentage).toBe(20);
+  expect(calls.at(-1)).toEqual({
+    method: 'POST',
+    path: `${submissionPath}/updatepackagerolloutpercentage?percentage=20`,
+  });
+
+  for (const percentage of [4, 5]) {
+    const blocked = fixture();
+    await expect(blocked.run({ action: 'increase', percentage })).rejects.toThrow('greater than the current');
+    expect(blocked.calls.some(call => call.method === 'POST')).toBe(false);
+  }
+});
+
+test('halt and finalize use their dedicated endpoints exactly once', async () => {
+  for (const [action, suffix] of [
+    ['halt', 'haltpackagerollout'],
+    ['finalize', 'finalizepackagerollout'],
+  ]) {
+    const { calls, run } = fixture();
+    await run({ action });
+    expect(calls.filter(call => call.method === 'POST')).toEqual([
+      { method: 'POST', path: `${submissionPath}/${suffix}` },
+    ]);
+  }
+});
+
+test('stale, pending, unpublished, disabled, and halted rollouts fail before mutation', async () => {
+  const stale = fixture({ app: { lastPublishedApplicationSubmission: { id: '999' } } });
+  await expect(stale.run({ action: 'halt' })).rejects.toThrow('not the current last published');
+  expect(stale.calls.every(call => call.method === 'GET')).toBe(true);
+
+  const pending = fixture({ app: { pendingApplicationSubmission: { id: '777' } } });
+  await expect(pending.run({ action: 'finalize' })).rejects.toThrow('pending production submission');
+  expect(pending.calls.every(call => call.method === 'GET')).toBe(true);
+
+  const unpublished = fixture({ submission: { status: 'Certification' } });
+  await expect(unpublished.run({ action: 'increase', percentage: 20 })).rejects.toThrow('must be Published');
+  expect(unpublished.calls.every(call => call.method === 'GET')).toBe(true);
+
+  const disabled = fixture({ rollout: { isPackageRollout: false, packageRolloutStatus: 'PackageRolloutNotStarted' } });
+  await expect(disabled.run({ action: 'increase', percentage: 20 })).rejects.toThrow('not enabled');
+  expect(disabled.calls.every(call => call.method === 'GET')).toBe(true);
+
+  const halted = fixture({ rollout: { packageRolloutPercentage: 0, packageRolloutStatus: 'PackageRolloutStopped' } });
+  await expect(halted.run({ action: 'increase', percentage: 20 })).rejects.toThrow('cannot be resumed through the API');
+  expect(halted.calls.every(call => call.method === 'GET')).toBe(true);
+});
+
+test('Windows stable publication defaults to a five-percent rollout and exposes its identity', () => {
+  const text = readFileSync('.github/workflows/release-windows.yml', 'utf8');
+  const workflow = parse(text);
+  for (const trigger of ['workflow_call', 'workflow_dispatch']) {
+    expect(workflow.on[trigger].inputs.rollout_mode).toMatchObject({ type: 'string', default: 'staged' });
+    expect(workflow.on[trigger].inputs.rollout_percentage).toMatchObject({ type: 'number', default: 5 });
+  }
+  expect(workflow.on.workflow_call.outputs.msstore_submission_id.value).toBe('${{ jobs.standalone.outputs.msstore_submission_id }}');
+  expect(workflow.on.workflow_call.outputs.msstore_rollout_policy.value).toBe('${{ jobs.standalone.outputs.msstore_rollout_policy }}');
+
+  const job = workflow.jobs.standalone;
+  expect(job.concurrency.group).toContain('msstore-production');
+  expect(job.concurrency.group).not.toContain('msstore-beta-flight');
+  expect(job.outputs.msstore_submission_id).toBe('${{ steps.msstore_publish.outputs.submission_id }}');
+  expect(job.outputs.msstore_rollout_policy).toBe('${{ steps.msstore_publish.outputs.rollout_policy }}');
+
+  const resolve = job.steps.find(step => step.id === 'version');
+  expect(resolve.env.ROLLOUT_MODE).toBe('${{ inputs.rollout_mode }}');
+  expect(resolve.env.ROLLOUT_PERCENTAGE).toBe('${{ inputs.rollout_percentage }}');
+  expect(resolve.run).toContain("@('staged', 'immediate')");
+  expect(resolve.run).toContain('[double]::IsNaN');
+  expect(resolve.run).toContain('$rolloutPercentage -ge 100');
+
+  const publish = job.steps.find(step => step.id === 'msstore_publish');
+  expect(publish.env.ROLLOUT_MODE).toBe('${{ steps.version.outputs.rollout_mode }}');
+  expect(publish.env.ROLLOUT_PERCENTAGE).toBe('${{ steps.version.outputs.rollout_percentage }}');
+  expect(publish.run).toContain("isPackageRollout -Value $true");
+  expect(publish.run).toContain("packageRolloutPercentage -Value $rolloutPercentage");
+  expect(publish.run).toContain("isPackageRollout -Value $false");
+  expect(publish.run).toContain("packageRolloutPercentage -Value 0.0");
+  expect(publish.run).toContain('Microsoft Store production submission');
+  expect(publish.run).toContain('submission_id=$submissionId');
+  expect(publish.run).not.toContain('$submission.packageDeliveryOptions = @{');
+  const commitStart = publish.run.indexOf('Write-Host "Committing submission..."');
+  const pollStart = publish.run.indexOf('Write-Host "Polling submission status..."');
+  expect(commitStart).toBeGreaterThan(-1);
+  expect(pollStart).toBeGreaterThan(commitStart);
+  const commitBlock = publish.run.slice(commitStart, pollStart);
+  expect(commitBlock).toContain('-MaxAttempts 1');
+  expect(commitBlock).toContain('outcome may be unknown');
+  expect(commitBlock).toContain('Inspect submission status before retrying');
+
+  const flight = job.steps.find(step => step.name === 'Submit Microsoft Store beta flight');
+  expect(flight.if).toBe('inputs.run_msstore_flight');
+  expect(flight.run).toContain('node scripts/ci/publish-msstore-flight.mjs');
+});
+
+test('Windows rollout payload mutates copied delivery options without replacing unrelated fields', () => {
+  const workflow = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
+  const publish = workflow.jobs.standalone.steps.find(step => step.id === 'msstore_publish');
+  const start = publish.run.indexOf('function Set-RequiredSubmissionProperty');
+  const end = publish.run.indexOf('function Apply-PublicSupportPropertiesIfPresent');
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  const applyRollout = publish.run.slice(start, end);
+
+  const run = (submission, mode, percentage) => {
+    const encodedFixture = Buffer.from(JSON.stringify(submission)).toString('base64');
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      `$rolloutMode = '${mode}'`,
+      `[double]$rolloutPercentage = ${percentage}`,
+      `$submission = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encodedFixture}')) | ConvertFrom-Json`,
+      applyRollout,
+      '$submission.packageDeliveryOptions | ConvertTo-Json -Depth 20 -Compress',
+    ].join('\n');
+    const output = execFileSync(
+      'pwsh',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return JSON.parse(output.trim().split(/\r?\n/).at(-1));
+  };
+
+  for (const fixture of [{}, { packageDeliveryOptions: null }]) {
+    const options = run(fixture, 'staged', 5);
+    expect(options.packageRollout.isPackageRollout).toBe(true);
+    expect(options.packageRollout.packageRolloutPercentage).toBe(5);
+  }
+
+  const copied = {
+    packageDeliveryOptions: {
+      isMandatoryUpdate: true,
+      mandatoryUpdateEffectiveDate: '2030-01-02T03:04:05Z',
+      packageRollout: {
+        isPackageRollout: false,
+        packageRolloutPercentage: 0,
+        packageRolloutStatus: 'PackageRolloutNotStarted',
+        fallbackSubmissionId: '42',
+      },
+    },
+  };
+  const staged = run(copied, 'staged', 5);
+  expect(staged).toMatchObject({
+    isMandatoryUpdate: true,
+    mandatoryUpdateEffectiveDate: '2030-01-02T03:04:05Z',
+    packageRollout: {
+      isPackageRollout: true,
+      packageRolloutPercentage: 5,
+      packageRolloutStatus: 'PackageRolloutNotStarted',
+      fallbackSubmissionId: '42',
+    },
+  });
+
+  copied.packageDeliveryOptions.packageRollout = {
+    isPackageRollout: true,
+    packageRolloutPercentage: 25,
+    packageRolloutStatus: 'PackageRolloutInProgress',
+    fallbackSubmissionId: '41',
+  };
+  const immediate = run(copied, 'immediate', 5);
+  expect(immediate).toMatchObject({
+    isMandatoryUpdate: true,
+    mandatoryUpdateEffectiveDate: '2030-01-02T03:04:05Z',
+    packageRollout: {
+      isPackageRollout: false,
+      packageRolloutPercentage: 0,
+      packageRolloutStatus: 'PackageRolloutInProgress',
+      fallbackSubmissionId: '41',
+    },
+  });
+});
+
+test('Windows routing rejects invalid rollout policy before resolving a Store package', () => {
+  const workflow = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
+  const resolve = workflow.jobs.standalone.steps.find(step => step.id === 'version').run;
+  const routingStart = resolve.indexOf("$tag = (($lines | Where-Object { $_ -like 'tag=*' })");
+  expect(routingStart).toBeGreaterThan(-1);
+  const routing = resolve.slice(routingStart);
+  const run = (mode, percentage) => {
+    const command = `$ErrorActionPreference = 'Stop'\n$lines = @('tag=v1.3.0', 'version=1.3.0')\n${routing}`;
+    return execFileSync(
+      'pwsh',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+      {
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: '/dev/null',
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          GITHUB_REF: 'refs/heads/main',
+          RUN_MSSTORE: 'true',
+          RUN_MSSTORE_FLIGHT: 'false',
+          ROLLOUT_MODE: mode,
+          ROLLOUT_PERCENTAGE: percentage,
+          MSSTORE_FLIGHT_ID: '',
+        },
+        stdio: 'pipe',
+      },
+    );
+  };
+  expect(() => run('resume', '5')).toThrow();
+  for (const percentage of ['NaN', 'Infinity', '-1', '0', '100']) {
+    expect(() => run('staged', percentage)).toThrow();
+  }
+});

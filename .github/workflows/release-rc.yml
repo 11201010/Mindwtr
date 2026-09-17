@@ -214,6 +214,10 @@ jobs:
     runs-on: ubuntu-latest
     name: Android VersionCode Preflight
     timeout-minutes: 10
+    concurrency:
+      # A lookup opens an app-wide Play edit; serialize with rollout controls.
+      group: google-play-production
+      cancel-in-progress: false
     permissions:
       contents: read
     outputs:
