@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, logInfo } = vi.hoisted(() => ({ invoke: vi.fn(), logInfo: vi.fn() }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+vi.mock('./app-log', () => ({ logInfo }));
 
 import {
     createSystemCalendarEventResult,
@@ -11,7 +12,7 @@ import {
     getSystemCalendarPushTargets,
 } from './system-calendar';
 
-describe('Linux system calendar adapter', () => {
+describe('system calendar adapter', () => {
     beforeEach(() => {
         invoke.mockReset();
         (window as any).__TAURI_INTERNALS__ = {};
@@ -62,5 +63,47 @@ describe('Linux system calendar adapter', () => {
         });
         expect(invoke).toHaveBeenCalledWith('get_linux_writable_calendars');
         expect(invoke).toHaveBeenCalledWith('create_linux_calendar_event', expect.any(Object));
+    });
+
+    it('logs privacy-safe aggregate date and color diagnostics for macOS reads', async () => {
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mindwtr macOS' });
+        invoke.mockResolvedValue({
+            permission: 'granted',
+            calendars: [
+                { id: 'system:private-calendar', name: 'Private calendar', url: 'system://private-calendar', enabled: true },
+                { id: 'system:colored-calendar', name: 'Colored calendar', url: 'system://colored-calendar', enabled: true, feedColor: '#123456' },
+            ],
+            events: [{
+                id: 'private-event',
+                sourceId: 'system:private-calendar',
+                title: 'Private appointment',
+                start: '2026-09-20T12:00:00.000Z',
+                end: '2026-09-21T12:00:00.000Z',
+                allDay: true,
+            }],
+        });
+
+        await fetchSystemCalendarEvents(
+            new Date('2026-09-01T00:00:00.000Z'),
+            new Date('2026-10-01T00:00:00.000Z'),
+        );
+
+        expect(logInfo).toHaveBeenCalledWith('Calendar date and color diagnostic snapshot', {
+            scope: 'calendar',
+            extra: expect.objectContaining({
+                releaseCheck: 'v1.3.1/calendar-date-color-diagnostics',
+                platform: 'macos',
+                calendarCount: '2',
+                eventCount: '1',
+                allDayCount: '1',
+                timedCount: '0',
+                nativeColorCount: '1',
+                fallbackColorCount: '1',
+            }),
+        });
+        expect(JSON.stringify(logInfo.mock.calls)).not.toContain('Private appointment');
+        expect(JSON.stringify(logInfo.mock.calls)).not.toContain('Private calendar');
+        expect(JSON.stringify(logInfo.mock.calls)).not.toContain('private-event');
     });
 });

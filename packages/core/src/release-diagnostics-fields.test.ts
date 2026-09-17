@@ -14,6 +14,10 @@ import { sanitizeLogContext } from './log-sanitize';
  */
 const RELEASE_CHECK_FIELD_NAMES = [
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.
+    // calendar-date-color-diagnostics uses only aggregate counts; no dates, names, ids, or colors.
+    'calendarCount', 'eventCount', 'allDayCount', 'timedCount',
+    'allDayNonMidnightCount', 'localDayAheadCount', 'localDayBehindCount',
+    'nativeColorCount', 'fallbackColorCount',
     // someday-section-move reuses releaseCheck, count, and operation below.
     // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
     // mcp-core-log-stderr: count of the first event actually forwarded.

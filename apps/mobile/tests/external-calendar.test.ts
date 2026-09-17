@@ -12,6 +12,7 @@ const {
     mockOpenEventInCalendarAsync,
     mockPlatform,
     mockGetAllCalendarSyncEntries,
+    mockLogInfo,
 } = vi.hoisted(() => ({
     mockGetItem: vi.fn<(key: string) => Promise<string | null>>(async () => null),
     mockSetItem: vi.fn<(key: string, value: string) => Promise<void>>(async () => {}),
@@ -38,7 +39,10 @@ const {
     mockOpenEventInCalendarAsync: vi.fn(async () => ({ action: 'done' })),
     mockPlatform: { OS: 'android' },
     mockGetAllCalendarSyncEntries: vi.fn(async () => [] as { calendarId: string; calendarEventId: string }[]),
+    mockLogInfo: vi.fn(async () => null),
 }));
+
+vi.mock('@/lib/app-log', () => ({ logInfo: mockLogInfo }));
 
 vi.mock('@/lib/storage-adapter', () => ({
     getAllCalendarSyncEntries: mockGetAllCalendarSyncEntries,
@@ -468,6 +472,17 @@ describe('fetchExternalCalendarEvents', () => {
         const systemCalendar = result.calendars.find((calendar) => calendar.id === 'system:google-primary');
         expect(systemCalendar?.feedColor).toBe('#123456');
         expect(systemCalendar?.color).toBeUndefined();
+        expect(mockLogInfo).toHaveBeenCalledWith('Calendar date and color diagnostic snapshot', {
+            scope: 'calendar',
+            extra: expect.objectContaining({
+                releaseCheck: 'v1.3.1/calendar-date-color-diagnostics',
+                platform: 'android',
+                calendarCount: '1',
+                eventCount: '0',
+                nativeColorCount: '1',
+                fallbackColorCount: '0',
+            }),
+        });
     });
 
     it('opens native device calendar events in the calendar app', async () => {

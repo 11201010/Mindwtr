@@ -1,4 +1,5 @@
 import { parseIcs, type ExternalCalendarEvent, type ExternalCalendarSubscription } from '@mindwtr/core';
+import { logInfo } from './app-log';
 import { isTauriRuntime } from './runtime';
 import { reportError } from './report-error';
 import { invokeNative } from './tauri-invoke';
@@ -65,6 +66,50 @@ const normalizePermissionStatus = (value: unknown): SystemCalendarPermissionStat
     return 'denied';
 };
 
+const calendarReadDiagnosticCounts = (
+    calendars: ExternalCalendarSubscription[],
+    events: ExternalCalendarEvent[],
+): Record<string, string> => {
+    let allDayCount = 0;
+    let allDayNonMidnightCount = 0;
+    let localDayAheadCount = 0;
+    let localDayBehindCount = 0;
+
+    for (const event of events) {
+        if (event.allDay) allDayCount += 1;
+        const start = new Date(event.start);
+        if (!Number.isFinite(start.getTime())) continue;
+        if (event.allDay && (
+            start.getHours() !== 0
+            || start.getMinutes() !== 0
+            || start.getSeconds() !== 0
+            || start.getMilliseconds() !== 0
+        )) {
+            allDayNonMidnightCount += 1;
+        }
+        const localDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+        const utcDay = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+        if (localDay > utcDay) localDayAheadCount += 1;
+        else if (localDay < utcDay) localDayBehindCount += 1;
+    }
+
+    const nativeColorCount = calendars.filter((calendar) => (
+        typeof calendar.feedColor === 'string' && calendar.feedColor.trim().length > 0
+    )).length;
+
+    return {
+        calendarCount: String(calendars.length),
+        eventCount: String(events.length),
+        allDayCount: String(allDayCount),
+        timedCount: String(events.length - allDayCount),
+        allDayNonMidnightCount: String(allDayNonMidnightCount),
+        localDayAheadCount: String(localDayAheadCount),
+        localDayBehindCount: String(localDayBehindCount),
+        nativeColorCount: String(nativeColorCount),
+        fallbackColorCount: String(calendars.length - nativeColorCount),
+    };
+};
+
 export type SystemCalendarPlatform = 'macos' | 'linux';
 
 export const getSystemCalendarPlatform = (): SystemCalendarPlatform | null => {
@@ -125,11 +170,20 @@ export async function fetchSystemCalendarEvents(rangeStart: Date, rangeEnd: Date
                     : []
             ))
             : (payload as SystemCalendarReadResult).events;
-        return {
+        const result = {
             permission: normalizePermissionStatus(payload?.permission),
             calendars: Array.isArray(payload?.calendars) ? payload.calendars : [],
             events: Array.isArray(events) ? events : [],
         };
+        void logInfo('Calendar date and color diagnostic snapshot', {
+            scope: 'calendar',
+            extra: {
+                releaseCheck: 'v1.3.1/calendar-date-color-diagnostics',
+                platform,
+                ...calendarReadDiagnosticCounts(result.calendars, result.events),
+            },
+        });
+        return result;
     } catch (error) {
         reportError('Failed to read system calendar events', error);
         return {
