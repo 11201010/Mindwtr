@@ -167,17 +167,17 @@ enum ApplePccEvaluationEngine {
                     guard try await model.supportsLocale(locale) else {
                         return .unavailable(backend, reason: "locale_unsupported")
                     }
+                    return ApplePccEvaluationCapability(
+                        available: true,
+                        backend: backend,
+                        reason: nil,
+                        contextSize: try await model.contextSize
+                    )
                 } catch let error as PrivateCloudComputeLanguageModel.Error {
                     return .unavailable(backend, reason: outcome(for: error))
                 } catch {
                     return .unavailable(backend, reason: "unknown")
                 }
-                return ApplePccEvaluationCapability(
-                    available: true,
-                    backend: backend,
-                    reason: nil,
-                    contextSize: model.contextSize
-                )
             }
             return .unavailable(backend, reason: "unsupported_os")
         }
@@ -260,7 +260,7 @@ enum ApplePccEvaluationEngine {
                     return .stopped("locale_unsupported")
                 case .timeout:
                     return .stopped("timeout")
-                @unknown default:
+                default:
                     return .stopped("unknown")
                 }
             }
