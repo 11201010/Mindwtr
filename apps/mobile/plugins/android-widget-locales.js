@@ -4,6 +4,7 @@ const compactWidgetLocales = {
   en: ['Compact', 'A simple focus list with quick capture'],
   ar: ['مختصر', 'قائمة تركيز بسيطة مع إضافة سريعة'],
   cs: ['Kompaktní', 'Jednoduchý seznam zaměření s rychlým přidáním'],
+  da: ['Kompakt', 'En enkel fokusliste med hurtig registrering'],
   de: ['Kompakt', 'Eine einfache Fokusliste mit Schnellerfassung'],
   es: ['Compacto', 'Una lista de enfoque sencilla con captura rápida'],
   fa: ['فشرده', 'فهرست تمرکز ساده با ثبت سریع'],

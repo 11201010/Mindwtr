@@ -66,7 +66,7 @@ export type LocaleDescriptor =
     // load time), so it is always an 'all' commitment.
     | (LocaleDescriptorCommon & { mode: 'full'; translatedKeyFloor: 'all' })
     // A partial dictionary merged onto the English base at load time; missing keys fall back
-    // to English. Usually a count, but fa and sv are maintained at full parity and are held
+    // to English. Usually a count, but da, fa, and sv are maintained at full parity and are held
     // to it — 'mode' is about how the dictionary loads, the floor is about what we promise.
     | (LocaleDescriptorCommon & { mode: 'overrides'; translatedKeyFloor: TranslationCommitment });
 
@@ -331,6 +331,16 @@ export const LOCALES = {
         nonLatin: false,
         // Complete translation. mode stays 'overrides' (not 'full') to mirror fa/ar's shape;
         // the commitment is full parity either way.
+        translatedKeyFloor: 'all',
+    },
+    da: {
+        loadSync: () => require('./locales/da') as typeof import('./locales/da'),
+        loadAsync: () => import('./locales/da'),
+        file: 'da',
+        export: 'daOverrides',
+        mode: 'overrides',
+        native: 'Dansk',
+        nonLatin: false,
         translatedKeyFloor: 'all',
     },
 } as const satisfies Record<string, LocaleDescriptor>;

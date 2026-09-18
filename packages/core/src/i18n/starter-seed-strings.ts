@@ -4,7 +4,7 @@
 //
 // Every `starter.*` string, per language, already merged onto English the way
 // i18n-loader.ts merges an 'overrides' locale. getting-started-seed.ts reads these
-// ~39 keys instead of loading all 22 locale dictionaries, because it sits on
+// ~39 keys instead of loading all 23 locale dictionaries, because it sits on
 // every platform's cold path (store.ts -> store-settings.ts -> here).
 import type { Language } from './i18n-types';
 
@@ -910,5 +910,46 @@ export const STARTER_SEED_STRINGS: Record<Language, Record<string, string>> = {
         "starter.weeklyReview.check3": "Välj de närmaste uppgifterna och låt resten vänta",
         "starter.weeklyReview.desc": "En kort veckovis städning håller dina listor pålitliga.",
         "starter.weeklyReview.title": "Kör din första veckogenomgång",
+    },
+    "da": {
+        "starter.focus.check1": "Åbn fokus",
+        "starter.focus.check2": "Brug stjernen til at vælge dine topopgaver",
+        "starter.focus.check3": "Udskyd en opgave for at skjule den, indtil du har brug for den",
+        "starter.focus.desc": "Vælg de få ting, du rent faktisk vil gøre i dag.",
+        "starter.focus.title": "Stjerne op til 3 opgaver til dagens fokus",
+        "starter.import.check1": "Åbn Indstillinger → Data",
+        "starter.import.check2": "Importer Todoist, DGT GTD, OmniFocus eller en sikkerhedskopi",
+        "starter.import.check3": "Gennemgå importerede elementer i Indbakke",
+        "starter.import.desc": "Inddrag eksisterende opgaver, før du omorganiserer dem i Mindwtr.",
+        "starter.import.title": "Importer opgaver fra en anden app",
+        "starter.processInbox.check1": "Åbn Indbakke",
+        "starter.processInbox.check2": "Tryk på Behandl indbakken",
+        "starter.processInbox.check3": "Beslut det næste trin for en prøveemne, eller parker den til senere",
+        "starter.processInbox.desc": "Gør en registreret tanke til et lille, konkret skridt.",
+        "starter.processInbox.title": "Start her: behandle dit første indbakkeelement",
+        "starter.projectNotes": "Disse kom-i-gang-opgaver er valgfrie. Slet dette projekt når som helst, når Mindwtr føler sig sat op.",
+        "starter.projectTitle": "Kom godt i gang",
+        "starter.quickCapture.check1": "Tryk på registreringsknappen",
+        "starter.quickCapture.check2": "Prøv: Ring til Alex @phone /due:tomorrow",
+        "starter.quickCapture.check3": "Giv kun datoer til ting med rigtige deadlines",
+        "starter.quickCapture.desc": "Skriv en tanke og tilføj detaljer direkte i teksten - ingen formularer er nødvendige.",
+        "starter.quickCapture.title": "Registrér en opgave på én linje",
+        "starter.sampleBuyMilk": "Køb mælk",
+        "starter.sampleReplySam": "Svar til Sam",
+        "starter.simplify.check1": "Åbn Indstillinger → GTD → Opgaveredigeringslayout",
+        "starter.simplify.check2": "Skjul de felter, du aldrig bruger",
+        "starter.simplify.check3": "Bring dem tilbage når som helst - skjul sletter aldrig data",
+        "starter.simplify.desc": "Foretrækker du en simpel liste? Trim opgaveeditoren ned til netop de felter, du har brug for.",
+        "starter.simplify.title": "Gør Mindwtr til din: skjul det, du ikke bruger",
+        "starter.sync.check1": "Åbn Indstillinger → Synkronisering",
+        "starter.sync.check2": "Vælg Dropbox, iCloud, WebDAV, Filsynkronisering eller selvhostet",
+        "starter.sync.check3": "Kør Test forbindelse, når den er tilgængelig, og derefter Synkroniser nu",
+        "starter.sync.desc": "Vælg en synkroniseringsmetode, når computer og mobil skal dele data.",
+        "starter.sync.title": "Konfigurer synkronisering på tværs af dine enheder",
+        "starter.weeklyReview.check1": "Åbn Gennemgang",
+        "starter.weeklyReview.check2": "Tøm din indbakke",
+        "starter.weeklyReview.check3": "Vælg de næste par opgaver, og lad resten vente",
+        "starter.weeklyReview.desc": "En kort ugentlig oprydning holder dine lister værd at stole på.",
+        "starter.weeklyReview.title": "Gennemfør din første ugentlige gennemgang",
     },
 };

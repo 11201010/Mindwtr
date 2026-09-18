@@ -4,6 +4,7 @@ Changes collected since the latest stable release.
 
 ## Full Change List
 
+- Mindwtr is now fully available in Danish, bringing the app to 23 language options across desktop and mobile.
 - Task area pickers on desktop and mobile follow the custom area order from Settings, including filtered search results (#1217).
 - Mobile task Preview keeps the checklist input above the keyboard while typing and adding items (#1218).
 - Android: tapping the blank background of a home-screen widget, the space below the last row, a section heading, or the "nothing here" message now opens Focus, whichever list the widget shows. The widget title still opens the list it displays, and the chevron still opens the list chooser. (#1173)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { arOverrides } from './locales/ar';
 import { csOverrides } from './locales/cs';
+import { daOverrides } from './locales/da';
 import { deOverrides } from './locales/de';
 import { en } from './locales/en';
 import { esOverrides } from './locales/es';
@@ -41,14 +42,14 @@ import { LOCALES, isEnglishResidueChecked, isMixedEnglishChecked, type Locale } 
 // an independent list of the same locale set and is now derived from LOCALES below.
 const translationsByLocale: Record<Locale, Record<string, string>> = {
     zh: zhHans, 'zh-Hant': zhHant,
-    ar: arOverrides, cs: csOverrides, de: deOverrides, es: esOverrides, fa: faOverrides, fr: frOverrides,
+    ar: arOverrides, cs: csOverrides, da: daOverrides, de: deOverrides, es: esOverrides, fa: faOverrides, fr: frOverrides,
     hi: hiOverrides, hu: huOverrides, it: itOverrides, ja: jaOverrides, ko: koOverrides, nl: nlOverrides,
     pl: plOverrides, pt: ptOverrides, ru: ruOverrides, sv: svOverrides, tr: trOverrides, uk: ukOverrides, vi: viOverrides,
 };
 
 const englishKeyCount = Object.keys(en).length;
 const locales = Object.entries(LOCALES) as Array<[Locale, (typeof LOCALES)[Locale]]>;
-// Full parity is the 'all' commitment, not the load mode: fa and sv load as 'overrides' but
+// Full parity is the 'all' commitment, not the load mode: da, fa, and sv load as 'overrides' but
 // are maintained at every key (see i18n-locales.ts).
 const fullParityLocales = locales.filter(([, descriptor]) => descriptor.translatedKeyFloor === 'all');
 const countFloorLocales = locales.filter(([, descriptor]) => typeof descriptor.translatedKeyFloor === 'number');

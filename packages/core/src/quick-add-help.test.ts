@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatQuickAddHelp } from './quick-add';
 import { csOverrides } from './i18n/locales/cs';
+import { daOverrides } from './i18n/locales/da';
 import { deOverrides } from './i18n/locales/de';
 import { en } from './i18n/locales/en';
 import { esOverrides } from './i18n/locales/es';
@@ -23,7 +24,7 @@ import { zhHant } from './i18n/locales/zh-Hant';
 // literal-ish pattern, so it has to be proven against each translation rather
 // than English alone.
 const HELP_BY_LOCALE: Record<string, Record<string, string>> = {
-    en, cs: csOverrides, de: deOverrides, es: esOverrides, fa: faOverrides, fr: frOverrides,
+    en, cs: csOverrides, da: daOverrides, de: deOverrides, es: esOverrides, fa: faOverrides, fr: frOverrides,
     hu: huOverrides, it: itOverrides, ja: jaOverrides, ko: koOverrides, nl: nlOverrides, pl: plOverrides,
     pt: ptOverrides, sv: svOverrides, tr: trOverrides, vi: viOverrides,
     zh: zhHans, 'zh-Hant': zhHant,
