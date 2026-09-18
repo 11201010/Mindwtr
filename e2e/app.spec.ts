@@ -65,6 +65,7 @@ test('restores a deleted task from trash', async ({ page }) => {
     await deleteInboxTask(page, title);
 
     const trashNav = page.locator('[data-sidebar-item][data-view="trash"]');
+    await page.getByRole('button', { name: 'More', exact: true }).click();
     await trashNav.click();
     await expect(trashNav).toHaveAttribute('aria-current', 'page');
 
@@ -88,6 +89,7 @@ test('filters trashed tasks by search query', async ({ page }) => {
     await deleteInboxTask(page, 'Trash Keep Beta');
 
     const trashNav = page.locator('[data-sidebar-item][data-view="trash"]');
+    await page.getByRole('button', { name: 'More', exact: true }).click();
     await trashNav.click();
     await expect(trashNav).toHaveAttribute('aria-current', 'page');
 

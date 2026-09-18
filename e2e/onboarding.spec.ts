@@ -43,7 +43,7 @@ test('Getting Started opens real capture, Inbox processing, and Focus', async ({
     await page.reload();
     await expect(page.getByRole('button', { name: 'Help: Inbox', exact: true })).toHaveCount(0);
     await page.locator('[data-sidebar-item][data-view="projects"]').click();
-    await page.getByRole('button', { name: /Drag Add to focus Getting Started/ }).click();
+    await page.locator('[data-project-navigation-item]').filter({ hasText: 'Getting Started' }).click();
     await actions.getByRole('button', { name: 'Open Focus', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     await expect(page.getByRole('complementary', { name: 'Help: Focus' })).toHaveCount(0);

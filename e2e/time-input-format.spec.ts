@@ -60,6 +60,7 @@ for (const locale of ['en-US', 'en-GB']) {
             await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
 
             await page.goto('/?view=settings');
+            await page.locator('[data-settings-section="regionalFormats"]').click();
             await page.locator('[data-settings-key="timeFormat"] select').selectOption('12h');
             await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('mindwtr-data')!).settings.timeFormat)).toBe('12h');
             await openEditor();

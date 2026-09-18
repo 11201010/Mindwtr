@@ -459,7 +459,7 @@ export function ArchiveView() {
     (listFilterCriteria.priority ?? []).forEach((priority) => {
         activeFilterChips.push({
             id: `priority:${priority}`,
-            label: priority === 'none' ? tFallback(t, 'filters.noPriority', 'No priority') : t(`priority.${priority}`),
+            label: priority === 'none' ? t('focus.group.noPriority') : t(`priority.${priority}`),
             onRemove: () => removeFilterChip(`priority:${priority}`),
         });
     });

@@ -1083,7 +1083,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         activeFilterChips.push({
             id: `priority:${priority}`,
             label: priority === 'none'
-                ? resolveText('filters.noPriority', 'No priority')
+                ? t('focus.group.noPriority')
                 : t(`priority.${priority}`),
             onRemove: () => removeFilterChip(`priority:${priority}`),
         });

@@ -549,7 +549,7 @@ export function BoardView() {
     (criteria.priority ?? []).forEach((priority) => {
         activeFilterChips.push({
             id: `priority:${priority}`,
-            label: priority === 'none' ? resolveText('filters.noPriority', 'No priority') : t(`priority.${priority}`),
+            label: priority === 'none' ? t('focus.group.noPriority') : t(`priority.${priority}`),
             isAdvanced: true,
             onRemove: () => removeCriteriaValue('priority', priority),
         });
