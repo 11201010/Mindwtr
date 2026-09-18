@@ -636,6 +636,9 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
           NODE_ENV: production
           RCT_NO_LAUNCH_PACKAGER: "1"
+          # The smoke launch below runs a Release build; without this every CI run
+          # counted as a new iOS install (and now a new profile) in analytics.
+          ANALYTICS_HEARTBEAT_DISABLED: "1"
         run: |
           set -euo pipefail
           ARTIFACTS_DIR="$RUNNER_TEMP/ios27-artifacts"
