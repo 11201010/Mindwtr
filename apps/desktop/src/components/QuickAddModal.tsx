@@ -49,6 +49,7 @@ import { MAX_AUDIO_RECORDING_SECONDS } from '../lib/audio-capture-buffer';
 import { AudioCaptureError, startAudioCapture, type AudioCaptureSession } from '../lib/audio-capture';
 import { processAudioCapture, resolveSpeechCapture, type SpeechToTextResult } from '../lib/speech-to-text';
 import { dispatchNavigateEvent } from '../lib/navigation-events';
+import { followCreatedTaskAfterEdit, resolveViewForTask } from '../lib/created-task-follow';
 import { Dialog, DialogBody } from './ui/Dialog';
 import { useUiStore } from '../store/ui-store';
 import {
@@ -911,30 +912,14 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
     const openCreatedTaskForEditing = useCallback((taskId: string, props: Partial<Task>) => {
         setHighlightTask(taskId);
         setEditingTaskId(taskId);
-        if (props.projectId) {
+        const view = resolveViewForTask({ status: props.status ?? 'inbox', projectId: props.projectId });
+        if (view === 'projects' && props.projectId) {
             setProjectView({ selectedProjectId: props.projectId });
-            dispatchNavigateEvent('projects');
-            return;
         }
-        switch (props.status) {
-            case 'next':
-                dispatchNavigateEvent('next');
-                return;
-            case 'waiting':
-                dispatchNavigateEvent('waiting');
-                return;
-            case 'someday':
-                dispatchNavigateEvent('someday');
-                return;
-            case 'reference':
-                dispatchNavigateEvent('reference');
-                return;
-            case 'done':
-                dispatchNavigateEvent('done');
-                return;
-            default:
-                dispatchNavigateEvent('inbox');
-        }
+        dispatchNavigateEvent(view);
+        // The editor may file the task elsewhere (a status, a project); follow it
+        // there instead of leaving the user on a list it just left (#1243).
+        followCreatedTaskAfterEdit(taskId, view);
     }, [setEditingTaskId, setHighlightTask, setProjectView]);
 
     const buildQuickAddCaptureInput = useCallback(({
