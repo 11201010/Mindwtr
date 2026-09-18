@@ -323,6 +323,21 @@ const createTaskActionSpies = (): TaskActionSpies => ({
     setStatusSelected: vi.fn(),
 });
 
+const SidebarTraversalHarness = ({ historyHidden = true }: { historyHidden?: boolean }) => (
+    <>
+        <nav data-sidebar-nav>
+            <button type="button" data-sidebar-item data-view="inbox">Inbox</button>
+            <section data-sidebar-section>
+                <button type="button" data-sidebar-section-toggle>More</button>
+                <div hidden={historyHidden}>
+                    <button type="button" data-sidebar-item data-view="history" data-active-views="done archived">History</button>
+                </div>
+            </section>
+        </nav>
+        <main data-main-content tabIndex={-1}>Main content</main>
+    </>
+);
+
 describe('KeybindingProvider (vim)', () => {
     beforeEach(() => {
         useUiStore.setState({ editingTaskId: null });
@@ -354,6 +369,78 @@ describe('KeybindingProvider (vim)', () => {
 
         fireEvent.keyDown(window, { key: '?' });
         await waitFor(() => expect(queryByRole('dialog')).toBeNull());
+    });
+
+    it.each([
+        { style: 'standard' as const, next: { key: 'ArrowDown' }, previous: { key: 'ArrowUp' } },
+        { style: 'vim' as const, next: { key: 'j' }, previous: { key: 'k' } },
+        { style: 'emacs' as const, next: { key: 'n', ctrlKey: true }, previous: { key: 'p', ctrlKey: true } },
+    ])('moves $style sidebar focus through the collapsed section toggle without entering hidden items', ({ style, next, previous }) => {
+        useTaskStore.setState((state) => ({
+            settings: { ...state.settings, keybindingStyle: style },
+        }));
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="inbox" onNavigate={vi.fn()}>
+                    <SidebarTraversalHarness />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        const inbox = document.querySelector<HTMLElement>('[data-view="inbox"]')!;
+        const more = document.querySelector<HTMLElement>('[data-sidebar-section-toggle]')!;
+        const history = document.querySelector<HTMLElement>('[data-view="history"]')!;
+        inbox.focus();
+
+        fireEvent.keyDown(window, next);
+        expect(more).toHaveFocus();
+        expect(history).not.toHaveFocus();
+
+        fireEvent.keyDown(window, next);
+        expect(more).toHaveFocus();
+
+        fireEvent.keyDown(window, previous);
+        expect(inbox).toHaveFocus();
+    });
+
+    it.each([
+        { style: 'standard' as const, key: 'ArrowLeft' },
+        { style: 'vim' as const, key: 'h' },
+    ])('returns $style focus from a hidden current view to its collapsed section toggle', ({ style, key }) => {
+        useTaskStore.setState((state) => ({
+            settings: { ...state.settings, keybindingStyle: style },
+        }));
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView="history" onNavigate={vi.fn()}>
+                    <SidebarTraversalHarness />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        document.querySelector<HTMLElement>('[data-main-content]')!.focus();
+        fireEvent.keyDown(window, { key });
+
+        expect(document.querySelector('[data-sidebar-section-toggle]')).toHaveFocus();
+        expect(document.querySelector('[data-view="history"]')).not.toHaveFocus();
+    });
+
+    it.each(['done', 'archived'])('returns focus to the visible History alias from the %s view', (currentView) => {
+        useTaskStore.setState((state) => ({
+            settings: { ...state.settings, keybindingStyle: 'standard' },
+        }));
+        render(
+            <LanguageProvider>
+                <KeybindingProvider currentView={currentView} onNavigate={vi.fn()}>
+                    <SidebarTraversalHarness historyHidden={false} />
+                </KeybindingProvider>
+            </LanguageProvider>
+        );
+
+        document.querySelector<HTMLElement>('[data-main-content]')!.focus();
+        fireEvent.keyDown(window, { key: 'ArrowLeft' });
+
+        expect(document.querySelector('[data-view="history"]')).toHaveFocus();
     });
 
     it('moves selection with j/k', async () => {

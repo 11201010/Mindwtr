@@ -122,13 +122,25 @@ function hasProjectNestedControlFocus(target: EventTarget | null): boolean {
     return candidate?.closest('[data-project-navigation-item] [data-project-selection-ignore="true"]') !== null;
 }
 
+const SIDEBAR_FOCUS_TARGET_SELECTOR = '[data-sidebar-section-toggle], [data-sidebar-item]';
+
+function isAvailableSidebarFocusTarget(item: HTMLElement): boolean {
+    if (item.matches(':disabled, [aria-disabled="true"]')) return false;
+    return item.closest('[hidden], [aria-hidden="true"], [inert]') === null;
+}
+
+function getSidebarFocusTargets(root: ParentNode): HTMLElement[] {
+    return Array.from(root.querySelectorAll<HTMLElement>(SIDEBAR_FOCUS_TARGET_SELECTOR))
+        .filter(isAvailableSidebarFocusTarget);
+}
+
 function moveSidebarFocus(target: EventTarget | null, direction: 'next' | 'prev'): boolean {
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const origin = active ?? (target instanceof HTMLElement ? target : null);
     if (!origin) return false;
     const sidebar = origin.closest('[data-sidebar-nav]');
     if (!sidebar) return false;
-    const items = Array.from(sidebar.querySelectorAll<HTMLElement>('[data-sidebar-item]'));
+    const items = getSidebarFocusTargets(sidebar);
     if (items.length === 0) return false;
     const currentIndex = active ? items.findIndex((item) => item === active) : -1;
     const nextIndex = currentIndex >= 0
@@ -143,9 +155,21 @@ function moveSidebarFocus(target: EventTarget | null, direction: 'next' | 'prev'
 }
 
 function focusSidebarCurrentView(view: string): boolean {
-    const items = Array.from(document.querySelectorAll<HTMLElement>('[data-sidebar-item]'));
-    if (items.length === 0) return false;
-    const match = items.find((item) => item.dataset.view === view) ?? items[0];
+    const currentItem = Array.from(document.querySelectorAll<HTMLElement>('[data-sidebar-item]'))
+        .find((item) => (
+            item.dataset.view === view
+            || item.dataset.activeViews?.split(/\s+/).includes(view) === true
+        ));
+    const visibleItems = getSidebarFocusTargets(document);
+    if (visibleItems.length === 0) return false;
+    const owningSectionToggle = currentItem
+        ?.closest('[data-sidebar-section]')
+        ?.querySelector<HTMLElement>('[data-sidebar-section-toggle]');
+    const match = currentItem && isAvailableSidebarFocusTarget(currentItem)
+        ? currentItem
+        : owningSectionToggle && isAvailableSidebarFocusTarget(owningSectionToggle)
+            ? owningSectionToggle
+            : visibleItems[0];
     match?.focus();
     return Boolean(match);
 }
@@ -745,10 +769,18 @@ export function KeybindingProvider({
             if (e.ctrlKey && !e.metaKey && !e.altKey) {
                 switch (e.key) {
                     case 'n':
+                        if (moveSidebarFocus(e.target, 'next')) {
+                            e.preventDefault();
+                            break;
+                        }
                         e.preventDefault();
                         navigationScope?.selectNext();
                         break;
                     case 'p':
+                        if (moveSidebarFocus(e.target, 'prev')) {
+                            e.preventDefault();
+                            break;
+                        }
                         e.preventDefault();
                         navigationScope?.selectPrev();
                         break;
@@ -811,9 +843,12 @@ export function KeybindingProvider({
                 }
                 return;
             }
-            // An open menu owns the keyboard: don't fire list shortcuts (j/k,
-            // e, x, dd…) while focus sits on a menu item (#848).
-            if (e.target instanceof HTMLElement && e.target.closest('[role="menu"]')) return;
+            // Open menus and listboxes own the keyboard: don't fire list
+            // shortcuts (j/k, e, x, dd…) while focus sits in a popup (#848).
+            if (
+                e.target instanceof HTMLElement
+                && e.target.closest('[role="menu"], [role="listbox"]')
+            ) return;
             // Same for modal dialogs: arrows and app shortcuts must not reach
             // the list behind global search / quick add / prompts.
             if (hasModalDialogOpen()) return;

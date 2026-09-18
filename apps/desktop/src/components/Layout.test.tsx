@@ -319,8 +319,10 @@ describe('Layout Obsidian nav visibility', () => {
             }));
         });
 
-        const { getByRole } = renderLayout();
+        const { getByRole, queryByRole } = renderLayout();
 
+        expect(queryByRole('button', { name: 'Obsidian' })).not.toBeInTheDocument();
+        fireEvent.click(getByRole('button', { name: 'More' }));
         expect(getByRole('button', { name: 'Obsidian' })).toBeInTheDocument();
     });
 });

@@ -887,13 +887,14 @@ export function Layout({
                             const isSectionCollapsed = !isCollapsed && collapsedSections.has(section.key);
                             const sectionId = `sidebar-section-${section.key}`;
                             return (
-                            <div key={section.key} className="space-y-1">
+                            <div key={section.key} className="space-y-1" data-sidebar-section>
                                 {!isCollapsed && (
                                     <button
                                         type="button"
                                         onClick={() => toggleSection(section.key)}
                                         aria-expanded={!isSectionCollapsed}
                                         aria-controls={sectionId}
+                                        data-sidebar-section-toggle
                                         className="group w-full flex h-7 items-center gap-1 rounded-md px-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-[0.16em] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 cursor-pointer"
                                     >
                                         <ChevronDown
@@ -905,7 +906,11 @@ export function Layout({
                                         <span>{section.label}</span>
                                     </button>
                                 )}
-                                <div id={sectionId} className={cn("space-y-1", isSectionCollapsed && "hidden")}>
+                                <div
+                                    id={sectionId}
+                                    hidden={isSectionCollapsed}
+                                    className={cn("space-y-1", isSectionCollapsed && "hidden")}
+                                >
                                 {section.items.map((item) => {
                                     const itemLabel = item.labelKey ? tFallback(t, item.labelKey, item.fallbackLabel ?? item.id) : (item.fallbackLabel ?? item.id);
                                     const isActiveItem = currentView === item.id || item.activeIds?.includes(currentView) === true;
@@ -938,6 +943,7 @@ export function Layout({
                                         onDrop={isDropTarget ? (event) => handleNavDrop(event, item.id) : undefined}
                                         data-sidebar-item
                                         data-view={item.id}
+                                        data-active-views={item.activeIds?.join(' ')}
                                         className={cn(
                                             "w-full flex items-center rounded-md text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-inset",
                                             itemWeightClass,
