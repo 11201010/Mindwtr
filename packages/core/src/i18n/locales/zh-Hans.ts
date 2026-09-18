@@ -1071,6 +1071,7 @@ export const zhHans: Record<string, string> = {
         'settings.languagePartlyTranslated': '部分翻译',
         'settings.videoTutorials': '视频教程',
         'settings.privacy': '隐私',
+        'settings.terms': '使用条款',
         'settings.mobile.appLock': '应用锁',
         'settings.mobile.appLockDesc': '打开 Mindwtr 或返回应用时需要设备锁验证。它保护应用界面，不加密设备上的数据库。',
         'appLock.title': 'Mindwtr 已锁定',

@@ -1129,6 +1129,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.languagePartlyTranslated': '一部のみ翻訳',
         'settings.videoTutorials': '動画チュートリアル',
         'settings.privacy': 'プライバシー',
+        'settings.terms': '利用規約',
         'settings.mobile.appLock': 'アプリロック',
         'settings.mobile.appLockDesc': 'Mindwtr を開くとき、またはアプリに戻るときに端末のロック解除を求めます。保護されるのは画面の表示だけで、端末内のデータベースそのものは保護の対象ではありません。',
         'appLock.title': 'Mindwtr はロックされています',

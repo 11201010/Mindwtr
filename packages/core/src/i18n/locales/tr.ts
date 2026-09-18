@@ -845,6 +845,7 @@ export const trOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Android\'de Material 3 renk belirteçlerini kullanma',
         'settings.selectLang': 'Tercih ettiğiniz dili seçin',
         'settings.privacy': 'Gizlilik',
+        'settings.terms': 'Kullanım Koşulları',
         'settings.mobile.appLock': 'Uygulama kilidi',
         'settings.mobile.appLockDesc': 'Mindwtr açılırken veya uygulamaya dönerken cihaz kilidini iste. Bu, cihazdaki veritabanını değil uygulama görünümünü korur.',
         'appLock.title': 'Mindwtr kilitli',

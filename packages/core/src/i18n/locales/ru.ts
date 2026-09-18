@@ -836,6 +836,7 @@ export const ruOverrides: Record<string, string> = {
         'settings.material3Theme': 'Материал 3 Тема',
         'settings.selectLang': 'Выберите предпочитаемый язык',
         'settings.privacy': 'Конфиденциальность',
+        'settings.terms': 'Условия использования',
         'settings.mobile.appLock': 'Блокировка приложения',
         'settings.mobile.appLockDesc': 'Требовать блокировку устройства при открытии Mindwtr или возврате в приложение. Это защищает экран приложения, а не базу данных на устройстве.',
         'appLock.title': 'Mindwtr заблокирован',

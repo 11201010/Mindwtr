@@ -991,6 +991,7 @@ export const frOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Utilisez les jetons de couleur Material 3 sur Android.',
         'settings.selectLang': 'Sélectionnez votre langue préférée',
         'settings.privacy': 'Confidentialité',
+        'settings.terms': 'Conditions d\'utilisation',
         'settings.mobile.appLock': 'Verrouillage de l’app',
         'settings.mobile.appLockDesc': 'Exiger le verrouillage de l’appareil à l’ouverture de Mindwtr ou au retour dans l’app. Cela protège la vue de l’app, pas la base de données sur l’appareil.',
         'appLock.title': 'Mindwtr est verrouillé',

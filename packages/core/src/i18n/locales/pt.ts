@@ -880,6 +880,7 @@ export const ptOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Use tokens de cores do Material 3 no Android',
         'settings.selectLang': 'Selecione seu idioma preferido',
         'settings.privacy': 'Privacidade',
+        'settings.terms': 'Termos de uso',
         'settings.mobile.appLock': 'Bloqueio do app',
         'settings.mobile.appLockDesc': 'Exija o bloqueio do dispositivo ao abrir o Mindwtr ou voltar ao app. Isso protege a visualização do app, não o banco de dados no dispositivo.',
         'appLock.title': 'Mindwtr está bloqueado',

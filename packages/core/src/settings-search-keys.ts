@@ -204,6 +204,7 @@ export const SETTINGS_SEARCH_PAGE_KEYS: Record<SettingsSearchPageId, readonly Se
         'documentation',
         'videoTutorials',
         'privacy',
+        'terms',
         'github',
         'sponsorProject',
         'license',

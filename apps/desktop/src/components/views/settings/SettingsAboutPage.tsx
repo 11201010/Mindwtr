@@ -14,6 +14,7 @@ type Labels = {
     documentation: string;
     videoTutorials: string;
     privacy: string;
+    terms: string;
     sponsorProject: string;
     checkForUpdates: string;
     checking: string;
@@ -175,7 +176,18 @@ export function SettingsAboutPage({
                         onClick={() => onOpenLink('https://mindwtr.app/privacy')}
                         className="text-primary hover:underline flex items-center gap-1"
                     >
-                        {t.privacy}
+                        mindwtr.app/privacy
+                        <ExternalLink className="w-3 h-3" />
+                    </button>
+                </div>
+                <div className="border-t border-border/50"></div>
+                <div data-settings-key="terms" className="flex justify-between items-center">
+                    <span className="text-muted-foreground">{t.terms}</span>
+                    <button
+                        onClick={() => onOpenLink('https://mindwtr.app/terms')}
+                        className="text-primary hover:underline flex items-center gap-1"
+                    >
+                        mindwtr.app/terms
                         <ExternalLink className="w-3 h-3" />
                     </button>
                 </div>
@@ -184,7 +196,7 @@ export function SettingsAboutPage({
                     <span className="text-muted-foreground">{t.github}</span>
                     <button
                         onClick={() => onOpenLink('https://github.com/dongdongbh/Mindwtr')}
-                        className="text-info hover:underline cursor-pointer flex items-center gap-1"
+                        className="text-primary hover:underline flex items-center gap-1"
                     >
                         github.com/dongdongbh/Mindwtr
                         <ExternalLink className="w-3 h-3" />
@@ -195,7 +207,7 @@ export function SettingsAboutPage({
                     <span className="text-muted-foreground">{t.sponsorProject}</span>
                     <button
                         onClick={() => onOpenLink('https://mindwtr.app/donate?src=app_about')}
-                        className="text-info hover:underline cursor-pointer flex items-center gap-1"
+                        className="text-primary hover:underline flex items-center gap-1"
                     >
                         mindwtr.app/donate
                         <ExternalLink className="w-3 h-3" />

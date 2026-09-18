@@ -1079,6 +1079,7 @@ export const huOverrides: Record<string, string> = {
     'settings.languagePartlyTranslated': 'Részben lefordítva',
     'settings.videoTutorials': 'Videós útmutatók',
     'settings.privacy': 'Adatvédelem',
+    'settings.terms': 'Felhasználási feltételek',
     'settings.mobile.appLock': 'Alkalmazászár',
     'settings.mobile.appLockDesc': 'Kérje az eszközzárat a Mindwtr megnyitásakor vagy az alkalmazáshoz való visszatéréskor. Ez az alkalmazás nézetét védi, nem az eszközön tárolt adatbázist.',
     'appLock.title': 'A Mindwtr zárolva van',

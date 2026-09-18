@@ -1051,6 +1051,7 @@ export const csOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Použít barevné tokeny Material 3 na Androidu',
         'settings.selectLang': 'Vyberte preferovaný jazyk',
         'settings.privacy': 'Soukromí',
+        'settings.terms': 'Podmínky použití',
         'settings.mobile.appLock': 'Zámek aplikace',
         'settings.mobile.appLockDesc': 'Vyžadovat zámek zařízení při otevření Mindwtr nebo návratu do aplikace. Chrání zobrazení aplikace, ne databázi v zařízení.',
         'appLock.title': 'Mindwtr je zamčený',

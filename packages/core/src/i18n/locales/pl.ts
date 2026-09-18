@@ -832,6 +832,7 @@ export const plOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Używaj kolorów Material 3 na Androidzie',
         'settings.selectLang': 'Wybierz preferowany język',
         'settings.privacy': 'Prywatność',
+        'settings.terms': 'Warunki korzystania',
         'settings.mobile.appLock': 'Blokada aplikacji',
         'settings.mobile.appLockDesc': 'Wymagaj blokady urządzenia podczas otwierania Mindwtr lub powrotu do aplikacji. Chroni to widok aplikacji, a nie bazę danych na urządzeniu.',
         'appLock.title': 'Mindwtr jest zablokowany',

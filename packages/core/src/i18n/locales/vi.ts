@@ -1086,6 +1086,7 @@ export const viOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Dùng token màu Material 3 trên Android',
         'settings.selectLang': 'Chọn ngôn ngữ ưa thích của bạn',
         'settings.privacy': 'Quyền riêng tư',
+        'settings.terms': 'Điều khoản sử dụng',
         'settings.mobile.appLock': 'Khóa ứng dụng',
         'settings.mobile.appLockDesc': 'Yêu cầu khóa thiết bị khi mở Mindwtr hoặc quay lại ứng dụng. Điều này bảo vệ chế độ xem ứng dụng, không phải cơ sở dữ liệu trên thiết bị.',
         'appLock.title': 'Mindwtr đã bị khóa',

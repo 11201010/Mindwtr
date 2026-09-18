@@ -1096,6 +1096,7 @@ export const koOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Android에서 Material 3 색상 토큰 사용',
         'settings.selectLang': '선호하는 언어를 선택하세요',
         'settings.privacy': '개인정보 보호',
+        'settings.terms': '이용약관',
         'settings.mobile.appLock': '앱 잠금',
         'settings.mobile.appLockDesc': 'Mindwtr를 열거나 앱으로 돌아올 때 기기 잠금을 요구합니다. 앱 화면만 보호하며 기기 안의 데이터베이스는 보호하지 않습니다.',
         'appLock.title': 'Mindwtr가 잠겨 있습니다',

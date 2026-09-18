@@ -1075,6 +1075,7 @@ export const ukOverrides: Record<string, string> = {
     "settings.languagePartlyTranslated": "Частково перекладено",
     "settings.videoTutorials": "Відеоуроки",
     "settings.privacy": "Конфіденційність",
+    "settings.terms": "Умови використання",
     "settings.mobile.appLock": "Блокування програми",
     "settings.mobile.appLockDesc": "Вимагати блокування пристрою під час відкриття Mindwtr або повернення до програми. Це захищає перегляд програми, а не базу даних на пристрої.",
     "appLock.title": "Mindwtr заблоковано",

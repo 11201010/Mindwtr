@@ -1123,6 +1123,7 @@ export const en: Record<string, string> = {
         'settings.languagePartlyTranslated': 'Partly translated',
         'settings.videoTutorials': 'Video tutorials',
         'settings.privacy': 'Privacy',
+        'settings.terms': 'Terms of Use',
         'settings.mobile.appLock': 'App lock',
         'settings.mobile.appLockDesc': 'Require your device lock when opening Mindwtr or returning to the app. This protects the app view, not the on-device database.',
         'appLock.title': 'Mindwtr is locked',

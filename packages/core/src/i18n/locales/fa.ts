@@ -1098,6 +1098,7 @@ export const faOverrides: Record<string, string> = {
         'settings.languagePartlyTranslated': 'ترجمهٔ ناقص',
         'settings.videoTutorials': 'آموزش‌های ویدیویی',
         'settings.privacy': 'حریم خصوصی',
+        'settings.terms': 'شرایط استفاده',
         'settings.mobile.appLock': 'قفل برنامه',
         'settings.mobile.appLockDesc': 'هنگام باز کردن Mindwtr یا بازگشت به برنامه، قفل دستگاه را الزامی کنید. این فقط نمای برنامه را محافظت می‌کند، نه پایگاه‌داده روی دستگاه.',
         'appLock.title': 'Mindwtr قفل است',

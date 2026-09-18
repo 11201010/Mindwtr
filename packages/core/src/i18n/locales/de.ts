@@ -883,6 +883,7 @@ export const deOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Material-3-Farben auf Android verwenden',
         'settings.selectLang': 'Bevorzugte Sprache auswählen',
         'settings.privacy': 'Datenschutz',
+        'settings.terms': 'Nutzungsbedingungen',
         'settings.mobile.appLock': 'App-Sperre',
         'settings.mobile.appLockDesc': 'Gerätesperre beim Öffnen von Mindwtr oder beim Zurückkehren zur App verlangen. Das schützt die App-Ansicht, nicht die Datenbank auf dem Gerät.',
         'appLock.title': 'Mindwtr ist gesperrt',

@@ -929,6 +929,7 @@ export const itOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'Usa i token di colore Material 3 su Android',
         'settings.selectLang': 'Seleziona la lingua preferita',
         'settings.privacy': 'Riservatezza',
+        'settings.terms': 'Termini di utilizzo',
         'settings.mobile.appLock': 'Blocco app',
         'settings.mobile.appLockDesc': 'Richiedi il blocco del dispositivo quando apri Mindwtr o torni nell’app. Protegge la vista dell’app, non il database sul dispositivo.',
         'appLock.title': 'Mindwtr è bloccata',

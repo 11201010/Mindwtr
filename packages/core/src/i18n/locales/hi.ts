@@ -835,6 +835,7 @@ export const hiOverrides: Record<string, string> = {
         'settings.material3ThemeDesc': 'एंड्रॉइड पर सामग्री 3 रंग टोकन का उपयोग करें',
         'settings.selectLang': 'अपनी पसंदीदा भाषा चुनें',
         'settings.privacy': 'गोपनीयता',
+        'settings.terms': 'उपयोग की शर्तें',
         'settings.mobile.appLock': 'ऐप लॉक',
         'settings.mobile.appLockDesc': 'Mindwtr खोलते समय या ऐप पर लौटते समय डिवाइस लॉक मांगें। यह ऐप दृश्य की सुरक्षा करता है, डिवाइस पर मौजूद डेटाबेस की नहीं।',
         'appLock.title': 'Mindwtr लॉक है',

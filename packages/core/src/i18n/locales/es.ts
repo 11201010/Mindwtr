@@ -1079,6 +1079,7 @@ export const esOverrides: Record<string, string> = {
 'settings.languagePartlyTranslated': "Traducido parcialmente",
 'settings.videoTutorials': "Videotutoriales",
 'settings.privacy': "Privacidad",
+'settings.terms': "Términos de uso",
 'settings.mobile.appLock': "Bloqueo de la app",
 'settings.mobile.appLockDesc': "Requiere el bloqueo del dispositivo al abrir Mindwtr o al volver a la app. Protege la vista de la app, no la base de datos del dispositivo.",
 'appLock.title': "Mindwtr está bloqueado",

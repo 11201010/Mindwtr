@@ -632,6 +632,7 @@ export const SETTINGS_LABEL_KEYS = [
     'documentation',
     'videoTutorials',
     'privacy',
+    'terms',
     'sponsorProject',
     'license',
     'feedback',

@@ -1114,6 +1114,7 @@ export const daOverrides: Record<string, string> = {
     'settings.languagePartlyTranslated': 'Delvis oversat',
     'settings.videoTutorials': 'Videovejledninger',
     'settings.privacy': 'Privatliv',
+    'settings.terms': 'Vilkår for brug',
     'settings.mobile.appLock': 'App lås',
     'settings.mobile.appLockDesc':
         'Kræv din enhedslås, når du åbner Mindwtr eller vender tilbage til appen. Dette beskytter appvisningen, ikke databasen på enheden.',

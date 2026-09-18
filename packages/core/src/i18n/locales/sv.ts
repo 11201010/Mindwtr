@@ -1098,6 +1098,7 @@ export const svOverrides: Record<string, string> = {
         'settings.languagePartlyTranslated': 'Delvis översatt',
         'settings.videoTutorials': 'Videohandledningar',
         'settings.privacy': 'Integritet',
+        'settings.terms': 'Användarvillkor',
         'settings.mobile.appLock': 'Applås',
         'settings.mobile.appLockDesc': 'Kräv enhetens lås när du öppnar Mindwtr eller återgår till appen. Det här skyddar appvyn, inte databasen på enheten.',
         'appLock.title': 'Mindwtr är låst',
