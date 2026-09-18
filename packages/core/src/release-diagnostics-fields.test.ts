@@ -47,6 +47,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'cardKind', 'exportMethod', 'failureStage', 'errorType', 'nativeCode',
     // file-sync-attachment-failure reuses errorType/nativeCode and stage/backend/operation/releaseCheck below.
     // linux-notification-delivery reuses releaseCheck/backend/outcome/errorType below.
+    // linux-notification-icon reuses releaseCheck/backend/outcome below.
     // android-system-bars reuses releaseCheck/backend/outcome below.
     // sandbox-workspace (desktop/mobile entry drain and immutable workspace bootstrap)
     'workspace', 'stage',

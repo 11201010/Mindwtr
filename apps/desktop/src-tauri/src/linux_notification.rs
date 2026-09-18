@@ -3,6 +3,7 @@ mod imp {
     use std::collections::HashMap;
     #[cfg(test)]
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::OnceLock;
     use std::time::Duration;
 
     use tokio::sync::Mutex;
@@ -13,6 +14,16 @@ mod imp {
     const NOTIFICATION_PATH: &str = "/org/freedesktop/Notifications";
     const NOTIFICATION_INTERFACE: &str = "org.freedesktop.Notifications";
     const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+    // Embed the pixels rather than relying on an installed icon theme or a resource path:
+    // an unintegrated AppImage must also have a logo. Decode this small PNG once.
+    fn notification_logo() -> Option<&'static tauri::image::Image<'static>> {
+        static LOGO: OnceLock<Option<tauri::image::Image<'static>>> = OnceLock::new();
+        LOGO.get_or_init(|| {
+            tauri::image::Image::from_bytes(include_bytes!("../icons/64x64.png")).ok()
+        })
+        .as_ref()
+    }
 
     #[derive(Clone)]
     struct NotificationEndpoint {
@@ -108,15 +119,45 @@ mod imp {
             .map_err(|error| classify_zbus_error(&error))?;
 
             let actions: Vec<&str> = Vec::new();
-            let hints: HashMap<&str, Value<'_>> = HashMap::new();
+            let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
+            // Tauri's visible Linux launcher is Mindwtr.desktop; its theme icon is lowercase.
+            hints.insert("desktop-entry", Value::from("Mindwtr"));
+            let logo = notification_logo();
+            if let Some(logo) = logo {
+                // Freedesktop image-data: width, height, rowstride, alpha, bits, channels, RGBA.
+                hints.insert(
+                    "image-data",
+                    Value::from((
+                        logo.width() as i32,
+                        logo.height() as i32,
+                        logo.width() as i32 * 4,
+                        true,
+                        8i32,
+                        4i32,
+                        logo.rgba(),
+                    )),
+                );
+            }
             let body = body.unwrap_or_default();
             let _: u32 = proxy
                 .call(
                     "Notify",
-                    &("Mindwtr", 0u32, "", title, body, actions, hints, -1i32),
+                    &(
+                        "Mindwtr", 0u32, "mindwtr", title, body, actions, hints, -1i32,
+                    ),
                 )
                 .await
                 .map_err(|error| classify_zbus_error(&error))?;
+
+            // A broken optional logo must never prevent the reminder from being delivered.
+            let outcome = if logo.is_some() {
+                "bundled"
+            } else {
+                "theme-fallback"
+            };
+            log::info!(
+                "Linux notification icon submitted extra.releaseCheck=v1.3.1/linux-notification-icon backend=linux-dbus outcome={outcome}"
+            );
 
             Ok(())
         }
@@ -195,6 +236,13 @@ mod imp {
         struct MockNotifications {
             behavior: MockBehavior,
             calls: Arc<AtomicUsize>,
+            received: Arc<Mutex<Vec<ReceivedNotification>>>,
+        }
+
+        #[derive(Debug)]
+        struct ReceivedNotification {
+            app_icon: String,
+            hints: HashMap<String, OwnedValue>,
         }
 
         #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -203,14 +251,18 @@ mod imp {
                 &self,
                 _app_name: &str,
                 _replaces_id: u32,
-                _app_icon: &str,
+                app_icon: &str,
                 _summary: &str,
                 _body: &str,
                 _actions: Vec<String>,
-                _hints: HashMap<String, OwnedValue>,
+                hints: HashMap<String, OwnedValue>,
                 _expire_timeout: i32,
             ) -> zbus::fdo::Result<u32> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
+                self.received.lock().await.push(ReceivedNotification {
+                    app_icon: app_icon.to_string(),
+                    hints,
+                });
                 match self.behavior {
                     MockBehavior::Accept => Ok(41),
                     MockBehavior::Reject => Err(zbus::fdo::Error::Failed(
@@ -242,9 +294,15 @@ mod imp {
 
         async fn mock_service(
             behavior: MockBehavior,
-        ) -> (Connection, LinuxNotificationState, Arc<AtomicUsize>) {
+        ) -> (
+            Connection,
+            LinuxNotificationState,
+            Arc<AtomicUsize>,
+            Arc<Mutex<Vec<ReceivedNotification>>>,
+        ) {
             let service = unique_service_name();
             let calls = Arc::new(AtomicUsize::new(0));
+            let received = Arc::new(Mutex::new(Vec::new()));
             let connection = Builder::session()
                 .expect("isolated session bus")
                 .name(service.as_str())
@@ -254,6 +312,7 @@ mod imp {
                     MockNotifications {
                         behavior,
                         calls: calls.clone(),
+                        received: received.clone(),
                     },
                 )
                 .expect("serve notification mock")
@@ -261,14 +320,53 @@ mod imp {
                 .await
                 .expect("start notification mock");
             let state = LinuxNotificationState::for_test(service, Duration::from_secs(1));
-            (connection, state, calls)
+            (connection, state, calls, received)
+        }
+
+        #[ignore = "requires an isolated session bus"]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn notification_carries_bundled_logo_without_an_installed_icon_theme() {
+            assert_isolated_session();
+            let (_service, state, _calls, received) = mock_service(MockBehavior::Accept).await;
+
+            send_notification(&state, "Logo test".to_string(), None)
+                .await
+                .expect("Notify acknowledgement");
+
+            let notification = received.lock().await.pop().expect("captured Notify");
+            assert_eq!(notification.app_icon, "mindwtr");
+            assert_eq!(
+                <&str>::try_from(notification.hints.get("desktop-entry").unwrap()).unwrap(),
+                "Mindwtr"
+            );
+            let (width, height, stride, alpha, bits, channels, pixels): (
+                i32,
+                i32,
+                i32,
+                bool,
+                i32,
+                i32,
+                Vec<u8>,
+            ) = notification.hints["image-data"]
+                .try_clone()
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(
+                (width, height, stride, alpha, bits, channels),
+                (64, 64, 256, true, 8, 4)
+            );
+            assert_eq!(pixels.len(), 64 * 64 * 4);
+            let logo = tauri::image::Image::from_bytes(include_bytes!("../icons/64x64.png"))
+                .expect("valid bundled PNG");
+            assert_eq!(pixels, logo.rgba());
         }
 
         #[ignore = "requires an isolated session bus"]
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn async_notify_is_acknowledged_and_reuses_one_connection() {
             assert_isolated_session();
-            let (_service, state, calls) = mock_service(MockBehavior::Accept).await;
+            let (_service, state, calls, _received) = mock_service(MockBehavior::Accept).await;
 
             send_notification(&state, "First".to_string(), None)
                 .await
@@ -285,7 +383,7 @@ mod imp {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn daemon_errors_are_classified_without_remote_text() {
             assert_isolated_session();
-            let (_service, state, calls) = mock_service(MockBehavior::Reject).await;
+            let (_service, state, calls, _received) = mock_service(MockBehavior::Reject).await;
 
             let error = send_notification(
                 &state,
@@ -318,7 +416,7 @@ mod imp {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn ambiguous_timeout_is_not_retried() {
             assert_isolated_session();
-            let (_service, mut state, calls) =
+            let (_service, mut state, calls, _received) =
                 mock_service(MockBehavior::Delay(Duration::from_millis(200))).await;
             state.delivery_timeout = Duration::from_millis(20);
 
