@@ -352,6 +352,15 @@ describe('InboxProcessingQuickPanel draft editing', () => {
         expect(getByText('taskEdit.projectLabel')).toBeInTheDocument();
         expect(getByText('+ New section…')).toBeInTheDocument();
     });
+
+    it('offers Area and Project controls before filing a Start later item (#1239)', () => {
+        const { getByText } = render(
+            <QuickPanelHarness actionabilityChoice="later" />,
+        );
+
+        expect(getByText('taskEdit.areaLabel')).toBeInTheDocument();
+        expect(getByText('taskEdit.projectLabel')).toBeInTheDocument();
+    });
 });
 
 describe('InboxProcessingWizard draft editing', () => {
@@ -428,5 +437,16 @@ describe('InboxProcessingWizard draft editing', () => {
         expect(getByText('taskEdit.areaLabel')).toBeInTheDocument();
         expect(getByText('taskEdit.projectLabel')).toBeInTheDocument();
         expect(getByText('+ New section…')).toBeInTheDocument();
+    });
+
+    it('offers Area and Project controls before confirming Start later (#1239)', () => {
+        const { getByRole, getByText } = render(
+            <WizardHarness processingStep="actionable" />,
+        );
+
+        fireEvent.click(getByRole('button', { name: 'Start later' }));
+
+        expect(getByText('taskEdit.areaLabel')).toBeInTheDocument();
+        expect(getByText('taskEdit.projectLabel')).toBeInTheDocument();
     });
 });

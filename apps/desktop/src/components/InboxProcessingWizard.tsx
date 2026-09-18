@@ -667,6 +667,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 <ChevronLeft className="h-3.5 w-3.5" /> {t('common.back')}
                             </button>
                             <div className="text-xs text-muted-foreground">{laterHint}</div>
+                            {projectAssignmentFields}
                             <InboxProcessingScheduleFields
                                 t={t}
                                 fields={scheduleFields}

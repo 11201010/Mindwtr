@@ -1792,6 +1792,46 @@ describe('InboxProcessingModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('lets Start later file the item under a project (#1239)', async () => {
+    mockSettings.gtd.taskEditor = { hidden: [] };
+    storeState.projects = [workProject];
+    storeState.areas = [workArea];
+    let tree: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<InboxProcessingModal visible onClose={vi.fn()} />);
+    });
+
+    const root = tree!.root;
+    act(() => {
+      findPressableWithText(root, 'Start later')!.props.onPress();
+    });
+    act(() => {
+      root.findByProps({
+        accessibilityRole: 'button',
+        accessibilityLabel: 'taskEdit.projectLabel: Work Project',
+      }).props.onPress();
+    });
+    act(() => {
+      root.findByProps({ children: 'common.notSet' }).parent!.props.onPress();
+    });
+    act(() => {
+      root.findByType('DateTimePicker' as any).props.onChange({ type: 'set' }, new Date(2026, 2, 23, 12, 0, 0));
+    });
+
+    pressStep(root, 'File it');
+    await flushAsyncActions();
+
+    expect(updateTask).toHaveBeenCalledWith(
+      'inbox-1',
+      expect.objectContaining({
+        status: 'next',
+        startTime: '2026-03-23',
+        projectId: 'project-work',
+      })
+    );
+  });
+
   it('moves Later items with the configured default schedule time', () => {
     mockSettings.gtd.defaultScheduleTime = '09:00';
     const onClose = vi.fn();

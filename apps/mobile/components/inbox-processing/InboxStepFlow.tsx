@@ -621,6 +621,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
               clearLabel={t('common.clear')}
               tc={tc}
             />
+            {renderProjectSection(false)}
           </View>
         );
 

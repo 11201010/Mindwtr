@@ -600,6 +600,7 @@ export function InboxProcessingQuickPanel({
                             visibleFieldKeys={['start']}
                             variant="quick"
                         />
+                        {organizationContainerFields}
                     </div>
                 ) : null}
 
