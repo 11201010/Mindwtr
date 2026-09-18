@@ -310,6 +310,8 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
                 taskSortBy: 'updatedAt',
                 sidebarCollapsed: true,
                 deviceId: 'local-device-id',
+                analyticsProfileId: 'profile-1',
+                supportPrompt: { lastShownAt: now },
                 lastSyncAt: now,
                 lastSyncStatus: 'success',
                 lastSyncError: 'x',
@@ -402,6 +404,9 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
 
         expect(sanitized.settings.globalQuickAddShortcut).toBeUndefined();
         expect(sanitized.settings.deviceId).toBeUndefined();
+        // Dataset-level, not preference groups: always on the wire.
+        expect(sanitized.settings.analyticsProfileId).toBe('profile-1');
+        expect(sanitized.settings.supportPrompt).toEqual({ lastShownAt: now });
         expect(sanitized.settings.lastSyncAt).toBeUndefined();
         expect(sanitized.settings.lastSyncStatus).toBeUndefined();
         expect(sanitized.settings.lastSyncError).toBeUndefined();

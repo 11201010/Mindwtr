@@ -1,4 +1,4 @@
-import type { AiSettings, AppData, GtdSettings, SavedFilter, SettingsSyncGroup, SettingsSyncPreferences } from './types';
+import type { AiSettings, AppData, GtdSettings, SavedFilter, SettingsSyncGroup, SettingsSyncPreferences, SupportPromptSettings } from './types';
 import {
     AI_PROVIDER_VALUE_SET,
     AI_REASONING_EFFORT_VALUE_SET,
@@ -752,12 +752,42 @@ export const sanitizeMergedSettingsForSync = (
     return next;
 };
 
+const latestTimestamp = (left?: string, right?: string): string | undefined => {
+    const leftValid = isNonEmptyString(left) && isValidTimestamp(left);
+    const rightValid = isNonEmptyString(right) && isValidTimestamp(right);
+    if (leftValid && rightValid) return isIncomingNewer(left, right) ? right : left;
+    return leftValid ? left : rightValid ? right : undefined;
+};
+
+/** Cooldowns take the latest timestamp on either side, so the prompt shown on one device silences the rest. */
+export const mergeSupportPromptSettings = (
+    local: SupportPromptSettings | undefined,
+    incoming: SupportPromptSettings | undefined,
+): SupportPromptSettings | undefined => {
+    const shownAt = (value: SupportPromptSettings | undefined): string | undefined => (
+        isObjectRecord(value) && typeof value.lastShownAt === 'string' ? value.lastShownAt : undefined
+    );
+    const lastShownAt = latestTimestamp(shownAt(local), shownAt(incoming));
+    return lastShownAt ? { lastShownAt } : undefined;
+};
+
 export const mergeSettingsForSync = (
     localSettings: AppData['settings'],
     incomingSettings: AppData['settings']
 ): AppData['settings'] => {
     const merged: AppData['settings'] = { ...localSettings };
     const nextSyncUpdatedAt: NonNullable<AppData['settings']['syncPreferencesUpdatedAt']> = {};
+
+    // One logical dataset = one profile id. The remote document's id always
+    // wins so every device on the same sync target converges; a device only
+    // keeps its own when the remote has none (older client or first upload).
+    if (isNonEmptyString(incomingSettings.analyticsProfileId)) {
+        merged.analyticsProfileId = incomingSettings.analyticsProfileId;
+    }
+    const mergedSupportPrompt = mergeSupportPromptSettings(localSettings.supportPrompt, incomingSettings.supportPrompt);
+    if (mergedSupportPrompt) {
+        merged.supportPrompt = mergedSupportPrompt;
+    }
 
     const localPrefs = localSettings.syncPreferences ?? {};
     const incomingPrefs = incomingSettings.syncPreferences ?? {};

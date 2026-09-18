@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
     comparePromptVersions,
     recordDonationPromptShown,
-    recordDonationPromptSupportClicked,
     getPromptLocalDayKey,
     recordPromptActivity,
     recordStoreReviewPromptAttempt,
@@ -12,6 +11,7 @@ import {
     recordUpdateReminderShown,
     shouldCheckUpdateReminder,
     shouldShowDonationPrompt,
+    withSupportPromptShown,
     shouldShowUpdateReminder,
     shouldAttemptStoreReviewPrompt,
     type UserPromptState,
@@ -257,23 +257,9 @@ describe('user prompt state', () => {
         })).toBe(false);
     });
 
-    it('blocks donation prompt for a year after support action click', () => {
-        let state = recordDonationPromptShown(buildDonationEligibleState(), baseMs - 366 * dayMs);
-        state = recordDonationPromptSupportClicked(state, baseMs - 364 * dayMs);
-        for (let index = 0; index < 21; index += 1) {
-            state = recordPromptActivity(state, baseMs - index * dayMs);
-        }
-
-        expect(shouldShowDonationPrompt({
-            nowMs: baseMs,
-            promptState: state,
-            donationAllowed: true,
-        })).toBe(false);
-    });
-
-    it('allows donation prompt after support click cooldown and renewed active usage', () => {
-        let state = recordDonationPromptShown(buildDonationEligibleState(), baseMs - 370 * dayMs);
-        state = recordDonationPromptSupportClicked(state, baseMs - 366 * dayMs);
+    it('ignores the legacy support-click record: only the last showing starts the cooldown', () => {
+        let state = recordDonationPromptShown(buildDonationEligibleState(), baseMs - 200 * dayMs);
+        state = { ...state, donation: { ...state.donation, lastActionAt: new Date(baseMs - 199 * dayMs).toISOString() } };
         for (let index = 0; index < 21; index += 1) {
             state = recordPromptActivity(state, baseMs - index * dayMs);
         }
@@ -285,16 +271,28 @@ describe('user prompt state', () => {
         })).toBe(true);
     });
 
+    it('honours the synced support-prompt cooldown from another install', () => {
+        const eligible = buildDonationEligibleState();
+        expect(shouldShowDonationPrompt({
+            nowMs: baseMs,
+            promptState: eligible,
+            supportPrompt: { lastShownAt: new Date(baseMs - 20 * dayMs).toISOString() },
+            donationAllowed: true,
+        })).toBe(false);
+        expect(shouldShowDonationPrompt({
+            nowMs: baseMs,
+            promptState: eligible,
+            supportPrompt: { lastShownAt: 'garbage' },
+            donationAllowed: true,
+        })).toBe(true);
+        expect(withSupportPromptShown(undefined, baseMs)).toEqual({ lastShownAt: new Date(baseMs).toISOString() });
+    });
+
     it('records donation prompt display metadata when shown', () => {
         const state = recordDonationPromptShown(buildDonationEligibleState(), baseMs);
         expect(state.donation?.askedEver).toBe(true);
         expect(state.donation?.lastShownAt).toBe(new Date(baseMs).toISOString());
         expect(state.lastInterruptivePromptAt).toBe(new Date(baseMs).toISOString());
-    });
-
-    it('records donation support action click metadata', () => {
-        const state = recordDonationPromptSupportClicked(buildDonationEligibleState(), baseMs);
-        expect(state.donation?.lastActionAt).toBe(new Date(baseMs).toISOString());
     });
 
     it('compares prompt versions with optional v prefixes', () => {

@@ -2,6 +2,7 @@ import type { AppData, Attachment } from './types';
 import { normalizeSavedFilters } from './saved-filters';
 import { getGtdSyncSnapshot, isSettingsSyncGroupEnabled } from './settings-options';
 import { normalizeRevision } from './sync-revision';
+import { isNonEmptyString } from './sync-normalization';
 import { SYNC_FILE_NAME } from './sync-service-utils';
 import {
     compactPurgedProjectTombstone,
@@ -201,6 +202,14 @@ const sanitizeSettingsForRemote = (settings: AppData['settings']): AppData['sett
         syncPreferences: remotePrefs,
         syncPreferencesUpdatedAt: remotePrefsUpdatedAt,
     };
+    // Not preference groups: the dataset id and the support-prompt cooldown
+    // must reach every device regardless of what the user chose to sync.
+    if (isNonEmptyString(settings.analyticsProfileId)) {
+        next.analyticsProfileId = settings.analyticsProfileId;
+    }
+    if (settings.supportPrompt) {
+        next.supportPrompt = { ...settings.supportPrompt };
+    }
 
     if (prefs.appearance === true) {
         next.theme = settings.theme;

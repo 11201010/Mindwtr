@@ -108,24 +108,26 @@ export const getDesktopVersion = async (): Promise<string> => {
     }
 };
 
-const getStartupAnalyticsHeartbeatEnabled = async (): Promise<boolean> => {
-    if (isTauriRuntime()) {
-        try {
-            const data = await invokeNative<AppData>('get_data');
-            return data?.settings?.analytics?.heartbeatEnabled !== false;
-        } catch {
-            return true;
-        }
-    }
+type StartupAnalyticsSettings = { heartbeatEnabled: boolean; profileId: string | null };
+
+// Read straight from storage: the heartbeat fires before the store finishes
+// loading. A first run after upgrade may not have the profile id yet; the next
+// day's heartbeat carries it.
+const getStartupAnalyticsSettings = async (): Promise<StartupAnalyticsSettings> => {
     try {
-        const data = await webStorage.getData();
-        return data.settings.analytics?.heartbeatEnabled !== false;
+        const data = isTauriRuntime()
+            ? await invokeNative<AppData>('get_data')
+            : await webStorage.getData();
+        return {
+            heartbeatEnabled: data?.settings?.analytics?.heartbeatEnabled !== false,
+            profileId: data?.settings?.analyticsProfileId ?? null,
+        };
     } catch {
-        return true;
+        return { heartbeatEnabled: true, profileId: null };
     }
 };
 
-const buildDesktopHeartbeatOptions = async () => {
+const buildDesktopHeartbeatOptions = async (profileId: string | null = null) => {
     const [channel, appVersion] = await Promise.all([
         getDesktopChannel(),
         getDesktopVersion(),
@@ -135,6 +137,7 @@ const buildDesktopHeartbeatOptions = async () => {
         enabled: true,
         endpointUrl: ANALYTICS_HEARTBEAT_URL,
         distinctId: getOrCreateAnalyticsDistinctId(),
+        profileId,
         platform,
         channel,
         appVersion,
@@ -157,7 +160,7 @@ export const resetDesktopAnalyticsOptOutMarker = async (): Promise<void> => {
 
 export const sendDesktopDailyHeartbeat = async (): Promise<void> => {
     if (!canSendDesktopAnalyticsHeartbeat()) return;
-    const heartbeatEnabled = await getStartupAnalyticsHeartbeatEnabled();
+    const { heartbeatEnabled, profileId } = await getStartupAnalyticsSettings();
     if (!heartbeatEnabled) return;
-    await sendDailyHeartbeat(await buildDesktopHeartbeatOptions());
+    await sendDailyHeartbeat(await buildDesktopHeartbeatOptions(profileId));
 };

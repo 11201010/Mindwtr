@@ -1,3 +1,5 @@
+import type { SupportPromptSettings } from './types';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PROMPT_DAY_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -7,8 +9,9 @@ export const STORE_REVIEW_MIN_ACTIVE_DAYS = 7;
 export const STORE_REVIEW_ATTEMPT_COOLDOWN_MS = 90 * DAY_MS;
 export const DONATION_PROMPT_MIN_DAYS_SINCE_FIRST_SEEN = 30;
 export const DONATION_PROMPT_MIN_ACTIVE_DAYS = 21;
+// One cooldown from the last time the notice was shown, whether or not the user
+// clicked support: a click is not proof of a donation, and twice a year is fine.
 export const DONATION_PROMPT_REPEAT_COOLDOWN_MS = 183 * DAY_MS;
-export const DONATION_PROMPT_SUPPORT_CLICK_COOLDOWN_MS = 365 * DAY_MS;
 export const UPDATE_REMINDER_CHECK_INTERVAL_MS = DAY_MS;
 export const UPDATE_REMINDER_MIN_DAYS_SINCE_FIRST_SEEN = 7;
 export const UPDATE_REMINDER_MIN_ACTIVE_DAYS = 2;
@@ -27,6 +30,7 @@ export type UserPromptState = {
     donation?: {
         askedEver?: boolean;
         lastShownAt?: string;
+        /** Legacy install-local field; no longer read. */
         lastActionAt?: string;
     };
     update?: {
@@ -47,6 +51,8 @@ export type StoreReviewPromptInput = {
 export type DonationPromptInput = {
     nowMs: number;
     promptState: UserPromptState | null | undefined;
+    /** settings.supportPrompt: the cooldown shared by every install on the dataset (#1237). */
+    supportPrompt?: SupportPromptSettings | null;
     donationAllowed: boolean;
 };
 
@@ -270,19 +276,26 @@ export function recordStoreReviewPromptAttempt(
     };
 }
 
+function latestTimeMs(...values: Array<string | null | undefined>): number | null {
+    let latest: number | null = null;
+    for (const value of values) {
+        const ms = parseTimeMs(value);
+        if (ms !== null && (latest === null || ms > latest)) latest = ms;
+    }
+    return latest;
+}
+
 export function shouldShowDonationPrompt({
     nowMs,
     promptState,
+    supportPrompt,
     donationAllowed,
 }: DonationPromptInput): boolean {
     if (!donationAllowed) return false;
 
-    const donationLastActionMs = parseTimeMs(promptState?.donation?.lastActionAt);
-    if (donationLastActionMs !== null && nowMs - donationLastActionMs < DONATION_PROMPT_SUPPORT_CLICK_COOLDOWN_MS) {
-        return false;
-    }
-
-    const donationLastShownMs = parseTimeMs(promptState?.donation?.lastShownAt);
+    // The install-local record and the synced one describe the same ask; the
+    // newest timestamp on either side starts the cooldown.
+    const donationLastShownMs = latestTimeMs(promptState?.donation?.lastShownAt, supportPrompt?.lastShownAt);
     let activeDayCount: number;
 
     if (donationLastShownMs !== null) {
@@ -328,18 +341,11 @@ export function recordDonationPromptShown(
     };
 }
 
-export function recordDonationPromptSupportClicked(
-    promptState: UserPromptState | null | undefined,
+export function withSupportPromptShown(
+    current: SupportPromptSettings | null | undefined,
     nowMs: number,
-): UserPromptState {
-    const nowIso = new Date(nowMs).toISOString();
-    return {
-        ...(promptState ?? {}),
-        donation: {
-            ...(promptState?.donation ?? {}),
-            lastActionAt: nowIso,
-        },
-    };
+): SupportPromptSettings {
+    return { ...(current ?? {}), lastShownAt: new Date(nowMs).toISOString() };
 }
 
 export function shouldCheckUpdateReminder({

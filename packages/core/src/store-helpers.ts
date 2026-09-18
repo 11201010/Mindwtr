@@ -50,6 +50,13 @@ export const ensureDeviceId = (settings: AppData['settings']): { settings: AppDa
     return { settings: { ...settings, deviceId }, deviceId, updated: true };
 };
 
+export const ensureAnalyticsProfileId = (settings: AppData['settings']): { settings: AppData['settings']; updated: boolean } => {
+    if (typeof settings.analyticsProfileId === 'string' && settings.analyticsProfileId.trim()) {
+        return { settings, updated: false };
+    }
+    return { settings: { ...settings, analyticsProfileId: uuidv4() }, updated: true };
+};
+
 export const getReferenceTaskFieldClears = (): Partial<Task> => ({
     status: 'reference',
     startTime: undefined,

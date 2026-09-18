@@ -10,6 +10,7 @@ import {
     clearDeletedTaskProjectArchiveMetadata,
     completeTaskForProjectArchive,
     ensureDeviceId,
+    ensureAnalyticsProfileId,
     isTaskSectionProjectArchiveReference,
     nextRevision,
 } from './store-helpers';
@@ -156,6 +157,17 @@ const ensureDeviceIdMigration: LoadMigration = {
     name: 'ensure-device-id',
     run: (data) => {
         const result = ensureDeviceId(data.settings);
+        return result.updated ? { ...data, settings: result.settings } : null;
+    },
+};
+
+// A dataset id that sync carries to every device (analytics counts profiles,
+// not installs). Remote wins in mergeSettingsForSync, so this only seeds a
+// value for a document that has never seen one.
+const ensureAnalyticsProfileIdMigration: LoadMigration = {
+    name: 'ensure-analytics-profile-id',
+    run: (data) => {
+        const result = ensureAnalyticsProfileId(data.settings);
         return result.updated ? { ...data, settings: result.settings } : null;
     },
 };
@@ -773,6 +785,7 @@ const LOAD_MIGRATIONS: LoadMigration[] = [
     bumpTombstoneCleanupTimestampMigration,
     // Everything below reads settings.deviceId for revBy stamping.
     ensureDeviceIdMigration,
+    ensureAnalyticsProfileIdMigration,
     freshInstallNotificationsDefaultMigration,
     taskEditorDefaultsMigration,
     focusGroupByDefaultsMigration,

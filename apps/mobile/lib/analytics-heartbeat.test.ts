@@ -83,6 +83,16 @@ describe('sendMobileDailyHeartbeat', () => {
     expect(sendDailyHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
       channel: 'fdroid',
       endpointUrl: 'https://analytics.example.com/heartbeat',
+      profileId: null,
+    }));
+  });
+
+  it('forwards the synced analytics profile id from settings', async () => {
+    await expect(sendMobileDailyHeartbeat(config, { analyticsProfileId: 'profile-1' })).resolves.toBe(true);
+
+    expect(sendDailyHeartbeat).toHaveBeenCalledWith(expect.objectContaining({
+      distinctId: 'generated-id',
+      profileId: 'profile-1',
     }));
   });
 

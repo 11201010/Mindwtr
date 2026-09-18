@@ -504,6 +504,10 @@ export interface AnalyticsSettings {
     heartbeatEnabled?: boolean;
 }
 
+export interface SupportPromptSettings {
+    lastShownAt?: string;
+}
+
 export interface SecuritySettings {
     mobileAppLockEnabled?: boolean;
 }
@@ -582,6 +586,14 @@ export interface AppSettings extends NotificationSettings {
     network?: NetworkSettings;
     filters?: FilterSettings;
     deviceId?: string;
+    /**
+     * Random id for one logical Mindwtr dataset, used only by the anonymous
+     * heartbeat so several synced installs count as one profile. Unlike deviceId
+     * it travels in the synced document and the remote copy always wins.
+     */
+    analyticsProfileId?: string;
+    /** Support-prompt cooldown shared by every install on the same dataset (#1237). */
+    supportPrompt?: SupportPromptSettings;
     migrations?: MigrationSettings;
 }
 

@@ -2288,6 +2288,7 @@ describe('TaskStore', () => {
             areas: [],
             settings: {
                 deviceId: 'device-a',
+                analyticsProfileId: 'profile-a',
                 migrations: {
                     version: 9999,
                     lastAutoArchiveAt: nowIso,
@@ -2337,6 +2338,7 @@ describe('TaskStore', () => {
             people: [],
             settings: {
                 deviceId: 'device-a',
+                analyticsProfileId: 'profile-a',
                 migrations: {
                     version: 9999,
                     lastAutoArchiveAt: nowIso,
@@ -2436,6 +2438,7 @@ describe('TaskStore', () => {
             people: [],
             settings: {
                 deviceId: 'device-a',
+                analyticsProfileId: 'profile-a',
                 migrations: {
                     version: 9999,
                     lastAutoArchiveAt: nowIso,
@@ -2489,6 +2492,7 @@ describe('TaskStore', () => {
             areas: [],
             settings: {
                 deviceId: 'device-a',
+                analyticsProfileId: 'profile-a',
                 migrations: {
                     version: 9999,
                     lastAutoArchiveAt: nowIso,
@@ -2581,6 +2585,7 @@ describe('TaskStore', () => {
             people: [],
             settings: {
                 deviceId: 'device-a',
+                analyticsProfileId: 'profile-a',
                 migrations: {
                     version: 9999,
                     lastAutoArchiveAt: nowIso,
@@ -2695,6 +2700,7 @@ describe('TaskStore', () => {
         vi.setSystemTime(new Date(nowIso));
         const settledSettings = {
             deviceId: 'device-a',
+            analyticsProfileId: 'profile-a',
             migrations: {
                 version: 9999,
                 lastAutoArchiveAt: nowIso,

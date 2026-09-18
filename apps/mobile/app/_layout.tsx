@@ -28,7 +28,6 @@ import {
   getAnnouncementDismissalStorageKey,
   isSupportedLanguage,
   recordDonationPromptShown,
-  recordDonationPromptSupportClicked,
   recordUpdateReminderChecked,
   recordUpdateReminderDismissed,
   recordUpdateReminderShown,
@@ -37,6 +36,7 @@ import {
   shouldCheckUpdateReminder,
   shouldShowAppAnnouncement,
   shouldShowDonationPrompt,
+  withSupportPromptShown,
   shouldShowUpdateReminder,
   translateWithFallback,
   useStartupPromptQueue,
@@ -819,6 +819,7 @@ function RootLayoutContentInner() {
         return shouldShowDonationPrompt({
           nowMs: Date.now(),
           promptState: promptStateSnapshot,
+          supportPrompt: useTaskStore.getState().settings.supportPrompt,
           donationAllowed: true,
         });
       },
@@ -978,24 +979,21 @@ function RootLayoutContentInner() {
       router.push({ pathname: '/settings', params: { settingsScreen: 'about' } } as never);
       return;
     }
-    updateLocalUserPromptState((state) => recordDonationPromptSupportClicked(state, Date.now()))
-      .catch((error) => {
-        void logWarn('Failed to record donation support action', {
-          scope: 'prompt-state',
-          extra: { error: error instanceof Error ? error.message : String(error) },
-        });
-      });
     openAnnouncementUrl(action.url);
   }, [dismissDonationPrompt, openAnnouncementUrl, router]);
 
   const recordDonationPromptVisible = useCallback(() => {
-    updateLocalUserPromptState((state) => recordDonationPromptShown(state, Date.now()))
+    const nowMs = Date.now();
+    updateLocalUserPromptState((state) => recordDonationPromptShown(state, nowMs))
       .catch((error) => {
         void logWarn('Failed to record donation prompt state', {
           scope: 'prompt-state',
           extra: { error: error instanceof Error ? error.message : String(error) },
         });
       });
+    // Synced so the other installs on this dataset skip the same ask (#1237).
+    const { settings, updateSettings } = useTaskStore.getState();
+    void updateSettings({ supportPrompt: withSupportPromptShown(settings.supportPrompt, nowMs) });
   }, []);
 
   const dismissUpdateReminder = useCallback(() => {

@@ -11,6 +11,8 @@ export type AnalyticsHeartbeatEvent = 'heartbeat' | 'opt_out';
 type SendHeartbeatRequestOptions = {
     endpointUrl?: string | null;
     distinctId?: string | null;
+    /** settings.analyticsProfileId: one id per synced dataset, so several installs count as one profile. */
+    profileId?: string | null;
     platform?: string | null;
     channel?: string | null;
     appVersion?: string | null;
@@ -51,6 +53,7 @@ const buildHeartbeatPayload = (
     event: AnalyticsHeartbeatEvent
 ): Record<string, string> | null => {
     const distinctId = trimValue(options.distinctId);
+    const profileId = trimValue(options.profileId);
     const platform = trimValue(options.platform);
     const channel = trimValue(options.channel);
     const appVersion = trimValue(options.appVersion);
@@ -62,6 +65,7 @@ const buildHeartbeatPayload = (
 
     const payload: Record<string, string> = {
         distinct_id: distinctId,
+        ...(profileId ? { profile_id: profileId } : {}),
         platform,
         channel,
         app_version: appVersion,

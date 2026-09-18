@@ -60,6 +60,27 @@ describe('sendDailyHeartbeat', () => {
             version: '0.6.17',
         });
         expect(store.dump()[HEARTBEAT_LAST_SENT_DAY_KEY]).toBe('2026-02-19');
+        expect(body.profile_id).toBeUndefined();
+    });
+
+    it('sends the synced analytics profile id next to the install id', async () => {
+        const fetcher = vi.fn().mockResolvedValue({ ok: true });
+
+        await sendDailyHeartbeat({
+            enabled: true,
+            endpointUrl: 'https://analytics.example.com/heartbeat',
+            distinctId: 'device-123',
+            profileId: ' profile-abc ',
+            platform: 'ios',
+            channel: 'app-store',
+            appVersion: '0.6.17',
+            storage: createMemoryStore(),
+            now: () => fixedDate,
+            fetcher,
+        });
+
+        const body = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body));
+        expect(body).toMatchObject({ distinct_id: 'device-123', profile_id: 'profile-abc' });
     });
 
 

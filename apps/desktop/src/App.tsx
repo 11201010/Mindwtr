@@ -27,12 +27,12 @@ import {
     isSandboxMode,
     isTaskFinished,
     recordDonationPromptShown,
-    recordDonationPromptSupportClicked,
     recordUpdateReminderChecked,
     recordUpdateReminderDismissed,
     recordUpdateReminderShown,
     shouldShowAppAnnouncement,
     shouldShowDonationPrompt,
+    withSupportPromptShown,
     shouldCheckUpdateReminder,
     shouldShowUpdateReminder,
     sortTasksByFocusOrder,
@@ -463,7 +463,12 @@ function App() {
                 if (ACTIVE_APP_ANNOUNCEMENT) return false;
                 if (!isDesktopDonationPromptAllowed(desktopInstallSource)) return false;
                 const promptState = readLocalUserPromptState();
-                return shouldShowDonationPrompt({ nowMs: Date.now(), promptState, donationAllowed: true });
+                return shouldShowDonationPrompt({
+                    nowMs: Date.now(),
+                    promptState,
+                    supportPrompt: useTaskStore.getState().settings.supportPrompt,
+                    donationAllowed: true,
+                });
             },
             present: () => true,
             onError: (error) => {
@@ -1450,7 +1455,7 @@ function App() {
     }, []);
 
     // Shared by all three startup-prompt action handlers below: dismissal and
-    // any prompt-specific side effect (e.g. donation's support-click record)
+    // any prompt-specific side effect (e.g. the update reminder's dismissed-version record)
     // happen in the handler itself; only the "feedback -> Settings, otherwise
     // open the URL" branch was tripled, so it lives here once.
     const performAnnouncementNavigation = useCallback((action: AppAnnouncementAction) => {
@@ -1474,23 +1479,21 @@ function App() {
 
     const handleDonationPromptAction = useCallback((action: AppAnnouncementAction) => {
         dismissDonationPrompt();
-        if (action.type !== 'feedback') {
-            try {
-                updateLocalUserPromptState((state) => recordDonationPromptSupportClicked(state, Date.now()));
-            } catch (error) {
-                void logError(error, { scope: 'prompt-state', step: 'recordDonationSupportClicked' });
-            }
-        }
         performAnnouncementNavigation(action);
     }, [dismissDonationPrompt, performAnnouncementNavigation]);
 
     const recordDonationPromptVisible = useCallback(() => {
+        const nowMs = Date.now();
         try {
-            updateLocalUserPromptState((state) => recordDonationPromptShown(state, Date.now()));
+            updateLocalUserPromptState((state) => recordDonationPromptShown(state, nowMs));
         } catch (error) {
             void logError(error, { scope: 'prompt-state', step: 'recordDonationShown' });
         }
-    }, []);
+        // Synced so the other installs on this dataset skip the same ask (#1237).
+        void updateSettings({
+            supportPrompt: withSupportPromptShown(useTaskStore.getState().settings.supportPrompt, nowMs),
+        });
+    }, [updateSettings]);
 
     const dismissUpdateReminder = useCallback(() => {
         const latestVersion = updateReminderInfo?.latestVersion;

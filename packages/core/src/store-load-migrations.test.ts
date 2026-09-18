@@ -19,6 +19,7 @@ const NOW_MS = Date.parse(NOW_ISO);
 // thing that can fire.
 const settledSettings = (): AppSettings => ({
     deviceId: 'device-a',
+    analyticsProfileId: 'profile-a',
     migrations: {
         version: MIGRATION_VERSION,
         lastAutoArchiveAt: NOW_ISO,
@@ -371,6 +372,15 @@ describe('runLoadMigrations', () => {
         const { data: result, applied } = runLoadMigrations(data, ctxFor(data));
         expect(applied).toEqual(['ensure-device-id']);
         expect(result.settings.deviceId).toBeTruthy();
+    });
+
+    it('ensure-analytics-profile-id: assigns a dataset id when settings has none', () => {
+        const data = settledData();
+        data.settings = { ...data.settings, analyticsProfileId: undefined };
+        const { data: result, applied } = runLoadMigrations(data, ctxFor(data));
+        expect(applied).toEqual(['ensure-analytics-profile-id']);
+        expect(result.settings.analyticsProfileId).toBeTruthy();
+        expect(result.settings.deviceId).toBe('device-a');
     });
 
     it('fresh-install-notifications-default: defaults notifications off only on a fresh install', () => {

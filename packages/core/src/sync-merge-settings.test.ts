@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSettingsForSync, sanitizeMergedSettingsForSync } from './sync-merge-settings';
+import { mergeSettingsForSync, mergeSupportPromptSettings, sanitizeMergedSettingsForSync } from './sync-merge-settings';
 import type { AppData, SettingsSyncGroup } from './types';
 
 type Settings = AppData['settings'];
@@ -514,5 +514,26 @@ describe('mergeSettingsForSync > documented quirks', () => {
 
         expect(merged.ai).toEqual({ enabled: true, model: 'shared-model', apiKey: undefined });
         expect(Object.keys(merged.ai ?? {}).slice(0, 2)).toEqual(['model', 'enabled']);
+    });
+});
+
+describe('mergeSettingsForSync > dataset identity', () => {
+    it('adopts the remote analytics profile id and keeps the local one only when remote has none', () => {
+        expect(mergeSettingsForSync({ analyticsProfileId: 'local' }, { analyticsProfileId: 'remote' }).analyticsProfileId).toBe('remote');
+        expect(mergeSettingsForSync({ analyticsProfileId: 'local' }, {}).analyticsProfileId).toBe('local');
+        expect(mergeSettingsForSync({ analyticsProfileId: 'local' }, { analyticsProfileId: '' }).analyticsProfileId).toBe('local');
+        expect(mergeSettingsForSync({}, { analyticsProfileId: 'remote' }).analyticsProfileId).toBe('remote');
+    });
+
+    it('keeps the newest support-prompt timestamps from either side', () => {
+        expect(mergeSupportPromptSettings(
+            { lastShownAt: '2026-01-01T00:00:00.000Z' },
+            { lastShownAt: '2026-02-01T00:00:00.000Z' },
+        )).toEqual({ lastShownAt: '2026-02-01T00:00:00.000Z' });
+        expect(mergeSupportPromptSettings({ lastShownAt: '2026-01-01T00:00:00.000Z' }, { lastShownAt: 'not-a-date' }))
+            .toEqual({ lastShownAt: '2026-01-01T00:00:00.000Z' });
+        expect(mergeSupportPromptSettings(undefined, undefined)).toBeUndefined();
+        expect(mergeSettingsForSync({}, { supportPrompt: { lastShownAt: '2026-02-01T00:00:00.000Z' } }).supportPrompt)
+            .toEqual({ lastShownAt: '2026-02-01T00:00:00.000Z' });
     });
 });

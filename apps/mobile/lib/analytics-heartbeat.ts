@@ -114,7 +114,7 @@ export async function getMobileStartupAnalyticsContext(
   };
 }
 
-async function buildMobileHeartbeatOptions(config: MobileAnalyticsHeartbeatConfig) {
+async function buildMobileHeartbeatOptions(config: MobileAnalyticsHeartbeatConfig, profileId: string | null = null) {
   const [distinctId, channel] = await Promise.all([
     getOrCreateAnalyticsDistinctId(),
     getMobileAnalyticsChannel(config.isFossBuild, config.analyticsHeartbeatChannel),
@@ -123,6 +123,7 @@ async function buildMobileHeartbeatOptions(config: MobileAnalyticsHeartbeatConfi
     enabled: true,
     endpointUrl: config.analyticsHeartbeatUrl,
     distinctId,
+    profileId,
     platform: Platform.OS,
     channel,
     appVersion: config.appVersion,
@@ -151,5 +152,5 @@ export async function sendMobileDailyHeartbeat(
   if (settings.analytics?.heartbeatEnabled === false) {
     return false;
   }
-  return sendDailyHeartbeat(await buildMobileHeartbeatOptions(config));
+  return sendDailyHeartbeat(await buildMobileHeartbeatOptions(config, settings.analyticsProfileId ?? null));
 }
