@@ -2044,6 +2044,8 @@ export const huOverrides: Record<string, string> = {
     'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} feladat a projekteken kívül maradt.',
     'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} feladat a projekteken kívül marad, hogy feldolgozhassa őket a Mindwtr-ben.',
     'settings.appleRemindersImport.appleReminders': 'Apple Reminders',
+    'settings.appleRemindersImport.autoImport': 'Automatikus importálás',
+    'settings.appleRemindersImport.autoImportDescription': 'A Mindwtr minden megnyitásakor a lista új, befejezetlen emlékeztetői a Beérkezőbe kerülnek.',
     'settings.appleRemindersImport.captureList': 'Rögzítési lista',
     'settings.appleRemindersImport.chooseCaptureList': 'Válasszon egy Emlékeztetők listát',
     'settings.appleRemindersImport.deleteAfterImport': 'Importált emlékeztetők törlése',

@@ -17,6 +17,10 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 - `Remote sync mutation fence renewed for mutation horizon` (`sync-remote-fence.ts`), with the requested horizon and conservative remaining authority. This remains useful when a provider mutation later loses its fence.
 - `Capture webhook request accepted` (`server-capture.ts`), with request shape, size, audio presence, and token scope but no content, identifier, or secret. This remains the server-side proof that a capture-only client reached the webhook.
 
+## v1.3.2 (add before tagging, trim in the release after)
+
+- **`v1.3.2/apple-reminders-auto-import`** — mobile `apps/mobile/hooks/root-layout/use-root-layout-apple-reminders.ts` (#1238), after the opted-in Apple Reminders import has run on startup or on a foreground. Message: `Apple Reminders auto-import ran`; fields: `releaseCheck`, `imported`, `skipped`, `deleted`, `failed` (counts only). With **Import automatically** on and a list chosen, add a reminder to that list, then bring Mindwtr to the foreground: the log must show `imported=1` and the Inbox must hold the task; a second foreground within 30 seconds does not run again, and later foregrounds show `imported=0`. The marker never appears when the toggle is off, no list is chosen, or Reminders access was not granted (the hook never prompts). No reminder text, list names, or identifiers are logged.
+
 ## v1.3.1 (add before tagging, trim in the release after)
 
 - **`v1.3.1/linux-notification-icon`** — desktop `apps/desktop/src-tauri/src/linux_notification.rs`, after the notification daemon acknowledges a direct Linux notification (#1232). Message: `Linux notification icon submitted`; fields: `releaseCheck`, `backend=linux-dbus`, `outcome` (`bundled` when the embedded Mindwtr logo pixels were included, `theme-fallback` if decoding failed and only the named application icon was sent). This proves submission of the logo, not desktop-shell rendering; confirm the visible icon separately on deb/AppImage installations. Flatpak's portal path is unchanged. No task title, body, raw errors, file paths, or identifiers are logged.

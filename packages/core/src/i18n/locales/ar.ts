@@ -1383,6 +1383,8 @@ export const arOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'دقائق التركيز',
         'settings.pomodoroBreakMinutes': 'دقائق الاستراحة',
         'settings.appleRemindersImport.appleReminders': 'تذكيرات آبل',
+        'settings.appleRemindersImport.autoImport': 'استيراد تلقائي',
+        'settings.appleRemindersImport.autoImportDescription': 'في كل مرة يُفتح فيها Mindwtr، تُضاف التذكيرات الجديدة غير المكتملة من هذه القائمة إلى الوارد.',
         'settings.appleRemindersImport.captureList': 'قائمة الالتقاط',
         'settings.appleRemindersImport.chooseCaptureList': 'اختر قائمة تذكيرات',
         'settings.appleRemindersImport.deleteAfterImport': 'حذف التذكيرات المستوردة',

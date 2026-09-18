@@ -2076,6 +2076,8 @@ export const viOverrides: Record<string, string> = {
 
         // Apple Reminders Import
         'settings.appleRemindersImport.appleReminders': 'Apple Nhắc nhở',
+        'settings.appleRemindersImport.autoImport': 'Tự động nhập',
+        'settings.appleRemindersImport.autoImportDescription': 'Mỗi khi mở Mindwtr, các lời nhắc mới chưa hoàn thành trong danh sách này sẽ được thêm vào Hộp thư đến.',
         'settings.appleRemindersImport.captureList': 'Danh sách ghi lại',
         'settings.appleRemindersImport.chooseCaptureList': 'Chọn danh sách Nhắc nhở',
         'settings.appleRemindersImport.deleteAfterImport': 'Xóa nhắc nhở đã nhập',

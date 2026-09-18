@@ -2115,6 +2115,8 @@ export const jaOverrides: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': 'タスク{{taskCount}}件は、どのプロジェクトにも属さないままです。',
         'settings.backupMobile.tasksWillStayOutsideProjects': 'タスク{{taskCount}}件は、Mindwtr で処理できるよう、どのプロジェクトにも属さないままになります。',
         'settings.appleRemindersImport.appleReminders': 'Apple リマインダー',
+        'settings.appleRemindersImport.autoImport': '自動的に読み込む',
+        'settings.appleRemindersImport.autoImportDescription': 'Mindwtr を開くたびに、このリストの新しい未完了リマインダーがインボックスに追加されます。',
         'settings.appleRemindersImport.captureList': '取り込み元のリスト',
         'settings.appleRemindersImport.chooseCaptureList': 'リマインダーのリストを選ぶ',
         'settings.appleRemindersImport.deleteAfterImport': '取り込んだリマインダーを削除する',

@@ -2044,6 +2044,8 @@ export const esOverrides: Record<string, string> = {
 'settings.backupMobile.tasksStayedOutsideProjects': "{{taskCount}} tarea(s) permanecieron fuera de los proyectos.",
 'settings.backupMobile.tasksWillStayOutsideProjects': "{{taskCount}} tarea(s) permanecerán fuera de los proyectos para que puedas procesarlas en Mindwtr.",
 'settings.appleRemindersImport.appleReminders': "Recordatorios de Apple",
+'settings.appleRemindersImport.autoImport': "Importar automáticamente",
+'settings.appleRemindersImport.autoImportDescription': "Cada vez que se abre Mindwtr, los recordatorios nuevos sin completar de esta lista se añaden a la Bandeja de entrada.",
 'settings.appleRemindersImport.captureList': "Lista de captura",
 'settings.appleRemindersImport.chooseCaptureList': "Elige una lista de Recordatorios",
 'settings.appleRemindersImport.deleteAfterImport': "Eliminar los recordatorios importados",

@@ -1339,6 +1339,8 @@ export const ruOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'Минуты фокуса',
         'settings.pomodoroBreakMinutes': 'Минуты перерыва',
         'settings.appleRemindersImport.appleReminders': 'Напоминания Эпл',
+        'settings.appleRemindersImport.autoImport': 'Импортировать автоматически',
+        'settings.appleRemindersImport.autoImportDescription': 'При каждом открытии Mindwtr новые невыполненные напоминания из этого списка добавляются во Входящие.',
         'settings.appleRemindersImport.captureList': 'Список захвата',
         'settings.appleRemindersImport.chooseCaptureList': 'Выберите список напоминаний',
         'settings.appleRemindersImport.deleteAfterImport': 'Удалять импортированные напоминания',

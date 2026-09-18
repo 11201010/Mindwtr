@@ -1383,6 +1383,8 @@ export const trOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'Odak dakikası',
         'settings.pomodoroBreakMinutes': 'Mola dakikası',
         'settings.appleRemindersImport.appleReminders': 'Apple Anımsatıcılar',
+        'settings.appleRemindersImport.autoImport': 'Otomatik içe aktar',
+        'settings.appleRemindersImport.autoImportDescription': 'Mindwtr her açıldığında bu listedeki yeni, tamamlanmamış anımsatıcılar Gelen Kutusuna eklenir.',
         'settings.appleRemindersImport.captureList': 'Yakalama listesi',
         'settings.appleRemindersImport.chooseCaptureList': 'Bir anımsatıcı listesi seç',
         'settings.appleRemindersImport.deleteAfterImport': 'İçe aktarılan anımsatıcıları sil',

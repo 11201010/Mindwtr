@@ -1076,6 +1076,8 @@ export const ptOverrides: Record<string, string> = {
         'settings.captureSaveAudio': 'Salvar anexos de áudio',
         'settings.captureSaveAudioDesc': 'Mantenha o arquivo de áudio anexado após a transcrição.',
         'settings.appleRemindersImport.appleReminders': 'Lembretes da Apple',
+        'settings.appleRemindersImport.autoImport': 'Importar automaticamente',
+        'settings.appleRemindersImport.autoImportDescription': 'Sempre que o Mindwtr abre, os novos lembretes incompletos desta lista são adicionados à Caixa de entrada.',
         'settings.appleRemindersImport.captureList': 'Lista de captura',
         'settings.appleRemindersImport.chooseCaptureList': 'Escolha uma lista de lembretes',
         'settings.appleRemindersImport.deleteAfterImport': 'Excluir lembretes importados',

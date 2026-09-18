@@ -12,6 +12,8 @@ export type AppleRemindersImportSettings = {
   selectedListTitle?: string;
   importedReminderIds: string[];
   deleteImportedReminders: boolean;
+  /** Run the import each time Mindwtr comes to the foreground (#1238). */
+  autoImportOnOpen: boolean;
 };
 
 export type AppleReminderList = {
@@ -35,6 +37,16 @@ export type AddInboxTask = (title: string, props?: Partial<Task>) => Promise<Sto
 const DEFAULT_IMPORT_SETTINGS: AppleRemindersImportSettings = {
   importedReminderIds: [],
   deleteImportedReminders: false,
+  autoImportOnOpen: false,
+};
+
+// The manual button and the foreground auto-import both read the imported-id
+// list at start; running them at the same time would add a reminder twice.
+let importChain: Promise<unknown> = Promise.resolve();
+const serializeImport = <T>(run: () => Promise<T>): Promise<T> => {
+  const next = importChain.then(run, run);
+  importChain = next.catch(() => undefined);
+  return next;
 };
 
 const normalizeString = (value: unknown): string | undefined => {
@@ -82,6 +94,7 @@ export function normalizeAppleRemindersImportSettings(value: unknown): AppleRemi
     ...(selectedListTitle ? { selectedListTitle } : {}),
     importedReminderIds,
     deleteImportedReminders: raw.deleteImportedReminders === true,
+    autoImportOnOpen: raw.autoImportOnOpen === true,
   };
 }
 
@@ -141,19 +154,47 @@ export async function getAppleReminderLists(): Promise<AppleReminderList[]> {
   return lists.sort((a, b) => a.title.localeCompare(b.title));
 }
 
-export async function importAppleRemindersIntoInbox({
-  addTask,
-  createRecoverySnapshot,
-  listId,
-  listTitle,
-  deleteImportedReminders,
-}: {
+export type AppleRemindersImportOptions = {
   addTask: AddInboxTask;
   createRecoverySnapshot: () => Promise<unknown>;
   listId: string;
   listTitle?: string;
   deleteImportedReminders?: boolean;
-}): Promise<AppleRemindersImportResult> {
+};
+
+export function importAppleRemindersIntoInbox(options: AppleRemindersImportOptions): Promise<AppleRemindersImportResult> {
+  return serializeImport(() => runAppleRemindersImport(options));
+}
+
+/**
+ * Foreground auto-import (#1238): runs the same import as the settings button
+ * when the user turned it on and a list is chosen. Never prompts for
+ * permission; returns null when nothing ran.
+ */
+export async function runAppleRemindersAutoImport({
+  addTask,
+  createRecoverySnapshot,
+}: Pick<AppleRemindersImportOptions, 'addTask' | 'createRecoverySnapshot'>): Promise<AppleRemindersImportResult | null> {
+  if (Platform.OS !== 'ios') return null;
+  const settings = await loadAppleRemindersImportSettings();
+  if (!settings.autoImportOnOpen || !settings.selectedListId) return null;
+  if ((await getAppleRemindersPermissionStatus()) !== 'granted') return null;
+  return importAppleRemindersIntoInbox({
+    addTask,
+    createRecoverySnapshot,
+    listId: settings.selectedListId,
+    listTitle: settings.selectedListTitle,
+    deleteImportedReminders: settings.deleteImportedReminders,
+  });
+}
+
+async function runAppleRemindersImport({
+  addTask,
+  createRecoverySnapshot,
+  listId,
+  listTitle,
+  deleteImportedReminders,
+}: AppleRemindersImportOptions): Promise<AppleRemindersImportResult> {
   if (Platform.OS !== 'ios') {
     throw new Error('Apple Reminders import is only available on iOS.');
   }
@@ -240,6 +281,7 @@ export async function importAppleRemindersIntoInbox({
     ...(normalizeString(listTitle) ? { selectedListTitle: normalizeString(listTitle) } : {}),
     importedReminderIds: Array.from(importedIds),
     deleteImportedReminders: shouldDeleteImported,
+    autoImportOnOpen: settings.autoImportOnOpen,
   });
 
   return result;

@@ -1445,6 +1445,8 @@ export const deOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'Fokusminuten',
         'settings.pomodoroBreakMinutes': 'Pausenminuten',
         'settings.appleRemindersImport.appleReminders': 'Apple Erinnerungen',
+        'settings.appleRemindersImport.autoImport': 'Automatisch importieren',
+        'settings.appleRemindersImport.autoImportDescription': 'Bei jedem Öffnen von Mindwtr werden neue, unerledigte Erinnerungen aus dieser Liste in den Eingang übernommen.',
         'settings.appleRemindersImport.captureList': 'Erfassungsliste',
         'settings.appleRemindersImport.chooseCaptureList': 'Erinnerungsliste auswählen',
         'settings.appleRemindersImport.deleteAfterImport': 'Importierte Erinnerungen löschen',

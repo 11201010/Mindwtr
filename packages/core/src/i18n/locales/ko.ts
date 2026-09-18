@@ -1938,6 +1938,8 @@ export const koOverrides: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '할 일 {{taskCount}}개가 프로젝트 외부에 유지되었습니다.',
         'settings.backupMobile.tasksWillStayOutsideProjects': '할 일 {{taskCount}}개가 프로젝트 외부에 유지되므로 Mindwtr에서 처리할 수 있습니다.',
         'settings.appleRemindersImport.appleReminders': '애플 미리 알림',
+        'settings.appleRemindersImport.autoImport': '자동으로 가져오기',
+        'settings.appleRemindersImport.autoImportDescription': 'Mindwtr를 열 때마다 이 목록의 새 미완료 미리 알림이 받은 편지함에 추가됩니다.',
         'settings.appleRemindersImport.captureList': '수집 목록',
         'settings.appleRemindersImport.chooseCaptureList': '미리 알림 목록 선택',
         'settings.appleRemindersImport.deleteAfterImport': '가져온 미리 알림 삭제',

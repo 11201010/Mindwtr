@@ -1339,6 +1339,8 @@ export const hiOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'फोकस मिनट',
         'settings.pomodoroBreakMinutes': 'ब्रेक मिनट',
         'settings.appleRemindersImport.appleReminders': 'ऐपल रिमाइंडर्स',
+        'settings.appleRemindersImport.autoImport': 'अपने आप आयात करें',
+        'settings.appleRemindersImport.autoImportDescription': 'हर बार Mindwtr खुलने पर इस सूची के नए अधूरे रिमाइंडर इनबॉक्स में जुड़ जाते हैं।',
         'settings.appleRemindersImport.captureList': 'कैप्चर सूची',
         'settings.appleRemindersImport.chooseCaptureList': 'रिमाइंडर सूची चुनें',
         'settings.appleRemindersImport.deleteAfterImport': 'आयात किए गए रिमाइंडर हटाएं',

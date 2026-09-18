@@ -1830,6 +1830,8 @@ export const frOverrides: Record<string, string> = {
 'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} tâche(s) resteront hors des projets afin que vous puissiez les traiter dans Mindwtr.',
 
 'settings.appleRemindersImport.appleReminders': 'Rappels Apple',
+'settings.appleRemindersImport.autoImport': 'Importer automatiquement',
+'settings.appleRemindersImport.autoImportDescription': 'À chaque ouverture de Mindwtr, les nouveaux rappels non terminés de cette liste sont ajoutés à la Boîte de réception.',
 'settings.appleRemindersImport.captureList': 'Liste de capture',
 'settings.appleRemindersImport.chooseCaptureList': 'Choisir une liste Rappels',
 'settings.appleRemindersImport.deleteAfterImport': 'Supprimer les rappels importés',

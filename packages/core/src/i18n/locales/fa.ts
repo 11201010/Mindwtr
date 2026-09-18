@@ -2076,6 +2076,8 @@ export const faOverrides: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} کار بیرون از پروژه‌ها ماند.',
         'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} کار بیرون از پروژه‌ها می‌ماند تا در Mindwtr پردازششان کنید.',
         'settings.appleRemindersImport.appleReminders': 'Apple Reminders',
+        'settings.appleRemindersImport.autoImport': 'وارد کردن خودکار',
+        'settings.appleRemindersImport.autoImportDescription': 'هر بار که Mindwtr باز می‌شود، یادآوری‌های جدید و انجام‌نشدهٔ این فهرست به صندوق ورودی اضافه می‌شوند.',
         'settings.appleRemindersImport.captureList': 'فهرست ثبت',
         'settings.appleRemindersImport.chooseCaptureList': 'یک فهرست Reminders انتخاب کنید',
         'settings.appleRemindersImport.deleteAfterImport': 'حذف یادآوری‌های وارد‌شده',

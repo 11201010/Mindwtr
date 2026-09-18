@@ -2110,6 +2110,8 @@ export const en: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} task(s) stayed outside projects.',
         'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} task(s) will stay outside projects so you can process them in Mindwtr.',
         'settings.appleRemindersImport.appleReminders': 'Apple Reminders',
+        'settings.appleRemindersImport.autoImport': 'Import automatically',
+        'settings.appleRemindersImport.autoImportDescription': 'Each time Mindwtr opens, new incomplete reminders from this list are added to Inbox.',
         'settings.appleRemindersImport.captureList': 'Capture list',
         'settings.appleRemindersImport.chooseCaptureList': 'Choose a Reminders list',
         'settings.appleRemindersImport.deleteAfterImport': 'Delete imported reminders',

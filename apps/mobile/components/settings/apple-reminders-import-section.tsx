@@ -45,6 +45,7 @@ export function AppleRemindersImportSection({
   const [selectedListId, setSelectedListId] = useState<string | undefined>();
   const [selectedListTitle, setSelectedListTitle] = useState<string | undefined>();
   const [deleteImportedReminders, setDeleteImportedReminders] = useState(false);
+  const [autoImportOnOpen, setAutoImportOnOpen] = useState(false);
   const [lists, setLists] = useState<AppleReminderList[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [loadingLists, setLoadingLists] = useState(false);
@@ -66,6 +67,7 @@ export function AppleRemindersImportSection({
         setSelectedListId(settings.selectedListId);
         setSelectedListTitle(settings.selectedListTitle);
         setDeleteImportedReminders(settings.deleteImportedReminders);
+        setAutoImportOnOpen(settings.autoImportOnOpen);
       })
       .catch(logSettingsError)
       .finally(() => setLoadingSettings(false));
@@ -146,6 +148,26 @@ export function AppleRemindersImportSection({
         deleteImportedReminders: value,
       });
       setDeleteImportedReminders(value);
+    } catch (error) {
+      logSettingsError(error);
+      showToast({
+        title: tr('settings.syncMobile.error'),
+        message: String(error),
+        tone: 'error',
+        durationMs: 5200,
+      });
+    } finally {
+      setSavingSettings(false);
+    }
+  }, [disabled, internalBusy, showToast, tr]);
+
+  const handleAutoImportChange = useCallback(async (value: boolean) => {
+    if (disabled || internalBusy) return;
+    setSavingSettings(true);
+    try {
+      const current = await loadAppleRemindersImportSettings();
+      await saveAppleRemindersImportSettings({ ...current, autoImportOnOpen: value });
+      setAutoImportOnOpen(value);
     } catch (error) {
       logSettingsError(error);
       showToast({
@@ -256,10 +278,30 @@ export function AppleRemindersImportSection({
           <Switch
             disabled={busy}
             onValueChange={(value) => void handleDeleteImportedRemindersChange(value)}
+            testID="apple-reminders-delete-switch"
             trackColor={{ false: '#767577', true: '#3B82F6' }}
             value={deleteImportedReminders}
           />
         </View>
+        {selectedListId ? (
+          <View style={[styles.settingRow, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+            <View style={styles.settingInfo}>
+              <Text style={[styles.settingLabel, { color: tc.text }]}>
+                {tr('settings.appleRemindersImport.autoImport')}
+              </Text>
+              <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                {tr('settings.appleRemindersImport.autoImportDescription')}
+              </Text>
+            </View>
+            <Switch
+              disabled={busy}
+              onValueChange={(value) => void handleAutoImportChange(value)}
+              testID="apple-reminders-auto-import-switch"
+              trackColor={{ false: '#767577', true: '#3B82F6' }}
+              value={autoImportOnOpen}
+            />
+          </View>
+        ) : null}
         <TouchableOpacity
           accessibilityRole="button"
           disabled={busy}

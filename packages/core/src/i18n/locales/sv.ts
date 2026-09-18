@@ -2075,6 +2075,8 @@ export const svOverrides: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} uppgift(er) förblev utanför projekt.',
         'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} uppgift(er) förblir utanför projekt så att du kan bearbeta dem i Mindwtr.',
         'settings.appleRemindersImport.appleReminders': 'Apple Reminders',
+        'settings.appleRemindersImport.autoImport': 'Importera automatiskt',
+        'settings.appleRemindersImport.autoImportDescription': 'Varje gång Mindwtr öppnas läggs nya oavslutade påminnelser från den här listan till i Inkorgen.',
         'settings.appleRemindersImport.captureList': 'Inspelningslista',
         'settings.appleRemindersImport.chooseCaptureList': 'Välj en Reminders-lista',
         'settings.appleRemindersImport.deleteAfterImport': 'Ta bort importerade påminnelser',

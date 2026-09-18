@@ -56,6 +56,7 @@ import { useThemeColors } from '../hooks/use-theme-colors';
 import { AdaptiveWindowProvider } from '@/hooks/use-adaptive-window';
 import { useRootLayoutContextAutomation } from '@/hooks/root-layout/use-root-layout-context-automation';
 import { useRootLayoutExternalCapture } from '@/hooks/root-layout/use-root-layout-external-capture';
+import { useRootLayoutAppleRemindersAutoImport } from '@/hooks/root-layout/use-root-layout-apple-reminders';
 import { useRootLayoutPendingCaptures } from '@/hooks/root-layout/use-root-layout-pending-captures';
 import { useRootLayoutPomodoro } from '@/hooks/root-layout/use-root-layout-pomodoro';
 import { useRootLayoutWatch } from '@/hooks/root-layout/use-root-layout-watch';
@@ -588,6 +589,7 @@ function RootLayoutContentInner() {
   });
   useRootLayoutPomodoro({ dataReady, disabled: sandboxMode, resolveText });
   const drainPendingCaptures = useRootLayoutPendingCaptures({ dataReady, disabled: sandboxMode });
+  useRootLayoutAppleRemindersAutoImport({ dataReady, disabled: sandboxMode, showToast, t });
   useRootLayoutWatch({ dataReady, disabled: sandboxMode, language, onPendingCapture: drainPendingCaptures });
 
   if (!firstRenderLogged.current) {

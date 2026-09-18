@@ -1366,6 +1366,8 @@ export const plOverrides: Record<string, string> = {
         'settings.pomodoroFocusMinutes': 'Minuty skupienia',
         'settings.pomodoroBreakMinutes': 'Minuty przerwy',
         'settings.appleRemindersImport.appleReminders': 'Przypomnienia Apple',
+        'settings.appleRemindersImport.autoImport': 'Importuj automatycznie',
+        'settings.appleRemindersImport.autoImportDescription': 'Przy każdym otwarciu Mindwtr nowe nieukończone przypomnienia z tej listy trafiają do Skrzynki.',
         'settings.appleRemindersImport.captureList': 'Lista przechwytywania',
         'settings.appleRemindersImport.chooseCaptureList': 'Wybierz listę przypomnień',
         'settings.appleRemindersImport.deleteAfterImport': 'Usuń zaimportowane przypomnienia',

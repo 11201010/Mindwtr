@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Platform, Switch } from 'react-native';
+import { Platform } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppleRemindersImportSection } from './apple-reminders-import-section';
@@ -18,6 +18,7 @@ vi.mock('@/lib/data-transfer', () => ({ createMobileRecoverySnapshot: vi.fn() })
 vi.mock('@/lib/settings-utils', () => ({ logSettingsError: vi.fn() }));
 
 const settings = {
+  autoImportOnOpen: false,
   deleteImportedReminders: false,
   selectedListId: 'list-1',
   selectedListTitle: 'Inbox',
@@ -96,7 +97,7 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
     onBusyChange.mockClear();
 
     await act(async () => {
-      renderer.root.findByType(Switch).props.onValueChange(true);
+      renderer.root.findByProps({ testID: 'apple-reminders-delete-switch' }).props.onValueChange(true);
       await Promise.resolve();
     });
 
@@ -108,5 +109,24 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
       await pendingSave.promise;
     });
     expect(onBusyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('saves the auto-import toggle next to the chosen list', async () => {
+    await renderSection();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'apple-reminders-auto-import-switch' }).props.onValueChange(true);
+      await Promise.resolve();
+    });
+
+    expect(reminders.saveAppleRemindersImportSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ autoImportOnOpen: true, selectedListId: 'list-1' }),
+    );
+  });
+
+  it('hides the auto-import toggle until a list is chosen', async () => {
+    reminders.loadAppleRemindersImportSettings.mockResolvedValue({ ...settings, selectedListId: undefined });
+    await renderSection();
+    expect(renderer.root.findAllByProps({ testID: 'apple-reminders-auto-import-switch' })).toHaveLength(0);
   });
 });

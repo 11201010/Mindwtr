@@ -1851,6 +1851,8 @@ export const csOverrides: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} úkolů zůstalo mimo projekty.',
         'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} úkolů zůstane mimo projekty, abyste je mohli v Mindwtr zpracovat.',
         'settings.appleRemindersImport.appleReminders': 'Apple Připomínky',
+        'settings.appleRemindersImport.autoImport': 'Importovat automaticky',
+        'settings.appleRemindersImport.autoImportDescription': 'Při každém otevření Mindwtr se nové nedokončené připomínky z tohoto seznamu přidají do Doručené pošty.',
         'settings.appleRemindersImport.captureList': 'Seznam pro zachycení',
         'settings.appleRemindersImport.chooseCaptureList': 'Zvolte seznam Připomínek',
         'settings.appleRemindersImport.deleteAfterImport': 'Smazat importované připomínky',

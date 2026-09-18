@@ -2049,6 +2049,8 @@ export const zhHant: Record<string, string> = {
         'settings.backupMobile.tasksStayedOutsideProjects': '{{taskCount}} 個任務保留在專案之外。',
         'settings.backupMobile.tasksWillStayOutsideProjects': '{{taskCount}} 個任務會保留在專案之外，方便你在 Mindwtr 中繼續整理。',
         'settings.appleRemindersImport.appleReminders': 'Apple 提醒事項',
+        'settings.appleRemindersImport.autoImport': '自動匯入',
+        'settings.appleRemindersImport.autoImportDescription': '每次開啟 Mindwtr 時，此清單中新的未完成提醒事項會加入收件匣。',
         'settings.appleRemindersImport.captureList': '收集列表',
         'settings.appleRemindersImport.chooseCaptureList': '選擇一個提醒事項列表',
         'settings.appleRemindersImport.deleteAfterImport': '導入後刪除提醒事項',

@@ -2040,6 +2040,8 @@ export const ukOverrides: Record<string, string> = {
     "settings.backupMobile.tasksStayedOutsideProjects": "Завдання ({{taskCount}}) залишилися поза проектами.",
     "settings.backupMobile.tasksWillStayOutsideProjects": "Завдання ({{taskCount}}) залишатимуться поза проектами, тож ви зможете обробити їх у Mindwtr.",
     "settings.appleRemindersImport.appleReminders": "Нагадування Apple",
+    "settings.appleRemindersImport.autoImport": "Імпортувати автоматично",
+    "settings.appleRemindersImport.autoImportDescription": "Під час кожного відкриття Mindwtr нові невиконані нагадування з цього списку додаються до Вхідних.",
     "settings.appleRemindersImport.captureList": "Список для збирання",
     "settings.appleRemindersImport.chooseCaptureList": "Виберіть список нагадувань",
     "settings.appleRemindersImport.deleteAfterImport": "Видалити імпортовані нагадування",

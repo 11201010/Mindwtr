@@ -49,6 +49,7 @@ import {
   importAppleRemindersIntoInbox,
   loadAppleRemindersImportSettings,
   requestAppleRemindersPermission,
+  runAppleRemindersAutoImport,
 } from './apple-reminders-import';
 
 describe('apple-reminders-import', () => {
@@ -115,6 +116,7 @@ describe('apple-reminders-import', () => {
         selectedListTitle: 'Inbox',
         importedReminderIds: ['rem-1'],
         deleteImportedReminders: false,
+        autoImportOnOpen: false,
       }),
     );
   });
@@ -153,6 +155,7 @@ describe('apple-reminders-import', () => {
         selectedListId: 'list-1',
         importedReminderIds: ['rem-1'],
         deleteImportedReminders: true,
+        autoImportOnOpen: false,
       }),
     );
   });
@@ -182,6 +185,7 @@ describe('apple-reminders-import', () => {
         selectedListId: 'list-1',
         importedReminderIds: ['rem-1'],
         deleteImportedReminders: true,
+        autoImportOnOpen: false,
       }),
     );
   });
@@ -217,6 +221,7 @@ describe('apple-reminders-import', () => {
         selectedListId: 'list-1',
         importedReminderIds: ['rem-1', 'fallback:list-1:Floating thought:note:::', 'rem-2'],
         deleteImportedReminders: false,
+        autoImportOnOpen: false,
       }),
     );
   });
@@ -262,6 +267,7 @@ describe('apple-reminders-import', () => {
     await expect(loadAppleRemindersImportSettings()).resolves.toEqual({
       importedReminderIds: [],
       deleteImportedReminders: false,
+      autoImportOnOpen: false,
     });
   });
 
@@ -270,5 +276,64 @@ describe('apple-reminders-import', () => {
 
     await expect(requestAppleRemindersPermission()).resolves.toBe('unavailable');
     expect(mockRequestRemindersPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  describe('runAppleRemindersAutoImport', () => {
+    const stored = (extra: Record<string, unknown>) => JSON.stringify({
+      selectedListId: 'list-1',
+      selectedListTitle: 'Capture',
+      importedReminderIds: [],
+      deleteImportedReminders: false,
+      ...extra,
+    });
+    const options = () => ({
+      addTask: vi.fn(async () => ({ success: true })) as never,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+    });
+
+    it('does nothing when the toggle is off or no list is chosen', async () => {
+      mockGetItem.mockResolvedValue(stored({ autoImportOnOpen: false }));
+      await expect(runAppleRemindersAutoImport(options())).resolves.toBeNull();
+      mockGetItem.mockResolvedValue(stored({ autoImportOnOpen: true, selectedListId: undefined }));
+      await expect(runAppleRemindersAutoImport(options())).resolves.toBeNull();
+      expect(mockGetRemindersAsync).not.toHaveBeenCalled();
+    });
+
+    it('never prompts for permission and skips when access is missing', async () => {
+      mockGetItem.mockResolvedValue(stored({ autoImportOnOpen: true }));
+      mockGetRemindersPermissionsAsync.mockResolvedValue({ status: 'undetermined' });
+      await expect(runAppleRemindersAutoImport(options())).resolves.toBeNull();
+      expect(mockRequestRemindersPermissionsAsync).not.toHaveBeenCalled();
+      expect(mockGetRemindersAsync).not.toHaveBeenCalled();
+    });
+
+    it('imports the chosen list with the saved delete choice and keeps the toggle', async () => {
+      mockGetItem.mockResolvedValue(stored({ autoImportOnOpen: true, deleteImportedReminders: true }));
+      mockGetRemindersAsync.mockResolvedValue([{ id: 'r-1', title: 'Buy milk', completed: false }] as never);
+      const opts = options();
+      const result = await runAppleRemindersAutoImport(opts);
+      expect(result?.importedCount).toBe(1);
+      expect(opts.addTask).toHaveBeenCalledWith('Buy milk', { status: 'inbox' });
+      expect(mockDeleteReminderAsync).toHaveBeenCalledWith('r-1');
+      const calls = (mockSetItem as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+      const saved = JSON.parse(String(calls[calls.length - 1]?.[1]));
+      expect(saved).toMatchObject({ autoImportOnOpen: true, importedReminderIds: ['r-1'] });
+    });
+
+    it('serializes overlapping imports so a reminder is added once', async () => {
+      mockGetItem.mockResolvedValue(stored({ autoImportOnOpen: true }));
+      mockGetRemindersAsync.mockResolvedValue([{ id: 'r-2', title: 'Call bank', completed: false }] as never);
+      // Persisted ids must be visible to the second run: mirror what the app stores.
+      mockSetItem.mockImplementation((async (_key: string, value: string) => {
+        mockGetItem.mockResolvedValue(value);
+      }) as never);
+      const opts = options();
+      const [first, second] = await Promise.all([
+        runAppleRemindersAutoImport(opts),
+        runAppleRemindersAutoImport(opts),
+      ]);
+      expect((first?.importedCount ?? 0) + (second?.importedCount ?? 0)).toBe(1);
+      expect(opts.addTask).toHaveBeenCalledTimes(1);
+    });
   });
 });

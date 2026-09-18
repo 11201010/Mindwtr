@@ -2218,6 +2218,8 @@ export const daOverrides: Record<string, string> = {
     'settings.backupMobile.tasksWillStayOutsideProjects':
         '{{taskCount}} opgaver vil forblive uden for projekter, så du kan behandle dem i Mindwtr.',
     'settings.appleRemindersImport.appleReminders': 'Apple-påmindelser',
+    'settings.appleRemindersImport.autoImport': 'Importér automatisk',
+    'settings.appleRemindersImport.autoImportDescription': 'Hver gang Mindwtr åbnes, føjes nye ufærdige påmindelser fra denne liste til Indbakken.',
     'settings.appleRemindersImport.captureList': 'Registreringsliste',
     'settings.appleRemindersImport.chooseCaptureList': 'Vælg en påmindelsesliste',
     'settings.appleRemindersImport.deleteAfterImport': 'Slet importerede påmindelser',

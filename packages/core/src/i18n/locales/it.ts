@@ -1138,6 +1138,8 @@ export const itOverrides: Record<string, string> = {
         'settings.captureSaveAudio': 'Salva allegati audio',
         'settings.captureSaveAudioDesc': 'Mantieni allegato il file audio dopo la trascrizione.',
         'settings.appleRemindersImport.appleReminders': 'Promemoria Apple',
+        'settings.appleRemindersImport.autoImport': 'Importa automaticamente',
+        'settings.appleRemindersImport.autoImportDescription': 'Ogni volta che apri Mindwtr, i nuovi promemoria non completati di questo elenco vengono aggiunti alla Posta in arrivo.',
         'settings.appleRemindersImport.captureList': 'Elenco di acquisizione',
         'settings.appleRemindersImport.chooseCaptureList': 'Scegli un elenco di promemoria',
         'settings.appleRemindersImport.deleteAfterImport': 'Elimina i promemoria importati',
