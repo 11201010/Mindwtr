@@ -30,6 +30,7 @@ vi.mock('@/modules/android-window-layout', () => ({
 
 vi.mock('@/lib/app-log', () => ({ logInfo }));
 
+vi.mock('@/hooks/root-layout/use-root-layout-apple-reminders', () => ({ useRootLayoutAppleRemindersAutoImport: vi.fn() }));
 vi.mock('@/hooks/root-layout/use-root-layout-context-automation', () => ({ useRootLayoutContextAutomation: vi.fn() }));
 vi.mock('@/hooks/root-layout/use-root-layout-external-capture', () => ({ useRootLayoutExternalCapture: vi.fn() }));
 vi.mock('@/hooks/root-layout/use-root-layout-notification-open-handler', () => ({ useRootLayoutNotificationOpenHandler: vi.fn() }));
