@@ -102,6 +102,7 @@ AGENTS.md
 .kiro
 skills-lock.json
 docs/agents
+.impeccable/
 
 # CI artifacts
 scripts/ci/__pycache__/
