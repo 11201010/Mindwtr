@@ -4,6 +4,7 @@ import { Alert, Text } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectRow } from './ProjectRow';
+import { projectsScreenStyles } from './projects-screen.styles';
 
 const hapticsMocks = vi.hoisted(() => ({
   selectionAsync: vi.fn().mockResolvedValue(undefined),
@@ -61,9 +62,32 @@ const statusPalette = {
   archived: { text: '#ffffff', bg: '#111111', border: '#222222' },
 };
 
+const flattenStyle = (value: unknown): Record<string, unknown> => Object.assign(
+  {},
+  ...(Array.isArray(value) ? value : [value]).filter(Boolean),
+);
+
 describe('ProjectRow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('shows a clean project title without tag dots while retaining its tags', () => {
+    const taggedProject = Object.freeze({ ...project, tagIds: Object.freeze(['admin', 'family']) });
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow project={taggedProject} tc={tc} focusedCount={0}
+          statusPalette={statusPalette as any} t={(key) => key}
+          onDeleteProject={vi.fn()} onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()} onToggleProjectFocus={vi.fn()} />,
+      );
+    });
+    const titleContent = tree.root.find((node) => String(node.type) === 'View'
+      && node.props.style === projectsScreenStyles.projectTitleContent);
+    expect(titleContent.children).toHaveLength(1);
+    expect(titleContent.findByType(Text).props.children).toBe(project.title);
+    expect(taggedProject.tagIds).toEqual(['admin', 'family']);
   });
 
   it('requires a deliberate horizontal drag before opening project swipe actions', () => {
@@ -94,7 +118,7 @@ describe('ProjectRow', () => {
     expect(swipeable.props.overshootRight).toBe(false);
   });
 
-  it('uses a 12px hitSlop and triggers selection haptics when focusing a project', () => {
+  it('keeps the focus action in a 44dp trailing target and triggers selection haptics', () => {
     const onToggleProjectFocus = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
@@ -115,8 +139,13 @@ describe('ProjectRow', () => {
     });
 
     const focusButton = tree.root.find((node) => node.props.testID === 'project-row-focus-project-1');
+    const trailing = tree.root.find((node) => node.props.testID === 'project-row-trailing-project-1');
+    const star = tree.root.find((node) => (node.type as unknown) === 'Star');
 
     expect(focusButton.props.hitSlop).toEqual({ top: 12, bottom: 12, left: 12, right: 12 });
+    expect(flattenStyle(focusButton.props.style)).toEqual(expect.objectContaining({ width: 44, height: 44 }));
+    expect(trailing.findAll((node) => node.props.testID === 'project-row-focus-project-1').length).toBeGreaterThanOrEqual(1);
+    expect(star.props.size).toBe(18);
 
     renderer.act(() => {
       focusButton.props.onPress();
@@ -124,6 +153,62 @@ describe('ProjectRow', () => {
 
     expect(hapticsMocks.selectionAsync).toHaveBeenCalledTimes(1);
     expect(onToggleProjectFocus).toHaveBeenCalledWith('project-1');
+  });
+
+  it('uses the filled star alone for focus without adding a yellow row outline', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow
+          project={{ ...project, isFocused: true }}
+          tc={tc}
+          focusedCount={1}
+          statusPalette={statusPalette as any}
+          t={(key) => key}
+          onDeleteProject={vi.fn()}
+          onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()}
+          onToggleProjectFocus={vi.fn()}
+        />,
+      );
+    });
+
+    const row = tree.root.find((node) => node.props.testID === 'project-row-project-1');
+    const rowStyle = flattenStyle(row.props.style);
+    expect(rowStyle.borderColor).toBeUndefined();
+    expect(rowStyle.borderWidth).toBeUndefined();
+  });
+
+  it('keeps the one-line next-action preview and opens the project from the main row target', () => {
+    const onOpenProject = vi.fn();
+    const nextAction = { id: 'task-next', title: 'Send the revised proposal' } as any;
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow
+          project={project}
+          taskSummary={{ activeTaskCount: 3, nextAction }}
+          tc={tc}
+          focusedCount={0}
+          statusPalette={statusPalette as any}
+          t={(key) => key}
+          onDeleteProject={vi.fn()}
+          onDuplicateProject={vi.fn()}
+          onOpenProject={onOpenProject}
+          onToggleProjectFocus={vi.fn()}
+        />,
+      );
+    });
+
+    const openTarget = tree.root.find((node) => node.props.testID === 'project-row-open-project-1');
+    const preview = tree.root.findByProps({ testID: 'project-row-next-action-project-1' });
+    expect(openTarget.props.accessibilityRole).toBe('button');
+    expect(openTarget.props.accessibilityLabel).toBeUndefined();
+    expect(preview.props.numberOfLines).toBe(1);
+    expect(preview.props.children).toEqual(['↳ ', 'Send the revised proposal']);
+
+    renderer.act(() => openTarget.props.onPress());
+    expect(onOpenProject).toHaveBeenCalledWith(project);
   });
 
   it('shows the project task count from the precomputed summary', () => {
@@ -145,9 +230,36 @@ describe('ProjectRow', () => {
       );
     });
 
-    const countBadge = tree.root.find((node) => node.props.accessibilityLabel === '7 tasks');
+    const count = tree.root.find((node) => node.props.accessibilityLabel === '7 tasks');
 
-    expect(countBadge.findByType(Text).props.children).toBe(7);
+    expect(count.findByType(Text).props.children).toBe(7);
+    expect(flattenStyle(count.props.style)).not.toEqual(expect.objectContaining({ borderWidth: 1 }));
+    expect(flattenStyle(count.props.style).backgroundColor).toBeUndefined();
+    expect(count.parent?.props.testID).toBe('project-row-trailing-project-1');
+  });
+
+  it('keeps the unfocused star visible but disabled at the focus limit', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <ProjectRow
+          project={project}
+          tc={tc}
+          focusedCount={5}
+          statusPalette={statusPalette as any}
+          t={(key) => key}
+          onDeleteProject={vi.fn()}
+          onDuplicateProject={vi.fn()}
+          onOpenProject={vi.fn()}
+          onToggleProjectFocus={vi.fn()}
+        />,
+      );
+    });
+
+    const focusButton = tree.root.findByProps({ testID: 'project-row-focus-project-1' });
+    expect(focusButton.props.disabled).toBe(true);
+    expect(focusButton.props.accessibilityState).toEqual({ selected: false, disabled: true });
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'Star')).toHaveLength(1);
   });
 
   it('uses warning haptics for confirmed project deletion from the swipe action', () => {

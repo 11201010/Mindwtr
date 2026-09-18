@@ -315,6 +315,12 @@ function findButtonByLabel(tree: ReturnType<typeof create>, label: string, optio
   return options.last ? matches[matches.length - 1] : matches[0];
 }
 
+function openViewOptions(tree: ReturnType<typeof create>) {
+  act(() => {
+    findButtonByLabel(tree, 'View options').props.onPress();
+  });
+}
+
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (Array.isArray(style)) {
     return style.reduce<Record<string, unknown>>((result, item) => ({
@@ -816,7 +822,6 @@ describe('FocusScreen', () => {
       .toEqual({ expanded: false });
 
     const collapseButton = findButtonByLabel(tree, 'Focus only');
-    expect(collapseButton.props.accessibilityState).toEqual({ disabled: false });
     act(() => {
       collapseButton.props.onPress();
     });
@@ -830,7 +835,7 @@ describe('FocusScreen', () => {
     expect(tree.root.findAllByType(SwipeableTaskItem).map((node) => node.props.task.id))
       .toEqual(['focus-task']);
     expect(() => findButtonByText(tree, 'Review project')).toThrow();
-    expect(findButtonByLabel(tree, 'Expand sections')).toBeTruthy();
+    expect(findButtonByLabel(tree, 'Expand sections').props.accessibilityState.selected).toBe(true);
     expect(asyncStorageMock.setItem).toHaveBeenLastCalledWith(
       'mindwtr:view:focus:v1',
       JSON.stringify({
@@ -850,7 +855,7 @@ describe('FocusScreen', () => {
     act(() => {
       findButtonByLabel(tree, 'Next Actions').props.onPress();
     });
-    expect(findButtonByLabel(tree, 'Focus only')).toBeTruthy();
+    expect(findButtonByLabel(tree, 'Focus only').props.accessibilityState.selected).toBe(false);
 
     act(() => {
       findButtonByLabel(tree, 'Focus only').props.onPress();
@@ -884,9 +889,11 @@ describe('FocusScreen', () => {
       tree = create(<FocusScreen />);
     });
 
-    const shortcut = findButtonByLabel(tree, 'Expand sections');
-    expect(shortcut.props.disabled).toBe(true);
-    expect(shortcut.props.accessibilityState).toEqual({ disabled: true });
+    expect(tree.root.findAll((node) => node.props.accessibilityLabel === 'Expand sections')
+      .some((node) => node.props.accessibilityState?.disabled === true)).toBe(true);
+    expect(tree.root.findAll((node) => (
+      node.props.accessibilityLabel === 'Expand sections' && typeof node.props.onPress === 'function'
+    ))).toHaveLength(0);
   });
 
   it('restores the persisted Next Actions collapsed state', async () => {
@@ -973,21 +980,21 @@ describe('FocusScreen', () => {
       await Promise.resolve();
     });
 
-    const detailsButton = tree.root.find((node) =>
-      node.props.accessibilityLabel === 'Show details' && typeof node.props.onPress === 'function'
-    );
+    openViewOptions(tree);
+    const detailsButton = findButtonByText(tree, 'Show details');
     expect(detailsButton).toBeTruthy();
   });
 
-  it('flips showDetails from the header toggle and persists it in the view-state blob', () => {
+  it('keeps Focus only on the page and changes Details inside View options without losing persistence', () => {
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(<FocusScreen />);
     });
 
-    const detailsButton = tree.root.find((node) =>
-      node.props.accessibilityLabel === 'Show details' && typeof node.props.onPress === 'function'
-    );
+    expect(() => findButtonByLabel(tree, 'Show details')).toThrow();
+    expect(findButtonByLabel(tree, 'Focus only')).toBeTruthy();
+    openViewOptions(tree);
+    const detailsButton = findButtonByText(tree, 'Show details');
 
     act(() => {
       detailsButton.props.onPress();
@@ -1009,10 +1016,30 @@ describe('FocusScreen', () => {
       })
     );
 
-    const flippedButton = tree.root.find((node) =>
-      node.props.accessibilityLabel === 'Hide details' && typeof node.props.onPress === 'function'
-    );
+    const flippedButton = findButtonByText(tree, 'Hide details');
     expect(flippedButton).toBeTruthy();
+  });
+
+  it('keeps Focus only as the rightmost toolbar action and Details inside View options', () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    const toolbarLabels = tree.root.findAll((node) => (
+      String(node.type) === 'Pressable'
+      &&
+      node.props.accessibilityRole === 'button'
+      && ['View options', 'Filters', 'Focus only', 'Show details'].includes(node.props.accessibilityLabel)
+      && typeof node.props.onPress === 'function'
+    )).map((node) => node.props.accessibilityLabel);
+    expect(toolbarLabels).toEqual(['View options', 'Filters', 'Focus only']);
+
+    openViewOptions(tree);
+    expect(findButtonByText(tree, 'Show details')).toBeTruthy();
+    const scrollContent = tree.root.findByProps({ testID: 'focus-view-options-content' });
+    expect(scrollContent.findAll((node) => node.props.children === 'Show details').length).toBeGreaterThan(0);
+    expect(scrollContent.props.style.flexShrink).toBe(1);
   });
 
   it('previews deferred and recurring tasks surfacing within a week under Upcoming (#1061)', () => {
@@ -2091,6 +2118,9 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     act(() => {
+      findButtonByText(tree, 'Contexts & tags').props.onPress();
+    });
+    act(() => {
       findButtonByText(tree, '@desk').props.onPress();
     });
     act(() => {
@@ -2323,7 +2353,7 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     await act(async () => {
-      findButtonByLabel(tree, 'Delete Due Date: This week').props.onPress();
+      findButtonByLabel(tree, 'Remove filter: Due Date: This week').props.onPress();
     });
 
     expect(alertSpy).toHaveBeenCalled();
@@ -2354,6 +2384,9 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     act(() => {
+      findButtonByText(tree, 'Contexts & tags').props.onPress();
+    });
+    act(() => {
       findButtonByText(tree, '@desk').props.onPress();
     });
 
@@ -2381,6 +2414,9 @@ describe('FocusScreen', () => {
 
     act(() => {
       filterButton.props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'Energy level').props.onPress();
     });
     act(() => {
       findButtonByText(tree, 'High energy').props.onPress();
@@ -2424,6 +2460,9 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     act(() => {
+      findButtonByText(tree, 'Contexts & tags').props.onPress();
+    });
+    act(() => {
       findButtonByText(tree, '@desk').props.onPress();
     });
     act(() => {
@@ -2431,6 +2470,9 @@ describe('FocusScreen', () => {
     });
     act(() => {
       findButtonByText(tree, 'Any').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'Back').props.onPress();
     });
     act(() => {
       findButtonByText(tree, 'Save', { last: true }).props.onPress();
@@ -2474,6 +2516,9 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     act(() => {
+      findButtonByText(tree, 'Contexts & tags').props.onPress();
+    });
+    act(() => {
       findButtonByText(tree, '#quick').props.onPress();
     });
     act(() => {
@@ -2481,6 +2526,9 @@ describe('FocusScreen', () => {
     });
     act(() => {
       findButtonByText(tree, 'Any').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'Back').props.onPress();
     });
     act(() => {
       findButtonByText(tree, 'Save', { last: true }).props.onPress();
@@ -2568,6 +2616,9 @@ describe('FocusScreen', () => {
       findButtonByLabel(tree, 'Filters').props.onPress();
     });
     act(() => {
+      buttonInVisibleModal('Contexts & tags').props.onPress();
+    });
+    act(() => {
       buttonInVisibleModal('@desk').props.onPress();
     });
     act(() => {
@@ -2575,6 +2626,9 @@ describe('FocusScreen', () => {
     });
     act(() => {
       buttonInVisibleModal('#urgent').props.onPress();
+    });
+    act(() => {
+      buttonInVisibleModal('Back').props.onPress();
     });
     act(() => {
       buttonInVisibleModal('Save').props.onPress();
@@ -2680,6 +2734,9 @@ describe('FocusScreen', () => {
 
     act(() => {
       findButtonByLabel(tree, 'Filters').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'More filters').props.onPress();
     });
 
     const locationInput = tree.root.findByProps({ accessibilityLabel: 'Location' });
@@ -2867,6 +2924,9 @@ describe('FocusScreen', () => {
 
     act(() => {
       findButtonByLabel(tree, 'Filters').props.onPress();
+    });
+    act(() => {
+      findButtonByText(tree, 'Contexts & tags').props.onPress();
     });
     act(() => {
       findButtonByText(tree, '@work').props.onPress();

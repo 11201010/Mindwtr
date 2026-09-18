@@ -374,6 +374,7 @@ vi.mock('lucide-react-native', () => {
     MapPin: Icon,
     MoreHorizontal: Icon,
     Save: Icon,
+    Settings2: Icon,
     SlidersHorizontal: Icon,
     Star: Icon,
     Timer: Icon,

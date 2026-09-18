@@ -25,18 +25,15 @@ const baseProps: SettingsMainPageProps = {
     onCalendarSystemChange: vi.fn(),
     timeFormat: 'system',
     onTimeFormatChange: vi.fn(),
-    keybindingStyle: 'vim',
-    onKeybindingStyleChange: vi.fn(),
     globalQuickAddShortcut: 'Control+Alt+M',
     onGlobalQuickAddShortcutChange: vi.fn(),
     undoNotificationsEnabled: true,
     onUndoNotificationsChange: vi.fn(),
-    onOpenHelp: vi.fn(),
     languages: [{ id: 'en', native: 'English' }],
 };
 
 describe('SettingsMainPage', () => {
-    it('flags only partly-translated languages in the picker', () => {
+    it('shows native language names without translation-coverage labels', () => {
         const { getByRole } = render(
             <SettingsMainPage
                 {...baseProps}
@@ -50,10 +47,10 @@ describe('SettingsMainPage', () => {
 
         const options = Array.from(getByRole('combobox', { name: 'Language' }).querySelectorAll('option'))
             .map((option) => option.textContent);
-        expect(options).toEqual(['English', 'Svenska', 'Nederlands — Partly translated']);
+        expect(options).toEqual(['English', 'Svenska', 'Nederlands']);
     });
 
-    it('says so on the row when the active language is partly translated', () => {
+    it('shows only the native name for the selected language', () => {
         const { getAllByText } = render(
             <SettingsMainPage
                 {...baseProps}
@@ -62,46 +59,7 @@ describe('SettingsMainPage', () => {
             />,
         );
 
-        // The row description and the sole option both carry it.
-        expect(getAllByText('Nederlands — Partly translated')).toHaveLength(2);
-    });
-
-    it('renders and toggles launch at startup when available', () => {
-        const onLaunchAtStartupChange = vi.fn();
-
-        const { getByRole, getByText } = render(
-            <SettingsMainPage
-                {...baseProps}
-                showLaunchAtStartup
-                launchAtStartupEnabled={false}
-                onLaunchAtStartupChange={onLaunchAtStartupChange}
-            />,
-        );
-
-        expect(getByText('Window Behavior')).toBeInTheDocument();
-        expect(getByText('Start Mindwtr automatically when you sign in to this computer.')).toBeInTheDocument();
-
-        fireEvent.click(getByRole('switch', { name: 'Launch at startup' }));
-
-        expect(onLaunchAtStartupChange).toHaveBeenCalledWith(true);
-    });
-
-    it('disables the launch at startup toggle while the OS state is updating', () => {
-        const onLaunchAtStartupChange = vi.fn();
-
-        const { getByRole } = render(
-            <SettingsMainPage
-                {...baseProps}
-                showLaunchAtStartup
-                launchAtStartupEnabled
-                launchAtStartupLoading
-                onLaunchAtStartupChange={onLaunchAtStartupChange}
-            />,
-        );
-
-        fireEvent.click(getByRole('switch', { name: 'Launch at startup' }));
-
-        expect(onLaunchAtStartupChange).not.toHaveBeenCalled();
+        expect(getAllByText('Nederlands')).toHaveLength(2);
     });
 
     it('shows the Flatpak quick add command and disables app-owned shortcut selection', () => {
@@ -127,6 +85,7 @@ describe('SettingsMainPage', () => {
             />,
         );
 
+        fireEvent.click(getByRole('button', { name: /Regional formats/ }));
         expect(getAllByText('Saturday').length).toBeGreaterThan(0);
         fireEvent.change(getByRole('combobox', { name: 'Week starts on' }), {
             target: { value: 'monday' },
@@ -150,6 +109,7 @@ describe('SettingsMainPage', () => {
             />,
         );
 
+        fireEvent.click(getByRole('button', { name: /Regional formats/ }));
         expect(getByText('Calendar system')).toBeInTheDocument();
         fireEvent.change(getByRole('combobox', { name: 'Calendar system' }), {
             target: { value: 'gregorian' },

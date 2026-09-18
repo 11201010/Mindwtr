@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react';
+import { Redirect, usePathname } from 'expo-router';
 import { View, Text, FlatList, Pressable, StyleSheet, Alert, TextInput } from 'react-native';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
 import {
@@ -21,7 +22,7 @@ import {
     type Task,
     type TaskSortBy,
 } from '@mindwtr/core';
-import { FilterChip, TaskFilterSheet } from '@/components/task-filter-sheet';
+import { TaskFilterSheet } from '@/components/task-filter-sheet';
 import { resolveTimeEstimateFilterOptions } from '@/components/time-estimate-filter-utils';
 import { taskMatchesFilterSelections, useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 import { useLocalDayKey } from '@/hooks/use-local-day-key';
@@ -49,7 +50,8 @@ import { settleStoreAction } from '@/components/store-action-result';
 import { useToast } from '@/contexts/toast-context';
 import { TASK_LIST_WINDOWING_PROPS } from '@/components/task-list-windowing';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Archive, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react-native';
+import { Archive, ArrowUpDown, ChevronDown, ChevronRight, Folder, SlidersHorizontal } from 'lucide-react-native';
+import { ListOverflowMenu } from '@/components/list-overflow-menu';
 
 function ArchivedTaskItem({
     task,
@@ -287,6 +289,7 @@ function ArchivedProjectItem({
 }
 
 export default function ArchivedScreen() {
+    const pathname = usePathname();
     const {
         _allTasks,
         projects,
@@ -693,6 +696,10 @@ export default function ArchivedScreen() {
         [],
     );
 
+    if (pathname === '/archived') {
+        return <Redirect href={{ pathname: '/history', params: { tab: 'archived' } } as never} />;
+    }
+
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <View style={[styles.container, { backgroundColor: tc.bg }]}>
@@ -731,29 +738,84 @@ export default function ArchivedScreen() {
                             returnKeyType="search"
                             style={[styles.searchInput, { borderColor: tc.border, backgroundColor: tc.inputBg, color: tc.text }]}
                         />
-                        <Pressable
-                            onPress={() => setFiltersVisible(true)}
-                            accessibilityRole="button"
-                            accessibilityLabel={tFallback(t, 'filters.title', 'Filters')}
-                            style={[
-                                styles.filtersButton,
+                        {selections.hasActive ? (
+                            <Pressable
+                                onPress={() => setFiltersVisible(true)}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${tFallback(t, 'filters.title', 'Filters')} · ${selections.activeCount}`}
+                                accessibilityState={{ selected: true }}
+                                style={[
+                                    styles.filtersButton,
+                                    { borderColor: tc.tint, backgroundColor: tc.filterBg },
+                                ]}
+                                testID="archived-active-filters-button"
+                            >
+                                <SlidersHorizontal size={16} color={tc.tint} strokeWidth={1.75} />
+                                <Text style={[styles.filtersButtonText, { color: tc.tint }]}>
+                                    {tFallback(t, 'filters.title', 'Filters')} · {selections.activeCount}
+                                </Text>
+                            </Pressable>
+                        ) : null}
+                        <ListOverflowMenu
+                            actions={[
                                 {
-                                    borderColor: selections.hasActive ? tc.tint : tc.border,
-                                    backgroundColor: selections.hasActive ? tc.tint : tc.cardBg,
+                                    id: 'filters',
+                                    label: tFallback(t, 'filters.title', 'Filters'),
+                                    icon: (color) => <SlidersHorizontal size={19} color={color} strokeWidth={2} />,
+                                    onPress: () => setFiltersVisible(true),
+                                    selected: selections.hasActive,
+                                    testID: 'archived-filter-action',
+                                },
+                                {
+                                    id: 'sort',
+                                    label: tFallback(t, 'sort.label', 'Sort'),
+                                    accessibilityLabel: `${tFallback(t, 'sort.label', 'Sort')}: ${t(`sort.${sortBy}`)}`,
+                                    icon: (color) => <ArrowUpDown size={19} color={color} strokeWidth={2} />,
+                                    value: t(`sort.${sortBy}`),
+                                    testID: 'archived-sort-action',
+                                    submenu: {
+                                        title: tFallback(t, 'sort.label', 'Sort'),
+                                        actions: archivedSortOptions.map((option) => ({
+                                            id: `sort:${option}`,
+                                            label: t(`sort.${option}`),
+                                            accessibilityLabel: `${tFallback(t, 'sort.label', 'Sort')}: ${t(`sort.${option}`)}`,
+                                            icon: (color) => <ArrowUpDown size={18} color={color} strokeWidth={2} />,
+                                            onPress: () => updateViewState({ sortBy: option }),
+                                            selected: sortBy === option,
+                                            testID: `archived-sort-${option}`,
+                                        })),
+                                    },
+                                },
+                                {
+                                    id: 'group',
+                                    label: tFallback(t, 'list.groupBy', 'Group'),
+                                    accessibilityLabel: `${tFallback(t, 'list.groupBy', 'Group')}: ${getTaskGroupByLabel(groupBy, t)}`,
+                                    icon: (color) => <Folder size={19} color={color} strokeWidth={2} />,
+                                    value: getTaskGroupByLabel(groupBy, t),
+                                    testID: 'archived-group-action',
+                                    submenu: {
+                                        title: tFallback(t, 'list.groupBy', 'Group'),
+                                        actions: ARCHIVED_LIST_GROUP_OPTIONS.map((option) => {
+                                            const label = getTaskGroupByLabel(option, t);
+                                            return {
+                                                id: `group:${option}`,
+                                                label,
+                                                accessibilityLabel: `${tFallback(t, 'list.groupBy', 'Group')}: ${label}`,
+                                                icon: (color: string) => <Folder size={18} color={color} strokeWidth={2} />,
+                                                onPress: () => updateViewState({ groupBy: option }),
+                                                selected: groupBy === option,
+                                                testID: `archived-group-${option}`,
+                                            };
+                                        }),
+                                    },
                                 },
                             ]}
-                        >
-                            <SlidersHorizontal
-                                size={16}
-                                color={selections.hasActive ? tc.onTint : tc.text}
-                                strokeWidth={1.75}
-                            />
-                            {selections.activeCount > 0 ? (
-                                <Text style={[styles.filtersButtonText, { color: tc.onTint }]}>
-                                    {selections.activeCount}
-                                </Text>
-                            ) : null}
-                        </Pressable>
+                            backLabel={tFallback(t, 'common.back', 'Back')}
+                            closeLabel={tFallback(t, 'common.close', 'Close')}
+                            moreLabel={tFallback(t, 'taskEdit.moreOptions', 'More options')}
+                            themeColors={tc}
+                            triggerTestID="archived-overflow-button"
+                        />
                     </View>
                 )}
                 {segment === 'tasks' && archivedTasks.length > 0 && (
@@ -902,39 +964,6 @@ export default function ArchivedScreen() {
                     }}
                     themeColors={tc}
                     t={t}
-                    topContent={(
-                        <>
-                            <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-                                {tFallback(t, 'sort.label', 'Sort')}
-                            </Text>
-                            <View style={styles.sheetChipRow}>
-                                {archivedSortOptions.map((option) => (
-                                    <FilterChip
-                                        key={`sort:${option}`}
-                                        label={t(`sort.${option}`)}
-                                        selected={sortBy === option}
-                                        themeColors={tc}
-                                        onPress={() => updateViewState({ sortBy: option })}
-                                    />
-                                ))}
-                            </View>
-
-                            <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-                                {tFallback(t, 'list.groupBy', 'Group')}
-                            </Text>
-                            <View style={styles.sheetChipRow}>
-                                {ARCHIVED_LIST_GROUP_OPTIONS.map((option) => (
-                                    <FilterChip
-                                        key={`group:${option}`}
-                                        label={getTaskGroupByLabel(option, t)}
-                                        selected={groupBy === option}
-                                        themeColors={tc}
-                                        onPress={() => updateViewState({ groupBy: option })}
-                                    />
-                                ))}
-                            </View>
-                        </>
-                    )}
                 />
                 <TaskEditModal
                     visible={Boolean(selectedTask)}
@@ -984,9 +1013,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 6,
         borderWidth: 1,
-        borderRadius: 10,
+        borderRadius: 12,
+        minHeight: 44,
         paddingHorizontal: 12,
-        paddingVertical: 9,
+        paddingVertical: 6,
     },
     filtersButtonText: {
         fontSize: 13,
@@ -1010,17 +1040,6 @@ const styles = StyleSheet.create({
     },
     groupHeaderCount: {
         fontSize: 12,
-    },
-    sheetSectionLabel: {
-        fontSize: 12,
-        fontWeight: '600',
-        marginTop: 12,
-        marginBottom: 6,
-    },
-    sheetChipRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
     },
     segmentRow: {
         paddingHorizontal: 16,

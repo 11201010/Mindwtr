@@ -10,7 +10,7 @@ const ObsidianView = lazy(() => import('./components/views/ObsidianView').then((
 import { ContextsView } from './components/views/ContextsView';
 import { ProjectsView as ProjectsViewEager } from './components/views/ProjectsView';
 const ReviewView = lazy(() => import('./components/views/ReviewView').then((m) => ({ default: m.ReviewView })));
-import { ArchiveView } from './components/views/ArchiveView';
+import { HistoryView } from './components/views/HistoryView';
 import { TrashView } from './components/views/TrashView';
 import { AgendaView } from './components/views/AgendaView';
 import { SearchView } from './components/views/SearchView';
@@ -1214,8 +1214,15 @@ function App() {
                 return <ListView title={t('list.reference')} statusFilter="reference" />;
             case 'waiting':
                 return <ListView title={t('list.waiting')} statusFilter="waiting" />;
+            case 'history':
             case 'done':
-                return <ListView title={t('list.done')} statusFilter="done" />;
+            case 'archived':
+                return (
+                    <HistoryView
+                        selectedTab={renderedView === 'archived' ? 'archived' : 'done'}
+                        onSelectTab={handleViewChange}
+                    />
+                );
             case 'calendar':
                 return <CalendarView />;
             case 'board':
@@ -1238,8 +1245,6 @@ function App() {
                         onResumeOnboarding={resumeDesktopOnboarding}
                     />
                 );
-            case 'archived':
-                return <ArchiveView />;
             case 'trash':
                 return <TrashView />;
             default:
@@ -1682,7 +1687,7 @@ function App() {
                     </Suspense>
                     <GlobalSearch
                         onNavigate={(view, _id) => handleViewChange(view)}
-                        defaultIncludeCompleted={currentView === 'done' || currentView === 'archived'}
+                    defaultIncludeCompleted={currentView === 'history' || currentView === 'done' || currentView === 'archived'}
                     />
                     <QuickAddModal />
                     {confirmModal}

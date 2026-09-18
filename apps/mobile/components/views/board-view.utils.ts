@@ -1,4 +1,4 @@
-import type { FilterCriteria } from '@mindwtr/core';
+import { countActiveFilterCriteria, type FilterCriteria } from '@mindwtr/core';
 
 export const STATUS_DRAG_STEP_PX = 72;
 export const STATUS_DRAG_TRIGGER_PX = 28;
@@ -45,12 +45,9 @@ export const toggleCriteriaDuePreset = (criteria: FilterCriteria, preset: BoardD
     return next;
 };
 
-/** Number of active board filter chips (contexts + tags + projects + due-date range). */
+/** Number of active Board criteria, including exclusions and advanced criteria. */
 export const countActiveBoardFilters = (criteria: FilterCriteria): number => (
-    (criteria.contexts?.length ?? 0)
-    + (criteria.tags?.length ?? 0)
-    + (criteria.projects?.length ?? 0)
-    + (criteria.dueDateRange ? 1 : 0)
+    countActiveFilterCriteria(criteria)
 );
 
 type ResolveBoardDropColumnIndexArgs = {

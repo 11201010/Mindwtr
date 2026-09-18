@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const trOverrides: Record<string, string> = {
+    'filters.searchTasks': "Görev başlıklarında ara",
+    'filters.searchOptions': "Seçeneklerde ara",
+    'filters.tokenCycleHint': "Dahil etmek için tıklayın, hariç tutmak için tekrar, seçimi temizlemek için bir kez daha tıklayın.",
+    'filters.more': "Diğer filtreler",
+    'viewSections.new': "Yeni bölüm",
+    'projects.new': 'Yeni proje',
+    'nav.history': 'Geçmiş',
+    'task.dates': 'Tarihler…',
+    'task.moveTo': 'Şuraya taşı…',
+    'task.destination': 'Hedef',
+    'common.viewOptions': 'Görünüm seçenekleri',
+    'settings.regionalFormats': 'Bölgesel biçimler',
+    'settings.keyboardAndWindow': 'Klavye ve pencere',
     'settings.gtdMobile.openTasksIn': 'Görevleri şurada aç',
     'settings.gtdMobile.openTasksInDesc': 'Bu cihazda bir göreve normal şekilde dokunulduğunda kullanılacak sekmeyi seçin.',
     'settings.gtdMobile.taskOpenAutomatic': 'Otomatik',

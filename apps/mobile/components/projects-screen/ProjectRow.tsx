@@ -117,34 +117,17 @@ export function ProjectRow({
 
     const rowContent = (
         <View
+            testID={`project-row-${project.id}`}
             style={[
                 styles.projectItem,
                 { backgroundColor: tc.cardBg },
-                project.isFocused && { borderColor: '#F59E0B', borderWidth: 1 },
             ]}
         >
             <TouchableOpacity
-                testID={`project-row-focus-${project.id}`}
-                onPress={() => {
-                    void Haptics.selectionAsync().catch(() => {});
-                    onToggleProjectFocus(project.id);
-                }}
-                style={styles.focusButton}
-                disabled={!project.isFocused && focusedCount >= 5}
-                accessibilityRole="button"
-                accessibilityLabel={project.isFocused ? 'Unfocus project' : 'Focus project'}
-                accessibilityState={{ selected: project.isFocused, disabled: !project.isFocused && focusedCount >= 5 }}
-                hitSlop={ROW_ACTION_HIT_SLOP}
-            >
-                <FocusStarIcon
-                    focused={project.isFocused === true}
-                    inactiveColor={tc.secondaryText}
-                    disabled={!project.isFocused && focusedCount >= 5}
-                />
-            </TouchableOpacity>
-            <TouchableOpacity
+                testID={`project-row-open-${project.id}`}
                 style={styles.projectTouchArea}
                 onPress={() => onOpenProject(project)}
+                accessibilityRole="button"
             >
                 <View style={styles.projectContent}>
                     <View style={styles.projectTitleRow}>
@@ -152,35 +135,14 @@ export function ProjectRow({
                             <Text style={[styles.projectTitle, { color: tc.text }]} numberOfLines={1}>
                                 {project.title}
                             </Text>
-                            {project.tagIds?.length ? (
-                                <View style={styles.projectTagDots}>
-                                    {project.tagIds.slice(0, 4).map((tag) => (
-                                        <View
-                                            key={tag}
-                                            style={[styles.projectTagDot, { backgroundColor: tc.secondaryText }]}
-                                        />
-                                    ))}
-                                </View>
-                            ) : null}
-                        </View>
-                        <View
-                            accessible
-                            accessibilityLabel={taskCountLabel}
-                            style={[
-                                styles.projectTaskCountBadge,
-                                {
-                                    backgroundColor: `${tc.secondaryText}20`,
-                                    borderColor: `${tc.secondaryText}40`,
-                                },
-                            ]}
-                        >
-                            <Text style={[styles.projectTaskCountText, { color: tc.secondaryText }]}>
-                                {taskCount}
-                            </Text>
                         </View>
                     </View>
                     {nextAction ? (
-                        <Text style={[styles.projectMeta, { color: tc.secondaryText }]} numberOfLines={1}>
+                        <Text
+                            testID={`project-row-next-action-${project.id}`}
+                            style={[styles.projectMeta, { color: tc.secondaryText }]}
+                            numberOfLines={1}
+                        >
                             ↳ {nextAction.title}
                         </Text>
                     ) : showFocusedWarning ? (
@@ -200,6 +162,37 @@ export function ProjectRow({
                     )}
                 </View>
             </TouchableOpacity>
+            <View testID={`project-row-trailing-${project.id}`} style={styles.projectTrailingControls}>
+                <View
+                    accessible
+                    accessibilityLabel={taskCountLabel}
+                    style={styles.projectTaskCount}
+                >
+                    <Text style={[styles.projectTaskCountText, { color: tc.secondaryText }]}>
+                        {taskCount}
+                    </Text>
+                </View>
+                <TouchableOpacity
+                    testID={`project-row-focus-${project.id}`}
+                    onPress={() => {
+                        void Haptics.selectionAsync().catch(() => {});
+                        onToggleProjectFocus(project.id);
+                    }}
+                    style={styles.focusButton}
+                    disabled={!project.isFocused && focusedCount >= 5}
+                    accessibilityRole="button"
+                    accessibilityLabel={project.isFocused ? 'Unfocus project' : 'Focus project'}
+                    accessibilityState={{ selected: project.isFocused, disabled: !project.isFocused && focusedCount >= 5 }}
+                    hitSlop={ROW_ACTION_HIT_SLOP}
+                >
+                    <FocusStarIcon
+                        focused={project.isFocused === true}
+                        inactiveColor={tc.secondaryText}
+                        disabled={!project.isFocused && focusedCount >= 5}
+                        size={18}
+                    />
+                </TouchableOpacity>
+            </View>
         </View>
     );
 

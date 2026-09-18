@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Task } from '@mindwtr/core';
-import { Pressable } from 'react-native';
+import { Pressable, ScrollView } from 'react-native';
 import { ContextsView } from './contexts-view';
 
 const now = '2026-06-11T00:00:00.000Z';
@@ -123,6 +123,27 @@ vi.mock('react-native', async (importOriginal) => {
 });
 
 describe('ContextsView', () => {
+  it('keeps All, No context, contexts and tags in one scrollable filter row', async () => {
+    storeState.tasks = [
+      { ...makeTask('work', 'Work'), contexts: ['@work'], tags: ['#admin'] },
+      { ...makeTask('none', 'Untagged'), contexts: [], tags: [] },
+    ];
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<ContextsView />); });
+    const rows = tree.root.findAllByType(ScrollView).filter((node) => node.props.horizontal);
+    expect(rows).toHaveLength(1);
+    const chips = rows[0].findAllByType(Pressable);
+    expect(chips).toHaveLength(4);
+    expect(chips.map((node) => node.props.accessibilityLabel)).toEqual([
+      'contexts.all', 'contexts.none', '@work (1)', '#admin (1)',
+    ]);
+    await act(async () => { chips[2].props.onPress(); });
+    expect(chips[2].props.accessibilityState.selected).toBe(true);
+    await act(async () => { chips[0].props.onPress(); });
+    expect(chips[0].props.accessibilityState.selected).toBe(true);
+    expect(tree.root.findAll((node) => (node.type as unknown) === 'SwipeableTaskItem')).toHaveLength(2);
+  });
+
   it('shows All/Any for two combined tokens and keeps No context exclusive', async () => {
     storeState.tasks = [
       { ...makeTask('alice', 'Alice only'), contexts: ['@alice'], tags: [] },

@@ -38,6 +38,8 @@ export interface TaskListViewProps {
   onAddTaskToSection?: (groupId: string) => void;
   highlightTaskId?: string | null;
   rowContext?: SwipeableTaskItemRowContext;
+  /** Whether collapsed rows reveal their existing project/context/tag metadata. */
+  showDetails?: boolean;
 
   /** Selection + bulk-action scaffolding, from useTaskListSelection. */
   selection: TaskListViewSelection;
@@ -79,6 +81,7 @@ export function TaskListView({
   onAddTaskToSection,
   highlightTaskId,
   rowContext,
+  showDetails = true,
   selection,
   bulkStatusOptions,
   ListHeaderComponent,
@@ -180,17 +183,18 @@ export function TaskListView({
     return (
       <SwipeableTaskItem
         task={task}
-      isDark={isDark}
-      tc={themeColors}
-      actions={rowActions}
-      selectionMode={selectionMode}
-      isMultiSelected={multiSelectedIds.has(task.id)}
-      isHighlighted={task.id === highlightTaskId}
-      statusBadgeAsIcon
-      rowContext={rowContext}
-      onProjectPress={openProjectScreen}
-      onContextPress={openContextsScreen}
-      onTagPress={openContextsScreen}
+        hideDetails={!showDetails}
+        isDark={isDark}
+        tc={themeColors}
+        actions={rowActions}
+        selectionMode={selectionMode}
+        isMultiSelected={multiSelectedIds.has(task.id)}
+        isHighlighted={task.id === highlightTaskId}
+        statusBadgeAsIcon
+        rowContext={rowContext}
+        onProjectPress={openProjectScreen}
+        onContextPress={openContextsScreen}
+        onTagPress={openContextsScreen}
       />
     );
   }, [
@@ -202,6 +206,7 @@ export function TaskListView({
     t,
     rowContext,
     selectionMode,
+    showDetails,
     themeColors,
   ]);
 

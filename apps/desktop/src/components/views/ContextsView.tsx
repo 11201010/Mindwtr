@@ -14,7 +14,7 @@ import {
     type Task,
     type ContextOrTagMatchMode,
 } from '@mindwtr/core';
-import { AtSign, CheckSquare, ChevronDown, ChevronRight, Filter, Hash, Tag, type LucideIcon } from 'lucide-react';
+import { AtSign, CheckSquare, ChevronDown, ChevronRight, Filter, Hash, List, Tag, type LucideIcon } from 'lucide-react';
 import { TokenPickerModal } from '../TokenPickerModal';
 import { BulkSelectionToolbar } from './list/BulkSelectionToolbar';
 import { ListBulkActions } from './list/ListBulkActions';
@@ -45,8 +45,8 @@ import {
 import { CONTEXTS_AXES, groupTasks, type TaskGroup } from './list/next-grouping';
 import { GroupedTaskList } from './list/GroupedTaskSections';
 import { useCollapsedGroupsViewState, useTaskGroupCollapse } from './list/useTaskGroupCollapse';
-import { GroupBySelect } from './list/GroupBySelect';
-import { LIST_END_GAP, SortBySelect, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-toolbar';
+import { LIST_END_GAP, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-toolbar';
+import { ViewControls } from './list/ViewControls';
 import { useUiStore } from '../../store/ui-store';
 import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 
@@ -87,7 +87,17 @@ export function ContextsView() {
     const batchUpdateTasks = useTaskStore((state) => state.batchUpdateTasks);
     const restoreTask = useTaskStore((state) => state.restoreTask);
     const { t } = useLanguage();
-    const showToast = useUiStore((state) => state.showToast);
+    const {
+        showToast,
+        showListDetails,
+        setListOptions,
+        collapseAllTaskDetails,
+    } = useUiStore((state) => ({
+        showToast: state.showToast,
+        showListDetails: state.listOptions.showDetails,
+        setListOptions: state.setListOptions,
+        collapseAllTaskDetails: state.collapseAllTaskDetails,
+    }), shallow);
     const [persistedViewState, setPersistedViewState] = usePersistedViewState(
         CONTEXTS_VIEW_STATE_STORAGE_KEY,
         DEFAULT_CONTEXTS_VIEW_STATE,
@@ -329,8 +339,18 @@ export function ContextsView() {
             isMultiSelected={multiSelectedIds.has(task.id)}
             onToggleSelectId={toggleMultiSelect}
             showProjectBadgeInActions={false}
+            compactMetaEnabled={showListDetails}
         />
-    ), [multiSelectedIds, selectionMode, toggleMultiSelect]);
+    ), [multiSelectedIds, selectionMode, showListDetails, toggleMultiSelect]);
+
+    const handleToggleDetails = useCallback(() => {
+        if (showListDetails) {
+            collapseAllTaskDetails();
+            setListOptions({ showDetails: false });
+            return;
+        }
+        setListOptions({ showDetails: true });
+    }, [collapseAllTaskDetails, setListOptions, showListDetails]);
 
     const handleBatchMove = moveSelectedTasks;
 
@@ -620,7 +640,7 @@ export function ContextsView() {
                                 </div>
                             )}
                             <div className="order-4 w-full lg:order-none lg:ml-auto lg:w-auto">
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
                                     <ToolbarButton
                                         active={selectionMode}
                                         data-task-selection-toggle
@@ -630,18 +650,28 @@ export function ContextsView() {
                                     >
                                         {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
                                     </ToolbarButton>
-                                    <SortBySelect
-                                        value={sortBy}
-                                        onChange={(value) => updateSettings({ taskSortBy: value })}
-                                        t={t}
-                                        iconTestId="contexts-sort-icon"
-                                    />
-                                    <GroupBySelect
-                                        value={groupBy}
-                                        axes={CONTEXTS_AXES}
-                                        onChange={setGroupBy}
+                                    <ViewControls
+                                        sortBy={sortBy}
+                                        defaultSortBy="default"
+                                        onChangeSortBy={(value) => updateSettings({ taskSortBy: value })}
+                                        groupBy={groupBy}
+                                        defaultGroupBy={DEFAULT_CONTEXTS_VIEW_STATE.groupBy}
+                                        groupByOptions={CONTEXTS_AXES}
+                                        onChangeGroupBy={setGroupBy}
                                         t={t}
                                     />
+                                    <ToolbarButton
+                                        active={showListDetails}
+                                        onClick={handleToggleDetails}
+                                        title={showListDetails
+                                            ? tFallback(t, 'list.hideDetails', 'Hide details')
+                                            : tFallback(t, 'list.showDetails', 'Show details')}
+                                        icon={<List className="h-3.5 w-3.5" aria-hidden="true" />}
+                                    >
+                                        {showListDetails
+                                            ? tFallback(t, 'list.hideDetails', 'Hide details')
+                                            : tFallback(t, 'list.showDetails', 'Show details')}
+                                    </ToolbarButton>
                                 </div>
                             </div>
                         </header>

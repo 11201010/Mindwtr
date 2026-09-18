@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const deOverrides: Record<string, string> = {
+    'filters.searchTasks': "Aufgabentitel durchsuchen",
+    'filters.searchOptions': "Optionen durchsuchen",
+    'filters.tokenCycleHint': "Klicken zum Einschließen, erneut zum Ausschließen und nochmals zum Zurücksetzen.",
+    'filters.more': "Weitere Filter",
+    'viewSections.new': "Neuer Abschnitt",
+    'projects.new': 'Neues Projekt',
+    'nav.history': 'Verlauf',
+    'task.dates': 'Termine…',
+    'task.moveTo': 'Verschieben nach…',
+    'task.destination': 'Ziel',
+    'common.viewOptions': 'Ansichtsoptionen',
+    'settings.regionalFormats': 'Regionale Formate',
+    'settings.keyboardAndWindow': 'Tastatur und Fenster',
     'settings.gtdMobile.openTasksIn': 'Aufgaben öffnen in',
     'settings.gtdMobile.openTasksInDesc': 'Wähle den Tab, der beim normalen Antippen einer Aufgabe auf diesem Gerät verwendet wird.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatisch',

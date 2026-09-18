@@ -25,6 +25,7 @@ export default function ReferenceScreen() {
       <TaskList
         statusFilter="reference"
         title={title}
+        overflowPlacement="navigation"
         showHeader={false}
         emptyText={emptyText}
         emptyHint={emptyHint}

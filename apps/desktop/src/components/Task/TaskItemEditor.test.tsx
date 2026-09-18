@@ -52,10 +52,15 @@ const translations: Record<string, string> = {
     'taskEdit.organizationEmpty': 'No organization fields',
     'taskEdit.detailsEmpty': 'No details fields',
     'areas.create': 'Create area',
+    'areas.new': 'New area',
     'areas.search': 'Search areas',
+    'areas.title': 'Areas',
+    'common.none': 'None',
     'common.noMatches': 'No matches',
+    'common.search': 'Search',
     'projects.addSection': 'Add section',
     'projects.create': 'Create project',
+    'projects.new': 'New project',
     'projects.search': 'Search projects',
     'projects.title': 'Projects',
     'sections.search': 'Search sections',
@@ -66,6 +71,7 @@ const translations: Record<string, string> = {
     'taskEdit.noSectionOption': 'No Section',
     'taskEdit.sectionLabel': 'Section',
     'taskEdit.titleLabel': 'Task title',
+    'task.destination': 'Destination',
     'taskEdit.editorLayoutHelpLabel': 'Editor layout help',
     'taskEdit.editorLayoutHelpText': 'You can customize which fields appear here in Settings -> GTD -> Task Editor Layout.',
     'task.aria.location': 'Location',
@@ -391,18 +397,18 @@ describe('TaskItemEditor', () => {
             />
         );
 
-        fireEvent.click(getByRole('button', { name: 'No Area' }));
+        fireEvent.click(getByRole('button', { name: 'Destination' }));
         expect(getAllByRole('option').map((option) => option.textContent))
-            .toEqual(['No Area', 'Zebra', 'Apple', 'Azure', 'Alpha unset', 'Zed unset']);
+            .toEqual(['None', 'Zebra', 'Apple', 'Azure', 'Alpha unset', 'Zed unset']);
 
-        fireEvent.change(getByRole('textbox', { name: 'Search areas' }), { target: { value: 'a' } });
+        fireEvent.change(getByRole('textbox', { name: 'Search' }), { target: { value: 'a' } });
         expect(getAllByRole('option')
-            .filter((option) => option.getAttribute('data-selector-option-kind') === 'item')
+            .filter((option) => option.getAttribute('data-destination-option') === 'true' && option.textContent !== 'None')
             .map((option) => option.textContent))
             .toEqual(['Zebra', 'Apple', 'Azure', 'Alpha unset']);
-        fireEvent.change(getByRole('textbox', { name: 'Search areas' }), { target: { value: 'az' } });
+        fireEvent.change(getByRole('textbox', { name: 'Search' }), { target: { value: 'az' } });
         expect(getAllByRole('option')
-            .filter((option) => option.getAttribute('data-selector-option-kind') === 'item')
+            .filter((option) => option.getAttribute('data-destination-option') === 'true' && option.textContent !== 'None')
             .map((option) => option.textContent))
             .toEqual(['Azure']);
         expect(queryByRole('option', { name: 'Archived area' })).not.toBeInTheDocument();
@@ -417,7 +423,7 @@ describe('TaskItemEditor', () => {
             />
         );
 
-        ['Area', 'Projects', 'Section'].forEach((label) => {
+        ['Destination'].forEach((label) => {
             expect(getByText(label)).toHaveClass('text-xs', 'font-semibold');
             expect(getByText(label)).not.toHaveClass('font-medium');
         });

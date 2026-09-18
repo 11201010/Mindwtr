@@ -773,8 +773,10 @@ export const styles = StyleSheet.create({
         maxHeight: 260,
     },
     pickerItem: {
+        minHeight: 44,
         paddingVertical: 10,
         paddingHorizontal: 14,
+        justifyContent: 'center',
     },
     pickerItemText: {
         fontSize: 16,

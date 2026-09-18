@@ -208,7 +208,7 @@ describe('AgendaView', () => {
 
         const { getByPlaceholderText, getByRole } = renderAgenda();
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
-        fireEvent.change(getByPlaceholderText('Search...'), { target: { value: 'Visible candidate' } });
+        fireEvent.change(getByPlaceholderText('Search task titles'), { target: { value: 'Visible candidate' } });
 
         expect(getByRole('button', { name: 'Max 5 focus item(s)' })).toBeDisabled();
     });
@@ -593,11 +593,11 @@ describe('AgendaView', () => {
     it('keeps Focus filters collapsed until opened from the header', () => {
         const { getByRole, getByPlaceholderText, queryByPlaceholderText } = renderAgenda();
 
-        expect(queryByPlaceholderText('Search...')).not.toBeInTheDocument();
+        expect(queryByPlaceholderText('Search task titles')).not.toBeInTheDocument();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
 
-        expect(getByPlaceholderText('Search...')).toBeInTheDocument();
+        expect(getByPlaceholderText('Search task titles')).toBeInTheDocument();
     });
 
     it('does not let earlier non-Focus tasks hide the next task in a sequential project', () => {
@@ -1622,6 +1622,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Projects' }));
         fireEvent.click(getByRole('button', { name: 'Alpha project' }));
 
         expect(getByText('Project task')).toBeInTheDocument();
@@ -1673,6 +1674,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Projects' }));
         fireEvent.click(getByRole('button', { name: 'No Project' }));
 
         expect(getByText('Standalone task')).toBeInTheDocument();
@@ -1715,6 +1717,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Energy Level' }));
         fireEvent.click(getByRole('button', { name: 'High energy' }));
 
         expect(getByText('High energy task')).toBeInTheDocument();
@@ -1748,6 +1751,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Energy Level' }));
         fireEvent.click(getByRole('button', { name: 'High energy' }));
 
         expect(queryByText('Low energy task')).not.toBeInTheDocument();
@@ -1798,6 +1802,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         fireEvent.click(getByRole('button', { name: '@desk' }));
         fireEvent.click(getByRole('button', { name: '@phone' }));
 
@@ -1847,6 +1852,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         // Neutral → included: only tasks carrying #waiting remain.
         fireEvent.click(getByRole('button', { name: '#waiting' }));
         expect(getByText('Waiting task')).toBeInTheDocument();
@@ -1979,7 +1985,7 @@ describe('AgendaView', () => {
         expect(getByRole('button', { name: 'Phone' })).toHaveAttribute('aria-pressed', 'true');
     });
 
-    it('hides a saved filter summary while collapsed but keeps its controls editable when expanded', () => {
+    it('keeps a saved filter summary removable while its controls are collapsed', () => {
         const deskTask = makeAgendaTask('desk-task', 'Desk task', { contexts: ['@desk'] });
         useTaskStore.setState({
             tasks: [deskTask],
@@ -2001,19 +2007,20 @@ describe('AgendaView', () => {
             highlightTaskId: null,
         });
 
-        const { getByPlaceholderText, getByRole, queryByPlaceholderText, queryByText } = renderAgenda();
+        const { getByPlaceholderText, getByRole, queryByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: 'Desk' }));
-        expect(queryByPlaceholderText('Search...')).not.toBeInTheDocument();
-        expect(queryByText('@desk')).not.toBeInTheDocument();
+        expect(getByPlaceholderText('Search task titles')).toBeInTheDocument();
+        expect(queryByText('@desk')).toBeInTheDocument();
 
         fireEvent.click(getByRole('button', { name: /^Filters/i }));
-        expect(getByPlaceholderText('Search...')).toBeInTheDocument();
+        expect(getByPlaceholderText('Search task titles')).toBeInTheDocument();
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         expect(getByRole('button', { name: '@desk' })).toBeInTheDocument();
 
         fireEvent.click(getByRole('button', { name: /^Filters/i }));
-        expect(queryByPlaceholderText('Search...')).not.toBeInTheDocument();
-        expect(queryByText('@desk')).not.toBeInTheDocument();
+        expect(getByPlaceholderText('Search task titles')).toBeInTheDocument();
+        expect(queryByText('@desk')).toBeInTheDocument();
     });
 
     it('keeps an ad hoc Focus filter summary visible when the controls collapse', () => {
@@ -2032,6 +2039,7 @@ describe('AgendaView', () => {
         const { getByRole, getByText, queryByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters/i }));
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         fireEvent.click(getByRole('button', { name: '@desk' }));
         fireEvent.click(getByRole('button', { name: /^Filters/i }));
 
@@ -2213,7 +2221,7 @@ describe('AgendaView', () => {
 
         fireEvent.click(getByRole('button', { name: 'Desk' }));
         fireEvent.click(getByRole('button', { name: /^Filters/i }));
-        fireEvent.click(getByRole('button', { name: 'Delete Due Date: This week' }));
+        fireEvent.click(getByRole('button', { name: 'Remove filter: Due Date: This week' }));
 
         await waitFor(() => {
             expect(useTaskStore.getState().settings.savedFilters?.[0]).toMatchObject({
@@ -2263,6 +2271,7 @@ describe('AgendaView', () => {
         const { getAllByRole, getByDisplayValue, getByRole, getByText } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Energy Level' }));
         fireEvent.click(getByRole('button', { name: 'High energy' }));
         fireEvent.click(getByRole('button', { name: /^Save$/i }));
         fireEvent.change(getByDisplayValue('High energy'), { target: { value: 'High energy preset' } });
@@ -2315,6 +2324,7 @@ describe('AgendaView', () => {
         const { getAllByRole, getByDisplayValue, getByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         fireEvent.click(getByRole('button', { name: '@desk' }));
         fireEvent.click(getByRole('button', { name: '@phone' }));
         fireEvent.click(getByRole('button', { name: 'Any' }));
@@ -2371,6 +2381,7 @@ describe('AgendaView', () => {
         const { getAllByRole, getByDisplayValue, getByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Contexts & tags' }));
         fireEvent.click(getByRole('button', { name: '#quick' }));
         fireEvent.click(getByRole('button', { name: '#calls' }));
         fireEvent.click(getByRole('button', { name: 'Any' }));
@@ -2406,7 +2417,7 @@ describe('AgendaView', () => {
         const { getAllByRole, getByDisplayValue, getByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
-        fireEvent.click(getByRole('button', { name: 'Start date' }));
+        selectToolbarOption('Sort', 'Start date', { getByRole });
         selectToolbarOption('Group', 'Project', { getByRole });
         fireEvent.click(getByRole('button', { name: /^Save$/i }));
         fireEvent.change(getByDisplayValue('Focus filter'), { target: { value: 'Start by project' } });
@@ -2448,7 +2459,7 @@ describe('AgendaView', () => {
 
         const { getByRole, queryByRole } = renderAgenda();
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
-        fireEvent.click(getByRole('button', { name: 'Priority' }));
+        selectToolbarOption('Sort', 'Priority', { getByRole });
         expect(getByRole('button', { name: /^Save$/i })).toBeInTheDocument();
         expect(getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false');
 
@@ -2602,12 +2613,13 @@ describe('AgendaView', () => {
         const { getByRole, queryByRole } = renderAgenda();
 
         fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+        fireEvent.click(getByRole('button', { name: 'Energy Level' }));
         fireEvent.click(getByRole('button', { name: 'High energy' }));
         fireEvent.click(getByRole('button', { name: /^hide$/i }));
 
         expect(getByRole('button', { name: /^Filters/i })).toHaveAttribute('aria-expanded', 'false');
         expect(queryByRole('button', { name: 'Low energy' })).not.toBeInTheDocument();
-        expect(getByRole('textbox')).toBeInTheDocument();
+        expect(getByRole('searchbox', { name: 'Search task titles' })).toBeInTheDocument();
         expect(queryByRole('button', { name: 'High energy' })).not.toBeInTheDocument();
         expect(document.body).toHaveTextContent('High energy');
     });
@@ -2803,7 +2815,7 @@ describe('AgendaView', () => {
             expect(queryAllByRole('button', { name: 'Reorder' }).length).toBeGreaterThan(0);
 
             fireEvent.click(getByRole('button', { name: /^Filters$/i }));
-            fireEvent.click(getByRole('button', { name: 'Start date' }));
+            selectToolbarOption('Sort', 'Start date', { getByRole });
 
             expect(queryByRole('button', { name: 'Reorder' })).toBeNull();
         });
@@ -2828,7 +2840,7 @@ describe('AgendaView', () => {
             expect(queryAllByRole('button', { name: 'Reorder' }).length).toBeGreaterThan(0);
 
             fireEvent.click(getByRole('button', { name: /^Filters$/i }));
-            fireEvent.change(getByPlaceholderText('Search...'), { target: { value: 'Focus A' } });
+            fireEvent.change(getByPlaceholderText('Search task titles'), { target: { value: 'Focus A' } });
 
             // The matching row still renders, but without any drag handle.
             expect(getByText('Focus A')).toBeInTheDocument();
@@ -2854,6 +2866,7 @@ describe('AgendaView', () => {
             expect(queryAllByRole('button', { name: 'Reorder' }).length).toBeGreaterThan(0);
 
             fireEvent.click(getByRole('button', { name: /^Filters$/i }));
+            fireEvent.click(getByRole('button', { name: 'Energy Level' }));
             fireEvent.click(getByRole('button', { name: 'High energy' }));
 
             expect(getByText('Focus A')).toBeInTheDocument();

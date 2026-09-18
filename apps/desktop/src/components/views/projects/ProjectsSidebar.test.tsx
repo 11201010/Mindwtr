@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type ComponentProps, type FormEvent } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useTaskStore, type Area, type Project, type Task, type TaskStatus } from '@mindwtr/core';
@@ -26,6 +26,7 @@ const translations: Record<string, string> = {
     'projects.maxFocusedProjects': 'Max 5 focused projects',
     'projects.noArea': 'No area',
     'projects.noNextAction': 'No next action',
+    'projects.new': 'New project',
     'projects.projectName': 'Project name',
     'projects.removeFromFocus': 'Remove from focus',
     'projects.tagFilter': 'Tag filter',
@@ -166,16 +167,17 @@ function renderSidebarWithSpy(
     ],
     projectTaskSummaryById: Map<string, ProjectTaskSummary> = new Map(),
     onActivateProject = vi.fn(),
+    tagFilter: Partial<Pick<ComponentProps<typeof ProjectsSidebar>, 'selectedTag' | 'tagOptions'>> = {},
 ) {
 
-    render(
+    const renderResult = render(
         <ProjectsSidebar
             t={t}
-            selectedTag={allTagsId}
+            selectedTag={tagFilter.selectedTag ?? allTagsId}
             noAreaId={noAreaId}
             allTagsId={allTagsId}
             noTagsId={noTagsId}
-            tagOptions={{ list: [], hasNoTags: true }}
+            tagOptions={tagFilter.tagOptions ?? { list: [], hasNoTags: true }}
             isCreating={false}
             isCreatingProject={false}
             newProjectTitle=""
@@ -210,7 +212,7 @@ function renderSidebarWithSpy(
         />
     );
 
-    return { onActivateProject, onSelectProject };
+    return { ...renderResult, onActivateProject, onSelectProject };
 }
 
 function KeyboardSidebarHarness({
@@ -307,57 +309,97 @@ function RemovableKeyboardSidebarHarness() {
 }
 
 describe('ProjectsSidebar', () => {
-    it('keeps project creation visible as an inline field below the filters', () => {
-        const onCreateProject = vi.fn((event: FormEvent) => event.preventDefault());
-        const onChangeNewProjectTitle = vi.fn();
+    it('keeps the native tag filter quiet while making an active tag clear', () => {
+        const firstRender = renderSidebarWithSpy();
+        const allTagsFilter = screen.getByRole('combobox', { name: 'Tag filter' });
 
-        render(
-            <ProjectsSidebar
-                t={t}
-                selectedTag={allTagsId}
-                noAreaId={noAreaId}
-                allTagsId={allTagsId}
-                noTagsId={noTagsId}
-                tagOptions={{ list: [], hasNoTags: true }}
-                isCreating={false}
-                isCreatingProject={false}
-                newProjectTitle=""
-                newProjectAreaId=""
-                areaOptions={[]}
-                onStartCreate={vi.fn()}
-                onCancelCreate={vi.fn()}
-                onCreateProject={onCreateProject}
-                onChangeNewProjectTitle={onChangeNewProjectTitle}
-                onChangeNewProjectAreaId={vi.fn()}
-                onSelectTag={vi.fn()}
-                groupedActiveProjects={[[noAreaId, [buildProject('project-alpha', 'Alpha', 0)]]]}
-                groupedDeferredProjects={[]}
-                groupedArchivedProjects={[]}
-                areaById={new Map()}
-                collapsedAreas={{}}
-                onToggleAreaCollapse={vi.fn()}
-                showDeferredProjects={false}
-                onToggleDeferredProjects={vi.fn()}
-                showArchivedProjects={false}
-                onToggleArchivedProjects={vi.fn()}
-                selectedProjectId={null}
-                onSelectProject={vi.fn()}
-                getProjectColor={(project) => project.color}
-                projectTaskSummaryById={new Map()}
-                projects={[buildProject('project-alpha', 'Alpha', 0)]}
-                focusedProjectCount={0}
-                toggleProjectFocus={vi.fn()}
-                onDuplicateProject={vi.fn()}
-                draggingSection={null}
-            />
+        expect(allTagsFilter).toHaveClass(
+            'appearance-none',
+            'bg-transparent',
+            'border-border/50',
+            'text-muted-foreground',
+            'focus-visible:ring-2',
+            'focus-visible:ring-primary/40',
+        );
+        expect(allTagsFilter.closest('[data-project-tag-filter-shell]')).toHaveClass('relative', 'flex-1');
+
+        firstRender.unmount();
+        renderSidebarWithSpy(
+            vi.fn(),
+            undefined,
+            undefined,
+            vi.fn(),
+            { selectedTag: 'admin', tagOptions: { list: ['admin'], hasNoTags: false } },
         );
 
+        expect(screen.getByRole('combobox', { name: 'Tag filter' })).toHaveClass('text-foreground');
+    });
+
+    it('reveals focused project creation, submits on Enter, and preserves a cancelled draft', async () => {
+        const onCreateProject = vi.fn((event: FormEvent) => event.preventDefault());
+        function CreationHarness() {
+            const [isCreating, setIsCreating] = useState(false);
+            const [draft, setDraft] = useState('');
+            return (
+                <ProjectsSidebar
+                    t={t}
+                    selectedTag={allTagsId}
+                    noAreaId={noAreaId}
+                    allTagsId={allTagsId}
+                    noTagsId={noTagsId}
+                    tagOptions={{ list: [], hasNoTags: true }}
+                    isCreating={isCreating}
+                    isCreatingProject={false}
+                    newProjectTitle={draft}
+                    newProjectAreaId=""
+                    areaOptions={[]}
+                    onStartCreate={() => setIsCreating(true)}
+                    onCancelCreate={() => setIsCreating(false)}
+                    onCreateProject={onCreateProject}
+                    onChangeNewProjectTitle={setDraft}
+                    onChangeNewProjectAreaId={vi.fn()}
+                    onSelectTag={vi.fn()}
+                    groupedActiveProjects={[[noAreaId, [buildProject('project-alpha', 'Alpha', 0)]]]}
+                    groupedDeferredProjects={[]}
+                    groupedArchivedProjects={[]}
+                    areaById={new Map()}
+                    collapsedAreas={{}}
+                    onToggleAreaCollapse={vi.fn()}
+                    showDeferredProjects={false}
+                    onToggleDeferredProjects={vi.fn()}
+                    showArchivedProjects={false}
+                    onToggleArchivedProjects={vi.fn()}
+                    selectedProjectId={null}
+                    onSelectProject={vi.fn()}
+                    getProjectColor={(project) => project.color}
+                    projectTaskSummaryById={new Map()}
+                    projects={[buildProject('project-alpha', 'Alpha', 0)]}
+                    focusedProjectCount={0}
+                    toggleProjectFocus={vi.fn()}
+                    onDuplicateProject={vi.fn()}
+                    draggingSection={null}
+                />
+            );
+        }
+
+        render(<CreationHarness />);
+        expect(screen.queryByLabelText('Project name')).not.toBeInTheDocument();
+
+        const createButton = screen.getByRole('button', { name: 'New project' });
+        expect(document.querySelector('[data-projects-sidebar-header]')).toContainElement(createButton);
+        expect(createButton).not.toHaveClass('w-full');
+        fireEvent.click(createButton);
         const projectName = screen.getByLabelText('Project name');
+        await waitFor(() => expect(projectName).toHaveFocus());
+        fireEvent.change(projectName, { target: { value: 'Preserved draft' } });
+        fireEvent.keyDown(projectName, { key: 'Escape' });
+        expect(screen.queryByLabelText('Project name')).not.toBeInTheDocument();
 
-        expect(projectName).toBeInTheDocument();
-
-        fireEvent.change(projectName, { target: { value: 'New project' } });
-        expect(onChangeNewProjectTitle).toHaveBeenCalledWith('New project');
+        fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+        const restoredProjectName = screen.getByLabelText('Project name');
+        expect(restoredProjectName).toHaveValue('Preserved draft');
+        fireEvent.keyDown(restoredProjectName, { key: 'Enter' });
+        expect(onCreateProject).toHaveBeenCalledTimes(1);
     });
 
     it('lets the user pick an area while creating a project', () => {
@@ -423,7 +465,7 @@ describe('ProjectsSidebar', () => {
         expect(screen.queryByLabelText('Area')).not.toBeInTheDocument();
     });
 
-    it('only warns focused projects and only displays tasks with next status', () => {
+    it('keeps no-next warnings but removes task previews from compact project rows', () => {
         const focusedWithoutNext = { ...buildProject('focused-inbox', 'Focused inbox', 0), isFocused: true };
         const unfocusedWithoutNext = buildProject('unfocused-inbox', 'Unfocused inbox', 1);
         const focusedWithNext = { ...buildProject('focused-next', 'Focused next', 2), isFocused: true };
@@ -441,7 +483,74 @@ describe('ProjectsSidebar', () => {
         expect(screen.getAllByText('No next action')).toHaveLength(1);
         expect(screen.queryByText('Focused inbox task')).not.toBeInTheDocument();
         expect(screen.queryByText('Unfocused inbox task')).not.toBeInTheDocument();
-        expect(screen.getByText('Focused next task')).toBeInTheDocument();
+        expect(screen.queryByText('Focused next task')).not.toBeInTheDocument();
+    });
+
+    it('reveals idle row controls on hover or focus while keeping focused stars visible', () => {
+        const focused = { ...buildProject('focused', 'Focused', 0), isFocused: true };
+        const idle = buildProject('idle', 'Idle', 1);
+        renderSidebarWithSpy(vi.fn(), [focused, idle]);
+
+        const dragControl = screen.getAllByTitle('Drag')[0].parentElement;
+        const idleStar = screen.getByLabelText('Add to focus');
+        const focusedStar = screen.getByLabelText('Remove from focus');
+
+        expect(dragControl).toHaveClass('absolute', 'opacity-0', 'group-hover:opacity-100', 'group-focus-within:opacity-100', '[@media(hover:none)]:opacity-100');
+        expect(idleStar).toHaveClass('opacity-0', 'group-hover:opacity-100', 'group-focus-within:opacity-100', '[@media(hover:none)]:opacity-100');
+        expect(focusedStar).not.toHaveClass('opacity-0');
+    });
+
+    it('aligns every project row on the same leading icon slot without a focused-row tint', () => {
+        const active = { ...buildProject('active', 'Active', 0), isFocused: true };
+        const deferred = { ...buildProject('deferred', 'Deferred', 1), status: 'waiting' as const };
+        const archived = { ...buildProject('archived', 'Archived', 2), status: 'archived' as const };
+
+        render(
+            <ProjectsSidebar
+                t={t}
+                selectedTag={allTagsId}
+                noAreaId={noAreaId}
+                allTagsId={allTagsId}
+                noTagsId={noTagsId}
+                tagOptions={{ list: [], hasNoTags: false }}
+                isCreating={false}
+                isCreatingProject={false}
+                newProjectTitle=""
+                newProjectAreaId=""
+                areaOptions={[]}
+                onStartCreate={vi.fn()}
+                onCancelCreate={vi.fn()}
+                onCreateProject={vi.fn()}
+                onChangeNewProjectTitle={vi.fn()}
+                onChangeNewProjectAreaId={vi.fn()}
+                onSelectTag={vi.fn()}
+                groupedActiveProjects={[[noAreaId, [active]]]}
+                groupedDeferredProjects={[[noAreaId, [deferred]]]}
+                groupedArchivedProjects={[[noAreaId, [archived]]]}
+                areaById={new Map()}
+                collapsedAreas={{}}
+                onToggleAreaCollapse={vi.fn()}
+                showDeferredProjects
+                onToggleDeferredProjects={vi.fn()}
+                showArchivedProjects
+                onToggleArchivedProjects={vi.fn()}
+                selectedProjectId={null}
+                onSelectProject={vi.fn()}
+                getProjectColor={(project) => project.color}
+                projectTaskSummaryById={new Map()}
+                projects={[active, deferred, archived]}
+                focusedProjectCount={1}
+                toggleProjectFocus={vi.fn()}
+                onDuplicateProject={vi.fn()}
+                draggingSection={null}
+            />,
+        );
+
+        const leadingSlots = ['active', 'deferred', 'archived'].map((id) => (
+            document.querySelector(`[data-project-id="${id}"] [data-project-leading-icon]`)
+        ));
+        leadingSlots.forEach((slot) => expect(slot).toHaveClass('h-8', 'w-8', 'flex-none'));
+        expect(document.querySelector('[data-project-id="active"]')).not.toHaveClass('bg-warning/10');
     });
 
     it('selects a project on primary mouse down so blur-driven rerenders cannot swallow the switch', () => {

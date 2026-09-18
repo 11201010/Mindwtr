@@ -415,6 +415,7 @@ function ProjectDetailScrollFrame({
 function ProjectOptionsModal({
     children,
     closeLabel,
+    onDismiss,
     onClose,
     title,
     visible,
@@ -422,6 +423,7 @@ function ProjectOptionsModal({
 }: {
     children: React.ReactNode;
     closeLabel: string;
+    onDismiss?: () => void;
     onClose: () => void;
     title: string;
     visible: boolean;
@@ -432,6 +434,7 @@ function ProjectOptionsModal({
             visible={visible}
             transparent
             animationType="fade"
+            onDismiss={onDismiss}
             onRequestClose={onClose}
             accessibilityViewIsModal
         >
@@ -656,6 +659,7 @@ export function ProjectDetailModal({
     const [projectTaskFilterActiveCount, setProjectTaskFilterActiveCount] = React.useState(0);
     const [projectSortModalVisible, setProjectSortModalVisible] = React.useState(false);
     const [projectViewOptionsVisible, setProjectViewOptionsVisible] = React.useState(false);
+    const [projectFilterOpenPending, setProjectFilterOpenPending] = React.useState(false);
     const [projectActionsVisible, setProjectActionsVisible] = React.useState(false);
     const [projectTaskBulkBarProps, setProjectTaskBulkBarProps] = React.useState<TaskListBulkBarProps | null>(null);
     const [sectionManagerVisible, setSectionManagerVisible] = React.useState(false);
@@ -733,6 +737,20 @@ export function ProjectDetailModal({
     const openProjectTaskFilters = React.useCallback(() => {
         setProjectTaskFilterOpenSignal((value) => value + 1);
     }, []);
+    const finishPendingProjectTaskFilterOpen = React.useCallback(() => {
+        if (!projectFilterOpenPending) return;
+        setProjectFilterOpenPending(false);
+        openProjectTaskFilters();
+    }, [openProjectTaskFilters, projectFilterOpenPending]);
+    React.useEffect(() => {
+        if (Platform.OS !== 'ios' && projectFilterOpenPending && !projectViewOptionsVisible) {
+            finishPendingProjectTaskFilterOpen();
+        }
+    }, [finishPendingProjectTaskFilterOpen, projectFilterOpenPending, projectViewOptionsVisible]);
+    const openProjectTaskFiltersFromOptions = React.useCallback(() => {
+        setProjectFilterOpenPending(true);
+        setProjectViewOptionsVisible(false);
+    }, []);
     const handleProjectFilterStateChange = React.useCallback(
         ({ activeCount }: { activeCount: number; hasActive: boolean }) => {
             setProjectTaskFilterActiveCount(activeCount);
@@ -808,35 +826,26 @@ export function ProjectDetailModal({
     const projectViewOptionsActive = sortIsActive || showCompletedTasks || projectTaskReorderMode;
     const projectTaskPinnedToolbar = selectedProject ? (
         <View style={[styles.projectTaskPinnedToolbar, { backgroundColor: tc.cardBg, borderBottomColor: tc.border }]}>
-            <TouchableOpacity
-                accessibilityLabel={projectTaskFilterActiveCount > 0 ? `${filterButtonLabel}: ${projectTaskFilterActiveCount}` : filterButtonLabel}
-                accessibilityRole="button"
-                onPress={openProjectTaskFilters}
-                hitSlop={8}
-                style={[
-                    styles.projectTaskPinnedControl,
-                    {
-                        backgroundColor: projectTaskFilterActiveCount > 0 ? `${tc.tint}20` : tc.filterBg,
-                        borderColor: projectTaskFilterActiveCount > 0 ? tc.tint : tc.border,
-                    },
-                ]}
-                testID="project-task-filter-button"
-            >
-                <View style={styles.projectTaskPinnedControlIcon}>
-                    <Ionicons
-                        name="filter-outline"
-                        size={20}
-                        color={projectTaskFilterActiveCount > 0 ? tc.tint : tc.secondaryText}
-                    />
-                    {projectTaskFilterActiveCount > 0 ? (
-                        <View style={[styles.projectTaskPinnedBadge, { backgroundColor: tc.tint }]}>
-                            <Text style={[styles.projectTaskPinnedBadgeText, { color: tc.onTint }]}>
-                                {projectTaskFilterActiveCount}
-                            </Text>
-                        </View>
-                    ) : null}
-                </View>
-            </TouchableOpacity>
+            {projectTaskFilterActiveCount > 0 ? (
+                <TouchableOpacity
+                    accessibilityLabel={`${filterButtonLabel} · ${projectTaskFilterActiveCount}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: true }}
+                    onPress={openProjectTaskFilters}
+                    hitSlop={8}
+                    style={[
+                        styles.projectTaskPinnedControl,
+                        styles.projectTaskPinnedFilterControl,
+                        { backgroundColor: `${tc.tint}20`, borderColor: tc.tint },
+                    ]}
+                    testID="project-task-filter-button"
+                >
+                    <Ionicons name="filter-outline" size={18} color={tc.tint} />
+                    <Text style={[styles.projectTaskPinnedFilterText, { color: tc.tint }]}>
+                        {filterButtonLabel} · {projectTaskFilterActiveCount}
+                    </Text>
+                </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
                 accessibilityLabel={moreOptionsLabel}
                 accessibilityRole="button"
@@ -1756,11 +1765,21 @@ export function ProjectDetailModal({
                                 />
                                 <ProjectOptionsModal
                                     closeLabel={closeLabel}
+                                    onDismiss={finishPendingProjectTaskFilterOpen}
                                     onClose={() => setProjectViewOptionsVisible(false)}
                                     title={moreOptionsLabel}
                                     visible={projectViewOptionsVisible}
                                     tc={tc}
                                 >
+                                    <ProjectOptionRow
+                                        icon="filter-outline"
+                                        label={filterButtonLabel}
+                                        onPress={openProjectTaskFiltersFromOptions}
+                                        selected={projectTaskFilterActiveCount > 0}
+                                        testID="project-view-filter-option"
+                                        value={projectTaskFilterActiveCount > 0 ? String(projectTaskFilterActiveCount) : undefined}
+                                        tc={tc}
+                                    />
                                     <ProjectOptionRow
                                         accessibilityHint={isArchivedProject ? t('projects.reactivate') : undefined}
                                         description={isArchivedProject ? t('projects.reactivate') : undefined}

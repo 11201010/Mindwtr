@@ -25,7 +25,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { TaskItem } from '../TaskItem';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, sortTasksBy, sortTasksByBoardOrder, buildProjectOrderMap, compareTasksByProjectThenOrder, getSequentialFirstTaskIds, isSequentialChainStatus, translateWithFallback, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, SAVED_FILTER_NO_PROJECT_ID, tFallback } from '@mindwtr/core';
+import { buildAdvancedFilterCriteriaChips, formatTimeEstimateLabel, removeAdvancedFilterCriteriaChip, shallow, useTaskStore, sortTasksBy, sortTasksByBoardOrder, buildProjectOrderMap, compareTasksByProjectThenOrder, getSequentialFirstTaskIds, isSequentialChainStatus, translateWithFallback, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, SAVED_FILTER_NO_PROJECT_ID, tFallback } from '@mindwtr/core';
 import { resolveBoardDragEnd } from './board-view-dnd';
 import type { Task, TaskStatus, FilterCriteria } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
@@ -37,8 +37,10 @@ import { isTaskVisibleInArea, projectMatchesAreaFilterSelection } from '@mindwtr
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { usePersistedViewState } from '../../hooks/usePersistedViewState';
 import { useTaskListScope } from './list/task-list-scope';
-import { LIST_END_GAP, VIEW_FILTER_INPUT } from './list/list-toolbar';
+import { LIST_END_GAP, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-toolbar';
 import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
+import { BoardFiltersPanel } from './board/BoardFiltersPanel';
+import type { DesktopActiveFilterChip } from './list/FilterDisclosure';
 
 const BOARD_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:board:v1';
 
@@ -243,6 +245,8 @@ export function BoardView() {
     const selectedTags = criteria.tags ?? [];
     const excludedContexts = criteria.excludedContexts ?? [];
     const excludedTags = criteria.excludedTags ?? [];
+    const selectedTokens = [...selectedContexts, ...selectedTags];
+    const excludedTokens = [...excludedContexts, ...excludedTags];
     const selectedProjectIds = criteria.projects ?? [];
     const selectedDuePreset = criteria.dueDateRange && 'preset' in criteria.dueDateRange
         ? criteria.dueDateRange.preset
@@ -319,6 +323,30 @@ export function BoardView() {
             ...criteria,
             dueDateRange: selectedDuePreset === preset ? undefined : { preset },
         });
+    };
+    const setMatchMode = (kind: 'context' | 'tag', mode: 'any' | 'all') => {
+        const key = kind === 'context' ? 'contextMatchMode' : 'tagMatchMode';
+        updateCriteria({ ...criteria, [key]: mode });
+    };
+    const removeToken = (token: string, excluded: boolean) => {
+        const isTag = token.trim().startsWith('#');
+        const key = excluded
+            ? (isTag ? 'excludedTags' : 'excludedContexts')
+            : (isTag ? 'tags' : 'contexts');
+        const current = criteria[key] ?? [];
+        const next = current.filter((item) => item !== token);
+        updateCriteria({ ...criteria, [key]: next.length > 0 ? next : undefined });
+    };
+    const removeCriteriaValue = (
+        key: 'projects' | 'priority' | 'energy' | 'timeEstimates',
+        value: string,
+    ) => {
+        const current = criteria[key] ?? [];
+        const values = current.filter((item) => item !== value);
+        const next = { ...criteria };
+        if (values.length > 0) Object.assign(next, { [key]: values });
+        else delete next[key];
+        updateCriteria(next);
     };
     const clearFilters = () => {
         updateCriteria({});
@@ -473,7 +501,88 @@ export function BoardView() {
     const resolveText = React.useCallback((key: string, fallback: string) => {
         return translateWithFallback(t, key, fallback);
     }, [t]);
-    const excludedStateLabel = resolveText('filters.excluded', 'Excluded');
+    const searchTasksLabel = resolveText('filters.searchTasks', 'Search task titles');
+    const activeFilterChips: DesktopActiveFilterChip[] = [];
+    const normalizedSearch = searchQuery.trim();
+    if (normalizedSearch) {
+        activeFilterChips.push({
+            id: 'search',
+            label: `${searchTasksLabel}: ${normalizedSearch}`,
+            onRemove: () => setSearchQuery(''),
+        });
+    }
+    selectedTokens.forEach((token) => {
+        activeFilterChips.push({
+            id: `token:${token}`,
+            label: token,
+            onRemove: () => removeToken(token, false),
+        });
+    });
+    excludedTokens.forEach((token) => {
+        activeFilterChips.push({
+            id: `excluded-token:${token}`,
+            label: token,
+            excluded: true,
+            onRemove: () => removeToken(token, true),
+        });
+    });
+    selectedProjectIds.forEach((projectId) => {
+        const project = projects.find((candidate) => candidate.id === projectId);
+        activeFilterChips.push({
+            id: `project:${projectId}`,
+            label: projectId === SAVED_FILTER_NO_PROJECT_ID
+                ? resolveText('taskEdit.noProjectOption', 'No project')
+                : project?.title ?? projectId,
+            dotColor: project
+                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
+                : undefined,
+            onRemove: () => removeCriteriaValue('projects', projectId),
+        });
+    });
+    if (selectedDuePreset) {
+        activeFilterChips.push({
+            id: 'dueDateRange',
+            label: `${resolveText('taskEdit.dueDateLabel', 'Due date')}: ${t(`filters.datePreset.${selectedDuePreset}`)}`,
+            onRemove: () => updateCriteria({ ...criteria, dueDateRange: undefined }),
+        });
+    }
+    (criteria.priority ?? []).forEach((priority) => {
+        activeFilterChips.push({
+            id: `priority:${priority}`,
+            label: priority === 'none' ? resolveText('filters.noPriority', 'No priority') : t(`priority.${priority}`),
+            isAdvanced: true,
+            onRemove: () => removeCriteriaValue('priority', priority),
+        });
+    });
+    (criteria.energy ?? []).forEach((energy) => {
+        activeFilterChips.push({
+            id: `energy:${energy}`,
+            label: t(`energyLevel.${energy}`),
+            isAdvanced: true,
+            onRemove: () => removeCriteriaValue('energy', energy),
+        });
+    });
+    (criteria.timeEstimates ?? []).forEach((estimate) => {
+        activeFilterChips.push({
+            id: `time:${estimate}`,
+            label: formatTimeEstimateLabel(estimate, { t }),
+            isAdvanced: true,
+            onRemove: () => removeCriteriaValue('timeEstimates', estimate),
+        });
+    });
+    buildAdvancedFilterCriteriaChips({ ...criteria, dueDateRange: undefined }, {
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+        resolveText,
+    }).forEach((chip) => {
+        activeFilterChips.push({
+            id: `advanced:${chip.id}`,
+            label: chip.label,
+            dotColor: chip.color,
+            isAdvanced: true,
+            onRemove: () => updateCriteria(removeAdvancedFilterCriteriaChip(criteria, chip.id)),
+        });
+    });
 
     const openQuickAdd = (status: TaskStatus) => {
         window.dispatchEvent(new CustomEvent('mindwtr:quick-add', {
@@ -534,31 +643,23 @@ export function BoardView() {
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
-                            {hasBoardFilters && (
-                                <button
-                                    type="button"
-                                    onClick={clearFilters}
-                                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                    {t('filters.clear')}
-                                </button>
-                            )}
-                            <button
-                                type="button"
+                            <ToolbarButton
+                                active={showFiltersPanel || hasBoardFilters}
                                 onClick={() => setPersistedViewState((current) => ({ filtersOpen: !current.filtersOpen }))}
                                 aria-expanded={showFiltersPanel}
-                                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                aria-controls="board-filters-panel"
+                                icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
                             >
-                                {showFiltersPanel ? t('filters.hide') : t('filters.show')}
-                            </button>
+                                {t('filters.label')}
+                            </ToolbarButton>
                         </div>
                     </div>
                     <div className="mt-3">
                         <input
                             type="text"
                             data-view-filter-input
-                            placeholder={t('common.search')}
-                            aria-label={t('common.search')}
+                            placeholder={searchTasksLabel}
+                            aria-label={searchTasksLabel}
                             value={searchQuery}
                             onChange={(event) => setSearchQuery(event.target.value)}
                             className={VIEW_FILTER_INPUT}
@@ -570,110 +671,33 @@ export function BoardView() {
                         </p>
                     )}
 
-                    {showFiltersPanel && (
-                        <div className="mt-3 bg-card border border-border rounded-lg p-3 space-y-4">
-                            {allTokens.length > 0 && (
-                                <div className="space-y-2">
-                                    <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                                        <Filter className="w-4 h-4" />
-                                        {t('filters.contexts')}
-                                    </div>
-                                    <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                                        {allTokens.map((token) => {
-                                            const isTag = token.trim().startsWith('#');
-                                            const isIncluded = isTag
-                                                ? selectedTags.includes(token)
-                                                : selectedContexts.includes(token);
-                                            const isExcluded = isTag
-                                                ? excludedTags.includes(token)
-                                                : excludedContexts.includes(token);
-                                            return (
-                                                <button
-                                                    key={token}
-                                                    type="button"
-                                                    onClick={() => toggleToken(token)}
-                                                    // Three states can't ride a boolean: 'mixed' marks excluded.
-                                                    aria-pressed={isExcluded ? 'mixed' : isIncluded}
-                                                    aria-label={isExcluded ? `${token} (${excludedStateLabel})` : undefined}
-                                                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                                                        isExcluded
-                                                            ? "border border-destructive bg-destructive/10 text-destructive line-through"
-                                                            : isIncluded
-                                                                ? "bg-primary text-primary-foreground"
-                                                                : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                                                    }`}
-                                                >
-                                                    {token}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                            <div className="space-y-2">
-                                <div className="text-xs text-muted-foreground uppercase tracking-wide">{t('search.due.label')}</div>
-                                <div className="flex flex-wrap gap-2">
-                                    {DUE_DATE_PRESETS.map((preset) => {
-                                        const isActive = selectedDuePreset === preset;
-                                        return (
-                                            <button
-                                                key={preset}
-                                                type="button"
-                                                onClick={() => toggleDuePreset(preset)}
-                                                aria-pressed={isActive}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                                                    isActive
-                                                        ? "bg-primary text-primary-foreground"
-                                                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                                                }`}
-                                            >
-                                                {t(`filters.datePreset.${preset}`)}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <div className="text-xs text-muted-foreground uppercase tracking-wide">{t('filters.projects')}</div>
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => toggleProjectFilter(SAVED_FILTER_NO_PROJECT_ID)}
-                                        aria-pressed={selectedProjectIds.includes(SAVED_FILTER_NO_PROJECT_ID)}
-                                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                                            selectedProjectIds.includes(SAVED_FILTER_NO_PROJECT_ID)
-                                                ? "bg-primary text-primary-foreground"
-                                                : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                                        }`}
-                                    >
-                                        {t('taskEdit.noProjectOption')}
-                                    </button>
-                                    {sortedProjects.map((project) => {
-                                        const isActive = selectedProjectIds.includes(project.id);
-                                        const projectColor = project.areaId ? areaById.get(project.areaId)?.color : undefined;
-                                        return (
-                                            <button
-                                                key={project.id}
-                                                type="button"
-                                                onClick={() => toggleProjectFilter(project.id)}
-                                                aria-pressed={isActive}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors flex items-center gap-2 ${
-                                                    isActive
-                                                        ? "bg-primary text-primary-foreground"
-                                                        : "bg-muted hover:bg-muted/80 text-muted-foreground"
-                                                }`}
-                                            >
-                                                <span
-                                                    className="w-2 h-2 rounded-full"
-                                                    style={{ backgroundColor: projectColor || "hsl(var(--muted-foreground))" }}
-                                                />
-                                                <span className="truncate max-w-[140px]">{project.title}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
+                    {(showFiltersPanel || hasBoardFilters) && (
+                        <BoardFiltersPanel
+                            activeFilterChips={activeFilterChips}
+                            allTokens={allTokens}
+                            contextMatchMode={criteria.contextMatchMode ?? 'all'}
+                            duePresets={DUE_DATE_PRESETS}
+                            excludedTokens={excludedTokens}
+                            hasFilters={hasBoardFilters}
+                            onClearFilters={clearFilters}
+                            onClose={() => setPersistedViewState((current) => ({ ...current, filtersOpen: false }))}
+                            onContextMatchModeChange={(mode) => setMatchMode('context', mode)}
+                            onTagMatchModeChange={(mode) => setMatchMode('tag', mode)}
+                            onToggleDuePreset={(preset) => toggleDuePreset(preset as DueDatePreset)}
+                            onToggleProject={toggleProjectFilter}
+                            onToggleToken={toggleToken}
+                            projectOptions={sortedProjects.map((project) => ({
+                                id: project.id,
+                                title: project.title,
+                                dotColor: (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined,
+                            }))}
+                            selectedDuePreset={selectedDuePreset}
+                            selectedProjectIds={selectedProjectIds}
+                            selectedTokens={selectedTokens}
+                            showFiltersPanel={showFiltersPanel}
+                            tagMatchMode={criteria.tagMatchMode ?? 'all'}
+                            t={t}
+                        />
                     )}
                 </div>
 

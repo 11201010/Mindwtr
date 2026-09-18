@@ -42,6 +42,7 @@ const tc = {
 
 const t = (key: string) => ({
     'taskEdit.projectLabel': 'Project',
+    'task.destination': 'Destination',
     'taskEdit.noProjectOption': 'No Project',
     'taskEdit.areaLabel': 'Area',
     'taskEdit.noAreaOption': 'No Area',
@@ -81,6 +82,7 @@ const baseProps = {
     createAssignedToPerson: vi.fn(),
     prioritiesEnabled: true,
     priorityOptions: [],
+    destinationFields: ['project', 'area'],
     projectSections: [],
     projects: [],
     requestBackdatedCompletion: vi.fn(),
@@ -148,7 +150,7 @@ describe('TaskEditOrganizationField', () => {
             );
         });
 
-        const compactButton = tree.root.findByProps({ accessibilityLabel: 'Project: No Project' });
+        const compactButton = tree.root.findByProps({ accessibilityLabel: 'Destination: None' });
         expect(compactButton.props.accessibilityRole).toBe('button');
 
         act(() => {
@@ -158,28 +160,97 @@ describe('TaskEditOrganizationField', () => {
         expect(setShowProjectPicker).toHaveBeenCalledWith(true);
     });
 
-    it('renders an unset area as a compact picker row', () => {
-        const setShowAreaPicker = vi.fn();
+    it.each([
+        {
+            label: 'Project before Area',
+            destinationFields: ['project', 'area'],
+            renderedField: 'project',
+            hiddenField: 'area',
+        },
+        {
+            label: 'Area before Project',
+            destinationFields: ['area', 'project'],
+            renderedField: 'area',
+            hiddenField: 'project',
+        },
+        {
+            label: 'Project only',
+            destinationFields: ['project'],
+            renderedField: 'project',
+            hiddenField: 'area',
+        },
+        {
+            label: 'Area only',
+            destinationFields: ['area'],
+            renderedField: 'area',
+            hiddenField: 'project',
+        },
+    ])('renders Destination once at the first visible organization slot: $label', ({
+        destinationFields,
+        renderedField,
+        hiddenField,
+    }) => {
+        let renderedTree!: renderer.ReactTestRenderer;
+        let hiddenTree!: renderer.ReactTestRenderer;
+        act(() => {
+            renderedTree = renderer.create(
+                <TaskEditOrganizationField
+                    {...(baseProps as any)}
+                    fieldId={renderedField}
+                    destinationFields={destinationFields}
+                />
+            );
+            hiddenTree = renderer.create(
+                <TaskEditOrganizationField
+                    {...(baseProps as any)}
+                    fieldId={hiddenField}
+                    destinationFields={destinationFields}
+                />
+            );
+        });
 
+        expect(renderedTree.root.findByProps({ accessibilityLabel: 'Destination: None' })).toBeTruthy();
+        expect(hiddenTree.toJSON()).toBeNull();
+    });
+
+    it('does not render Destination when Project and Area are both hidden', () => {
+        let projectTree!: renderer.ReactTestRenderer;
+        let areaTree!: renderer.ReactTestRenderer;
+        act(() => {
+            projectTree = renderer.create(
+                <TaskEditOrganizationField
+                    {...(baseProps as any)}
+                    fieldId="project"
+                    destinationFields={[]}
+                />
+            );
+            areaTree = renderer.create(
+                <TaskEditOrganizationField
+                    {...(baseProps as any)}
+                    fieldId="area"
+                    destinationFields={[]}
+                />
+            );
+        });
+
+        expect(projectTree.toJSON()).toBeNull();
+        expect(areaTree.toJSON()).toBeNull();
+    });
+
+    it('shows an area selection in the combined destination row', () => {
         let tree!: renderer.ReactTestRenderer;
         act(() => {
             tree = renderer.create(
                 <TaskEditOrganizationField
                     {...(baseProps as any)}
-                    fieldId="area"
-                    setShowAreaPicker={setShowAreaPicker}
+                    fieldId="project"
+                    areas={[{ id: 'area-1', name: 'Home' }]}
+                    draft={{ ...baseProps.draft, areaId: 'area-1' }}
                 />
             );
         });
 
-        const compactButton = tree.root.findByProps({ accessibilityLabel: 'Area: No Area' });
-        expect(compactButton.props.accessibilityRole).toBe('button');
-
-        act(() => {
-            compactButton.props.onPress();
-        });
-
-        expect(setShowAreaPicker).toHaveBeenCalledWith(true);
+        expect(tree.root.findByProps({ accessibilityLabel: 'Destination: Home' })).toBeTruthy();
     });
 
     it('opens the section picker for a project task with no section (#1190)', () => {

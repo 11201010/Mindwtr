@@ -4,6 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 import type { Area } from '@mindwtr/core';
 
 import { TaskEditAreaPicker } from './TaskEditAreaPicker';
+import { TaskEditDestinationPicker } from './TaskEditDestinationPicker';
 import { TaskEditProjectPicker } from './TaskEditProjectPicker';
 import { TaskEditSectionPicker } from './TaskEditSectionPicker';
 
@@ -29,6 +30,42 @@ const deferred = <T,>() => {
 };
 
 describe('Task edit pickers', () => {
+    it.each([
+        { label: 'both', allowProjects: true, allowAreas: true, projectVisible: true, areaVisible: true },
+        { label: 'Project only', allowProjects: true, allowAreas: false, projectVisible: true, areaVisible: false },
+        { label: 'Area only', allowProjects: false, allowAreas: true, projectVisible: false, areaVisible: true },
+        { label: 'neither', allowProjects: false, allowAreas: false, projectVisible: false, areaVisible: false },
+    ])('limits Destination choices to the visible organization kinds: $label', ({
+        allowProjects,
+        allowAreas,
+        projectVisible,
+        areaVisible,
+    }) => {
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <TaskEditDestinationPicker
+                    visible
+                    projects={[{ id: 'project-1', title: 'Project One' }] as any}
+                    areas={[{ id: 'area-1', name: 'Area One' }] as any}
+                    allowProjects={allowProjects}
+                    allowAreas={allowAreas}
+                    tc={{ ...tc, danger: '#f00' } as any}
+                    t={(key) => key}
+                    onClose={vi.fn()}
+                    onSelect={vi.fn()}
+                />
+            );
+        });
+
+        const optionLabels = tree.root
+            .findAll((node) => node.props.accessibilityRole === 'button')
+            .map((node) => node.props.accessibilityLabel);
+        expect(optionLabels).toContain('common.none');
+        expect(optionLabels.includes('nav.projects: Project One')).toBe(projectVisible);
+        expect(optionLabels.includes('taskEdit.areaLabel: Area One')).toBe(areaVisible);
+    });
+
     it('adds modal accessibility metadata to the area picker', () => {
         let tree: renderer.ReactTestRenderer;
         act(() => {

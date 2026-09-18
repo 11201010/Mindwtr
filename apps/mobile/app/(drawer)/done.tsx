@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Redirect, usePathname } from 'expo-router';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { translateWithFallback } from '@mindwtr/core';
@@ -16,6 +17,7 @@ import {
 } from '@/lib/view-state/done-list-view-state';
 
 export default function DoneScreen() {
+  const pathname = usePathname();
   const tc = useThemeColors();
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
@@ -49,11 +51,16 @@ export default function DoneScreen() {
     });
   }, []);
 
+  if (pathname === '/done') {
+    return <Redirect href={{ pathname: '/history', params: { tab: 'done' } } as never} />;
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <TaskList
         statusFilter="done"
         title={title}
+        overflowPlacement="navigation"
         showHeader={false}
         emptyText={emptyText}
         emptyHint={emptyHint}

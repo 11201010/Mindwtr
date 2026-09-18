@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const hiOverrides: Record<string, string> = {
+    'filters.searchTasks': "कार्य शीर्षक खोजें",
+    'filters.searchOptions': "विकल्प खोजें",
+    'filters.tokenCycleHint': "शामिल करने के लिए क्लिक करें, बाहर रखने के लिए दोबारा और चयन हटाने के लिए फिर क्लिक करें।",
+    'filters.more': "और फ़िल्टर",
+    'viewSections.new': "नया अनुभाग",
+    'projects.new': 'नया प्रोजेक्ट',
+    'nav.history': 'इतिहास',
+    'task.dates': 'तारीखें…',
+    'task.moveTo': 'यहाँ ले जाएँ…',
+    'task.destination': 'गंतव्य',
+    'common.viewOptions': 'दृश्य विकल्प',
+    'settings.regionalFormats': 'क्षेत्रीय प्रारूप',
+    'settings.keyboardAndWindow': 'कीबोर्ड और विंडो',
     'settings.gtdMobile.openTasksIn': 'कार्य इसमें खोलें',
     'settings.gtdMobile.openTasksInDesc': 'इस डिवाइस पर किसी कार्य को सामान्य रूप से टैप करने पर उपयोग होने वाला टैब चुनें।',
     'settings.gtdMobile.taskOpenAutomatic': 'स्वचालित',

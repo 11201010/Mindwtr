@@ -115,7 +115,7 @@ export function SortableProjectRow({
             aria-label="Drag"
             data-project-selection-ignore="true"
             onClick={(event) => event.stopPropagation()}
-            className="h-6 w-6 rounded-md border border-transparent text-muted-foreground/80 hover:text-foreground hover:bg-muted/70 hover:border-border/70 flex items-center justify-center transition-colors"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-muted-foreground/80 transition-colors hover:border-border/70 hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             title="Drag"
         >
             <GripVertical className="w-3 h-3" />

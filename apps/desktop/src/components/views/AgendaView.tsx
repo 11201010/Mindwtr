@@ -526,8 +526,6 @@ export function AgendaView() {
         tokens: selectedTokens,
         unbindSaved: unbindSavedFilter,
     } = filterSelections;
-    const activePriorities = showPriorityFilters ? selectedPriorities : [];
-    const activeTimeEstimates = showTimeEstimateFilters ? selectedTimeEstimates : [];
     // A saved or stored 'priority' sort/group stops taking effect while
     // Priorities is off (the preference survives for re-enable) — otherwise
     // Focus would keep ordering and bucketing by a field hidden everywhere
@@ -568,12 +566,28 @@ export function AgendaView() {
         ));
         void updateSettings({ savedFilters: nextFilters }).catch(() => undefined);
     }, [activeSavedFilter, settings?.savedFilters, updateSettings]);
+    const removeIncludedToken = useCallback((token: string) => {
+        // Picker tokens are tri-state; summary chips are direct removal controls.
+        // Advancing twice clears included → excluded → neutral without changing
+        // the picker cycle itself.
+        toggleTokenFilter(token);
+        toggleTokenFilter(token);
+    }, [toggleTokenFilter]);
     const activeFilterChips = useMemo<AgendaActiveFilterChip[]>(() => {
         const chips: AgendaActiveFilterChip[] = [];
+        const normalizedSearch = searchQuery.trim();
+        if (normalizedSearch) {
+            chips.push({
+                id: 'search',
+                label: `${resolveText('filters.searchTasks', 'Search task titles')}: ${normalizedSearch}`,
+                onRemove: () => setSearchQuery(''),
+            });
+        }
         selectedTokens.forEach((token) => {
             chips.push({
                 id: `token:${token}`,
                 label: token,
+                onRemove: () => removeIncludedToken(token),
             });
         });
         excludedTokens.forEach((token) => {
@@ -589,40 +603,47 @@ export function AgendaView() {
                 chips.push({
                     id: `project:${projectId}`,
                     label: resolveText('taskEdit.noProjectOption', 'No project'),
+                    onRemove: () => toggleProjectFilter(projectId),
                 });
                 return;
             }
             const project = projectMap.get(projectId);
-            if (!project) return;
             chips.push({
-                id: `project:${project.id}`,
-                label: project.title,
-                dotColor: (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined,
+                id: `project:${projectId}`,
+                label: project?.title ?? projectId,
+                dotColor: project
+                    ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
+                    : undefined,
+                onRemove: () => toggleProjectFilter(projectId),
             });
         });
-        (showPriorityFilters ? activePriorities : []).forEach((priority) => {
+        selectedPriorities.forEach((priority) => {
             chips.push({
                 id: `priority:${priority}`,
                 label: t(`priority.${priority}`),
+                onRemove: () => togglePriorityFilter(priority),
             });
         });
-        (showEnergyLevelFilters ? selectedEnergyLevels : []).forEach((energyLevel) => {
+        selectedEnergyLevels.forEach((energyLevel) => {
             chips.push({
                 id: `energy:${energyLevel}`,
                 label: t(`energyLevel.${energyLevel}`),
+                onRemove: () => toggleEnergyFilter(energyLevel),
             });
         });
-        (showTimeEstimateFilters ? activeTimeEstimates : []).forEach((estimate) => {
+        selectedTimeEstimates.forEach((estimate) => {
             chips.push({
                 id: `time:${estimate}`,
                 label: formatEstimate(estimate),
+                onRemove: () => toggleTimeFilter(estimate),
             });
         });
         const normalizedLocationFilter = locationFilter.trim();
-        if (showLocationFilter && normalizedLocationFilter && !activeSavedFilter) {
+        if (normalizedLocationFilter && !activeSavedFilter) {
             chips.push({
                 id: `location:${normalizedLocationFilter}`,
                 label: `${resolveText('taskEdit.locationLabel', 'Location')}: ${normalizedLocationFilter}`,
+                onRemove: () => updateLocationFilter(''),
             });
         }
         if (activeSavedFilter) {
@@ -641,25 +662,31 @@ export function AgendaView() {
         return chips;
     }, [
         activeSavedFilter,
-        activePriorities,
-        activeTimeEstimates,
         areaById,
         effectiveFilterCriteria,
         formatEstimate,
         projectMap,
+        removeIncludedToken,
         removeAdvancedSavedFilterCriterion,
         resolveText,
+        searchQuery,
         selectedEnergyLevels,
+        selectedPriorities,
+        selectedTimeEstimates,
         locationFilter,
         selectedProjects,
         selectedTokens,
         excludedTokens,
+        setSearchQuery,
         t,
+        toggleEnergyFilter,
+        togglePriorityFilter,
+        toggleProjectFilter,
+        toggleTimeFilter,
         toggleTokenFilter,
+        updateLocationFilter,
     ]);
-    const activeFilterCount = filterSelections.activeCount
-        + (effectiveFocusSortBy !== DEFAULT_FOCUS_SORT_BY ? 1 : 0)
-        + (activeSavedFilterId && filterSelections.activeCount === 0 && effectiveFocusSortBy === DEFAULT_FOCUS_SORT_BY ? 1 : 0);
+    const activeFilterCount = filterSelections.activeCount;
     const saveFilterDefaultName = getSavedFilterDefaultName(activeFilterChips, resolveText('savedFilters.defaultName', 'Focus filter'));
 
     const { focusPools, upcomingAppearsAtById, scheduleAppearsAtById } = useMemo(() => {
@@ -730,11 +757,7 @@ export function AgendaView() {
         dispatchNavigateEvent('projects');
     }, [setProjectView]);
     const showFiltersPanel = filtersOpen;
-    const shouldRenderFiltersPanel = filtersOpen
-        || (!activeSavedFilter && (
-            hasTaskFilters
-            || focusSortBy !== DEFAULT_FOCUS_SORT_BY
-        ));
+    const shouldRenderFiltersPanel = filtersOpen || activeFilterCount > 0;
     useEffect(() => {
         if (!filtersOpen) return;
         filterInputRef.current?.focus();
@@ -1103,9 +1126,11 @@ export function AgendaView() {
                 filtersOpen={filtersOpen}
                 nextActionsCount={nextActionsCount}
                 nextGroupBy={effectiveNextGroupBy}
+                focusSortBy={effectiveFocusSortBy}
                 canToggleOtherSections={canToggleOtherSections}
                 collapseOtherSections={collapseOtherSections}
                 onChangeGroupBy={updateFocusGroupBy}
+                onChangeSortBy={updateFocusSortBy}
                 onToggleFilters={() => setFiltersOpen((prev) => !prev)}
                 onToggleDetails={handleToggleDetails}
                 onToggleOtherSections={toggleOtherSections}
@@ -1164,7 +1189,6 @@ export function AgendaView() {
                         all: resolveText('common.all', 'All'),
                     }}
                     energyLevelOptions={energyLevelOptions}
-                    focusSortBy={effectiveFocusSortBy}
                     formatEstimate={formatEstimate}
                     hasFilters={activeFilterCount > 0}
                     locationFilter={locationFilter}
@@ -1176,7 +1200,6 @@ export function AgendaView() {
                     onContextMatchModeChange={updateContextMatchMode}
                     onTagMatchModeChange={updateTagMatchMode}
                     onSearchChange={setSearchQuery}
-                    onSortChange={updateFocusSortBy}
                     onToggleEnergy={toggleEnergyFilter}
                     onToggleFiltersOpen={() => setFiltersOpen((prev) => !prev)}
                     onToggleProject={toggleProjectFilter}

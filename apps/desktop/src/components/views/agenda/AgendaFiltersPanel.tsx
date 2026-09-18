@@ -1,11 +1,22 @@
+import { useEffect, useMemo, useState } from 'react';
 import type { RefObject } from 'react';
-import { FOCUS_SORT_OPTIONS, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
-import type { MultiValueFilterMatchMode, SortField, TaskEnergyLevel, TaskPriority, TimeEstimate } from '@mindwtr/core';
-import { Filter, Save, X } from 'lucide-react';
+import { tFallback } from '@mindwtr/core';
+import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskPriority, TimeEstimate } from '@mindwtr/core';
+import { Filter, Save } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
-import { VIEW_FILTER_INPUT } from '../list/list-toolbar';
 import { PriorityFlag } from '../../Task/PriorityFlag';
+import {
+    ActiveFilterChips,
+    FILTER_OPTION_BASE,
+    FilterCategory,
+    FilterOptionSearch,
+    MatchModeControl,
+    matchesFilterOption,
+    summarizeFilterValues,
+    type DesktopActiveFilterChip,
+} from '../list/FilterDisclosure';
+import { VIEW_FILTER_INPUT } from '../list/list-toolbar';
 
 export type AgendaProjectFilterOption = {
     id: string;
@@ -13,36 +24,20 @@ export type AgendaProjectFilterOption = {
     dotColor?: string;
 };
 
-export type AgendaActiveFilterChip = {
-    id: string;
-    label: string;
-    dotColor?: string;
-    isAdvanced?: boolean;
-    /** Excluded (subtracting) token — rendered struck through, not selected. */
-    excluded?: boolean;
-    onRemove?: () => void;
-};
+export type AgendaActiveFilterChip = DesktopActiveFilterChip;
 
+type FilterCategoryId = 'tokens' | 'projects' | 'location' | 'priority' | 'energy' | 'time';
 
 type AgendaFiltersPanelProps = {
     allTokens: string[];
     activeFilterChips: AgendaActiveFilterChip[];
     energyLevelOptions: TaskEnergyLevel[];
     formatEstimate: (estimate: TimeEstimate) => string;
-    focusSortBy: SortField;
     canSaveFilter: boolean;
     contextMatchMode: MultiValueFilterMatchMode;
-    contextMatchModeLabels: {
-        title: string;
-        any: string;
-        all: string;
-    };
+    contextMatchModeLabels: { title: string; any: string; all: string };
     tagMatchMode: MultiValueFilterMatchMode;
-    tagMatchModeLabels: {
-        title: string;
-        any: string;
-        all: string;
-    };
+    tagMatchModeLabels: { title: string; any: string; all: string };
     hasFilters: boolean;
     locationFilter: string;
     showEnergyLevelFilters: boolean;
@@ -53,7 +48,6 @@ type AgendaFiltersPanelProps = {
     onContextMatchModeChange: (value: MultiValueFilterMatchMode) => void;
     onTagMatchModeChange: (value: MultiValueFilterMatchMode) => void;
     onSearchChange: (value: string) => void;
-    onSortChange: (value: SortField) => void;
     onToggleEnergy: (energyLevel: TaskEnergyLevel) => void;
     onToggleFiltersOpen: () => void;
     onToggleProject: (projectId: string) => void;
@@ -80,12 +74,17 @@ type AgendaFiltersPanelProps = {
     showTimeEstimateFilters: boolean;
 };
 
+const focusFiltersTrigger = () => {
+    window.requestAnimationFrame(() => {
+        document.querySelector<HTMLButtonElement>('button[aria-controls="agenda-filters-panel"]')?.focus();
+    });
+};
+
 export function AgendaFiltersPanel({
     allTokens,
     activeFilterChips,
     energyLevelOptions,
     formatEstimate,
-    focusSortBy,
     canSaveFilter,
     contextMatchMode,
     contextMatchModeLabels,
@@ -100,7 +99,6 @@ export function AgendaFiltersPanel({
     onTagMatchModeChange,
     onLocationChange,
     onSearchChange,
-    onSortChange,
     onSaveFilter,
     onToggleEnergy,
     onToggleFiltersOpen,
@@ -127,32 +125,101 @@ export function AgendaFiltersPanel({
     timeEstimateOptions,
     showTimeEstimateFilters,
 }: AgendaFiltersPanelProps) {
-    // Focus renders its sort as chips rather than the shared SortBySelect, so
-    // the Priorities gate is repeated here: with the feature off the option
-    // must not be offered, and AgendaView resolves a stored 'priority' sort to
-    // 'default' so the missing chip can never leave nothing selected.
-    const prioritiesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).priorities);
-    const sortOptions = prioritiesEnabled
-        ? FOCUS_SORT_OPTIONS
-        : FOCUS_SORT_OPTIONS.filter((option) => option !== 'priority');
+    const [expandedCategory, setExpandedCategory] = useState<FilterCategoryId | null>(null);
+    const [tokenQuery, setTokenQuery] = useState('');
+    const [projectQuery, setProjectQuery] = useState('');
+    const allLabel = tFallback(t, 'common.all', 'All');
+    const noMatchesLabel = tFallback(t, 'common.noMatches', 'No matches');
+    const removeLabel = tFallback(t, 'filters.remove', 'Remove filter');
+    const searchOptionsLabel = tFallback(t, 'filters.searchOptions', 'Search options');
+    const searchTasksLabel = tFallback(t, 'filters.searchTasks', 'Search task titles');
+    const tokenCycleHint = tFallback(
+        t,
+        'filters.tokenCycleHint',
+        'Click to include, again to exclude, and once more to clear.',
+    );
+
+    const tokenOptions = useMemo(
+        () => Array.from(new Set([...allTokens, ...selectedTokens, ...excludedTokens])),
+        [allTokens, excludedTokens, selectedTokens],
+    );
+    const visibleTokens = useMemo(
+        () => tokenOptions.filter((token) => matchesFilterOption(token, tokenQuery)),
+        [tokenOptions, tokenQuery],
+    );
+    const visibleProjects = useMemo(
+        () => projectOptions.filter((project) => matchesFilterOption(project.title, projectQuery)),
+        [projectOptions, projectQuery],
+    );
+    const projectTitleById = useMemo(
+        () => new Map(projectOptions.map((project) => [project.id, project.title])),
+        [projectOptions],
+    );
+
     const selectedContextCount = selectedTokens.filter((token) => token.trim().startsWith('@')).length;
-    const showContextMatchMode = selectedContextCount > 1;
     const selectedTagCount = selectedTokens.filter((token) => token.trim().startsWith('#')).length;
-    const showTagMatchMode = selectedTagCount > 1;
+    const tokenSummary = summarizeFilterValues([
+        ...selectedTokens,
+        ...excludedTokens.map((token) => `${excludedStateLabel}: ${token}`),
+    ], allLabel);
+    const projectSummary = summarizeFilterValues(selectedProjects.map((projectId) => (
+        projectId === '__no_project__'
+            ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
+            : projectTitleById.get(projectId) ?? projectId
+    )), allLabel);
+    const prioritySummary = summarizeFilterValues(
+        selectedPriorities.map((priority) => t(`priority.${priority}`)),
+        allLabel,
+    );
+    const energySummary = summarizeFilterValues(
+        selectedEnergyLevels.map((level) => t(`energyLevel.${level}`)),
+        allLabel,
+    );
+    const timeSummary = summarizeFilterValues(selectedTimeEstimates.map(formatEstimate), allLabel);
+
+    const closePanel = () => {
+        if (!showFiltersPanel) return;
+        onToggleFiltersOpen();
+        focusFiltersTrigger();
+    };
+
+    useEffect(() => {
+        if (showFiltersPanel) return;
+        setExpandedCategory(null);
+        setTokenQuery('');
+        setProjectQuery('');
+    }, [showFiltersPanel]);
+
+    useEffect(() => {
+        if (!showFiltersPanel) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            closePanel();
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    });
+
+    const toggleCategory = (category: FilterCategoryId) => {
+        setExpandedCategory((current) => current === category ? null : category);
+    };
+
+    const renderNoMatches = () => <p className="text-sm text-muted-foreground">{noMatchesLabel}</p>;
 
     return (
         <div id="agenda-filters-panel" className="space-y-3 rounded-lg border border-border/70 bg-card/45 p-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    <Filter className="h-4 w-4" />
+                    <Filter className="h-4 w-4" aria-hidden="true" />
                     {t('filters.label')}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     {canSaveFilter && (
                         <button
                             type="button"
                             onClick={onSaveFilter}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                         >
                             <Save className="h-3.5 w-3.5" aria-hidden="true" />
                             {saveFilterLabel}
@@ -162,189 +229,110 @@ export function AgendaFiltersPanel({
                         <button
                             type="button"
                             onClick={onClearFilters}
-                            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                            className="text-xs text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                         >
                             {t('filters.clear')}
                         </button>
                     )}
                     <button
                         type="button"
-                        onClick={onToggleFiltersOpen}
+                        onClick={showFiltersPanel ? closePanel : onToggleFiltersOpen}
                         aria-expanded={showFiltersPanel}
-                        className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                        className="text-xs text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
                         {showFiltersPanel ? t('filters.hide') : t('filters.show')}
                     </button>
                 </div>
             </div>
-            <input
-                ref={searchInputRef}
-                type="text"
-                data-view-filter-input
-                placeholder={t('common.search')}
-                aria-label={t('common.search')}
-                value={searchQuery}
-                onChange={(event) => onSearchChange(event.target.value)}
-                className={VIEW_FILTER_INPUT}
-            />
-            {activeFilterChips.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                    {activeFilterChips.map((chip) => (
-                        <span
-                            key={chip.id}
-                            className={cn(
-                                'inline-flex min-h-8 items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium',
-                                chip.excluded
-                                    ? 'border border-destructive bg-destructive/10 text-destructive line-through'
-                                    : chip.isAdvanced
-                                        ? 'border border-dashed border-primary/50 bg-muted/40 text-primary'
-                                        : 'bg-muted text-muted-foreground',
-                            )}
-                        >
-                            {chip.dotColor && (
-                                <span
-                                    className="h-2 w-2 rounded-full"
-                                    style={{ backgroundColor: chip.dotColor }}
-                                    aria-hidden="true"
-                                />
-                            )}
-                            {chip.excluded && (
-                                <span className="sr-only">{excludedStateLabel}: </span>
-                            )}
-                            {chip.label}
-                            {chip.onRemove && (
-                                <button
-                                    type="button"
-                                    onClick={chip.onRemove}
-                                    aria-label={`${t('common.delete')} ${chip.label}`}
-                                    className="-mr-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-current transition-colors hover:bg-background/80"
-                                >
-                                    <X className="h-3 w-3" aria-hidden="true" />
-                                </button>
-                            )}
-                        </span>
-                    ))}
-                </div>
-            )}
+            <div>
+                <label htmlFor="agenda-task-filter" className="sr-only">{searchTasksLabel}</label>
+                <input
+                    id="agenda-task-filter"
+                    ref={searchInputRef}
+                    type="search"
+                    data-view-filter-input
+                    placeholder={searchTasksLabel}
+                    value={searchQuery}
+                    onChange={(event) => onSearchChange(event.target.value)}
+                    className={VIEW_FILTER_INPUT}
+                />
+            </div>
+            <ActiveFilterChips chips={activeFilterChips} excludedLabel={excludedStateLabel} removeLabel={removeLabel} />
             {showFiltersPanel && (
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('sort.label')}</div>
-                        <div className="flex flex-wrap gap-2">
-                            {sortOptions.map((sortBy) => {
-                                const isActive = focusSortBy === sortBy;
-                                const label = sortBy === 'priority' ? t('filters.priority') : t(`sort.${sortBy}`);
-                                return (
-                                    <button
-                                        key={sortBy}
-                                        type="button"
-                                        onClick={() => onSortChange(sortBy)}
-                                        aria-pressed={isActive}
-                                        className={cn(
-                                            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                                            isActive
-                                                ? 'bg-primary text-primary-foreground'
-                                                : 'bg-muted text-muted-foreground hover:bg-muted/80',
-                                        )}
-                                    >
-                                        {label}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    <div className="space-y-2">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('filters.contexts')}</div>
-                        {showContextMatchMode && (
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs text-muted-foreground">{contextMatchModeLabels.title}</span>
-                                <div className="inline-flex rounded-full border border-border bg-muted/50 p-0.5">
-                                    {(['any', 'all'] as const).map((mode) => {
-                                        const isActive = contextMatchMode === mode;
-                                        return (
-                                            <button
-                                                key={mode}
-                                                type="button"
-                                                onClick={() => onContextMatchModeChange(mode)}
-                                                aria-pressed={isActive}
-                                                className={cn(
-                                                    'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                                                    isActive
-                                                        ? 'bg-primary text-primary-foreground'
-                                                        : 'text-muted-foreground hover:text-foreground',
-                                                )}
-                                            >
-                                                {mode === 'any' ? contextMatchModeLabels.any : contextMatchModeLabels.all}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+                <div className="rounded-md border border-border/60 px-2">
+                    <FilterCategory
+                        id="agenda-token-filters"
+                        label={t('filters.contexts')}
+                        summary={tokenSummary}
+                        expanded={expandedCategory === 'tokens'}
+                        onToggle={() => toggleCategory('tokens')}
+                    >
+                        <FilterOptionSearch id="agenda-token-option-search" label={searchOptionsLabel} value={tokenQuery} onChange={setTokenQuery} />
+                        {selectedContextCount > 1 && (
+                            <MatchModeControl
+                                label={contextMatchModeLabels.title}
+                                mode={contextMatchMode}
+                                anyLabel={contextMatchModeLabels.any}
+                                allLabel={contextMatchModeLabels.all}
+                                onChange={onContextMatchModeChange}
+                            />
                         )}
-                        {showTagMatchMode && (
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs text-muted-foreground">{tagMatchModeLabels.title}</span>
-                                <div className="inline-flex rounded-full border border-border bg-muted/50 p-0.5">
-                                    {(['any', 'all'] as const).map((mode) => {
-                                        const isActive = tagMatchMode === mode;
-                                        return (
-                                            <button
-                                                key={mode}
-                                                type="button"
-                                                onClick={() => onTagMatchModeChange(mode)}
-                                                aria-pressed={isActive}
-                                                className={cn(
-                                                    'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                                                    isActive
-                                                        ? 'bg-primary text-primary-foreground'
-                                                        : 'text-muted-foreground hover:text-foreground',
-                                                )}
-                                            >
-                                                {mode === 'any' ? tagMatchModeLabels.any : tagMatchModeLabels.all}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+                        {selectedTagCount > 1 && (
+                            <MatchModeControl
+                                label={tagMatchModeLabels.title}
+                                mode={tagMatchMode}
+                                anyLabel={tagMatchModeLabels.any}
+                                allLabel={tagMatchModeLabels.all}
+                                onChange={onTagMatchModeChange}
+                            />
                         )}
-                        <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto">
-                            {allTokens.map((token) => {
-                                const isIncluded = selectedTokens.includes(token);
-                                const isExcluded = excludedTokens.includes(token);
-                                return (
-                                    <button
-                                        key={token}
-                                        type="button"
-                                        onClick={() => onToggleToken(token)}
-                                        // Three states can't ride a boolean: 'mixed' marks excluded.
-                                        aria-pressed={isExcluded ? 'mixed' : isIncluded}
-                                        aria-label={isExcluded ? `${token} (${excludedStateLabel})` : undefined}
-                                        className={cn(
-                                            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                                            isExcluded
-                                                ? 'border border-destructive bg-destructive/10 text-destructive line-through'
-                                                : isIncluded
-                                                    ? 'bg-primary text-primary-foreground'
-                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
-                                        )}
-                                    >
-                                        {token}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    {(showNoProjectOption || projectOptions.length > 0) && (
-                        <div className="space-y-2">
-                            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('filters.projects')}</div>
-                            <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto">
-                                {showNoProjectOption && (
+                        <p className="text-xs text-muted-foreground">{tokenCycleHint}</p>
+                        {visibleTokens.length > 0 ? (
+                            <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                {visibleTokens.map((token) => {
+                                    const isIncluded = selectedTokens.includes(token);
+                                    const isExcluded = excludedTokens.includes(token);
+                                    return (
+                                        <button
+                                            key={token}
+                                            type="button"
+                                            onClick={() => onToggleToken(token)}
+                                            aria-pressed={isExcluded ? 'mixed' : isIncluded}
+                                            aria-label={isExcluded ? `${token} (${excludedStateLabel})` : undefined}
+                                            className={cn(
+                                                FILTER_OPTION_BASE,
+                                                isExcluded
+                                                    ? 'border border-destructive bg-destructive/10 text-destructive line-through'
+                                                    : isIncluded
+                                                        ? 'bg-primary text-primary-foreground'
+                                                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                                            )}
+                                        >
+                                            {token}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : renderNoMatches()}
+                    </FilterCategory>
+
+                    {(showNoProjectOption || projectOptions.length > 0 || selectedProjects.length > 0) && (
+                        <FilterCategory
+                            id="agenda-project-filters"
+                            label={t('filters.projects')}
+                            summary={projectSummary}
+                            expanded={expandedCategory === 'projects'}
+                            onToggle={() => toggleCategory('projects')}
+                        >
+                            <FilterOptionSearch id="agenda-project-option-search" label={searchOptionsLabel} value={projectQuery} onChange={setProjectQuery} />
+                            <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                {showNoProjectOption && matchesFilterOption(tFallback(t, 'taskEdit.noProjectOption', 'No project'), projectQuery) && (
                                     <button
                                         type="button"
                                         onClick={() => onToggleProject('__no_project__')}
                                         aria-pressed={selectedProjects.includes('__no_project__')}
                                         className={cn(
-                                            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+                                            FILTER_OPTION_BASE,
                                             selectedProjects.includes('__no_project__')
                                                 ? 'bg-primary text-primary-foreground'
                                                 : 'bg-muted text-muted-foreground hover:bg-muted/80',
@@ -353,7 +341,7 @@ export function AgendaFiltersPanel({
                                         {t('taskEdit.noProjectOption')}
                                     </button>
                                 )}
-                                {projectOptions.map((project) => {
+                                {visibleProjects.map((project) => {
                                     const isActive = selectedProjects.includes(project.id);
                                     return (
                                         <button
@@ -362,34 +350,36 @@ export function AgendaFiltersPanel({
                                             onClick={() => onToggleProject(project.id)}
                                             aria-pressed={isActive}
                                             className={cn(
-                                                'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+                                                FILTER_OPTION_BASE,
+                                                'inline-flex max-w-full items-center gap-2',
                                                 isActive
                                                     ? 'bg-primary text-primary-foreground'
                                                     : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                             )}
                                         >
                                             {project.dotColor && (
-                                                <span
-                                                    className="h-2 w-2 rounded-full"
-                                                    style={{ backgroundColor: project.dotColor }}
-                                                    aria-hidden="true"
-                                                />
+                                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: project.dotColor }} aria-hidden="true" />
                                             )}
-                                            <span className="truncate max-w-[140px]">{project.title}</span>
+                                            <span className="max-w-[240px] break-words text-left">{project.title}</span>
                                         </button>
                                     );
                                 })}
+                                {visibleProjects.length === 0
+                                    && !(showNoProjectOption && matchesFilterOption(tFallback(t, 'taskEdit.noProjectOption', 'No project'), projectQuery))
+                                    && renderNoMatches()}
                             </div>
-                        </div>
+                        </FilterCategory>
                     )}
-                    {showLocationFilter ? (
-                        <div className="space-y-2">
-                            <label
-                                htmlFor="agenda-location-filter"
-                                className="text-xs uppercase tracking-wide text-muted-foreground"
-                            >
-                                {t('taskEdit.locationLabel')}
-                            </label>
+
+                    {(showLocationFilter || Boolean(locationFilter.trim())) && (
+                        <FilterCategory
+                            id="agenda-location-filters"
+                            label={t('taskEdit.locationLabel')}
+                            summary={locationFilter.trim() || allLabel}
+                            expanded={expandedCategory === 'location'}
+                            onToggle={() => toggleCategory('location')}
+                        >
+                            <label htmlFor="agenda-location-filter" className="sr-only">{t('taskEdit.locationLabel')}</label>
                             <input
                                 id="agenda-location-filter"
                                 type="text"
@@ -398,11 +388,17 @@ export function AgendaFiltersPanel({
                                 placeholder={t('taskEdit.locationPlaceholder')}
                                 className={VIEW_FILTER_INPUT}
                             />
-                        </div>
-                    ) : null}
-                    {showPriorityFilters ? (
-                        <div className="space-y-2">
-                            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('filters.priority')}</div>
+                        </FilterCategory>
+                    )}
+
+                    {(showPriorityFilters || selectedPriorities.length > 0) && (
+                        <FilterCategory
+                            id="agenda-priority-filters"
+                            label={t('filters.priority')}
+                            summary={prioritySummary}
+                            expanded={expandedCategory === 'priority'}
+                            onToggle={() => toggleCategory('priority')}
+                        >
                             <div className="flex flex-wrap gap-2">
                                 {priorityOptions.map((priority) => {
                                     const isActive = selectedPriorities.includes(priority);
@@ -413,10 +409,8 @@ export function AgendaFiltersPanel({
                                             onClick={() => onTogglePriority(priority)}
                                             aria-pressed={isActive}
                                             className={cn(
-                                                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                                                isActive
-                                                    ? 'bg-primary text-primary-foreground'
-                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                                                FILTER_OPTION_BASE,
+                                                isActive ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                             )}
                                         >
                                             <PriorityFlag priority={priority} />
@@ -425,11 +419,17 @@ export function AgendaFiltersPanel({
                                     );
                                 })}
                             </div>
-                        </div>
-                    ) : null}
-                    {showEnergyLevelFilters ? (
-                        <div className="space-y-2">
-                            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('taskEdit.energyLevel')}</div>
+                        </FilterCategory>
+                    )}
+
+                    {(showEnergyLevelFilters || selectedEnergyLevels.length > 0) && (
+                        <FilterCategory
+                            id="agenda-energy-filters"
+                            label={t('taskEdit.energyLevel')}
+                            summary={energySummary}
+                            expanded={expandedCategory === 'energy'}
+                            onToggle={() => toggleCategory('energy')}
+                        >
                             <div className="flex flex-wrap gap-2">
                                 {energyLevelOptions.map((energyLevel) => {
                                     const isActive = selectedEnergyLevels.includes(energyLevel);
@@ -440,10 +440,8 @@ export function AgendaFiltersPanel({
                                             onClick={() => onToggleEnergy(energyLevel)}
                                             aria-pressed={isActive}
                                             className={cn(
-                                                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                                                isActive
-                                                    ? 'bg-primary text-primary-foreground'
-                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                                                FILTER_OPTION_BASE,
+                                                isActive ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                             )}
                                         >
                                             {t(`energyLevel.${energyLevel}`)}
@@ -451,11 +449,17 @@ export function AgendaFiltersPanel({
                                     );
                                 })}
                             </div>
-                        </div>
-                    ) : null}
-                    {showTimeEstimateFilters ? (
-                        <div className="space-y-2">
-                            <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('filters.timeEstimate')}</div>
+                        </FilterCategory>
+                    )}
+
+                    {(showTimeEstimateFilters || selectedTimeEstimates.length > 0) && (
+                        <FilterCategory
+                            id="agenda-time-filters"
+                            label={t('filters.timeEstimate')}
+                            summary={timeSummary}
+                            expanded={expandedCategory === 'time'}
+                            onToggle={() => toggleCategory('time')}
+                        >
                             <div className="flex flex-wrap gap-2">
                                 {timeEstimateOptions.map((estimate) => {
                                     const isActive = selectedTimeEstimates.includes(estimate);
@@ -466,10 +470,8 @@ export function AgendaFiltersPanel({
                                             onClick={() => onToggleTime(estimate)}
                                             aria-pressed={isActive}
                                             className={cn(
-                                                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-                                                isActive
-                                                    ? 'bg-primary text-primary-foreground'
-                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                                                FILTER_OPTION_BASE,
+                                                isActive ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                             )}
                                         >
                                             {formatEstimate(estimate)}
@@ -477,8 +479,8 @@ export function AgendaFiltersPanel({
                                     );
                                 })}
                             </div>
-                        </div>
-                    ) : null}
+                        </FilterCategory>
+                    )}
                 </div>
             )}
         </div>

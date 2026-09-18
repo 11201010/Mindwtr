@@ -24,6 +24,11 @@ const taskEditModal = vi.hoisted(() => ({ props: null as Record<string, any> | n
 const focusEffect = vi.hoisted(() => ({ callback: null as null | (() => void | (() => void)) }));
 const consumePendingCaptureTaskOpenMock = vi.hoisted(() => vi.fn());
 
+const flattenStyle = (value: unknown): Record<string, unknown> => Object.assign(
+  {},
+  ...(Array.isArray(value) ? value : [value]).filter(Boolean),
+);
+
 const createDeferred = <T,>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -173,12 +178,19 @@ vi.mock('../contexts/language-context', () => ({
       'projects.deferredSection': 'Someday / Waiting',
       'projects.noArea': 'No Area',
       'projects.addPlaceholder': 'Add new project...',
+      'projects.allTags': 'All tags',
       'projects.tagFilter': 'Tag filter',
       'projects.show': 'Show',
       'projects.empty': 'No projects yet',
       'status.archived': 'Archived',
+      'common.back': 'Back',
+      'common.close': 'Close',
       'common.loading': 'Loading...',
       'common.notice': 'Notice',
+      'filters.hide': 'Hide',
+      'filters.show': 'Show',
+      'filters.title': 'Filters',
+      'taskEdit.moreOptions': 'More options',
     }[key] ?? key),
   }),
 }));
@@ -231,7 +243,7 @@ vi.mock('@/hooks/use-project-filtering', () => ({
     groupedDeferredProjects: [],
     groupedArchivedProjects: [],
     projectTagOptions: [],
-    tagFilterOptions: { list: [], hasNoTags: false },
+    tagFilterOptions: { list: ['work'], hasNoTags: false },
   }),
 }));
 
@@ -350,6 +362,111 @@ describe('ProjectsScreen project quick add', () => {
     await act(async () => {
       tree.unmount();
     });
+  });
+});
+
+describe('ProjectsScreen list controls', () => {
+  it('toggles tag filters from the project heading while preserving and clearing the selection', async () => {
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<ProjectsScreen />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(tree.root.findAllByProps({ testID: 'projects-list-overflow-button' })).toHaveLength(0);
+    let toggle = tree.root.findByProps({ testID: 'projects-tag-filter-toggle' });
+    expect(toggle.props.accessibilityLabel).toBe('Tag filter, Show');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false, selected: false });
+    expect(flattenStyle(toggle.props.style)).toEqual(expect.objectContaining({ minHeight: 44 }));
+    expect(flattenStyle(toggle.parent?.props.style)).toEqual(expect.objectContaining({ marginTop: 0 }));
+    expect(flattenStyle(tree.root.findByProps({ testID: 'projects-list-controls' }).props.style))
+      .toEqual(expect.objectContaining({ paddingBottom: 0 }));
+    const list = tree.root.findByType(FlatList);
+    expect(flattenStyle(list.props.contentContainerStyle)).toEqual(expect.objectContaining({ paddingTop: 0 }));
+    const sectionRow = list.props.data.find((item: { type: string }) => item.type === 'section-label');
+    const sectionHeader = list.props.renderItem({ item: sectionRow, index: 0 });
+    expect(flattenStyle(sectionHeader.props.style)).toEqual(expect.objectContaining({ paddingTop: 8 }));
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'work' })).toHaveLength(0);
+
+    act(() => toggle.props.onPress());
+    expect(flattenStyle(tree.root.findByProps({ accessibilityLabel: 'work' }).parent?.props.style))
+      .toEqual(expect.objectContaining({ paddingBottom: 8 }));
+    act(() => tree.root.findByProps({ accessibilityLabel: 'work' }).props.onPress());
+
+    toggle = tree.root.findByProps({ testID: 'projects-tag-filter-toggle' });
+    expect(toggle.props.accessibilityLabel).toBe('Tag filter: work, Hide');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: true, selected: true });
+
+    act(() => toggle.props.onPress());
+    toggle = tree.root.findByProps({ testID: 'projects-tag-filter-toggle' });
+    expect(toggle.props.accessibilityLabel).toBe('Tag filter: work, Show');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false, selected: true });
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'work' })).toHaveLength(0);
+
+    act(() => toggle.props.onPress());
+    expect(tree.root.findByProps({ accessibilityLabel: 'work' }).props.accessibilityState).toEqual({ selected: true });
+    act(() => tree.root.findByProps({ accessibilityLabel: 'All tags' }).props.onPress());
+
+    toggle = tree.root.findByProps({ testID: 'projects-tag-filter-toggle' });
+    expect(toggle.props.accessibilityLabel).toBe('Tag filter, Hide');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: true, selected: false });
+    expect(tree.root.findByProps({ accessibilityLabel: 'Add new project...' })).toBeTruthy();
+  });
+
+  it('shows a custom area icon without a duplicate color dot and keeps a color-dot fallback', async () => {
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<ProjectsScreen />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const list = tree.root.findByType(FlatList);
+    const renderAreaHeader = (item: Record<string, unknown>) => list.props.renderItem({ item, index: 1 });
+    let iconHeaderTree!: ReturnType<typeof create>;
+    act(() => {
+      iconHeaderTree = create(renderAreaHeader({
+        type: 'area-header',
+        key: 'active-area-research',
+        title: 'Research',
+        areaId: 'research',
+        collapsed: false,
+        sectionKind: 'active',
+        color: '#22c55e',
+        icon: '🧪',
+      }));
+    });
+
+    const iconHeader = iconHeaderTree.root.findByProps({ testID: 'project-area-header-active-research' });
+    expect(iconHeader.props.accessibilityRole).toBe('button');
+    expect(iconHeader.props.accessibilityState).toEqual({ expanded: true });
+    expect(iconHeaderTree.root.findByProps({ testID: 'project-area-icon-research' }).props.children).toBe('🧪');
+    expect(iconHeaderTree.root.findAllByProps({ testID: 'project-area-dot-research' })).toHaveLength(0);
+
+    await act(async () => {
+      iconHeader.props.onPress();
+      await Promise.resolve();
+    });
+    expect(asyncStorageMock.setItem).toHaveBeenCalled();
+
+    let fallbackHeaderTree!: ReturnType<typeof create>;
+    act(() => {
+      fallbackHeaderTree = create(renderAreaHeader({
+        type: 'area-header',
+        key: 'active-area-home',
+        title: 'Home',
+        areaId: 'home',
+        collapsed: true,
+        sectionKind: 'active',
+        color: '#3b82f6',
+      }));
+    });
+
+    expect(fallbackHeaderTree.root.findByProps({ testID: 'project-area-header-active-home' }).props.accessibilityState)
+      .toEqual({ expanded: false });
+    expect(fallbackHeaderTree.root.findAllByProps({ testID: 'project-area-icon-home' })).toHaveLength(0);
+    expect(fallbackHeaderTree.root.findByProps({ testID: 'project-area-dot-home' })).toBeTruthy();
   });
 });
 

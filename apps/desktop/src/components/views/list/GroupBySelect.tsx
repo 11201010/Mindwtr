@@ -5,6 +5,7 @@ import { getGroupAxisLabel, type TaskGroupAxis } from './next-grouping';
 
 type GroupBySelectProps<Axis extends TaskGroupAxis> = {
     value: Axis;
+    defaultValue?: Axis;
     axes: readonly Axis[];
     disabledAxes?: readonly Axis[];
     onChange: (value: Axis) => void;
@@ -15,6 +16,7 @@ type GroupBySelectProps<Axis extends TaskGroupAxis> = {
 /** The labeled GROUP select shared by every list toolbar. */
 export function GroupBySelect<Axis extends TaskGroupAxis>({
     value,
+    defaultValue,
     axes,
     disabledAxes = [],
     onChange,
@@ -31,7 +33,8 @@ export function GroupBySelect<Axis extends TaskGroupAxis>({
     const visibleAxes = prioritiesEnabled ? axes : axes.filter((axis) => axis !== 'priority');
     return (
         <ToolbarSelect
-            className={cn('min-w-[180px]', className)}
+            active={defaultValue !== undefined && value !== defaultValue}
+            className={cn('w-[180px] min-w-0 max-w-full', className)}
             label={groupLabel}
             value={value}
             options={visibleAxes.map((axis) => ({

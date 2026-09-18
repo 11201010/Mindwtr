@@ -111,10 +111,10 @@ const resetStores = () => {
 };
 
 describe('Layout shared view actions', () => {
-    it('removes the obsolete one-item More menu from sidebar chrome', () => {
+    it('uses More for secondary navigation without the obsolete CSV action', () => {
         renderLayout('next');
 
-        expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false');
         expect(screen.queryByRole('button', { name: 'Export CSV' })).not.toBeInTheDocument();
     });
 });
@@ -240,21 +240,22 @@ describe('Layout content width', () => {
     });
 });
 
-describe('Layout sidebar archive section', () => {
-    it('keeps archive visible by default on a fresh sidebar', () => {
+describe('Layout secondary history navigation', () => {
+    it('collapses secondary navigation by default on a fresh sidebar', () => {
         const { container, getByRole } = renderLayout();
 
-        expect(getByRole('button', { name: 'Archive' })).toHaveAttribute('aria-expanded', 'true');
-        expect(container.querySelector('#sidebar-section-archive')).not.toHaveClass('hidden');
-        expect(getByRole('button', { name: 'Done' })).toBeInTheDocument();
+        expect(getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false');
+        expect(container.querySelector('#sidebar-section-secondary')).toHaveClass('hidden');
+        fireEvent.click(getByRole('button', { name: 'More' }));
+        expect(getByRole('button', { name: 'History' })).toBeInTheDocument();
     });
 
-    it('expands archive when the active view lives in archive', async () => {
+    it('expands secondary navigation when the active view lives there', async () => {
         const { container, getByRole } = renderLayout('trash');
 
         await waitFor(() => {
-            expect(getByRole('button', { name: 'Archive' })).toHaveAttribute('aria-expanded', 'true');
-            expect(container.querySelector('#sidebar-section-archive')).not.toHaveClass('hidden');
+            expect(getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'true');
+            expect(container.querySelector('#sidebar-section-secondary')).not.toHaveClass('hidden');
         });
         expect(getByRole('button', { name: 'Trash' })).toHaveAttribute('aria-current', 'page');
     });
@@ -264,19 +265,19 @@ describe('Layout sidebar archive section', () => {
 
         const { container, getByRole } = renderLayout();
 
-        expect(getByRole('button', { name: 'Archive' })).toHaveAttribute('aria-expanded', 'false');
-        expect(container.querySelector('#sidebar-section-archive')).toHaveClass('hidden');
+        expect(getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false');
+        expect(container.querySelector('#sidebar-section-secondary')).toHaveClass('hidden');
     });
 
-    it('uses the full archive header row as the collapse target', () => {
+    it('uses the full More header row as the expansion target', () => {
         const { container, getByRole } = renderLayout();
-        const archiveHeader = getByRole('button', { name: 'Archive' });
+        const archiveHeader = getByRole('button', { name: 'More' });
 
-        expect(archiveHeader).toHaveAttribute('aria-controls', 'sidebar-section-archive');
+        expect(archiveHeader).toHaveAttribute('aria-controls', 'sidebar-section-secondary');
         fireEvent.click(archiveHeader);
 
-        expect(archiveHeader).toHaveAttribute('aria-expanded', 'false');
-        expect(container.querySelector('#sidebar-section-archive')).toHaveClass('hidden');
+        expect(archiveHeader).toHaveAttribute('aria-expanded', 'true');
+        expect(container.querySelector('#sidebar-section-secondary')).not.toHaveClass('hidden');
     });
 });
 
@@ -1155,8 +1156,9 @@ describe('Sidebar hidden views (#1115)', () => {
         expect(ids).not.toContain('done');
         expect(ids).toContain('inbox');
         expect(ids).toContain('waiting');
-        // Every Archive entry is hidden, so its section header disappears too.
-        expect(container.querySelector('#sidebar-section-archive')).toBeNull();
+        // Legacy Done + Archived preferences jointly hide the consolidated History entry.
+        expect(ids).not.toContain('history');
+        expect(ids).not.toContain('trash');
         expect(container.querySelector('#sidebar-section-lists')).not.toBeNull();
     });
 });

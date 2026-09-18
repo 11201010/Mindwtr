@@ -9,16 +9,13 @@ import { openToolbarSelect } from '../../../test/toolbar-select';
 const translations: Record<string, string> = {
     'bulk.select': 'Select',
     'common.tasks': 'tasks',
+    'common.viewOptions': 'View options',
     'filters.label': 'Filters',
     'filters.priority': 'Priority',
     'focus.group.energy': 'Energy',
     'list.details': 'Details',
     'list.showDetails': 'Show details',
     'list.hideDetails': 'Hide details',
-    'list.density': 'Density',
-    'list.densityComfortable': 'Comfortable',
-    'list.densityCompact': 'Compact',
-    'list.densityCondensed': 'Condensed',
     'list.groupBy': 'Group',
     'list.groupByArea': 'Area',
     'list.groupByContext': 'Context',
@@ -81,8 +78,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
@@ -129,15 +124,14 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
 
         expect(screen.getByText('Sort')).toBeInTheDocument();
         expect(screen.getByText('Group')).toBeInTheDocument();
-        expect(screen.getByTestId('list-sort-icon')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'View options' })).not.toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: 'Sort' }).querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
         expect(screen.getByRole('combobox', { name: 'Sort' })).toBeInTheDocument();
         expect(screen.getByRole('combobox', { name: 'Group' })).toBeInTheDocument();
     });
@@ -158,8 +152,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails={false}
                 onToggleDetails={vi.fn()}
-                densityMode="compact"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
@@ -194,8 +186,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
@@ -224,8 +214,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
@@ -262,42 +250,11 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
 
         expect(screen.queryByRole('button', { name: 'Filters' })).not.toBeInTheDocument();
-    });
-
-    it('shows the condensed density label and marks the control active when condensed', () => {
-        render(
-            <ListHeader
-                title="Focus"
-                showNextCount={false}
-                nextCount={0}
-                taskCount={3}
-                hasFilters={false}
-                filterSummaryLabel=""
-                filterSummarySuffix=""
-                sortBy="default"
-                onChangeSortBy={vi.fn()}
-                showGroupBy
-                groupBy="none"
-                onChangeGroupBy={vi.fn()}
-                selectionMode={false}
-                onToggleSelection={vi.fn()}
-                showListDetails
-                onToggleDetails={vi.fn()}
-                densityMode="condensed"
-                onToggleDensity={vi.fn()}
-                t={t}
-            />
-        );
-
-        const button = screen.getByRole('button', { name: 'Condensed' });
-        expect(button).toHaveAttribute('aria-pressed', 'true');
     });
 
     // "Hide details, toggle button, pressed" told a screen-reader user the action
@@ -318,8 +275,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails={false}
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
@@ -342,14 +297,37 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );
 
         const hideButton = screen.getByRole('button', { name: 'Hide details' });
         expect(hideButton).not.toHaveAttribute('aria-pressed');
+    });
+
+    it('can omit the Details action without changing its default-on contract', () => {
+        const baseProps = {
+            title: 'Reference',
+            showNextCount: false,
+            nextCount: 0,
+            taskCount: 3,
+            hasFilters: false,
+            filterSummaryLabel: '',
+            filterSummarySuffix: '',
+            sortBy: 'default' as const,
+            onChangeSortBy: vi.fn(),
+            selectionMode: false,
+            onToggleSelection: vi.fn(),
+            showListDetails: false,
+            onToggleDetails: vi.fn(),
+            t,
+        };
+        const { rerender } = render(<ListHeader {...baseProps} showDetailsToggle={false} />);
+
+        expect(screen.queryByRole('button', { name: 'Show details' })).not.toBeInTheDocument();
+
+        rerender(<ListHeader {...baseProps} />);
+        expect(screen.getByRole('button', { name: 'Show details' })).toBeInTheDocument();
     });
 
     it('renders a Filters toggle that reflects and drives the panel open state', () => {
@@ -375,8 +353,6 @@ describe('ListHeader', () => {
                 onToggleSelection={vi.fn()}
                 showListDetails
                 onToggleDetails={vi.fn()}
-                densityMode="comfortable"
-                onToggleDensity={vi.fn()}
                 t={t}
             />
         );

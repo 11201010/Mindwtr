@@ -1,8 +1,8 @@
 import { ChevronsDown, ChevronsUp, Filter, List } from 'lucide-react';
-import { tFallback } from '@mindwtr/core';
+import { DEFAULT_FOCUS_SORT_BY, FOCUS_SORT_OPTIONS, tFallback, type SortField } from '@mindwtr/core';
 
-import { GroupBySelect } from '../list/GroupBySelect';
 import { ToolbarButton } from '../list/list-toolbar';
+import { ViewControls } from '../list/ViewControls';
 import { FOCUS_AXES, type NextGroupBy } from '../list/next-grouping';
 
 type AgendaHeaderProps = {
@@ -10,9 +10,11 @@ type AgendaHeaderProps = {
     filtersOpen: boolean;
     nextActionsCount: number;
     nextGroupBy: NextGroupBy;
+    focusSortBy: SortField;
     canToggleOtherSections: boolean;
     collapseOtherSections: boolean;
     onChangeGroupBy: (value: NextGroupBy) => void;
+    onChangeSortBy: (value: SortField) => void;
     onToggleFilters: () => void;
     onToggleDetails: () => void;
     onToggleOtherSections: () => void;
@@ -26,9 +28,11 @@ export function AgendaHeader({
     filtersOpen,
     nextActionsCount,
     nextGroupBy,
+    focusSortBy,
     canToggleOtherSections,
     collapseOtherSections,
     onChangeGroupBy,
+    onChangeSortBy,
     onToggleFilters,
     onToggleDetails,
     onToggleOtherSections,
@@ -38,7 +42,6 @@ export function AgendaHeader({
 }: AgendaHeaderProps) {
     const filtersActive = filtersOpen || filterCount > 0;
     const filtersLabel = resolveText('filters.label', 'Filters');
-    // Names the action, not the state, and carries no aria-pressed — see ListHeader.
     const detailsLabel = showListDetails
         ? tFallback(t, 'list.hideDetails', 'Hide details')
         : tFallback(t, 'list.showDetails', 'Show details');
@@ -56,7 +59,7 @@ export function AgendaHeader({
                     {nextActionsCount} {tFallback(t, 'list.next', t('agenda.nextActions'))}
                 </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
                 <ToolbarButton
                     onClick={onToggleOtherSections}
                     disabled={!canToggleOtherSections}
@@ -83,6 +86,17 @@ export function AgendaHeader({
                         </span>
                     )}
                 </ToolbarButton>
+                <ViewControls
+                    sortBy={focusSortBy}
+                    defaultSortBy={DEFAULT_FOCUS_SORT_BY}
+                    sortByOptions={FOCUS_SORT_OPTIONS}
+                    onChangeSortBy={onChangeSortBy}
+                    groupBy={nextGroupBy}
+                    defaultGroupBy="none"
+                    groupByOptions={FOCUS_AXES}
+                    onChangeGroupBy={onChangeGroupBy}
+                    t={t}
+                />
                 <ToolbarButton
                     active={showListDetails}
                     onClick={onToggleDetails}
@@ -91,12 +105,6 @@ export function AgendaHeader({
                 >
                     {detailsLabel}
                 </ToolbarButton>
-                <GroupBySelect
-                    value={nextGroupBy}
-                    axes={FOCUS_AXES}
-                    onChange={onChangeGroupBy}
-                    t={t}
-                />
             </div>
         </header>
     );

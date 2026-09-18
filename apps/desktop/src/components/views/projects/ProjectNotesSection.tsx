@@ -38,6 +38,7 @@ type ProjectNotesSectionProps = {
     language: string;
     readOnly?: boolean;
     readOnlyHint?: string;
+    showHeading?: boolean;
 };
 
 export function ProjectNotesSection({
@@ -56,6 +57,7 @@ export function ProjectNotesSection({
     language,
     readOnly = false,
     readOnlyHint,
+    showHeading = true,
 }: ProjectNotesSectionProps) {
     const projectRef = useRef(project);
     projectRef.current = project;
@@ -213,11 +215,13 @@ export function ProjectNotesSection({
     };
 
     return (
-        <section className="py-5 border-b border-border/50">
-            <div className="text-sm font-medium">
-                {t('project.notes')}
-            </div>
-            <div className="pt-4 space-y-3">
+        <section className="border-b border-border/50 py-4">
+            {showHeading && (
+                <div className="text-sm font-medium">
+                    {t('project.notes')}
+                </div>
+            )}
+            <div className={showHeading ? 'space-y-3 pt-4' : 'space-y-3'}>
                 {readOnly ? (
                     <p className="text-xs text-muted-foreground" role="note">
                         {readOnlyHint}

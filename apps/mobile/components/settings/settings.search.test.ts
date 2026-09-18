@@ -9,6 +9,7 @@ import {
 import {
     buildSettingsMenuSearchText,
     findSettingsMenuMatch,
+    normalizeSettingsScreen,
     SETTINGS_MENU_KEYWORD_KEYS,
     settingsMenuMatchesQuery,
     type SettingsMenuRowId,
@@ -50,7 +51,7 @@ const PREVIOUS_SETTINGS_MENU_KEYWORD_KEYS: Record<SettingsMenuRowId, readonly st
     ],
     gtd: [
         'settings.features', 'settings.featurePomodoro', 'settings.gtdMobile.pomodoroSettings',
-        'settings.timeEstimatePresets', 'settings.autoArchive', 'settings.taskEditorLayout',
+        'settings.autoArchive', 'settings.taskEditorLayout',
         'settings.captureDefault', 'settings.inboxProcessing', 'settings.gtdMobile.defaultScheduleTime',
         'settings.focusTaskLimit', 'settings.defaultProjectFlowMode', 'settings.defaultArea',
         'settings.weeklyReviewConfig', 'settings.dailyReviewConfig',
@@ -80,6 +81,11 @@ const PREVIOUS_SETTINGS_MENU_KEYWORD_KEYS: Record<SettingsMenuRowId, readonly st
 };
 
 describe('settings menu search index', () => {
+    it('redirects retired preset-editor links to the GTD summary', () => {
+        expect(normalizeSettingsScreen('gtd-time-estimates')).toBe('gtd');
+        expect(normalizeSettingsScreen('gtd-task-editor')).toBe('gtd-task-editor');
+        expect(normalizeSettingsScreen('unknown')).toBe('main');
+    });
     // Regression guard for the review's HIGH finding: keyword keys were guessed
     // from desktop naming and silently resolved to nothing. Every listed key
     // must be a real English translation, or search misses that content.
@@ -184,10 +190,9 @@ describe('settings menu search index', () => {
             title: 'Clean up quick add text',
             path: 'GTD → Default capture method',
         });
-        expect(findSettingsMenuMatch('gtd', t('settings.gtd'), t, 'estimate')).toEqual({
-            title: 'Time estimate presets',
-            path: 'GTD',
-        });
+        // Preset editing is retired; estimates remain available on tasks, but
+        // Settings no longer advertises a configuration destination for them.
+        expect(findSettingsMenuMatch('gtd', t('settings.gtd'), t, 'estimate')).toBeNull();
         // A row that matched on its own title has no inner setting to report.
         expect(findSettingsMenuMatch('gtd', t('settings.gtd'), t, 'gtd')).toBeNull();
         expect(findSettingsMenuMatch('gtd', t('settings.gtd'), t, '  ')).toBeNull();

@@ -131,6 +131,7 @@ test('converting an action to Reference keeps an editable plain list and restore
         description: 'Keep these original notes.', checklist: expectedChecklist,
     });
 
+    await page.getByRole('button', { name: 'More', exact: true }).click();
     await page.locator('[data-sidebar-item][data-view="reference"]').click();
     await page.reload();
     const reference = row(page, 'normal-action');

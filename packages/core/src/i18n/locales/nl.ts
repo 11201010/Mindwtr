@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const nlOverrides: Record<string, string> = {
+    'filters.searchTasks': "Taaktitels zoeken",
+    'filters.searchOptions': "Opties zoeken",
+    'filters.tokenCycleHint': "Klik om op te nemen, nogmaals om uit te sluiten en nog een keer om de selectie te wissen.",
+    'filters.more': "Meer filters",
+    'viewSections.new': "Nieuwe sectie",
+    'projects.new': 'Nieuw project',
+    'nav.history': 'Geschiedenis',
+    'task.dates': 'Datums…',
+    'task.moveTo': 'Verplaatsen naar…',
+    'task.destination': 'Bestemming',
+    'common.viewOptions': 'Weergaveopties',
+    'settings.regionalFormats': 'Regionale notaties',
+    'settings.keyboardAndWindow': 'Toetsenbord en venster',
     'settings.gtdMobile.openTasksIn': 'Taken openen in',
     'settings.gtdMobile.openTasksInDesc': 'Kies welk tabblad wordt gebruikt wanneer je op dit apparaat normaal op een taak tikt.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatisch',

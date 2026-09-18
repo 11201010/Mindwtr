@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { View, FlatList, Text, RefreshControl, Modal, Pressable, Switch, TouchableOpacity, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical } from 'lucide-react-native';
 import DraggableFlatList, { type DragEndParams, type RenderItemParams } from 'react-native-draggable-flatlist';
 import {
@@ -15,6 +15,7 @@ import {
   type ProjectSequenceTaskCue,
   shallow,
   normalizeFocusTaskLimit,
+  normalizeBulkTaskTokenInput,
   resolveFeatureFlags,
   tFallback,
   isTaskInActiveProject,
@@ -207,6 +208,8 @@ interface TaskListScrollProps {
 
 /** Everything drawn around the rows: header, empty state, filter and sort controls. */
 interface TaskListChromeProps {
+  /** Put the neutral overflow in the native navigation header instead of an inline row. */
+  overflowPlacement?: 'inline' | 'navigation';
   showHeader?: boolean;
   showSort?: boolean;
   showFilterButton?: boolean;
@@ -219,6 +222,17 @@ interface TaskListChromeProps {
   onEmptyAction?: () => void;
   headerAccessory?: React.ReactNode;
   primaryActionRow?: React.ReactNode;
+}
+
+function TaskListNavigationOverflow({ headerRight }: { headerRight: () => React.ReactNode }) {
+  const navigation = useNavigation();
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerRight });
+    return () => navigation.setOptions({ headerRight: undefined });
+  }, [headerRight, navigation]);
+
+  return null;
 }
 
 /** Which interactions this instance is allowed to offer at all. */
@@ -244,6 +258,7 @@ function TaskListComponent({
   statusFilter,
   title,
   taskSource,
+  overflowPlacement = 'inline',
   showHeader = true,
   showTimeEstimateFilters: showTimeEstimateFiltersProp = true,
   enableBulkActions = true,
@@ -607,7 +622,10 @@ function TaskListComponent({
     return getUsedTaskTokens(
       filterableTasks,
       statusFilter === 'reference'
-        ? (task) => task.tags ?? []
+        // Reference tags may still be stored without a leading #. The picker
+        // works with typed tokens, so normalize only its options while leaving
+        // persisted task data untouched; core matching accepts both shapes.
+        ? (task) => (task.tags ?? []).map((tag) => normalizeBulkTaskTokenInput(tag, 'tags'))
         : (task) => [...(task.contexts ?? []), ...(task.tags ?? [])],
     );
   }, [filterableTasks, filtersVisible, selections.tokens, selections.excludedTokens, statusFilter]);
@@ -1408,6 +1426,7 @@ function TaskListComponent({
       <ErrorBoundary>
         <SwipeableTaskItem
           actions={rowActions}
+          hideDetails
           hideChecklistProgress={hideChecklistProgressForList}
           hideProjectMeta={Boolean(projectId)}
           isDark={isDark}
@@ -1627,11 +1646,51 @@ function TaskListComponent({
     return renderProjectReorderTaskRow(item.task, drag, isActive);
   }, [renderProjectReorderHeader, renderProjectReorderTaskRow]);
 
+  const renderNavigationOverflow = useCallback(() => (
+    <TaskListHeader
+      activeFilterChips={activeFilterChips}
+      count={orderedTasks.length}
+      filterActiveCount={totalFilterActiveCount}
+      groupByLabel={showGroupControl ? groupByLabel : undefined}
+      hasActiveFilters={hasAnyActiveFilters}
+      onClearFilters={clearAllFilters}
+      onOpenFilters={() => setFiltersVisible(true)}
+      onOpenGroup={showGroupControl ? () => setReferenceGroupModalVisible(true) : undefined}
+      onOpenSort={() => setSortModalVisible(true)}
+      renderOverflowOnly
+      showHeader={false}
+      showFilterButton={showFilterButton}
+      showSort={showSort}
+      sortByLabel={t(`sort.${sortBy}`)}
+      t={t}
+      themeColors={themeColors}
+      title={title}
+    />
+  ), [
+    activeFilterChips,
+    clearAllFilters,
+    groupByLabel,
+    hasAnyActiveFilters,
+    orderedTasks.length,
+    showFilterButton,
+    showGroupControl,
+    showSort,
+    sortBy,
+    t,
+    themeColors,
+    title,
+    totalFilterActiveCount,
+  ]);
+
   return (
     <View style={[styles.container, { backgroundColor: themeColors.bg }]}>
+      {overflowPlacement === 'navigation' ? (
+        <TaskListNavigationOverflow headerRight={renderNavigationOverflow} />
+      ) : null}
       <TaskListHeader
         activeFilterChips={activeFilterChips}
         count={orderedTasks.length}
+        directControls={statusFilter === 'inbox' && overflowPlacement === 'inline'}
         filterActiveCount={totalFilterActiveCount}
         groupByLabel={showGroupControl ? groupByLabel : undefined}
         hasActiveFilters={hasAnyActiveFilters}
@@ -1642,6 +1701,7 @@ function TaskListComponent({
         onOpenSort={() => setSortModalVisible(true)}
         showHeader={showHeader}
         showFilterButton={showFilterButton}
+        showOverflow={overflowPlacement !== 'navigation'}
         showSort={showSort}
         sortByLabel={t(`sort.${sortBy}`)}
         t={t}

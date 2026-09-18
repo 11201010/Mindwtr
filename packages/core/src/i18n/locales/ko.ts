@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const koOverrides: Record<string, string> = {
+    'filters.searchTasks': "작업 제목 검색",
+    'filters.searchOptions': "옵션 검색",
+    'filters.tokenCycleHint': "클릭하면 포함하고, 다시 클릭하면 제외하며, 한 번 더 클릭하면 선택을 해제합니다.",
+    'filters.more': "추가 필터",
+    'viewSections.new': "새 섹션",
+    'projects.new': '새 프로젝트',
+    'nav.history': '기록',
+    'task.dates': '날짜…',
+    'task.moveTo': '이동…',
+    'task.destination': '이동 위치',
+    'common.viewOptions': '보기 옵션',
+    'settings.regionalFormats': '지역별 형식',
+    'settings.keyboardAndWindow': '키보드 및 창',
     'settings.gtdMobile.openTasksIn': '작업을 열 탭',
     'settings.gtdMobile.openTasksInDesc': '이 기기에서 작업을 일반적으로 탭할 때 사용할 탭을 선택하세요.',
     'settings.gtdMobile.taskOpenAutomatic': '자동',

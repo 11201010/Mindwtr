@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const csOverrides: Record<string, string> = {
+    'filters.searchTasks': "Hledat v názvech úkolů",
+    'filters.searchOptions': "Hledat možnosti",
+    'filters.tokenCycleHint': "Kliknutím zahrnete, dalším vyloučíte a třetím výběr zrušíte.",
+    'filters.more': "Další filtry",
+    'viewSections.new': "Nová sekce",
+    'projects.new': 'Nový projekt',
+    'nav.history': 'Historie',
+    'task.dates': 'Data…',
+    'task.moveTo': 'Přesunout do…',
+    'task.destination': 'Umístění',
+    'common.viewOptions': 'Možnosti zobrazení',
+    'settings.regionalFormats': 'Místní formáty',
+    'settings.keyboardAndWindow': 'Klávesnice a okno',
     'settings.gtdMobile.openTasksIn': 'Otevírat úkoly v',
     'settings.gtdMobile.openTasksInDesc': 'Zvolte kartu používanou při běžném klepnutí na úkol na tomto zařízení.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automaticky',

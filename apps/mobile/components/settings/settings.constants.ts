@@ -51,6 +51,13 @@ export const SETTINGS_SCREEN_SET: Record<SettingsScreen, true> = {
     about: true,
 };
 
+export function normalizeSettingsScreen(value: string | undefined): SettingsScreen {
+    if (!value || !SETTINGS_SCREEN_SET[value as SettingsScreen]) return 'main';
+    // Compatibility alias for links and restored navigation state created
+    // before the time-estimate preset-list editor was retired.
+    return value === 'gtd-time-estimates' ? 'gtd' : value as SettingsScreen;
+}
+
 // Root settings-menu rows the search field filters (see settings.tsx). Each id
 // maps to the i18n keys of the settings its sub-screen(s) render, so the search
 // keywords come from the *translated* setting labels and can't drift when new

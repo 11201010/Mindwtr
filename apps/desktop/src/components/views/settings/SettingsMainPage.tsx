@@ -4,13 +4,13 @@ import {
     GLOBAL_QUICK_ADD_SHORTCUT_DISABLED,
     getGlobalQuickAddShortcutOptions,
 } from '../../../lib/global-quick-add-shortcut';
-import { getLocaleCoverageTier, normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
+import { normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
 import type { DesktopThemeMode } from '../../../lib/theme';
 import { useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Switch } from '../../ui/Switch';
-import { SettingRow, SettingsCard, SettingsSectionHeader } from './SettingRow';
+import { SettingRow, SettingsCard, SettingsDisclosureCard, SettingsSectionHeader } from './SettingRow';
 import { useUiStore } from '../../../store/ui-store';
 import { HIDEABLE_SIDEBAR_VIEW_IDS, type HideableSidebarViewId } from '../../../lib/sidebar-views';
 
@@ -27,6 +27,7 @@ type TimeFormatSetting = 'system' | '12h' | '24h';
 type Labels = {
     lookAndFeel: string;
     localization: string;
+    regionalFormats: string;
     input: string;
     windowBehavior: string;
     appearance: string;
@@ -134,15 +135,18 @@ export type SettingsMainPageProps = {
     onCalendarSystemChange: (calendarSystem: CalendarSystemSetting) => void;
     timeFormat: TimeFormatSetting;
     onTimeFormatChange: (format: TimeFormatSetting) => void;
-    keybindingStyle: 'vim' | 'emacs' | 'standard';
-    onKeybindingStyleChange: (style: 'vim' | 'emacs' | 'standard') => void;
     globalQuickAddShortcut: GlobalQuickAddShortcutSetting;
     onGlobalQuickAddShortcutChange: (shortcut: GlobalQuickAddShortcutSetting) => void;
     isFlatpak?: boolean;
     undoNotificationsEnabled: boolean;
     onUndoNotificationsChange: (enabled: boolean) => void;
-    onOpenHelp: () => void;
     languages: LanguageOption[];
+};
+
+export type SettingsKeyboardWindowProps = {
+    onOpenHelp: () => void;
+    keybindingStyle: 'vim' | 'emacs' | 'standard';
+    onKeybindingStyleChange: (style: 'vim' | 'emacs' | 'standard') => void;
     showWindowDecorations?: boolean;
     windowDecorationsEnabled?: boolean;
     onWindowDecorationsChange?: (enabled: boolean) => void;
@@ -182,37 +186,14 @@ export function SettingsMainPage({
     onCalendarSystemChange,
     timeFormat,
     onTimeFormatChange,
-    keybindingStyle,
-    onKeybindingStyleChange,
     globalQuickAddShortcut,
     onGlobalQuickAddShortcutChange,
     isFlatpak = false,
     undoNotificationsEnabled,
     onUndoNotificationsChange,
-    onOpenHelp,
     languages,
-    showWindowDecorations = false,
-    windowDecorationsEnabled = true,
-    onWindowDecorationsChange,
-    showCloseBehavior = false,
-    closeBehavior = 'ask',
-    onCloseBehaviorChange,
-    showLaunchAtStartup = false,
-    launchAtStartupEnabled = false,
-    launchAtStartupLoading = false,
-    onLaunchAtStartupChange,
-    showTrayToggle = false,
-    trayVisible = true,
-    onTrayVisibleChange,
 }: SettingsMainPageProps) {
-    // A <select> takes text, not markup, so the caveat rides the option label itself.
-    const languageLabel = (code: string) => {
-        const native = languages.find((l) => l.id === code)?.native ?? code;
-        return getLocaleCoverageTier(code) === 'partial'
-            ? `${native} — ${t.languagePartlyTranslated}`
-            : native;
-    };
-    const hasWindowSection = showWindowDecorations || showCloseBehavior || showLaunchAtStartup || showTrayToggle;
+    const languageLabel = (code: string) => languages.find((l) => l.id === code)?.native ?? code;
     const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
     const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent);
     const globalQuickAddOptions = getGlobalQuickAddShortcutOptions({
@@ -230,6 +211,7 @@ export function SettingsMainPage({
                 : t.weekStartSystem;
 
     const [sidebarViewsOpen, setSidebarViewsOpen] = useState(false);
+    const [regionalFormatsOpen, setRegionalFormatsOpen] = useState(false);
     const hiddenSidebarViews = useUiStore((state) => state.hiddenSidebarViews);
     const setSidebarViewHidden = useUiStore((state) => state.setSidebarViewHidden);
     const timelineEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).timeline);
@@ -377,6 +359,15 @@ export function SettingsMainPage({
                         ))}
                     </select>
                 </SettingRow>
+            </SettingsCard>
+            <SettingsDisclosureCard
+                sectionKey="regionalFormats"
+                settingsKey={null}
+                title={t.regionalFormats}
+                hint={`${weekStartDescription} · ${dateFormat === 'system' ? t.dateFormatSystem : dateFormat === 'dmy' ? t.dateFormatDmy : dateFormat === 'mdy' ? t.dateFormatMdy : t.dateFormatYmd} · ${timeFormat === 'system' ? t.timeFormatSystem : timeFormat === '12h' ? t.timeFormat12h : t.timeFormat24h}`}
+                open={regionalFormatsOpen}
+                onToggle={() => setRegionalFormatsOpen((open) => !open)}
+            >
                 <SettingRow padded
                     settingsKey="weekStart"
                     title={t.weekStart}
@@ -468,29 +459,11 @@ export function SettingsMainPage({
                         <option value="24h">{t.timeFormat24h}</option>
                     </select>
                 </SettingRow>
-            </SettingsCard>
+            </SettingsDisclosureCard>
 
             {/* Input */}
             <SettingsSectionHeader>{t.input}</SettingsSectionHeader>
             <SettingsCard>
-                <SettingRow padded settingsKey="keybindings" title={t.keybindings} description={t.keybindingsDesc}>
-                    <select
-                        aria-label={t.keybindings}
-                        value={keybindingStyle}
-                        onChange={(e) => onKeybindingStyleChange(e.target.value as 'vim' | 'emacs' | 'standard')}
-                        className={selectCls}
-                    >
-                        <option value="standard">{t.keybindingStandard}</option>
-                        <option value="vim">{t.keybindingVim}</option>
-                        <option value="emacs">{t.keybindingEmacs}</option>
-                    </select>
-                    <button
-                        onClick={onOpenHelp}
-                        className="text-xs px-2.5 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                    >
-                        {t.viewShortcuts}
-                    </button>
-                </SettingRow>
                 <SettingRow padded
                     settingsKey="globalQuickAddShortcut"
                     title={t.globalQuickAddShortcut}
@@ -527,57 +500,6 @@ export function SettingsMainPage({
                     />
                 </SettingRow>
             </SettingsCard>
-
-            {/* Window Behavior */}
-            {hasWindowSection && (
-                <>
-                    <SettingsSectionHeader>{t.windowBehavior}</SettingsSectionHeader>
-                    <SettingsCard>
-                        {showWindowDecorations && (
-                            <SettingRow padded settingsKey="windowDecorations" title={t.windowDecorations} description={t.windowDecorationsDesc}>
-                                <Switch
-                                    checked={windowDecorationsEnabled}
-                                    aria-label={t.windowDecorations}
-                                    onCheckedChange={() => onWindowDecorationsChange?.(!windowDecorationsEnabled)}
-                                />
-                            </SettingRow>
-                        )}
-                        {showCloseBehavior && (
-                            <SettingRow padded settingsKey="closeBehavior" title={t.closeBehavior} description={t.closeBehaviorDesc}>
-                                <select
-                                    aria-label={t.closeBehavior}
-                                    value={closeBehavior}
-                                    onChange={(e) => onCloseBehaviorChange?.(e.target.value as 'ask' | 'tray' | 'quit')}
-                                    className={selectCls}
-                                >
-                                    <option value="ask">{t.closeBehaviorAsk}</option>
-                                    <option value="tray">{t.closeBehaviorTray}</option>
-                                    <option value="quit">{t.closeBehaviorQuit}</option>
-                                </select>
-                            </SettingRow>
-                        )}
-                        {showTrayToggle && (
-                            <SettingRow padded settingsKey="showTray" title={t.showTray} description={t.showTrayDesc}>
-                                <Switch
-                                    checked={trayVisible}
-                                    aria-label={t.showTray}
-                                    onCheckedChange={() => onTrayVisibleChange?.(!trayVisible)}
-                                />
-                            </SettingRow>
-                        )}
-                        {showLaunchAtStartup && (
-                            <SettingRow padded settingsKey="launchAtStartup" title={t.launchAtStartup} description={t.launchAtStartupDesc}>
-                                <Switch
-                                    disabled={launchAtStartupLoading}
-                                    checked={launchAtStartupEnabled}
-                                    aria-label={t.launchAtStartup}
-                                    onCheckedChange={() => onLaunchAtStartupChange?.(!launchAtStartupEnabled)}
-                                />
-                            </SettingRow>
-                        )}
-                    </SettingsCard>
-                </>
-            )}
         </div>
     );
 }

@@ -1,8 +1,10 @@
-import { CheckSquare, ChevronsUpDown, Filter, List, Plus, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CheckSquare, Filter, List, MoreHorizontal, Plus, SlidersHorizontal } from 'lucide-react';
 import { tFallback, type TaskSortBy } from '@mindwtr/core';
 import { FOCUS_AXES, type TaskListGroupBy } from './next-grouping';
-import { GroupBySelect } from './GroupBySelect';
-import { SortBySelect, ToolbarButton } from './list-toolbar';
+import { ToolbarButton } from './list-toolbar';
+import { ViewControls } from './ViewControls';
+import { ViewHeaderActions } from './ViewHeaderActions';
 
 type ListHeaderProps = {
     title: string;
@@ -14,10 +16,12 @@ type ListHeaderProps = {
     filterSummaryLabel: string;
     filterSummarySuffix: string;
     sortBy: TaskSortBy;
+    defaultSortBy?: TaskSortBy;
     sortByOptions?: readonly TaskSortBy[];
     onChangeSortBy: (value: TaskSortBy) => void;
     showGroupBy?: boolean;
     groupBy?: TaskListGroupBy;
+    defaultGroupBy?: TaskListGroupBy;
     groupByOptions?: readonly TaskListGroupBy[];
     onChangeGroupBy?: (value: TaskListGroupBy) => void;
     showFiltersButton?: boolean;
@@ -25,10 +29,9 @@ type ListHeaderProps = {
     onToggleFilters?: () => void;
     selectionMode: boolean;
     onToggleSelection: () => void;
+    showDetailsToggle?: boolean;
     showListDetails: boolean;
     onToggleDetails: () => void;
-    densityMode: 'comfortable' | 'compact' | 'condensed';
-    onToggleDensity: () => void;
     onNewSomedaySection?: () => void;
     t: (key: string) => string;
 };
@@ -43,10 +46,12 @@ export function ListHeader({
     filterSummaryLabel,
     filterSummarySuffix,
     sortBy,
+    defaultSortBy = 'default',
     sortByOptions,
     onChangeSortBy,
     showGroupBy = false,
     groupBy = 'none',
+    defaultGroupBy = 'none',
     groupByOptions = FOCUS_AXES,
     onChangeGroupBy,
     showFiltersButton = false,
@@ -54,30 +59,37 @@ export function ListHeader({
     onToggleFilters,
     selectionMode,
     onToggleSelection,
+    showDetailsToggle = true,
     showListDetails,
     onToggleDetails,
-    densityMode,
-    onToggleDensity,
     onNewSomedaySection,
     t,
 }: ListHeaderProps) {
-    // The button names what clicking it does, not the current state — "Details off"
-    // read as a disabled control rather than a way to show the dates and project.
-    // A flipping name IS the state for a screen reader, so it carries no
-    // aria-pressed: "Hide details, pressed" announced the action and the state at
-    // once and they contradict each other.
+    const [overflowOpen, setOverflowOpen] = useState(false);
+    const overflowRef = useRef<HTMLDivElement | null>(null);
+    const overflowTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const moreOptionsLabel = tFallback(t, 'taskEdit.moreOptions', 'More options');
     const detailsLabel = showListDetails
         ? tFallback(t, 'list.hideDetails', 'Hide details')
         : tFallback(t, 'list.showDetails', 'Show details');
-    const densityTitle = (() => {
-        const value = t('list.density');
-        return value === 'list.density' ? 'Density' : value;
-    })();
-    const densityLabels = {
-        comfortable: tFallback(t, 'list.densityComfortable', 'Comfortable'),
-        compact: tFallback(t, 'list.densityCompact', 'Compact'),
-        condensed: tFallback(t, 'list.densityCondensed', 'Condensed'),
-    };
+
+    useEffect(() => {
+        if (!overflowOpen) return;
+        const handleMouseDown = (event: MouseEvent) => {
+            if (!overflowRef.current?.contains(event.target as Node)) setOverflowOpen(false);
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            setOverflowOpen(false);
+            overflowTriggerRef.current?.focus();
+        };
+        window.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('mousedown', handleMouseDown);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [overflowOpen]);
 
     return (
         <header className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
@@ -112,80 +124,81 @@ export function ListHeader({
                 </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                {onNewSomedaySection && (
+            <ViewHeaderActions>
+                <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+                    {showFiltersButton && onToggleFilters && (
+                        <ToolbarButton
+                            active={filtersOpen}
+                            onClick={onToggleFilters}
+                            aria-expanded={filtersOpen}
+                            aria-controls="list-filters-panel"
+                            icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
+                        >
+                            {t('filters.label')}
+                        </ToolbarButton>
+                    )}
                     <ToolbarButton
-                        onClick={onNewSomedaySection}
-                        icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                        active={selectionMode}
+                        onClick={onToggleSelection}
+                        aria-pressed={selectionMode}
+                        icon={<CheckSquare className="h-3.5 w-3.5" aria-hidden="true" />}
                     >
-                        {tFallback(t, 'viewSections.add', 'New section…')}
+                        {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
                     </ToolbarButton>
-                )}
-                {showFiltersButton && onToggleFilters && (
-                    <ToolbarButton
-                        active={filtersOpen}
-                        onClick={onToggleFilters}
-                        aria-expanded={filtersOpen}
-                        aria-controls="list-filters-panel"
-                        icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
-                    >
-                        {t('filters.label')}
-                    </ToolbarButton>
-                )}
-                <ToolbarButton
-                    active={selectionMode}
-                    onClick={onToggleSelection}
-                    aria-pressed={selectionMode}
-                    icon={<CheckSquare className="h-3.5 w-3.5" aria-hidden="true" />}
-                >
-                    {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
-                </ToolbarButton>
-                <SortBySelect
-                    options={sortByOptions}
-                    value={sortBy}
-                    onChange={onChangeSortBy}
-                    t={t}
-                    iconTestId="list-sort-icon"
-                />
-                {showGroupBy && onChangeGroupBy && (
-                    <GroupBySelect
-                        value={groupBy}
-                        axes={groupByOptions}
-                        onChange={onChangeGroupBy}
+                    <ViewControls
+                        sortBy={sortBy}
+                        defaultSortBy={defaultSortBy}
+                        sortByOptions={sortByOptions}
+                        onChangeSortBy={onChangeSortBy}
+                        groupBy={showGroupBy && onChangeGroupBy ? groupBy : undefined}
+                        defaultGroupBy={showGroupBy && onChangeGroupBy ? defaultGroupBy : undefined}
+                        groupByOptions={showGroupBy && onChangeGroupBy ? groupByOptions : undefined}
+                        onChangeGroupBy={onChangeGroupBy}
                         t={t}
                     />
-                )}
-                <ToolbarButton
-                    active={showListDetails}
-                    onClick={onToggleDetails}
-                    title={detailsLabel}
-                    icon={<List className="h-3.5 w-3.5" aria-hidden="true" />}
-                >
-                    {detailsLabel}
-                </ToolbarButton>
-                <ToolbarButton
-                    active={densityMode !== 'comfortable'}
-                    onClick={onToggleDensity}
-                    aria-pressed={densityMode !== 'comfortable'}
-                    title={densityTitle}
-                    icon={<ChevronsUpDown className="h-3.5 w-3.5" aria-hidden="true" />}
-                >
-                    {/* Overlapping labels reserve the widest translation without
-                        a fixed pixel width. Only the current mode is visible or
-                        announced, so cycling density cannot reflow the toolbar. */}
-                    <span className="inline-grid whitespace-nowrap">
-                        {Object.entries(densityLabels).map(([mode, label]) => (
-                            <span
-                                key={mode}
-                                className={`col-start-1 row-start-1 ${mode === densityMode ? '' : 'invisible'}`}
-                                aria-hidden={mode !== densityMode || undefined}
+                    {showDetailsToggle && (
+                        <ToolbarButton
+                            active={showListDetails}
+                            onClick={onToggleDetails}
+                            title={detailsLabel}
+                            icon={<List className="h-3.5 w-3.5" aria-hidden="true" />}
+                        >
+                            {detailsLabel}
+                        </ToolbarButton>
+                    )}
+                    {onNewSomedaySection && (
+                        <div ref={overflowRef} className="relative">
+                            <button
+                                ref={overflowTriggerRef}
+                                type="button"
+                                aria-label={moreOptionsLabel}
+                                aria-haspopup="menu"
+                                aria-expanded={overflowOpen}
+                                onClick={() => setOverflowOpen((open) => !open)}
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                             >
-                                {label}
-                            </span>
-                        ))}
-                    </span>
-                </ToolbarButton>
-            </div>
+                                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                            {overflowOpen && (
+                                <div role="menu" aria-label={moreOptionsLabel} className="absolute right-0 top-full z-50 mt-2 w-48 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+                                    <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            setOverflowOpen(false);
+                                            onNewSomedaySection();
+                                        }}
+                                        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted focus:outline-none focus:bg-muted"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                                        {tFallback(t, 'viewSections.add', 'New section…')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </ViewHeaderActions>
         </header>
     );
 }

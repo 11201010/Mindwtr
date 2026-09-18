@@ -2,12 +2,14 @@ import { memo, useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ErrorBoundary } from '../ErrorBoundary';
 import {
+    buildAdvancedFilterCriteriaChips,
     createTaskFilterPredicate,
     formatTimeEstimateLabel,
     getTaskMetadataFilterVisibility,
     hasActiveFilterCriteria,
     projectMatchesAreaFilterSelection,
     resolveFeatureFlags,
+    SAVED_FILTER_NO_PROJECT_ID,
     safeFormatDate,
     shallow,
     sortDoneTasksForListView,
@@ -32,11 +34,13 @@ import {
 } from './list/virtual-list';
 import { StoreTaskItem } from './list/StoreTaskItem';
 import { BulkSelectionToolbar } from './list/BulkSelectionToolbar';
-import { GroupBySelect } from './list/GroupBySelect';
 import { GroupedTaskList } from './list/GroupedTaskSections';
 import { useCollapsedGroupsViewState, useTaskGroupCollapse } from './list/useTaskGroupCollapse';
 import { ListFiltersPanel } from './list/ListFiltersPanel';
-import { DONE_TASK_LIST_SORT_OPTIONS, LIST_END_GAP, SortBySelect, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-toolbar';
+import type { DesktopActiveFilterChip } from './list/FilterDisclosure';
+import { DONE_TASK_LIST_SORT_OPTIONS, LIST_END_GAP, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-toolbar';
+import { ViewControls } from './list/ViewControls';
+import { ViewHeaderActions } from './list/ViewHeaderActions';
 import {
     PRIORITY_FILTER_OPTIONS,
     TIME_ESTIMATE_FILTER_OPTIONS,
@@ -173,9 +177,13 @@ export function ArchiveView() {
         excludedTokens,
         selectedPriorities,
         selectedTimeEstimates,
+        contextMatchMode,
+        tagMatchMode,
         toggleToken,
         togglePriority,
         toggleEstimate,
+        setMatchMode,
+        removeFilterChip,
         clearFilters,
         setFiltersOpen,
     } = useListFilterControls();
@@ -411,13 +419,80 @@ export function ArchiveView() {
         (value: TimeEstimate) => formatTimeEstimateLabel(value, { t }),
         [t]
     );
-    const filterSummary = [
-        ...(searchQuery.trim() ? [`${t('common.search')}: ${searchQuery.trim()}`] : []),
-        ...selectedTokens,
-        ...excludedTokens.map((token) => `${tFallback(t, 'filters.excluded', 'Excluded')}: ${token}`),
-        ...(showPriorityFilters ? selectedPriorities.map((priority) => t(`priority.${priority}`)) : []),
-        ...(showTimeEstimateFilters ? selectedTimeEstimates.map(formatEstimate) : []),
-    ];
+    const excludedLabel = tFallback(t, 'filters.excluded', 'Excluded');
+    const activeFilterChips: DesktopActiveFilterChip[] = [];
+    if (searchQuery.trim()) {
+        activeFilterChips.push({
+            id: 'search',
+            label: `${t('common.search')}: ${searchQuery.trim()}`,
+            onRemove: () => setSearchQuery(''),
+        });
+    }
+    [...(listFilterCriteria.contexts ?? []), ...(listFilterCriteria.tags ?? [])].forEach((token) => {
+        activeFilterChips.push({
+            id: `token:${token}`,
+            label: token,
+            onRemove: () => removeFilterChip(`token:${token}`),
+        });
+    });
+    [...(listFilterCriteria.excludedContexts ?? []), ...(listFilterCriteria.excludedTags ?? [])].forEach((token) => {
+        activeFilterChips.push({
+            id: `excluded-token:${token}`,
+            label: token,
+            excluded: true,
+            onRemove: () => removeFilterChip(`excluded-token:${token}`),
+        });
+    });
+    (listFilterCriteria.projects ?? []).forEach((projectId) => {
+        const project = projectById.get(projectId);
+        activeFilterChips.push({
+            id: `project:${projectId}`,
+            label: projectId === SAVED_FILTER_NO_PROJECT_ID
+                ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
+                : project?.title ?? projectId,
+            dotColor: project
+                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
+                : undefined,
+            onRemove: () => removeFilterChip(`project:${projectId}`),
+        });
+    });
+    (listFilterCriteria.priority ?? []).forEach((priority) => {
+        activeFilterChips.push({
+            id: `priority:${priority}`,
+            label: priority === 'none' ? tFallback(t, 'filters.noPriority', 'No priority') : t(`priority.${priority}`),
+            onRemove: () => removeFilterChip(`priority:${priority}`),
+        });
+    });
+    (listFilterCriteria.energy ?? []).forEach((energy) => {
+        activeFilterChips.push({
+            id: `energy:${energy}`,
+            label: t(`energyLevel.${energy}`),
+            onRemove: () => removeFilterChip(`energy:${energy}`),
+        });
+    });
+    (listFilterCriteria.timeEstimates ?? []).forEach((estimate) => {
+        activeFilterChips.push({
+            id: `time:${estimate}`,
+            label: formatEstimate(estimate),
+            onRemove: () => removeFilterChip(`time:${estimate}`),
+        });
+    });
+    buildAdvancedFilterCriteriaChips(listFilterCriteria, {
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+        resolveText: (key, fallback) => tFallback(t, key, fallback),
+    }).forEach((chip) => {
+        activeFilterChips.push({
+            id: `advanced:${chip.id}`,
+            label: chip.label,
+            dotColor: chip.color,
+            isAdvanced: true,
+            onRemove: () => removeFilterChip(`advanced:${chip.id}`),
+        });
+    });
+    const filterSummary = activeFilterChips.map((chip) => (
+        chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label
+    ));
     const hasFilters = filterSummary.length > 0;
     const filterSummaryLabel = filterSummary.slice(0, 3).join(', ');
     const filterSummarySuffix = filterSummary.length > 3 ? ` +${filterSummary.length - 3}` : '';
@@ -598,53 +673,63 @@ export function ArchiveView() {
                 </div>
 
                 {segment === 'tasks' && (
-                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                        <ToolbarButton
-                            active={filtersOpen}
-                            onClick={() => setFiltersOpen(!filtersOpen)}
-                            aria-expanded={filtersOpen}
-                            aria-controls="list-filters-panel"
-                            icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
-                        >
-                            {t('filters.label')}
-                        </ToolbarButton>
-                        {archivedTasks.length > 0 && (
+                    <ViewHeaderActions>
+                        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
                             <ToolbarButton
-                                active={selectionMode}
-                                onClick={toggleSelectionMode}
-                                aria-pressed={selectionMode}
-                                icon={<CheckSquare className="h-3.5 w-3.5" aria-hidden="true" />}
+                                active={filtersOpen}
+                                onClick={() => setFiltersOpen(!filtersOpen)}
+                                aria-expanded={filtersOpen}
+                                aria-controls="list-filters-panel"
+                                icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
                             >
-                                {selectionMode ? t('common.done') : t('bulk.select')}
+                                {t('filters.label')}
                             </ToolbarButton>
-                        )}
-                        <SortBySelect
-                            options={DONE_TASK_LIST_SORT_OPTIONS}
-                            value={sortBy}
-                            onChange={(value) => setListOptions({ archivedSortBy: value })}
-                            t={t}
-                            iconTestId="archive-sort-icon"
-                        />
-                        <GroupBySelect
-                            value={archivedGroupBy}
-                            axes={DONE_AXES}
-                            onChange={(value) => setListOptions({ archivedGroupBy: value as DoneGroupBy })}
-                            t={t}
-                        />
-                    </div>
+                            {archivedTasks.length > 0 && (
+                                <ToolbarButton
+                                    active={selectionMode}
+                                    onClick={toggleSelectionMode}
+                                    aria-pressed={selectionMode}
+                                    icon={<CheckSquare className="h-3.5 w-3.5" aria-hidden="true" />}
+                                >
+                                    {selectionMode ? t('common.done') : t('bulk.select')}
+                                </ToolbarButton>
+                            )}
+                            <ViewControls
+                                sortBy={sortBy}
+                                defaultSortBy="default"
+                                sortByOptions={DONE_TASK_LIST_SORT_OPTIONS}
+                                onChangeSortBy={(value) => setListOptions({ archivedSortBy: value })}
+                                groupBy={archivedGroupBy}
+                                defaultGroupBy="none"
+                                groupByOptions={DONE_AXES}
+                                onChangeGroupBy={(value) => setListOptions({ archivedGroupBy: value as DoneGroupBy })}
+                                t={t}
+                            />
+                        </div>
+                    </ViewHeaderActions>
                 )}
             </header>
 
-            {segment === 'tasks' && filtersOpen && (
+            {segment === 'tasks' && (filtersOpen || hasFilters) && (
                 <ListFiltersPanel
                     t={t}
+                    activeFilterChips={activeFilterChips}
                     hasFilters={hasFilters}
-                    onClearFilters={clearFilters}
+                    showFiltersPanel={filtersOpen}
+                    onClose={() => setFiltersOpen(false)}
+                    onClearFilters={() => {
+                        clearFilters();
+                        setSearchQuery('');
+                    }}
                     allTokens={allTokens}
                     selectedTokens={selectedTokens}
                     excludedTokens={excludedTokens}
                     tokenCounts={tokenCounts}
                     onToggleToken={toggleToken}
+                    contextMatchMode={contextMatchMode}
+                    tagMatchMode={tagMatchMode}
+                    onContextMatchModeChange={(mode) => setMatchMode('context', mode)}
+                    onTagMatchModeChange={(mode) => setMatchMode('tag', mode)}
                     showPriorityFilters={showPriorityFilters}
                     priorityOptions={PRIORITY_FILTER_OPTIONS}
                     selectedPriorities={selectedPriorities}

@@ -1,9 +1,12 @@
 import React, { Profiler } from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { Text } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GeneralSettingsScreen } from './general-settings-screen';
 import { GtdSettingsScreen } from './gtd-settings-screen';
+import { SettingRow } from './setting-row';
+import { LANGUAGES } from './settings.constants';
 import { useSyncSettingsStoreSlice } from './use-sync-settings-store-slice';
 
 const updateSettings = vi.hoisted(() => vi.fn(async () => undefined));
@@ -179,6 +182,38 @@ describe('settings store subscriptions', () => {
         });
 
         expect(rendered.commits).toBe(commitsBeforeTaskMutation);
+        act(() => rendered.tree.unmount());
+    });
+
+    it('shows native language names without translation-coverage labels', () => {
+        const rendered = renderAndCountCommits(<GeneralSettingsScreen />);
+        const languageRow = rendered.tree.root.findAllByType(SettingRow)
+            .find((row) => row.props.label === 'settings.language')!;
+        expect(languageRow.props.description).toBe('English');
+        act(() => languageRow.props.onPress());
+        const labels = rendered.tree.root.findAllByType(Text)
+            .map((node) => node.props.children);
+        for (const language of LANGUAGES) {
+            expect(labels).toContain(language.native);
+        }
+        expect(labels.some((label) => typeof label === 'string' && label.includes('languagePartlyTranslated'))).toBe(false);
+        act(() => rendered.tree.unmount());
+    });
+
+    it('keeps regional formats collapsed until requested', () => {
+        const rendered = renderAndCountCommits(<GeneralSettingsScreen />);
+        const labels = () => rendered.tree.root.findAllByType(SettingRow).map((row) => row.props.label);
+
+        expect(labels()).toContain('settings.regionalFormats');
+        expect(labels()).not.toContain('settings.weekStart');
+
+        act(() => {
+            rendered.tree.root.findByProps({ testID: 'regional-formats-toggle' }).props.onPress();
+        });
+
+        expect(labels()).toContain('settings.weekStart');
+        expect(labels()).toContain('settings.dateFormat');
+        expect(labels()).toContain('settings.timeFormat');
         act(() => rendered.tree.unmount());
     });
 

@@ -167,7 +167,8 @@ describe('desktop Someday section actions', () => {
     it('creates a section from the Someday list action', async () => {
         const { updateSettings } = seed([], []);
         const view = renderSomeday();
-        fireEvent.click(view.getByRole('button', { name: 'New section…' }));
+        fireEvent.click(view.getByRole('button', { name: 'More options' }));
+        fireEvent.click(view.getByRole('menuitem', { name: 'New section…' }));
         const dialog = await view.findByRole('dialog', { name: 'New section…' });
         fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'Films' } });
         fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -179,7 +180,8 @@ describe('desktop Someday section actions', () => {
         const { updateSettings } = seed([], []);
         updateSettings.mockRejectedValueOnce(new Error('disk unavailable'));
         const view = renderSomeday();
-        fireEvent.click(view.getByRole('button', { name: 'New section…' }));
+        fireEvent.click(view.getByRole('button', { name: 'More options' }));
+        fireEvent.click(view.getByRole('menuitem', { name: 'New section…' }));
         const dialog = await view.findByRole('dialog', { name: 'New section…' });
         fireEvent.change(within(dialog).getByRole('combobox'), { target: { value: 'Films' } });
         fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));

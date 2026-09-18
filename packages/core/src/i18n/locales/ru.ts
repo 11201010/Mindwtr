@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ruOverrides: Record<string, string> = {
+    'filters.searchTasks': "Поиск по названиям задач",
+    'filters.searchOptions': "Поиск вариантов",
+    'filters.tokenCycleHint': "Нажмите, чтобы включить, ещё раз — исключить, и третий раз — сбросить выбор.",
+    'filters.more': "Другие фильтры",
+    'viewSections.new': "Новый раздел",
+    'projects.new': 'Новый проект',
+    'nav.history': 'История',
+    'task.dates': 'Даты…',
+    'task.moveTo': 'Переместить в…',
+    'task.destination': 'Расположение',
+    'common.viewOptions': 'Параметры вида',
+    'settings.regionalFormats': 'Региональные форматы',
+    'settings.keyboardAndWindow': 'Клавиатура и окно',
     'settings.gtdMobile.openTasksIn': 'Открывать задачи в режиме',
     'settings.gtdMobile.openTasksInDesc': 'Выберите вкладку, которая открывается при обычном нажатии на задачу на этом устройстве.',
     'settings.gtdMobile.taskOpenAutomatic': 'Автоматически',

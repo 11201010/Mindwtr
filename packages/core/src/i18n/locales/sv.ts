@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const svOverrides: Record<string, string> = {
+    'filters.searchTasks': "Sök i uppgiftstitlar",
+    'filters.searchOptions': "Sök alternativ",
+    'filters.tokenCycleHint': "Klicka för att inkludera, igen för att exkludera och en gång till för att rensa valet.",
+    'filters.more': "Fler filter",
+    'viewSections.new': "Ny sektion",
+    'projects.new': 'Nytt projekt',
+    'nav.history': 'Historik',
+    'task.dates': 'Datum…',
+    'task.moveTo': 'Flytta till…',
+    'task.destination': 'Placering',
+    'common.viewOptions': 'Visningsalternativ',
+    'settings.regionalFormats': 'Regionala format',
+    'settings.keyboardAndWindow': 'Tangentbord och fönster',
     'settings.gtdMobile.openTasksIn': 'Öppna uppgifter i',
     'settings.gtdMobile.openTasksInDesc': 'Välj vilken flik som används när du trycker på en uppgift på den här enheten.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatiskt',

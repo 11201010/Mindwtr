@@ -6,6 +6,7 @@ import {
     resolveFeatureFlags,
     tFallback,
     useTaskStore,
+    type SortField,
     type TaskSortBy,
 } from '@mindwtr/core';
 import { cn } from '../../../lib/utils';
@@ -68,31 +69,37 @@ export function ToolbarButton({ active = false, children, disabled = false, icon
     );
 }
 
-type SortBySelectProps = {
-    value: TaskSortBy;
-    onChange: (value: TaskSortBy) => void;
+type SortBySelectProps<Sort extends SortField> = {
+    value: Sort;
+    defaultValue?: Sort;
+    onChange: (value: Sort) => void;
     t: (key: string) => string;
     className?: string;
     iconTestId?: string;
     /** Defaults to TASK_LIST_SORT_OPTIONS; the Done list passes DONE_TASK_LIST_SORT_OPTIONS. */
-    options?: readonly TaskSortBy[];
+    options?: readonly Sort[];
 };
 
 /** The labelled SORT select shared by every list toolbar. */
-export function SortBySelect({ value, onChange, t, className, iconTestId, options }: SortBySelectProps) {
+export function SortBySelect<Sort extends SortField = TaskSortBy>({ value, defaultValue, onChange, t, className, iconTestId, options }: SortBySelectProps<Sort>) {
     const sortLabel = tFallback(t, 'sort.label', 'Sort');
     // Gated here rather than at each toolbar: Focus, Review, Contexts, Archive
     // and the project workspace all render this select, and a new one must not
     // be able to leak a disabled feature's sort. Callers pass the resolved sort
     // ('timeEstimate' reads as 'default' while the feature is off), so dropping
     // the option can never leave the trigger blank (#1107).
-    const timeEstimatesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).timeEstimates);
+    const { timeEstimatesEnabled, prioritiesEnabled } = useTaskStore((state) => {
+        const flags = resolveFeatureFlags(state.settings);
+        return { timeEstimatesEnabled: flags.timeEstimates, prioritiesEnabled: flags.priorities };
+    });
     const sortOptions = (options ?? TASK_LIST_SORT_OPTIONS).filter(
-        (option) => option !== 'timeEstimate' || timeEstimatesEnabled
+        (option) => (option !== 'timeEstimate' || timeEstimatesEnabled)
+            && (option !== 'priority' || prioritiesEnabled)
     );
     return (
         <ToolbarSelect
-            className={cn('min-w-[160px]', className)}
+            active={defaultValue !== undefined && value !== defaultValue}
+            className={cn('w-[160px] min-w-0 max-w-full', className)}
             label={sortLabel}
             icon={(
                 <ArrowUpDown
@@ -102,8 +109,11 @@ export function SortBySelect({ value, onChange, t, className, iconTestId, option
                 />
             )}
             value={value}
-            options={sortOptions.map((option) => ({ value: option, label: t(`sort.${option}`) }))}
-            onChange={(next) => onChange(next as TaskSortBy)}
+            options={sortOptions.map((option) => ({
+                value: option,
+                label: option === 'priority' ? t('filters.priority') : t(`sort.${option}`),
+            }))}
+            onChange={(next) => onChange(next as Sort)}
         />
     );
 }

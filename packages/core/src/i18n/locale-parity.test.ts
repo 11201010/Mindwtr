@@ -81,6 +81,17 @@ const pomodoroAlertSettingsKeys = [
 ] as const;
 
 describe('locale parity', () => {
+    it.each(locales)('keeps simplified navigation and controls translated in %s', (lang) => {
+        for (const key of [
+            'nav.history', 'task.dates', 'task.moveTo', 'task.destination',
+            'common.viewOptions', 'settings.regionalFormats', 'settings.keyboardAndWindow',
+            'projects.new', 'filters.more', 'viewSections.new',
+            'filters.searchTasks', 'filters.searchOptions', 'filters.tokenCycleHint',
+        ]) {
+            expect(translationsByLocale[lang][key], key).toBeTruthy();
+        }
+    });
+
     it.each(locales)('keeps the AI request timeout controls translated in %s', (lang) => {
         const translations = translationsByLocale[lang];
         for (const key of ['settings.aiAdvanced', 'settings.aiRequestTimeout', 'settings.aiRequestTimeoutDesc']) {

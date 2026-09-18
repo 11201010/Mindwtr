@@ -6,6 +6,9 @@ import { SettingsAdvancedPage } from './SettingsAdvancedPage';
 
 const baseProps: Parameters<typeof SettingsAdvancedPage>[0] = {
     t: getEnglishSettingsLabels(),
+    onOpenHelp: vi.fn(),
+    keybindingStyle: 'standard',
+    onKeybindingStyleChange: vi.fn(),
     isTauri: true,
     localApiStatus: {
         enabled: false,
@@ -31,6 +34,34 @@ const baseProps: Parameters<typeof SettingsAdvancedPage>[0] = {
 };
 
 describe('SettingsAdvancedPage', () => {
+    it('keeps keyboard and window controls folded and preserves their callbacks', () => {
+        const onKeybindingStyleChange = vi.fn();
+        const onLaunchAtStartupChange = vi.fn();
+        const onOpenHelp = vi.fn();
+        const { getByRole, queryByRole } = render(
+            <SettingsAdvancedPage
+                {...baseProps}
+                onOpenHelp={onOpenHelp}
+                onKeybindingStyleChange={onKeybindingStyleChange}
+                showLaunchAtStartup
+                launchAtStartupEnabled={false}
+                onLaunchAtStartupChange={onLaunchAtStartupChange}
+            />,
+        );
+
+        expect(queryByRole('combobox', { name: 'Keyboard Shortcuts' })).not.toBeInTheDocument();
+        fireEvent.click(getByRole('button', { name: 'Keyboard and window' }));
+        fireEvent.change(getByRole('combobox', { name: 'Keyboard Shortcuts' }), {
+            target: { value: 'vim' },
+        });
+        fireEvent.click(getByRole('button', { name: 'Show shortcuts' }));
+        fireEvent.click(getByRole('switch', { name: 'Launch at startup' }));
+
+        expect(onKeybindingStyleChange).toHaveBeenCalledWith('vim');
+        expect(onOpenHelp).toHaveBeenCalledTimes(1);
+        expect(onLaunchAtStartupChange).toHaveBeenCalledWith(true);
+    });
+
     it('toggles the local API server', () => {
         const onLocalApiToggle = vi.fn();
         const { getByRole } = render(

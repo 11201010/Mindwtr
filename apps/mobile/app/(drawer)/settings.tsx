@@ -34,7 +34,7 @@ import { styles } from '@/components/settings/settings.styles';
 import {
     buildSettingsMenuSearchText,
     findSettingsMenuMatch,
-    SETTINGS_SCREEN_SET,
+    normalizeSettingsScreen,
     settingsMenuMatchesQuery,
     type SettingsMenuRowId,
     type SettingsScreen,
@@ -69,8 +69,7 @@ function PersonalSettingsPage() {
 
     const currentScreen = useMemo<SettingsScreen>(() => {
         const rawScreen = Array.isArray(settingsScreen) ? settingsScreen[0] : settingsScreen;
-        if (!rawScreen) return 'main';
-        return SETTINGS_SCREEN_SET[rawScreen as SettingsScreen] ? (rawScreen as SettingsScreen) : 'main';
+        return normalizeSettingsScreen(rawScreen);
     }, [settingsScreen]);
     const showOnboardingHandoff = useMemo(() => {
         const rawHandoff = Array.isArray(onboardingHandoff) ? onboardingHandoff[0] : onboardingHandoff;
@@ -124,7 +123,6 @@ function PersonalSettingsPage() {
         || currentScreen === 'gtd-inbox'
         || currentScreen === 'gtd-pomodoro'
         || currentScreen === 'gtd-review'
-        || currentScreen === 'gtd-time-estimates'
         || currentScreen === 'gtd-task-editor'
     ) {
         return <GtdSettingsScreen onNavigate={pushSettingsScreen} screen={currentScreen} />;

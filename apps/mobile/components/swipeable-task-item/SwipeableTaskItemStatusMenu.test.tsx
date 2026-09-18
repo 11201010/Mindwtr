@@ -35,6 +35,28 @@ const baseProps = {
 };
 
 describe('Someday task menu', () => {
+  it('opens the grouped project or area destination picker', () => {
+    const onMoveToDestination = vi.fn();
+    const onClose = vi.fn();
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(
+        <SwipeableTaskItemStatusMenu
+          {...baseProps}
+          onClose={onClose}
+          onMoveToDestination={onMoveToDestination}
+        />,
+      );
+    });
+    const button = tree!.root.findAllByType('Pressable' as never)
+      .find((node) => node.props.accessibilityLabel === 'Move to…');
+    expect(button).toBeDefined();
+    act(() => { button?.props.onPress(); });
+    expect(onMoveToDestination).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    act(() => tree!.unmount());
+  });
+
   it('offers Move to section without changing task status or opening the editor', () => {
     const onMoveToSection = vi.fn();
     let tree: ReturnType<typeof create>;

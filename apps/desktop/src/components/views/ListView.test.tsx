@@ -64,6 +64,26 @@ const renderListView = (statusFilter: 'inbox' | 'next' | 'waiting' | 'someday' |
   );
 
 describe('ListView', () => {
+  it('keeps the quiet Waiting person selector functional and resettable', () => {
+    useTaskStore.setState({
+      _allTasks: [
+        makeTask('waiting-tom', { status: 'waiting', assignedTo: 'Tom' }),
+        makeTask('waiting-maya', { status: 'waiting', assignedTo: 'Maya' }),
+      ],
+      lastDataChangeAt: 1,
+    });
+    const view = renderListView('waiting', 'Waiting');
+    const who = view.getByRole('combobox', { name: 'Who? (optional)' });
+    expect(who.className).toContain('bg-transparent');
+    expect(who.className).toContain('appearance-none');
+    expect(who.className).toContain('focus-visible:ring-2');
+    fireEvent.change(who, { target: { value: 'Tom' } });
+    expect(view.getByText('Task waiting-tom')).toBeInTheDocument();
+    expect(view.queryByText('Task waiting-maya')).not.toBeInTheDocument();
+    fireEvent.change(who, { target: { value: '' } });
+    expect(view.getByText('Task waiting-maya')).toBeInTheDocument();
+  });
+
   it('keeps Inbox global while other lists retain the selected area', () => {
     const work: Area = {
       id: 'area-work', name: 'Work', color: '#2563eb', order: 0, createdAt: now, updatedAt: now,
@@ -170,6 +190,68 @@ describe('ListView', () => {
   it('renders the view title', () => {
     const html = renderStaticListView('inbox', 'Inbox');
     expect(html).toContain('Inbox');
+  });
+
+  it('omits redundant Details in Reference while preserving its preview and other list controls', () => {
+    useTaskStore.setState({
+      _allTasks: [makeTask('reference', {
+        title: 'Reference note',
+        status: 'reference',
+        description: 'Always-visible reference preview',
+      })],
+      lastDataChangeAt: 1,
+    });
+
+    const reference = renderListView('reference', 'Reference');
+    const referenceSort = reference.getByRole('combobox', { name: 'Sort' });
+    const referenceGroup = reference.getByRole('combobox', { name: 'Group' });
+
+    expect(reference.queryByRole('button', { name: 'Show details' })).not.toBeInTheDocument();
+    expect(reference.queryByRole('button', { name: 'Hide details' })).not.toBeInTheDocument();
+    expect(reference.getByText('Always-visible reference preview')).toBeInTheDocument();
+    expect(referenceSort).toHaveClass('bg-card');
+    expect(referenceGroup).toHaveClass('bg-card');
+    expect(referenceSort).not.toHaveClass('bg-primary/10');
+    expect(referenceGroup).not.toHaveClass('bg-primary/10');
+    expect(useUiStore.getState().listOptions.showDetails).toBe(false);
+    reference.unmount();
+
+    const next = renderListView('next', 'Next');
+    expect(next.getByRole('button', { name: 'Show details' })).toBeInTheDocument();
+  });
+
+  it('keeps fresh Someday grouping neutral and highlights selected section grouping', () => {
+    useUiStore.setState((state) => ({
+      listOptions: { ...state.listOptions, somedayGroupBy: 'none' },
+    }));
+    const view = renderListView('someday', 'Someday');
+    const trigger = view.getByRole('combobox', { name: 'Group' });
+
+    expect(trigger).toHaveClass('bg-card');
+    expect(trigger).not.toHaveClass('bg-primary/10');
+
+    act(() => {
+      useUiStore.getState().setListOptions({ somedayGroupBy: 'viewSection' });
+    });
+    expect(trigger).toHaveClass('bg-primary/10');
+
+    act(() => {
+      useUiStore.getState().setListOptions({ somedayGroupBy: 'none' });
+    });
+    expect(trigger).toHaveClass('bg-card');
+  });
+
+  it('keeps global density rendering while omitting density from the toolbar', () => {
+    useTaskStore.setState({
+      _allTasks: [makeTask('compact', { title: 'Compact task', status: 'next' })],
+      settings: { appearance: { density: 'compact' } },
+      lastDataChangeAt: 1,
+    });
+    const view = renderListView('next', 'Next');
+
+    expect(view.getByText('Compact task')).toHaveClass('text-sm');
+    expect(view.queryByRole('button', { name: /Density:/ })).not.toBeInTheDocument();
+    expect(view.queryByText('Density')).not.toBeInTheDocument();
   });
 
   it('ends the scroller with the shared end gap, not with viewport padding (#977)', () => {
@@ -779,6 +861,7 @@ describe('ListView', () => {
     expect(view.queryByRole('button', { name: /^#history/ })).not.toBeInTheDocument();
 
     fireEvent.click(includeArchived);
+    fireEvent.click(view.getByRole('button', { name: 'Contexts & tags' }));
 
     await waitFor(() => {
       expect(view.getByText('Historical note')).toBeInTheDocument();
@@ -903,8 +986,9 @@ describe('ListView', () => {
       expect(view.getByText('Tagged reference')).toBeInTheDocument();
       expect(view.queryByText('Other reference')).not.toBeInTheDocument();
     });
-    expect(view.queryByText('@missing')).not.toBeInTheDocument();
-    expect(view.queryByText('@blocked')).not.toBeInTheDocument();
+    expect(view.getByText('@missing')).toBeInTheDocument();
+    expect(view.getByText('@blocked')).toBeInTheDocument();
+    fireEvent.click(view.getByRole('button', { name: 'Contexts & tags' }));
     expect(view.getByRole('button', { name: '#reading' })).toHaveAttribute('aria-pressed', 'true');
     expect(useUiStore.getState().listFilters.criteria).toMatchObject({
       contexts: ['@missing'],
@@ -1241,6 +1325,7 @@ describe('ListView', () => {
     });
     const panel = () => within(document.getElementById('list-filters-panel') as HTMLElement);
 
+    fireEvent.click(panel().getByRole('button', { name: 'Contexts & tags' }));
     fireEvent.click(panel().getByRole('button', { name: /^@computer/ }));
     await waitFor(() => {
       expect(queryByText('Computer task')).toBeInTheDocument();
@@ -1709,6 +1794,7 @@ describe('ListView', () => {
     fireEvent.click(getByRole('button', { name: 'Filters' }));
     const panel = document.getElementById('list-filters-panel');
     expect(panel).not.toBeNull();
+    fireEvent.click(within(panel!).getByRole('button', { name: 'Contexts & tags' }));
     fireEvent.click(within(panel!).getByRole('button', { name: /@work/ }));
 
     await waitFor(() => {

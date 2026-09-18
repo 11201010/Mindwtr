@@ -475,6 +475,7 @@ describe('ArchiveView', () => {
             renderWithBoth();
 
             fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+            fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
             // Rows carry their own clickable context chips now, so anchor the
             // match to the panel's chip, whose name starts with the token.
             fireEvent.click(screen.getByRole('button', { name: /^@home/ }));
@@ -498,10 +499,11 @@ describe('ArchiveView', () => {
             expect(rowTitles()).toEqual([]);
 
             fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+            fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
             // Included → excluded: nothing archived carries @office, so both
             // rows come back, and the chip is still listed under its excluded
             // name so the last click can clear it.
-            fireEvent.click(screen.getByRole('button', { name: /@office/ }));
+            fireEvent.click(screen.getByRole('button', { name: '@office' }));
             expect(rowTitles()).toHaveLength(2);
             expect(useUiStore.getState().listFilters.criteria.excludedContexts).toEqual(['@office']);
 
@@ -514,6 +516,7 @@ describe('ArchiveView', () => {
             renderWithBoth();
 
             fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+            fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
             const chip = () => screen.getByRole('button', { name: /^@home/ });
             fireEvent.click(chip());
             fireEvent.click(chip());
@@ -524,12 +527,22 @@ describe('ArchiveView', () => {
 
         it('defaults to newest completion first and re-sorts by title on request', () => {
             renderWithBoth();
+            const sort = screen.getByRole('combobox', { name: 'Sort' });
+            const group = screen.getByRole('combobox', { name: 'Group' });
 
             expect(rowTitles()).toEqual(['Tidy the garage', 'Archived task']);
+            expect(sort).toHaveClass('bg-card');
+            expect(group).toHaveClass('bg-card');
+            expect(screen.queryByRole('button', { name: 'View options' })).not.toBeInTheDocument();
 
             pickOption('Sort', 'Title');
 
             expect(rowTitles()).toEqual(['Archived task', 'Tidy the garage']);
+            expect(sort).toHaveClass('bg-primary/10');
+            expect(group).toHaveClass('bg-card');
+
+            pickOption('Sort', 'Default');
+            expect(sort).toHaveClass('bg-card');
         });
 
         it('groups archived tasks by the chosen axis', () => {

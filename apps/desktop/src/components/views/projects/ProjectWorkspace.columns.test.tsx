@@ -65,6 +65,7 @@ const translations: Record<string, string> = {
     'projects.sectionEmpty': 'No tasks',
     'projects.sectionNotes': 'Section notes',
     'projects.sectionsLabel': 'Tasks',
+    'taskEdit.moreOptions': 'More options',
     'sort.default': 'Default',
     'sort.label': 'Sort',
 };
@@ -209,18 +210,21 @@ describe('ProjectWorkspace sections-as-columns (#1019)', () => {
         withoutSections.unmount();
 
         const withSections = renderWorkspace();
-        expect(withSections.getByRole('button', { name: 'Columns' })).toBeInTheDocument();
+        fireEvent.click(withSections.getByRole('button', { name: 'More options: Tasks' }));
+        expect(withSections.getByRole('menuitemcheckbox', { name: 'Columns' })).toBeInTheDocument();
     });
 
     it('remembers the layout per project as device-local state', () => {
         const { getByRole } = renderWorkspace();
 
-        fireEvent.click(getByRole('button', { name: 'Columns' }));
+        fireEvent.click(getByRole('button', { name: 'More options: Tasks' }));
+        fireEvent.click(getByRole('menuitemcheckbox', { name: 'Columns' }));
 
         expect(useUiStore.getState().projectLayouts).toEqual({ [project.id]: 'columns' });
         expect(window.localStorage.getItem('mindwtr:project-layouts:v1'))
             .toBe(JSON.stringify({ [project.id]: 'columns' }));
-        expect(getByRole('button', { name: 'Columns' })).toHaveAttribute('aria-pressed', 'true');
+        fireEvent.click(getByRole('button', { name: 'More options: Tasks' }));
+        expect(getByRole('menuitemcheckbox', { name: 'Columns' })).toHaveAttribute('aria-checked', 'true');
     });
 
     it('renders sections in order with the unsectioned bucket last, each column holding its own tasks', () => {
@@ -360,9 +364,23 @@ describe('ProjectWorkspace sections-as-columns (#1019)', () => {
     it('reorders sections along the column axis with left/right affordances', () => {
         const { getByRole, store } = renderWorkspace({ layout: 'columns' });
 
-        fireEvent.click(getByRole('button', { name: 'Move section left: Shipping' }));
+        fireEvent.click(getByRole('button', { name: 'More options: Shipping' }));
+        fireEvent.click(getByRole('menuitem', { name: 'Move section left: Shipping' }));
 
         expect(store.reorderSections).toHaveBeenCalledWith(project.id, [shipping.id, planning.id]);
+    });
+
+    it('dismisses a section overflow with Escape and restores focus to its trigger', () => {
+        const { getByRole, queryByRole } = renderWorkspace({ layout: 'columns' });
+        const trigger = getByRole('button', { name: 'More options: Planning' });
+
+        fireEvent.click(trigger);
+        const firstAction = getByRole('menuitem', { name: 'Move section right: Planning' });
+        expect(firstAction).toHaveFocus();
+
+        fireEvent.keyDown(firstAction, { key: 'Escape' });
+        expect(queryByRole('menuitem', { name: 'Move section right: Planning' })).not.toBeInTheDocument();
+        expect(trigger).toHaveFocus();
     });
 });
 
@@ -436,7 +454,8 @@ describe('ProjectWorkspace section notes preview', () => {
 
         expect(previewTexts(container)).toEqual(['Planning notes', 'Shipping notes']);
 
-        fireEvent.click(getAllByRole('button', { name: 'Section notes' })[0]);
+        fireEvent.click(getAllByRole('button', { name: 'More options: Planning' })[0]);
+        fireEvent.click(getAllByRole('menuitem', { name: 'Section notes' })[0]);
 
         expect(previewTexts(container)).toEqual(['Shipping notes']);
     });

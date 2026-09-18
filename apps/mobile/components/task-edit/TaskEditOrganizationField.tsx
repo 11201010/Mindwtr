@@ -25,7 +25,6 @@ import {
     Hourglass,
     Layers,
     ListTodo,
-    MapPin,
     Timer,
     User,
     X,
@@ -82,6 +81,7 @@ export function TaskEditOrganizationField({
     energyLevelOptions,
     fieldId,
     handleInputFocus,
+    destinationFields,
     prioritiesEnabled,
     priorityOptions,
     projectSections,
@@ -89,7 +89,6 @@ export function TaskEditOrganizationField({
     requestBackdatedCompletion,
     requestStatusChange,
     setDraftField,
-    setShowAreaPicker,
     setShowProjectPicker,
     setShowSectionPicker,
     styles,
@@ -255,52 +254,24 @@ export function TaskEditOrganizationField({
                     </View>
                 </View>
             );
-        case 'project': {
+        case 'project':
+        case 'area': {
+            const destinationFieldId = destinationFields.find(
+                (candidate) => candidate === 'project' || candidate === 'area',
+            );
+            if (fieldId !== destinationFieldId) return null;
             const projectId = draft.projectId;
-            if (!projectId) {
-                return renderCompactPicker(
-                    t('taskEdit.projectLabel'),
-                    t('taskEdit.noProjectOption'),
-                    () => setShowProjectPicker(true),
-                    Folder
-                );
-            }
-            return (
-                <View style={styles.formGroup}>
-                    <FieldHeading
-                        icon={Folder}
-                        label={t('taskEdit.projectLabel')}
-                        iconColor={tc.secondaryText}
-                        labelStyle={[styles.label, { color: tc.secondaryText }]}
-                    />
-                    <View style={styles.dateRow}>
-                        <TouchableOpacity
-                            style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                            onPress={() => setShowProjectPicker(true)}
-                        >
-                            <Text style={{ color: tc.text }}>
-                                {projects.find((project) => project.id === projectId)?.title || t('taskEdit.noProjectOption')}
-                            </Text>
-                        </TouchableOpacity>
-                        {!!projectId && (
-                            <TouchableOpacity
-                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                onPress={() => {
-                                    const areaId = draft.areaId
-                                        || projects.find((project) => project.id === draft.projectId)?.areaId
-                                        || '';
-                                    setDraftField('projectId', '');
-                                    setDraftField('sectionId', '');
-                                    setDraftField('areaId', areaId);
-                                }}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('common.clear')}
-                            >
-                                <X size={14} color={tc.secondaryText} aria-hidden accessible={false} pointerEvents="none" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
-                </View>
+            const areaId = draft.areaId;
+            const destination = projectId
+                ? projects.find((project) => project.id === projectId)?.title || t('taskEdit.noProjectOption')
+                : areaId
+                    ? areas.find((area) => area.id === areaId)?.name || t('taskEdit.noAreaOption')
+                    : t('common.none');
+            return renderCompactPicker(
+                t('task.destination'),
+                destination,
+                () => setShowProjectPicker(true),
+                Folder,
             );
         }
         case 'section': {
@@ -328,48 +299,6 @@ export function TaskEditOrganizationField({
                             <TouchableOpacity
                                 style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
                                 onPress={() => setDraftField('sectionId', '')}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('common.clear')}
-                            >
-                                <X size={14} color={tc.secondaryText} aria-hidden accessible={false} pointerEvents="none" />
-                            </TouchableOpacity>
-                        )}
-                    </View>
-                </View>
-            );
-        }
-        case 'area': {
-            const areaId = draft.areaId;
-            if (draft.projectId) return null;
-            if (!areaId) {
-                return renderCompactPicker(
-                    t('taskEdit.areaLabel'),
-                    t('taskEdit.noAreaOption'),
-                    () => setShowAreaPicker(true),
-                    MapPin
-                );
-            }
-            return (
-                <View style={styles.formGroup}>
-                    <FieldHeading
-                        icon={MapPin}
-                        label={t('taskEdit.areaLabel')}
-                        iconColor={tc.secondaryText}
-                        labelStyle={[styles.label, { color: tc.secondaryText }]}
-                    />
-                    <View style={styles.dateRow}>
-                        <TouchableOpacity
-                            style={[styles.dateBtn, styles.flex1, { backgroundColor: tc.inputBg, borderColor: tc.border }]}
-                            onPress={() => setShowAreaPicker(true)}
-                        >
-                            <Text style={{ color: tc.text }}>
-                                {areas.find((area) => area.id === areaId)?.name || t('taskEdit.noAreaOption')}
-                            </Text>
-                        </TouchableOpacity>
-                        {!!areaId && (
-                            <TouchableOpacity
-                                style={[styles.clearDateBtn, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
-                                onPress={() => setDraftField('areaId', '')}
                                 accessibilityRole="button"
                                 accessibilityLabel={t('common.clear')}
                             >

@@ -106,10 +106,12 @@ export const resolveMoreMenuFrameStyle = (
 
 function MoreSheetTile({
   item,
+  itemStyle,
   onNavigate,
   tc,
 }: {
   item: MoreDestination;
+  itemStyle?: ViewStyle;
   onNavigate: (route: string) => void;
   tc: ReturnType<typeof useThemeColors>;
 }) {
@@ -126,6 +128,7 @@ function MoreSheetTile({
       }}
       style={({ pressed }) => [
         styles.moreTile,
+        itemStyle,
         {
           backgroundColor: pressed ? tc.filterBg : tc.cardBg,
           borderColor: tc.border,
@@ -184,7 +187,7 @@ function MoreSheetCompactItem({
         numberOfLines={2}
         adjustsFontSizeToFit
         minimumFontScale={0.72}
-        maxFontSizeMultiplier={1}
+        maxFontSizeMultiplier={COMPACT_NAV_TEXT_MAX_SCALE}
       >
         {item.displayLabel ?? item.label}
       </Text>
@@ -229,8 +232,7 @@ function MoreNavigationSheet({
     waiting: '#F2B705',
     someday: '#6366F1',
     reference: '#0EA5E9',
-    done: '#22C55E',
-    archived: '#64748B',
+    history: '#22C55E',
     trash: '#EF4444',
     settings: '#64748B',
     saved: '#4F8CF7',
@@ -332,13 +334,11 @@ function MoreNavigationSheet({
     calendar: { id: 'calendar', label: t('nav.calendar'), icon: 'calendar', iconColor: iconColors.calendar, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.calendar },
     contexts: { id: 'contexts', label: t('nav.contexts'), icon: 'circle', iconColor: iconColors.contexts, route: MOBILE_QUICK_ACCESS_STACK_ROUTE.contexts },
   };
-  const moreQuickAccessItem = (view: Exclude<MobileQuickAccessView, 'review'>) => (
-    quickAccessView === view ? quickAccessItems.review : quickAccessItems[view]
+  const moreQuickAccessItem = (view: Exclude<MobileQuickAccessView, 'projects'>) => (
+    quickAccessView === view ? quickAccessItems.projects : quickAccessItems[view]
   );
   const primaryItems: MoreDestination[] = [
     { id: 'waiting', label: t('nav.waiting'), icon: 'pause.circle.fill', iconColor: iconColors.waiting, route: '/waiting' },
-    { id: 'board', label: t('nav.board'), icon: 'square.grid.2x2.fill', iconColor: iconColors.board, route: '/board' },
-    moreQuickAccessItem('projects'),
     {
       id: 'someday',
       label: t('nav.someday'),
@@ -347,14 +347,15 @@ function MoreNavigationSheet({
       iconColor: iconColors.someday,
       route: '/someday',
     },
+    moreQuickAccessItem('review'),
+    { id: 'reference', label: t('nav.reference'), icon: 'book.closed.fill', iconColor: iconColors.reference, route: '/reference' },
     moreQuickAccessItem('contexts'),
     moreQuickAccessItem('calendar'),
   ];
   const secondaryItems: MoreDestination[] = [
     { id: 'trash', label: t('nav.trash'), icon: 'trash.fill', iconColor: iconColors.trash, route: '/trash' },
-    { id: 'archived', label: t('nav.archived'), icon: 'archivebox.fill', iconColor: iconColors.archived, route: '/archived' },
-    { id: 'done', label: t('nav.done'), icon: 'checkmark.circle.fill', iconColor: iconColors.done, route: '/done' },
-    { id: 'reference', label: t('nav.reference'), icon: 'book.closed.fill', iconColor: iconColors.reference, route: '/reference' },
+    { id: 'board', label: t('tab.board'), icon: 'square.grid.2x2.fill', iconColor: iconColors.board, route: '/board' },
+    { id: 'history', label: t('nav.history'), icon: 'clock.arrow.circlepath', iconColor: iconColors.history, route: '/history' },
     { id: 'settings', label: t('nav.settings'), icon: 'gearshape.fill', iconColor: iconColors.settings, route: '/settings' },
   ];
 
@@ -377,6 +378,9 @@ function MoreNavigationSheet({
             {
               backgroundColor: tc.cardBg,
               borderColor: tc.border,
+              // Keep the rounded Android surface opaque through its final
+              // pixel instead of exposing the screen at the tab-bar seam.
+              borderBottomColor: constrainedSheetStyle ? tc.border : tc.cardBg,
               bottom: 0,
               transform: [{ translateY: sheetTranslateY }],
             },
@@ -434,7 +438,13 @@ function MoreNavigationSheet({
 
             <View style={styles.morePrimaryGrid}>
               {primaryItems.map((item) => (
-                <MoreSheetTile key={item.id} item={item} onNavigate={onNavigate} tc={tc} />
+                <MoreSheetTile
+                  key={item.id}
+                  item={item}
+                  itemStyle={styles.moreTileThird}
+                  onNavigate={onNavigate}
+                  tc={tc}
+                />
               ))}
             </View>
           </ScrollView>
@@ -1208,7 +1218,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     maxHeight: '82%',
     paddingTop: 10,
     paddingHorizontal: 18,
@@ -1234,11 +1244,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    flexBasis: '31%',
     flexGrow: 1,
     minHeight: 104,
     paddingHorizontal: 8,
     paddingVertical: 12,
+  },
+  moreTileHalf: {
+    flexBasis: '47%',
+  },
+  moreTileThird: {
+    flexBasis: '31%',
   },
   moreTileIcon: {
     width: 44,

@@ -23,6 +23,8 @@ const task: Task = {
 };
 
 const t = (key: string) => ({
+    'areas.new': 'New area',
+    'areas.manage': 'Areas',
     'areas.create': 'Create area',
     'areas.search': 'Search areas',
     'calendar.nextMonth': 'Next month',
@@ -31,9 +33,13 @@ const t = (key: string) => ({
     'common.clear': 'Clear',
     'common.delete': 'Delete',
     'common.noMatches': 'No matches',
+    'common.none': 'None',
+    'common.search': 'Search',
     'common.save': 'Save',
     'nav.calendar': 'Calendar',
     'projects.duplicate': 'Duplicate',
+    'projects.new': 'New project',
+    'projects.title': 'Projects',
     'projects.create': 'Create project',
     'projects.search': 'Search projects',
     'review.markReviewed': 'Mark reviewed',
@@ -43,6 +49,9 @@ const t = (key: string) => ({
     'task.aria.dueTime': 'Due time',
     'task.aria.reviewTime': 'Review time',
     'task.aria.startTime': 'Start time',
+    'task.dates': 'Dates…',
+    'task.destination': 'Destination',
+    'task.moveTo': 'Move to…',
     'taskEdit.areaLabel': 'Area',
     'priority.low': 'Low',
     'priority.medium': 'Medium',
@@ -57,6 +66,9 @@ const t = (key: string) => ({
     'taskEdit.projectLabel': 'Project',
     'taskEdit.reviewDateLabel': 'Review Date',
     'taskEdit.startDateLabel': 'Start Date',
+    'taskEdit.sectionLabel': 'Section',
+    'taskEdit.noSectionOption': 'No Section',
+    'sections.search': 'Search sections',
     'waiting.moveToNext': 'Move to Next',
 }[key] ?? key);
 
@@ -104,6 +116,16 @@ const renderClosableMenu = (overrides: Partial<ComponentProps<typeof TaskQuickAc
     }
     render(<Harness />);
     return props;
+};
+
+const openDatePanel = (name: 'Start Date…' | 'Due Date…' | 'Review Date…') => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dates…' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Dates…' })).getByRole('menuitem', { name }));
+};
+
+const openDestinationPanel = () => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Move to…' }));
+    return screen.getByRole('dialog', { name: 'Destination' });
 };
 
 describe('TaskQuickActionMenu', () => {
@@ -156,39 +178,28 @@ describe('TaskQuickActionMenu', () => {
         renderMenu();
 
         expect(screen.getByRole('menu', { name: /more options/i })).toBeInTheDocument();
-        const startButton = screen.getByRole('menuitem', { name: /start date/i });
-        expect(startButton).toHaveAttribute('aria-haspopup', 'dialog');
-        expect(startButton).toHaveAttribute('aria-expanded', 'false');
-        expect(startButton).not.toHaveAttribute('aria-pressed');
-        expect(startButton).toHaveClass('focus-visible:ring-2');
+        const datesButton = screen.getByRole('menuitem', { name: 'Dates…' });
+        expect(datesButton).toHaveAttribute('aria-haspopup', 'dialog');
+        expect(datesButton).toHaveAttribute('aria-expanded', 'false');
+        expect(datesButton).not.toHaveAttribute('aria-pressed');
+        expect(datesButton).toHaveClass('focus-visible:ring-2');
 
-        fireEvent.click(startButton);
+        openDatePanel('Start Date…');
 
-        expect(startButton).toHaveAttribute('aria-expanded', 'true');
+        expect(datesButton).toHaveAttribute('aria-expanded', 'true');
         expect(screen.getByRole('dialog', { name: /start date/i }))
             .toHaveClass('w-[min(30rem,calc(100vw-1rem))]');
 
-        const dueButton = screen.getByRole('menuitem', { name: 'Due Date…' });
-        fireEvent.click(dueButton);
-
-        expect(dueButton).toHaveAttribute('aria-haspopup', 'dialog');
-        expect(startButton).toHaveAttribute('aria-expanded', 'false');
-        expect(dueButton).toHaveAttribute('aria-expanded', 'true');
-        expect(dueButton).not.toHaveAttribute('aria-pressed');
-        expect(dueButton).toHaveClass('focus-visible:ring-2');
+        openDatePanel('Due Date…');
         expect(screen.getByRole('dialog', { name: /due date/i })).toBeInTheDocument();
 
-        const reviewButton = screen.getByRole('menuitem', { name: /review date/i });
-        fireEvent.click(reviewButton);
-
-        expect(dueButton).toHaveAttribute('aria-expanded', 'false');
-        expect(reviewButton).toHaveAttribute('aria-expanded', 'true');
+        openDatePanel('Review Date…');
         expect(screen.getByRole('dialog', { name: /review date/i })).toBeInTheDocument();
     });
 
     it('uses Escape to close the active panel before closing the menu', () => {
         const props = renderMenu();
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
 
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(props.onClose).not.toHaveBeenCalled();
@@ -200,7 +211,7 @@ describe('TaskQuickActionMenu', () => {
 
     it('closes when clicking outside an open date panel', () => {
         const props = renderMenu();
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
 
         fireEvent.mouseDown(document.body);
 
@@ -289,7 +300,7 @@ describe('TaskQuickActionMenu', () => {
 
     it('closes the due date mini calendar when clicking elsewhere in the quick panel', () => {
         const props = renderMenu({ task: { ...task, dueDate: '2026-04-12' } });
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
 
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         fireEvent.focus(within(panel).getByLabelText('Due Date'));
@@ -305,7 +316,7 @@ describe('TaskQuickActionMenu', () => {
     it('discards a popover-selected quick date when Cancel is clicked', async () => {
         const user = userEvent.setup();
         const props = renderMenu({ task: { ...task, dueDate: '2026-04-12' } });
-        await user.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
 
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         await user.click(within(panel).getByRole('button', { name: 'Due Date Calendar' }));
@@ -325,7 +336,7 @@ describe('TaskQuickActionMenu', () => {
         const user = userEvent.setup();
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({ onUpdateTask });
-        await user.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
 
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         await user.click(within(panel).getByRole('button', { name: 'Due Date Calendar' }));
@@ -349,7 +360,7 @@ describe('TaskQuickActionMenu', () => {
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({ onUpdateTask });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: /start date/i }));
+        openDatePanel('Start Date…');
 
         const dialog = screen.getByRole('dialog', { name: /start date/i });
         fireEvent.change(within(dialog).getByLabelText('Start Date'), {
@@ -370,7 +381,7 @@ describe('TaskQuickActionMenu', () => {
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({ onUpdateTask });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: /start date/i }));
+        openDatePanel('Start Date…');
         const dialog = screen.getByRole('dialog', { name: /start date/i });
         const input = within(dialog).getByLabelText('Start Date');
         fireEvent.change(input, { target: { value: '2026-02-04' } });
@@ -386,7 +397,7 @@ describe('TaskQuickActionMenu', () => {
         const user = userEvent.setup();
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         renderMenu({ task: { ...task, startTime: '2026-02-04T09:30' }, onUpdateTask });
-        await user.click(screen.getByRole('menuitem', { name: /start date/i }));
+        openDatePanel('Start Date…');
         const panel = screen.getByRole('dialog', { name: /start date/i });
         await user.clear(within(panel).getByLabelText('Start time'));
         await user.keyboard('{Enter}');
@@ -397,7 +408,7 @@ describe('TaskQuickActionMenu', () => {
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({ task: { ...task, dueDate: '2026-04-12' }, onUpdateTask });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         fireEvent.keyDown(within(panel).getByLabelText('Due Date'), { key: 'Enter' });
 
@@ -405,7 +416,7 @@ describe('TaskQuickActionMenu', () => {
         expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('moves the task into a project from the Project panel and drops its section', async () => {
+    it('moves the task into a project from the Destination panel and clears its area and section', async () => {
         const onUpdateTask = vi.fn(async () => ({ success: true as const }));
         const props = renderMenu({
             task: { ...task, sectionId: 'section-old' },
@@ -422,14 +433,17 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Project…' }));
-        const panel = screen.getByRole('dialog', { name: 'Project' });
+        const panel = openDestinationPanel();
         expect(within(panel).getByRole('button', { name: 'Save' })).toBeDisabled();
-        fireEvent.click(within(panel).getByRole('button', { name: 'No Project' }));
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
         fireEvent.click(screen.getByRole('option', { name: 'Alpha' }));
         fireEvent.click(within(panel).getByRole('button', { name: 'Save' }));
 
-        await waitFor(() => expect(onUpdateTask).toHaveBeenCalledWith({ projectId: 'project-alpha', sectionId: undefined }));
+        await waitFor(() => expect(onUpdateTask).toHaveBeenCalledWith({
+            projectId: 'project-alpha',
+            areaId: undefined,
+            sectionId: undefined,
+        }));
         await waitFor(() => expect(props.onClose).toHaveBeenCalled());
     });
 
@@ -445,13 +459,12 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Project…' }));
-        const panel = screen.getByRole('dialog', { name: 'Project' });
-        fireEvent.click(within(panel).getByRole('button', { name: 'No Project' }));
-        fireEvent.change(screen.getByRole('textbox', { name: 'Search projects' }), {
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
+        fireEvent.change(screen.getByRole('textbox', { name: 'Search' }), {
             target: { value: 'Garden redesign' },
         });
-        const createOption = screen.getByRole('option', { name: 'Create project "Garden redesign"' });
+        const createOption = screen.getByRole('button', { name: 'New project: “Garden redesign”' });
         fireEvent.click(createOption);
         fireEvent.click(createOption);
 
@@ -468,6 +481,7 @@ describe('TaskQuickActionMenu', () => {
 
         await waitFor(() => expect(onUpdateTask).toHaveBeenCalledExactlyOnceWith({
             projectId: 'project-garden',
+            areaId: undefined,
             sectionId: undefined,
         }));
         expect(props.onClose).toHaveBeenCalledTimes(1);
@@ -492,13 +506,12 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Project…' }));
-        const panel = screen.getByRole('dialog', { name: 'Project' });
-        fireEvent.click(within(panel).getByRole('button', { name: 'Original' }));
-        fireEvent.change(screen.getByRole('textbox', { name: 'Search projects' }), {
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
+        fireEvent.change(screen.getByRole('textbox', { name: 'Search' }), {
             target: { value: 'Garden redesign' },
         });
-        fireEvent.click(screen.getByRole('option', { name: 'Create project "Garden redesign"' }));
+        fireEvent.click(screen.getByRole('button', { name: 'New project: “Garden redesign”' }));
         await waitFor(() => expect(within(panel).getByRole('button', { name: 'Save' })).toBeEnabled());
         fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
 
@@ -512,15 +525,14 @@ describe('TaskQuickActionMenu', () => {
             .mockResolvedValueOnce('project-garden');
         renderMenu({ onCreateProject });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Project…' }));
-        const panel = screen.getByRole('dialog', { name: 'Project' });
-        fireEvent.click(within(panel).getByRole('button', { name: 'No Project' }));
-        const search = screen.getByRole('textbox', { name: 'Search projects' });
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
+        const search = screen.getByRole('textbox', { name: 'Search' });
         fireEvent.change(search, { target: { value: 'Garden redesign' } });
-        fireEvent.click(screen.getByRole('option', { name: 'Create project "Garden redesign"' }));
+        fireEvent.click(screen.getByRole('button', { name: 'New project: “Garden redesign”' }));
 
         await waitFor(() => expect(search).toHaveValue('Garden redesign'));
-        const retryOption = screen.getByRole('option', { name: 'Create project "Garden redesign"' });
+        const retryOption = screen.getByRole('button', { name: 'New project: “Garden redesign”' });
         expect(retryOption).toBeEnabled();
         fireEvent.click(retryOption);
 
@@ -531,7 +543,7 @@ describe('TaskQuickActionMenu', () => {
         const onCreateProject = vi.fn(async () => 'project-new');
         renderMenu({ task: { ...task, status: 'done' }, readOnly: true, onCreateProject });
 
-        expect(screen.queryByRole('menuitem', { name: 'Project…' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('menuitem', { name: 'Move to…' })).not.toBeInTheDocument();
         expect(onCreateProject).not.toHaveBeenCalled();
     });
 
@@ -549,17 +561,16 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Area…' }));
-        fireEvent.click(screen.getByRole('button', { name: 'No Area' }));
-        const search = screen.getByRole('textbox', { name: 'Search areas' });
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
+        const search = screen.getByRole('textbox', { name: 'Search' });
         fireEvent.change(search, { target: { value: 'Wo' } });
         fireEvent.keyDown(search, { key: 'Enter' });
 
         // Enter picked the area in the dropdown; the panel stays open for Save.
         expect(onUpdateTask).not.toHaveBeenCalled();
         expect(props.onClose).not.toHaveBeenCalled();
-        const panel = screen.getByRole('dialog', { name: 'Area' });
-        expect(within(panel).getByRole('button', { name: 'Work' })).toBeInTheDocument();
+        expect(within(panel).getByRole('button', { name: 'Destination' })).toHaveTextContent('Work');
     });
 
     it('keeps a mini-calendar date in the draft until Save', async () => {
@@ -569,7 +580,7 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         fireEvent.focus(within(panel).getByLabelText('Due Date'));
         fireEvent.click(within(panel).getByRole('button', { name: 'Due Date Calendar' }));
@@ -598,7 +609,7 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        openDatePanel('Due Date…');
         const panel = screen.getByRole('dialog', { name: 'Due Date' });
         const input = within(panel).getByLabelText('Due Date') as HTMLInputElement;
 
@@ -619,6 +630,7 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Dates…' }));
         fireEvent.click(screen.getByRole('menuitem', { name: 'Mark reviewed' }));
 
         await waitFor(() => {
@@ -634,6 +646,7 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Dates…' }));
         fireEvent.click(screen.getByRole('menuitem', { name: 'Review in 1 week' }));
 
         const expected = new Date();
@@ -649,6 +662,7 @@ describe('TaskQuickActionMenu', () => {
         renderMenu({
             task: { ...task, reviewAt: '2999-01-01T00:00:00.000Z' },
         });
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Dates…' }));
 
         expect(screen.queryByRole('menuitem', { name: 'Mark reviewed' })).not.toBeInTheDocument();
         expect(screen.queryByRole('menuitem', { name: 'Review in 1 week' })).not.toBeInTheDocument();
@@ -669,21 +683,24 @@ describe('TaskQuickActionMenu', () => {
             onUpdateTask,
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Area…' }));
-        fireEvent.click(screen.getByRole('button', { name: 'No Area' }));
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
 
         const option = screen.getByRole('option', { name: 'Work' });
         fireEvent.mouseDown(option);
         expect(props.onClose).not.toHaveBeenCalled();
 
         fireEvent.click(option);
-        const panel = screen.getByRole('dialog', { name: 'Area' });
-        expect(within(panel).getByRole('button', { name: 'Work' })).toBeInTheDocument();
+        expect(within(panel).getByRole('button', { name: 'Destination' })).toHaveTextContent('Work');
 
         fireEvent.click(within(panel).getByRole('button', { name: 'Save' }));
 
         await waitFor(() => {
-            expect(onUpdateTask).toHaveBeenCalledWith({ areaId: 'area-work' });
+            expect(onUpdateTask).toHaveBeenCalledWith({
+                projectId: undefined,
+                areaId: 'area-work',
+                sectionId: undefined,
+            });
         });
         expect(props.onClose).toHaveBeenCalledTimes(1);
     });
@@ -698,19 +715,19 @@ describe('TaskQuickActionMenu', () => {
         renderMenu();
 
         fireEvent.keyDown(window, { key: 'ArrowDown' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /start date/i }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Dates…' }));
 
         fireEvent.keyDown(window, { key: 'ArrowDown' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Due Date…' }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Move to…' }));
 
         fireEvent.keyDown(window, { key: 'ArrowUp' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /start date/i }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Dates…' }));
 
         fireEvent.keyDown(window, { key: 'ArrowUp' });
         expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }));
 
         fireEvent.keyDown(window, { key: 'ArrowDown' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /start date/i }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Dates…' }));
     });
 
     it('highlights the focused item with a plain focus style, not focus-visible only', () => {
@@ -727,35 +744,36 @@ describe('TaskQuickActionMenu', () => {
         expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }));
 
         fireEvent.keyDown(window, { key: 'Home' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /start date/i }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Dates…' }));
     });
 
     it('opens the focused submenu panel with ArrowRight and closes it with ArrowLeft', () => {
         renderMenu();
 
-        const startButton = screen.getByRole('menuitem', { name: /start date/i });
-        startButton.focus();
+        const datesButton = screen.getByRole('menuitem', { name: 'Dates…' });
+        datesButton.focus();
         fireEvent.keyDown(window, { key: 'ArrowRight' });
 
-        expect(screen.getByRole('dialog', { name: /start date/i })).toBeInTheDocument();
+        expect(screen.getByRole('dialog', { name: 'Dates…' })).toBeInTheDocument();
 
         fireEvent.keyDown(window, { key: 'ArrowLeft' });
 
-        expect(screen.queryByRole('dialog', { name: /start date/i })).not.toBeInTheDocument();
-        expect(document.activeElement).toBe(startButton);
+        expect(screen.queryByRole('dialog', { name: 'Dates…' })).not.toBeInTheDocument();
+        expect(document.activeElement).toBe(datesButton);
     });
 
     it('returns focus to the anchoring item when Escape closes a panel', () => {
         renderMenu();
 
-        const dueButton = screen.getByRole('menuitem', { name: 'Due Date…' });
-        fireEvent.click(dueButton);
+        const datesButton = screen.getByRole('menuitem', { name: 'Dates…' });
+        fireEvent.click(datesButton);
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Due Date…' }));
         expect(screen.getByRole('dialog', { name: 'Due Date' })).toBeInTheDocument();
 
         fireEvent.keyDown(window, { key: 'Escape' });
 
         expect(screen.queryByRole('dialog', { name: 'Due Date' })).not.toBeInTheDocument();
-        expect(document.activeElement).toBe(dueButton);
+        expect(document.activeElement).toBe(datesButton);
     });
 
     it('skips disabled items when moving focus', () => {
@@ -770,7 +788,7 @@ describe('TaskQuickActionMenu', () => {
         });
 
         fireEvent.keyDown(window, { key: 'Home' });
-        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /start date/i }));
+        expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Dates…' }));
     });
 
     it('lets Escape close the area selector dropdown before the panel and menu', () => {
@@ -785,55 +803,33 @@ describe('TaskQuickActionMenu', () => {
             }],
         });
 
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Area…' }));
-        fireEvent.click(screen.getByRole('button', { name: 'No Area' }));
-        const search = screen.getByRole('textbox', { name: 'Search areas' });
+        const panel = openDestinationPanel();
+        fireEvent.click(within(panel).getByRole('button', { name: 'Destination' }));
+        const search = screen.getByRole('textbox', { name: 'Search' });
 
         fireEvent.keyDown(search, { key: 'Escape' });
         expect(screen.queryByRole('option', { name: 'Work' })).not.toBeInTheDocument();
-        expect(screen.getByRole('dialog', { name: 'Area' })).toBeInTheDocument();
+        expect(screen.getByRole('dialog', { name: 'Destination' })).toBeInTheDocument();
         expect(props.onClose).not.toHaveBeenCalled();
 
         fireEvent.keyDown(window, { key: 'Escape' });
-        expect(screen.queryByRole('dialog', { name: 'Area' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('dialog', { name: 'Destination' })).not.toBeInTheDocument();
         expect(props.onClose).not.toHaveBeenCalled();
 
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(props.onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps secondary task row actions in the quick menu', () => {
-        const onStatusChange = vi.fn();
-        const props = renderMenu({ onStatusChange });
-
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Convert to Reference' }));
-        expect(onStatusChange).toHaveBeenCalledWith('reference');
-        expect(props.onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it('runs the convert-to-section action only for a task in a project', () => {
-        const onConvertToSection = vi.fn();
-        renderMenu({ onConvertToSection });
-        expect(screen.queryByRole('menuitem', { name: 'Convert to Section' })).not.toBeInTheDocument();
-
-        const props = renderMenu({
-            onConvertToSection,
-            task: { ...task, id: 'task-2', projectId: 'project-1' },
+    it('keeps conversion actions out of the quick menu', () => {
+        renderMenu({
+            onConvertToSection: vi.fn(),
+            onPromoteToProject: vi.fn(),
+            task: { ...task, projectId: 'project-1' },
         });
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Convert to Section' }));
 
-        expect(onConvertToSection).toHaveBeenCalledTimes(1);
-        expect(props.onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it('runs the promote-to-project action from the quick menu', () => {
-        const onPromoteToProject = vi.fn();
-        const props = renderMenu({ onPromoteToProject });
-
-        fireEvent.click(screen.getByRole('menuitem', { name: 'Create project from task' }));
-
-        expect(onPromoteToProject).toHaveBeenCalledTimes(1);
-        expect(props.onClose).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('menuitem', { name: 'Convert to Reference' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('menuitem', { name: 'Convert to Section' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('menuitem', { name: 'Create project from task' })).not.toBeInTheDocument();
     });
 
     it('runs the focus action from the quick menu and closes it', () => {

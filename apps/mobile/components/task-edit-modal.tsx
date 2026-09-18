@@ -501,6 +501,10 @@ function TaskEditModalInner({
         visibleAttachmentsLength: visibleAttachments.length,
         t,
     });
+    const destinationFields = useMemo(
+        () => basicFields.filter((fieldId) => fieldId === 'project' || fieldId === 'area'),
+        [basicFields],
+    );
     const isReference = (taskEditDraft?.draft.status ?? task?.status) === 'reference';
     const readOnlyProjectSections = useMemo(() => {
         if (!readOnly || !task?.projectId) return [];
@@ -826,7 +830,6 @@ function TaskEditModalInner({
         handleAIClarify,
         handleAIBreakdown,
         handleAttemptClose,
-        handleConvertToReference,
         handleConvertToSection,
         handleCancelTask,
         handleDeleteTask,
@@ -938,6 +941,7 @@ function TaskEditModalInner({
         applyChecklistUpdate,
         language,
         monthlyPattern,
+        destinationFields,
         onDateChange,
         openAddLinkAttachment,
         openAttachment: stableOpenAttachment,
@@ -1030,6 +1034,7 @@ function TaskEditModalInner({
         applyChecklistUpdate,
         language,
         monthlyPattern,
+        destinationFields,
         onDateChange,
         openAddLinkAttachment,
         stableOpenAttachment,
@@ -1131,8 +1136,6 @@ function TaskEditModalInner({
                             ? tFallback(t, 'task.cancelRecurringSeries', 'Cancel recurring series')
                             : tFallback(t, 'task.cancel', 'Cancel task')}
                         onDelete={handleDeleteTask}
-                        onConvertToReference={handleConvertToReference}
-                        showConvertToReference={!isReference}
                         onConvertToAction={handleConvertToAction}
                         showConvertToAction={isReference}
                         onConvertToSection={handleConvertToSection}
@@ -1326,6 +1329,7 @@ function TaskEditModalInner({
                         linkInputTouched={linkInputTouched}
                         linkModalVisible={linkModalVisible}
                         linkModalTitle={editingLinkAttachmentId ? t('common.edit') : t('attachments.addLink')}
+                        destinationFields={destinationFields}
                         projectFilterAreaId={projectFilterAreaId}
                         projects={projects}
                         recurrenceWeekdayButtons={recurrenceWeekdayButtons}

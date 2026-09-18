@@ -148,6 +148,7 @@ export const allowedEnglishMirrorKeysByLocale: Record<string, readonly string[]>
     ],
     fr: [
         'calendar.date',
+        'task.dates', // "Dates" is the same word in French and English.
         'keybindings.style.standard',
         'common.pause',
         'context.energy.routine',

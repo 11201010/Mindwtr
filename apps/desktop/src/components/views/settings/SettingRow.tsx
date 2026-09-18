@@ -86,6 +86,9 @@ type SettingsDisclosureCardProps = {
     // Label key of the settings this card contains, so a search result can
     // open it before scrolling to the row (see settings-search.ts).
     sectionKey: string;
+    // A disclosure that only groups searchable child rows can opt out of being
+    // treated as a standalone setting while keeping its reveal section key.
+    settingsKey?: string | null;
     title: string;
     description?: string;
     hint?: string;
@@ -98,6 +101,7 @@ type SettingsDisclosureCardProps = {
 // chevron, with its rows opening in place underneath.
 export function SettingsDisclosureCard({
     sectionKey,
+    settingsKey = sectionKey,
     title,
     description,
     hint,
@@ -112,7 +116,7 @@ export function SettingsDisclosureCard({
                 onClick={onToggle}
                 aria-expanded={open}
                 data-settings-section={sectionKey}
-                data-settings-key={sectionKey}
+                data-settings-key={settingsKey ?? undefined}
                 className="w-full p-4 flex items-center justify-between gap-4 text-left"
             >
                 <div className="min-w-0">

@@ -10,7 +10,6 @@ import {
     shallow,
     tFallback,
     useTaskStore,
-    type Section,
     type Task,
     type TaskDraftSetter,
     type TaskStatus,
@@ -28,14 +27,11 @@ import { formatTaskMarkedDoneMessage, formatTaskMovedMessage } from '@mindwtr/co
 import { TaskQuickActionMenu, type TaskQuickActionMenuProps } from './TaskQuickActionMenu';
 import { useTaskItemProjectContext } from './useTaskItemProjectContext';
 
-const EMPTY_SECTIONS: Section[] = [];
 const NOOP_SET_DRAFT_FIELD: TaskDraftSetter = () => {};
 
 export type TaskQuickActionMenuOverrides = {
     readOnly?: boolean;
     onRename?: () => void;
-    onPromoteToProject?: () => void;
-    onConvertToSection?: () => void;
     focusAction?: TaskQuickActionMenuProps['focusAction'];
     /** Runs before the default delete; the row uses it to close its edit session. */
     onBeforeDelete?: () => void;
@@ -130,8 +126,8 @@ export function useTaskQuickActionMenuProps(
     overrides?: TaskQuickActionMenuOverrides,
 ): Omit<TaskQuickActionMenuProps, 'x' | 'y' | 'onClose'> {
     const { t, language } = useLanguage();
-    const { areas, projects, settings } = useTaskStore(
-        (state) => ({ areas: state.areas, projects: state.projects, settings: state.settings }),
+    const { areas, projects, sections, settings } = useTaskStore(
+        (state) => ({ areas: state.areas, projects: state.projects, sections: state.sections, settings: state.settings }),
         shallow,
     );
     const nativeDateInputLocale = useMemo(() => {
@@ -152,7 +148,7 @@ export function useTaskQuickActionMenuProps(
     // second copy of the token-collection/prefixing logic.
     const { allContexts, popularContextOptions } = useTaskItemProjectContext({
         task,
-        sections: EMPTY_SECTIONS,
+        sections,
         isEditing: false,
         loadTokenOptions: true,
         editProjectId: '',
@@ -292,13 +288,12 @@ export function useTaskQuickActionMenuProps(
         contextSuggestions: allContexts,
         areas,
         projects,
+        sections,
         readOnly,
         prioritiesEnabled: resolveFeatureFlags(settings).priorities,
         focusAction: overrides?.focusAction,
         onRename: overrides?.onRename,
         onDuplicate,
-        onPromoteToProject: overrides?.onPromoteToProject,
-        onConvertToSection: overrides?.onConvertToSection,
         onDelete,
         onStatusChange: overrides?.onStatusChange ?? defaultOnStatusChange,
         onCreateArea,

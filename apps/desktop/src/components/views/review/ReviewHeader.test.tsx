@@ -5,7 +5,9 @@ import { ReviewListControls } from './ReviewHeader';
 import { openToolbarSelect } from '../../../test/toolbar-select';
 
 const translations: Record<string, string> = {
+    'common.viewOptions': 'View options',
     'list.details': 'Details',
+    'list.showDetails': 'Show details',
     'list.groupBy': 'Group',
     'list.groupByArea': 'Area',
     'list.groupByContext': 'Context',
@@ -21,7 +23,44 @@ const translations: Record<string, string> = {
 };
 
 describe('ReviewListControls', () => {
-    it('keeps selection separate while placing display settings in an accessible popover', () => {
+    it('shows direct Sort and Group controls and highlights each non-default value independently', () => {
+        const controls = (sortBy: 'default' | 'title', groupBy: 'none' | 'project') => (
+            <ReviewListControls
+                selectionMode={false}
+                onToggleSelection={vi.fn()}
+                sortBy={sortBy}
+                onChangeSortBy={vi.fn()}
+                groupBy={groupBy}
+                onChangeGroupBy={vi.fn()}
+                showListDetails={false}
+                onToggleDetails={vi.fn()}
+                disableStatusGrouping={false}
+                t={(key) => translations[key] ?? key}
+                labels={{ select: 'Select', exitSelect: 'Exit select' }}
+            />
+        );
+        const view = render(controls('default', 'none'));
+        const sort = screen.getByRole('combobox', { name: 'Sort' });
+        const group = screen.getByRole('combobox', { name: 'Group' });
+
+        expect(screen.queryByRole('button', { name: 'View options' })).not.toBeInTheDocument();
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-card');
+
+        view.rerender(controls('title', 'none'));
+        expect(sort).toHaveClass('bg-primary/10');
+        expect(group).toHaveClass('bg-card');
+
+        view.rerender(controls('default', 'project'));
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-primary/10');
+
+        view.rerender(controls('default', 'none'));
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-card');
+    });
+
+    it('keeps selection and Details separate while Sort and Group stay directly accessible', () => {
         const onChangeSortBy = vi.fn();
         const onChangeGroupBy = vi.fn();
         const onToggleDetails = vi.fn();
@@ -42,14 +81,9 @@ describe('ReviewListControls', () => {
             />
         );
 
-        const viewButton = screen.getByRole('button', { name: 'View' });
         expect(screen.getByRole('button', { name: 'Select' })).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
-        expect(screen.queryByRole('dialog', { name: 'View' })).not.toBeInTheDocument();
-
-        fireEvent.click(viewButton);
-
-        expect(screen.getByRole('dialog', { name: 'View' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Show details' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'View options' })).not.toBeInTheDocument();
 
         // Status grouping is disabled while a single-status filter is active:
         // the option is inert and clicking it must not change the axis.
@@ -59,21 +93,12 @@ describe('ReviewListControls', () => {
         fireEvent.click(statusOption);
         expect(onChangeGroupBy).not.toHaveBeenCalled();
 
-        // The listbox portals outside the View panel; a mousedown inside it must
-        // not read as an outside click and close the panel.
         openToolbarSelect('Sort');
         const titleOption = screen.getByRole('option', { name: 'Title' });
-        fireEvent.mouseDown(titleOption);
-        expect(screen.getByRole('dialog', { name: 'View' })).toBeInTheDocument();
         fireEvent.click(titleOption);
         expect(onChangeSortBy).toHaveBeenCalledWith('title');
-        expect(screen.getByRole('dialog', { name: 'View' })).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
         expect(onToggleDetails).toHaveBeenCalledOnce();
-
-        fireEvent.keyDown(window, { key: 'Escape' });
-        expect(screen.queryByRole('dialog', { name: 'View' })).not.toBeInTheDocument();
-        expect(viewButton).toHaveFocus();
     });
 });

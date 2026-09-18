@@ -17,8 +17,6 @@ type TaskEditHeaderProps = {
   onCancelTask?: () => void;
   cancelTaskLabel?: string;
   onDelete: () => void;
-  onConvertToReference?: () => void;
-  showConvertToReference?: boolean;
   onConvertToAction?: () => void;
   showConvertToAction?: boolean;
   onConvertToSection?: () => void;
@@ -35,8 +33,6 @@ export function TaskEditHeader({
   onCancelTask,
   cancelTaskLabel,
   onDelete,
-  onConvertToReference,
-  showConvertToReference = false,
   onConvertToAction,
   showConvertToAction = false,
   onConvertToSection,
@@ -143,19 +139,6 @@ export function TaskEditHeader({
                   }}
                 >
                   <Text style={[styles.menuItemText, { color: tc.text }]}>{createProjectFromTaskLabel}</Text>
-                </AppPressable>
-              )}
-              {showConvertToReference && onConvertToReference && (
-                <AppPressable
-                  style={styles.menuItem}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('task.convertToReference')}
-                  onPress={() => {
-                    setMenuVisible(false);
-                    onConvertToReference();
-                  }}
-                >
-                  <Text style={[styles.menuItemText, { color: tc.text }]}>{t('task.convertToReference')}</Text>
                 </AppPressable>
               )}
               {showConvertToAction && onConvertToAction && (

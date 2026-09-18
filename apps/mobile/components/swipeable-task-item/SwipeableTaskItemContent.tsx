@@ -80,6 +80,19 @@ interface SwipeableTaskItemContentProps {
     tc: ThemeColors;
 }
 
+const COLLAPSED_META_KEYS = new Set([
+    'project',
+    'area',
+    'project-deadline',
+    'context',
+    'completed',
+    'cancelled',
+    'due',
+    'start',
+    'date-issue',
+    'checklist',
+]);
+
 export function SwipeableTaskItemContent({
     accessibilityActions,
     accessibilityHint,
@@ -212,12 +225,14 @@ export function SwipeableTaskItemContent({
         [task.description],
     );
     const metaParts: ReactNode[] = [];
+    const collapsedMetaParts: ReactNode[] = [];
     const canNavigateMeta = !selectionMode;
 
     // Items are separated by the row's gap alone. A "·" between them used to be
     // its own node, so a wrapped line could start with a lone dot (#1161).
-    const addMetaPart = (node: ReactNode, _key: string) => {
+    const addMetaPart = (node: ReactNode, key: string) => {
         metaParts.push(node);
+        if (COLLAPSED_META_KEYS.has(key)) collapsedMetaParts.push(node);
     };
 
     const renderMetaItem = ({
@@ -538,6 +553,7 @@ export function SwipeableTaskItemContent({
     }
 
     const { isMaterial, shape } = useThemeTokens();
+    const visibleMetaParts = hideDetails ? collapsedMetaParts : metaParts;
 
     return (
         <AppPressable
@@ -633,9 +649,9 @@ export function SwipeableTaskItemContent({
                         numberOfLines={isReference ? 3 : 1}
                     />
                 ) : null}
-                {!hideDetails && metaParts.length > 0 && (
+                {visibleMetaParts.length > 0 && (
                     <View style={styles.inlineMeta}>
-                        {metaParts}
+                        {visibleMetaParts}
                     </View>
                 )}
                 {footerContent}

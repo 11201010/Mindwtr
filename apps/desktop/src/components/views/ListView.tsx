@@ -2,6 +2,7 @@ import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, us
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, ChevronDown, ChevronRight, Folder, HelpCircle } from 'lucide-react';
 import { buildProjectOrderMap,
+    buildAdvancedFilterCriteriaChips,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
     compareAreasByOrder,
@@ -31,6 +32,7 @@ import { buildProjectOrderMap,
     TaskPriority,
     TimeEstimate,
     resolveI18nText,
+    SAVED_FILTER_NO_PROJECT_ID,
     useTaskStore, tFallback,
     baseTextCollator,
 } from '@mindwtr/core';
@@ -43,6 +45,7 @@ import { ListHeader } from './list/ListHeader';
 import { BulkSelectionToolbar } from './list/BulkSelectionToolbar';
 import { ListBulkActions } from './list/ListBulkActions';
 import { ListFiltersPanel } from './list/ListFiltersPanel';
+import type { DesktopActiveFilterChip } from './list/FilterDisclosure';
 import { ListQuickAdd } from './list/ListQuickAdd';
 import { QuickAddPreview } from '../QuickAddPreview';
 import { PromptModal } from '../PromptModal';
@@ -70,7 +73,6 @@ import {
     undoSomedaySectionMove,
     type SomedaySectionMove,
 } from '../../lib/someday-section-move';
-import { nextDensityMode } from '../../lib/density';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToValue, isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, taskMatchesAreaFilterSelection } from '@mindwtr/core';
 import { useAreaVisibility } from '../../hooks/useVisibleTaskContext';
 import { sortDoneTasksForListView } from './list/done-sort';
@@ -218,12 +220,15 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         excludedTokens,
         selectedPriorities,
         selectedTimeEstimates,
+        contextMatchMode,
+        tagMatchMode,
         toggleToken: toggleTokenFilter,
         togglePriority: togglePriorityFilter,
         toggleEstimate: toggleTimeFilter,
+        setMatchMode,
+        removeFilterChip,
         clearFilters,
         setFiltersOpen,
-        setListFilters,
     } = useListFilterControls();
     const showToast = useUiStore((state) => state.showToast);
     const resolveText = useCallback((key: string, fallback: string) => {
@@ -351,12 +356,14 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
 
     const [isProcessing, setIsProcessing] = useState(false);
     const [bulkOrganizeOpen, setBulkOrganizeOpen] = useState(false);
-    const allTokens = useMemo(
-        () => isReferenceView
-            ? Array.from(new Set(listFilterableTasks.flatMap((task) => task.tags))).sort()
-            : Array.from(new Set([...allContexts, ...allTags])).sort(),
-        [allContexts, allTags, isReferenceView, listFilterableTasks],
-    );
+    const allTokens = useMemo(() => {
+        const offered = isReferenceView
+            ? listFilterableTasks.flatMap((task) => task.tags)
+            : [...allContexts, ...allTags];
+        // The criteria are shared across list surfaces. Keep selections that do
+        // not occur in this view visible so they can still be removed here.
+        return Array.from(new Set([...offered, ...selectedTokens, ...excludedTokens])).sort();
+    }, [allContexts, allTags, excludedTokens, isReferenceView, listFilterableTasks, selectedTokens]);
     const personOptionNames = useMemo(
         () => getPersonOptionNames(people, tasks),
         [people, tasks],
@@ -635,7 +642,10 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             ? DONE_AXES
             : statusFilter === 'someday'
                 ? SOMEDAY_AXES
-                : FOCUS_AXES;
+            : FOCUS_AXES;
+    const defaultGroupBy: TaskListGroupBy = statusFilter === 'reference'
+        ? 'area'
+        : 'none';
     const isListGrouping = activeGroupBy !== 'none';
     const somedaySectionDefinitions = useMemo(
         () => sortViewSectionDefinitions(settings?.gtd?.viewSections?.someday),
@@ -1030,33 +1040,102 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const priorityOptions = PRIORITY_FILTER_OPTIONS;
     const timeEstimateOptions = TIME_ESTIMATE_FILTER_OPTIONS;
     const formatEstimate = (value: TimeEstimate) => formatTimeEstimateLabel(value, { t });
-    const filterSummary = [
-        ...(normalizedSearchQuery ? [`${t('common.search')}: ${searchQuery.trim()}`] : []),
-        ...activeSelectedTokens,
-        ...activeExcludedTokens.map((token) => `${resolveText('filters.excluded', 'Excluded')}: ${token}`),
-        ...(showPriorityFilters ? selectedPriorities.map((priority) => t(`priority.${priority}`)) : []),
-        ...(showTimeEstimateFilters ? selectedTimeEstimates.map(formatEstimate) : []),
-        ...(selectedWaitingPerson ? [`${t('process.delegateWhoLabel')}: ${selectedWaitingPerson}`] : []),
-        ...(isReferenceView && includeArchivedReferenceProjects ? [t('reference.includeArchivedProjects')] : []),
-    ];
+    const excludedLabel = resolveText('filters.excluded', 'Excluded');
+    const activeFilterChips: DesktopActiveFilterChip[] = [];
+    if (normalizedSearchQuery) {
+        activeFilterChips.push({
+            id: 'search',
+            // Reference searches more than titles, so its existing generic label
+            // is intentionally preserved.
+            label: `${t('common.search')}: ${searchQuery.trim()}`,
+            onRemove: () => setSearchQuery(''),
+        });
+    }
+    [...(listFilterCriteria.contexts ?? []), ...(listFilterCriteria.tags ?? [])].forEach((token) => {
+        activeFilterChips.push({
+            id: `token:${token}`,
+            label: token,
+            onRemove: () => removeFilterChip(`token:${token}`),
+        });
+    });
+    [...(listFilterCriteria.excludedContexts ?? []), ...(listFilterCriteria.excludedTags ?? [])].forEach((token) => {
+        activeFilterChips.push({
+            id: `excluded-token:${token}`,
+            label: token,
+            excluded: true,
+            onRemove: () => removeFilterChip(`excluded-token:${token}`),
+        });
+    });
+    (listFilterCriteria.projects ?? []).forEach((projectId) => {
+        const project = projectMap.get(projectId);
+        activeFilterChips.push({
+            id: `project:${projectId}`,
+            label: projectId === SAVED_FILTER_NO_PROJECT_ID
+                ? resolveText('taskEdit.noProjectOption', 'No project')
+                : project?.title ?? projectId,
+            dotColor: project
+                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
+                : undefined,
+            onRemove: () => removeFilterChip(`project:${projectId}`),
+        });
+    });
+    (listFilterCriteria.priority ?? []).forEach((priority) => {
+        activeFilterChips.push({
+            id: `priority:${priority}`,
+            label: priority === 'none'
+                ? resolveText('filters.noPriority', 'No priority')
+                : t(`priority.${priority}`),
+            onRemove: () => removeFilterChip(`priority:${priority}`),
+        });
+    });
+    (listFilterCriteria.energy ?? []).forEach((energy) => {
+        activeFilterChips.push({
+            id: `energy:${energy}`,
+            label: t(`energyLevel.${energy}`),
+            onRemove: () => removeFilterChip(`energy:${energy}`),
+        });
+    });
+    (listFilterCriteria.timeEstimates ?? []).forEach((estimate) => {
+        activeFilterChips.push({
+            id: `time:${estimate}`,
+            label: formatEstimate(estimate),
+            onRemove: () => removeFilterChip(`time:${estimate}`),
+        });
+    });
+    buildAdvancedFilterCriteriaChips(listFilterCriteria, {
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+        resolveText,
+    }).forEach((chip) => {
+        activeFilterChips.push({
+            id: `advanced:${chip.id}`,
+            label: chip.label,
+            dotColor: chip.color,
+            isAdvanced: true,
+            onRemove: () => removeFilterChip(`advanced:${chip.id}`),
+        });
+    });
+    if (selectedWaitingPerson) {
+        activeFilterChips.push({
+            id: 'waiting-person',
+            label: `${t('process.delegateWhoLabel')}: ${selectedWaitingPerson}`,
+            onRemove: () => setSelectedWaitingPerson(''),
+        });
+    }
+    if (isReferenceView && includeArchivedReferenceProjects) {
+        activeFilterChips.push({
+            id: 'include-archived-projects',
+            label: t('reference.includeArchivedProjects'),
+            onRemove: () => setIncludeArchivedReferenceProjects(false),
+        });
+    }
+    const filterSummary = activeFilterChips.map((chip) => (
+        chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label
+    ));
     const hasFilters = filterSummary.length > 0;
     const filterSummaryLabel = filterSummary.slice(0, 3).join(', ');
     const filterSummarySuffix = filterSummary.length > 3 ? ` +${filterSummary.length - 3}` : '';
     const showFiltersPanel = filtersOpen;
-
-    useEffect(() => {
-        let nextCriteria: FilterCriteria | null = null;
-        if (!showPriorityFilters && selectedPriorities.length > 0) {
-            nextCriteria = { ...(nextCriteria ?? listFilterCriteria) };
-            delete nextCriteria.priority;
-        }
-        if (!showTimeEstimateFilters && selectedTimeEstimates.length > 0) {
-            nextCriteria = { ...(nextCriteria ?? listFilterCriteria) };
-            delete nextCriteria.timeEstimates;
-            delete nextCriteria.timeEstimateRange;
-        }
-        if (nextCriteria) setListFilters({ criteria: nextCriteria });
-    }, [listFilterCriteria, selectedPriorities.length, selectedTimeEstimates.length, setListFilters, showPriorityFilters, showTimeEstimateFilters]);
 
     const openQuickAdd = useCallback((status: TaskStatus | 'all', captureMode?: 'text' | 'audio') => {
         const initialStatus = status === 'all' ? 'inbox' : status;
@@ -1165,6 +1244,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         filterSummaryLabel={filterSummaryLabel}
                         filterSummarySuffix={filterSummarySuffix}
                         sortBy={sortBy}
+                        defaultSortBy="default"
                         onChangeSortBy={(value) => {
                             if (statusFilter === 'done') {
                                 setListOptions({ doneSortBy: value });
@@ -1174,6 +1254,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         }}
                         showGroupBy
                         groupBy={activeGroupBy}
+                        defaultGroupBy={defaultGroupBy}
                         groupByOptions={groupByOptions}
                         sortByOptions={statusFilter === 'done' ? DONE_TASK_LIST_SORT_OPTIONS : undefined}
                         onChangeGroupBy={(value) => {
@@ -1192,16 +1273,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         onToggleFilters={() => setFiltersOpen(!filtersOpen)}
                         selectionMode={selectionMode}
                         onToggleSelection={toggleSelectionMode}
+                        showDetailsToggle={!isReferenceView}
                         showListDetails={showListDetails}
                         onToggleDetails={handleToggleDetails}
-                        densityMode={densityMode}
-                        onToggleDensity={() => {
-                            void updateSettings({
-                                appearance: {
-                                    density: nextDensityMode(densityMode),
-                                },
-                            });
-                        }}
                         onNewSomedaySection={statusFilter === 'someday' ? () => {
                             setNewSomedaySectionError(null);
                             setNewSomedaySectionOpen(true);
@@ -1349,19 +1423,22 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                     {isWaitingView && !isProcessing && (
                         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
                             <span className="text-xs font-medium text-muted-foreground">{t('process.delegateWhoLabel')}</span>
-                            <select
-                                aria-label={t('process.delegateWhoLabel')}
-                                value={selectedWaitingPerson}
-                                onChange={(event) => setSelectedWaitingPerson(event.target.value)}
-                                className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
-                            >
-                                <option value="">{t('common.all')}</option>
-                                {waitingPeople.map((person) => (
-                                    <option key={person} value={person}>
-                                        {person}
-                                    </option>
-                                ))}
-                            </select>
+                            <div className="relative max-w-full">
+                                <select
+                                    aria-label={t('process.delegateWhoLabel')}
+                                    value={selectedWaitingPerson}
+                                    onChange={(event) => setSelectedWaitingPerson(event.target.value)}
+                                    className={`max-w-full appearance-none rounded border border-border/50 bg-transparent py-1 pl-2 pr-7 text-xs hover:border-border focus-visible:outline-none focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 ${selectedWaitingPerson ? 'text-foreground' : 'text-muted-foreground'}`}
+                                >
+                                    <option value="">{t('common.all')}</option>
+                                    {waitingPeople.map((person) => (
+                                        <option key={person} value={person}>
+                                            {person}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                            </div>
                             {selectedWaitingPerson && (
                                 <button
                                     type="button"
@@ -1374,19 +1451,28 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         </div>
                     )}
 
-                    {showFilters && showFiltersPanel && !isProcessing && (
+                    {showFilters && (showFiltersPanel || hasFilters) && !isProcessing && (
                         <ListFiltersPanel
                             t={t}
+                            activeFilterChips={activeFilterChips}
                             hasFilters={hasFilters}
+                            showFiltersPanel={showFiltersPanel}
+                            onClose={() => setFiltersOpen(false)}
                             onClearFilters={() => {
                                 clearFilters();
+                                setSearchQuery('');
+                                setSelectedWaitingPerson('');
                                 setIncludeArchivedReferenceProjects(false);
                             }}
                             allTokens={allTokens}
-                            selectedTokens={activeSelectedTokens}
-                            excludedTokens={activeExcludedTokens}
+                            selectedTokens={selectedTokens}
+                            excludedTokens={excludedTokens}
                             tokenCounts={tokenCounts}
                             onToggleToken={toggleTokenFilter}
+                            contextMatchMode={contextMatchMode}
+                            tagMatchMode={tagMatchMode}
+                            onContextMatchModeChange={(mode) => setMatchMode('context', mode)}
+                            onTagMatchModeChange={(mode) => setMatchMode('tag', mode)}
                             showPriorityFilters={showPriorityFilters}
                             priorityOptions={priorityOptions}
                             selectedPriorities={selectedPriorities}

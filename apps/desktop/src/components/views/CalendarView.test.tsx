@@ -1,6 +1,6 @@
 import { act, createEvent, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Area, Project, Task } from '@mindwtr/core';
+import type { Area, Project, Section, Task } from '@mindwtr/core';
 
 import { LanguageProvider } from '../../contexts/language-context';
 import { useUiStore } from '../../store/ui-store';
@@ -31,6 +31,7 @@ const storeMocks = vi.hoisted(() => {
         moveTask: vi.fn(async () => ({ success: true })),
         people: [] as Array<{ id: string; name: string }>,
         projects: [] as Project[],
+        sections: [] as Section[],
         promoteTaskToProject: vi.fn(async () => ({ success: true, id: 'project-new' })),
         restoreTask: vi.fn(async () => ({ success: true })),
         setError: vi.fn(),

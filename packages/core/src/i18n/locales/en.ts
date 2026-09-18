@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const en: Record<string, string> = {
+    'filters.searchTasks': "Search task titles",
+    'filters.searchOptions': "Search options",
+    'filters.tokenCycleHint': "Click to include, again to exclude, and once more to clear.",
+    'filters.more': "More filters",
+    'viewSections.new': "New section",
+    'projects.new': 'New project',
+    'nav.history': 'History',
+    'task.dates': 'Dates…',
+    'task.moveTo': 'Move to…',
+    'task.destination': 'Destination',
+    'common.viewOptions': 'View options',
+    'settings.regionalFormats': 'Regional formats',
+    'settings.keyboardAndWindow': 'Keyboard and window',
     'settings.gtdMobile.openTasksIn': 'Open tasks in',
     'settings.gtdMobile.openTasksInDesc': 'Choose the tab used for normal task taps on this device.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatic',

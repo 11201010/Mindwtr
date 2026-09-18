@@ -1,16 +1,24 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ListFiltersPanel } from './ListFiltersPanel';
 
 const translations: Record<string, string> = {
+    'common.all': 'All',
+    'common.noMatches': 'No matches',
     'filters.clear': 'Clear',
+    'filters.contextMatchMode': 'Context match',
     'filters.contexts': 'Contexts & tags',
     'filters.excluded': 'Excluded',
     'filters.hide': 'Hide',
     'filters.label': 'Filters',
+    'filters.matchAny': 'Any',
     'filters.priority': 'Priority',
+    'filters.remove': 'Remove filter',
+    'filters.searchOptions': 'Search options',
+    'filters.tagMatchMode': 'Tag match',
     'filters.timeEstimate': 'Time estimate',
+    'filters.tokenCycleHint': 'Click to include, again to exclude, and once more to clear.',
     'reference.includeArchivedProjects': 'Include archived projects',
     'priority.urgent': 'Urgent priority',
 };
@@ -18,67 +26,111 @@ const translations: Record<string, string> = {
 const t = (key: string) => translations[key] ?? key;
 
 const createProps = (overrides: Partial<Parameters<typeof ListFiltersPanel>[0]> = {}): Parameters<typeof ListFiltersPanel>[0] => ({
+    activeFilterChips: [],
     allTokens: ['@home'],
+    contextMatchMode: 'all',
+    excludedTokens: [],
     formatEstimate: () => '30m',
     hasFilters: false,
+    includeArchivedProjects: false,
     onClearFilters: vi.fn(),
+    onClose: vi.fn(),
+    onContextMatchModeChange: vi.fn(),
+    onTagMatchModeChange: vi.fn(),
     onToggleEstimate: vi.fn(),
+    onToggleIncludeArchivedProjects: vi.fn(),
     onTogglePriority: vi.fn(),
     onToggleToken: vi.fn(),
     priorityOptions: ['urgent'],
     selectedPriorities: [],
     selectedTimeEstimates: [],
     selectedTokens: [],
-    excludedTokens: [],
+    showFiltersPanel: true,
+    showIncludeArchivedProjects: false,
     showPriorityFilters: false,
     showTimeEstimateFilters: false,
-    showIncludeArchivedProjects: false,
-    includeArchivedProjects: false,
-    onToggleIncludeArchivedProjects: vi.fn(),
     t,
+    tagMatchMode: 'all',
     timeEstimateOptions: ['30min'],
     tokenCounts: { '@home': 1 },
     ...overrides,
 });
 
 describe('ListFiltersPanel', () => {
-    it('hides optional metadata filters until the current list uses those fields', () => {
-        render(<ListFiltersPanel {...createProps()} />);
-
-        expect(screen.getByText('Contexts & tags')).toBeInTheDocument();
-        expect(screen.queryByText('Urgent priority')).not.toBeInTheDocument();
-        expect(screen.queryByText('Time estimate')).not.toBeInTheDocument();
-    });
-
-    it('shows optional metadata filters when the current list uses those fields', () => {
+    it('starts every category collapsed and opens only one category at a time', () => {
         render(<ListFiltersPanel {...createProps({
             showPriorityFilters: true,
             showTimeEstimateFilters: true,
         })} />);
 
-        expect(screen.getByText('Urgent priority')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Urgent priority' }).querySelector('[data-priority-flag="urgent"]'))
-            .toHaveAttribute('stroke', '#dc2626');
-        expect(screen.getByText('Time estimate')).toBeInTheDocument();
-        expect(screen.getByText('30m')).toBeInTheDocument();
+        const tokens = screen.getByRole('button', { name: 'Contexts & tags' });
+        const priority = screen.getByRole('button', { name: 'Priority' });
+        expect(tokens).toHaveAttribute('aria-expanded', 'false');
+        expect(priority).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByRole('button', { name: 'Urgent priority' })).not.toBeInTheDocument();
+
+        fireEvent.click(tokens);
+        expect(tokens).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByRole('button', { name: /^@home/ })).toBeInTheDocument();
+
+        fireEvent.click(priority);
+        expect(tokens).toHaveAttribute('aria-expanded', 'false');
+        expect(priority).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByRole('button', { name: 'Urgent priority' })).toBeInTheDocument();
     });
 
-    it('renders token chips in three accessible states: neutral, included, excluded', () => {
+    it('keeps a selected metadata category visible when its normal visibility gate is off', () => {
         render(<ListFiltersPanel {...createProps({
-            allTokens: ['@home', '@errands', '#waiting'],
-            selectedTokens: ['@errands'],
-            excludedTokens: ['#waiting'],
-            tokenCounts: { '@home': 1, '@errands': 2, '#waiting': 3 },
+            selectedPriorities: ['urgent'],
+            showPriorityFilters: false,
         })} />);
 
-        expect(screen.getByRole('button', { name: /^@home/ })).toHaveAttribute('aria-pressed', 'false');
-        const included = screen.getByRole('button', { name: /^@errands/ });
-        expect(included).toHaveAttribute('aria-pressed', 'true');
-        expect(included).not.toHaveClass('line-through');
+        expect(screen.getByRole('button', { name: 'Priority' })).toBeInTheDocument();
+    });
+
+    it('searches token options locally without calling the task-search callback', () => {
+        const onToggleToken = vi.fn();
+        render(<ListFiltersPanel {...createProps({
+            allTokens: ['@home', '@office', '#waiting'],
+            onToggleToken,
+            tokenCounts: { '@home': 1, '@office': 2, '#waiting': 3 },
+        })} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search options' }), { target: { value: 'office' } });
+
+        expect(screen.getByRole('button', { name: /^@office/ })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^@home/ })).not.toBeInTheDocument();
+        expect(onToggleToken).not.toHaveBeenCalled();
+    });
+
+    it('renders token options in three accessible states and keeps Any/All matching', () => {
+        render(<ListFiltersPanel {...createProps({
+            allTokens: ['@home', '@errands', '#quick', '#waiting'],
+            selectedTokens: ['@home', '@errands', '#quick'],
+            excludedTokens: ['#waiting'],
+            tokenCounts: { '@home': 1, '@errands': 2, '#quick': 1, '#waiting': 3 },
+        })} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
+        expect(screen.getByRole('button', { name: /^@home/ })).toHaveAttribute('aria-pressed', 'true');
         const excluded = screen.getByRole('button', { name: '#waiting (Excluded)' });
         expect(excluded).toHaveAttribute('aria-pressed', 'mixed');
         expect(excluded).toHaveClass('line-through');
-        expect(excluded).toHaveClass('border-destructive');
+        expect(screen.getByRole('group', { name: 'Context match' })).toBeInTheDocument();
+    });
+
+    it('keeps active chips visible and removable while the categories are collapsed', () => {
+        const onRemove = vi.fn();
+        render(<ListFiltersPanel {...createProps({
+            activeFilterChips: [{ id: 'token:@home', label: '@home', onRemove }],
+            hasFilters: true,
+            showFiltersPanel: false,
+        })} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Remove filter: @home' }));
+        expect(onRemove).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', { name: /Contexts & tags/ })).not.toBeInTheDocument();
     });
 
     it('renders the Reference archive toggle as an accessible checkbox', () => {

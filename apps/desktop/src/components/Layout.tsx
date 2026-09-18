@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import {
     Calendar,
     Inbox,
-    CheckSquare,
-    Archive,
     GanttChartSquare,
     Kanban,
     Tag,
@@ -19,6 +17,7 @@ import {
     PauseCircle,
     Book,
     Clock3,
+    History as HistoryIcon,
     BookOpen,
     AlertTriangle,
     Plus,
@@ -57,6 +56,7 @@ type NavItem = {
     icon: LucideIcon;
     count?: number;
     tone?: 'primary' | 'normal' | 'recessed';
+    activeIds?: string[];
 };
 
 type NavSection = {
@@ -84,7 +84,7 @@ const NAV_DROP_STATUSES: Record<string, TaskStatus> = {
     archived: 'archived',
 };
 const SECTION_COLLAPSE_STORAGE_KEY = 'mindwtr:sidebar:collapsedSections';
-const DEFAULT_COLLAPSED_SECTION_KEYS: string[] = [];
+const DEFAULT_COLLAPSED_SECTION_KEYS = ['secondary'];
 
 function createDefaultCollapsedSections(): Set<string> {
     return new Set(DEFAULT_COLLAPSED_SECTION_KEYS);
@@ -96,7 +96,12 @@ function loadCollapsedSections(): Set<string> {
         const raw = getWorkspaceCache()?.getItem(SECTION_COLLAPSE_STORAGE_KEY);
         if (!raw) return createDefaultCollapsedSections();
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : createDefaultCollapsedSections();
+        if (!Array.isArray(parsed)) return createDefaultCollapsedSections();
+        const stored = new Set(parsed.filter((v): v is string => typeof v === 'string'));
+        // The old Archive section became part of More. Preserve an explicit
+        // legacy collapse instead of resetting it during the regrouping.
+        if (stored.has('archive')) stored.add('secondary');
+        return stored;
     } catch {
         return createDefaultCollapsedSections();
     }
@@ -312,6 +317,7 @@ export function Layout({
         'someday',
         'reference',
         'waiting',
+        'history',
         'done',
         'archived',
         'trash',
@@ -348,7 +354,6 @@ export function Layout({
                 { id: 'projects', labelKey: 'nav.projects', icon: Folder, tone: 'primary' },
                 { id: 'someday', labelKey: 'nav.someday', icon: Clock3 },
                 { id: 'waiting', labelKey: 'nav.waiting', icon: PauseCircle },
-                { id: 'reference', labelKey: 'nav.reference', icon: Book },
             ],
         },
         {
@@ -358,6 +363,13 @@ export function Layout({
                 { id: 'calendar', labelKey: 'nav.calendar', icon: Calendar },
                 { id: 'review', labelKey: 'nav.review', icon: CheckCircle2 },
                 { id: 'contexts', labelKey: 'nav.contexts', icon: Tag },
+            ],
+        },
+        {
+            key: 'secondary',
+            label: tFallback(t, 'common.more', 'More'),
+            items: [
+                { id: 'reference', labelKey: 'nav.reference', icon: Book },
                 ...(isObsidianEnabled
                     ? [{ id: 'obsidian', labelKey: 'nav.obsidian', fallbackLabel: 'Obsidian', icon: BookOpen }]
                     : []),
@@ -365,21 +377,26 @@ export function Layout({
                 ...(isTimelineEnabled
                     ? [{ id: 'timeline', labelKey: 'nav.timeline', fallbackLabel: 'Timeline', icon: GanttChartSquare }]
                     : []),
-            ],
-        },
-        {
-            key: 'archive',
-            label: tFallback(t, 'nav.sectionArchive', 'Archive'),
-            items: [
-                { id: 'done', labelKey: 'nav.done', icon: CheckSquare, tone: 'recessed' },
-                { id: 'archived', labelKey: 'nav.archived', icon: Archive, tone: 'recessed' },
+                {
+                    id: 'history',
+                    labelKey: 'nav.history',
+                    fallbackLabel: 'History',
+                    icon: HistoryIcon,
+                    tone: 'recessed',
+                    activeIds: ['done', 'archived'],
+                },
                 { id: 'trash', labelKey: 'nav.trash', icon: Trash2, tone: 'recessed' },
             ],
         },
     ] satisfies NavSection[])
         .map((section) => ({
             ...section,
-            items: section.items.filter((item) => !hiddenSidebarViews.includes(item.id as (typeof hiddenSidebarViews)[number])),
+            items: section.items.filter((item) => {
+                if (item.id === 'history') {
+                    return !(hiddenSidebarViews.includes('done') && hiddenSidebarViews.includes('archived'));
+                }
+                return !hiddenSidebarViews.includes(item.id as (typeof hiddenSidebarViews)[number]);
+            }),
         }))
         .filter((section) => section.items.length > 0), [hiddenSidebarViews, inboxCount, isObsidianEnabled, isTimelineEnabled, t]);
 
@@ -391,7 +408,9 @@ export function Layout({
 
     // Auto-expand the section containing the active view so it's never hidden.
     useEffect(() => {
-        const activeSection = navSections.find((section) => section.items.some((item) => item.id === currentView));
+        const activeSection = navSections.find((section) => section.items.some(
+            (item) => item.id === currentView || item.activeIds?.includes(currentView),
+        ));
         if (!activeSection) return;
         setCollapsedSections((prev) => {
             if (!prev.has(activeSection.key)) return prev;
@@ -889,7 +908,7 @@ export function Layout({
                                 <div id={sectionId} className={cn("space-y-1", isSectionCollapsed && "hidden")}>
                                 {section.items.map((item) => {
                                     const itemLabel = item.labelKey ? tFallback(t, item.labelKey, item.fallbackLabel ?? item.id) : (item.fallbackLabel ?? item.id);
-                                    const isActiveItem = currentView === item.id;
+                                    const isActiveItem = currentView === item.id || item.activeIds?.includes(currentView) === true;
                                     const isDropTarget = item.id === 'calendar' || NAV_DROP_STATUSES[item.id] !== undefined;
                                     const tone = item.tone ?? 'normal';
                                     const inactiveItemClass = tone === 'primary'

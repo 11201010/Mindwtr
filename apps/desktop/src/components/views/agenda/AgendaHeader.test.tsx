@@ -17,9 +17,11 @@ const renderHeader = (overrides: Partial<Parameters<typeof AgendaHeader>[0]> = {
         filtersOpen={false}
         nextActionsCount={3}
         nextGroupBy="none"
+        focusSortBy="default"
         canToggleOtherSections
         collapseOtherSections
         onChangeGroupBy={vi.fn()}
+        onChangeSortBy={vi.fn()}
         onToggleDetails={vi.fn()}
         onToggleFilters={vi.fn()}
         onToggleOtherSections={vi.fn()}
@@ -31,6 +33,82 @@ const renderHeader = (overrides: Partial<Parameters<typeof AgendaHeader>[0]> = {
 );
 
 describe('AgendaHeader', () => {
+    it('shows direct Sort and Group controls and highlights each non-default value independently', () => {
+        const view = renderHeader();
+        const sort = view.getByRole('combobox', { name: 'Sort' });
+        const group = view.getByRole('combobox', { name: 'Group' });
+
+        expect(view.queryByRole('button', { name: 'common.viewOptions' })).not.toBeInTheDocument();
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-card');
+
+        view.rerender(
+            <AgendaHeader
+                filterCount={0}
+                filtersOpen={false}
+                nextActionsCount={3}
+                nextGroupBy="none"
+                focusSortBy="due"
+                canToggleOtherSections
+                collapseOtherSections
+                onChangeGroupBy={vi.fn()}
+                onChangeSortBy={vi.fn()}
+                onToggleDetails={vi.fn()}
+                onToggleFilters={vi.fn()}
+                onToggleOtherSections={vi.fn()}
+                resolveText={resolveText}
+                showListDetails={false}
+                t={t}
+            />
+        );
+        expect(sort).toHaveClass('bg-primary/10');
+        expect(group).toHaveClass('bg-card');
+
+        view.rerender(
+            <AgendaHeader
+                filterCount={0}
+                filtersOpen={false}
+                nextActionsCount={3}
+                nextGroupBy="project"
+                focusSortBy="default"
+                canToggleOtherSections
+                collapseOtherSections
+                onChangeGroupBy={vi.fn()}
+                onChangeSortBy={vi.fn()}
+                onToggleDetails={vi.fn()}
+                onToggleFilters={vi.fn()}
+                onToggleOtherSections={vi.fn()}
+                resolveText={resolveText}
+                showListDetails={false}
+                t={t}
+            />
+        );
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-primary/10');
+
+        view.rerender(
+            <AgendaHeader
+                filterCount={0}
+                filtersOpen={false}
+                nextActionsCount={3}
+                nextGroupBy="none"
+                focusSortBy="default"
+                canToggleOtherSections
+                collapseOtherSections
+                onChangeGroupBy={vi.fn()}
+                onChangeSortBy={vi.fn()}
+                onToggleDetails={vi.fn()}
+                onToggleFilters={vi.fn()}
+                onToggleOtherSections={vi.fn()}
+                resolveText={resolveText}
+                showListDetails={false}
+                t={t}
+            />
+        );
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-card');
+    });
+
     it('offers tag as a Focus grouping option', () => {
         const onChangeGroupBy = vi.fn();
         renderHeader({ onChangeGroupBy });
@@ -52,9 +130,11 @@ describe('AgendaHeader', () => {
                 filtersOpen={false}
                 nextActionsCount={3}
                 nextGroupBy="none"
+                focusSortBy="default"
                 canToggleOtherSections
                 collapseOtherSections
                 onChangeGroupBy={vi.fn()}
+                onChangeSortBy={vi.fn()}
                 onToggleDetails={vi.fn()}
                 onToggleFilters={vi.fn()}
                 onToggleOtherSections={vi.fn()}
@@ -78,9 +158,11 @@ describe('AgendaHeader', () => {
                 filtersOpen={false}
                 nextActionsCount={3}
                 nextGroupBy="none"
+                focusSortBy="default"
                 canToggleOtherSections
                 collapseOtherSections={false}
                 onChangeGroupBy={vi.fn()}
+                onChangeSortBy={vi.fn()}
                 onToggleDetails={vi.fn()}
                 onToggleFilters={vi.fn()}
                 onToggleOtherSections={vi.fn()}
@@ -121,5 +203,11 @@ describe('AgendaHeader', () => {
             expect(button.className).toContain('rounded-lg');
             expect(button.className).not.toContain('rounded-full');
         });
+    });
+
+    it('keeps density out of the Focus toolbar', () => {
+        const { queryByRole } = renderHeader();
+
+        expect(queryByRole('button', { name: /Density:/ })).not.toBeInTheDocument();
     });
 });

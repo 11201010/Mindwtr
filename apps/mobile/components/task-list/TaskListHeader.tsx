@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { ArrowUpDown, Folder, SlidersHorizontal, X } from 'lucide-react-native';
 
+import { ListOverflowMenu } from '@/components/list-overflow-menu';
 import { styles } from './task-list.styles';
 
 type ThemeColors = {
@@ -26,6 +27,8 @@ export type TaskListActiveFilterChip = {
 type TaskListHeaderProps = {
   activeFilterChips: TaskListActiveFilterChip[];
   count: number;
+  /** Inbox-only: keep Sort, Group, and Filters as direct compact controls. */
+  directControls?: boolean;
   headerAccessory?: React.ReactNode;
   filterActiveCount: number;
   groupByLabel?: string;
@@ -34,8 +37,10 @@ type TaskListHeaderProps = {
   onOpenFilters: () => void;
   onOpenGroup?: () => void;
   onOpenSort: () => void;
+  renderOverflowOnly?: boolean;
   showHeader: boolean;
   showFilterButton?: boolean;
+  showOverflow?: boolean;
   showSort: boolean;
   sortByLabel: string;
   t: (key: string) => string;
@@ -46,6 +51,7 @@ type TaskListHeaderProps = {
 export function TaskListHeader({
   activeFilterChips,
   count,
+  directControls = false,
   headerAccessory,
   filterActiveCount,
   groupByLabel,
@@ -54,8 +60,10 @@ export function TaskListHeader({
   onOpenFilters,
   onOpenGroup,
   onOpenSort,
+  renderOverflowOnly = false,
   showHeader,
   showFilterButton = true,
+  showOverflow = true,
   showSort,
   sortByLabel,
   t,
@@ -64,61 +72,118 @@ export function TaskListHeader({
 }: TaskListHeaderProps) {
   const filtersLabel = t('filters.label') === 'filters.label' ? 'Filters' : t('filters.label');
   const groupLabel = t('list.groupBy') === 'list.groupBy' ? 'Group' : t('list.groupBy');
+  const allLabel = t('common.all') === 'common.all' ? 'All' : t('common.all');
+  const moreOptionsLabel = t('taskEdit.moreOptions') === 'taskEdit.moreOptions' ? 'More options' : t('taskEdit.moreOptions');
+  const backLabel = t('common.back') === 'common.back' ? 'Back' : t('common.back');
+  const closeLabel = t('common.close') === 'common.close' ? 'Close' : t('common.close');
   const clearLabel = t('filters.clear') === 'filters.clear' ? t('common.clear') : t('filters.clear');
   const removeFilterLabel = t('filters.remove') === 'filters.remove' ? 'Remove filter' : t('filters.remove');
   const excludedStateLabel = t('filters.excluded') === 'filters.excluded' ? 'Excluded' : t('filters.excluded');
-  const sortControl = showSort ? (
-    <TouchableOpacity
-      onPress={onOpenSort}
-      style={[
-        styles.sortButton,
-        { borderColor: themeColors.border, backgroundColor: themeColors.filterBg },
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={`${t('sort.label')}: ${sortByLabel}`}
-      hitSlop={8}
-    >
-      <ArrowUpDown size={16} color={themeColors.secondaryText} strokeWidth={2} />
-    </TouchableOpacity>
-  ) : null;
-  const filterControl = showFilterButton ? (
+  const activeFiltersLabel = `${filtersLabel} · ${filterActiveCount}`;
+  const activeFilterControl = !directControls && showFilterButton && hasActiveFilters ? (
     <TouchableOpacity
       onPress={onOpenFilters}
       style={[
-        styles.sortButton,
-        {
-          borderColor: hasActiveFilters ? themeColors.tint : themeColors.border,
-          backgroundColor: themeColors.filterBg,
-        },
+        styles.activeFiltersButton,
+        { borderColor: themeColors.tint, backgroundColor: themeColors.filterBg },
       ]}
       accessibilityRole="button"
-      accessibilityLabel={filterActiveCount > 0 ? `${filtersLabel}: ${filterActiveCount}` : filtersLabel}
+      accessibilityLabel={activeFiltersLabel}
+      accessibilityState={{ selected: true }}
       hitSlop={8}
     >
-      <SlidersHorizontal size={16} color={hasActiveFilters ? themeColors.tint : themeColors.secondaryText} strokeWidth={2} />
-      {filterActiveCount > 0 ? (
-        <View style={[styles.filterBadge, { backgroundColor: themeColors.tint }]}>
-          <Text style={[styles.filterBadgeText, { color: themeColors.onTint }]}>
-            {filterActiveCount}
-          </Text>
-        </View>
+      <SlidersHorizontal size={16} color={themeColors.tint} strokeWidth={2} />
+      <Text style={[styles.activeFiltersButtonText, { color: themeColors.tint }]}>{activeFiltersLabel}</Text>
+    </TouchableOpacity>
+  ) : null;
+  const directControlGroup = directControls ? (
+    <View style={styles.headerAccessoryControls}>
+      {showSort ? (
+        <TouchableOpacity
+          accessibilityLabel={`${t('sort.label')}: ${sortByLabel}`}
+          accessibilityRole="button"
+          onPress={onOpenSort}
+          style={styles.directControlButton}
+        >
+          <View style={[styles.directControlVisual, { borderColor: themeColors.border, backgroundColor: themeColors.filterBg }]}>
+            <ArrowUpDown size={16} color={themeColors.secondaryText} strokeWidth={2} />
+          </View>
+        </TouchableOpacity>
       ) : null}
-    </TouchableOpacity>
+      {onOpenGroup ? (
+        <TouchableOpacity
+          accessibilityLabel={`${groupLabel}: ${groupByLabel ?? allLabel}`}
+          accessibilityRole="button"
+          onPress={onOpenGroup}
+          style={styles.directControlButton}
+        >
+          <View style={[styles.directControlVisual, { borderColor: themeColors.border, backgroundColor: themeColors.filterBg }]}>
+            <Folder size={16} color={themeColors.secondaryText} strokeWidth={2} />
+          </View>
+        </TouchableOpacity>
+      ) : null}
+      {showFilterButton ? (
+        <TouchableOpacity
+          accessibilityLabel={`${filtersLabel}: ${hasActiveFilters ? filterActiveCount : allLabel}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: hasActiveFilters }}
+          onPress={onOpenFilters}
+          style={styles.directControlButton}
+        >
+          <View
+            style={[
+              styles.directControlVisual,
+              {
+                borderColor: hasActiveFilters ? themeColors.tint : themeColors.border,
+                backgroundColor: themeColors.filterBg,
+              },
+            ]}
+          >
+            <SlidersHorizontal
+              size={16}
+              color={hasActiveFilters ? themeColors.tint : themeColors.secondaryText}
+              strokeWidth={2}
+            />
+          </View>
+        </TouchableOpacity>
+      ) : null}
+    </View>
   ) : null;
-  const groupControl = onOpenGroup ? (
-    <TouchableOpacity
-      onPress={onOpenGroup}
-      style={[
-        styles.sortButton,
-        { borderColor: themeColors.border, backgroundColor: themeColors.filterBg },
+  const overflowControl = !directControls && showOverflow && (showFilterButton || showSort || onOpenGroup) ? (
+    <ListOverflowMenu
+      actions={[
+        ...(showFilterButton ? [{
+          id: 'filters',
+          label: filtersLabel,
+          icon: (color: string) => <SlidersHorizontal size={18} color={color} strokeWidth={2} />,
+          onPress: onOpenFilters,
+          selected: hasActiveFilters,
+        }] : []),
+        ...(showSort ? [{
+          id: 'sort',
+          label: t('sort.label'),
+          accessibilityLabel: `${t('sort.label')}: ${sortByLabel}`,
+          icon: (color: string) => <ArrowUpDown size={18} color={color} strokeWidth={2} />,
+          onPress: onOpenSort,
+          value: sortByLabel,
+        }] : []),
+        ...(onOpenGroup ? [{
+          id: 'group',
+          label: groupLabel,
+          accessibilityLabel: `${groupLabel}: ${groupByLabel ?? allLabel}`,
+          icon: (color: string) => <Folder size={18} color={color} strokeWidth={2} />,
+          onPress: onOpenGroup,
+          value: groupByLabel ?? allLabel,
+        }] : []),
       ]}
-      accessibilityRole="button"
-      accessibilityLabel={`${groupLabel}: ${groupByLabel ?? ''}`}
-      hitSlop={8}
-    >
-      <Folder size={16} color={themeColors.secondaryText} strokeWidth={2} />
-    </TouchableOpacity>
+      backLabel={backLabel}
+      closeLabel={closeLabel}
+      moreLabel={moreOptionsLabel}
+      themeColors={themeColors}
+      triggerStyle={renderOverflowOnly ? styles.navigationOverflowButton : undefined}
+    />
   ) : null;
+  if (renderOverflowOnly) return overflowControl;
   return (
     <>
       {showHeader ? (
@@ -132,23 +197,21 @@ export function TaskListHeader({
             </Text>
           </View>
           <View style={styles.headerActions}>
-            {sortControl}
-            {groupControl}
-            {filterControl}
+            {directControlGroup}
+            {activeFilterControl}
             {headerAccessory}
+            {overflowControl}
           </View>
         </View>
-      ) : sortControl || groupControl || filterControl || headerAccessory ? (
+      ) : directControlGroup || overflowControl || activeFilterControl || headerAccessory ? (
         <View style={styles.headerAccessoryRow}>
           <View style={styles.headerAccessoryLeft}>
-            <View style={styles.headerAccessoryControls}>
-              {sortControl}
-              {groupControl}
-              {filterControl}
-            </View>
+            {directControlGroup}
+            {activeFilterControl}
           </View>
           <View style={styles.headerAccessoryRight}>
             {headerAccessory}
+            {overflowControl}
           </View>
         </View>
       ) : null}

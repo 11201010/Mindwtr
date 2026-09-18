@@ -40,6 +40,11 @@ import { styles } from './swipeable-task-item/swipeable-task-item.styles';
 import { CompactText } from '@/components/compact-text';
 import { useSwipeableChecklist } from './swipeable-task-item/useSwipeableChecklist';
 import { settleStoreAction } from './store-action-result';
+import {
+    buildTaskDestinationUpdates,
+    TaskEditDestinationPicker,
+    type TaskEditDestination,
+} from './task-edit/TaskEditDestinationPicker';
 
 /**
  * Everything a row can mutate, on one object whose identity never changes
@@ -300,6 +305,7 @@ function SwipeableTaskItemInner({
         toggleChecklistItem,
     } = useSwipeableChecklist(task, updateTask, interactionDisabled);
     const [showStatusMenu, setShowStatusMenu] = useState(false);
+    const [showDestinationPicker, setShowDestinationPicker] = useState(false);
     const [projectNextActionPrompt, setProjectNextActionPrompt] = useState<ProjectNextActionPromptState | null>(null);
     const [projectNextActionTitle, setProjectNextActionTitle] = useState('');
     const [isProjectNextActionSubmitting, setIsProjectNextActionSubmitting] = useState(false);
@@ -393,6 +399,14 @@ function SwipeableTaskItemInner({
                 }
             });
     }, [interactionDisabled, onStatusChange, openProjectNextActionPromptIfNeeded, showActionFailure, showToast, t, task.id, task.isFocusedToday, task.status, task.title]);
+
+    const handleMoveToDestination = useCallback((destination: TaskEditDestination) => {
+        if (interactionDisabled) return;
+        const updates = buildTaskDestinationUpdates(task.projectId, task.sectionId, destination);
+        void settleStoreAction(() => updateTask(task.id, updates)).then((outcome) => {
+            if (!outcome.ok) showActionFailure(outcome.message);
+        });
+    }, [interactionDisabled, showActionFailure, task.id, task.projectId, task.sectionId, updateTask]);
 
     const [completedAtPicker, setCompletedAtPicker] = useState<null | 'complete' | 'edit'>(null);
     useEffect(() => {
@@ -860,6 +874,7 @@ function SwipeableTaskItemInner({
                 visible={!interactionDisabled && showStatusMenu}
                 onClose={() => setShowStatusMenu(false)}
                 onStatusChange={handleStatusChange}
+                onMoveToDestination={() => setShowDestinationPicker(true)}
                 onMoveToSection={onMoveToSection}
                 onBackdatedComplete={interactionDisabled || task.status === 'done'
                     ? undefined
@@ -868,6 +883,19 @@ function SwipeableTaskItemInner({
                 tc={tc}
                 t={t}
             />
+            {!interactionDisabled ? (
+                <TaskEditDestinationPicker
+                    visible={showDestinationPicker}
+                    projects={projects}
+                    areas={areas}
+                    selectedProjectId={task.projectId}
+                    selectedAreaId={task.areaId}
+                    tc={tc}
+                    t={t}
+                    onClose={() => setShowDestinationPicker(false)}
+                    onSelect={handleMoveToDestination}
+                />
+            ) : null}
             {!interactionDisabled && completedAtPicker ? (
                 <CompletedAtPicker
                     initialValue={completedAtPicker === 'edit' ? (task.completedAt || task.updatedAt) : undefined}

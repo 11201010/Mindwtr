@@ -1,6 +1,6 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import type { Area, Project, Task } from '@mindwtr/core';
-import { useTaskStore } from '@mindwtr/core';
+import { safeFormatDate, useTaskStore } from '@mindwtr/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider } from '../../contexts/language-context';
 import { ContextsView } from './ContextsView';
@@ -8,6 +8,7 @@ import { CONTEXTS_VIEW_STATE_STORAGE_KEY, dispatchContextsTokenSelection } from 
 import { selectToolbarOption } from '../../test/toolbar-select';
 import { expectScrolledEndGap } from '../../test/list-end-gap';
 import * as dataTransfer from '../../lib/data-transfer';
+import { useUiStore } from '../../store/ui-store';
 
 // Its own key, separate from the view state above: see the note in ContextsView.
 const CONTEXTS_GROUP_COLLAPSE_STORAGE_KEY = 'mindwtr:view:contexts:groups:v1';
@@ -36,6 +37,11 @@ describe('ContextsView', () => {
     beforeEach(() => {
         window.localStorage.clear();
         useTaskStore.setState(initialTaskState, true);
+        useUiStore.setState((state) => ({
+            ...state,
+            expandedTaskIds: {},
+            listOptions: { ...state.listOptions, showDetails: false },
+        }));
         const tasks = [
             makeTask('task-1', {
                 title: 'Plan launch',
@@ -168,11 +174,57 @@ describe('ContextsView', () => {
         expect(view.getByRole('heading', { name: 'Contexts & Tags' })).toBeInTheDocument();
     });
 
-    it('keeps the sort control labeled and visually scannable', () => {
-        const { getByRole, getByTestId } = renderContextsView();
+    it('shows direct Sort and Group controls and highlights only the changed control', () => {
+        const { getByRole } = renderContextsView();
+        const sort = getByRole('combobox', { name: 'Sort' });
+        const group = getByRole('combobox', { name: 'Group' });
 
-        expect(getByRole('combobox', { name: 'Sort' })).toBeInTheDocument();
-        expect(getByTestId('contexts-sort-icon')).toBeInTheDocument();
+        expect(sort).toHaveClass('bg-card');
+        expect(group).toHaveClass('bg-card');
+        expect(getByRole('combobox', { name: 'Sort' }).querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+
+        selectToolbarOption('Sort', 'Title');
+        expect(sort).toHaveClass('bg-primary/10');
+        expect(group).toHaveClass('bg-card');
+
+        selectToolbarOption('Sort', 'Default');
+        expect(sort).toHaveClass('bg-card');
+    });
+
+    it('shows the direct Details toggle and propagates it to compact task metadata', () => {
+        const dueDate = '2030-01-15';
+        const tasks = [makeTask('due-context', {
+            title: 'Due context task',
+            contexts: ['@Office'],
+            dueDate,
+        })];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        const view = renderContextsView();
+        const formattedDueDate = safeFormatDate(dueDate, 'P');
+
+        expect(view.getByRole('button', { name: 'Show details' })).toBeInTheDocument();
+        expect(view.queryByText(formattedDueDate)).not.toBeInTheDocument();
+
+        fireEvent.click(view.getByRole('button', { name: 'Show details' }));
+
+        expect(view.getByRole('button', { name: 'Hide details' })).toBeInTheDocument();
+        expect(view.getByText(formattedDueDate)).toBeInTheDocument();
+        expect(useUiStore.getState().listOptions.showDetails).toBe(true);
+    });
+
+    it('collapses expanded rows when hiding Details', () => {
+        useUiStore.setState((state) => ({
+            ...state,
+            expandedTaskIds: { 'task-1': true },
+            listOptions: { ...state.listOptions, showDetails: true },
+        }));
+        const view = renderContextsView();
+
+        fireEvent.click(view.getByRole('button', { name: 'Hide details' }));
+
+        expect(view.getByRole('button', { name: 'Show details' })).toBeInTheDocument();
+        expect(useUiStore.getState().listOptions.showDetails).toBe(false);
+        expect(useUiStore.getState().expandedTaskIds).toEqual({});
     });
 
     it('groups the task list by status and by tag from the Group control', () => {

@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const arOverrides: Record<string, string> = {
+    'filters.searchTasks': "البحث في عناوين المهام",
+    'filters.searchOptions': "البحث في الخيارات",
+    'filters.tokenCycleHint': "انقر للتضمين، ثم للاستبعاد، ثم مرة أخرى للمسح.",
+    'filters.more': "المزيد من عوامل التصفية",
+    'viewSections.new': "قسم جديد",
+    'projects.new': 'مشروع جديد',
+    'nav.history': 'السجل',
+    'task.dates': 'التواريخ…',
+    'task.moveTo': 'نقل إلى…',
+    'task.destination': 'الوجهة',
+    'common.viewOptions': 'خيارات العرض',
+    'settings.regionalFormats': 'التنسيقات الإقليمية',
+    'settings.keyboardAndWindow': 'لوحة المفاتيح والنافذة',
     'settings.gtdMobile.openTasksIn': 'فتح المهام في',
     'settings.gtdMobile.openTasksInDesc': 'اختر علامة التبويب المستخدمة عند النقر على مهمة بشكل عادي على هذا الجهاز.',
     'settings.gtdMobile.taskOpenAutomatic': 'تلقائي',

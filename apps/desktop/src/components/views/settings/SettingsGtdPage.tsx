@@ -1,11 +1,10 @@
-import type { AppSettings, Area, DefaultProjectFlowMode, FeatureSettings, GtdSettings, TaskEditorFieldId, TaskEditorPresentation, TaskEditorSectionId, TimeEstimate } from '@mindwtr/core';
+import type { AppSettings, Area, DefaultProjectFlowMode, FeatureSettings, GtdSettings, TaskEditorFieldId, TaskEditorPresentation, TaskEditorSectionId } from '@mindwtr/core';
 import {
     DEFAULT_TASK_EDITOR_ORDER,
     DEFAULT_TASK_EDITOR_VISIBLE,
     DEFAULT_TASK_EDITOR_SECTION_BY_FIELD,
     DEFAULT_TASK_EDITOR_SECTION_OPEN,
     FOCUS_TASK_LIMIT_OPTIONS,
-    formatTimeEstimateLabel,
     getTaskEditorSectionAssignments,
     getTaskEditorSectionOpenDefaults,
     isTaskEditorSectionableField,
@@ -51,10 +50,6 @@ type Labels = {
     defaultProjectFlowModeDesc: string;
     projectFlowParallel: string;
     projectFlowSequential: string;
-    timeEstimatePresets: string;
-    timeEstimatePresetsDesc: string;
-    timeEstimatePresetsDisabled: string;
-    enableTimeEstimates: string;
     inboxProcessing: string;
     inboxProcessingDesc: string;
     inboxDefaultMode: string;
@@ -146,11 +141,6 @@ type Labels = {
 
 const DEFAULT_AREA_ACTIVE_SELECT_VALUE = '__active-area__';
 
-// Mirrors the mobile GTD time-estimate editor (gtd-settings-screen.tsx) so the
-// two platforms round-trip each other's gtd.timeEstimatePresets values.
-const DEFAULT_TIME_ESTIMATE_PRESETS: TimeEstimate[] = ['5min', '10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
-const TIME_ESTIMATE_OPTIONS: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
-
 type PomodoroSettings = NonNullable<GtdSettings['pomodoro']>;
 type InboxProcessingSettings = NonNullable<GtdSettings['inboxProcessing']>;
 
@@ -176,7 +166,6 @@ export function SettingsGtdPage({
 }: SettingsGtdPageProps) {
     const safeSettings = settings ?? ({} as AppSettings);
     const [featuresOpen, setFeaturesOpen] = useState(false);
-    const [timeEstimatesOpen, setTimeEstimatesOpen] = useState(false);
     const [captureOpen, setCaptureOpen] = useState(false);
     const [reviewOpen, setReviewOpen] = useState(false);
     const [inboxOpen, setInboxOpen] = useState(false);
@@ -241,10 +230,6 @@ export function SettingsGtdPage({
     const defaultProjectFlowMode: DefaultProjectFlowMode = safeSettings.gtd?.defaultProjectFlowMode === 'sequential'
         ? 'sequential'
         : 'parallel';
-    const timeEstimatesEnabled = resolvedFeatureFlags.timeEstimates;
-    const timeEstimatePresets: TimeEstimate[] = (safeSettings.gtd?.timeEstimatePresets?.length
-        ? safeSettings.gtd.timeEstimatePresets
-        : DEFAULT_TIME_ESTIMATE_PRESETS) as TimeEstimate[];
     const pomodoroEnabled = resolvedFeatureFlags.pomodoro;
     const pomodoroCustomDurations = sanitizePomodoroDurations(safeSettings.gtd?.pomodoro?.customDurations);
     const pomodoroLinkTask = safeSettings.gtd?.pomodoro?.linkTask === true;
@@ -304,30 +289,6 @@ export function SettingsGtdPage({
                 ...partial,
             },
         }).then(showSaved).catch((error) => reportSettingsFailure('Failed to update GTD settings', error, t.settingsSaveFailed));
-    };
-
-    const toggleTimeEstimatePreset = (value: TimeEstimate) => {
-        const isSelected = timeEstimatePresets.includes(value);
-        // Keep at least one preset so the editor always offers a choice.
-        if (isSelected && timeEstimatePresets.length <= 1) return;
-        const next = isSelected
-            ? timeEstimatePresets.filter((v) => v !== value)
-            : [...timeEstimatePresets, value];
-        const ordered = TIME_ESTIMATE_OPTIONS.filter((v) => next.includes(v));
-        updateGtdSettings({ timeEstimatePresets: ordered });
-    };
-
-    const resetTimeEstimatePresets = () => {
-        updateGtdSettings({ timeEstimatePresets: [...DEFAULT_TIME_ESTIMATE_PRESETS] });
-    };
-
-    const enableTimeEstimates = () => {
-        updateSettings({
-            features: {
-                ...(safeSettings.features ?? {}),
-                timeEstimates: true,
-            },
-        }).then(showSaved).catch((error) => reportSettingsFailure('Failed to enable time estimates', error, t.settingsSaveFailed));
     };
 
     const commitDefaultScheduleTime = () => {
@@ -754,67 +715,6 @@ export function SettingsGtdPage({
                             </SettingRow>
                         </div>
                     </SettingField>
-                )}
-            </SettingsDisclosureCard>
-            <SettingsDisclosureCard
-                sectionKey="timeEstimatePresets"
-                title={t.timeEstimatePresets}
-                description={t.timeEstimatePresetsDesc}
-                open={timeEstimatesOpen}
-                onToggle={() => setTimeEstimatesOpen((prev) => !prev)}
-            >
-                {timeEstimatesEnabled ? (
-                    <div className="p-4 space-y-3">
-                        <div className="flex flex-wrap gap-2">
-                            {TIME_ESTIMATE_OPTIONS.map((value) => {
-                                const selected = timeEstimatePresets.includes(value);
-                                return (
-                                    <button
-                                        key={value}
-                                        type="button"
-                                        aria-pressed={selected}
-                                        onClick={() => toggleTimeEstimatePreset(value)}
-                                        className={cn(
-                                            'rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40',
-                                            selected
-                                                ? 'border-primary bg-primary/10 text-primary'
-                                                : 'border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                                        )}
-                                    >
-                                        {/* This page's `t` prop is a pre-resolved Labels struct, not a
-                                            (key: string) => string function (unlike InboxProcessingWizard/
-                                            InboxProcessingQuickPanel's `t`), so there's no key-lookup function
-                                            to pass here — the core default (English, matching this page's
-                                            existing copy) is used instead. That still fixes the real bug: the
-                                            deleted local copy of this function collapsed any custom estimate
-                                            straight to '4h+', losing precision; the shared implementation keeps
-                                            the exact hours/minutes split. */}
-                                        {formatTimeEstimateLabel(value)}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        <div className="flex justify-end">
-                            <button
-                                type="button"
-                                onClick={resetTimeEstimatePresets}
-                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-muted transition-colors text-muted-foreground"
-                            >
-                                {t.taskEditorLayoutReset}
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="p-4 flex items-center justify-between gap-6">
-                        <div className="min-w-0 text-sm text-muted-foreground">{t.timeEstimatePresetsDisabled}</div>
-                        <button
-                            type="button"
-                            onClick={enableTimeEstimates}
-                            className="shrink-0 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                        >
-                            {t.enableTimeEstimates}
-                        </button>
-                    </div>
                 )}
             </SettingsDisclosureCard>
             <SettingsDisclosureCard

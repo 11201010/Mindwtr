@@ -167,6 +167,7 @@ const translations: Record<string, string> = {
     'common.save': 'Save',
     'common.search': 'Search...',
     'common.tasks': 'tasks',
+    'common.viewOptions': 'View options',
     'list.confirmBatchDelete': 'Delete selected tasks?',
     'projects.addSection': 'Add section',
     'projects.addTask': 'Add task',
@@ -176,6 +177,8 @@ const translations: Record<string, string> = {
     'projects.reactivate': 'Reactivate',
     'projects.sectionNotes': 'Section notes',
     'projects.sectionsLabel': 'Tasks',
+    'project.notes': 'Project notes',
+    'taskEdit.moreOptions': 'More options',
     'sort.default': 'Default',
     'sort.due': 'Due date',
     'sort.start': 'Start date',
@@ -397,6 +400,23 @@ describe('ProjectWorkspace Select mode', () => {
         expect(updateProject).toHaveBeenLastCalledWith('project-1', { startDate: undefined });
     });
 
+    it('keeps project notes behind an independent disclosure without writing on open or close', () => {
+        const updateProject = vi.fn();
+        const { getByRole, queryByTestId } = renderWorkspace({ updateProject });
+        const disclosure = getByRole('button', { name: 'Project notes' });
+
+        expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+        expect(queryByTestId('project-notes-input')).not.toBeInTheDocument();
+
+        fireEvent.click(disclosure);
+        expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+        expect(queryByTestId('project-notes-input')).toBeInTheDocument();
+
+        fireEvent.click(disclosure);
+        expect(queryByTestId('project-notes-input')).not.toBeInTheDocument();
+        expect(updateProject).not.toHaveBeenCalled();
+    });
+
     it('keeps archived project details and delayed section notes read-only until Reactivate', () => {
         const archivedProject = { ...project, status: 'archived' as const };
         const archivedSection = archiveSectionForProjectArchive(
@@ -418,6 +438,7 @@ describe('ProjectWorkspace Select mode', () => {
         });
 
         fireEvent.click(getByRole('button', { name: 'Details' }));
+        fireEvent.click(getByRole('button', { name: 'Project notes' }));
 
         const titleInput = getByTestId('project-title-input');
         const notesInput = getByTestId('project-notes-input');
@@ -429,7 +450,8 @@ describe('ProjectWorkspace Select mode', () => {
         fireEvent.change(titleInput, { target: { value: 'Rewritten history' } });
         fireEvent.blur(titleInput);
         fireEvent.blur(notesInput, { target: { value: 'Changed notes' } });
-        fireEvent.click(getByRole('button', { name: 'Section notes' }));
+        fireEvent.click(getByRole('button', { name: 'More options: Planning' }));
+        fireEvent.click(getByRole('menuitem', { name: 'Section notes' }));
         expect(queryByPlaceholderText('projects.sectionNotesPlaceholder')).not.toBeInTheDocument();
 
         expect(updateProject).not.toHaveBeenCalled();
@@ -874,6 +896,30 @@ describe('ProjectWorkspace Select mode', () => {
         expect(toolbar).toContainElement(selectButton);
     });
 
+    it('keeps the primary add-task action in the same task toolbar row as section controls', () => {
+        const { container, getAllByRole } = renderWorkspace();
+        const toolbar = container.querySelector('[data-project-task-toolbar]');
+        const toolbarRow = container.querySelector('[data-project-task-toolbar-row]');
+        const primaryControls = container.querySelector('[data-project-task-primary-controls]');
+        const secondaryControls = container.querySelector('[data-project-task-secondary-controls]');
+        const addTask = getAllByRole('button', { name: 'Add task' })[0];
+
+        expect(toolbar).toContainElement(addTask);
+        expect(toolbarRow).toHaveClass('flex-wrap');
+        expect(primaryControls).toContainElement(addTask);
+        expect(primaryControls).toHaveClass('shrink-0', 'whitespace-nowrap');
+        expect(addTask).toHaveClass('shrink-0', 'whitespace-nowrap');
+        expect(secondaryControls).toHaveClass('min-w-0', 'max-w-full', 'flex-wrap');
+    });
+
+    it('keeps structural section creation in the task toolbar overflow', () => {
+        const { getByRole, queryByRole } = renderWorkspace();
+
+        expect(queryByRole('menuitem', { name: 'Add section' })).not.toBeInTheDocument();
+        fireEvent.click(getByRole('button', { name: 'More options: Tasks' }));
+        expect(getByRole('menuitem', { name: 'Add section' })).toBeInTheDocument();
+    });
+
     it('condenses the project task toolbar while scrolled down and expands at the top', () => {
         const allTasks = Array.from({ length: 120 }, (_, index) => task(`task-${index}`, `Task ${index}`));
         const { container } = renderWorkspace({ allTasks });
@@ -911,20 +957,25 @@ describe('ProjectWorkspace Select mode', () => {
         expect(updateProject).toHaveBeenCalledWith('project-1', { taskSortBy: 'due' });
     });
 
-    it('falls back to the default manual order when the project has no persisted sort', () => {
-        const { container } = renderWorkspace({ allTasks: sortSampleTasks() });
+    it('shows the direct sort control and falls back to manual order without a persisted sort', () => {
+        const { container, getByRole, queryByRole } = renderWorkspace({ allTasks: sortSampleTasks() });
         const taskTitles = () => Array.from(container.querySelectorAll('[data-task-id] span')).map((item) => item.textContent);
 
         expect(taskTitles()).toEqual(['No due', 'Later due', 'Soon due']);
+        expect(getByRole('combobox', { name: 'Sort' })).toHaveTextContent('Default');
+        expect(getByRole('combobox', { name: 'Sort' })).toHaveClass('bg-card');
+        expect(queryByRole('button', { name: 'View options' })).not.toBeInTheDocument();
     });
 
     it('renders the project task list in the project\'s persisted sort order', () => {
-        const { container } = renderWorkspace({
+        const { container, getByRole } = renderWorkspace({
             allTasks: sortSampleTasks(),
             selectedProject: { ...project, taskSortBy: 'due' },
         });
         const taskTitles = () => Array.from(container.querySelectorAll('[data-task-id] span')).map((item) => item.textContent);
 
         expect(taskTitles()).toEqual(['Soon due', 'Later due', 'No due']);
+        expect(getByRole('combobox', { name: 'Sort' })).toHaveTextContent('Due date');
+        expect(getByRole('combobox', { name: 'Sort' })).toHaveClass('bg-primary/10');
     });
 });

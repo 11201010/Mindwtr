@@ -301,6 +301,7 @@ export function ContextsView() {
               onPress={() => { setSelectedContexts([]); setMatchMode('all'); }}
               accessibilityRole="button"
               accessibilityState={{ selected: selectedContexts.length === 0 }}
+              accessibilityLabel={t('contexts.all')}
             >
               <Text
                 style={[
@@ -308,7 +309,7 @@ export function ContextsView() {
                   { color: selectedContexts.length === 0 ? tc.onTint : tc.text },
                 ]}
               >
-                {t('contexts.all')}
+                {t('common.all')}
               </Text>
               <View
                 style={[
@@ -370,6 +371,51 @@ export function ContextsView() {
                 </Text>
               </View>
             </Pressable>
+            {filterSections.flatMap((section) => section.tokens).map((context) => {
+              const count = activeTasks.filter((t) => matchesSelected(t, context)).length;
+              const isActive = selectedContexts.includes(context);
+              return (
+                <Pressable
+                  key={context}
+                  style={[
+                    styles.contextButton,
+                    { backgroundColor: isActive ? tc.tint : tc.filterBg, borderColor: tc.border },
+                  ]}
+                  onPress={() => setSelectedContexts((prev) => {
+                    if (prev.includes(NO_CONTEXT_TOKEN)) {
+                      return [context];
+                    }
+                    return prev.includes(context) ? prev.filter((item) => item !== context) : [...prev, context];
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${context} (${count})`}
+                  accessibilityState={{ selected: isActive }}
+                >
+                  <Text
+                    style={[
+                      styles.contextButtonText,
+                      { color: isActive ? tc.onTint : tc.text },
+                    ]}
+                  >
+                    {context}
+                  </Text>
+                  <View
+                    style={[
+                      styles.contextBadge,
+                      {
+                        backgroundColor: isActive
+                          ? tc.cardBg
+                          : isDark
+                            ? 'rgba(255, 255, 255, 0.12)'
+                            : 'rgba(0, 0, 0, 0.08)',
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.contextBadgeText, { color: isActive ? tc.text : tc.secondaryText }]}>{count}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
           </ScrollView>
 
           {selectedContexts.length > 1 && !noContextSelected ? (
@@ -394,66 +440,6 @@ export function ContextsView() {
               </View>
             </View>
           ) : null}
-
-          {filterSections.map((section) => (
-            <View key={section.kind} style={styles.contextFilterSection}>
-              <Text style={[styles.contextFilterSectionLabel, { color: tc.secondaryText }]}>
-                {section.kind === 'contexts' ? t('contexts.title') : t('tags.title')}
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.contextsBar}
-                contentContainerStyle={styles.contextsBarContent}
-              >
-                {section.tokens.map((context) => {
-                  const count = activeTasks.filter((t) => matchesSelected(t, context)).length;
-                  const isActive = selectedContexts.includes(context);
-                  return (
-                    <Pressable
-                      key={context}
-                      style={[
-                        styles.contextButton,
-                        { backgroundColor: isActive ? tc.tint : tc.filterBg, borderColor: tc.border },
-                      ]}
-                      onPress={() => setSelectedContexts((prev) => {
-                        if (prev.includes(NO_CONTEXT_TOKEN)) {
-                          return [context];
-                        }
-                        return prev.includes(context) ? prev.filter((item) => item !== context) : [...prev, context];
-                      })}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${context} (${count})`}
-                      accessibilityState={{ selected: isActive }}
-                    >
-                      <Text
-                        style={[
-                          styles.contextButtonText,
-                          { color: isActive ? tc.onTint : tc.text },
-                        ]}
-                      >
-                        {context}
-                      </Text>
-                      <View
-                        style={[
-                          styles.contextBadge,
-                          {
-                            backgroundColor: isActive
-                              ? tc.cardBg
-                              : isDark
-                                ? 'rgba(255, 255, 255, 0.12)'
-                                : 'rgba(0, 0, 0, 0.08)',
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.contextBadgeText, { color: isActive ? tc.text : tc.secondaryText }]}>{count}</Text>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          ))}
         </View>
 
         <View style={styles.content}>
@@ -711,19 +697,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  contextFilterSection: {
-    gap: 2,
-  },
-  contextFilterSectionLabel: {
-    paddingHorizontal: 12,
-    paddingTop: 6,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
   contextsBar: {
-    maxHeight: 48,
+    flexGrow: 0,
   },
   contextsBarContent: {
     paddingHorizontal: 10,
@@ -732,6 +707,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   contextButton: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

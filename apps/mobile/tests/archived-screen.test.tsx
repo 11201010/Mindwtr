@@ -7,6 +7,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ArchivedScreen from '../app/(drawer)/archived';
 import { CompletedAtPicker } from '@/components/completed-at-picker';
 
+vi.mock('expo-router', () => ({
+  Redirect: (props: Record<string, unknown>) => React.createElement('Redirect', props),
+  usePathname: () => '/history',
+}));
+
 const mocks = vi.hoisted(() => {
   const alert = vi.fn();
   const batchDeleteTasks = vi.fn();
@@ -129,11 +134,18 @@ vi.mock('../contexts/language-context', () => ({
       'bulk.select': 'Select',
       'bulk.selected': 'selected',
       'common.all': 'all',
+      'common.back': 'Back',
       'common.cancel': 'Cancel',
+      'common.close': 'Close',
       'common.delete': 'Delete',
       'common.done': 'Done',
       'common.tasks': 'tasks',
+      'common.viewOptions': 'View options',
+      'filters.title': 'Filters',
+      'list.groupBy': 'Group',
       'list.done': 'Completed',
+      'sort.label': 'Sort',
+      'taskEdit.moreOptions': 'More options',
       'task.deleteConfirmBody': 'Move this task to Trash?',
       'trash.restoreToInbox': 'Restore to Inbox',
       'projects.title': 'Projects',
@@ -188,10 +200,19 @@ vi.mock('react-native-gesture-handler', () => ({
 
 vi.mock('lucide-react-native', () => ({
   Archive: (props: any) => React.createElement('Archive', props),
+  ArrowUpDown: (props: any) => React.createElement('ArrowUpDown', props),
+  ChevronLeft: (props: any) => React.createElement('ChevronLeft', props),
   ChevronDown: (props: any) => React.createElement('ChevronDown', props),
   ChevronRight: (props: any) => React.createElement('ChevronRight', props),
+  Folder: (props: any) => React.createElement('Folder', props),
+  MoreHorizontal: (props: any) => React.createElement('MoreHorizontal', props),
+  Settings2: (props: any) => React.createElement('Settings2', props),
   SlidersHorizontal: (props: any) => React.createElement('SlidersHorizontal', props),
+  X: (props: any) => React.createElement('X', props),
 }));
+
+vi.mock('@/hooks/use-reduced-motion', () => ({ useReducedMotion: () => false }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 
 // The sheet's own rendering is covered by task-filter-sheet.test.tsx; here it is
 // only a destination, so stub it rather than pull its whole icon/Modal tree in.
@@ -626,6 +647,34 @@ describe('ArchivedScreen', () => {
     // back is to leave the screen.
     expect(countByLabel(tree, 'Search')).toBe(1);
     expect(hasText(tree, 'No tasks match these filters.')).toBe(true);
+  });
+
+  it('keeps Filters, Sort, and Group at the top level, then exposes an active count', () => {
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<ArchivedScreen />);
+    });
+
+    expect(tree.root.findAllByProps({ testID: 'archived-active-filters-button' })).toHaveLength(0);
+    const overflow = tree.root.findByProps({ testID: 'archived-overflow-button' });
+    expect(overflow.props.accessibilityState).toEqual({ expanded: false });
+
+    renderer.act(() => overflow.props.onPress());
+    expect(tree.root.findByProps({ testID: 'archived-filter-action' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ accessibilityLabel: 'View options' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'archived-sort-action' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'archived-group-action' })).toBeTruthy();
+    renderer.act(() => tree.root.findByProps({ testID: 'archived-sort-action' }).props.onPress());
+    expect(tree.root.findByProps({ testID: 'archived-sort-default' })).toBeTruthy();
+
+    renderer.act(() => tree.root.findByProps({ accessibilityLabel: 'Back' }).props.onPress());
+    renderer.act(() => tree.root.findByProps({ testID: 'archived-group-action' }).props.onPress());
+    expect(tree.root.findByProps({ testID: 'archived-group-none' })).toBeTruthy();
+
+    typeSearch(tree, 'printer');
+    const activeFilters = tree.root.findByProps({ testID: 'archived-active-filters-button' });
+    expect(activeFilters.props.accessibilityLabel).toBe('Filters · 1');
+    expect(activeFilters.props.accessibilityState).toEqual({ selected: true });
   });
 
   it('keeps the Filters button out of the Projects segment, which it does not apply to', () => {

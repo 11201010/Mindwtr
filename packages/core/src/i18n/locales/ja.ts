@@ -10,6 +10,19 @@
 //   パーサのコマンドトークン (/due:, @context, #tag, +Project…) は英語のまま。
 // - 数値プレースホルダは詰める ({{count}}件)、英単語は前後に半角スペースを入れる (Dropbox に接続)。
 export const jaOverrides: Record<string, string> = {
+    'filters.searchTasks': "タスクのタイトルを検索",
+    'filters.searchOptions': "選択肢を検索",
+    'filters.tokenCycleHint': "クリックで含める、もう一度で除外、さらにもう一度で選択を解除します。",
+    'filters.more': "その他のフィルター",
+    'viewSections.new': "新しいセクション",
+    'projects.new': '新しいプロジェクト',
+    'nav.history': '履歴',
+    'task.dates': '日付…',
+    'task.moveTo': '移動先…',
+    'task.destination': '移動先',
+    'common.viewOptions': '表示オプション',
+    'settings.regionalFormats': '地域の表示形式',
+    'settings.keyboardAndWindow': 'キーボードとウィンドウ',
     'settings.gtdMobile.openTasksIn': 'タスクを開く画面',
     'settings.gtdMobile.openTasksInDesc': 'このデバイスで通常タスクをタップしたときに表示するタブを選択します。',
     'settings.gtdMobile.taskOpenAutomatic': '自動',

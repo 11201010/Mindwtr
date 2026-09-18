@@ -1,13 +1,14 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@mindwtr/core';
+import { SAVED_FILTER_NO_PROJECT_ID, type Task } from '@mindwtr/core';
 
 import { SomedayView } from './someday-view';
 
 const mocked = vi.hoisted(() => ({
   state: null as any,
   taskListProps: null as any,
+  taskFilterSheetProps: null as any,
   showToast: vi.fn(),
   flush: vi.fn(),
 }));
@@ -31,7 +32,28 @@ vi.mock('@/contexts/theme-context', () => ({
 
 vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({
-    t: (key: string) => key === 'viewSections.noSection' ? 'No section' : key,
+    t: (key: string) => ({
+      'common.back': 'Back',
+      'common.close': 'Close',
+      'common.viewOptions': 'View options',
+      'filters.clear': 'Clear',
+      'filters.title': 'Filters',
+      'list.details': 'Details',
+      'list.groupBy': 'Group',
+      'list.groupByArea': 'Area',
+      'list.groupByNone': 'No grouping',
+      'list.groupByProject': 'Project',
+      'list.hideDetails': 'Hide details',
+      'list.showDetails': 'Show details',
+      'sort.default': 'Default',
+      'sort.label': 'Sort',
+      'sort.title': 'Title',
+      'taskEdit.moreOptions': 'More options',
+      'taskEdit.noProjectOption': 'No project',
+      'viewSections.new': 'New section',
+      'viewSections.noSection': 'No section',
+      'viewSections.somedaySection': 'Someday section',
+    }[key] ?? key),
   }),
 }));
 
@@ -61,11 +83,31 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('lucide-react-native', () => ({
+  ArrowUpDown: () => null,
+  ChevronLeft: () => null,
+  ChevronRight: () => null,
+  Eye: () => null,
+  Folder: () => null,
   Lightbulb: () => null,
+  MoreHorizontal: () => null,
+  Plus: () => null,
+  Settings2: () => null,
+  SlidersHorizontal: () => null,
+  X: () => null,
 }));
+
+vi.mock('@/hooks/use-reduced-motion', () => ({ useReducedMotion: () => false }));
 
 vi.mock('../task-edit-modal', () => ({
   TaskEditModal: () => null,
+}));
+
+vi.mock('../task-filter-sheet', () => ({
+  FilterChip: (props: any) => React.createElement('FilterChip', props),
+  TaskFilterSheet: (props: any) => {
+    mocked.taskFilterSheetProps = props;
+    return React.createElement('TaskFilterSheet', props);
+  },
 }));
 
 vi.mock('@/contexts/toast-context', () => ({
@@ -94,7 +136,12 @@ vi.mock('../task-list/TaskListBulkBar', () => ({
 }));
 
 vi.mock('../use-task-list-selection', () => ({
-  useTaskListSelection: () => ({}),
+  usePruneSelectionToVisible: vi.fn(),
+  useTaskListSelection: () => ({
+    exitSelectionMode: vi.fn(),
+    selectedIdsArray: [],
+    setMultiSelectedIds: vi.fn(),
+  }),
   assertBulkActionSucceeded: (result: { success?: boolean }) => {
     if (result?.success === false) throw new Error('save failed');
   },
@@ -116,10 +163,14 @@ const makeTask = (id: string, overrides: Partial<Task> = {}): Task => ({
   ...overrides,
 } as Task);
 
-const setState = (tasks: Task[], somedaySections: { id: string; title: string; order: number }[]) => {
+const setState = (
+  tasks: Task[],
+  somedaySections: { id: string; title: string; order: number }[],
+  projects: { id: string; title: string; status: string; order: number }[] = [],
+) => {
   mocked.state = {
     tasks,
-    projects: [],
+    projects,
     settings: { gtd: { viewSections: { someday: somedaySections } } },
     updateTask: vi.fn(),
     updateProject: vi.fn(),
@@ -148,6 +199,7 @@ describe('SomedayView section grouping', () => {
   beforeEach(() => {
     vi.stubGlobal('React', React);
     mocked.taskListProps = null;
+    mocked.taskFilterSheetProps = null;
     mocked.flush.mockReset().mockResolvedValue(undefined);
     mocked.showToast.mockClear();
   });
@@ -180,6 +232,92 @@ describe('SomedayView section grouping', () => {
     expect(mocked.taskListProps.taskGroups.map((group: { title: string }) => group.title))
       .toEqual(['Books to read', 'No section']);
     expect(mocked.taskListProps.taskGroups[0].tasks[0].id).toBe('book');
+  });
+
+  it('filters with normalized legacy bare tags and contexts, shows an active count, and clears back to all rows', async () => {
+    setState([
+      makeTask('bare-tag', { contexts: ['home'], tags: ['ideas'] }),
+      makeTask('other', { contexts: ['office'], tags: ['later'] }),
+    ], []);
+    renderSomedayView();
+
+    const moreOptions = renderer!.root.findByProps({ testID: 'someday-overflow-button' });
+    await act(async () => { moreOptions.props.onPress(); });
+    const filtersAction = renderer!.root.findByProps({ testID: 'someday-filter-action' });
+    await act(async () => { filtersAction.props.onPress(); });
+
+    expect(mocked.taskFilterSheetProps.visible).toBe(true);
+    expect(mocked.taskFilterSheetProps.options.tokens).toEqual(expect.arrayContaining(['@home', '#ideas']));
+    await act(async () => { mocked.taskFilterSheetProps.selections.toggleToken('@home'); });
+
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['bare-tag']);
+    const activeChip = renderer!.root.findByType('FilterChip' as never);
+    expect(activeChip.props.label).toBe('Filters · 1');
+    await act(async () => { activeChip.props.onPress(); });
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['bare-tag', 'other']);
+  });
+
+  it('offers and retains No project so unassigned Someday tasks can be filtered directly', async () => {
+    setState([
+      makeTask('unassigned'),
+      makeTask('planned', { projectId: 'project-a' }),
+    ], [], [
+      { id: 'project-a', title: 'Alpha project', status: 'active', order: 0 },
+    ]);
+    renderSomedayView();
+
+    expect(mocked.taskFilterSheetProps.options.projects).toEqual([
+      { id: SAVED_FILTER_NO_PROJECT_ID, title: 'No project' },
+      { id: 'project-a', title: 'Alpha project' },
+    ]);
+    await act(async () => {
+      mocked.taskFilterSheetProps.selections.toggleProject(SAVED_FILTER_NO_PROJECT_ID);
+    });
+
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['unassigned']);
+    expect(mocked.taskFilterSheetProps.selections.chips).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `project:${SAVED_FILTER_NO_PROJECT_ID}`, label: 'No project' }),
+    ]));
+  });
+
+  it('applies Someday sort and project grouping before it derives headings', async () => {
+    setState([
+      makeTask('zulu', { title: 'Zulu', projectId: 'project-b', createdAt: '2026-08-28T12:00:00.000Z' }),
+      makeTask('alpha', { title: 'Alpha', projectId: 'project-a', createdAt: '2026-08-27T12:00:00.000Z' }),
+    ], [{ id: 'books', title: 'Books to read', order: 0 }], [
+      { id: 'project-a', title: 'Alpha project', status: 'active', order: 0 },
+      { id: 'project-b', title: 'Beta project', status: 'active', order: 1 },
+    ]);
+    renderSomedayView();
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['zulu', 'alpha']);
+
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-overflow-button' }).props.onPress(); });
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: 'View options' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ accessibilityLabel: 'Sort: Default' })).toBeTruthy();
+    expect(renderer!.root.findByProps({ accessibilityLabel: 'Group: Someday section' })).toBeTruthy();
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-sort-action' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-sort-title' }).props.onPress(); });
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['alpha', 'zulu']);
+
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-overflow-button' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-group-action' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-group-project' }).props.onPress(); });
+    expect(mocked.taskListProps.taskGroups.map((group: { title: string }) => group.title))
+      .toEqual(['Alpha project', 'Beta project']);
+    expect(mocked.taskListProps.taskGroups[0].tasks.map((task: Task) => task.id)).toEqual(['alpha']);
+    expect(mocked.taskListProps.onAddTaskToSection).toBeUndefined();
+  });
+
+  it('toggles rendered row details directly from the overflow without adding a persistent details control', async () => {
+    setState([makeTask('one')], []);
+    renderSomedayView();
+    expect(mocked.taskListProps.showDetails).toBe(false);
+
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-overflow-button' }).props.onPress(); });
+    await act(async () => { renderer!.root.findByProps({ testID: 'someday-toggle-details' }).props.onPress(); });
+
+    expect(mocked.taskListProps.showDetails).toBe(true);
+    expect(renderer!.root.findAllByProps({ testID: 'someday-details-button' })).toHaveLength(0);
   });
 
   it('keeps an empty heading actionable and preassigns a task created there', async () => {
@@ -232,14 +370,18 @@ describe('SomedayView section grouping', () => {
     expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
   });
 
-  it('keeps New section in the summary bar without a separate list row', async () => {
+  it('opens New section from the summary overflow without a separate list row', async () => {
     setState([makeTask('one')], [{ id: 'books', title: 'Books to read', order: 0 }]);
     renderSomedayView();
     expect(mocked.taskListProps.onMoveTaskToSection).toEqual(expect.any(Function));
     expect(mocked.taskListProps.onMoveSelectionToSection).toEqual(expect.any(Function));
 
-    const newSection = renderer!.root.findAllByProps({ accessibilityLabel: 'New section…' })[0];
-    expect(newSection.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+    const moreOptions = renderer!.root.findByProps({ testID: 'someday-overflow-button' });
+    expect(moreOptions.props.accessibilityState).toEqual({ expanded: false });
+    await act(async () => { moreOptions.props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: 'someday-overflow-button' }).props.accessibilityState)
+      .toEqual({ expanded: true });
+    const newSection = renderer!.root.findByProps({ testID: 'someday-new-section-action' });
     expect(mocked.taskListProps.ListHeaderComponent.props).not.toHaveProperty('children');
     await act(async () => { newSection.props.onPress(); });
     const picker = renderer!.root.findAllByType('SomedaySectionPicker' as never)

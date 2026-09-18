@@ -51,35 +51,44 @@ export const styles = StyleSheet.create({
   headerAccessoryControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 0,
+  },
+  directControlButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  directControlVisual: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerAccessoryRight: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 8,
   },
-  sortButton: {
+  activeFiltersButton: {
+    alignItems: 'center',
+    borderRadius: 12,
     borderWidth: 1,
-    borderRadius: 18,
-    width: 36,
-    height: 36,
-    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+    minHeight: 44,
     justifyContent: 'center',
+    paddingHorizontal: 12,
   },
-  filterBadge: {
-    position: 'absolute',
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    right: -3,
-    top: -4,
-  },
-  filterBadgeText: {
-    fontSize: 10,
+  activeFiltersButtonText: {
+    fontSize: 13,
     fontWeight: '700',
+  },
+  navigationOverflowButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
   },
   bulkBar: {
     borderBottomWidth: 1,

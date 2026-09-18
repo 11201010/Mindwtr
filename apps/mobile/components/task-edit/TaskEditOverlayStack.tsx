@@ -2,6 +2,7 @@ import React from 'react';
 
 import { AIResponseModal } from '../ai-response-modal';
 import { TaskEditAreaPicker } from './TaskEditAreaPicker';
+import { applyTaskEditDestination, TaskEditDestinationPicker } from './TaskEditDestinationPicker';
 import { TaskEditCustomRecurrenceModal } from './TaskEditCustomRecurrenceModal';
 import {
     TaskEditAudioModal,
@@ -9,7 +10,6 @@ import {
     TaskEditLinkModal,
     TaskEditWaitingAssignmentModal,
 } from './TaskEditOverlayModals';
-import { TaskEditProjectPicker } from './TaskEditProjectPicker';
 import { TaskEditSectionPicker } from './TaskEditSectionPicker';
 
 type TaskEditOverlayStackProps = {
@@ -45,6 +45,7 @@ export function TaskEditOverlayStack(props: TaskEditOverlayStackProps) {
         linkInputTouched,
         linkModalVisible,
         linkModalTitle,
+        destinationFields,
         projects,
         recurrenceWeekdayButtons,
         recurrenceWeekdayLabels,
@@ -155,20 +156,25 @@ export function TaskEditOverlayStack(props: TaskEditOverlayStackProps) {
                 />
             ) : null}
             {showProjectPicker ? (
-                <TaskEditProjectPicker
+                <TaskEditDestinationPicker
                     visible
                     projects={filteredProjectsForPicker}
                     allProjects={projects}
+                    areas={areas}
+                    allowProjects={destinationFields.includes('project')}
+                    allowAreas={destinationFields.includes('area')}
+                    selectedProjectId={draft?.projectId || null}
+                    selectedAreaId={draft?.areaId || null}
                     tc={tc}
                     t={t}
                     onClose={() => props.setShowProjectPicker(false)}
-                    onSelectProject={(projectId?: string) => {
-                        const areaId = draft?.areaId
-                            || projects.find((project: any) => project.id === draft?.projectId)?.areaId
-                            || '';
-                        setDraftField('projectId', projectId ?? '');
-                        setDraftField('areaId', projectId ? '' : areaId);
-                        setDraftField('sectionId', projectId && draft?.projectId === projectId ? draft.sectionId : '');
+                    onSelect={(destination) => {
+                        applyTaskEditDestination(
+                            setDraftField,
+                            draft?.projectId,
+                            draft?.sectionId,
+                            destination,
+                        );
                     }}
                     onCreateProject={(title: string) => (
                         props.addProject(
@@ -177,6 +183,7 @@ export function TaskEditOverlayStack(props: TaskEditOverlayStackProps) {
                             props.projectFilterAreaId ? { areaId: props.projectFilterAreaId } : undefined,
                         )
                     )}
+                    onCreateArea={(name: string) => props.addArea(name)}
                 />
             ) : null}
             {showSectionPicker ? (

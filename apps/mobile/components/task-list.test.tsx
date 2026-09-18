@@ -15,6 +15,7 @@ const flatListPropsSpy = vi.hoisted(() => vi.fn());
 const flatListScrollToIndexMock = vi.hoisted(() => vi.fn());
 const flatListScrollToOffsetMock = vi.hoisted(() => vi.fn());
 const rowRenderSpy = vi.hoisted(() => vi.fn());
+const navigationSetOptionsMock = vi.hoisted(() => vi.fn());
 const mobileAreaFilterState = vi.hoisted(() => ({
   current: {
     areaById: new Map<string, Area>(),
@@ -139,6 +140,7 @@ vi.mock('react-native', () => ({
 
 vi.mock('expo-router', () => ({
   router: { push: vi.fn() },
+  useNavigation: () => ({ setOptions: navigationSetOptionsMock }),
 }));
 
 vi.mock('lucide-react-native', () => ({
@@ -169,7 +171,6 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
       showPriority: true,
       showTimeEstimate: true,
     })),
-    getUsedTaskTokens: vi.fn(() => []),
     hasActiveFilterCriteria: vi.fn(() => false),
     matchesTask: vi.fn(() => true),
     parseSearchQuery: vi.fn(() => ({ filters: [], text: '' })),
@@ -352,6 +353,8 @@ vi.mock('./task-list/TaskListTagModal', () => ({
   TaskListTagModal: () => null,
 }));
 
+// Mocks above must be registered before the component module is evaluated.
+// eslint-disable-next-line import/first
 import { TaskList } from './task-list';
 
 const latestHeaderProps = () => taskListHeaderPropsSpy.mock.calls.at(-1)?.[0];
@@ -405,6 +408,60 @@ describe('TaskList', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('enables direct controls only for Inbox and leaves other task lists on overflow', async () => {
+    let inboxTree!: ReturnType<typeof create>;
+    await act(async () => {
+      inboxTree = create(
+        <TaskList
+          groupBy="none"
+          onChangeGroupBy={vi.fn()}
+          showHeader={false}
+          statusFilter="inbox"
+          title="Inbox"
+        />,
+      );
+    });
+    expect(latestHeaderProps()).toEqual(expect.objectContaining({
+      directControls: true,
+      groupByLabel: expect.any(String),
+      onOpenGroup: expect.any(Function),
+    }));
+    act(() => inboxTree.unmount());
+
+    let waitingTree!: ReturnType<typeof create>;
+    await act(async () => {
+      waitingTree = create(
+        <TaskList showHeader={false} statusFilter="waiting" title="Waiting" />,
+      );
+    });
+    expect(latestHeaderProps().directControls).not.toBe(true);
+    expect(latestHeaderProps().showOverflow).toBe(true);
+    act(() => waitingTree.unmount());
+  });
+
+  it('mounts the neutral overflow in the navigation header without an empty inline toolbar row', async () => {
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <TaskList
+          overflowPlacement="navigation"
+          showHeader={false}
+          statusFilter="reference"
+          title="Reference"
+        />,
+      );
+    });
+
+    expect(latestHeaderProps().showOverflow).toBe(false);
+    const headerOptions = navigationSetOptionsMock.mock.calls
+      .map(([options]) => options)
+      .find((options) => typeof options.headerRight === 'function');
+    expect(headerOptions).toBeTruthy();
+    expect(headerOptions.headerRight().props.renderOverflowOnly).toBe(true);
+
+    act(() => tree.unmount());
   });
 
   it('keeps Inbox rows global while other status lists retain the selected area', async () => {
@@ -474,7 +531,7 @@ describe('TaskList', () => {
         );
       });
 
-      const data = flatListPropsSpy.mock.calls.at(-1)?.[0].data as Array<{ type: string; id?: string; count?: number; task?: Task }>;
+      const data = flatListPropsSpy.mock.calls.at(-1)?.[0].data as { type: string; id?: string; count?: number; task?: Task }[];
       const sectionIndex = data.findIndex((item) => item.type === 'section' && item.id === 'project-reference-tasks');
       expect(sectionIndex).toBeGreaterThan(-1);
       expect(data[sectionIndex].count).toBe(2);
@@ -671,6 +728,49 @@ describe('TaskList', () => {
     act(() => inboxTree.unmount());
   });
 
+  it('normalizes legacy bare Reference tags into active filters that constrain the list', async () => {
+    const adminReference = makeTask('ref-admin', 'Admin handbook', {
+      status: 'reference',
+      projectId: undefined,
+      tags: ['admin'],
+    });
+    const homeReference = makeTask('ref-home', 'Home handbook', {
+      status: 'reference',
+      projectId: undefined,
+      tags: ['#home'],
+    });
+    storeState.tasks = [adminReference, homeReference];
+    storeState._allTasks = storeState.tasks;
+
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <TaskList showHeader={false} statusFilter="reference" title="Reference" />,
+      );
+    });
+    await act(async () => {
+      latestHeaderProps().onOpenFilters();
+    });
+
+    const sheet = taskFilterSheetPropsSpy.mock.calls.at(-1)?.[0];
+    expect(sheet.options.tokens).toEqual(['#admin', '#home']);
+
+    await act(async () => {
+      sheet.selections.toggleToken('#admin');
+    });
+
+    const visibleReferenceIds = (flatListPropsSpy.mock.calls.at(-1)?.[0].data as { type: string; task?: Task }[])
+      .filter((item) => item.type === 'task')
+      .map((item) => item.task!.id);
+    expect(visibleReferenceIds).toEqual(['ref-admin']);
+    expect(latestHeaderProps()).toEqual(expect.objectContaining({
+      filterActiveCount: 1,
+      hasActiveFilters: true,
+    }));
+
+    act(() => tree.unmount());
+  });
+
   it('shows only project-archive-owned sections in read-only project history', async () => {
     const archivedAt = '2026-09-07T17:55:52.636Z';
     const manuallyDeletedAt = '2026-09-01T10:00:00.000Z';
@@ -722,7 +822,7 @@ describe('TaskList', () => {
       );
     });
 
-    const data = flatListPropsSpy.mock.calls.at(-1)?.[0].data as Array<{ type: string; id?: string; task?: Task }>;
+    const data = flatListPropsSpy.mock.calls.at(-1)?.[0].data as { type: string; id?: string; task?: Task }[];
     expect(data.find((item) => item.type === 'section' && item.id === archivedSection.id)).toBeTruthy();
     expect(data.find((item) => item.type === 'section' && item.id === manuallyDeletedSection.id)).toBeUndefined();
     expect(data.find((item) => item.type === 'task' && item.task?.id === linkedTask.id)).toBeTruthy();

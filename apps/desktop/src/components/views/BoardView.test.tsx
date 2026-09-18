@@ -113,11 +113,12 @@ describe('BoardView', () => {
     it('exposes the project filter panel state with aria-expanded', () => {
         const { getByRole } = renderWithProviders();
 
-        const filtersButton = getByRole('button', { name: /show/i });
+        const filtersButton = getByRole('button', { name: /^filters$/i });
         expect(filtersButton).toHaveAttribute('aria-expanded', 'false');
 
         fireEvent.click(filtersButton);
-        expect(getByRole('button', { name: /hide/i })).toHaveAttribute('aria-expanded', 'true');
+        expect(getByRole('button', { name: /^filters$/i })).toHaveAttribute('aria-expanded', 'true');
+        expect(getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
     });
 
     it('allows hiding the project filter panel after selecting a filter', () => {
@@ -139,11 +140,12 @@ describe('BoardView', () => {
 
         const { getByRole, queryByRole } = renderWithProviders();
 
-        fireEvent.click(getByRole('button', { name: /^show$/i }));
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.click(getByRole('button', { name: /^Projects$/i }));
         fireEvent.click(getByRole('button', { name: 'Alpha project' }));
         fireEvent.click(getByRole('button', { name: /^hide$/i }));
 
-        expect(getByRole('button', { name: /^show$/i })).toHaveAttribute('aria-expanded', 'false');
+        expect(getByRole('button', { name: /^filters$/i })).toHaveAttribute('aria-expanded', 'false');
         expect(queryByRole('button', { name: 'Alpha project' })).not.toBeInTheDocument();
     });
 
@@ -379,7 +381,8 @@ describe('BoardView', () => {
 
         const { getByRole, getByText, queryByText } = renderWithProviders();
 
-        fireEvent.click(getByRole('button', { name: /^show$/i }));
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.click(getByRole('button', { name: /^Contexts & tags$/i }));
         fireEvent.click(getByRole('button', { name: '@work' }));
 
         expect(getByText('Work task')).toBeInTheDocument();
@@ -414,7 +417,8 @@ describe('BoardView', () => {
         });
 
         const { getByRole, getByText, queryByText } = renderWithProviders();
-        fireEvent.click(getByRole('button', { name: /^show$/i }));
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.click(getByRole('button', { name: /^Contexts & tags$/i }));
 
         fireEvent.click(getByRole('button', { name: '@work' }));
         expect(useUiStore.getState().boardFilters.criteria.contexts).toEqual(['@work']);
@@ -465,7 +469,8 @@ describe('BoardView', () => {
         });
 
         const { getByRole, getByText, queryByText } = renderWithProviders();
-        fireEvent.click(getByRole('button', { name: /^show$/i }));
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.click(getByRole('button', { name: /^Contexts & tags$/i }));
 
         fireEvent.click(getByRole('button', { name: '#chore' }));
         fireEvent.click(getByRole('button', { name: '#chore' }));

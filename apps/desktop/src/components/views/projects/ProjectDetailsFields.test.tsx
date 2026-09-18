@@ -73,6 +73,19 @@ const defaultProps = {
 };
 
 describe('ProjectDetailsFields', () => {
+    it('uses a compact responsive settings grid', () => {
+        const { container } = render(
+            <LanguageProvider>
+                <ProjectDetailsFields {...defaultProps} />
+            </LanguageProvider>
+        );
+
+        const grid = container.querySelector('[data-project-details-grid]');
+        expect(grid).toHaveClass('sm:grid-cols-2', 'xl:grid-cols-4', '2xl:grid-cols-6');
+        expect(screen.getByLabelText('Start Date')).toHaveClass('h-8');
+        expect(screen.getByText('Review reminders keep projects visible in Review.')).toHaveClass('sr-only');
+    });
+
     it('offers existing tag completions for the project tag field', async () => {
         render(
             <LanguageProvider>

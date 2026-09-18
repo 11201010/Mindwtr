@@ -58,7 +58,7 @@ describe('TaskItemDisplay', () => {
                     task={baseTask}
                     language="zh"
                     selectionMode={false}
-                    isViewOpen={false}
+                    isViewOpen
                     actions={{
                         onToggleView: vi.fn(),
                         onEdit: vi.fn(),
@@ -291,7 +291,7 @@ describe('TaskItemDisplay', () => {
                     task={baseTask}
                     language="zh"
                     selectionMode={false}
-                    isViewOpen={false}
+                    isViewOpen
                     actions={{
                         onToggleView: vi.fn(),
                         onEdit: vi.fn(),
@@ -362,7 +362,7 @@ describe('TaskItemDisplay', () => {
                     }}
                     language="en"
                     selectionMode={false}
-                    isViewOpen={false}
+                    isViewOpen
                     actions={{
                         onToggleView: vi.fn(),
                         onEdit: vi.fn(),
@@ -747,7 +747,7 @@ describe('TaskItemDisplay', () => {
                     task={taggedTask}
                     language="en"
                     selectionMode={false}
-                    isViewOpen={false}
+                    isViewOpen
                     actions={{
                         onToggleView: vi.fn(),
                         onEdit: vi.fn(),
@@ -981,7 +981,7 @@ describe('TaskItemDisplay', () => {
                     task={taggedTask}
                     language="en"
                     selectionMode={false}
-                    isViewOpen={false}
+                    isViewOpen
                     actions={{
                         onToggleView: vi.fn(),
                         onEdit: vi.fn(),
@@ -1493,8 +1493,8 @@ describe('TaskItemDisplay', () => {
         expect(getByText('Support hours').tagName).toBe('STRONG');
         expect(getByText('Project Alpha')).toBeInTheDocument();
         expect(getByText('Client work')).toBeInTheDocument();
-        expect(getByText('Assigned to: Ada')).toBeInTheDocument();
-        expect(getByText('#vendor')).toBeInTheDocument();
+        expect(queryByText('Assigned to: Ada')).not.toBeInTheDocument();
+        expect(queryByText('#vendor')).not.toBeInTheDocument();
         expect(container.querySelector('[data-priority-strip]')).toBeNull();
         expect(queryByRole('combobox', { name: 'task.aria.status' })).not.toBeInTheDocument();
         expect(queryByText('@phone')).not.toBeInTheDocument();

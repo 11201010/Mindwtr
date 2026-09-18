@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const faOverrides: Record<string, string> = {
+    'filters.searchTasks': "جستجو در عنوان کارها",
+    'filters.searchOptions': "جستجوی گزینه‌ها",
+    'filters.tokenCycleHint': "برای افزودن کلیک کنید، دوباره برای حذف از نتایج و بار سوم برای پاک کردن انتخاب.",
+    'filters.more': "فیلترهای بیشتر",
+    'viewSections.new': "بخش جدید",
+    'projects.new': 'پروژهٔ جدید',
+    'nav.history': 'تاریخچه',
+    'task.dates': 'تاریخ‌ها…',
+    'task.moveTo': 'انتقال به…',
+    'task.destination': 'مقصد',
+    'common.viewOptions': 'گزینه‌های نمایش',
+    'settings.regionalFormats': 'قالب‌های منطقه‌ای',
+    'settings.keyboardAndWindow': 'صفحه‌کلید و پنجره',
     'settings.gtdMobile.openTasksIn': 'باز کردن کارها در',
     'settings.gtdMobile.openTasksInDesc': 'زبانه‌ای را انتخاب کنید که با لمس معمولی کارها در این دستگاه باز می‌شود.',
     'settings.gtdMobile.taskOpenAutomatic': 'خودکار',

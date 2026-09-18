@@ -10,7 +10,7 @@ const OPTIONS: ToolbarSelectOption[] = [
     { value: 'c', label: 'Gamma' },
 ];
 
-function renderSelect(overrides: { value?: string; onChange?: (value: string) => void } = {}) {
+function renderSelect(overrides: { value?: string; onChange?: (value: string) => void; active?: boolean } = {}) {
     const onChange = overrides.onChange ?? vi.fn();
     const result = render(
         <ToolbarSelect
@@ -18,6 +18,7 @@ function renderSelect(overrides: { value?: string; onChange?: (value: string) =>
             value={overrides.value ?? 'a'}
             options={OPTIONS}
             onChange={onChange}
+            active={overrides.active}
         />
     );
     return { ...result, onChange };
@@ -34,6 +35,23 @@ const focusedOptionLabel = () => (document.activeElement as HTMLElement | null)?
 describe('ToolbarSelect keyboard interaction', () => {
     afterEach(() => {
         vi.restoreAllMocks();
+    });
+
+    it('highlights only when its caller marks the current value non-default', () => {
+        const view = renderSelect();
+        const trigger = screen.getByRole('combobox', { name: 'Sort' });
+
+        expect(trigger).toHaveClass('bg-card');
+        view.rerender(
+            <ToolbarSelect
+                active
+                label="Sort"
+                value="a"
+                options={OPTIONS}
+                onChange={view.onChange}
+            />
+        );
+        expect(trigger).toHaveClass('bg-primary/10');
     });
 
     it('focuses the selected option on open and starts arrow navigation there', () => {

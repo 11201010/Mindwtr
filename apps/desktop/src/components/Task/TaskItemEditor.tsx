@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { ContextualHelp } from '../ContextualHelp';
-import { ArrowRight, Check, Folder, HelpCircle, Layers, MapPin, Trash2 } from 'lucide-react';
+import { ArrowRight, Check, FolderPlus, HelpCircle, Layers, MapPin, Rows3, Trash2 } from 'lucide-react';
 import {
-    compareAreasByOrder,
-    filterProjectsBySelectedArea,
     resolveAutoTextDirection,
     setTaskViewSectionId,
     tFallback,
@@ -15,10 +13,8 @@ import {
     type TaskEditorFieldId,
     type TaskEditorSectionId,
     type ViewSectionDefinition,
-    numericTextCollator,
 } from '@mindwtr/core';
-import { AreaSelector } from '../ui/AreaSelector';
-import { ProjectSelector } from '../ui/ProjectSelector';
+import { DestinationSelector, type DestinationSelection } from '../ui/DestinationSelector';
 import { SectionSelector } from '../ui/SectionSelector';
 import { SomedaySectionSelector } from '../ui/SomedaySectionSelector';
 import { TaskInput, type TaskInputAcceptedSuggestion } from './TaskInput';
@@ -77,6 +73,8 @@ interface TaskItemEditorProps {
         onToggle: () => void;
     };
     onDeleteTask?: () => void;
+    onPromoteToProject?: () => void;
+    onConvertToSection?: () => void;
     onCancel: () => void;
     onSubmit: (e: FormEvent) => void;
     onFilesDropped?: (files: File[]) => void;
@@ -133,6 +131,8 @@ export function TaskItemEditor({
     onRequestBackdatedComplete,
     focusStar,
     onDeleteTask,
+    onPromoteToProject,
+    onConvertToSection,
     onCancel,
     onSubmit,
     onFilesDropped,
@@ -165,14 +165,24 @@ export function TaskItemEditor({
     );
     const [editorLayoutHelpOpen, setEditorLayoutHelpOpen] = useState(false);
 
-    const compareLabels = (left: string, right: string) =>
-        numericTextCollator.compare(left, right);
-    const sortedProjects = [...projects].sort((a, b) => compareLabels(a.title, b.title));
-    const sortedAreas = areas
-        .filter((area) => !area.deletedAt)
-        .sort(compareAreasByOrder);
-    const projectFilterAreaId = editAreaId || undefined;
-    const filteredProjects = filterProjectsBySelectedArea(sortedProjects, projectFilterAreaId);
+    const showProjectDestination = organizerFields.includes('project');
+    const showAreaDestination = organizerFields.includes('area');
+    const destinationValue: DestinationSelection = editProjectId
+        ? { kind: 'project', id: editProjectId }
+        : editAreaId
+            ? { kind: 'area', id: editAreaId }
+            : { kind: 'none' };
+    const setDestination = (selection: DestinationSelection) => {
+        if (selection.kind === 'project') {
+            if (selection.id !== editProjectId) setEditSectionId('');
+            setEditProjectId(selection.id);
+            setEditAreaId('');
+            return;
+        }
+        setEditProjectId('');
+        setEditSectionId('');
+        setEditAreaId(selection.kind === 'area' ? selection.id : '');
+    };
     const [schedulingOpen, setSchedulingOpen] = useState(() => sectionOpenDefaults.scheduling || sectionCounts.scheduling > 0);
     const [organizationOpen, setOrganizationOpen] = useState(() => sectionOpenDefaults.organization || sectionCounts.organization > 0);
     const [detailsOpen, setDetailsOpen] = useState(() => sectionOpenDefaults.details || sectionCounts.details > 0);
@@ -370,54 +380,41 @@ export function TaskItemEditor({
             )}
             {organizerFields.length > 0 && (
                 <div className="flex flex-wrap gap-4">
-                    {organizerFields.map((fieldId) => {
-                        if (fieldId === 'area') {
+                    {organizerFields.map((fieldId, index) => {
+                        if (fieldId === 'area' || fieldId === 'project') {
+                            const firstDestinationIndex = organizerFields.findIndex((id) => id === 'area' || id === 'project');
+                            if (index !== firstDestinationIndex) return null;
                             return (
-                                <div key={fieldId} className="flex flex-col gap-1 flex-1 min-w-0">
+                                <div key="destination" className="flex flex-col gap-1 flex-1 min-w-0">
                                     <TaskEditorFieldLabel icon={MapPin}>
-                                        {t('taskEdit.areaLabel')}
-                                        <QuickAddTokenBadge t={t} token={QUICK_ADD_FIELD_TOKENS.area} />
+                                        {t('task.destination')}
+                                        {showProjectDestination && <QuickAddTokenBadge t={t} token={QUICK_ADD_FIELD_TOKENS.project} />}
+                                        {showAreaDestination && <QuickAddTokenBadge t={t} token={QUICK_ADD_FIELD_TOKENS.area} />}
                                     </TaskEditorFieldLabel>
-                                    <AreaSelector
-                                        areas={sortedAreas}
-                                        value={editAreaId}
-                                        onChange={setEditAreaId}
+                                    <DestinationSelector
+                                        projects={projects}
+                                        areas={areas}
+                                        value={destinationValue}
+                                        onChange={setDestination}
+                                        onCreateProject={(title) => onCreateProject(title, editAreaId || undefined)}
                                         onCreateArea={onCreateArea}
-                                        placeholder={t('taskEdit.noAreaOption')}
-                                        noAreaLabel={t('taskEdit.noAreaOption')}
-                                        searchPlaceholder={t('areas.search')}
+                                        destinationLabel={t('task.destination')}
+                                        projectsLabel={t('projects.title')}
+                            areasLabel={t('areas.manage')}
+                                        noneLabel={t('common.none')}
+                                        searchPlaceholder={t('common.search')}
                                         noMatchesLabel={t('common.noMatches')}
-                                        createAreaLabel={t('areas.create')}
-                                        className="w-full"
-                                    />
-                                </div>
-                            );
-                        }
-                        if (fieldId === 'project') {
-                            return (
-                                <div key={fieldId} className="flex flex-col gap-1 flex-1 min-w-0">
-                                    <TaskEditorFieldLabel icon={Folder}>
-                                        {t('projects.title')}
-                                        <QuickAddTokenBadge t={t} token={QUICK_ADD_FIELD_TOKENS.project} />
-                                    </TaskEditorFieldLabel>
-                                    <ProjectSelector
-                                        projects={filteredProjects}
-                                        allProjects={sortedProjects}
-                                        value={editProjectId}
-                                        onChange={setEditProjectId}
-                                        onCreateProject={(title) => onCreateProject(title, projectFilterAreaId)}
-                                        placeholder={t('taskEdit.noProjectOption')}
-                                        noProjectLabel={t('taskEdit.noProjectOption')}
-                                        searchPlaceholder={t('projects.search')}
-                                        noMatchesLabel={t('common.noMatches')}
-                                        emptyLabel={projectFilterAreaId ? t('projects.noProjectsInArea') : undefined}
-                                        createProjectLabel={t('projects.create')}
+                                        createProjectLabel={t('projects.new')}
+                                        createAreaLabel={t('areas.new')}
+                                        showProjects={showProjectDestination}
+                                        showAreas={showAreaDestination}
                                         className="w-full"
                                     />
                                 </div>
                             );
                         }
                         if (fieldId === 'section') {
+                            if (!editProjectId) return null;
                             return (
                                 <div key={fieldId} className="flex flex-col gap-1 flex-1 min-w-0">
                                     <TaskEditorFieldLabel icon={Layers}>{t('taskEdit.sectionLabel')}</TaskEditorFieldLabel>
@@ -539,6 +536,26 @@ export function TaskItemEditor({
                     >
                         <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                         {t('reference.convertToAction')}
+                    </button>
+                )}
+                {onPromoteToProject && (
+                    <button
+                        type="button"
+                        onClick={onPromoteToProject}
+                        className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    >
+                        <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                        {t('task.createProjectFromTask')}
+                    </button>
+                )}
+                {onConvertToSection && (
+                    <button
+                        type="button"
+                        onClick={onConvertToSection}
+                        className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    >
+                        <Rows3 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {t('task.convertToSection')}
                     </button>
                 )}
                 {onDeleteTask && (

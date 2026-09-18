@@ -12,6 +12,7 @@ const renderHostChild = (child: any, key: string) => {
 };
 
 export const StyleSheet = {
+  hairlineWidth: 1,
   create: <T extends Record<string, unknown>>(styles: T) => styles,
   absoluteFillObject: {
     position: 'absolute',

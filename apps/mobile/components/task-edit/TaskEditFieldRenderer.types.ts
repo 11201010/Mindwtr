@@ -79,6 +79,7 @@ export type TaskEditFieldRendererProps = {
     handleResetChecklist: () => void;
     language: string;
     monthlyPattern: 'date' | 'custom';
+    destinationFields: TaskEditorFieldId[];
     onDateChange: (event: DateTimePickerEvent, selectedDate?: Date) => void;
     openAttachment: (attachment: Attachment) => void | Promise<void>;
     openAddLinkAttachment: () => void;

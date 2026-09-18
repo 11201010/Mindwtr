@@ -1,5 +1,5 @@
 import { View, Text, ScrollView, StyleSheet, Platform, Pressable, TextInput } from 'react-native';
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, Gesture, Swipeable } from 'react-native-gesture-handler';
 import { Clock3, Filter, Folder, X } from 'lucide-react-native';
@@ -10,8 +10,8 @@ import Animated, {
   runOnJS,
   type SharedValue,
 } from 'react-native-reanimated';
-import { shallow, sortTasksByBoardOrder, useTaskStore, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, resolveFeatureFlags, tFallback, projectMatchesAreaFilterSelection, SAVED_FILTER_NO_PROJECT_ID } from '@mindwtr/core';
-import type { Task, TaskStatus, FilterCriteria } from '@mindwtr/core';
+import { shallow, sortTasksByBoardOrder, useTaskStore, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, normalizeBulkTaskTokenInput, resolveFeatureFlags, tFallback, projectMatchesAreaFilterSelection, SAVED_FILTER_NO_PROJECT_ID } from '@mindwtr/core';
+import type { Task, TaskStatus, FilterCriteria, TaskMetadataFilterVisibility } from '@mindwtr/core';
 import { useToast } from '@/contexts/toast-context';
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { useThemeColors, type ThemeColors } from '@/hooks/use-theme-colors';
@@ -19,7 +19,9 @@ import { openContextsScreen, openProjectScreen, openTaskScreen } from '@/lib/tas
 
 import { useLanguage } from '../../contexts/language-context';
 import { TaskEditModal } from '../task-edit-modal';
-import { BOARD_DUE_DATE_PRESETS, countActiveBoardFilters, resolveBoardColumnReorder, resolveBoardDropColumnIndex, resolveBoardDropColumnIndexFromY, toggleCriteriaDuePreset, toggleCriteriaToken, type BoardDuePreset } from './board-view.utils';
+import { FilterChip, TaskFilterSheet, type TaskFilterSheetActiveChip } from '../task-filter-sheet';
+import { useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
+import { BOARD_DUE_DATE_PRESETS, countActiveBoardFilters, resolveBoardColumnReorder, resolveBoardDropColumnIndex, resolveBoardDropColumnIndexFromY, toggleCriteriaDuePreset, type BoardDuePreset } from './board-view.utils';
 
 const COLUMNS: { id: TaskStatus; label: string; labelKey: string }[] = [
   { id: 'inbox', label: 'Inbox', labelKey: 'status.inbox' },
@@ -28,7 +30,12 @@ const COLUMNS: { id: TaskStatus; label: string; labelKey: string }[] = [
   { id: 'someday', label: 'Someday', labelKey: 'status.someday' },
   { id: 'done', label: 'Done', labelKey: 'status.done' },
 ];
-const BOARD_FILTER_CHIP_MAX_FONT_SCALE = 1.2;
+const BOARD_FILTER_VISIBILITY: TaskMetadataFilterVisibility = {
+  energyLevel: false,
+  location: false,
+  priority: false,
+  timeEstimate: false,
+};
 
 function resolveColumnColor(status: TaskStatus, tc: ThemeColors): string {
   switch (status) {
@@ -379,8 +386,9 @@ export function BoardView() {
   const [dragSourceColumnIndex, setDragSourceColumnIndex] = useState<number | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [dueFilterExpanded, setDueFilterExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [criteria, setCriteria] = useState<FilterCriteria>({});
+  const [boardCriteria, setBoardCriteria] = useState<FilterCriteria>({});
   const insets = useSafeAreaInsets();
   const boardScrollRef = useRef<ScrollView | null>(null);
   const draggingTaskIdRef = useRef<string | null>(null);
@@ -426,16 +434,106 @@ export function BoardView() {
   );
 
   const allTokens = useMemo(
-    () => getUsedTaskTokens(areaActiveTasks, (task) => [...(task.contexts || []), ...(task.tags || [])]),
+    () => getUsedTaskTokens(areaActiveTasks, (task) => [
+      ...(task.contexts ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'contexts')),
+      ...(task.tags ?? []).map((token) => normalizeBulkTaskTokenInput(token, 'tags')),
+    ]),
     [areaActiveTasks],
   );
+
+  const projectFilterOptions = useMemo(() => [
+    { id: SAVED_FILTER_NO_PROJECT_ID, title: t('taskEdit.noProjectOption') },
+    ...sortedProjects.map((project) => ({ id: project.id, title: project.title })),
+  ], [sortedProjects, t]);
+  const projectFilterOptionIds = useMemo(
+    () => projectFilterOptions.map((project) => project.id),
+    [projectFilterOptions],
+  );
+  const getProjectFilterLabel = useCallback((projectId: string) => (
+    projectId === SAVED_FILTER_NO_PROJECT_ID
+      ? t('taskEdit.noProjectOption')
+      : projectById[projectId]?.title
+  ), [projectById, t]);
+  const clearBoardFilterExtras = useCallback(() => {
+    setBoardCriteria({});
+    setDueFilterExpanded(false);
+    setSearchQuery('');
+  }, []);
+  const selections = useTaskFilterSelections({
+    // Board keeps its title search in the always-visible bar, so the sheet only
+    // owns criteria pickers (the focus variant omits a duplicate search field).
+    view: 'focus',
+    t,
+    visibility: BOARD_FILTER_VISIBILITY,
+    retainTokens: allTokens,
+    retainProjects: projectFilterOptionIds,
+    getProjectLabel: getProjectFilterLabel,
+    onClear: clearBoardFilterExtras,
+  });
+  const {
+    contextMatchMode,
+    setMatchMode,
+    tagMatchMode,
+    tokens: selectedFilterTokens,
+  } = selections;
+  useEffect(() => {
+    // The former Board filter treated multiple tokens as ANY by default. Keep
+    // that behavior while still exposing the shared Any/All controls once two
+    // included tokens of the same kind are selected.
+    if (!selectedFilterTokens.some((token) => token.startsWith('@')) && contextMatchMode !== 'any') {
+      setMatchMode('context', 'any');
+    }
+    if (!selectedFilterTokens.some((token) => token.startsWith('#')) && tagMatchMode !== 'any') {
+      setMatchMode('tag', 'any');
+    }
+  }, [
+    contextMatchMode,
+    selectedFilterTokens,
+    setMatchMode,
+    tagMatchMode,
+  ]);
+  const criteria = useMemo<FilterCriteria>(() => ({
+    ...selections.criteria,
+    ...boardCriteria,
+  }), [boardCriteria, selections.criteria]);
+  const activeDuePreset = useMemo<BoardDuePreset | null>(() => {
+    const dueDateRange = boardCriteria.dueDateRange;
+    if (!dueDateRange || !('preset' in dueDateRange)) return null;
+    return BOARD_DUE_DATE_PRESETS.includes(dueDateRange.preset as BoardDuePreset)
+      ? dueDateRange.preset as BoardDuePreset
+      : null;
+  }, [boardCriteria.dueDateRange]);
+  const additionalActiveChips = useMemo<TaskFilterSheetActiveChip[]>(() => (
+    [
+      ...(searchQuery.trim()
+        ? [{
+            id: 'board-search',
+            label: `${t('common.search')}: ${searchQuery.trim()}`,
+            onPress: () => setSearchQuery(''),
+          }]
+        : []),
+      ...(activeDuePreset
+        ? [{
+          id: 'board-due-date',
+          label: `${tFallback(t, 'search.due.label', 'Due date')}: ${t(`filters.datePreset.${activeDuePreset}`)}`,
+          onPress: () => {
+            setBoardCriteria((current) => {
+              const next = { ...current };
+              delete next.dueDateRange;
+              return next;
+            });
+            setDueFilterExpanded(false);
+          },
+        }]
+        : []),
+    ]
+  ), [activeDuePreset, searchQuery, t]);
 
   const filtersActive = hasActiveFilterCriteria(criteria);
   const searchActive = searchQuery.trim().length > 0;
   const boardFiltersActive = filtersActive || searchActive;
   const activeFilterCount = countActiveBoardFilters(criteria);
   const boardActiveFilterCount = activeFilterCount + (searchActive ? 1 : 0);
-  const selectedProjectIds = criteria.projects ?? [];
 
   const criteriaFilteredTasks = useMemo(() => {
     const now = new Date();
@@ -457,26 +555,16 @@ export function BoardView() {
     return grouped;
   }, [criteriaFilteredTasks, normalizedSearch]);
 
-  const handleToggleToken = useCallback((token: string) => {
-    setCriteria((prev) => toggleCriteriaToken(prev, token));
-  }, []);
   const handleToggleDuePreset = useCallback((preset: BoardDuePreset) => {
-    setCriteria((prev) => toggleCriteriaDuePreset(prev, preset));
+    setBoardCriteria((prev) => toggleCriteriaDuePreset(prev, preset));
+    setDueFilterExpanded(false);
   }, []);
-  const handleToggleProject = useCallback((projectId: string) => {
-    setCriteria((prev) => {
-      const current = prev.projects ?? [];
-      const next = current.includes(projectId)
-        ? current.filter((item) => item !== projectId)
-        : [...current, projectId];
-      return { ...prev, projects: next.length > 0 ? next : undefined };
-    });
-  }, []);
-  const clearFilters = useCallback(() => {
-    setCriteria({});
-    setSearchQuery('');
-  }, []);
+  const clearFilters = selections.clear;
   const clearSearch = useCallback(() => setSearchQuery(''), []);
+  const closeFilters = useCallback(() => {
+    setFiltersOpen(false);
+    setDueFilterExpanded(false);
+  }, []);
 
   const getTaskTopInContent = useCallback((taskId: string): number | null => {
     const taskLayout = taskLayoutsRef.current[taskId];
@@ -718,190 +806,63 @@ export function BoardView() {
   return (
     <View style={[styles.container, { backgroundColor: tc.bg }]}>
       <View style={[styles.filterBar, { borderBottomColor: tc.border }]}>
-        <View style={styles.filterBarHeader}>
-          <Pressable
-            onPress={() => setFiltersOpen((open) => !open)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: filtersOpen }}
-            style={[
-              styles.filterToggle,
-              {
-                backgroundColor: boardFiltersActive ? tc.tint : tc.filterBg,
-                borderColor: boardFiltersActive ? tc.tint : tc.border,
-              },
-            ]}
-          >
-            <Filter size={14} color={boardFiltersActive ? tc.onTint : tc.secondaryText} />
-            <Text style={[styles.filterToggleText, { color: boardFiltersActive ? tc.onTint : tc.text }]}>
-              {t('filters.label')}{boardActiveFilterCount > 0 ? ` (${boardActiveFilterCount})` : ''}
-            </Text>
-          </Pressable>
-          {boardFiltersActive && (
-            <Pressable onPress={clearFilters} accessibilityRole="button" hitSlop={8}>
-              <Text style={[styles.filterClearText, { color: tc.tint }]}>{t('filters.clear')}</Text>
-            </Pressable>
-          )}
-        </View>
-        <View style={styles.searchRow}>
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder={t('common.search')}
-            placeholderTextColor={tc.secondaryText}
-            accessibilityLabel={t('common.search')}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-            style={[
-              styles.searchInput,
-              searchActive ? styles.searchInputWithClear : null,
-              {
-                backgroundColor: searchActive ? tc.filterBg : tc.inputBg,
-                borderColor: searchActive ? tc.tint : tc.border,
-                color: tc.text,
-              },
-            ]}
-          />
-          {searchActive && (
-            <Pressable
-              onPress={clearSearch}
-              accessibilityRole="button"
-              accessibilityLabel={t('filters.clear')}
-              hitSlop={8}
-              style={[styles.searchClearButton, { backgroundColor: tc.cardBg }]}
-            >
-              <X size={16} color={tc.secondaryText} />
-            </Pressable>
-          )}
-        </View>
-        {filtersOpen && (
-          <View style={styles.filterPanel}>
-            {allTokens.length > 0 && (
-              <View style={styles.filterSection}>
-                <Text style={[styles.filterSectionTitle, { color: tc.secondaryText }]}>{t('filters.contexts')}</Text>
-                <View style={styles.filterChipRow}>
-                  {allTokens.map((token) => {
-                    const selected = token.trim().startsWith('#')
-                      ? (criteria.tags ?? []).includes(token)
-                      : (criteria.contexts ?? []).includes(token);
-                    return (
-                      <Pressable
-                        key={`token:${token}`}
-                        onPress={() => handleToggleToken(token)}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        style={[
-                          styles.filterChip,
-                          {
-                            backgroundColor: selected ? tc.tint : tc.filterBg,
-                            borderColor: selected ? tc.tint : tc.border,
-                          },
-                        ]}
-                      >
-                        <Text
-                          maxFontSizeMultiplier={BOARD_FILTER_CHIP_MAX_FONT_SCALE}
-                          style={[styles.filterChipText, { color: selected ? tc.onTint : tc.text }]}
-                        >
-                          {token}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
+        <View style={styles.filterControlsRow} testID="board-filter-controls">
+          <View style={styles.searchRow}>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('common.search')}
+              placeholderTextColor={tc.secondaryText}
+              accessibilityLabel={t('common.search')}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              style={[
+                styles.searchInput,
+                searchActive ? styles.searchInputWithClear : null,
+                {
+                  backgroundColor: searchActive ? tc.filterBg : tc.inputBg,
+                  borderColor: searchActive ? tc.tint : tc.border,
+                  color: tc.text,
+                },
+              ]}
+            />
+            {searchActive && (
+              <Pressable
+                onPress={clearSearch}
+                accessibilityRole="button"
+                accessibilityLabel={t('filters.clear')}
+                hitSlop={8}
+                style={[styles.searchClearButton, { backgroundColor: tc.cardBg }]}
+              >
+                <X size={16} color={tc.secondaryText} />
+              </Pressable>
             )}
-            <View style={styles.filterSection}>
-              <Text style={[styles.filterSectionTitle, { color: tc.secondaryText }]}>{t('search.due.label')}</Text>
-              <View style={styles.filterChipRow}>
-                {BOARD_DUE_DATE_PRESETS.map((preset) => {
-                  const selected = !!criteria.dueDateRange
-                    && 'preset' in criteria.dueDateRange
-                    && criteria.dueDateRange.preset === preset;
-                  return (
-                    <Pressable
-                      key={`due:${preset}`}
-                      onPress={() => handleToggleDuePreset(preset)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      style={[
-                        styles.filterChip,
-                        {
-                          backgroundColor: selected ? tc.tint : tc.filterBg,
-                          borderColor: selected ? tc.tint : tc.border,
-                        },
-                      ]}
-                    >
-                      <Text
-                        maxFontSizeMultiplier={BOARD_FILTER_CHIP_MAX_FONT_SCALE}
-                        style={[styles.filterChipText, { color: selected ? tc.onTint : tc.text }]}
-                      >
-                        {t(`filters.datePreset.${preset}`)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-            <View style={styles.filterSection}>
-              <Text style={[styles.filterSectionTitle, { color: tc.secondaryText }]}>{t('filters.projects')}</Text>
-              <View style={styles.filterChipRow}>
-                {(() => {
-                  const selected = selectedProjectIds.includes(SAVED_FILTER_NO_PROJECT_ID);
-                  return (
-                    <Pressable
-                      key={`project:${SAVED_FILTER_NO_PROJECT_ID}`}
-                      onPress={() => handleToggleProject(SAVED_FILTER_NO_PROJECT_ID)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      style={[
-                        styles.filterChip,
-                        {
-                          backgroundColor: selected ? tc.tint : tc.filterBg,
-                          borderColor: selected ? tc.tint : tc.border,
-                        },
-                      ]}
-                    >
-                      <Text
-                        maxFontSizeMultiplier={BOARD_FILTER_CHIP_MAX_FONT_SCALE}
-                        style={[styles.filterChipText, { color: selected ? tc.onTint : tc.text }]}
-                      >
-                        {t('taskEdit.noProjectOption')}
-                      </Text>
-                    </Pressable>
-                  );
-                })()}
-                {sortedProjects.map((project) => {
-                  const selected = selectedProjectIds.includes(project.id);
-                  const projectColor = project.areaId ? areaById.get(project.areaId)?.color : undefined;
-                  return (
-                    <Pressable
-                      key={`project:${project.id}`}
-                      onPress={() => handleToggleProject(project.id)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      style={[
-                        styles.filterChip,
-                        styles.projectFilterChip,
-                        {
-                          backgroundColor: selected ? tc.tint : tc.filterBg,
-                          borderColor: selected ? tc.tint : tc.border,
-                        },
-                      ]}
-                    >
-                      <View style={[styles.projectFilterDot, { backgroundColor: projectColor || tc.secondaryText }]} />
-                      <Text
-                        maxFontSizeMultiplier={BOARD_FILTER_CHIP_MAX_FONT_SCALE}
-                        style={[styles.filterChipText, styles.projectFilterText, { color: selected ? tc.onTint : tc.text }]}
-                        numberOfLines={1}
-                      >
-                        {project.title}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
           </View>
-        )}
+          <View style={styles.filterActionsRow}>
+            {boardFiltersActive && (
+              <Pressable onPress={clearFilters} accessibilityRole="button" hitSlop={8} style={styles.filterClearButton}>
+                <Text style={[styles.filterClearText, { color: tc.tint }]}>{t('filters.clear')}</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={() => setFiltersOpen(true)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: filtersOpen }}
+              style={[
+                styles.filterToggle,
+                {
+                  backgroundColor: boardFiltersActive ? tc.tint : tc.filterBg,
+                  borderColor: boardFiltersActive ? tc.tint : tc.border,
+                },
+              ]}
+            >
+              <Filter size={14} color={boardFiltersActive ? tc.onTint : tc.secondaryText} />
+              <Text style={[styles.filterToggleText, { color: boardFiltersActive ? tc.onTint : tc.text }]}>
+                {t('filters.label')}{boardActiveFilterCount > 0 ? ` (${boardActiveFilterCount})` : ''}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
       <ScrollView
         ref={boardScrollRef}
@@ -955,6 +916,60 @@ export function BoardView() {
         ))}
       </ScrollView>
 
+      <TaskFilterSheet
+        visible={filtersOpen}
+        onClose={closeFilters}
+        selections={selections}
+        options={{
+          tokens: allTokens,
+          projects: projectFilterOptions,
+          timeEstimates: [],
+          visibility: BOARD_FILTER_VISIBILITY,
+        }}
+        themeColors={tc}
+        t={t}
+        hasAdditionalActiveFilters={additionalActiveChips.length > 0}
+        additionalActiveChips={additionalActiveChips}
+        topContent={(
+          <View style={styles.filterSection}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: dueFilterExpanded }}
+              accessibilityLabel={`${tFallback(t, 'search.due.label', 'Due date')}: ${
+                activeDuePreset ? t(`filters.datePreset.${activeDuePreset}`) : tFallback(t, 'common.all', 'All')
+              }`}
+              onPress={() => setDueFilterExpanded((expanded) => !expanded)}
+              style={[styles.dueFilterDisclosure, { backgroundColor: tc.bg, borderColor: tc.border }]}
+            >
+              <View style={styles.dueFilterDisclosureText}>
+                <Text style={[styles.dueFilterLabel, { color: tc.text }]}>
+                  {tFallback(t, 'search.due.label', 'Due date')}
+                </Text>
+                <Text style={[styles.dueFilterSummary, { color: activeDuePreset ? tc.tint : tc.secondaryText }]}>
+                  {activeDuePreset ? t(`filters.datePreset.${activeDuePreset}`) : tFallback(t, 'common.all', 'All')}
+                </Text>
+              </View>
+              <Text style={[styles.dueFilterDisclosureMark, { color: tc.secondaryText }]}>
+                {dueFilterExpanded ? '−' : '+'}
+              </Text>
+            </Pressable>
+            {dueFilterExpanded ? (
+              <View style={styles.filterChipRow}>
+                {BOARD_DUE_DATE_PRESETS.map((preset) => (
+                  <FilterChip
+                    key={`due:${preset}`}
+                    label={t(`filters.datePreset.${preset}`)}
+                    selected={activeDuePreset === preset}
+                    themeColors={tc}
+                    onPress={() => handleToggleDuePreset(preset)}
+                  />
+                ))}
+              </View>
+            ) : null}
+          </View>
+        )}
+      />
+
       {/* Task Edit Modal */}
       <TaskEditModal
         visible={!!editingTask}
@@ -979,14 +994,23 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
   },
-  filterBarHeader: {
+  filterControlsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
+  filterActionsRow: {
+    marginLeft: 'auto',
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
   },
   filterToggle: {
+    minHeight: 44,
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1003,14 +1027,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  filterPanel: {
-    gap: 12,
+  filterClearButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchRow: {
+    flexBasis: 180,
+    flexGrow: 1,
+    minWidth: 140,
     position: 'relative',
   },
   searchInput: {
-    minHeight: 40,
+    width: '100%',
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -1023,7 +1054,7 @@ const styles = StyleSheet.create({
   searchClearButton: {
     position: 'absolute',
     right: 8,
-    top: 6,
+    top: 8,
     width: 28,
     height: 28,
     borderRadius: 14,
@@ -1031,42 +1062,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   filterSection: {
-    gap: 6,
+    gap: 8,
   },
-  filterSectionTitle: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  dueFilterDisclosure: {
+    minHeight: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  dueFilterDisclosureText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  dueFilterLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  dueFilterSummary: {
+    fontSize: 13,
+  },
+  dueFilterDisclosureMark: {
+    width: 20,
+    fontSize: 20,
+    fontWeight: '400',
+    textAlign: 'center',
   },
   filterChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  filterChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  projectFilterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    maxWidth: 180,
-  },
-  projectFilterDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  projectFilterText: {
-    flexShrink: 1,
   },
   boardScroll: {
     flex: 1,

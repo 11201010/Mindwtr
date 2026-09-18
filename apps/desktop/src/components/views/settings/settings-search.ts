@@ -14,7 +14,7 @@ export { formatSettingsSearchPath, matchSettingsSearchResults };
 // packages/core/src/settings-search-keys.ts (the actual index) and only ever
 // match the page row itself.
 export const SETTINGS_PAGE_SYNONYMS: Record<SettingsSearchPageId, readonly string[]> = {
-    main: ['theme', 'font size', 'text size', 'dark mode', 'light mode', 'launch at startup', 'autostart', 'login item'],
+    main: ['theme', 'font size', 'text size', 'dark mode', 'light mode'],
     gtd: ['auto-archive', 'priorities', 'time estimates', 'pomodoro', 'capture', 'inbox processing', '2-minute rule', 'task editor'],
     manage: ['areas', 'contexts', 'tags', 'rename', 'delete', 'reorder'],
     notifications: ['review reminders', 'weekly review', 'daily digest', 'morning', 'evening'],
@@ -22,7 +22,7 @@ export const SETTINGS_PAGE_SYNONYMS: Record<SettingsSearchPageId, readonly strin
     data: ['backup', 'restore', 'import', 'Todoist', 'DGT GTD', 'OmniFocus', 'CSV', 'Mindwtr CSV', 'attachments', 'cleanup', 'diagnostics', 'logging'],
     integrations: ['obsidian', 'vault', 'calendar', 'ICS', 'apple calendar', 'integration'],
     ai: ['OpenAI', 'Gemini', 'Anthropic', 'API key', 'speech', 'whisper', 'copilot', 'model', 'timeout'],
-    advanced: ['automation', 'local api', 'localhost', 'port', 'mcp', 'Claude', 'LLM'],
+    advanced: ['automation', 'local api', 'localhost', 'port', 'mcp', 'Claude', 'LLM', 'launch at startup', 'autostart', 'login item'],
     about: ['version', 'update', 'license', 'sponsor'],
 };
 

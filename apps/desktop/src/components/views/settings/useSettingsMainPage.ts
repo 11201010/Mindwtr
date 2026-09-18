@@ -31,9 +31,9 @@ import {
 } from '../../../lib/theme';
 import { coerceDesktopTextSize } from '../../../lib/text-size';
 import { resolveCloseBehavior } from '../../../lib/window-behavior';
-import type { SettingsMainPageProps } from './SettingsMainPage';
+import type { SettingsKeyboardWindowProps, SettingsMainPageProps } from './SettingsMainPage';
 
-type MainPageProps = Omit<SettingsMainPageProps, 'languages' | 't'>;
+type MainPageProps = Omit<SettingsMainPageProps, 'languages' | 't'> & SettingsKeyboardWindowProps;
 
 type UseSettingsMainPageOptions = {
     globalQuickAddShortcut: GlobalQuickAddShortcutSetting;

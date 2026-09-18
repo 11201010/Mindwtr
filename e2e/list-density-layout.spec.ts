@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 import { dismissOnboarding, seedAppData, seedTasks } from './seed';
 
 for (const locale of [
-    { language: 'en', title: 'Someday/Maybe', density: 'Density', labels: ['Comfortable', 'Compact', 'Condensed'] },
-    { language: 'de', title: 'Irgendwann/Vielleicht', density: 'Dichte', labels: ['Komfortabel', 'Kompakt', 'Verdichtet'] },
+    { language: 'en', title: 'Someday/Maybe' },
+    { language: 'de', title: 'Irgendwann/Vielleicht' },
 ]) {
     test(`Someday density layout stays stable across widths (${locale.language})`, async ({ page }, testInfo) => {
         await dismissOnboarding(page);
@@ -15,21 +15,41 @@ for (const locale of [
         await page.goto('/');
         await page.locator('[data-sidebar-item][data-view="someday"]').click();
         const header = page.locator('header').filter({ has: page.getByRole('heading', { name: locale.title, exact: true }) });
-        const density = header.getByTitle(locale.density, { exact: true });
-        await expect(density).toHaveAccessibleName(locale.labels[0]);
+        await expect(header.getByRole('combobox')).toHaveCount(2);
         await page.evaluate(() => document.fonts.ready);
+
+        const setDensity = async (density: 'comfortable' | 'compact' | 'condensed') => {
+            await page.evaluate((nextDensity) => {
+                const data = JSON.parse(localStorage.getItem('mindwtr-data') ?? '{}');
+                data.settings = {
+                    ...(data.settings ?? {}),
+                    appearance: { ...(data.settings?.appearance ?? {}), density: nextDensity },
+                };
+                localStorage.setItem('mindwtr-data', JSON.stringify(data));
+            }, density);
+            await page.reload();
+            await expect(header).toBeVisible();
+            await expect.poll(() => page.evaluate(() => (
+                JSON.parse(localStorage.getItem('mindwtr-data') ?? '{}').settings?.appearance?.density
+            ))).toBe(density);
+        };
 
         for (const width of [1758, 1920, 1440, 1280, 800]) {
             await page.setViewportSize({ width, height: 900 });
+            // Wait for the responsive sidebar's matchMedia update before taking
+            // the baseline; density changes must not be blamed for that resize.
+            await expect.poll(async () => Math.round((await page.getByRole('complementary').boundingBox())?.width ?? 0))
+                .toBe(width < 1024 ? 64 : 256);
             const boxes = () => header.locator('button').evaluateAll((buttons) => buttons.map((button) => {
                 const { x, y, width, height } = button.getBoundingClientRect();
                 return { x, y, width, height };
             }));
             const before = await boxes();
-            for (const label of [locale.labels[1], locale.labels[2], locale.labels[0]]) {
-                await density.click();
-                await expect(density).toHaveAccessibleName(label);
-                expect(await boxes(), `toolbar geometry at ${width}px in ${label}`).toEqual(before);
+            for (const density of ['compact', 'condensed', 'comfortable'] as const) {
+                await setDensity(density);
+                await expect.poll(async () => Math.round((await page.getByRole('complementary').boundingBox())?.width ?? 0))
+                    .toBe(width < 1024 ? 64 : 256);
+                expect(await boxes(), `toolbar geometry at ${width}px in ${density}`).toEqual(before);
             }
             const bounds = await header.boundingBox();
             expect(bounds).not.toBeNull();

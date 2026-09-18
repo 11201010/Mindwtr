@@ -174,12 +174,15 @@ const styles = StyleSheet.create({
     // The toolbar row above ends at 6dp of padding; 6 more here separates the
     // process action from the list controls without orphaning it (#grouping).
     paddingTop: 6,
-    paddingBottom: 10,
+    // The shared list content already adds the full 12dp gutter below this row.
+    paddingBottom: 0,
   },
   scopeHint: {
     alignItems: 'flex-start',
     paddingHorizontal: 16,
-    paddingTop: 4,
+    // Keep the action-to-summary gap at the shared 12dp list inset rather than
+    // stacking another local inset on top of it.
+    paddingTop: 0,
     paddingBottom: 8,
   },
   scopeHintText: {

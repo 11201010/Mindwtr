@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const plOverrides: Record<string, string> = {
+    'filters.searchTasks': "Szukaj w tytułach zadań",
+    'filters.searchOptions': "Szukaj opcji",
+    'filters.tokenCycleHint': "Kliknij, aby uwzględnić, ponownie, aby wykluczyć, i jeszcze raz, aby wyczyścić wybór.",
+    'filters.more': "Więcej filtrów",
+    'viewSections.new': "Nowa sekcja",
+    'projects.new': 'Nowy projekt',
+    'nav.history': 'Historia',
+    'task.dates': 'Daty…',
+    'task.moveTo': 'Przenieś do…',
+    'task.destination': 'Miejsce docelowe',
+    'common.viewOptions': 'Opcje widoku',
+    'settings.regionalFormats': 'Formaty regionalne',
+    'settings.keyboardAndWindow': 'Klawiatura i okno',
     'settings.gtdMobile.openTasksIn': 'Otwieraj zadania w',
     'settings.gtdMobile.openTasksInDesc': 'Wybierz kartę używaną po zwykłym stuknięciu zadania na tym urządzeniu.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatycznie',

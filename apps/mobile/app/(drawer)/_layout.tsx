@@ -16,6 +16,7 @@ function DrawerHeader({
   backgroundColor,
   borderColor,
   backAccessibilityLabel,
+  rightAction,
 }: {
   title: string;
   canGoBack: boolean;
@@ -24,6 +25,7 @@ function DrawerHeader({
   backgroundColor: string;
   borderColor: string;
   backAccessibilityLabel: string;
+  rightAction?: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -51,7 +53,7 @@ function DrawerHeader({
       <Text numberOfLines={1} style={[styles.headerTitle, { color: tintColor }]}>
         {title}
       </Text>
-      <View style={styles.headerBackButton} />
+      <View style={styles.headerRightAction}>{rightAction}</View>
     </View>
   );
 }
@@ -85,6 +87,7 @@ export default function AppLayout() {
             tintColor={tc.text}
             title={getHeaderTitle(options, route.name)}
             backAccessibilityLabel={backAccessibilityLabel}
+            rightAction={options.headerRight?.({ tintColor: tc.text, canGoBack: !!back })}
           />
         ),
       }}
@@ -98,6 +101,7 @@ export default function AppLayout() {
       <Stack.Screen name="someday" options={{ title: t('someday.title') }} />
       <Stack.Screen name="reference" options={{ title: t('nav.reference') }} />
       <Stack.Screen name="done" options={{ title: t('nav.done') }} />
+      <Stack.Screen name="history" options={{ title: t('nav.history') }} />
       <Stack.Screen name="projects-screen" options={{ title: t('projects.title') }} />
       <Stack.Screen name="archived" options={{ title: t('archived.title') }} />
       <Stack.Screen name="trash" options={{ title: t('trash.title') }} />
@@ -127,6 +131,12 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerRightAction: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   headerBackButtonHidden: {
     opacity: 0,

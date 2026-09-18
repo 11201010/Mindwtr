@@ -77,10 +77,15 @@ vi.mock('./settings/SettingsUpdateModal', () => ({
 }));
 
 vi.mock('./settings/SettingsSidebar', () => ({
-    SettingsSidebar: ({ items, onSelect }: { items: Array<{ id: string }>; onSelect: (id: string) => void }) => (
+    SettingsSidebar: ({ items, activeId, onSelect }: { items: Array<{ id: string }>; activeId: string; onSelect: (id: string) => void }) => (
         <div>
             {items.map((item) => (
-                <button key={item.id} type="button" onClick={() => onSelect(item.id)}>
+                <button
+                    key={item.id}
+                    type="button"
+                    aria-current={activeId === item.id ? 'page' : undefined}
+                    onClick={() => onSelect(item.id)}
+                >
                     {item.id}
                 </button>
             ))}
@@ -271,6 +276,7 @@ describe('SettingsView', () => {
 
         await waitFor(() => {
             expect(aiHookTracker.enabled[aiHookTracker.enabled.length - 1]).toBe(true);
+            expect(getByRole('button', { name: 'ai' })).toHaveAttribute('aria-current', 'page');
         });
     });
 

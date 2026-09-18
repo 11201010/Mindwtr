@@ -146,12 +146,28 @@ describe('settings search key roster', () => {
         });
     });
 
-    it('finds the time estimate presets for "estimate"', () => {
-        expect(search('estimate')).toContainEqual({
-            title: 'Time estimate presets',
-            page: 'gtd',
-            path: 'GTD',
-        });
+    it('does not advertise the retired time-estimate preset editor', () => {
+        expect(ALL_KEYS).not.toContain('timeEstimatePresets');
+    });
+
+    it('finds regional overrides inside Regional formats', () => {
+        for (const key of ['weekStart', 'dateFormat', 'timeFormat', 'calendarSystem']) {
+            expect(SETTINGS_SEARCH_INDEX).toContainEqual({ pageId: 'main', key, section: 'regionalFormats' });
+        }
+    });
+
+    it('finds keyboard and window preferences under Advanced', () => {
+        for (const key of ['keybindings', 'windowDecorations', 'closeBehavior', 'showTray', 'launchAtStartup']) {
+            expect(SETTINGS_SEARCH_INDEX).toContainEqual({ pageId: 'advanced', key, section: 'keyboardAndWindow' });
+            expect(getSettingsSearchEntryKeys('main')).not.toContain(key);
+        }
+        expect(getSettingsSearchEntryKeys('main')).toContain('globalQuickAddShortcut');
+    });
+
+    it('retains Timeline and AI/integration route identities', () => {
+        expect(getSettingsSearchEntryKeys('gtd')).toContain('featureTimeline');
+        expect(ALL_PAGE_IDS).toContain('ai');
+        expect(ALL_PAGE_IDS).toContain('integrations');
     });
 
     it('ranks settings whose own name matches above ones that only share a page', () => {

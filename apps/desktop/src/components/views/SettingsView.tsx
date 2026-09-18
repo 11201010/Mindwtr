@@ -657,7 +657,28 @@ export function SettingsView({ initialPage, onboardingHintPage, onResumeOnboardi
     }
 
     if (page === "advanced") {
-      return <SettingsAdvancedPage t={t} {...advancedPageProps} />;
+      return (
+        <SettingsAdvancedPage
+          t={t}
+          {...advancedPageProps}
+          onOpenHelp={mainPageProps.onOpenHelp}
+          keybindingStyle={mainPageProps.keybindingStyle}
+          onKeybindingStyleChange={mainPageProps.onKeybindingStyleChange}
+          showWindowDecorations={mainPageProps.showWindowDecorations}
+          windowDecorationsEnabled={mainPageProps.windowDecorationsEnabled}
+          onWindowDecorationsChange={mainPageProps.onWindowDecorationsChange}
+          showCloseBehavior={mainPageProps.showCloseBehavior}
+          closeBehavior={mainPageProps.closeBehavior}
+          onCloseBehaviorChange={mainPageProps.onCloseBehaviorChange}
+          showLaunchAtStartup={mainPageProps.showLaunchAtStartup}
+          launchAtStartupEnabled={mainPageProps.launchAtStartupEnabled}
+          launchAtStartupLoading={mainPageProps.launchAtStartupLoading}
+          onLaunchAtStartupChange={mainPageProps.onLaunchAtStartupChange}
+          showTrayToggle={mainPageProps.showTrayToggle}
+          trayVisible={mainPageProps.trayVisible}
+          onTrayVisibleChange={mainPageProps.onTrayVisibleChange}
+        />
+      );
     }
 
     if (page === "about") {

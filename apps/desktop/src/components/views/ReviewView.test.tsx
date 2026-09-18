@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { act, render, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, fireEvent, waitFor } from '@testing-library/react';
 import { useTaskStore, type Project, type Task } from '@mindwtr/core';
 import { ReviewView } from './ReviewView';
 import { LanguageProvider } from '../../contexts/language-context';
@@ -100,7 +100,7 @@ describe('ReviewView', () => {
         expect(getByRole('button', { name: /weekly review/i })).toBeInTheDocument();
     });
 
-    it('hides compact metadata when the details toggle is turned off', () => {
+    it('updates the details preference from the direct toolbar toggle', () => {
         const reviewTask = makeTask('review-1', {
             title: 'Review task',
             location: 'Desk lamp',
@@ -119,15 +119,12 @@ describe('ReviewView', () => {
             },
         }));
 
-        const { getByRole, queryByText } = renderWithProviders(<ReviewView />);
+        const { getByRole } = renderWithProviders(<ReviewView />);
 
-        expect(queryByText('Desk lamp')).toBeInTheDocument();
+        fireEvent.click(getByRole('button', { name: /hide details/i }));
 
-        fireEvent.click(getByRole('button', { name: /^view$/i }));
-        fireEvent.click(within(getByRole('dialog', { name: /^view$/i })).getByRole('button', { name: /^details$/i }));
-
-        expect(queryByText('Desk lamp')).not.toBeInTheDocument();
         expect(useUiStore.getState().listOptions.showDetails).toBe(false);
+        expect(getByRole('button', { name: /show details/i })).toBeInTheDocument();
     });
 
     it('labels the aggregate scope as open tasks and filters completed tasks from the compact selector', () => {

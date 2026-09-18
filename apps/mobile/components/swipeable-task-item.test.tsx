@@ -1155,7 +1155,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(renderedText).not.toContain('](');
   });
 
-  it('renders title-only with hideDetails, hiding the description preview, metadata parts and task age', () => {
+  it('keeps essential date metadata with hideDetails while hiding description and task age', () => {
     storeState.settings = { features: {}, appearance: { showTaskAge: true } };
     getTaskAgeLabel.mockReturnValue('2 days old');
     getTaskStaleness.mockReturnValue('fresh');
@@ -1201,7 +1201,7 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     const hidden = renderRow(true);
     expect(hasText(hidden, 'Client call')).toBe(true);
     expect(hasText(hidden, 'Prep the deck')).toBe(false);
-    expect(hasText(hidden, 'Start: May 12, 2026, 8:30 AM')).toBe(false);
+    expect(hasText(hidden, 'Start: May 12, 2026, 8:30 AM')).toBe(true);
     expect(hasText(hidden, '2 days old')).toBe(false);
   });
 

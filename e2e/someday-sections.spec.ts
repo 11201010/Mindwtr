@@ -78,7 +78,8 @@ test('creates a section in an empty Someday list and adds a task from its headin
     await dismissOnboarding(page);
     await seedAppData(page, {});
     await page.goto('/?view=someday');
-    await page.getByRole('button', { name: 'New section…', exact: true }).click();
+    await page.getByRole('button', { name: 'More options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'New section…', exact: true }).click();
     const createDialog = page.getByRole('dialog', { name: 'New section…' });
     await createDialog.getByRole('combobox').fill('Places to explore');
     await createDialog.getByRole('button', { name: 'Save', exact: true }).click();
@@ -86,6 +87,7 @@ test('creates a section in an empty Someday list and adds a task from its headin
 
     await page.getByRole('combobox', { name: 'Group', exact: true }).click();
     await page.locator('[role="option"][data-value="viewSection"]').click();
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Add task to Places to explore', exact: true }).click();
     const capture = page.getByRole('dialog');
     await capture.getByPlaceholder('Add Task', { exact: true }).fill('Visit the botanical garden');

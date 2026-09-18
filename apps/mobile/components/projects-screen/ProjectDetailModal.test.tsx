@@ -815,9 +815,13 @@ describe('ProjectDetailModal task sorting', () => {
 
         expect(taskListPropsSpy.mock.calls.at(-1)?.[0].headerAccessory).toBeUndefined();
         expect(taskListPropsSpy.mock.calls.at(-1)?.[0].externalFilterOpenSignal).toBe(0);
+        expect(tree.root.findAllByProps({ testID: 'project-task-filter-button' })).toHaveLength(0);
 
         act(() => {
-            tree.root.findByProps({ testID: 'project-task-filter-button' }).props.onPress();
+            tree.root.findByProps({ testID: 'project-task-view-options-button' }).props.onPress();
+        });
+        act(() => {
+            tree.root.findByProps({ testID: 'project-view-filter-option' }).props.onPress();
         });
 
         expect(taskListPropsSpy.mock.calls.at(-1)?.[0].externalFilterOpenSignal).toBe(1);
@@ -926,7 +930,7 @@ describe('ProjectDetailModal task sorting', () => {
         expect(onOpenOrganize).toHaveBeenCalledTimes(1);
     });
 
-    it('reflects the active in-sheet filter count on the pinned filter button badge', () => {
+    it('reflects active filters as a direct compact Filters count', () => {
         let tree!: ReturnType<typeof create>;
 
         act(() => {
@@ -941,7 +945,11 @@ describe('ProjectDetailModal task sorting', () => {
         });
 
         const filterButton = tree.root.findByProps({ testID: 'project-task-filter-button' });
-        expect(filterButton.findAllByProps({ children: 2 }).length).toBeGreaterThan(0);
+        expect(filterButton.props.accessibilityLabel).toBe('Filters · 2');
+        expect(filterButton.props.accessibilityState).toEqual({ selected: true });
+        expect(filterButton.findAll((node) => (
+            Array.isArray(node.props.children) && node.props.children.join('') === 'Filters · 2'
+        )).length).toBeGreaterThan(0);
     });
 });
 

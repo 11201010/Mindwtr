@@ -43,6 +43,15 @@ describe('countActiveBoardFilters', () => {
         })).toBe(6);
     });
 
+    it('counts excluded and advanced criteria through the shared core counter', () => {
+        expect(countActiveBoardFilters({
+            excludedContexts: ['@blocked'],
+            excludedTags: ['#later'],
+            priority: ['high'],
+            hasDescription: true,
+        })).toBe(4);
+    });
+
     it('is zero for empty criteria', () => {
         expect(countActiveBoardFilters({})).toBe(0);
     });

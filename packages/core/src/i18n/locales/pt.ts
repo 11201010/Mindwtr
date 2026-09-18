@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'filters.searchTasks': "Pesquisar títulos de tarefas",
+    'filters.searchOptions': "Pesquisar opções",
+    'filters.tokenCycleHint': "Clique para incluir, novamente para excluir e mais uma vez para limpar a seleção.",
+    'filters.more': "Mais filtros",
+    'viewSections.new': "Nova seção",
+    'projects.new': 'Novo projeto',
+    'nav.history': 'Histórico',
+    'task.dates': 'Datas…',
+    'task.moveTo': 'Mover para…',
+    'task.destination': 'Destino',
+    'common.viewOptions': 'Opções de visualização',
+    'settings.regionalFormats': 'Formatos regionais',
+    'settings.keyboardAndWindow': 'Teclado e janela',
     'settings.gtdMobile.openTasksIn': 'Abrir tarefas em',
     'settings.gtdMobile.openTasksInDesc': 'Escolha o separador usado ao tocar normalmente numa tarefa neste dispositivo.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automático',

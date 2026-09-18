@@ -21,7 +21,6 @@ import {
     DEFAULT_TASK_EDITOR_VISIBLE,
     compareAreasByOrder,
     FOCUS_TASK_LIMIT_OPTIONS,
-    formatTimeEstimateLabel,
     getTaskEditorSectionAssignments,
     getTaskEditorSectionOpenDefaults,
     isTaskEditorSectionableField,
@@ -40,7 +39,6 @@ import {
     type GtdSettings,
     type TaskEditorFieldId,
     type TaskEditorSectionId,
-    type TimeEstimate,
     useTaskStore,
 } from '@mindwtr/core';
 
@@ -64,7 +62,6 @@ type GtdScreen =
     | 'gtd-inbox'
     | 'gtd-pomodoro'
     | 'gtd-review'
-    | 'gtd-time-estimates'
     | 'gtd-task-editor';
 
 type PomodoroSettings = NonNullable<GtdSettings['pomodoro']>;
@@ -101,11 +98,6 @@ export function GtdSettingsScreen({
     const [taskEditorSelectedField, setTaskEditorSelectedField] = useState<TaskEditorFieldId | null>(null);
     const [defaultAreaPickerVisible, setDefaultAreaPickerVisible] = useState(false);
 
-    const defaultTimeEstimatePresets: TimeEstimate[] = ['5min', '10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
-    const timeEstimateOptions: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
-    const timeEstimatePresets: TimeEstimate[] = (settings.gtd?.timeEstimatePresets?.length
-        ? settings.gtd.timeEstimatePresets
-        : defaultTimeEstimatePresets) as TimeEstimate[];
     const defaultCaptureMethod = settings.gtd?.defaultCaptureMethod ?? 'text';
     const defaultAreaMode = getDefaultTaskAreaMode(settings);
     const sortedAreas = [...areas]
@@ -558,12 +550,6 @@ export function GtdSettingsScreen({
                                 })}
                             </View>
                         </View>
-                        {timeEstimatesEnabled && renderGtdNavigationRow(
-                            t('settings.timeEstimatePresets'),
-                            t('settings.timeEstimatePresetsDesc'),
-                            'gtd-time-estimates',
-                            { testID: 'gtd-nav-time-estimates' }
-                        )}
                         {renderGtdNavigationRow(
                             t('settings.autoArchive'),
                             t('settings.autoArchiveDesc'),
@@ -998,92 +984,6 @@ export function GtdSettingsScreen({
                             );
                         })}
                     </View>
-                </ScrollView>
-            </SafeAreaView>
-        );
-    }
-
-    if (screen === 'gtd-time-estimates') {
-        if (!timeEstimatesEnabled) {
-            return (
-                <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                    <SettingsTopBar title={t('settings.timeEstimatePresets')} />
-                    <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                        <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.timeEstimatePresetsDisabled')}</Text>
-                        <TouchableOpacity
-                            style={[styles.settingCard, { backgroundColor: tc.cardBg }]}
-                            onPress={() => updateFeatureFlags({ timeEstimates: true })}
-                        >
-                            <View style={styles.settingRow}>
-                                <Text style={[styles.settingLabel, { color: tc.tint }]}>{t('settings.enableTimeEstimates')}</Text>
-                            </View>
-                        </TouchableOpacity>
-                    </ScrollView>
-                </SafeAreaView>
-            );
-        }
-
-        const togglePreset = (value: TimeEstimate) => {
-            const isSelected = timeEstimatePresets.includes(value);
-            if (isSelected && timeEstimatePresets.length <= 1) return;
-
-            const next = isSelected ? timeEstimatePresets.filter((v) => v !== value) : [...timeEstimatePresets, value];
-            const ordered = timeEstimateOptions.filter((v) => next.includes(v));
-            updateSettings({
-                gtd: {
-                    ...(settings.gtd ?? {}),
-                    timeEstimatePresets: ordered,
-                },
-            }).catch(logSettingsError);
-        };
-
-        const resetToDefault = () => {
-            updateSettings({
-                gtd: {
-                    ...(settings.gtd ?? {}),
-                    timeEstimatePresets: [...defaultTimeEstimatePresets],
-                },
-            }).catch(logSettingsError);
-        };
-
-        return (
-            <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-                <SettingsTopBar title={t('settings.timeEstimatePresets')} />
-                <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
-                    <Text style={[styles.description, { color: tc.secondaryText }]}>{t('settings.timeEstimatePresetsDesc')}</Text>
-                    <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                        {timeEstimateOptions.map((value, idx) => {
-                            const selected = timeEstimatePresets.includes(value);
-                            return (
-                                <TouchableOpacity
-                                    key={value}
-                                    style={[styles.settingRow, idx > 0 && { borderTopWidth: 1, borderTopColor: tc.border }]}
-                                    onPress={() => togglePreset(value)}
-                                >
-                                    <CompactText
-                                        style={[styles.settingLabel, { color: tc.text }]}
-                                        numberOfLines={2}
-                                    >
-                                        {formatTimeEstimateLabel(value, { t })}
-                                    </CompactText>
-                                    {selected && <Text style={{ color: '#3B82F6', fontSize: 20 }}>✓</Text>}
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-                    <TouchableOpacity
-                        style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}
-                        onPress={resetToDefault}
-                    >
-                        <View style={styles.settingRow}>
-                            <CompactText
-                                style={[styles.settingLabel, { color: tc.text }]}
-                                numberOfLines={2}
-                            >
-                                {t('settings.resetToDefault')}
-                            </CompactText>
-                        </View>
-                    </TouchableOpacity>
                 </ScrollView>
             </SafeAreaView>
         );

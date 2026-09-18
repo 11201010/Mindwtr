@@ -22,6 +22,7 @@ import {
 import { useUiStore } from '../../../store/ui-store';
 import type { SettingsLabels } from './labels';
 import type { SettingsAdvancedPageProps } from './SettingsAdvancedPage';
+import type { SettingsKeyboardWindowProps } from './SettingsMainPage';
 
 type UseSettingsAdvancedPageOptions = {
     loadEnabled?: boolean;
@@ -39,7 +40,10 @@ export function useSettingsAdvancedPage({
     isTauri,
     showSaved,
     t,
-}: UseSettingsAdvancedPageOptions): Omit<SettingsAdvancedPageProps, 't'> {
+}: UseSettingsAdvancedPageOptions): Omit<
+    SettingsAdvancedPageProps,
+    't' | keyof SettingsKeyboardWindowProps
+> {
     const settings =
         useTaskStore((state) => state.settings) ?? ({} as AppData['settings']);
     const updateSettings = useTaskStore((state) => state.updateSettings);

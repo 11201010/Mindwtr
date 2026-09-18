@@ -4,9 +4,10 @@ import type { SettingsLabels } from './labels';
 import type { LocalApiServerStatus } from '../../../lib/local-api-server';
 import type { DesktopRenderingConfig } from '../../../lib/desktop-rendering';
 import { Switch } from '../../ui/Switch';
-import { SettingRow, SettingsCard, SettingsSectionHeader } from './SettingRow';
+import type { SettingsKeyboardWindowProps } from './SettingsMainPage';
+import { SettingRow, SettingsCard, SettingsDisclosureCard, SettingsSectionHeader } from './SettingRow';
 
-export type SettingsAdvancedPageProps = {
+export type SettingsAdvancedPageProps = SettingsKeyboardWindowProps & {
     t: SettingsLabels;
     isTauri: boolean;
     localApiStatus: LocalApiServerStatus;
@@ -43,8 +44,25 @@ export function SettingsAdvancedPage({
     onNetworkProxyUrlChange,
     onSaveNetworkProxy,
     onDesktopRenderingToggle,
+    onOpenHelp,
+    keybindingStyle,
+    onKeybindingStyleChange,
+    showWindowDecorations = false,
+    windowDecorationsEnabled = true,
+    onWindowDecorationsChange,
+    showCloseBehavior = false,
+    closeBehavior = 'ask',
+    onCloseBehaviorChange,
+    showLaunchAtStartup = false,
+    launchAtStartupEnabled = false,
+    launchAtStartupLoading = false,
+    onLaunchAtStartupChange,
+    showTrayToggle = false,
+    trayVisible = true,
+    onTrayVisibleChange,
 }: SettingsAdvancedPageProps) {
     const [networkProxyOpen, setNetworkProxyOpen] = useState(false);
+    const [keyboardWindowOpen, setKeyboardWindowOpen] = useState(false);
     const statusText = !isTauri
         ? t.localApiUnavailable
         : localApiStatus.running && localApiStatus.url
@@ -54,6 +72,77 @@ export function SettingsAdvancedPage({
 
     return (
         <div className="space-y-5">
+            <SettingsDisclosureCard
+                sectionKey="keyboardAndWindow"
+                settingsKey={null}
+                title={t.keyboardAndWindow}
+                open={keyboardWindowOpen}
+                onToggle={() => setKeyboardWindowOpen((open) => !open)}
+            >
+                <SettingRow padded settingsKey="keybindings" title={t.keybindings} description={t.keybindingsDesc}>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                        <select
+                            aria-label={t.keybindings}
+                            value={keybindingStyle}
+                            onChange={(event) => onKeybindingStyleChange(event.target.value as 'vim' | 'emacs' | 'standard')}
+                            className="rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        >
+                            <option value="standard">{t.keybindingStandard}</option>
+                            <option value="vim">{t.keybindingVim}</option>
+                            <option value="emacs">{t.keybindingEmacs}</option>
+                        </select>
+                        <button
+                            type="button"
+                            onClick={onOpenHelp}
+                            className="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                        >
+                            {t.viewShortcuts}
+                        </button>
+                    </div>
+                </SettingRow>
+                {showWindowDecorations && (
+                    <SettingRow padded settingsKey="windowDecorations" title={t.windowDecorations} description={t.windowDecorationsDesc}>
+                        <Switch
+                            checked={windowDecorationsEnabled}
+                            aria-label={t.windowDecorations}
+                            onCheckedChange={() => onWindowDecorationsChange?.(!windowDecorationsEnabled)}
+                        />
+                    </SettingRow>
+                )}
+                {showCloseBehavior && (
+                    <SettingRow padded settingsKey="closeBehavior" title={t.closeBehavior} description={t.closeBehaviorDesc}>
+                        <select
+                            aria-label={t.closeBehavior}
+                            value={closeBehavior}
+                            onChange={(event) => onCloseBehaviorChange?.(event.target.value as 'ask' | 'tray' | 'quit')}
+                            className="rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        >
+                            <option value="ask">{t.closeBehaviorAsk}</option>
+                            <option value="tray">{t.closeBehaviorTray}</option>
+                            <option value="quit">{t.closeBehaviorQuit}</option>
+                        </select>
+                    </SettingRow>
+                )}
+                {showTrayToggle && (
+                    <SettingRow padded settingsKey="showTray" title={t.showTray} description={t.showTrayDesc}>
+                        <Switch
+                            checked={trayVisible}
+                            aria-label={t.showTray}
+                            onCheckedChange={() => onTrayVisibleChange?.(!trayVisible)}
+                        />
+                    </SettingRow>
+                )}
+                {showLaunchAtStartup && (
+                    <SettingRow padded settingsKey="launchAtStartup" title={t.launchAtStartup} description={t.launchAtStartupDesc}>
+                        <Switch
+                            disabled={launchAtStartupLoading}
+                            checked={launchAtStartupEnabled}
+                            aria-label={t.launchAtStartup}
+                            onCheckedChange={() => onLaunchAtStartupChange?.(!launchAtStartupEnabled)}
+                        />
+                    </SettingRow>
+                )}
+            </SettingsDisclosureCard>
             <SettingsSectionHeader>{t.automation}</SettingsSectionHeader>
             <SettingsCard>
                 <SettingRow padded settingsKey="localApiServer" title={t.localApiServer} description={statusText}>

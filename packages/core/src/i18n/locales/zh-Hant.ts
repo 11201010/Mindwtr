@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const zhHant: Record<string, string> = {
+    'filters.searchTasks': "搜尋任務標題",
+    'filters.searchOptions': "搜尋選項",
+    'filters.tokenCycleHint': "點擊以包含，再次點擊以排除，第三次點擊以清除選擇。",
+    'filters.more': "更多篩選",
+    'viewSections.new': "新增分區",
+    'projects.new': '新增專案',
+    'nav.history': '歷史記錄',
+    'task.dates': '日期…',
+    'task.moveTo': '移至…',
+    'task.destination': '歸屬',
+    'common.viewOptions': '檢視選項',
+    'settings.regionalFormats': '地區格式',
+    'settings.keyboardAndWindow': '鍵盤與視窗',
     'settings.gtdMobile.openTasksIn': '開啟任務時顯示',
     'settings.gtdMobile.openTasksInDesc': '選擇在此裝置上一般點按任務時使用的分頁。',
     'settings.gtdMobile.taskOpenAutomatic': '自動',

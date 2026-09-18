@@ -1,5 +1,18 @@
 // Ukrainian app strings. Keep placeholders and slash-command syntax in sync with en.ts.
 export const ukOverrides: Record<string, string> = {
+    'filters.searchTasks': "Пошук за назвами завдань",
+    'filters.searchOptions': "Пошук варіантів",
+    'filters.tokenCycleHint': "Натисніть, щоб включити, ще раз — виключити, і втретє — скинути вибір.",
+    'filters.more': "Інші фільтри",
+    'viewSections.new': "Новий розділ",
+    'projects.new': 'Новий проєкт',
+    'nav.history': 'Історія',
+    'task.dates': 'Дати…',
+    'task.moveTo': 'Перемістити до…',
+    'task.destination': 'Розташування',
+    'common.viewOptions': 'Параметри вигляду',
+    'settings.regionalFormats': 'Регіональні формати',
+    'settings.keyboardAndWindow': 'Клавіатура та вікно',
     'settings.gtdMobile.openTasksIn': 'Відкривати завдання в режимі',
     'settings.gtdMobile.openTasksInDesc': 'Виберіть вкладку, яка відкривається після звичайного натискання на завдання на цьому пристрої.',
     'settings.gtdMobile.taskOpenAutomatic': 'Автоматично',

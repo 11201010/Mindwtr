@@ -264,7 +264,7 @@ export function ReviewView() {
                         weeklyReview: t('review.openGuide'),
                     }}
                 />
-                <div className="review-toolbar relative z-10 flex flex-wrap items-center gap-2">
+                <div className="review-toolbar relative z-10 flex flex-col gap-2 lg:flex-row lg:items-center">
                     <input
                         type="text"
                         data-view-filter-input
@@ -272,31 +272,33 @@ export function ReviewView() {
                         aria-label={t('common.search')}
                         value={searchQuery}
                         onChange={(event) => setSearchQuery(event.target.value)}
-                        className="h-9 min-w-[220px] flex-1 rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
-                    <ReviewFiltersBar
-                        filterStatus={filterStatus}
-                        statusOptions={statusOptions}
-                        statusCounts={statusCounts}
-                        onSelect={setFilterStatus}
-                        t={t}
-                    />
-                    <ReviewListControls
-                        selectionMode={selectionMode}
-                        onToggleSelection={toggleSelectionMode}
-                        sortBy={sortBy}
-                        onChangeSortBy={(value) => updateSettings({ taskSortBy: value })}
-                        groupBy={groupBy}
-                        onChangeGroupBy={setGroupBy}
-                        showListDetails={showListDetails}
-                        onToggleDetails={handleToggleDetails}
-                        disableStatusGrouping={filterStatus !== 'all'}
-                        t={t}
-                        labels={{
-                            select: t('bulk.select'),
-                            exitSelect: t('bulk.exitSelect'),
-                        }}
-                    />
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        <ReviewFiltersBar
+                            filterStatus={filterStatus}
+                            statusOptions={statusOptions}
+                            statusCounts={statusCounts}
+                            onSelect={setFilterStatus}
+                            t={t}
+                        />
+                        <ReviewListControls
+                            selectionMode={selectionMode}
+                            onToggleSelection={toggleSelectionMode}
+                            sortBy={sortBy}
+                            onChangeSortBy={(value) => updateSettings({ taskSortBy: value })}
+                            groupBy={groupBy}
+                            onChangeGroupBy={setGroupBy}
+                            showListDetails={showListDetails}
+                            onToggleDetails={handleToggleDetails}
+                            disableStatusGrouping={filterStatus !== 'all'}
+                            t={t}
+                            labels={{
+                                select: t('bulk.select'),
+                                exitSelect: t('bulk.exitSelect'),
+                            }}
+                        />
+                    </div>
                 </div>
 
                 {selectionMode && (

@@ -6,8 +6,10 @@ export const projectsScreenStyles = StyleSheet.create({
         backgroundColor: '#fff',
     },
     inputContainer: {
-        padding: 16,
-        gap: 12,
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 0,
+        gap: 0,
         borderBottomWidth: 1,
         borderBottomColor: '#e5e5e5',
     },
@@ -18,11 +20,13 @@ export const projectsScreenStyles = StyleSheet.create({
     },
     filterSection: {
         gap: 8,
+        marginTop: 0,
     },
     filterHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        minHeight: 44,
         gap: 12,
     },
     filterToggleText: {
@@ -42,6 +46,12 @@ export const projectsScreenStyles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: 8,
+    },
+    newProjectAreaChips: {
+        marginTop: 12,
+    },
+    projectTagFilterChips: {
+        paddingBottom: 8,
     },
     tagFilterChip: {
         paddingHorizontal: 10,
@@ -98,14 +108,16 @@ export const projectsScreenStyles = StyleSheet.create({
         flexDirection: 'row',
         backgroundColor: '#f9f9f9',
         borderRadius: 8,
-        padding: 12,
-        marginBottom: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginBottom: 6,
         alignItems: 'center',
     },
     projectTouchArea: {
         flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
+        minWidth: 0,
+        alignSelf: 'stretch',
+        justifyContent: 'center',
     },
     projectDetailScroll: {
         flexGrow: 1,
@@ -139,6 +151,16 @@ export const projectsScreenStyles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    projectTaskPinnedFilterControl: {
+        flexDirection: 'row',
+        gap: 7,
+        paddingHorizontal: 12,
+        width: 'auto',
+    },
+    projectTaskPinnedFilterText: {
+        fontSize: 13,
+        fontWeight: '700',
+    },
     projectTaskPinnedSpacer: {
         flex: 1,
     },
@@ -167,6 +189,7 @@ export const projectsScreenStyles = StyleSheet.create({
     },
     projectContent: {
         flex: 1,
+        minWidth: 0,
     },
     sectionBlock: {
         marginBottom: 12,
@@ -189,6 +212,7 @@ export const projectsScreenStyles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        minHeight: 44,
         paddingTop: 4,
         paddingBottom: 8,
     },
@@ -206,7 +230,8 @@ export const projectsScreenStyles = StyleSheet.create({
         borderWidth: 1,
     },
     collapsibleAreaIcon: {
-        fontSize: 10,
+        fontSize: 14,
+        lineHeight: 18,
     },
     collapsibleAreaHeaderText: {
         fontSize: 12,
@@ -229,34 +254,25 @@ export const projectsScreenStyles = StyleSheet.create({
         alignItems: 'center',
         gap: 6,
     },
-    projectTagDots: {
-        flexDirection: 'row',
-        gap: 4,
-    },
-    projectTagDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 999,
-        opacity: 0.7,
-    },
     projectTitle: {
         flexShrink: 1,
         fontSize: 16,
         fontWeight: '500',
     },
-    projectTaskCountBadge: {
-        minWidth: 22,
-        minHeight: 20,
+    projectTrailingControls: {
+        flexDirection: 'row',
         alignItems: 'center',
+        marginLeft: 8,
+    },
+    projectTaskCount: {
+        minWidth: 20,
+        alignItems: 'flex-end',
         justifyContent: 'center',
-        borderRadius: 999,
-        borderWidth: 1,
-        paddingHorizontal: 6,
     },
     projectTaskCountText: {
-        fontSize: 11,
-        fontWeight: '700',
-        lineHeight: 14,
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
     },
     projectMeta: {
         fontSize: 12,
@@ -288,6 +304,12 @@ export const projectsScreenStyles = StyleSheet.create({
     emptyText: {
         color: '#999',
         fontSize: 16,
+    },
+    projectListContent: {
+        paddingTop: 0,
+    },
+    projectListSectionHeader: {
+        paddingTop: 8,
     },
     modalHeader: {
         flexDirection: 'row',
@@ -1045,6 +1067,9 @@ export const projectsScreenStyles = StyleSheet.create({
         borderWidth: 1,
     },
     focusButton: {
-        padding: 8,
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

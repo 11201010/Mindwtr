@@ -189,10 +189,20 @@ describe('TaskListView', () => {
     expect(onAddTaskToSection).toHaveBeenCalledWith('view-section:someday:empty');
   });
 
-  it('omits the section action from Waiting rows when no handler is provided', () => {
+  it('keeps Waiting row metadata visible when no details preference is provided', () => {
     const renderer = renderView({ tasks: [makeTask('waiting', { status: 'waiting' })] });
     const row = renderer.root.findByType('SwipeableTaskItem' as never);
     expect(row.props.actions.moveToSection).toBeUndefined();
+    expect(row.props.hideDetails).toBe(false);
+  });
+
+  it('shows collapsed row metadata only when the caller enables details', () => {
+    const renderer = renderView({
+      tasks: [makeTask('someday', { status: 'someday', projectId: 'project-a' })],
+      showDetails: true,
+    });
+
+    expect(renderer.root.findByType('SwipeableTaskItem' as never).props.hideDetails).toBe(false);
   });
 
   it('keeps row actions stable while the section-move capability remains present', () => {

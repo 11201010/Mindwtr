@@ -20,7 +20,7 @@ import {
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
-import { BookmarkPlus, ChevronsDown, ChevronsUp, Folder, GripVertical, List, SlidersHorizontal, Trash2 } from 'lucide-react-native';
+import { BookmarkPlus, ChevronsDown, ChevronsUp, Folder, GripVertical, Settings2, SlidersHorizontal, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DraggableFlatList, {
   ScaleDecorator,
@@ -88,6 +88,7 @@ import { useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { PullSyncIndicator } from '@/components/PullSyncIndicator';
 import { useManualPullSync } from '@/hooks/use-manual-pull-sync';
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { projectMatchesAreaFilterSelection } from '@mindwtr/core';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import {
@@ -247,12 +248,14 @@ export default function FocusScreen() {
   const tc = useThemeColors();
   const filledButton = useFilledButtonColors();
   const pullSync = useManualPullSync();
+  const reducedMotion = useReducedMotion();
   const localDayKey = useLocalDayKey();
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [taskModalDefaultTab, setTaskModalDefaultTab] = useState<TaskEditTab>('view');
   const [taskModalOpenKey, setTaskModalOpenKey] = useState('manual');
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [viewOptionsVisible, setViewOptionsVisible] = useState(false);
   const [deferPickerTask, setDeferPickerTask] = useState<Task | null>(null);
   const [deferPickerDate, setDeferPickerDate] = useState<Date>(() => getStartDateOffset(1));
   const [focusSortBy, setFocusSortBy] = useState<SortField>(DEFAULT_FOCUS_SORT_BY);
@@ -299,10 +302,6 @@ export default function FocusScreen() {
     prioritiesEnabled,
     timeEstimatesEnabled,
   }), [activeTasks, prioritiesEnabled, timeEstimatesEnabled]);
-  const showPriorityFilters = metadataFilterVisibility.priority;
-  const showEnergyLevelFilters = metadataFilterVisibility.energyLevel;
-  const showTimeEstimateFilters = metadataFilterVisibility.timeEstimate;
-  const showLocationFilter = metadataFilterVisibility.location;
   const activeProjectIds = useMemo(() => (
     new Set(activeTasks.map((task) => task.projectId).filter((projectId): projectId is string => Boolean(projectId)))
   ), [activeTasks]);
@@ -1575,30 +1574,10 @@ export default function FocusScreen() {
               </View>
               <View style={styles.headerActions}>
                 <Pressable
-                  accessibilityLabel={collapseOtherSections
-                    ? resolveText('agenda.collapseOtherSections', 'Focus only')
-                    : resolveText('agenda.expandOtherSections', 'Expand sections')}
+                  accessibilityLabel={resolveText('common.viewOptions', 'View options')}
                   accessibilityRole="button"
-                  accessibilityState={{ disabled: !canToggleOtherSections }}
-                  disabled={!canToggleOtherSections}
-                  onPress={toggleOtherSections}
-                  style={({ pressed }) => [
-                    styles.filterButton,
-                    {
-                      opacity: !canToggleOtherSections ? 0.4 : pressed ? 0.78 : 1,
-                    },
-                  ]}
-                >
-                  {collapseOtherSections
-                    ? <ChevronsUp size={20} color={tc.secondaryText} />
-                    : <ChevronsDown size={20} color={tc.secondaryText} />}
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={showDetails
-                    ? resolveText('list.hideDetails', 'Hide details')
-                    : resolveText('list.showDetails', 'Show details')}
-                  accessibilityRole="button"
-                  onPress={toggleShowDetails}
+                  accessibilityState={{ expanded: viewOptionsVisible }}
+                  onPress={() => setViewOptionsVisible(true)}
                   style={({ pressed }) => [
                     styles.filterButton,
                     {
@@ -1606,7 +1585,7 @@ export default function FocusScreen() {
                     },
                   ]}
                 >
-                  <List size={20} color={showDetails ? tc.tint : tc.secondaryText} />
+                  <Settings2 size={20} color={(effectiveFocusGroupBy !== 'none' || effectiveFocusSortBy !== DEFAULT_FOCUS_SORT_BY) ? tc.tint : tc.secondaryText} />
                 </Pressable>
                 <Pressable
                   accessibilityLabel={resolveText('filters.label', 'Filters')}
@@ -1627,6 +1606,25 @@ export default function FocusScreen() {
                       </Text>
                     </View>
                   ) : null}
+                </Pressable>
+                <Pressable
+                  accessibilityLabel={collapseOtherSections
+                    ? resolveText('agenda.collapseOtherSections', 'Focus only')
+                    : resolveText('agenda.expandOtherSections', 'Expand sections')}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: !collapseOtherSections, disabled: !canToggleOtherSections }}
+                  disabled={!canToggleOtherSections}
+                  onPress={canToggleOtherSections ? toggleOtherSections : undefined}
+                  style={({ pressed }) => [
+                    styles.filterButton,
+                    {
+                      opacity: !canToggleOtherSections ? 0.4 : pressed ? 0.78 : 1,
+                    },
+                  ]}
+                >
+                  {collapseOtherSections
+                    ? <ChevronsUp size={20} color={tc.secondaryText} />
+                    : <ChevronsDown size={20} color={tc.tint} />}
                 </Pressable>
               </View>
             </View>
@@ -1805,6 +1803,83 @@ export default function FocusScreen() {
       />
       )}
       <PullSyncIndicator state={pullSync.indicatorState} />
+      <Modal
+        animationType={reducedMotion ? 'none' : 'fade'}
+        transparent
+        visible={viewOptionsVisible}
+        onRequestClose={() => setViewOptionsVisible(false)}
+        accessibilityViewIsModal
+      >
+        <View style={styles.sheetRoot}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={resolveText('common.close', 'Close')}
+            onPress={() => setViewOptionsVisible(false)}
+            style={styles.sheetBackdrop}
+          />
+          <View style={[styles.sheet, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={[styles.sheetTitle, { color: tc.text }]} accessibilityRole="header">
+                {resolveText('common.viewOptions', 'View options')}
+              </Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={resolveText('common.done', 'Done')}
+                onPress={() => setViewOptionsVisible(false)}
+                style={styles.sheetTextButton}
+              >
+                <Text style={[styles.sheetTextButtonText, { color: tc.tint }]}>
+                  {resolveText('common.done', 'Done')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              testID="focus-view-options-content"
+              style={styles.sheetScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
+                {resolveText('sort.label', 'Sort')}
+              </Text>
+              <View style={styles.sheetChipRow}>
+                {focusSortOptions.map((sortBy) => renderFilterChip(
+                  getFocusSortByLabel(sortBy),
+                  effectiveFocusSortBy === sortBy,
+                  () => updateFocusSortBy(sortBy),
+                  `view-sort:${sortBy}`,
+                ))}
+              </View>
+
+              <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
+                {resolveText('focus.groupBy', 'Group by')}
+              </Text>
+              <View style={styles.sheetChipRow}>
+                {focusGroupByOptions.map((groupBy) => renderFilterChip(
+                  getFocusGroupByLabel(groupBy),
+                  effectiveFocusGroupBy === groupBy,
+                  () => updateFocusGroupBy(groupBy),
+                  `view-group:${groupBy}`,
+                ))}
+              </View>
+
+              <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
+                {resolveText('common.viewOptions', 'View options')}
+              </Text>
+              <View style={styles.sheetChipRow}>
+                {renderFilterChip(
+                  showDetails
+                    ? resolveText('list.hideDetails', 'Hide details')
+                    : resolveText('list.showDetails', 'Show details'),
+                  showDetails,
+                  toggleShowDetails,
+                  'view-details',
+                )}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <TaskFilterSheet
         visible={filtersVisible}
         onClose={() => {
@@ -1835,44 +1910,7 @@ export default function FocusScreen() {
             </Text>
           </TouchableOpacity>
         ) : null}
-        topContent={(
-          <>
-            <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-              {resolveText('sort.label', 'Sort')}
-            </Text>
-            <View style={styles.sheetChipRow}>
-              {focusSortOptions.map((sortBy) => renderFilterChip(
-                getFocusSortByLabel(sortBy),
-                effectiveFocusSortBy === sortBy,
-                () => updateFocusSortBy(sortBy),
-                `sort:${sortBy}`,
-              ))}
-            </View>
-
-            <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-              {resolveText('focus.groupBy', 'Group by')}
-            </Text>
-            <View style={styles.sheetChipRow}>
-              {focusGroupByOptions.map((groupBy) => renderFilterChip(
-                getFocusGroupByLabel(groupBy),
-                effectiveFocusGroupBy === groupBy,
-                () => updateFocusGroupBy(groupBy),
-                `group:${groupBy}`,
-              ))}
-            </View>
-
-            {activeFilterChips.length > 0 ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: tc.secondaryText }]}>
-                  {resolveText('filters.active', 'Active filters')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {activeFilterChips.map((chip) => renderFilterChip(chip.label, true, chip.onPress, chip.id, chip.variant))}
-                </View>
-              </>
-            ) : null}
-          </>
-        )}
+        additionalActiveChips={advancedFilterChips}
         overlay={saveFilterDialogVisible ? (
           <View style={saveFilterKeyboardInset > 0
             ? [styles.dialogRoot, { paddingBottom: saveFilterKeyboardInset }]
@@ -2400,6 +2438,9 @@ const styles = StyleSheet.create({
   },
   deferPickerSheet: {
     maxHeight: '70%',
+  },
+  sheetScrollContent: {
+    flexShrink: 1,
   },
   deferPickerTaskTitle: {
     marginBottom: 8,

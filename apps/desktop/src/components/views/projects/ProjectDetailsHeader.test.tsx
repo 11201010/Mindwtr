@@ -102,7 +102,7 @@ describe('ProjectDetailsHeader', () => {
         expect(onCommitTitle).toHaveBeenCalledTimes(2);
     });
 
-    it('shows compact project summary metadata and toggles details from the menu', () => {
+    it('keeps only essential project summary metadata visible and exposes details from the menu', () => {
         const onToggleDetails = vi.fn();
         const project = buildProject({
             status: 'waiting',
@@ -139,27 +139,25 @@ describe('ProjectDetailsHeader', () => {
         expect(screen.getByDisplayValue('Launch site').tagName).toBe('TEXTAREA');
         screen.getByText('Waiting');
         screen.getByText('Ops');
-        screen.getByText('Sequential');
-        screen.getByText('Start Date: Mar 24');
         screen.getByText('Due Date: Mar 28');
-        screen.getByText('Review Date: Mar 30');
-        screen.getByText('#client');
         screen.getByText('2/5 Done • 3 remaining');
+        expect(screen.queryByText('Sequential')).not.toBeInTheDocument();
+        expect(screen.queryByText('Start Date: Mar 24')).not.toBeInTheDocument();
+        expect(screen.queryByText('Review Date: Mar 30')).not.toBeInTheDocument();
+        expect(screen.queryByText('#client')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('project-progress-bar')).not.toBeInTheDocument();
 
-        // Management actions stay out of the row until the menu opens.
-        expect(screen.queryByRole('menuitem', { name: 'Details' })).not.toBeInTheDocument();
+        const details = screen.getByRole('button', { name: 'Details' });
+        expect(details).toHaveAttribute('aria-expanded', 'false');
+        expect(details).toHaveAttribute('aria-controls', 'project-details-fields');
         expect(screen.queryByRole('button', { name: 'Duplicate' })).not.toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Project type help' }));
-        expect(screen.getByText('Sequential projects surface one available action at a time. Parallel projects can surface multiple independent Next tasks.')).toBeInTheDocument();
+        fireEvent.click(details);
+        expect(onToggleDetails).toHaveBeenCalledTimes(1);
 
         openMenu();
         expect(screen.getByRole('button', { name: 'More options: Launch site' })).toHaveAttribute('aria-expanded', 'true');
-        const details = screen.getByRole('menuitem', { name: 'Details' });
-        expect(details).toHaveAttribute('aria-expanded', 'false');
-        fireEvent.click(details);
-        expect(onToggleDetails).toHaveBeenCalledTimes(1);
-        expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+        expect(screen.queryByRole('menuitem', { name: 'Details' })).not.toBeInTheDocument();
     });
 
     it('routes duplicate, archive, and delete through the menu and closes it on Escape', () => {
@@ -189,7 +187,7 @@ describe('ProjectDetailsHeader', () => {
         );
 
         openMenu();
-        expect(screen.getByRole('menuitem', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
         expect(screen.queryByRole('menuitem', { name: 'Reactivate' })).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
         expect(onDuplicate).toHaveBeenCalledTimes(1);
@@ -207,7 +205,7 @@ describe('ProjectDetailsHeader', () => {
         expect(onDelete).toHaveBeenCalledTimes(1);
 
         openMenu();
-        const focusedItem = screen.getByRole('menuitem', { name: 'Details' });
+        const focusedItem = screen.getByRole('menuitem', { name: 'Duplicate' });
         expect(focusedItem).toHaveFocus();
         fireEvent.keyDown(focusedItem, { key: 'Escape' });
         expect(screen.queryByRole('menu')).not.toBeInTheDocument();

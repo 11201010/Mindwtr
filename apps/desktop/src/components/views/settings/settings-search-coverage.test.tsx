@@ -92,18 +92,10 @@ const mainProps: Parameters<typeof SettingsMainPage>[0] = {
     onCalendarSystemChange: noop,
     timeFormat: 'system',
     onTimeFormatChange: noop,
-    keybindingStyle: 'vim',
-    onKeybindingStyleChange: noop,
     globalQuickAddShortcut: 'Control+Alt+M',
     onGlobalQuickAddShortcutChange: noop,
     undoNotificationsEnabled: true,
     onUndoNotificationsChange: noop,
-    onOpenHelp: noop,
-    // Window behavior only exists in the desktop shell (decorations are Linux).
-    showWindowDecorations: true,
-    showCloseBehavior: true,
-    showLaunchAtStartup: true,
-    showTrayToggle: true,
 };
 
 const gtdProps: Parameters<typeof SettingsGtdPage>[0] = {
@@ -382,6 +374,14 @@ const aiProps: Parameters<typeof SettingsAiPage>[0] = {
 
 const advancedProps: Parameters<typeof SettingsAdvancedPage>[0] = {
     t,
+    onOpenHelp: noop,
+    keybindingStyle: 'vim',
+    onKeybindingStyleChange: noop,
+    // Window behavior only exists in the desktop shell (decorations are Linux).
+    showWindowDecorations: true,
+    showCloseBehavior: true,
+    showLaunchAtStartup: true,
+    showTrayToggle: true,
     // Rendering and network sections, and the API token row, are Tauri-only.
     isTauri: true,
     localApiStatus: {

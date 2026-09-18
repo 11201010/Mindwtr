@@ -4,6 +4,8 @@ import {
     Text,
     TouchableOpacity,
     View,
+    type AccessibilityRole,
+    type AccessibilityState,
     type GestureResponderEvent,
     type StyleProp,
     type TextStyle,
@@ -39,6 +41,8 @@ export interface SettingRowProps {
     labelStyle?: StyleProp<TextStyle>;
     descriptionStyle?: StyleProp<TextStyle>;
     accessibilityLabel?: string;
+    accessibilityRole?: AccessibilityRole;
+    accessibilityState?: AccessibilityState;
     testID?: string;
 }
 
@@ -60,6 +64,8 @@ export function SettingRow({
     labelStyle,
     descriptionStyle,
     accessibilityLabel,
+    accessibilityRole,
+    accessibilityState,
     testID,
 }: SettingRowProps) {
     const tc = useThemeColors();
@@ -91,6 +97,8 @@ export function SettingRow({
                 onPress={onPress}
                 disabled={disabled}
                 accessibilityLabel={accessibilityLabel}
+                accessibilityRole={accessibilityRole}
+                accessibilityState={accessibilityState}
                 testID={testID}
             >
                 {content}
@@ -99,7 +107,13 @@ export function SettingRow({
     }
 
     return (
-        <View style={rowStyle} accessibilityLabel={accessibilityLabel} testID={testID}>
+        <View
+            style={rowStyle}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityRole={accessibilityRole}
+            accessibilityState={accessibilityState}
+            testID={testID}
+        >
             {content}
         </View>
     );

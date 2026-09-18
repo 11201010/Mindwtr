@@ -24,7 +24,7 @@ import { Attachment,
 import { useDndMonitor } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Columns3, FileText, Folder, PanelLeftOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Folder, PanelLeftOpen, Plus, X } from 'lucide-react';
 
 import { PromptModal } from '../../PromptModal';
 import { browseForLinkTarget } from '../../../lib/attachment-import';
@@ -51,6 +51,8 @@ import { useProjectWorkspaceStore } from './useProjectWorkspaceStore';
 import { ProjectDetailsHeader } from './ProjectDetailsHeader';
 import { ProjectDetailsFields } from './ProjectDetailsFields';
 import { ProjectNotesSection } from './ProjectNotesSection';
+import { ProjectSectionActionsMenu } from './ProjectSectionActionsMenu';
+import { ProjectTaskToolbarMenu } from './ProjectTaskToolbarMenu';
 import { DraggableProjectTaskRow, SortableProjectTaskRow } from './SortableRows';
 import { SectionDropZone, getSectionContainerId, getSectionIdFromContainer, NO_SECTION_CONTAINER } from './section-dnd';
 import {
@@ -469,6 +471,7 @@ export function ProjectWorkspace({
         settings,
     );
     const [projectDetailsExpanded, setProjectDetailsExpanded] = useState(false);
+    const [projectNotesExpanded, setProjectNotesExpanded] = useState(false);
     const [isProjectDeleting, setIsProjectDeleting] = useState(false);
     const [bulkTokenPicker, setBulkTokenPicker] = useState<BulkTokenPickerState>(null);
     const [bulkOrganizeOpen, setBulkOrganizeOpen] = useState(false);
@@ -595,6 +598,7 @@ export function ProjectWorkspace({
 
     useEffect(() => {
         setProjectDetailsExpanded(false);
+        setProjectNotesExpanded(false);
     }, [selectedProject?.id]);
 
     useEffect(() => {
@@ -1198,8 +1202,6 @@ export function ProjectWorkspace({
         const moveForwardLabel = isHorizontal
             ? resolveText('projects.moveSectionRight', 'Move section right')
             : resolveText('projects.moveSectionDown', 'Move section down');
-        const MoveBackIcon = isHorizontal ? ArrowLeft : ArrowUp;
-        const MoveForwardIcon = isHorizontal ? ArrowRight : ArrowDown;
         // Hidden while the editor is open: the textarea below already shows the
         // notes, and it saves on blur, so a preview would sit there stale.
         const notesPreview = hasNotes && !notesOpen
@@ -1215,7 +1217,7 @@ export function ProjectWorkspace({
                     : stripped;
             })()
             : '';
-        const disabledArrow = 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground';
+        const moreOptionsLabel = resolveText('taskEdit.moreOptions', 'More options');
 
         return (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1241,37 +1243,7 @@ export function ProjectWorkspace({
                     <span className="truncate">{group.section.title}</span>
                     <span className="text-xs text-muted-foreground">{group.tasks.length}</span>
                 </button>
-                <div className="flex items-center gap-2">
-                    {sectionTaskGroups.sections.length > 1 && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={() => handleMoveSection(group.section.id, -1)}
-                                disabled={isArchivedProject || !canMoveBack}
-                                className={cn(
-                                    "flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground",
-                                    (isArchivedProject || !canMoveBack) && disabledArrow,
-                                )}
-                                aria-label={`${moveBackLabel}: ${group.section.title}`}
-                                title={isArchivedProject ? archivedReadOnlyHint : moveBackLabel}
-                            >
-                                <MoveBackIcon className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => handleMoveSection(group.section.id, 1)}
-                                disabled={isArchivedProject || !canMoveForward}
-                                className={cn(
-                                    "flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground",
-                                    (isArchivedProject || !canMoveForward) && disabledArrow,
-                                )}
-                                aria-label={`${moveForwardLabel}: ${group.section.title}`}
-                                title={isArchivedProject ? archivedReadOnlyHint : moveForwardLabel}
-                            >
-                                <MoveForwardIcon className="h-3.5 w-3.5" />
-                            </button>
-                        </>
-                    )}
+                <div className="flex items-center gap-1">
                     {!isArchivedProject && (
                         <button
                             type="button"
@@ -1283,37 +1255,26 @@ export function ProjectWorkspace({
                             <Plus className="h-3.5 w-3.5" />
                         </button>
                     )}
-                    <button
-                        type="button"
-                        onClick={() => handleToggleSectionNotes(group.section.id)}
-                        className={cn(
-                            'flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                            (hasNotes || notesOpen) && 'text-primary',
-                        )}
-                        aria-label={t('projects.sectionNotes')}
-                    >
-                        <FileText className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => handleRenameSection(group.section)}
-                        disabled={isArchivedProject}
-                        title={isArchivedProject ? archivedReadOnlyHint : undefined}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={t('common.edit')}
-                    >
-                        <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => handleDeleteSection(group.section)}
-                        disabled={isArchivedProject}
-                        title={isArchivedProject ? archivedReadOnlyHint : undefined}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={t('common.delete')}
-                    >
-                        <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <ProjectSectionActionsMenu
+                        sectionTitle={group.section.title}
+                        orientation={orientation}
+                        moreOptionsLabel={moreOptionsLabel}
+                        moveBackLabel={moveBackLabel}
+                        moveForwardLabel={moveForwardLabel}
+                        notesLabel={t('projects.sectionNotes')}
+                        editLabel={t('common.edit')}
+                        deleteLabel={t('common.delete')}
+                        canMoveBack={sectionTaskGroups.sections.length > 1 && canMoveBack}
+                        canMoveForward={sectionTaskGroups.sections.length > 1 && canMoveForward}
+                        readOnly={isArchivedProject}
+                        readOnlyHint={archivedReadOnlyHint}
+                        notesActive={hasNotes || notesOpen}
+                        onMoveBack={() => handleMoveSection(group.section.id, -1)}
+                        onMoveForward={() => handleMoveSection(group.section.id, 1)}
+                        onToggleNotes={() => handleToggleSectionNotes(group.section.id)}
+                        onRename={() => handleRenameSection(group.section)}
+                        onDelete={() => handleDeleteSection(group.section)}
+                    />
                 </div>
                 {notesPreview && (
                     <div
@@ -1665,26 +1626,6 @@ export function ProjectWorkspace({
         : t('taskEdit.contextsPlaceholder');
 
     const columnsLayoutLabel = resolveText('projects.layoutColumns', 'Columns');
-    const projectLayoutToggle = hasProjectSections && selectedProjectId ? (
-        <button
-            type="button"
-            data-project-layout-toggle
-            onClick={() => {
-                captureProjectScrollBeforeLayoutChange();
-                setProjectLayout(selectedProjectId, columnsLayout ? 'list' : 'columns');
-            }}
-            aria-pressed={columnsLayout}
-            className={cn(
-                'inline-flex items-center gap-2 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                columnsLayout
-                    ? 'border-primary/40 bg-primary/10 text-primary'
-                    : 'border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-            )}
-        >
-            <Columns3 className="h-3.5 w-3.5" />
-            {columnsLayoutLabel}
-        </button>
-    ) : null;
 
     const clearSearchLabel = resolveText('common.clearSearch', 'Clear search');
     const projectAddTaskButton = !isArchivedProject ? (
@@ -1692,10 +1633,7 @@ export function ProjectWorkspace({
             type="button"
             data-add-task-trigger
             onClick={() => openProjectQuickAdd()}
-            className={cn(
-                'inline-flex h-8 items-center gap-2 rounded-md bg-primary font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-                projectTaskToolbarCompact ? 'px-3 text-xs' : 'mb-3 px-4 text-sm',
-            )}
+            className="inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             {t('projects.addTask')}
@@ -1719,6 +1657,30 @@ export function ProjectWorkspace({
         >
             {selectionMode ? t('bulk.exitSelect') : t('bulk.select')}
         </button>
+    ) : null;
+    const completedControlLabel = showCompletedTasks
+        ? resolveText('common.hideCompleted', 'Hide completed')
+        : resolveText('common.showCompleted', 'Show completed');
+    const taskToolbarMoreLabel = `${resolveText('taskEdit.moreOptions', 'More options')}: ${t('projects.sectionsLabel')}`;
+    const projectTaskToolbarMenu = selectedProjectId ? (
+        <ProjectTaskToolbarMenu
+            triggerLabel={taskToolbarMoreLabel}
+            columnsLabel={columnsLayoutLabel}
+            columnsLayout={columnsLayout}
+            showColumns={hasProjectSections}
+            onToggleColumns={() => {
+                captureProjectScrollBeforeLayoutChange();
+                setProjectLayout(selectedProjectId, columnsLayout ? 'list' : 'columns');
+            }}
+            completedLabel={completedControlLabel}
+            showCompletedTasks={showCompletedTasks}
+            completedTaskCount={completedProjectTaskCount}
+            showCompletedControl={!isArchivedProject}
+            onToggleShowCompletedTasks={onToggleShowCompletedTasks}
+            addSectionLabel={t('projects.addSection')}
+            showAddSection={!isArchivedProject}
+            onAddSection={handleAddSection}
+        />
     ) : null;
 
     return (
@@ -1811,8 +1773,7 @@ export function ProjectWorkspace({
                             {isGettingStartedProject(selectedProject, allTasks) && <GettingStartedActions t={t} />}
 
                             {projectDetailsExpanded && (
-                                <>
-                                    <ProjectDetailsFields
+                                <ProjectDetailsFields
                                         project={selectedProject}
                                         selectedAreaId={
                                             selectedProject.areaId && areaById.has(selectedProject.areaId)
@@ -1850,9 +1811,23 @@ export function ProjectWorkspace({
                                         onReviewAtChange={(value) => updateMutableSelectedProject({ reviewAt: value || undefined })}
                                         readOnly={isArchivedProject}
                                         readOnlyHint={archivedReadOnlyHint}
-                                    />
+                                />
+                            )}
 
-                                    <ProjectNotesSection
+                            <button
+                                type="button"
+                                data-project-notes-disclosure
+                                aria-expanded={projectNotesExpanded}
+                                onClick={() => setProjectNotesExpanded((value) => !value)}
+                                className="flex h-10 w-full items-center justify-between border-b border-border/50 px-1 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                            >
+                                <span>{t('project.notes')}</span>
+                                {projectNotesExpanded
+                                    ? <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                                    : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                            </button>
+                            {projectNotesExpanded && (
+                                <ProjectNotesSection
                                         project={selectedProject}
                                         showNotesPreview={showNotesPreview}
                                         onTogglePreview={() => setShowNotesPreview((value) => !value)}
@@ -1868,11 +1843,11 @@ export function ProjectWorkspace({
                                         language={language}
                                         readOnly={isArchivedProject}
                                         readOnlyHint={archivedReadOnlyHint}
-                                    />
-                                </>
+                                        showHeading={false}
+                                />
                             )}
 
-                            <section className="border-t border-border/50 py-5">
+                            <section className="py-4">
                                 <div
                                     data-project-task-toolbar
                                     data-compact={projectTaskToolbarCompact ? 'true' : 'false'}
@@ -1881,18 +1856,23 @@ export function ProjectWorkspace({
                                         projectTaskToolbarCompact ? 'py-2' : 'py-3',
                                     )}
                                 >
-                                    {!projectTaskToolbarCompact && projectAddTaskButton}
-                                    <div className={cn(
-                                        'flex gap-3',
-                                        projectTaskToolbarCompact
-                                            ? 'flex-wrap items-center justify-between'
-                                            : 'items-center justify-between',
-                                    )}>
-                                        <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                                            {t('projects.sectionsLabel')}
+                                    <div
+                                        className="flex flex-wrap items-center justify-between gap-3"
+                                        data-project-task-toolbar-row
+                                    >
+                                        <div
+                                            className="flex shrink-0 items-center gap-3 whitespace-nowrap"
+                                            data-project-task-primary-controls
+                                        >
+                                            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                                                {t('projects.sectionsLabel')}
+                                            </span>
+                                            {projectAddTaskButton}
                                         </div>
-                                        <div className="flex flex-wrap items-center justify-end gap-2">
-                                            {projectTaskToolbarCompact && projectAddTaskButton}
+                                        <div
+                                            className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2"
+                                            data-project-task-secondary-controls
+                                        >
                                             <fieldset
                                                 className="m-0 min-w-0 border-0 p-0 disabled:cursor-not-allowed disabled:opacity-60"
                                                 disabled={isArchivedProject}
@@ -1900,52 +1880,13 @@ export function ProjectWorkspace({
                                             >
                                                 <SortBySelect
                                                     value={projectTaskSortBy}
+                                                    defaultValue="default"
                                                     onChange={handleProjectTaskSortByChange}
                                                     t={t}
                                                 />
                                             </fieldset>
-                                            {projectLayoutToggle}
                                             {selectProjectTasksButton}
-                                            {!isArchivedProject && (
-                                                <>
-                                                    <button
-                                                        type="button"
-                                                        onClick={onToggleShowCompletedTasks}
-                                                        aria-label={showCompletedTasks
-                                                            ? resolveText('common.hideCompleted', 'Hide completed')
-                                                            : resolveText('common.showCompleted', 'Show completed')}
-                                                        aria-pressed={showCompletedTasks}
-                                                        className={cn(
-                                                            'inline-flex items-center gap-2 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                                                            showCompletedTasks
-                                                                ? 'border-primary/40 bg-primary/10 text-primary'
-                                                                : 'border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                                                        )}
-                                                    >
-                                                        <CheckCircle2 className="h-3.5 w-3.5" />
-                                                        {showCompletedTasks
-                                                            ? resolveText('common.hideCompleted', 'Hide completed')
-                                                            : resolveText('common.showCompleted', 'Show completed')}
-                                                        {!showCompletedTasks && completedProjectTaskCount > 0 && (
-                                                            <span
-                                                                aria-hidden="true"
-                                                                className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                                                            >
-                                                                {completedProjectTaskCount}
-                                                            </span>
-                                                        )}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleAddSection}
-                                                        aria-label={t('projects.addSection')}
-                                                        className="inline-flex items-center gap-2 whitespace-nowrap rounded-md border border-border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-muted/40"
-                                                    >
-                                                        <Plus className="h-3.5 w-3.5" />
-                                                        {t('projects.addSection')}
-                                                    </button>
-                                                </>
-                                            )}
+                                            {projectTaskToolbarMenu}
                                         </div>
                                     </div>
                                     {selectionMode && (

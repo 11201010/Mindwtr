@@ -1,5 +1,15 @@
-import React from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import {
   formatTimeEstimateLabel,
   tFallback,
@@ -8,19 +18,20 @@ import {
   type TaskPriority,
   type TimeEstimate,
 } from '@mindwtr/core';
-import { X } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, ChevronUp, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CompactText } from '@/components/compact-text';
 import { PriorityFlag } from '@/components/priority-flag';
 import { ThemedAlertHost } from '@/components/themed-alert';
 import type { TaskFilterSelections } from '@/hooks/use-task-filter-selections';
+import { useKeyboardInset } from '@/lib/use-android-keyboard-inset';
 
 /**
  * The one filter sheet for Focus and the task list. Both views hold their
  * selections in useTaskFilterSelections and render them here, so a filter
- * concept only ever has one picker. View-specific chrome (Focus's sort,
- * group-by, and saved-filter controls) arrives through the header and top
- * slots rather than forking the sheet.
+ * concept only ever has one picker. View-specific controls arrive through the
+ * header, top-content, and advanced-chip slots rather than forking the sheet.
  */
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
@@ -51,6 +62,7 @@ type FilterChipProps = {
   /** Accessible name for the advanced chip's remove button. */
   removeLabel?: string;
   excludedLabel?: string;
+  removable?: boolean;
 };
 
 /**
@@ -67,6 +79,7 @@ export function FilterChip({
   removeLabel,
   excludedLabel,
   leading,
+  removable = false,
 }: FilterChipProps) {
   const isAdvanced = variant === 'advanced';
   const isExcluded = variant === 'excluded';
@@ -94,7 +107,7 @@ export function FilterChip({
     return <View style={chipStyle}>{leading}{chipText}</View>;
   }
 
-  if (isAdvanced) {
+  if (isAdvanced || removable) {
     return (
       <View style={chipStyle}>
         {chipText}
@@ -134,6 +147,13 @@ export type TaskFilterSheetOptions = {
   visibility: TaskMetadataFilterVisibility;
 };
 
+export type TaskFilterSheetActiveChip = {
+  id: string;
+  label: string;
+  onPress?: () => void;
+  variant?: FilterChipVariant;
+};
+
 type TaskFilterSheetProps = {
   visible: boolean;
   onClose: () => void;
@@ -143,7 +163,7 @@ type TaskFilterSheetProps = {
   t: (key: string) => string;
   /** Extra header buttons, left of Clear (Focus's save-filter action). */
   headerActions?: React.ReactNode;
-  /** Content above the filter sections (Focus's sort, group-by, active chips). */
+  /** View-local controls above the shared category rows. */
   topContent?: React.ReactNode;
   /**
    * Rendered in place of the sheet body inside the same modal (Focus's
@@ -152,7 +172,16 @@ type TaskFilterSheetProps = {
   overlay?: React.ReactNode;
   /** View-local controls that participate in Clear without entering filter criteria. */
   hasAdditionalActiveFilters?: boolean;
+  /** Focus-only saved criteria that no shared picker can express. */
+  additionalActiveChips?: TaskFilterSheetActiveChip[];
 };
+
+type PickerPage = 'overview' | 'tokens' | 'projects';
+type PickerItem = string | { id: string; title: string };
+
+const joinSummary = (values: string[], fallback: string): string => (
+  values.length > 0 ? values.join(', ') : fallback
+);
 
 export function TaskFilterSheet({
   visible,
@@ -165,11 +194,108 @@ export function TaskFilterSheet({
   topContent,
   overlay,
   hasAdditionalActiveFilters = false,
+  additionalActiveChips = [],
 }: TaskFilterSheetProps) {
+  const safeAreaInsets = useSafeAreaInsets();
+  const keyboardInset = useKeyboardInset(visible);
+  const [pickerPage, setPickerPage] = useState<PickerPage>('overview');
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [timeExpanded, setTimeExpanded] = useState(false);
+  const [energyExpanded, setEnergyExpanded] = useState(false);
+  const [moreExpanded, setMoreExpanded] = useState(false);
   const resolveText = (key: string, fallback: string) => tFallback(t, key, fallback);
   const { visibility } = options;
-  const projectOptions = options.projects ?? [];
+  const projectOptions = useMemo(() => options.projects ?? [], [options.projects]);
   const excludedLabel = resolveText('filters.excluded', 'Excluded');
+  const removeFilterLabel = resolveText('filters.remove', 'Remove filter');
+  const allLabel = resolveText('common.all', 'All');
+
+  const resetSheetNavigation = useCallback(() => {
+    setPickerPage('overview');
+    setPickerQuery('');
+    setTimeExpanded(false);
+    setEnergyExpanded(false);
+    setMoreExpanded(false);
+  }, []);
+
+  useEffect(() => {
+    if (!visible) resetSheetNavigation();
+  }, [resetSheetNavigation, visible]);
+
+  const closeSheet = useCallback(() => {
+    resetSheetNavigation();
+    onClose();
+  }, [onClose, resetSheetNavigation]);
+
+  const openPicker = useCallback((page: Exclude<PickerPage, 'overview'>) => {
+    setPickerQuery('');
+    setPickerPage(page);
+  }, []);
+
+  const returnToOverview = useCallback(() => {
+    setPickerPage('overview');
+    setPickerQuery('');
+  }, []);
+
+  const handleRequestClose = useCallback(() => {
+    if (overlay) {
+      onClose();
+      return;
+    }
+    if (pickerPage !== 'overview') {
+      returnToOverview();
+      return;
+    }
+    closeSheet();
+  }, [closeSheet, onClose, overlay, pickerPage, returnToOverview]);
+
+  const normalizedPickerQuery = pickerQuery.trim().toLocaleLowerCase();
+  const visibleTokenOptions = useMemo(() => (
+    normalizedPickerQuery
+      ? options.tokens.filter((token) => token.toLocaleLowerCase().includes(normalizedPickerQuery))
+      : options.tokens
+  ), [normalizedPickerQuery, options.tokens]);
+  const visibleProjectOptions = useMemo(() => (
+    normalizedPickerQuery
+      ? projectOptions.filter((project) => project.title.toLocaleLowerCase().includes(normalizedPickerQuery))
+      : projectOptions
+  ), [normalizedPickerQuery, projectOptions]);
+
+  const tokenSummary = useMemo(() => joinSummary([
+    ...selections.tokens,
+    ...selections.excludedTokens.map((token) => `${excludedLabel}: ${token}`),
+  ], allLabel), [allLabel, excludedLabel, selections.excludedTokens, selections.tokens]);
+  const projectSummary = useMemo(() => joinSummary(
+    projectOptions
+      .filter((project) => selections.projects.includes(project.id))
+      .map((project) => project.title),
+    allLabel,
+  ), [allLabel, projectOptions, selections.projects]);
+  const timeSummary = joinSummary(
+    selections.timeEstimates.map((estimate) => formatTimeEstimateLabel(estimate)),
+    allLabel,
+  );
+  const energySummary = joinSummary(selections.energyLevels.map((level) => t(`energyLevel.${level}`)), allLabel);
+  const moreSummary = joinSummary([
+    ...selections.priorities.map((priority) => t(`priority.${priority}`)),
+    ...(selections.locationQuery.trim()
+      ? [`${resolveText('taskEdit.locationLabel', 'Location')}: ${selections.locationQuery.trim()}`]
+      : []),
+  ], allLabel);
+
+  const removeSelectionChip = useCallback((chip: TaskFilterSelections['chips'][number]) => {
+    if (chip.id.startsWith('token:')) {
+      const token = chip.id.slice('token:'.length);
+      // Picker tokens are tri-state. Active chips are removal controls, so an
+      // included token intentionally advances through excluded to neutral.
+      selections.toggleToken(token);
+      selections.toggleToken(token);
+      return;
+    }
+    chip.onPress();
+  }, [selections]);
+
+  const hasActiveChips = selections.chips.length > 0 || additionalActiveChips.length > 0;
 
   const renderMatchMode = (
     kind: 'context' | 'tag',
@@ -204,199 +330,408 @@ export function TaskFilterSheet({
     </View>
   );
 
+  const renderActiveFilters = () => (
+    hasActiveChips ? (
+      <View style={styles.activeFilters}>
+        <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
+          {resolveText('filters.active', 'Active filters')}
+        </Text>
+        <View style={styles.sheetChipRow}>
+          {selections.chips.map((chip) => (
+            <FilterChip
+              key={chip.id}
+              label={chip.label}
+              selected
+              themeColors={themeColors}
+              onPress={() => removeSelectionChip(chip)}
+              removable
+              variant={chip.excluded ? 'excluded' : undefined}
+              removeLabel={`${removeFilterLabel}: ${chip.label}`}
+              excludedLabel={excludedLabel}
+            />
+          ))}
+          {additionalActiveChips.map((chip) => (
+            <FilterChip
+              key={chip.id}
+              label={chip.label}
+              selected
+              themeColors={themeColors}
+              onPress={chip.onPress}
+              removable
+              variant={chip.variant}
+              removeLabel={`${removeFilterLabel}: ${chip.label}`}
+              excludedLabel={excludedLabel}
+            />
+          ))}
+        </View>
+      </View>
+    ) : null
+  );
+
+  const renderOverviewRow = ({
+    label,
+    summary,
+    onPress,
+    expanded,
+  }: {
+    label: string;
+    summary: string;
+    onPress: () => void;
+    expanded?: boolean;
+  }) => (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
+      onPress={onPress}
+      style={[styles.overviewRow, { borderColor: themeColors.border, backgroundColor: themeColors.bg }]}
+    >
+      <View style={styles.overviewRowText}>
+        <Text style={[styles.overviewRowLabel, { color: themeColors.text }]}>{label}</Text>
+        <Text
+          numberOfLines={2}
+          style={[styles.overviewRowSummary, { color: summary === allLabel ? themeColors.secondaryText : themeColors.tint }]}
+        >
+          {summary}
+        </Text>
+      </View>
+      {expanded === undefined
+        ? <ChevronRight size={18} color={themeColors.secondaryText} />
+        : expanded
+          ? <ChevronUp size={18} color={themeColors.secondaryText} />
+          : <ChevronDown size={18} color={themeColors.secondaryText} />}
+    </TouchableOpacity>
+  );
+
+  const renderPickerOption = (
+    label: string,
+    selected: boolean,
+    excluded: boolean,
+    onPress: () => void,
+  ) => (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={excluded ? `${label} (${excludedLabel})` : undefined}
+      onPress={onPress}
+      style={[styles.pickerOption, { borderBottomColor: themeColors.border }]}
+    >
+      <Text
+        numberOfLines={2}
+        style={[
+          styles.pickerOptionLabel,
+          { color: excluded ? themeColors.danger : themeColors.text },
+          excluded ? styles.excludedText : null,
+        ]}
+      >
+        {label}
+      </Text>
+      {selected || excluded ? (
+        <Text style={[styles.pickerOptionState, { color: excluded ? themeColors.danger : themeColors.tint }]}>
+          {excluded ? excludedLabel : resolveText('bulk.selected', 'Selected')}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+
+  const renderPicker = () => {
+    const isTokenPicker = pickerPage === 'tokens';
+    const title = isTokenPicker
+      ? resolveText('filters.contexts', 'Contexts & tags')
+      : resolveText('filters.projects', 'Projects');
+    const data: PickerItem[] = isTokenPicker ? visibleTokenOptions : visibleProjectOptions;
+    const renderItem = (item: PickerItem) => {
+      if (typeof item === 'string') {
+        const token = item;
+        return renderPickerOption(
+          token,
+          selections.tokens.includes(token),
+          selections.excludedTokens.includes(token),
+          () => selections.toggleToken(token),
+        );
+      }
+      return renderPickerOption(
+        item.title,
+        selections.projects.includes(item.id),
+        false,
+        () => selections.toggleProject(item.id),
+      );
+    };
+    const matchModeFooter = isTokenPicker ? (
+      <View style={styles.matchModeFooter}>
+        {selections.showContextMatchMode
+          ? renderMatchMode('context', resolveText('filters.contextMatchMode', 'Context match'), selections.contextMatchMode)
+          : null}
+        {selections.showTagMatchMode
+          ? renderMatchMode('tag', resolveText('filters.tagMatchMode', 'Tag match'), selections.tagMatchMode)
+          : null}
+      </View>
+    ) : null;
+
+    return (
+      <View style={styles.pickerBody}>
+        <TextInput
+          accessibilityLabel={`${resolveText('common.search', 'Search')} ${title}`}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onChangeText={setPickerQuery}
+          placeholder={resolveText('common.search', 'Search')}
+          placeholderTextColor={themeColors.secondaryText}
+          returnKeyType="search"
+          style={[styles.sheetInput, { backgroundColor: themeColors.bg, borderColor: themeColors.border, color: themeColors.text }]}
+          value={pickerQuery}
+        />
+        {data.length === 0 ? (
+          <View style={styles.pickerList}>
+            <Text style={[styles.emptyPickerText, { color: themeColors.secondaryText }]}>
+              {resolveText('search.noResults', 'No results')}
+            </Text>
+          </View>
+        ) : data.length > 60 ? (
+          <FlatList<PickerItem>
+            data={data}
+            keyExtractor={(item) => typeof item === 'string' ? `token:${item}` : `project:${item.id}`}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => renderItem(item)}
+            ListFooterComponent={matchModeFooter}
+            showsVerticalScrollIndicator={false}
+            style={styles.pickerList}
+          />
+        ) : (
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.pickerList}
+          >
+            {data.map((item) => (
+              <React.Fragment key={typeof item === 'string' ? `token:${item}` : `project:${item.id}`}>
+                {renderItem(item)}
+              </React.Fragment>
+            ))}
+            {matchModeFooter}
+          </ScrollView>
+        )}
+      </View>
+    );
+  };
+
   return (
     <Modal
       animationType="fade"
       accessibilityViewIsModal
       transparent
       visible={visible}
-      onRequestClose={onClose}
+      onRequestClose={handleRequestClose}
     >
       {overlay ?? (
-      <View style={styles.sheetRoot}>
+      <View style={[styles.sheetRoot, keyboardInset > 0 ? { paddingBottom: keyboardInset } : null]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={resolveText('common.close', 'Close')}
-          onPress={onClose}
+          onPress={closeSheet}
           style={styles.sheetBackdrop}
         />
         <View
           accessibilityLabel={resolveText('filters.label', 'Filters')}
-          style={[styles.sheet, { backgroundColor: themeColors.cardBg, borderColor: themeColors.border }]}
+          style={[
+            styles.sheet,
+            pickerPage !== 'overview' ? styles.pickerSheet : null,
+            {
+              backgroundColor: themeColors.cardBg,
+              borderColor: themeColors.border,
+              paddingBottom: Math.max(12, safeAreaInsets.bottom),
+            },
+          ]}
         >
           <View style={styles.sheetHeader}>
-            <Text style={[styles.sheetTitle, { color: themeColors.text }]}>
-              {resolveText('filters.label', 'Filters')}
-            </Text>
+            <View style={styles.sheetHeaderLeading}>
+              {pickerPage !== 'overview' ? (
+                <TouchableOpacity accessibilityRole="button" onPress={returnToOverview} style={styles.backButton}>
+                  <Text style={[styles.backButtonText, { color: themeColors.tint }]}>
+                    {resolveText('common.back', 'Back')}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              <Text accessibilityRole="header" style={[styles.sheetTitle, { color: themeColors.text }]}>
+                {pickerPage === 'tokens'
+                  ? resolveText('filters.contexts', 'Contexts & tags')
+                  : pickerPage === 'projects'
+                    ? resolveText('filters.projects', 'Projects')
+                    : resolveText('filters.label', 'Filters')}
+              </Text>
+            </View>
             <View style={styles.sheetHeaderActions}>
-              {headerActions}
-              {selections.hasActive || hasAdditionalActiveFilters ? (
+              {pickerPage === 'overview' ? headerActions : null}
+              {selections.hasActive || hasAdditionalActiveFilters || additionalActiveChips.length > 0 ? (
                 <TouchableOpacity accessibilityRole="button" onPress={selections.clear} style={styles.sheetTextButton}>
                   <Text style={[styles.sheetTextButtonText, { color: themeColors.tint }]}>
                     {resolveText('filters.clear', 'Clear')}
                   </Text>
                 </TouchableOpacity>
               ) : null}
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel={resolveText('common.close', 'Close')}
-                onPress={onClose}
-                style={styles.sheetIconButton}
-              >
-                <X size={18} color={themeColors.secondaryText} />
-              </TouchableOpacity>
             </View>
           </View>
 
-          <ScrollView
-            style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {selections.view === 'list' ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('common.search', 'Search')}
-                </Text>
-                <TextInput
-                  accessibilityLabel={resolveText('common.search', 'Search')}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={selections.setSearchQuery}
-                  placeholder={resolveText('search.placeholder', 'Search tasks')}
-                  placeholderTextColor={themeColors.secondaryText}
-                  returnKeyType="search"
-                  style={[styles.sheetInput, { backgroundColor: themeColors.bg, borderColor: themeColors.border, color: themeColors.text }]}
-                  value={selections.searchQuery}
-                />
-              </>
-            ) : null}
+          {pickerPage !== 'overview' ? renderPicker() : (
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {renderActiveFilters()}
 
-            {topContent}
-
-            {options.tokens.length > 0 ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('filters.contexts', 'Contexts & tags')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {options.tokens.map((token) => (
-                    <FilterChip
-                      key={`token:${token}`}
-                      label={token}
-                      selected={selections.tokens.includes(token)}
-                      themeColors={themeColors}
-                      onPress={() => selections.toggleToken(token)}
-                      variant={selections.excludedTokens.includes(token) ? 'excluded' : undefined}
-                      excludedLabel={excludedLabel}
-                    />
-                  ))}
+              {selections.view === 'list' ? (
+                <View style={styles.controlGroup}>
+                  <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
+                    {resolveText('common.search', 'Search')}
+                  </Text>
+                  <TextInput
+                    accessibilityLabel={resolveText('common.search', 'Search')}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={selections.setSearchQuery}
+                    placeholder={resolveText('search.placeholder', 'Search tasks')}
+                    placeholderTextColor={themeColors.secondaryText}
+                    returnKeyType="search"
+                    style={[styles.sheetInput, { backgroundColor: themeColors.bg, borderColor: themeColors.border, color: themeColors.text }]}
+                    value={selections.searchQuery}
+                  />
                 </View>
-                {selections.showContextMatchMode
-                  ? renderMatchMode('context', resolveText('filters.contextMatchMode', 'Context match'), selections.contextMatchMode)
+              ) : null}
+
+              {topContent}
+
+              <View style={styles.overviewRows}>
+                {options.tokens.length > 0
+                  ? renderOverviewRow({
+                      label: resolveText('filters.contexts', 'Contexts & tags'),
+                      summary: tokenSummary,
+                      onPress: () => openPicker('tokens'),
+                    })
                   : null}
-                {selections.showTagMatchMode
-                  ? renderMatchMode('tag', resolveText('filters.tagMatchMode', 'Tag match'), selections.tagMatchMode)
+
+                {projectOptions.length > 0
+                  ? renderOverviewRow({
+                      label: resolveText('filters.projects', 'Projects'),
+                      summary: projectSummary,
+                      onPress: () => openPicker('projects'),
+                    })
                   : null}
-              </>
-            ) : null}
 
-            {projectOptions.length > 0 ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('filters.projects', 'Projects')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {projectOptions.map((project) => (
-                    <FilterChip
-                      key={`project:${project.id}`}
-                      label={project.title}
-                      selected={selections.projects.includes(project.id)}
-                      themeColors={themeColors}
-                      onPress={() => selections.toggleProject(project.id)}
-                    />
-                  ))}
-                </View>
-              </>
-            ) : null}
+                {visibility.timeEstimate && options.timeEstimates.length > 0 ? (
+                  <View>
+                    {renderOverviewRow({
+                      label: resolveText('filters.timeEstimate', 'Time estimate'),
+                      summary: timeSummary,
+                      expanded: timeExpanded,
+                      onPress: () => setTimeExpanded((current) => !current),
+                    })}
+                    {timeExpanded ? (
+                      <View style={styles.disclosureContent}>
+                        <View style={styles.sheetChipRow}>
+                          {options.timeEstimates.map((estimate) => (
+                            <FilterChip
+                              key={`time:${estimate}`}
+                              label={formatTimeEstimateLabel(estimate)}
+                              selected={selections.timeEstimates.includes(estimate)}
+                              themeColors={themeColors}
+                              onPress={() => selections.toggleTimeEstimate(estimate)}
+                            />
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
 
-            {visibility.location ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('taskEdit.locationLabel', 'Location')}
-                </Text>
-                <TextInput
-                  accessibilityLabel={resolveText('taskEdit.locationLabel', 'Location')}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={selections.setLocation}
-                  placeholder={resolveText('taskEdit.locationPlaceholder', 'e.g. Office')}
-                  placeholderTextColor={themeColors.secondaryText}
-                  returnKeyType="done"
-                  style={[styles.sheetInput, { backgroundColor: themeColors.bg, borderColor: themeColors.border, color: themeColors.text }]}
-                  value={selections.locationQuery}
-                />
-              </>
-            ) : null}
+                {visibility.energyLevel ? (
+                  <View>
+                    {renderOverviewRow({
+                      label: resolveText('taskEdit.energyLevel', 'Energy level'),
+                      summary: energySummary,
+                      expanded: energyExpanded,
+                      onPress: () => setEnergyExpanded((current) => !current),
+                    })}
+                    {energyExpanded ? (
+                      <View style={styles.disclosureContent}>
+                        <View style={styles.sheetChipRow}>
+                          {ENERGY_LEVEL_OPTIONS.map((energyLevel) => (
+                            <FilterChip
+                              key={`energy:${energyLevel}`}
+                              label={t(`energyLevel.${energyLevel}`)}
+                              selected={selections.energyLevels.includes(energyLevel)}
+                              themeColors={themeColors}
+                              onPress={() => selections.toggleEnergyLevel(energyLevel)}
+                            />
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
 
-            {visibility.priority ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('filters.priority', 'Priority')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {PRIORITY_OPTIONS.map((priority) => (
-                    <FilterChip
-                      key={`priority:${priority}`}
-                      label={t(`priority.${priority}`)}
-                      leading={<PriorityFlag priority={priority} />}
-                      selected={selections.priorities.includes(priority)}
-                      themeColors={themeColors}
-                      onPress={() => selections.togglePriority(priority)}
-                    />
-                  ))}
-                </View>
-              </>
-            ) : null}
+                {visibility.priority || visibility.location ? (
+                  <View>
+                    {renderOverviewRow({
+                      label: resolveText('filters.more', 'More filters'),
+                      summary: moreSummary,
+                      expanded: moreExpanded,
+                      onPress: () => setMoreExpanded((current) => !current),
+                    })}
+                    {moreExpanded ? (
+                      <View style={styles.disclosureContent}>
+                        {visibility.priority ? (
+                          <View style={styles.controlGroup}>
+                            <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
+                              {resolveText('filters.priority', 'Priority')}
+                            </Text>
+                            <View style={styles.sheetChipRow}>
+                              {PRIORITY_OPTIONS.map((priority) => (
+                                <FilterChip
+                                  key={`priority:${priority}`}
+                                  label={t(`priority.${priority}`)}
+                                  leading={<PriorityFlag priority={priority} />}
+                                  selected={selections.priorities.includes(priority)}
+                                  themeColors={themeColors}
+                                  onPress={() => selections.togglePriority(priority)}
+                                />
+                              ))}
+                            </View>
+                          </View>
+                        ) : null}
+                        {visibility.location ? (
+                          <View style={styles.controlGroup}>
+                            <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
+                              {resolveText('taskEdit.locationLabel', 'Location')}
+                            </Text>
+                            <TextInput
+                              accessibilityLabel={resolveText('taskEdit.locationLabel', 'Location')}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              onChangeText={selections.setLocation}
+                              placeholder={resolveText('taskEdit.locationPlaceholder', 'e.g. Office')}
+                              placeholderTextColor={themeColors.secondaryText}
+                              returnKeyType="done"
+                              style={[styles.sheetInput, { backgroundColor: themeColors.bg, borderColor: themeColors.border, color: themeColors.text }]}
+                              value={selections.locationQuery}
+                            />
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            </ScrollView>
+          )}
 
-            {visibility.energyLevel ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('taskEdit.energyLevel', 'Energy level')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {ENERGY_LEVEL_OPTIONS.map((energyLevel) => (
-                    <FilterChip
-                      key={`energy:${energyLevel}`}
-                      label={t(`energyLevel.${energyLevel}`)}
-                      selected={selections.energyLevels.includes(energyLevel)}
-                      themeColors={themeColors}
-                      onPress={() => selections.toggleEnergyLevel(energyLevel)}
-                    />
-                  ))}
-                </View>
-              </>
-            ) : null}
-
-            {visibility.timeEstimate && options.timeEstimates.length > 0 ? (
-              <>
-                <Text style={[styles.sheetSectionLabel, { color: themeColors.secondaryText }]}>
-                  {resolveText('filters.timeEstimate', 'Time estimate')}
-                </Text>
-                <View style={styles.sheetChipRow}>
-                  {options.timeEstimates.map((estimate) => (
-                    <FilterChip
-                      key={`time:${estimate}`}
-                      label={formatTimeEstimateLabel(estimate)}
-                      selected={selections.timeEstimates.includes(estimate)}
-                      themeColors={themeColors}
-                      onPress={() => selections.toggleTimeEstimate(estimate)}
-                    />
-                  ))}
-                </View>
-              </>
-            ) : null}
-          </ScrollView>
+          <View style={styles.sheetFooter}>
+            <TouchableOpacity accessibilityRole="button" onPress={closeSheet} style={styles.doneButton}>
+              <Text style={[styles.doneButtonText, { color: themeColors.tint }]}>
+                {resolveText('common.done', 'Done')}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
       )}
@@ -426,6 +761,9 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     maxHeight: '82%',
   },
+  pickerSheet: {
+    height: '82%',
+  },
   sheetHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -433,9 +771,18 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
+  sheetHeaderLeading: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   sheetTitle: {
     fontSize: 16,
     fontWeight: '700',
+    flexShrink: 1,
+    minWidth: 0,
   },
   sheetHeaderActions: {
     flexDirection: 'row',
@@ -452,19 +799,116 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  sheetIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
+  backButton: {
+    minHeight: 44,
     justifyContent: 'center',
+    paddingHorizontal: 8,
+    marginLeft: -8,
+  },
+  backButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   sheetScroll: {
+    flexShrink: 1,
     maxHeight: '100%',
   },
   sheetContent: {
     gap: 14,
     paddingBottom: 12,
+  },
+  activeFilters: {
+    gap: 8,
+  },
+  controlGroup: {
+    gap: 8,
+  },
+  overviewRows: {
+    gap: 8,
+  },
+  overviewRow: {
+    minHeight: 60,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  overviewRowText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  overviewRowLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  overviewRowSummary: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  disclosureContent: {
+    paddingHorizontal: 4,
+    paddingTop: 10,
+    gap: 12,
+  },
+  pickerBody: {
+    flex: 1,
+    minHeight: 0,
+    gap: 10,
+  },
+  pickerList: {
+    flex: 1,
+  },
+  pickerOption: {
+    minHeight: 52,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  pickerOptionLabel: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  pickerOptionState: {
+    flexShrink: 0,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  excludedText: {
+    textDecorationLine: 'line-through',
+  },
+  emptyPickerText: {
+    paddingVertical: 28,
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  matchModeFooter: {
+    gap: 10,
+    paddingVertical: 12,
+  },
+  sheetFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingTop: 8,
+  },
+  doneButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  doneButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   sheetSectionLabel: {
     fontSize: 12,

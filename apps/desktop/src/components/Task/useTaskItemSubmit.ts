@@ -29,6 +29,8 @@ type TaskItemSubmitOptions = {
     statusOverride?: TaskStatus;
     completedAtOverride?: string;
     timeSpentMinutesOverride?: number;
+    /** Save the draft but leave the editor mounted for a chained durable action. */
+    keepEditing?: boolean;
 };
 
 export function useTaskItemSubmit({
@@ -81,9 +83,11 @@ export function useTaskItemSubmit({
             }
             settlePersistedAttachmentSave(editAttachments ?? task.attachments ?? []);
         }
-        setIsEditing(false);
-        if (editingTaskId === task.id) {
-            setEditingTaskId(null);
+        if (!options?.keepEditing) {
+            setIsEditing(false);
+            if (editingTaskId === task.id) {
+                setEditingTaskId(null);
+            }
         }
         return result;
     }, [

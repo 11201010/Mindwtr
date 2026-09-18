@@ -25,6 +25,7 @@ const MAPPING = {
   'arrow.up.circle.fill': 'arrow-up-circle',
   'book.closed.fill': 'book',
   'archivebox.fill': 'archive',
+  'clock.arrow.circlepath': 'time',
   'trash.fill': 'trash',
   'gearshape.fill': 'settings',
   'questionmark.circle.fill': 'help-circle',

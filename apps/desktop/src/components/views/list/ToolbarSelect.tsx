@@ -16,7 +16,7 @@ import { useDropdownPosition } from '../../ui/use-dropdown-position';
 // but follows the APG select-only combobox pattern so the open popup is a
 // themed, portaled listbox instead of the OS-native option list (#861).
 const TOOLBAR_SELECT_TRIGGER =
-    'relative flex h-9 items-center rounded-lg border border-border bg-card pl-2 text-xs text-foreground transition-colors hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/40';
+    'relative flex h-9 items-center rounded-lg border pl-2 text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40';
 const TOOLBAR_SELECT_LABEL = 'text-[10px] font-medium uppercase tracking-wide text-muted-foreground';
 const TOOLBAR_SELECT_VALUE = 'min-w-0 flex-1 truncate pl-2 pr-8 text-left';
 
@@ -27,6 +27,7 @@ export type ToolbarSelectOption = {
 };
 
 type ToolbarSelectProps = {
+    active?: boolean;
     label: string;
     icon?: ReactNode;
     value: string;
@@ -35,7 +36,7 @@ type ToolbarSelectProps = {
     className?: string;
 };
 
-export function ToolbarSelect({ label, icon, value, options, onChange, className }: ToolbarSelectProps) {
+export function ToolbarSelect({ active = false, label, icon, value, options, onChange, className }: ToolbarSelectProps) {
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -169,7 +170,13 @@ export function ToolbarSelect({ label, icon, value, options, onChange, className
                         setOpen(true);
                     }
                 }}
-                className={cn(TOOLBAR_SELECT_TRIGGER, className)}
+                className={cn(
+                    TOOLBAR_SELECT_TRIGGER,
+                    active
+                        ? 'border-primary bg-primary/10 text-primary hover:bg-primary/15'
+                        : 'border-border bg-card text-foreground hover:bg-muted/70',
+                    className,
+                )}
             >
                 {icon}
                 <span className={TOOLBAR_SELECT_LABEL}>{label}</span>

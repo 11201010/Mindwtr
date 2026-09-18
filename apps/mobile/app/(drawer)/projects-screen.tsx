@@ -584,9 +584,90 @@ export default function ProjectsScreen() {
     persistProjectListViewState(nextState);
   }, [persistProjectListViewState]);
 
+  const projectTagFilterActive = selectedTagFilter !== ALL_TAGS;
+  const selectedTagFilterLabel = selectedTagFilter === NO_TAGS
+    ? t('projects.noTags')
+    : selectedTagFilter;
+  const projectTagFilterHeading = projectTagFilterActive
+    ? `${t('projects.tagFilter')}: ${selectedTagFilterLabel}`
+    : t('projects.tagFilter');
+  const projectTagFilterActionLabel = showTagFilter ? t('filters.hide') : t('filters.show');
+  const renderProjectTagFilters = () => (
+    <View style={[styles.tagFilterChips, styles.projectTagFilterChips]}>
+      <TouchableOpacity
+        style={[
+          styles.tagFilterChip,
+          selectedTagFilter === ALL_TAGS
+            ? { borderColor: tc.tint, backgroundColor: tc.tint }
+            : { borderColor: tc.border, backgroundColor: tc.cardBg },
+        ]}
+        onPress={() => setSelectedTagFilter(ALL_TAGS)}
+        accessibilityRole="button"
+        accessibilityLabel={t('projects.allTags')}
+        accessibilityState={{ selected: selectedTagFilter === ALL_TAGS }}
+      >
+        <Text
+          style={[
+            styles.tagFilterText,
+            { color: selectedTagFilter === ALL_TAGS ? tc.onTint : tc.text },
+          ]}
+        >
+          {t('projects.allTags')}
+        </Text>
+      </TouchableOpacity>
+      {tagFilterOptions.list.map((tag) => (
+        <TouchableOpacity
+          key={tag}
+          style={[
+            styles.tagFilterChip,
+            selectedTagFilter === tag
+              ? { borderColor: tc.tint, backgroundColor: tc.tint }
+              : { borderColor: tc.border, backgroundColor: tc.cardBg },
+          ]}
+          onPress={() => setSelectedTagFilter(tag)}
+          accessibilityRole="button"
+          accessibilityLabel={tag}
+          accessibilityState={{ selected: selectedTagFilter === tag }}
+        >
+          <Text
+            style={[
+              styles.tagFilterText,
+              { color: selectedTagFilter === tag ? tc.onTint : tc.text },
+            ]}
+          >
+            {tag}
+          </Text>
+        </TouchableOpacity>
+      ))}
+      {tagFilterOptions.hasNoTags && (
+        <TouchableOpacity
+          style={[
+            styles.tagFilterChip,
+            selectedTagFilter === NO_TAGS
+              ? { borderColor: tc.tint, backgroundColor: tc.tint }
+              : { borderColor: tc.border, backgroundColor: tc.cardBg },
+          ]}
+          onPress={() => setSelectedTagFilter(NO_TAGS)}
+          accessibilityRole="button"
+          accessibilityLabel={t('projects.noTags')}
+          accessibilityState={{ selected: selectedTagFilter === NO_TAGS }}
+        >
+          <Text
+            style={[
+              styles.tagFilterText,
+              { color: selectedTagFilter === NO_TAGS ? tc.onTint : tc.text },
+            ]}
+          >
+            {t('projects.noTags')}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
   const renderProjectListRow = ({ item, index }: { item: ProjectListRow; index: number }) => {
     if (item.type === 'section-label') {
-      return <ListSectionHeader title={item.title} tc={tc} />;
+      return <ListSectionHeader title={item.title} tc={tc} style={styles.projectListSectionHeader} />;
     }
 
     if (item.type === 'section-toggle') {
@@ -614,20 +695,29 @@ export default function ProjectsScreen() {
     if (item.type === 'area-header') {
       return (
         <TouchableOpacity
+          testID={`project-area-header-${item.sectionKind}-${item.areaId}`}
           onPress={() => toggleAreaCollapse(item.areaId)}
           style={styles.collapsibleAreaHeader}
+          accessibilityRole="button"
+          accessibilityLabel={item.title}
+          accessibilityState={{ expanded: !item.collapsed }}
         >
           <View style={styles.collapsibleAreaHeaderContent}>
-            {item.color ? (
+            {item.icon ? (
+              <Text
+                testID={`project-area-icon-${item.areaId}`}
+                style={[styles.collapsibleAreaIcon, { color: tc.secondaryText }]}
+              >
+                {item.icon}
+              </Text>
+            ) : item.color ? (
               <View
+                testID={`project-area-dot-${item.areaId}`}
                 style={[
                   styles.collapsibleAreaDot,
                   { backgroundColor: item.color, borderColor: tc.border },
                 ]}
               />
-            ) : null}
-            {item.icon ? (
-              <Text style={[styles.collapsibleAreaIcon, { color: tc.secondaryText }]}>{item.icon}</Text>
             ) : null}
             <Text style={[styles.collapsibleAreaHeaderText, { color: tc.secondaryText }]} numberOfLines={1}>
               {item.title}
@@ -835,7 +925,10 @@ export default function ProjectsScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View onLayout={onStartupLayout} style={[styles.container, { backgroundColor: tc.bg }]}>
-      <View style={[styles.inputContainer, { borderBottomColor: tc.border }]}>
+      <View
+        style={[styles.inputContainer, { borderBottomColor: tc.border }]}
+        testID="projects-list-controls"
+      >
         <View style={styles.addProjectRow}>
           <CompactTextInput
             style={[styles.input, styles.addProjectInput, { borderColor: tc.border, backgroundColor: tc.inputBg, color: tc.text }]}
@@ -862,7 +955,7 @@ export default function ProjectsScreen() {
           </TouchableOpacity>
         </View>
         {newProjectTitle.trim().length > 0 && sortedAreas.length > 0 && (
-          <View style={styles.tagFilterChips}>
+          <View style={[styles.tagFilterChips, styles.newProjectAreaChips]}>
             <TouchableOpacity
               style={[
                 styles.tagFilterChip,
@@ -912,106 +1005,39 @@ export default function ProjectsScreen() {
         )}
         <View style={styles.filterSection}>
           <TouchableOpacity
-            style={styles.filterHeader}
-            onPress={() => setShowTagFilter((prev) => !prev)}
+            accessibilityLabel={`${projectTagFilterHeading}, ${projectTagFilterActionLabel}`}
             accessibilityRole="button"
-            accessibilityLabel={`${t('projects.tagFilter')}: ${showTagFilter ? t('filters.hide') : t('filters.show')}`}
-            accessibilityState={{ expanded: showTagFilter }}
+            accessibilityState={{ expanded: showTagFilter, selected: projectTagFilterActive }}
+            onPress={() => setShowTagFilter((current) => !current)}
+            style={styles.filterHeader}
+            testID="projects-tag-filter-toggle"
           >
             <CompactText
-              style={[styles.tagFilterLabel, { color: tc.text }]}
               numberOfLines={1}
+              style={[
+                styles.tagFilterLabel,
+                { color: projectTagFilterActive ? tc.tint : tc.text },
+              ]}
             >
-              {t('projects.tagFilter')}
+              {projectTagFilterHeading}
             </CompactText>
             <CompactText
-              style={[styles.filterToggleText, { color: tc.secondaryText }]}
-              numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.78}
+              numberOfLines={1}
+              style={[styles.filterToggleText, { color: tc.secondaryText }]}
             >
-              {showTagFilter ? t('filters.hide') : t('filters.show')}
+              {projectTagFilterActionLabel}
             </CompactText>
           </TouchableOpacity>
-          {showTagFilter && (
-            <View style={styles.tagFilterChips}>
-              <TouchableOpacity
-                style={[
-                  styles.tagFilterChip,
-                  selectedTagFilter === ALL_TAGS
-                    ? { borderColor: tc.tint, backgroundColor: tc.tint }
-                    : { borderColor: tc.border, backgroundColor: tc.cardBg },
-                ]}
-                onPress={() => setSelectedTagFilter(ALL_TAGS)}
-                accessibilityRole="button"
-                accessibilityLabel={t('projects.allTags')}
-                accessibilityState={{ selected: selectedTagFilter === ALL_TAGS }}
-              >
-                <Text
-                  style={[
-                    styles.tagFilterText,
-                    { color: selectedTagFilter === ALL_TAGS ? tc.onTint : tc.text },
-                  ]}
-                >
-                  {t('projects.allTags')}
-                </Text>
-              </TouchableOpacity>
-              {tagFilterOptions.list.map((tag) => (
-                <TouchableOpacity
-                  key={tag}
-                  style={[
-                    styles.tagFilterChip,
-                    selectedTagFilter === tag
-                      ? { borderColor: tc.tint, backgroundColor: tc.tint }
-                      : { borderColor: tc.border, backgroundColor: tc.cardBg },
-                  ]}
-                  onPress={() => setSelectedTagFilter(tag)}
-                  accessibilityRole="button"
-                  accessibilityLabel={tag}
-                  accessibilityState={{ selected: selectedTagFilter === tag }}
-                >
-                  <Text
-                    style={[
-                      styles.tagFilterText,
-                      { color: selectedTagFilter === tag ? tc.onTint : tc.text },
-                    ]}
-                  >
-                    {tag}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-              {tagFilterOptions.hasNoTags && (
-                <TouchableOpacity
-                  style={[
-                    styles.tagFilterChip,
-                    selectedTagFilter === NO_TAGS
-                      ? { borderColor: tc.tint, backgroundColor: tc.tint }
-                      : { borderColor: tc.border, backgroundColor: tc.cardBg },
-                  ]}
-                  onPress={() => setSelectedTagFilter(NO_TAGS)}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('projects.noTags')}
-                  accessibilityState={{ selected: selectedTagFilter === NO_TAGS }}
-                >
-                  <Text
-                    style={[
-                      styles.tagFilterText,
-                      { color: selectedTagFilter === NO_TAGS ? tc.onTint : tc.text },
-                    ]}
-                  >
-                    {t('projects.noTags')}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+          {showTagFilter ? renderProjectTagFilters() : null}
         </View>
       </View>
 
       <FlatList
         data={projectListRows}
         keyExtractor={(item) => item.key}
-        contentContainerStyle={defaultListContentStyle}
+        contentContainerStyle={[defaultListContentStyle, styles.projectListContent]}
         style={{ flex: 1 }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>

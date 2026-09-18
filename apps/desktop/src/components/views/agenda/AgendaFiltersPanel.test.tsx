@@ -1,32 +1,28 @@
-import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useTaskStore } from '@mindwtr/core';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AgendaFiltersPanel } from './AgendaFiltersPanel';
 
 const translations: Record<string, string> = {
-    'common.delete': 'Delete',
+    'common.all': 'All',
+    'common.noMatches': 'No matches',
     'filters.clear': 'Clear',
     'filters.contexts': 'Contexts & tags',
     'filters.hide': 'Hide',
     'filters.label': 'Filters',
     'filters.priority': 'Priority',
     'filters.projects': 'Projects',
+    'filters.remove': 'Remove filter',
+    'filters.searchOptions': 'Search options',
+    'filters.searchTasks': 'Search task titles',
     'filters.show': 'Show',
-    'filters.matchAny': 'Any',
-    'common.all': 'All',
     'filters.timeEstimate': 'Time estimate',
+    'filters.tokenCycleHint': 'Click to include, again to exclude, and once more to clear.',
     'priority.urgent': 'Urgent priority',
-    'sort.created': 'Created',
-    'sort.created-desc': 'Newest',
-    'sort.default': 'Default',
-    'sort.due': 'Due',
-    'sort.label': 'Sort',
-    'sort.priority': 'Priority',
-    'sort.start': 'Start',
     'taskEdit.energyLevel': 'Energy level',
     'taskEdit.locationLabel': 'Location',
     'taskEdit.locationPlaceholder': 'Office',
+    'taskEdit.noProjectOption': 'No project',
     'energyLevel.high': 'High energy',
 };
 
@@ -37,11 +33,10 @@ const createProps = (overrides: Partial<Parameters<typeof AgendaFiltersPanel>[0]
     allTokens: [],
     canSaveFilter: false,
     contextMatchMode: 'all',
-    contextMatchModeLabels: { title: 'Context matching', any: 'Any', all: 'All' },
+    contextMatchModeLabels: { title: 'Context match', any: 'Any', all: 'All' },
     tagMatchMode: 'all',
     tagMatchModeLabels: { title: 'Tag match', any: 'Any', all: 'All' },
     energyLevelOptions: ['high'],
-    focusSortBy: 'default',
     formatEstimate: () => '30m',
     hasFilters: false,
     locationFilter: '',
@@ -51,7 +46,6 @@ const createProps = (overrides: Partial<Parameters<typeof AgendaFiltersPanel>[0]
     onLocationChange: vi.fn(),
     onSaveFilter: vi.fn(),
     onSearchChange: vi.fn(),
-    onSortChange: vi.fn(),
     onToggleEnergy: vi.fn(),
     onToggleFiltersOpen: vi.fn(),
     onTogglePriority: vi.fn(),
@@ -81,33 +75,15 @@ const createProps = (overrides: Partial<Parameters<typeof AgendaFiltersPanel>[0]
 });
 
 describe('AgendaFiltersPanel', () => {
-    afterEach(() => {
-        useTaskStore.setState({ settings: {} as never });
+    it('labels the Focus task query explicitly and starts categories collapsed', () => {
+        render(<AgendaFiltersPanel {...createProps({ allTokens: ['@home'] })} />);
+
+        expect(screen.getByRole('searchbox', { name: 'Search task titles' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Contexts & tags' })).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByRole('button', { name: '@home' })).not.toBeInTheDocument();
     });
 
-    it('offers the Priority sort only while the Priorities feature is on', () => {
-        // showPriorityFilters stays false in both renders, so the only 'Priority'
-        // text on screen is the sort chip.
-        const { rerender } = render(<AgendaFiltersPanel {...createProps()} />);
-        expect(screen.getByText('Priority')).toBeInTheDocument();
-
-        useTaskStore.setState({ settings: { features: { priorities: false } } as never });
-        rerender(<AgendaFiltersPanel {...createProps()} />);
-        expect(screen.queryByText('Priority')).not.toBeInTheDocument();
-        // The other sort chips are untouched.
-        expect(screen.getByText('Due')).toBeInTheDocument();
-    });
-
-    it('hides optional metadata filters until current Focus tasks use those fields', () => {
-        render(<AgendaFiltersPanel {...createProps()} />);
-
-        expect(screen.queryByText('Urgent priority')).not.toBeInTheDocument();
-        expect(screen.queryByText('High energy')).not.toBeInTheDocument();
-        expect(screen.queryByLabelText('Location')).not.toBeInTheDocument();
-        expect(screen.queryByText('Time estimate')).not.toBeInTheDocument();
-    });
-
-    it('shows optional metadata filters when current Focus tasks use those fields', () => {
+    it('shows gated metadata as compact categories and only mounts options after disclosure', () => {
         render(<AgendaFiltersPanel {...createProps({
             showEnergyLevelFilters: true,
             showLocationFilter: true,
@@ -115,56 +91,64 @@ describe('AgendaFiltersPanel', () => {
             showTimeEstimateFilters: true,
         })} />);
 
-        expect(screen.getByText('Urgent priority')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Urgent priority' })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Priority' }));
+        expect(screen.getByRole('button', { name: 'Urgent priority' })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Urgent priority' }).querySelector('[data-priority-flag="urgent"]'))
             .toHaveAttribute('stroke', '#dc2626');
-        expect(screen.getByText('High energy')).toBeInTheDocument();
-        expect(screen.getByLabelText('Location')).toBeInTheDocument();
-        expect(screen.getByText('Time estimate')).toBeInTheDocument();
-        expect(screen.getByText('30m')).toBeInTheDocument();
     });
 
-    it('only shows the tag match control once 2+ tags are selected', () => {
-        const { rerender } = render(<AgendaFiltersPanel {...createProps({
-            allTokens: ['#quick', '#calls'],
-            selectedTokens: ['#quick'],
+    it('opens at most one category and searches options without changing the task query', () => {
+        const onSearchChange = vi.fn();
+        render(<AgendaFiltersPanel {...createProps({
+            allTokens: ['@home', '@office'],
+            onSearchChange,
+            projectOptions: [{ id: 'project', title: 'A very long project title that remains fully accessible' }],
         })} />);
 
-        expect(screen.queryByText('Tag match')).not.toBeInTheDocument();
+        const tokens = screen.getByRole('button', { name: 'Contexts & tags' });
+        const projects = screen.getByRole('button', { name: 'Projects' });
+        fireEvent.click(tokens);
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search options' }), { target: { value: 'office' } });
+        expect(screen.getByRole('button', { name: '@office' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '@home' })).not.toBeInTheDocument();
+        expect(onSearchChange).not.toHaveBeenCalled();
 
-        rerender(<AgendaFiltersPanel {...createProps({
-            allTokens: ['#quick', '#calls'],
-            selectedTokens: ['#quick', '#calls'],
-        })} />);
-
-        expect(screen.getByText('Tag match')).toBeInTheDocument();
+        fireEvent.click(projects);
+        expect(tokens).toHaveAttribute('aria-expanded', 'false');
+        expect(projects).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByRole('button', { name: 'A very long project title that remains fully accessible' })).toBeInTheDocument();
     });
 
-    it('renders token chips in three accessible states: neutral, included, excluded', () => {
+    it('preserves token tri-state and Any/All controls inside the open token category', () => {
         render(<AgendaFiltersPanel {...createProps({
             allTokens: ['@home', '@errands', '#waiting'],
-            selectedTokens: ['@errands'],
+            selectedTokens: ['@home', '@errands'],
             excludedTokens: ['#waiting'],
         })} />);
 
-        expect(screen.getByRole('button', { name: '@home' })).toHaveAttribute('aria-pressed', 'false');
-        const included = screen.getByRole('button', { name: '@errands' });
-        expect(included).toHaveAttribute('aria-pressed', 'true');
-        expect(included).not.toHaveClass('line-through');
-        const excludedChip = screen.getByRole('button', { name: '#waiting (Excluded)' });
-        expect(excludedChip).toHaveAttribute('aria-pressed', 'mixed');
-        expect(excludedChip).toHaveClass('line-through');
+        fireEvent.click(screen.getByRole('button', { name: 'Contexts & tags' }));
+        expect(screen.getByRole('button', { name: '@home' })).toHaveAttribute('aria-pressed', 'true');
+        const excluded = screen.getByRole('button', { name: '#waiting (Excluded)' });
+        expect(excluded).toHaveAttribute('aria-pressed', 'mixed');
+        expect(screen.getByRole('group', { name: 'Context match' })).toBeInTheDocument();
+        expect(screen.getByText('Click to include, again to exclude, and once more to clear.')).toBeInTheDocument();
     });
 
-    it('shows excluded tokens in the active-filter summary with strikethrough and a remove control', () => {
-        const onRemove = vi.fn();
+    it('keeps excluded and advanced chips visible and removable while categories are collapsed', () => {
+        const removeExcluded = vi.fn();
+        const removeAdvanced = vi.fn();
         render(<AgendaFiltersPanel {...createProps({
             activeFilterChips: [
-                { id: 'excluded-token:#waiting', label: '#waiting', excluded: true, onRemove },
+                { id: 'excluded-token:#waiting', label: '#waiting', excluded: true, onRemove: removeExcluded },
+                { id: 'advanced:status:waiting', label: 'Status: Waiting', isAdvanced: true, onRemove: removeAdvanced },
             ],
+            showFiltersPanel: false,
         })} />);
 
-        const summaryLabel = screen.getAllByText('#waiting').find((node) => node.closest('span')?.className.includes('line-through'));
-        expect(summaryLabel).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Remove filter: #waiting' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Remove filter: Status: Waiting' }));
+        expect(removeExcluded).toHaveBeenCalledTimes(1);
+        expect(removeAdvanced).toHaveBeenCalledTimes(1);
     });
 });

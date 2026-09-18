@@ -191,6 +191,73 @@ describe('TaskItem', () => {
         expect(getByDisplayValue('Test Task')).toBeInTheDocument();
     });
 
+    it('saves an edited title before promoting the task to a project', async () => {
+        const editableTask: Task = { ...mockTask, id: 'promote-edited-task', status: 'next' };
+        const updateTask = vi.fn(async () => ({ success: true as const }));
+        const promoteTaskToProject = vi.fn(async () => ({
+            success: true as const,
+            id: 'project-promoted',
+            reused: false,
+        }));
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [editableTask],
+                _allTasks: [editableTask],
+                _tasksById: new Map([[editableTask.id, editableTask]]),
+                updateTask,
+                promoteTaskToProject,
+            }));
+        });
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={editableTask} />
+            </LanguageProvider>
+        );
+
+        fireEvent.click(view.getAllByRole('button', { name: /edit/i })[0]);
+        fireEvent.change(view.getByDisplayValue('Test Task'), {
+            target: { value: 'Edited before promotion' },
+        });
+        fireEvent.click(view.getByRole('button', { name: /create project from task/i }));
+
+        await waitFor(() => expect(promoteTaskToProject).toHaveBeenCalledWith(editableTask.id));
+        expect(updateTask).toHaveBeenCalledWith(editableTask.id, expect.objectContaining({
+            title: 'Edited before promotion',
+        }));
+        expect(updateTask.mock.invocationCallOrder[0]).toBeLessThan(promoteTaskToProject.mock.invocationCallOrder[0]);
+    });
+
+    it('aborts project promotion when the dirty editor draft cannot be saved', async () => {
+        const editableTask: Task = { ...mockTask, id: 'promote-save-failure-task', status: 'next' };
+        const updateTask = vi.fn(async () => ({ success: false as const, error: 'Save failed' }));
+        const promoteTaskToProject = vi.fn();
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [editableTask],
+                _allTasks: [editableTask],
+                _tasksById: new Map([[editableTask.id, editableTask]]),
+                updateTask,
+                promoteTaskToProject,
+            }));
+        });
+        const view = render(
+            <LanguageProvider>
+                <TaskItem task={editableTask} />
+            </LanguageProvider>
+        );
+
+        fireEvent.click(view.getAllByRole('button', { name: /edit/i })[0]);
+        const titleInput = view.getByDisplayValue('Test Task');
+        fireEvent.change(titleInput, { target: { value: 'Unsaved promotion title' } });
+        fireEvent.click(view.getByRole('button', { name: /create project from task/i }));
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(promoteTaskToProject).not.toHaveBeenCalled();
+        expect(view.getByDisplayValue('Unsaved promotion title')).toBeInTheDocument();
+    });
+
     it('saves an edited Reference without erasing fields hidden by its editor', async () => {
         const referenceTask: Task = {
             ...mockTask,
@@ -1190,9 +1257,8 @@ describe('TaskItem', () => {
         });
 
         expect(getByRole('menu', { name: /more options/i })).toBeInTheDocument();
-        expect(getByRole('menuitem', { name: /due date/i })).toBeInTheDocument();
-        expect(getByRole('menuitem', { name: /review date/i })).toBeInTheDocument();
-        expect(getByRole('menuitem', { name: /area/i })).toBeInTheDocument();
+        expect(getByRole('menuitem', { name: /dates/i })).toBeInTheDocument();
+        expect(getByRole('menuitem', { name: /move to/i })).toBeInTheDocument();
         expect(getByRole('menuitem', { name: /contexts/i })).toBeInTheDocument();
         expect(getByRole('menuitem', { name: /duplicate/i })).toBeInTheDocument();
         expect(getByText('Delete')).toBeInTheDocument();
@@ -1330,10 +1396,9 @@ describe('TaskItem', () => {
             return container.textContent ?? '';
         };
 
-        // Age is a nudge about work still waiting, so an open task keeps it…
-        expect(renderWithStatus('next', 'age-next-task')).toContain('5 days old');
-        // …and neither kind of finished task shows it (#968: Archive picked it up when
-        // its rows became the shared read-only row).
+        // Age is expanded-only metadata; the collapsed summary stays limited
+        // to actionable routing and date information.
+        expect(renderWithStatus('next', 'age-next-task')).not.toContain('5 days old');
         expect(renderWithStatus('done', 'age-done-task')).not.toContain('5 days old');
         expect(renderWithStatus('archived', 'age-archived-task')).not.toContain('5 days old');
     });
@@ -1603,6 +1668,7 @@ describe('TaskItem', () => {
         const row = container.querySelector('[data-task-id="quick-due-task"]');
         expect(row).toBeTruthy();
         fireEvent.contextMenu(row!);
+        fireEvent.click(getByRole('menuitem', { name: /dates/i }));
         fireEvent.click(getByRole('menuitem', { name: /due date/i }));
         fireEvent.change(getByLabelText('Due Date', { selector: 'input' }), { target: { value: '2026-05-01' } });
         fireEvent.click(getByRole('button', { name: 'Save' }));
@@ -1637,6 +1703,7 @@ describe('TaskItem', () => {
         const row = container.querySelector('[data-task-id="quick-review-task"]');
         expect(row).toBeTruthy();
         fireEvent.contextMenu(row!);
+        fireEvent.click(getByRole('menuitem', { name: /dates/i }));
         fireEvent.click(getByRole('menuitem', { name: /review date/i }));
         fireEvent.change(getByLabelText('Review Date', { selector: 'input' }), { target: { value: '2026-05-03' } });
         fireEvent.click(getByRole('button', { name: 'Save' }));
@@ -1681,12 +1748,11 @@ describe('TaskItem', () => {
         const row = container.querySelector('[data-task-id="quick-area-task"]');
         expect(row).toBeTruthy();
         fireEvent.contextMenu(row!);
-        fireEvent.click(getByRole('menuitem', { name: /area/i }));
-        const areaDialog = getByRole('dialog', { name: 'Area' });
-        fireEvent.click(within(areaDialog).getByRole('button', { name: 'No Area' }));
-        const areaListbox = getByRole('listbox', { name: 'No Area' });
-        fireEvent.click(within(areaListbox).getByRole('option', { name: 'Work' }));
-        fireEvent.click(within(areaDialog).getByRole('button', { name: 'Save' }));
+        fireEvent.click(getByRole('menuitem', { name: /move to/i }));
+        const destinationDialog = getByRole('dialog', { name: 'Destination' });
+        fireEvent.click(within(destinationDialog).getByRole('button', { name: 'Destination' }));
+        fireEvent.click(getByRole('option', { name: 'Work' }));
+        fireEvent.click(within(destinationDialog).getByRole('button', { name: 'Save' }));
 
         await waitFor(() => {
             const updatedTask = useTaskStore.getState()._allTasks.find((task) => task.id === 'quick-area-task');

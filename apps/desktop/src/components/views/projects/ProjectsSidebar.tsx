@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { AlertTriangle, ChevronDown, ChevronRight, ChevronsLeft, CornerDownRight, Folder, Plus } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronsLeft, Folder, Plus } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { FocusStarIcon } from '../../FocusStarIcon';
 import { SortableProjectRow } from './SortableRows';
@@ -165,6 +165,7 @@ export function ProjectsSidebar({
     const [contextMenu, setContextMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement | null>(null);
     const contextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
+    const createProjectInputRef = useRef<HTMLInputElement | null>(null);
     const pendingProjectSelectionRef = useRef<{ projectId: string; timeoutId: number } | null>(null);
     const projectNavigationRootRef = useRef<HTMLDivElement | null>(null);
     const projectRowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -174,6 +175,10 @@ export function ProjectsSidebar({
     const previousVisibleProjectIdsRef = useRef<string[]>([]);
     const keybindings = useOptionalKeybindings();
     const registerProjectListScope = keybindings?.registerProjectListScope;
+
+    useEffect(() => {
+        if (isCreating && !isCreatingProject) createProjectInputRef.current?.focus();
+    }, [isCreating, isCreatingProject]);
 
     const visibleProjectIds = useMemo(() => getVisibleProjectIds({
         groupedActiveProjects,
@@ -481,6 +486,7 @@ export function ProjectsSidebar({
     const addToFocusLabel = t('projects.addToFocus');
     const maxFocusedProjectsLabel = t('projects.maxFocusedProjects');
     const createProjectLabel = `${tFallback(t, 'projects.create', 'Create')} ${tFallback(t, 'taskEdit.projectLabel', 'Project')}`;
+    const newProjectLabel = tFallback(t, 'projects.new', 'New project');
 
     return (
         <div
@@ -488,7 +494,7 @@ export function ProjectsSidebar({
             data-project-navigation-root
             className="w-full h-full min-h-0 flex flex-col gap-4 border-r border-border pr-5 xl:pr-6"
         >
-            <div className="flex items-center justify-between">
+            <div data-projects-sidebar-header className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                     <h2 className="text-xl font-bold tracking-tight">{t('projects.title')}</h2>
                     {areaFilterLabel && (
@@ -497,104 +503,133 @@ export function ProjectsSidebar({
                         </span>
                     )}
                 </div>
-                {onToggleCollapsed && collapseLabel && (
-                    <button
-                        type="button"
-                        onClick={onToggleCollapsed}
-                        className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/40"
-                        title={collapseLabel}
-                        aria-label={collapseLabel}
-                        aria-controls="projects-sidebar-panel"
-                        aria-expanded={true}
-                    >
-                        <ChevronsLeft className="w-4 h-4" />
-                    </button>
-                )}
+                <div className="flex flex-none items-center gap-1">
+                    {!isCreating && (
+                        <button
+                            type="button"
+                            onClick={onStartCreate}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                            {newProjectLabel}
+                        </button>
+                    )}
+                    {onToggleCollapsed && collapseLabel && (
+                        <button
+                            type="button"
+                            onClick={onToggleCollapsed}
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/40"
+                            title={collapseLabel}
+                            aria-label={collapseLabel}
+                            aria-controls="projects-sidebar-panel"
+                            aria-expanded={true}
+                        >
+                            <ChevronsLeft className="h-4 w-4" />
+                        </button>
+                    )}
+                </div>
             </div>
 
-            <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            <div className="flex items-center gap-2">
+                <label htmlFor="projects-tag-filter" className="flex-none text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {t('projects.tagFilter')}
                 </label>
-                <select
-                    aria-label={t('projects.tagFilter')}
-                    value={selectedTag}
-                    onChange={(e) => onSelectTag(e.target.value)}
-                    className="w-full h-8 text-xs bg-background border border-border rounded px-2 text-foreground"
-                >
-                    <option value={allTagsId}>{t('projects.allTags')}</option>
-                    {tagOptions.list.map((tag) => (
-                        <option key={tag} value={tag}>
-                            {tag}
-                        </option>
-                    ))}
-                    {tagOptions.hasNoTags && (
-                        <option value={noTagsId}>{t('projects.noTags')}</option>
-                    )}
-                </select>
-            </div>
-
-            <form
-                onSubmit={onCreateProject}
-                className="rounded-lg border border-border/70 bg-card/40 p-2.5 space-y-2"
-            >
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    {createProjectLabel}
-                </label>
-                <div className="flex items-center gap-2">
-                    <input
-                        type="text"
-                        value={newProjectTitle}
-                        onChange={(e) => onChangeNewProjectTitle(e.target.value)}
-                        onFocus={onStartCreate}
-                        placeholder={t('projects.projectName')}
-                        className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={isCreatingProject}
-                        aria-busy={isCreatingProject}
-                        aria-label={t('projects.projectName')}
-                    />
-                    <button
-                        type="submit"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={!newProjectTitle.trim() || isCreatingProject}
-                        title={t('projects.create')}
-                        aria-label={createProjectLabel}
-                    >
-                        <Plus className="w-4 h-4" />
-                    </button>
-                </div>
-                {(isCreating || newProjectTitle.trim().length > 0) && areaOptions.length > 0 && (
+                <div className="relative min-w-0 flex-1" data-project-tag-filter-shell>
                     <select
-                        aria-label={t('projects.areaLabel')}
-                        value={newProjectAreaId}
-                        onChange={(e) => onChangeNewProjectAreaId(e.target.value)}
-                        className="w-full h-8 text-xs bg-background border border-border rounded px-2 text-foreground"
-                        disabled={isCreatingProject}
+                        id="projects-tag-filter"
+                        aria-label={t('projects.tagFilter')}
+                        value={selectedTag}
+                        onChange={(e) => onSelectTag(e.target.value)}
+                        className={cn(
+                            'h-8 w-full appearance-none rounded border border-border/50 bg-transparent px-2 pr-7 text-xs transition-colors hover:border-border focus-visible:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+                            tagOptions.list.includes(selectedTag) ? 'text-foreground' : 'text-muted-foreground',
+                        )}
                     >
-                        <option value="">{t('projects.noArea')}</option>
-                        {areaOptions.map((area) => (
-                            <option key={area.id} value={area.id}>
-                                {area.name}
+                        <option value={allTagsId}>{t('projects.allTags')}</option>
+                        {tagOptions.list.map((tag) => (
+                            <option key={tag} value={tag}>
+                                {tag}
                             </option>
                         ))}
+                        {tagOptions.hasNoTags && (
+                            <option value={noTagsId}>{t('projects.noTags')}</option>
+                        )}
                     </select>
-                )}
-                {(isCreating || newProjectTitle.trim().length > 0) && (
+                    <ChevronDown
+                        className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                </div>
+            </div>
+
+            {isCreating && (
+                <form
+                    onSubmit={onCreateProject}
+                    className="space-y-2 rounded-lg border border-border/70 bg-card/40 p-2.5"
+                >
+                    <label className="sr-only" htmlFor="new-project-title">
+                        {createProjectLabel}
+                    </label>
+                    <div className="flex items-center gap-2">
+                        <input
+                            ref={createProjectInputRef}
+                            id="new-project-title"
+                            type="text"
+                            value={newProjectTitle}
+                            onChange={(e) => onChangeNewProjectTitle(e.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    onCancelCreate();
+                                } else if (event.key === 'Enter' && newProjectTitle.trim()) {
+                                    event.preventDefault();
+                                    event.currentTarget.form?.requestSubmit();
+                                }
+                            }}
+                            placeholder={t('projects.projectName')}
+                            className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isCreatingProject}
+                            aria-busy={isCreatingProject}
+                            aria-label={t('projects.projectName')}
+                        />
+                        <button
+                            type="submit"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!newProjectTitle.trim() || isCreatingProject}
+                            title={t('projects.create')}
+                            aria-label={createProjectLabel}
+                        >
+                            <Plus className="h-4 w-4" />
+                        </button>
+                    </div>
+                    {areaOptions.length > 0 && (
+                        <select
+                            aria-label={t('projects.areaLabel')}
+                            value={newProjectAreaId}
+                            onChange={(e) => onChangeNewProjectAreaId(e.target.value)}
+                            className="h-8 w-full rounded border border-border bg-background px-2 text-xs text-foreground"
+                            disabled={isCreatingProject}
+                        >
+                            <option value="">{t('projects.noArea')}</option>
+                            {areaOptions.map((area) => (
+                                <option key={area.id} value={area.id}>
+                                    {area.name}
+                                </option>
+                            ))}
+                        </select>
+                    )}
                     <div className="flex justify-end">
                         <button
                             type="button"
-                            onClick={() => {
-                                onChangeNewProjectTitle('');
-                                onCancelCreate();
-                            }}
+                            onClick={onCancelCreate}
                             className="text-xs px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground rounded disabled:opacity-60 disabled:cursor-not-allowed"
                             disabled={isCreatingProject}
                         >
                             {t('common.cancel')}
                         </button>
                     </div>
-                )}
-            </form>
+                </form>
+            )}
 
             <div className="space-y-3 overflow-y-auto flex-1">
                 {groupedActiveProjects.length > 0 && (
@@ -633,7 +668,7 @@ export function ProjectsSidebar({
                                                 {areaProjects.map((project) => {
                                             const summary = projectTaskSummaryById.get(project.id);
                                             const activeTaskCount = summary?.activeTaskCount ?? 0;
-                                            const nextAction = summary?.nextAction;
+                                            const hasNextAction = Boolean(summary?.nextAction);
 
                                             return (
                                                 <SortableProjectRow key={project.id} projectId={project.id} section="active">
@@ -643,9 +678,7 @@ export function ProjectsSidebar({
                                                         "group rounded-lg cursor-pointer transition-colors text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                                                         selectedProjectId === project.id
                                                             ? "bg-primary/10 text-primary"
-                                                            : project.isFocused
-                                                                ? "bg-warning/10 hover:bg-warning/15"
-                                                                : "hover:bg-muted/40 text-foreground",
+                                                            : "hover:bg-muted/40 text-foreground",
                                                         isDragging && "opacity-70",
                                                         isTaskOver && "ring-2 ring-primary/50 bg-primary/5",
                                                     )}
@@ -671,8 +704,17 @@ export function ProjectsSidebar({
                                                             }}
                                                         >
                                                     <div className="flex items-center gap-2 px-2 py-2">
-                                                                <span className="opacity-40 group-hover:opacity-100 transition-opacity">
-                                                                    {handle}
+                                                                <div data-project-leading-icon className="relative flex h-8 w-8 flex-none items-center justify-center">
+                                                                    <Folder
+                                                                        className="h-4 w-4 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0"
+                                                                        style={{ color: getProjectColor(project) }}
+                                                                    />
+                                                                    <span className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                                                                        {handle}
+                                                                    </span>
+                                                                </div>
+                                                                <span className="flex-1 truncate font-medium" title={project.title}>
+                                                                    {project.title}
                                                                 </span>
                                                                 <button
                                                                     data-project-selection-ignore="true"
@@ -681,36 +723,28 @@ export function ProjectsSidebar({
                                                                         toggleProjectFocus(project.id);
                                                                     }}
                                                                     className={cn(
-                                                                        "text-sm transition-colors",
+                                                                        "inline-flex h-8 w-8 flex-none items-center justify-center rounded-md text-sm transition-[color,opacity] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                                                                         project.isFocused ? "text-warning" : "text-muted-foreground hover:text-warning",
+                                                                        !project.isFocused && "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100",
                                                                         !project.isFocused && focusedCount >= 5 && "opacity-30 cursor-not-allowed",
                                                                     )}
                                                                     title={project.isFocused ? removeFromFocusLabel : focusedCount >= 5 ? maxFocusedProjectsLabel : addToFocusLabel}
                                                                     aria-label={project.isFocused ? removeFromFocusLabel : addToFocusLabel}
                                                                 >
-                                                                    <FocusStarIcon className="w-4 h-4" filled={project.isFocused} />
+                                                                    <FocusStarIcon className="h-4 w-4" filled={project.isFocused} />
                                                                 </button>
-                                                                <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
-                                                                <span className="flex-1 truncate font-medium" title={project.title}>
-                                                                    {project.title}
-                                                                </span>
                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted/60 text-muted-foreground min-w-5 text-center">
                                                                     {activeTaskCount}
                                                                 </span>
                                                             </div>
-                                                            <div className="px-2 pb-2 pl-10">
-                                                                {nextAction ? (
-                                                                    <span className="text-xs text-muted-foreground truncate flex items-center gap-1" title={nextAction.title}>
-                                                                        <CornerDownRight className="w-3 h-3" />
-                                                                        {nextAction.title}
-                                                                    </span>
-                                                                ) : project.isFocused && activeTaskCount > 0 ? (
+                                                            {project.isFocused && activeTaskCount > 0 && !hasNextAction && (
+                                                            <div className="px-2 pb-2 pl-12">
                                                                     <span className="text-xs text-warning flex items-center gap-1">
                                                                         <AlertTriangle className="w-3 h-3" />
                                                                         {t('projects.noNextAction')}
                                                                     </span>
-                                                                ) : null}
                                                             </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </SortableProjectRow>
@@ -796,10 +830,15 @@ export function ProjectsSidebar({
                                                                         }}
                                                                     >
                                                                         <div className="flex items-center gap-2 px-2 py-2">
-                                                                            <span className="opacity-40 group-hover:opacity-100 transition-opacity">
-                                                                                {handle}
-                                                                            </span>
-                                                                            <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
+                                                                            <div data-project-leading-icon className="relative flex h-8 w-8 flex-none items-center justify-center">
+                                                                                <Folder
+                                                                                    className="h-4 w-4 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0"
+                                                                                    style={{ color: getProjectColor(project) }}
+                                                                                />
+                                                                                <span className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                                                                                    {handle}
+                                                                                </span>
+                                                                            </div>
                                                                             <span className="flex-1 truncate font-medium" title={project.title}>
                                                                                 {project.title}
                                                                             </span>
@@ -892,10 +931,15 @@ export function ProjectsSidebar({
                                                                             }}
                                                                         >
                                                                             <div className="flex items-center gap-2 px-2 py-2">
-                                                                                <span className="opacity-40 group-hover:opacity-100 transition-opacity">
-                                                                                    {handle}
-                                                                                </span>
-                                                                                <Folder className="w-4 h-4" style={{ color: getProjectColor(project) }} />
+                                                                                <div data-project-leading-icon className="relative flex h-8 w-8 flex-none items-center justify-center">
+                                                                                    <Folder
+                                                                                        className="h-4 w-4 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0"
+                                                                                        style={{ color: getProjectColor(project) }}
+                                                                                    />
+                                                                                    <span className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                                                                                        {handle}
+                                                                                    </span>
+                                                                                </div>
                                                                                 <span className="flex-1 truncate font-medium" title={project.title}>
                                                                                     {project.title}
                                                                                 </span>

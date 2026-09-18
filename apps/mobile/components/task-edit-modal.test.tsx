@@ -1027,7 +1027,7 @@ describe('TaskEditModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the project area when clearing a task project', async () => {
+  it('clears both project and inherited area when Destination is set to None', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
     let tree: renderer.ReactTestRenderer;
@@ -1054,18 +1054,29 @@ describe('TaskEditModal', () => {
     });
 
     const formTab = tree!.root.find((node) => typeof node.props.renderField === 'function');
-    let projectField!: renderer.ReactTestRenderer;
+    const destinationFieldId = formTab.props.basicFields.find(
+      (fieldId: string) => fieldId === 'project' || fieldId === 'area',
+    );
+    let destinationField!: renderer.ReactTestRenderer;
     act(() => {
-      projectField = renderer.create(formTab.props.renderField('project'));
+      destinationField = renderer.create(formTab.props.renderField(destinationFieldId));
     });
 
-    const clearProjectButton = projectField!.root.find((node) => (
+    const destinationButton = destinationField!.root.find((node) => (
       typeof node.props.onPress === 'function'
       && node.props.accessibilityRole === 'button'
-      && node.props.accessibilityLabel === 'common.clear'
+      && node.props.accessibilityLabel === 'task.destination: Project'
     ));
     act(() => {
-      clearProjectButton.props.onPress();
+      destinationButton.props.onPress();
+    });
+    const noneButton = tree!.root.find((node) => (
+      typeof node.props.onPress === 'function'
+      && node.props.accessibilityRole === 'button'
+      && node.props.accessibilityLabel === 'common.none'
+    ));
+    act(() => {
+      noneButton.props.onPress();
     });
 
     const header = tree!.root.find((node) =>
@@ -1079,12 +1090,13 @@ describe('TaskEditModal', () => {
     expect(onSave).toHaveBeenCalledWith('t1', expect.objectContaining({
       projectId: undefined,
       sectionId: undefined,
-      areaId: 'area-1',
     }));
+    const updates = onSave.mock.calls[0]?.[1] ?? {};
+    expect(Object.prototype.hasOwnProperty.call(updates, 'areaId')).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('does not overwrite an explicit task area when clearing a task project', async () => {
+  it('clears an explicit legacy area with the project when Destination is set to None', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
     let tree: renderer.ReactTestRenderer;
@@ -1112,18 +1124,29 @@ describe('TaskEditModal', () => {
     });
 
     const formTab = tree!.root.find((node) => typeof node.props.renderField === 'function');
-    let projectField!: renderer.ReactTestRenderer;
+    const destinationFieldId = formTab.props.basicFields.find(
+      (fieldId: string) => fieldId === 'project' || fieldId === 'area',
+    );
+    let destinationField!: renderer.ReactTestRenderer;
     act(() => {
-      projectField = renderer.create(formTab.props.renderField('project'));
+      destinationField = renderer.create(formTab.props.renderField(destinationFieldId));
     });
 
-    const clearProjectButton = projectField!.root.find((node) => (
+    const destinationButton = destinationField!.root.find((node) => (
       typeof node.props.onPress === 'function'
       && node.props.accessibilityRole === 'button'
-      && node.props.accessibilityLabel === 'common.clear'
+      && node.props.accessibilityLabel === 'task.destination: Project'
     ));
     act(() => {
-      clearProjectButton.props.onPress();
+      destinationButton.props.onPress();
+    });
+    const noneButton = tree!.root.find((node) => (
+      typeof node.props.onPress === 'function'
+      && node.props.accessibilityRole === 'button'
+      && node.props.accessibilityLabel === 'common.none'
+    ));
+    act(() => {
+      noneButton.props.onPress();
     });
 
     const header = tree!.root.find((node) =>
@@ -1139,7 +1162,7 @@ describe('TaskEditModal', () => {
       sectionId: undefined,
     }));
     const updates = onSave.mock.calls[0]?.[1] ?? {};
-    expect(Object.prototype.hasOwnProperty.call(updates, 'areaId')).toBe(false);
+    expect(updates.areaId).toBeUndefined();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

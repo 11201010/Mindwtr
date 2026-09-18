@@ -1,5 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const frOverrides: Record<string, string> = {
+    'filters.searchTasks': "Rechercher dans les titres des tâches",
+    'filters.searchOptions': "Rechercher des options",
+    'filters.tokenCycleHint': "Cliquez pour inclure, à nouveau pour exclure, puis une dernière fois pour effacer la sélection.",
+    'filters.more': "Plus de filtres",
+    'viewSections.new': "Nouvelle section",
+    'projects.new': 'Nouveau projet',
+    'nav.history': 'Historique',
+    'task.dates': 'Dates…',
+    'task.moveTo': 'Déplacer vers…',
+    'task.destination': 'Emplacement',
+    'common.viewOptions': 'Options d’affichage',
+    'settings.regionalFormats': 'Formats régionaux',
+    'settings.keyboardAndWindow': 'Clavier et fenêtre',
     'settings.gtdMobile.openTasksIn': 'Ouvrir les tâches dans',
     'settings.gtdMobile.openTasksInDesc': 'Choisissez l’onglet utilisé lorsque vous touchez normalement une tâche sur cet appareil.',
     'settings.gtdMobile.taskOpenAutomatic': 'Automatique',

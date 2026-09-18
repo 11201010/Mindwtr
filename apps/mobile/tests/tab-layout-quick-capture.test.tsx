@@ -192,6 +192,7 @@ vi.mock('../contexts/language-context', () => ({
       'nav.calendar': 'Calendar',
       'nav.contexts': 'Contexts',
       'nav.done': 'Done',
+      'nav.history': 'History',
       'nav.projects': 'Projects',
       'nav.reference': 'Reference',
       'nav.review': 'Review',
@@ -206,6 +207,7 @@ vi.mock('../contexts/language-context', () => ({
       'search.title': 'Search',
       'search.savedSearches': 'Saved searches',
       'tab.inbox': 'Inbox',
+      'tab.board': 'Board',
       'tab.menu': 'Menu',
       'tab.next': 'Focus',
       'tab.review': 'Review',
@@ -342,20 +344,33 @@ const getMoreSheetButtonIconName = (tree: ReturnType<typeof create>, label: stri
   return icon.props.name;
 };
 
-const moreDestinationLabels = [
+const compactMoreDestinationLabels = [
   'Trash',
-  'Archived',
-  'Done',
-  'Reference',
+  'Board',
+  'History',
   'Settings',
+];
+const defaultMoreDestinationLabels = [
+  ...compactMoreDestinationLabels,
   'Waiting For',
-  'Board View',
-  'Projects',
   'Someday',
+  'Projects',
+  'Reference',
   'Contexts',
   'Calendar',
 ];
-const moreSheetDestinationLabels = [...moreDestinationLabels, 'Review'];
+const projectsQuickAccessMoreDestinationLabels = [
+  ...compactMoreDestinationLabels,
+  'Waiting For',
+  'Someday',
+  'Review',
+  'Reference',
+  'Contexts',
+  'Calendar',
+];
+const moreSheetDestinationLabels = [
+  ...new Set([...defaultMoreDestinationLabels, ...projectsQuickAccessMoreDestinationLabels]),
+];
 
 const hasHiddenAccessibilityAncestor = (node: any) => {
   let parent = node.parent;
@@ -808,7 +823,8 @@ describe('mobile tab quick capture', () => {
     expect(getCaptureIconColor(tree)).toBe('#003063');
   });
 
-  it('opens the restored compact More grid and navigates to Calendar', () => {
+  it('opens the More sheet with four compact shortcuts and a default 3x2 primary grid', () => {
+    mockTaskSettings.appearance = { mobileQuickAccessView: 'projects' };
     let tree!: ReturnType<typeof create>;
 
     act(() => {
@@ -821,21 +837,30 @@ describe('mobile tab quick capture', () => {
       getMenuButton(tree).props.onPress();
     });
 
-    expect(getVisibleMoreDestinationLabels(tree)).toEqual(moreDestinationLabels);
-    expect(getMoreSheetButtonIconName(tree, 'Board View')).toBe('square.grid.2x2.fill');
+    expect(getVisibleMoreDestinationLabels(tree)).toEqual(projectsQuickAccessMoreDestinationLabels);
+    expect(getMoreSheetButtonIconName(tree, 'Board')).toBe('square.grid.2x2.fill');
+    expect(getMoreSheetButtonIconName(tree, 'History')).toBe('clock.arrow.circlepath');
     expect(getMoreSheetButtonIconName(tree, 'Someday')).toBe('arrow.up.circle.fill');
     const trashLabel = getMoreSheetButtonLabelNode(tree, 'Trash');
     expect(trashLabel.props.numberOfLines).toBe(2);
     expect(trashLabel.props.adjustsFontSizeToFit).toBe(true);
-    expect(trashLabel.props.maxFontSizeMultiplier).toBe(1);
+    expect(trashLabel.props.maxFontSizeMultiplier).toBe(1.15);
     expect(flattenStyle(getMoreSheetButtons(tree, 'Trash')[0]?.props.style)).toEqual(expect.objectContaining({
       flex: 1,
       minWidth: 0,
     }));
     expect(flattenStyle(getMoreSheetButtons(tree, 'Trash')[0]?.props.style)).not.toHaveProperty('flexBasis');
 
+    const primaryLabels = ['Waiting For', 'Someday', 'Review', 'Reference', 'Contexts', 'Calendar'];
+    expect(primaryLabels.every((label) => (
+      flattenStyle(getMoreSheetButtons(tree, label)[0]?.props.style).flexBasis === '31%'
+    ))).toBe(true);
+    expect(getMoreSheetButtons(tree, 'Contexts')).toHaveLength(1);
+    expect(getMoreSheetButtons(tree, 'Reference')).toHaveLength(1);
+
     const calendarButtons = getMoreSheetButtons(tree, 'Calendar');
     expect(calendarButtons.length).toBeGreaterThan(0);
+    expect(flattenStyle(calendarButtons[0]?.props.style)).toEqual(expect.objectContaining({ flexBasis: '31%' }));
 
     act(() => {
       calendarButtons[0]?.props.onPress();
@@ -845,7 +870,29 @@ describe('mobile tab quick capture', () => {
     expect(getMoreSheetButtons(tree, 'Calendar')).toHaveLength(0);
   });
 
-  it('swaps a selected quick access view with Review in the More sheet', () => {
+  it('closes the menu surface at the tab bar with an opaque bottom edge', () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<TabLayout />); });
+    act(() => { getMenuButton(tree).props.onPress(); });
+
+    const style = flattenStyle(getMoreSheetMenu(tree).props.style);
+    expect(style.borderBottomWidth).toBeGreaterThan(0);
+    expect(style.borderBottomColor).toBe(style.backgroundColor);
+    expect(style.bottom).toBe(0);
+  });
+
+  it('opens the combined History destination without separate Done and Archived entries', () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<TabLayout />); });
+    act(() => { getMenuButton(tree).props.onPress(); });
+
+    expect(getMoreSheetButtons(tree, 'Done')).toHaveLength(0);
+    expect(getMoreSheetButtons(tree, 'Archived')).toHaveLength(0);
+    act(() => { getMoreSheetButtons(tree, 'History')[0]!.props.onPress(); });
+    expect(mockRouterPush).toHaveBeenCalledWith('/history');
+  });
+
+  it('swaps a selected quick access view without duplicating Contexts or Reference', () => {
     mockTaskSettings.appearance = { mobileQuickAccessView: 'projects' };
     let tree!: ReturnType<typeof create>;
 
@@ -861,14 +908,13 @@ describe('mobile tab quick capture', () => {
 
     expect(getVisibleMoreDestinationLabels(tree)).toEqual([
       'Trash',
-      'Archived',
-      'Done',
-      'Reference',
+      'Board',
+      'History',
       'Settings',
       'Waiting For',
-      'Board View',
-      'Review',
       'Someday',
+      'Review',
+      'Reference',
       'Contexts',
       'Calendar',
     ]);
@@ -876,6 +922,8 @@ describe('mobile tab quick capture', () => {
 
     const reviewButtons = getMoreSheetButtons(tree, 'Review');
     expect(reviewButtons.length).toBeGreaterThan(0);
+    expect(getMoreSheetButtons(tree, 'Contexts')).toHaveLength(1);
+    expect(getMoreSheetButtons(tree, 'Reference')).toHaveLength(1);
     expect(getMoreSheetButtonLabelStyle(tree, 'Review')).toEqual(expect.objectContaining({
       includeFontPadding: false,
     }));
@@ -898,7 +946,7 @@ describe('mobile tab quick capture', () => {
     act(() => {
       getMenuButton(tree).props.onPress();
     });
-    expect(getVisibleMoreDestinationLabels(tree)).toEqual(moreDestinationLabels);
+    expect(getVisibleMoreDestinationLabels(tree)).toEqual(defaultMoreDestinationLabels);
 
     act(() => {
       getMenuButton(tree).props.onPress();
@@ -914,7 +962,7 @@ describe('mobile tab quick capture', () => {
     act(() => {
       menu.props.onResponderRelease?.({}, { dx: 4, dy: 24, vy: 0.2 });
     });
-    expect(getVisibleMoreDestinationLabels(tree)).toEqual(moreDestinationLabels);
+    expect(getVisibleMoreDestinationLabels(tree)).toEqual(defaultMoreDestinationLabels);
 
     act(() => {
       menu.props.onResponderRelease?.({}, { dx: 4, dy: 32, vy: 1 });
@@ -932,7 +980,7 @@ describe('mobile tab quick capture', () => {
     act(() => {
       getMenuButton(tree).props.onPress();
     });
-    expect(getVisibleMoreDestinationLabels(tree)).toEqual(moreDestinationLabels);
+    expect(getVisibleMoreDestinationLabels(tree)).toEqual(defaultMoreDestinationLabels);
 
     act(() => {
       getMoreSheetMenu(tree).props.onResponderRelease?.({}, { dx: 4, dy: 240, vy: 0.2 });
