@@ -1,3 +1,4 @@
+import { useCallback, type KeyboardEvent } from 'react';
 import { format } from 'date-fns';
 import { Check, Search, X } from 'lucide-react';
 import { CALENDAR_TIME_ESTIMATE_OPTIONS, formatCalendarDurationLabel, safeParseDate, tFallback } from '@mindwtr/core';
@@ -51,6 +52,21 @@ type CalendarTaskComposerModalProps = {
     controller: CalendarTaskComposerModalController;
 };
 
+// The global list shortcuts stay silent while a modal dialog is open, so the
+// "edit selected task" key would otherwise do nothing here (#1241). The pop-up
+// holds exactly one task, so the key edits it without selecting the row first.
+// `e` is the edit key in the Standard and Vim presets, Shift+Enter in Emacs.
+function isEditShortcut(event: KeyboardEvent<HTMLDivElement>): boolean {
+    if (event.key === 'e') return !event.ctrlKey && !event.metaKey && !event.altKey;
+    return event.key === 'Enter' && event.shiftKey;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+}
+
 export function CalendarOpenTaskModal({ controller }: CalendarOpenTaskModalProps) {
     const {
         closeOpenTask,
@@ -58,6 +74,15 @@ export function CalendarOpenTaskModal({ controller }: CalendarOpenTaskModalProps
         openTask,
         t,
     } = controller;
+
+    const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+        if (!isEditShortcut(event) || isTypingTarget(event.target)) return;
+        const trigger = event.currentTarget.querySelector<HTMLElement>('[data-task-edit-trigger]');
+        if (!trigger) return;
+        event.preventDefault();
+        event.stopPropagation();
+        trigger.click();
+    }, []);
 
     if (!openTask) return null;
 
@@ -68,6 +93,7 @@ export function CalendarOpenTaskModal({ controller }: CalendarOpenTaskModalProps
         // scrolls here rather than the panel.
         <Dialog
             onClose={closeOpenTask}
+            onKeyDown={handleKeyDown}
             label={tFallback(t, 'taskEdit.editTask', 'Task')}
             placement="top"
             overlayClassName="overflow-y-auto p-4"
