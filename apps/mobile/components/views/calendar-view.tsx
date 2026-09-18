@@ -1452,7 +1452,9 @@ export function CalendarView() {
           style={styles.scheduleScroll}
           contentContainerStyle={styles.scheduleContent}
           keyExtractor={(section) => section.id}
-          ListHeaderComponent={selectedDate && planningTasks.length > 0 ? (
+          // Scheduled days come first; the planning list sits below them like the
+          // desktop planning panel, so due tasks are never pushed off screen (#1240).
+          ListFooterComponent={selectedDate && planningTasks.length > 0 ? (
             <PlanningTaskList
               getScheduleSlotLabel={getScheduleSlotLabel}
               planningTasks={planningTasks}
