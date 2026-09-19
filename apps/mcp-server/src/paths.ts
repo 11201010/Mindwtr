@@ -52,9 +52,18 @@ function firstExisting(paths: string[]): string | null {
   return null;
 }
 
+// MCP client configs pass args to the server without a shell, and the quoted
+// samples in the README keep the tilde intact, so `~` has to be expanded here or
+// every documented `--db "~/..."` example resolves against the current directory.
+function expandHome(value: string): string {
+  if (value === '~') return getHomeDir();
+  if (value.startsWith('~/') || value.startsWith('~\\')) return join(getHomeDir(), value.slice(2));
+  return value;
+}
+
 function getExplicitDbPath(overridePath?: string): string | null {
   const explicit = overridePath || process.env.MINDWTR_DB_PATH || process.env.MINDWTR_DB;
-  return explicit ? resolve(explicit) : null;
+  return explicit ? resolve(expandHome(explicit)) : null;
 }
 
 function dedupe(paths: Array<string | null | undefined>): string[] {

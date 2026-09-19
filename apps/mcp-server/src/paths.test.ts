@@ -68,6 +68,18 @@ describe('mcp default database discovery', () => {
     expect(resolveMindwtrDbPath()).toBe(flatDb);
   });
 
+  test('expands a leading ~ in an explicit database path', () => {
+    process.env.HOME = '/home/tester';
+    delete process.env.MINDWTR_DB_PATH;
+    delete process.env.MINDWTR_DB;
+
+    // MCP client configs pass args without a shell, so the tilde arrives literally.
+    expect(resolveMindwtrDbPath('~/.local/share/mindwtr/mindwtr.db'))
+      .toBe('/home/tester/.local/share/mindwtr/mindwtr.db');
+    expect(resolveMindwtrDbPath('~\\mindwtr.db')).toBe('/home/tester/mindwtr.db');
+    expect(resolveMindwtrDbPath('/tmp/~tilde/mindwtr.db')).toBe('/tmp/~tilde/mindwtr.db');
+  });
+
   test('discovers the Flatpak database when XDG locations are empty', () => {
     const home = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-flatpak-'));
     tempDirs.push(home);
