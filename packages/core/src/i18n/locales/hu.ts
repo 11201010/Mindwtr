@@ -1744,6 +1744,7 @@ export const huOverrides: Record<string, string> = {
     'trash.clearAllConfirm': 'Kiüríti az összes kukába helyezett feladatot?',
     'trash.clearAllConfirmBody': 'Ez véglegesen törli az összes kukába helyezett feladatot.',
     'trash.emptyHintWithProjects': 'A törölt feladatai és projektjei itt fognak megjelenni',
+    'trash.retentionHint': 'A Kukában lévő elemek {{days}} nap után véglegesen törlődnek',
     'trash.clearAllConfirmBodyWithProjects': 'Ez véglegesen törli az összes kukába helyezett feladatot és projektet.',
     'trash.restoreProject': 'Projekt visszaállítása',
     'trash.taskType': 'Feladat',

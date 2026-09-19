@@ -2,6 +2,8 @@ import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import {
     buildTrashTimeline,
+    DEFAULT_TOMBSTONE_RETENTION_DAYS,
+    formatI18nTemplate,
     projectMatchesAreaFilterSelection,
     resolveTrashClearScope,
     safeFormatDate,
@@ -342,6 +344,12 @@ export function TrashView() {
                     </button>
                 </div>
             </header>
+
+            {trashedItemCount > 0 && (
+                <p className="text-sm text-muted-foreground">
+                    {formatI18nTemplate(t('trash.retentionHint'), { days: DEFAULT_TOMBSTONE_RETENTION_DAYS })}
+                </p>
+            )}
 
             {selectionMode && (
                 <div className="space-y-2">

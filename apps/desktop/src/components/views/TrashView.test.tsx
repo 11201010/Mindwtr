@@ -57,6 +57,11 @@ describe('TrashView', () => {
         expect(taskTitle.compareDocumentPosition(projectTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it('says how long trashed items are kept', () => {
+        render(<LanguageProvider><TrashView /></LanguageProvider>);
+        expect(screen.getByText('Items in Trash are removed for good after 90 days')).toBeInTheDocument();
+    });
+
     // The area filter is app-wide, and mobile's Trash has always honoured it.
     it('honours the app-wide area filter', () => {
         const workTask: Task = { ...recentTask, id: 'work-task', title: 'Work deleted task', areaId: 'area-work' };

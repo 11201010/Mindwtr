@@ -1,5 +1,5 @@
 import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
-import { buildTrashTimeline, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, resolveTrashClearScope, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
+import { buildTrashTimeline, DEFAULT_TOMBSTONE_RETENTION_DAYS, formatI18nTemplate, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, resolveTrashClearScope, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
 import type { Project, StoreActionResult, Task } from '@mindwtr/core';
 import { MarkdownInlineText } from '@/components/markdown-text';
 import { assertBulkActionSucceeded } from '@/components/use-task-list-selection';
@@ -475,6 +475,11 @@ export default function TrashScreen() {
             </View>
           </View>
         )}
+        {trashItems.length > 0 && (
+          <Text style={[styles.retentionHint, { color: tc.secondaryText }]}>
+            {formatI18nTemplate(tFallback(t, 'trash.retentionHint', 'Items in Trash are removed for good after {{days}} days'), { days: DEFAULT_TOMBSTONE_RETENTION_DAYS })}
+          </Text>
+        )}
         {selectionMode && (
           <View style={[styles.bulkBar, { borderColor: tc.border, backgroundColor: tc.cardBg }]}>
             <Text
@@ -602,6 +607,11 @@ const styles = StyleSheet.create({
   summaryText: {
     fontSize: 13,
     fontWeight: '500',
+  },
+  retentionHint: {
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingTop: 4,
   },
   summaryActions: {
     flexDirection: 'row',

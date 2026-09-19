@@ -1740,6 +1740,7 @@ export const ukOverrides: Record<string, string> = {
     "trash.clearAllConfirm": "Очистити всі викинуті завдання?",
     "trash.clearAllConfirmBody": "Це назавжди видалить усі поміщені в кошик завдання.",
     "trash.emptyHintWithProjects": "Тут з’являться видалені завдання та проекти",
+    "trash.retentionHint": "Елементи у смітті остаточно видаляються через {{days}} днів",
     "trash.clearAllConfirmBodyWithProjects": "Це назавжди видалить усі поміщені в кошик завдання та проекти.",
     "trash.restoreProject": "Відновити проект",
     "trash.taskType": "завдання",

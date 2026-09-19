@@ -1667,6 +1667,7 @@ export const zhHant: Record<string, string> = {
         'trash.clearAllConfirm': '清除所有已刪除的任務？',
         'trash.clearAllConfirmBody': '這將永久刪除所有已丟棄的任務。',
         'trash.emptyHintWithProjects': '已刪除的任務和專案會顯示在這裡',
+        'trash.retentionHint': '垃圾桶中的項目會在 {{days}} 天後永久移除',
         'trash.clearAllConfirmBodyWithProjects': '這會永久刪除所有已放入垃圾桶的任務和專案。',
         'trash.restoreProject': '復原專案',
         'trash.taskType': '任務',

@@ -64,7 +64,7 @@ export type {
 } from './sync-types';
 export { CLOCK_SKEW_THRESHOLD_MS, DELETE_VS_LIVE_AMBIGUOUS_WINDOW_MS, SYNC_REPAIR_REV_BY } from './sync-types';
 export { normalizeAppData } from './sync-normalization';
-export { purgeExpiredTombstones } from './sync-tombstones';
+export { DEFAULT_TOMBSTONE_RETENTION_DAYS, purgeExpiredTombstones } from './sync-tombstones';
 export { createSyncCycleExecutor, executeSyncCycle } from './sync-cycle';
 export type { SyncCycleExecutor, SyncCycleOperation } from './sync-cycle';
 

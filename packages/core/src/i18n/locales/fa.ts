@@ -1775,6 +1775,7 @@ export const faOverrides: Record<string, string> = {
         'trash.clearAllConfirm': 'همه کارهای زباله‌دان پاک شوند؟',
         'trash.clearAllConfirmBody': 'این کار همه کارهای زباله‌دان را برای همیشه حذف می‌کند.',
         'trash.emptyHintWithProjects': 'کارها و پروژه‌های حذف‌شده اینجا نمایش داده می‌شوند',
+        'trash.retentionHint': 'موارد زباله‌دان پس از {{days}} روز برای همیشه حذف می‌شوند',
         'trash.clearAllConfirmBodyWithProjects': 'این کار همه کارها و پروژه‌های زباله‌دان را برای همیشه حذف می‌کند.',
         'trash.restoreProject': 'بازگردانی پروژه',
         'trash.taskType': 'کار',

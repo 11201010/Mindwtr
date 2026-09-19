@@ -1744,6 +1744,7 @@ export const esOverrides: Record<string, string> = {
 'trash.clearAllConfirm': "¿Vaciar todas las tareas de la papelera?",
 'trash.clearAllConfirmBody': "Esto eliminará permanentemente todas las tareas de la papelera.",
 'trash.emptyHintWithProjects': "Las tareas y los proyectos eliminados aparecerán aquí",
+'trash.retentionHint': "Los elementos de la Papelera se eliminan definitivamente después de {{days}} días",
 'trash.clearAllConfirmBodyWithProjects': "Esto eliminará permanentemente todas las tareas y los proyectos de la papelera.",
 'trash.restoreProject': "Restaurar proyecto",
 'trash.taskType': "Tarea",

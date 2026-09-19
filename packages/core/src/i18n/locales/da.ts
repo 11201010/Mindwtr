@@ -1851,6 +1851,7 @@ export const daOverrides: Record<string, string> = {
     'trash.clearAllConfirm': 'Vil du rydde alle opgaver i papirkurven?',
     'trash.clearAllConfirmBody': 'Dette vil permanent slette alle opgaver, der er gået i papirkurven.',
     'trash.emptyHintWithProjects': 'Slettede opgaver og projekter vises her',
+    'trash.retentionHint': 'Elementer i papirkurven fjernes permanent efter {{days}} dage',
     'trash.clearAllConfirmBodyWithProjects':
         'Dette vil permanent slette alle opgaver og projekter, der er smidt i papirkurven.',
     'trash.restoreProject': 'Gendan projekt',

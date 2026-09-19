@@ -1814,6 +1814,7 @@ export const jaOverrides: Record<string, string> = {
         'trash.clearAllConfirm': 'ゴミ箱のタスクをすべて削除しますか？',
         'trash.clearAllConfirmBody': 'ゴミ箱にあるタスクがすべて完全に削除されます。',
         'trash.emptyHintWithProjects': '削除したタスクとプロジェクトがここに表示されます',
+        'trash.retentionHint': 'ゴミ箱の項目は{{days}}日後に完全に削除されます',
         'trash.clearAllConfirmBodyWithProjects': 'ゴミ箱にあるタスクとプロジェクトがすべて完全に削除されます。',
         'trash.restoreProject': 'プロジェクトを復元',
         'trash.taskType': 'タスク',

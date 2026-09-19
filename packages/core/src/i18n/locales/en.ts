@@ -1809,6 +1809,7 @@ export const en: Record<string, string> = {
         'trash.clearAllConfirm': 'Clear all trashed tasks?',
         'trash.clearAllConfirmBody': 'This will permanently delete all trashed tasks.',
         'trash.emptyHintWithProjects': 'Deleted tasks and projects will appear here',
+        'trash.retentionHint': 'Items in Trash are removed for good after {{days}} days',
         'trash.clearAllConfirmBodyWithProjects': 'This will permanently delete all trashed tasks and projects.',
         'trash.restoreProject': 'Restore project',
         'trash.taskType': 'Task',

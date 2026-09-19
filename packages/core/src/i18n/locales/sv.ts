@@ -1775,6 +1775,7 @@ export const svOverrides: Record<string, string> = {
         'trash.clearAllConfirm': 'Töm alla borttagna uppgifter?',
         'trash.clearAllConfirmBody': 'Det här tar bort alla borttagna uppgifter permanent.',
         'trash.emptyHintWithProjects': 'Borttagna uppgifter och projekt visas här',
+        'trash.retentionHint': 'Objekt i papperskorgen tas bort permanent efter {{days}} dagar',
         'trash.clearAllConfirmBodyWithProjects': 'Det här tar bort alla borttagna uppgifter och projekt permanent.',
         'trash.restoreProject': 'Återställ projekt',
         'trash.taskType': 'Uppgift',
