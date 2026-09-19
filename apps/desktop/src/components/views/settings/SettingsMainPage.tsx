@@ -61,8 +61,7 @@ type Labels = {
     navContexts: string;
     navBoard: string;
     navTimeline: string;
-    navDone: string;
-    navArchived: string;
+    navHistory: string;
     navTrash: string;
     system: string;
     light: string;
@@ -236,13 +235,19 @@ export function SettingsMainPage({
         contexts: t.navContexts,
         board: t.navBoard,
         timeline: t.navTimeline,
-        done: t.navDone,
-        archived: t.navArchived,
+        done: t.navHistory,
+        archived: t.navHistory,
         trash: t.navTrash,
     };
+    // The sidebar shows Done and Archived as one History entry and hides it only
+    // when both ids are hidden (Layout.tsx), so the roster offers one History
+    // toggle that writes both. The stored ids are unchanged.
     const sidebarViewOptions = HIDEABLE_SIDEBAR_VIEW_IDS
-        .filter((id) => id !== 'timeline' || timelineEnabled)
-        .map((id) => ({ id, label: sidebarViewLabels[id] }));
+        .filter((id) => (id !== 'timeline' || timelineEnabled) && id !== 'archived')
+        .map((id) => ({
+            ids: (id === 'done' ? ['done', 'archived'] : [id]) as HideableSidebarViewId[],
+            label: sidebarViewLabels[id],
+        }));
 
     return (
         <div className="space-y-5">
@@ -327,13 +332,13 @@ export function SettingsMainPage({
                     {sidebarViewsOpen && (
                         <div className="flex flex-wrap gap-2">
                             {sidebarViewOptions.map((view) => {
-                                const visible = !hiddenSidebarViews.includes(view.id);
+                                const visible = !view.ids.every((id) => hiddenSidebarViews.includes(id));
                                 return (
                                     <button
-                                        key={view.id}
+                                        key={view.ids.join('+')}
                                         type="button"
                                         aria-pressed={visible}
-                                        onClick={() => setSidebarViewHidden(view.id, visible)}
+                                        onClick={() => view.ids.forEach((id) => setSidebarViewHidden(id, visible))}
                                         className={cn(
                                             'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm transition-colors',
                                             'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',

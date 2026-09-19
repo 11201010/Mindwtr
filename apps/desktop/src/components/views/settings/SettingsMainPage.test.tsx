@@ -8,6 +8,7 @@ const fontMocks = vi.hoisted(() => ({
 
 vi.mock('../../../lib/font-family', () => fontMocks);
 
+import { useUiStore } from '../../../store/ui-store';
 import { getEnglishSettingsLabels } from './labels';
 import { SettingsMainPage, type SettingsMainPageProps } from './SettingsMainPage';
 
@@ -218,5 +219,27 @@ describe('SettingsMainPage', () => {
         fireEvent.change(input, { target: { value: 'Inter' } });
         fireEvent.keyDown(input, { key: 'Enter' });
         expect(onFontFamilyChange).toHaveBeenLastCalledWith('Inter');
+    });
+
+    it('offers one History toggle for the merged Done and Archived sidebar entry', () => {
+        useUiStore.setState({ hiddenSidebarViews: [] });
+        const { getByRole, queryByRole, unmount } = render(<SettingsMainPage {...baseProps} />);
+
+        fireEvent.click(getByRole('button', { name: /Sidebar views/ }));
+        expect(queryByRole('button', { name: 'Done' })).toBeNull();
+        expect(queryByRole('button', { name: 'Archived' })).toBeNull();
+        expect(getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
+
+        fireEvent.click(getByRole('button', { name: 'History' }));
+        expect(useUiStore.getState().hiddenSidebarViews).toEqual(expect.arrayContaining(['done', 'archived']));
+        expect(getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'false');
+        unmount();
+
+        // A stored choice that hides only one of the two ids still leaves the
+        // sidebar entry visible, so the toggle reads as shown.
+        useUiStore.setState({ hiddenSidebarViews: ['archived'] });
+        const second = render(<SettingsMainPage {...baseProps} />);
+        fireEvent.click(second.getByRole('button', { name: /Sidebar views/ }));
+        expect(second.getByRole('button', { name: 'History' })).toHaveAttribute('aria-pressed', 'true');
     });
 });
