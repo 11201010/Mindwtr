@@ -236,7 +236,9 @@ describe('TrashScreen', () => {
     expect(mocks.storeState.purgeDeletedProjects).not.toHaveBeenCalled();
   });
 
-  it('clears the whole trash when the list hides nothing', async () => {
+  // The confirmed set is the set the alert was opened for, whatever its wording.
+  // An item that arrives while the alert is open was never shown, so it survives.
+  it('clears exactly the items the alert was opened for', async () => {
     const alertSpy = vi.spyOn(Alert, 'alert');
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
@@ -244,15 +246,23 @@ describe('TrashScreen', () => {
     });
     renderer.act(() => { findPressableByText(tree, 'Clear Trash').props.onPress(); });
 
+    // Nothing is hidden, so the alert still claims the whole trash.
     expect(alertSpy.mock.calls[0]?.[1]).toBe('This will permanently delete all trashed tasks and projects.');
+
+    // A sync merge lands another trashed task before the user confirms.
+    mocks.storeState._allTasks.push({
+      ...mocks.storeState._allTasks[0], id: 'arriving-task', title: 'Arriving deleted task',
+    });
+
     const confirmButton = (alertSpy.mock.calls[0]?.[2] ?? []).find((button) => button.style === 'destructive');
     await renderer.act(async () => {
       await confirmButton?.onPress?.();
     });
 
-    expect(mocks.storeState.purgeDeletedTasks).toHaveBeenCalled();
-    expect(mocks.storeState.purgeDeletedProjects).toHaveBeenCalled();
-    expect(mocks.storeState.purgeTasks).not.toHaveBeenCalled();
+    expect(mocks.storeState.purgeTasks).toHaveBeenCalledWith(['recent-task']);
+    expect(mocks.storeState.purgeProject).toHaveBeenCalledWith('older-project');
+    expect(mocks.storeState.purgeDeletedTasks).not.toHaveBeenCalled();
+    expect(mocks.storeState.purgeDeletedProjects).not.toHaveBeenCalled();
   });
 
   it('bulk restores all selected tasks and projects', async () => {

@@ -35,8 +35,6 @@ export function TrashView() {
         purgeTask,
         purgeTasks,
         purgeProject,
-        purgeDeletedTasks,
-        purgeDeletedProjects,
     } = useTaskStore(
         (state) => ({
             _allTasks: state._allTasks,
@@ -47,8 +45,6 @@ export function TrashView() {
             purgeTask: state.purgeTask,
             purgeTasks: state.purgeTasks,
             purgeProject: state.purgeProject,
-            purgeDeletedTasks: state.purgeDeletedTasks,
-            purgeDeletedProjects: state.purgeDeletedProjects,
         }),
         shallow
     );
@@ -213,10 +209,8 @@ export function TrashView() {
                 cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
             });
         if (!confirmed) return;
-        if (!scope.narrowed) {
-            await Promise.all([purgeDeletedTasks(), purgeDeletedProjects()]);
-            return;
-        }
+        // Always the ids the dialog counted, never a fresh whole-store sweep: an
+        // item that arrived while the dialog was open was never shown to the user.
         await Promise.all([
             scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(),
             ...scope.projectIds.map((projectId) => purgeProject(projectId)),

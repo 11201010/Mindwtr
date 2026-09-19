@@ -213,8 +213,6 @@ export default function TrashScreen() {
     purgeTask,
     purgeTasks,
     purgeProject,
-    purgeDeletedTasks,
-    purgeDeletedProjects,
     highlightTaskId,
     setHighlightTask,
   } = useTaskStore((state) => ({
@@ -227,8 +225,6 @@ export default function TrashScreen() {
     purgeTask: state.purgeTask,
     purgeTasks: state.purgeTasks,
     purgeProject: state.purgeProject,
-    purgeDeletedTasks: state.purgeDeletedTasks,
-    purgeDeletedProjects: state.purgeDeletedProjects,
     highlightTaskId: state.highlightTaskId,
     setHighlightTask: state.setHighlightTask,
   }), shallow);
@@ -430,11 +426,8 @@ export default function TrashScreen() {
           text: tFallback(t, 'trash.clearAll', 'Clear Trash'),
           style: 'destructive',
           onPress: async () => {
-            if (!scope.narrowed) {
-              void purgeDeletedTasks();
-              void purgeDeletedProjects();
-              return;
-            }
+            // Always the ids the alert was opened for, never a fresh whole-store
+            // sweep: an item that arrived meanwhile was never shown to the user.
             await runTrashBulkAction(tFallback(t, 'trash.clearAll', 'Clear Trash'), () => Promise.all([
               scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(undefined),
               ...scope.projectIds.map((projectId) => purgeProject(projectId)),

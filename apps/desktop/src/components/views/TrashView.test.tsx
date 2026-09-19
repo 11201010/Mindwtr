@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Project, Task } from '@mindwtr/core';
 import { useTaskStore } from '@mindwtr/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -171,6 +171,44 @@ describe('TrashView', () => {
             expect(useTaskStore.getState()._allTasks.find((task) => task.id === recentTask.id)?.purgedAt).toBeTruthy();
             expect(useTaskStore.getState()._allProjects.find((project) => project.id === olderProject.id)?.purgedAt).toBeTruthy();
         });
+    });
+
+    // The confirmed set is the set the dialog counted. An item that arrives while
+    // the dialog is open was never shown, so it must survive the purge.
+    it('purges only the items the dialog was opened for', async () => {
+        useTaskStore.setState({
+            _allAreas: [
+                { id: 'area-work', name: 'Work', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+            ],
+            settings: { filters: { excludedAreaIds: ['area-work'] } },
+        });
+
+        render(
+            <LanguageProvider>
+                <TrashView />
+            </LanguageProvider>
+        );
+
+        // Nothing is hidden yet, so the dialog claims the whole trash.
+        fireEvent.click(screen.getByRole('button', { name: 'Clear Trash' }));
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toHaveTextContent('all trashed tasks and projects');
+
+        // A sync merge lands a trashed task the area filter hides.
+        const arrivingTask: Task = { ...recentTask, id: 'arriving-task', title: 'Arriving deleted task', areaId: 'area-work' };
+        act(() => {
+            useTaskStore.setState({
+                _allTasks: [recentTask, arrivingTask],
+                _tasksById: new Map([[recentTask.id, recentTask], [arrivingTask.id, arrivingTask]]),
+            });
+        });
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Trash' }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState()._allTasks.find((task) => task.id === recentTask.id)?.purgedAt).toBeTruthy();
+        });
+        expect(useTaskStore.getState()._allTasks.find((task) => task.id === 'arriving-task')?.purgedAt).toBeUndefined();
     });
 
     it('bulk restores selected trashed tasks and projects', async () => {
