@@ -25,14 +25,12 @@ import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { logError } from '@/lib/app-log';
 import { styles } from './task-edit-modal.styles';
 
-export type TaskEditDestination = TaskMoveDestination;
-
 /** Writes core's move patch into the draft, where '' is this screen's "none". */
 export function applyTaskEditDestination(
     setDraftField: (field: 'projectId' | 'areaId' | 'sectionId', value: string) => void,
     currentProjectId: string | undefined,
     currentSectionId: string | undefined,
-    destination: TaskEditDestination,
+    destination: TaskMoveDestination,
 ) {
     const patch = buildTaskMovePatch(destination, {
         projectId: currentProjectId,
@@ -60,7 +58,7 @@ type TaskEditDestinationPickerProps = {
     tc: DestinationPickerThemeColors;
     t: (key: string) => string;
     onClose: () => void;
-    onSelect: (destination: TaskEditDestination) => void;
+    onSelect: (destination: TaskMoveDestination) => void;
     onCreateProject?: (title: string) => Promise<Project | null>;
     onCreateArea?: (name: string) => Promise<Area | null>;
 };
@@ -127,7 +125,7 @@ export function TaskEditDestinationPicker({
         onClose();
     };
 
-    const selectAndClose = (destination: TaskEditDestination) => {
+    const selectAndClose = (destination: TaskMoveDestination) => {
         onSelect(destination);
         closePicker();
     };

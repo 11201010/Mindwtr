@@ -22,7 +22,7 @@ import {
     undoTaskCompletion,
     useTaskStore,
 } from '@mindwtr/core';
-import type { Area, Project, ProjectSequenceTaskCue, Section, Task, TaskStatus } from '@mindwtr/core';
+import type { Area, Project, ProjectSequenceTaskCue, Section, Task, TaskMoveDestination, TaskStatus } from '@mindwtr/core';
 import { useLanguage } from '../contexts/language-context';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
@@ -41,10 +41,7 @@ import { styles } from './swipeable-task-item/swipeable-task-item.styles';
 import { CompactText } from '@/components/compact-text';
 import { useSwipeableChecklist } from './swipeable-task-item/useSwipeableChecklist';
 import { settleStoreAction } from './store-action-result';
-import {
-    TaskEditDestinationPicker,
-    type TaskEditDestination,
-} from './task-edit/TaskEditDestinationPicker';
+import { TaskEditDestinationPicker } from './task-edit/TaskEditDestinationPicker';
 
 /**
  * Everything a row can mutate, on one object whose identity never changes
@@ -400,7 +397,7 @@ function SwipeableTaskItemInner({
             });
     }, [interactionDisabled, onStatusChange, openProjectNextActionPromptIfNeeded, showActionFailure, showToast, t, task.id, task.isFocusedToday, task.status, task.title]);
 
-    const handleMoveToDestination = useCallback((destination: TaskEditDestination) => {
+    const handleMoveToDestination = useCallback((destination: TaskMoveDestination) => {
         if (interactionDisabled) return;
         const updates = buildTaskMovePatch(destination, {
             projectId: task.projectId,

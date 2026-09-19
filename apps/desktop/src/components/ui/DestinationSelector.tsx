@@ -13,13 +13,11 @@ import { cn } from '../../lib/utils';
 import { ModalPortal } from '../ModalPortal';
 import { useDropdownPosition } from './use-dropdown-position';
 
-export type DestinationSelection = TaskMoveDestination;
-
 type DestinationSelectorProps = {
     projects: Project[];
     areas: Area[];
-    value: DestinationSelection;
-    onChange: (value: DestinationSelection) => void;
+    value: TaskMoveDestination;
+    onChange: (value: TaskMoveDestination) => void;
     onCreateProject?: (title: string) => Promise<string | null>;
     onCreateArea?: (name: string) => Promise<string | null>;
     destinationLabel: string;
@@ -146,7 +144,7 @@ export function DestinationSelector({
         triggerRef.current?.focus();
     }, [disabled, open]);
 
-    const choose = (selection: DestinationSelection) => {
+    const choose = (selection: TaskMoveDestination) => {
         onChange(selection);
         closeDropdown();
     };
@@ -226,7 +224,7 @@ export function DestinationSelector({
     const renderOption = (
         key: string,
         label: string,
-        selection: DestinationSelection,
+        selection: TaskMoveDestination,
         icon: typeof Folder,
     ) => {
         const selected = selection.kind === value.kind

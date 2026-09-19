@@ -22,6 +22,7 @@ import {
     type Section,
     type StoreActionResult,
     type Task,
+    type TaskMoveDestination,
     type TaskPriority,
     type TaskStatus,
 } from '@mindwtr/core';
@@ -31,7 +32,7 @@ import { reportError } from '../../lib/report-error';
 import { cn } from '../../lib/utils';
 import { FocusStarIcon } from '../FocusStarIcon';
 import { Button } from '../ui/Button';
-import { DestinationSelector, type DestinationSelection } from '../ui/DestinationSelector';
+import { DestinationSelector } from '../ui/DestinationSelector';
 import { SectionSelector } from '../ui/SectionSelector';
 import { normalizeDateInputValue } from './task-item-helpers';
 import { ContextsField } from './fields/TaskMetadataFields';
@@ -184,7 +185,7 @@ export function TaskQuickActionMenu({
     const initialStartDraft = splitDateTime(task.startTime);
     const initialDueDraft = splitDateTime(task.dueDate);
     const initialReviewDraft = splitDateTime(task.reviewAt);
-    const initialDestinationDraft: DestinationSelection = task.projectId
+    const initialDestinationDraft: TaskMoveDestination = task.projectId
         ? { kind: 'project', id: task.projectId }
         : task.areaId
             ? { kind: 'area', id: task.areaId }
@@ -197,7 +198,7 @@ export function TaskQuickActionMenu({
     const [dueTimeDraft, setDueTimeDraft] = useState(initialDueDraft.time);
     const [reviewDateDraft, setReviewDateDraft] = useState(initialReviewDraft.date);
     const [reviewTimeDraft, setReviewTimeDraft] = useState(initialReviewDraft.time);
-    const [destinationDraft, setDestinationDraft] = useState<DestinationSelection>(initialDestinationDraft);
+    const [destinationDraft, setDestinationDraft] = useState<TaskMoveDestination>(initialDestinationDraft);
     const [sectionDraft, setSectionDraft] = useState(initialSectionDraft);
     const [contextsDraft, setContextsDraft] = useState(initialContextsDraft);
     const [savingPanel, setSavingPanel] = useState<Exclude<QuickPanelId, null> | null>(null);

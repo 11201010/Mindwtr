@@ -13,9 +13,10 @@ import {
     type TaskDraftSetter,
     type TaskEditorFieldId,
     type TaskEditorSectionId,
+    type TaskMoveDestination,
     type ViewSectionDefinition,
 } from '@mindwtr/core';
-import { DestinationSelector, type DestinationSelection } from '../ui/DestinationSelector';
+import { DestinationSelector } from '../ui/DestinationSelector';
 import { SectionSelector } from '../ui/SectionSelector';
 import { SomedaySectionSelector } from '../ui/SomedaySectionSelector';
 import { TaskInput, type TaskInputAcceptedSuggestion } from './TaskInput';
@@ -168,12 +169,12 @@ export function TaskItemEditor({
 
     const showProjectDestination = organizerFields.includes('project');
     const showAreaDestination = organizerFields.includes('area');
-    const destinationValue: DestinationSelection = editProjectId
+    const destinationValue: TaskMoveDestination = editProjectId
         ? { kind: 'project', id: editProjectId }
         : editAreaId
             ? { kind: 'area', id: editAreaId }
             : { kind: 'none' };
-    const setDestination = (selection: DestinationSelection) => {
+    const setDestination = (selection: TaskMoveDestination) => {
         const patch = buildTaskMovePatch(selection, { projectId: editProjectId, sectionId: editSectionId });
         setEditProjectId(patch.projectId ?? '');
         setEditAreaId(patch.areaId ?? '');
