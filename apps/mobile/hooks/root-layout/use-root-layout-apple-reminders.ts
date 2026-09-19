@@ -52,6 +52,13 @@ export function useRootLayoutAppleRemindersAutoImport({
                 createRecoverySnapshot: createMobileRecoverySnapshot,
             });
             if (!result || !enabledRef.current) return;
+            // A foreground where nothing changed is the normal case: say
+            // nothing at all rather than write a log line every 30 seconds.
+            const changed = result.importedCount
+                + result.deletedCount
+                + result.failedCount
+                + result.deleteFailedCount;
+            if (changed === 0) return;
             void logInfo('Apple Reminders auto-import ran', {
                 scope: 'import',
                 extra: {
