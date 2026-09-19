@@ -2,24 +2,12 @@ import { useTaskStore, type Task } from '@mindwtr/core';
 
 import { useUiStore } from '../store/ui-store';
 import { dispatchNavigateEvent, type DesktopViewId } from './navigation-events';
+import { resolveTaskNavigationView, type TaskNavigationInput } from './task-navigation';
 
-/** The list view a task belongs to, by its project first and then its status. */
-export function resolveViewForTask(task: Pick<Task, 'projectId' | 'status'>): DesktopViewId {
+/** The list that shows a task: its project first, otherwise the shared navigation rule. */
+export function resolveViewForTask(task: TaskNavigationInput & Pick<Task, 'projectId'>): DesktopViewId {
     if (task.projectId) return 'projects';
-    switch (task.status) {
-        case 'next':
-            return 'next';
-        case 'waiting':
-            return 'waiting';
-        case 'someday':
-            return 'someday';
-        case 'reference':
-            return 'reference';
-        case 'done':
-            return 'done';
-        default:
-            return 'inbox';
-    }
+    return resolveTaskNavigationView(task);
 }
 
 function navigateToTaskView(task: Task, view: DesktopViewId): void {

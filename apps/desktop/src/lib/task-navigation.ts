@@ -1,7 +1,9 @@
 import { shouldShowTaskForStart, type Task, type TaskStatus } from '@mindwtr/core';
 import type { DesktopViewId } from './navigation-events';
 
-export function resolveTaskNavigationView(task: Task, now: Date = new Date()): DesktopViewId {
+export type TaskNavigationInput = Pick<Task, 'status' | 'startTime'> & Partial<Pick<Task, 'dueDate' | 'recurrence' | 'reviewAt'>>;
+
+export function resolveTaskNavigationView(task: TaskNavigationInput, now: Date = new Date()): DesktopViewId {
     const statusViewMap: Record<TaskStatus, DesktopViewId> = {
         inbox: 'inbox',
         next: 'next',

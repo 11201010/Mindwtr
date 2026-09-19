@@ -38,6 +38,19 @@ describe('followCreatedTaskAfterEdit (#1243)', () => {
         expect(resolveViewForTask({ status: 'next', projectId: 'p1' })).toBe('projects');
         expect(resolveViewForTask({ status: 'waiting' })).toBe('waiting');
         expect(resolveViewForTask({ status: 'inbox' })).toBe('inbox');
+        expect(resolveViewForTask({ status: 'archived' })).toBe('archived');
+        // Next hides a task whose start date has not arrived; Review shows it.
+        expect(resolveViewForTask({ status: 'next', startTime: '2999-01-01' })).toBe('review');
+        expect(resolveViewForTask({ status: 'next', startTime: '2999-01-01', projectId: 'p1' })).toBe('projects');
+    });
+
+    it('follows a deferred next action to Review, where it is shown', () => {
+        followCreatedTaskAfterEdit('task-1', 'inbox');
+        taskStoreState._allTasks = [{ id: 'task-1', status: 'next', startTime: '2999-01-01' }];
+
+        useUiStore.setState({ editingTaskId: null });
+
+        expect(navigated).toEqual(['review']);
     });
 
     it('follows the task to its new list once the editor closes', () => {

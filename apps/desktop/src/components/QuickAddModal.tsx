@@ -933,7 +933,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
     const openCreatedTaskForEditing = useCallback((taskId: string, props: Partial<Task>) => {
         setHighlightTask(taskId);
         setEditingTaskId(taskId);
-        const view = resolveViewForTask({ status: props.status ?? 'inbox', projectId: props.projectId });
+        const view = resolveViewForTask({ ...props, status: props.status ?? 'inbox' });
         if (view === 'projects' && props.projectId) {
             setProjectView({ selectedProjectId: props.projectId });
         }
