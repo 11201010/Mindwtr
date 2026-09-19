@@ -574,6 +574,7 @@ export const zhHant: Record<string, string> = {
         'contexts.title': '情境',
         'contexts.filter': '按情境篩選任務',
         'filters.label': '篩選',
+        'filters.active': '已啟用的篩選',
         'filters.clear': '清除',
         'filters.show': '顯示',
         'filters.hide': '隱藏',

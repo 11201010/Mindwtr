@@ -564,6 +564,7 @@ export const svOverrides: Record<string, string> = {
         'contexts.title': 'Kontexter',
         'contexts.filter': 'Filtrera uppgifter efter kontext',
         'filters.label': 'Filter',
+        'filters.active': 'Aktiva filter',
         'filters.clear': 'Rensa',
         'filters.show': 'Visa',
         'filters.hide': 'Dölj',

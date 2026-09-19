@@ -567,6 +567,7 @@ export const daOverrides: Record<string, string> = {
     'contexts.title': 'Kontekster',
     'contexts.filter': 'Filtrer opgaver efter kontekst',
     'filters.label': 'Filtre',
+    'filters.active': 'Aktive filtre',
     'filters.clear': 'Ryd',
     'filters.show': 'Vis',
     'filters.hide': 'Skjul',

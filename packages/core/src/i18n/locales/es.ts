@@ -551,6 +551,7 @@ export const esOverrides: Record<string, string> = {
 'contexts.title': "Contextos",
 'contexts.filter': "Filtrar tareas por contexto",
 'filters.label': "Filtros",
+'filters.active': "Filtros activos",
 'filters.clear': "Limpiar",
 'filters.show': "Mostrar",
 'filters.hide': "Ocultar",

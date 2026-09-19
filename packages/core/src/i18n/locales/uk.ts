@@ -547,6 +547,7 @@ export const ukOverrides: Record<string, string> = {
     "contexts.title": "Контексти",
     "contexts.filter": "Фільтрувати завдання за контекстом",
     "filters.label": "Фільтри",
+    "filters.active": "Активні фільтри",
     "filters.clear": "ясно",
     "filters.show": "Показати",
     "filters.hide": "Сховати",

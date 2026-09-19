@@ -551,6 +551,7 @@ export const huOverrides: Record<string, string> = {
     'contexts.title': 'Kontextusok',
     'contexts.filter': 'Feladatok szűrése kontextus szerint',
     'filters.label': 'Szűrők',
+    'filters.active': 'Aktív szűrők',
     'filters.clear': 'Törlés',
     'filters.show': 'Megjelenítés',
     'filters.hide': 'Elrejtés',

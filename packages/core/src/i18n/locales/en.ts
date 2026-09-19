@@ -581,6 +581,7 @@ export const en: Record<string, string> = {
         'contexts.title': 'Contexts',
         'contexts.filter': 'Filter tasks by context',
         'filters.label': 'Filters',
+        'filters.active': 'Active filters',
         'filters.clear': 'Clear',
         'filters.show': 'Show',
         'filters.hide': 'Hide',

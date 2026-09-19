@@ -589,6 +589,7 @@ export const jaOverrides: Record<string, string> = {
         'contexts.title': 'コンテキスト',
         'contexts.filter': 'コンテキストでタスクを絞り込む',
         'filters.label': '絞り込み',
+        'filters.active': '適用中の絞り込み',
         'filters.clear': 'クリア',
         'filters.show': '表示',
         'filters.hide': '非表示',

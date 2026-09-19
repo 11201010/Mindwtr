@@ -82,7 +82,6 @@ const KNOWN_MISSING_KEYS = new Set([
   'contextAutomation.noNextActionsBody',
   'contextAutomation.noNextActionsTitle',
   'contextAutomation.oneNextActionTitle',
-  'filters.active',
   'people.edit',
   'people.empty',
   'people.namePlaceholder',

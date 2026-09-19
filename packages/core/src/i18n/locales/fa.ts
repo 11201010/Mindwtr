@@ -564,6 +564,7 @@ export const faOverrides: Record<string, string> = {
         'contexts.title': 'زمینه‌ها',
         'contexts.filter': 'فیلتر کارها بر اساس زمینه',
         'filters.label': 'فیلترها',
+        'filters.active': 'فیلترهای فعال',
         'filters.clear': 'پاک کردن',
         'filters.show': 'نمایش',
         'filters.hide': 'پنهان کردن',

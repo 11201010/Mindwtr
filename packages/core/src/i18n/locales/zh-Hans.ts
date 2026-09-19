@@ -574,6 +574,7 @@ export const zhHans: Record<string, string> = {
         'contexts.title': '情境',
         'contexts.filter': '按情境筛选任务',
         'filters.label': '筛选',
+        'filters.active': '已启用的筛选',
         'filters.clear': '清除',
         'filters.show': '显示',
         'filters.hide': '隐藏',
