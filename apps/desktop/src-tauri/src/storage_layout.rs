@@ -20,7 +20,9 @@
 //!   runs inside the path lookup, which happens before the single-instance
 //!   plugin exists, so it cannot lean on that plugin. A second process waits a
 //!   few seconds for the holder and then re-reads the folder, because either
-//!   process may be the one the single-instance plugin keeps.
+//!   process may be the one the single-instance plugin keeps — and if the
+//!   holder gave up, the waiter gives up too rather than move the folder under
+//!   a process that has settled on the flat root.
 //! * The journal is published atomically and synced before the first rename,
 //!   and removed only after every rename is durable, so a power loss is always
 //!   visible to the next start.
@@ -293,6 +295,9 @@ fn clear_journal(root: &Path) {
 /// simultaneous launches would otherwise interleave renames.
 struct MigrationLock {
     path: PathBuf,
+    /// Whether another process held a live lock that this one waited out. A
+    /// stale lock replaced after a crash does not count: nobody was running.
+    waited_for_holder: bool,
 }
 
 impl MigrationLock {
@@ -303,9 +308,15 @@ impl MigrationLock {
     fn acquire(root: &Path) -> Option<Self> {
         let path = root.join(LOCK_FILE_NAME);
         let started = Instant::now();
+        let mut waited_for_holder = false;
         loop {
             match Self::create(&path) {
-                Ok(()) => return Some(Self { path }),
+                Ok(()) => {
+                    return Some(Self {
+                        path,
+                        waited_for_holder,
+                    })
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => {
                     log::warn!("Failed to take the storage layout migration lock: {error}");
@@ -317,10 +328,10 @@ impl MigrationLock {
             }
             if Self::is_stale(&path) {
                 // A crashed run left this behind. Replacing it is safe: no
-                // migration takes minutes, and the loser of a race here simply
-                // keeps the flat root for this start.
+                // migration takes minutes.
                 fs::remove_file(&path).ok()?;
             } else {
+                waited_for_holder = true;
                 thread::sleep(LOCK_WAIT_POLL);
             }
         }
@@ -368,7 +379,7 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
         return LayoutMigration::settled(LayoutOutcome::Already, 0, 0);
     }
 
-    let Some(_lock) = MigrationLock::acquire(root) else {
+    let Some(lock) = MigrationLock::acquire(root) else {
         // The holder outlasted the wait, or the lock file itself could not be
         // written. Reading the flat root is the safe answer: it is where the
         // files still are, or were a moment ago.
@@ -391,7 +402,17 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
                 }
             };
         }
-        Classification::Unfinished => {}
+        Classification::Unfinished => {
+            // A holder was running and the folder is still unfinished, so its
+            // run failed and rolled back. That process is already reading the
+            // flat root and may be the instance the single-instance plugin
+            // keeps; migrating now would empty the root under it. Both stay
+            // flat and the journal makes the next start retry.
+            if lock.waited_for_holder {
+                log::warn!("Another process gave up on the storage layout migration");
+                return LayoutMigration::failed("lock");
+            }
+        }
     }
 
     let planned: Vec<(&'static str, Destination)> = MIGRATED_ENTRIES
@@ -735,6 +756,43 @@ mod tests {
         assert_eq!(waited.failed_entry, None);
         assert!(root.join(DATA_DIR_NAME).join(DB_FILE_NAME).is_file());
         assert!(!root.join(DB_FILE_NAME).exists());
+        assert!(!root.join(LOCK_FILE_NAME).exists(), "lock is released");
+    }
+
+    // Finding C3: a holder that releases the lock with the folder still
+    // unfinished failed and rolled back. It is already reading the flat root, so
+    // the waiter must not migrate the folder out from under it — both stay flat
+    // and the journal makes the next start retry.
+    #[test]
+    fn a_waiter_stays_flat_when_the_holder_gave_up() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().to_path_buf();
+        legacy_profile(&root);
+        write(&root.join(LOCK_FILE_NAME), "");
+        write(
+            &root.join(JOURNAL_FILE_NAME),
+            "{\"version\":1,\"moves\":[]}",
+        );
+
+        // The holder tries, rolls back, and releases the lock unchanged.
+        let holder_root = root.clone();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            fs::remove_file(holder_root.join(LOCK_FILE_NAME)).expect("release lock");
+        });
+
+        let waited = migrate_standard_layout(&root);
+        holder.join().expect("holder thread");
+
+        assert_eq!(waited.outcome, LayoutOutcome::Failed);
+        assert_eq!(waited.failed_entry, Some("lock"));
+        assert!(!waited.subfolders, "both processes read the flat root");
+        assert!(root.join(DB_FILE_NAME).is_file(), "nothing was moved");
+        assert!(!root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists());
+        assert!(
+            root.join(JOURNAL_FILE_NAME).is_file(),
+            "the journal makes the next start retry"
+        );
         assert!(!root.join(LOCK_FILE_NAME).exists(), "lock is released");
     }
 
