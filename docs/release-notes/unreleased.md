@@ -5,16 +5,17 @@ Changes collected since the latest stable release.
 ## Full Change List
 
 - Mindwtr is now fully available in Danish, bringing the app to 23 language options across desktop and mobile.
-- Task area pickers on desktop and mobile follow the custom area order from Settings, including filtered search results (#1217).
-- Mobile task Preview keeps the checklist input above the keyboard while typing and adding items (#1218).
-- Android: tapping the blank background of a home-screen widget, the space below the last row, a section heading, or the "nothing here" message now opens Focus, whichever list the widget shows. The widget title still opens the list it displays, and the chevron still opens the list chooser. (#1173)
-- Mobile: the Calendar settings link to the calendar setup guide now appears in your app language instead of always in English. (#1222)
-- Desktop: the Someday **Move to section** dialog matches the other dialogs in spacing, button size and focus rings, names the section picker, and no longer steals keyboard focus back to the task row while it is open.
-- Calendar: an event Mindwtr itself pushed to your device calendar is no longer imported back as an external event. Pushed events now carry a hidden Mindwtr marker, so the mirror is recognised even in a calendar you did not name.
-- Desktop and mobile: the Contexts view can filter on several contexts and tags at once, with an **All** and **Any** toggle. **All** keeps tasks that carry every selected token, **Any** keeps tasks that carry at least one. Selecting a single token works as before, and the chip's remove button now reads in your app language. (#1224)
-- Desktop: typing a time by hand now follows the time format from Settings. The 12-hour and 24-hour choice applies to the start-time and due-time fields, the calendar dialogs, the quick action menu and the notification time pickers.
-- Desktop and mobile: **Settings -> Manage** now counts every task that belongs to a person, whether it is assigned to them or carries their `@name` context, and the count is a button. Press it to open Global Search on that person, completed tasks included. Global Search also understands a `person:"Name"` term, and quoted values may now contain escaped quotes.
-- Mobile: **Settings -> Task editor layout** adds **Open tasks in**, which decides what a normal task tap opens on this device. **Automatic** keeps today's behaviour, **Preview** always opens the preview tab, and **Edit** always opens the edit tab. The choice stays on the device and is not synced. (#1227)
-- Desktop and mobile: the morning and evening digests now run on their own switches. Turning task reminders off no longer silently cancels a digest you had enabled, the same way the weekly review reminder already worked.
-- Desktop: the Local API can create and update projects with `POST /projects` and `PATCH /projects/:id`, and triage a task with `status` on `PATCH /tasks/:id`. Terminal statuses still need `/complete` or `/archive`, and a request blocked by the record's state answers `409` with a message that says what to do. (#1228, #1229)
-- Windows: the README shows how to install Mindwtr with Scoop. (#1223)
+- Desktop and mobile: task screens show fewer choices at once. Desktop gains direct **Sort** and **Group** controls, simpler filters and a tidier project layout. Done and Archived are now two tabs of one **History** destination, and the mobile Menu is a compact grid. The old Done and Archived links still open the matching tab, and nothing changed about how tasks are stored, synced, completed, archived or restored.
+- Desktop: **Settings -> General -> Look & feel** gains a **Font** box. Click it to browse the fonts installed on this computer, type to narrow the list, and pick one to apply. Leave it empty to keep the app default. The choice syncs, and a font that is missing on another computer falls back to the default. (#1244)
+- Windows and macOS: an installed Mindwtr now keeps its settings in a `config` folder and its data in a `data` folder inside the same profile folder, the way the portable build already did. The first start of this version moves those files once and leaves everything else in the folder alone. Going back to an older version after that is not supported, because an older version only looks in the old place. If you read your database with the MCP server, update it to `mindwtr-mcp` 1.1.10 or later. Linux is not affected. (#1245)
+- Mobile: Apple Reminders can now import on its own. Once you have chosen a Reminders list, the new **Import automatically** switch runs the same import each time Mindwtr opens or comes back to the foreground. It never asks for Reminders access by itself, and a manual and an automatic import cannot add the same reminder twice. (#1238)
+- Inbox: choosing **Start later** now offers a Project and an Area, the same way **Incubate** already did. (#1239)
+- Desktop: **Save & edit** now follows the task to the list it was filed under, so the editor stays open on the task you just saved. (#1243)
+- Desktop: the edit keyboard shortcut now works inside the calendar pop-up, so you can open a task for editing without leaving the calendar. (#1241)
+- Mobile: the calendar schedule view lists the scheduled days before the planning list. (#1240)
+- Mobile: a task filed under an area with no project now names that area on the task row, the same as on desktop. (#1246)
+- Mobile: compact dates on the home-screen widgets follow the date format from Settings instead of the app language. (#1242)
+- Mobile: task Preview keeps the checklist input clear of the keyboard suggestion bar while you type and add items. (#1218)
+- Linux: reminder notifications now carry the Mindwtr logo. (#1232)
+- About: the Terms of Use sits next to Privacy, and every About row shows the address it opens.
+- The occasional notice asking you to support Mindwtr now appears at most once every six months across all the devices that share your data, instead of once per device. Anonymous diagnostics, which you can opt out of in Settings, now carry one id per set of data, so one person on several devices is counted once. (#1237)
