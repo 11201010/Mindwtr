@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -139,6 +139,33 @@ describe('automation script explicit paths', () => {
         expect(resolveMindwtrDbPath(pinnedDb)).toBe(pinnedDb);
         expect(resolveMindwtrDataPath(pinnedData)).toBe(pinnedData);
         expect(existsSync(join(root, 'scratch'))).toBe(false);
+    });
+
+    // `data.json` and `data/` are two of the most generic names there are, and the
+    // storage layer rewrites whatever file it opens. Only a real profile may win.
+    test('ignores a sibling folder that is not a Mindwtr profile', () => {
+        const root = makeTempDir();
+        const unrelated = join(root, 'data.json');
+        const contents = '{"someOtherTool":true}';
+        writeFileSync(unrelated, contents);
+        const pinned = join(root, 'data', 'data.json');
+        clearOverrides();
+
+        expect(resolveMindwtrDataPath(pinned)).toBe(pinned);
+        expect(readFileSync(unrelated, 'utf8')).toBe(contents);
+    });
+
+    test('ignores an unrelated data/data.json when no database sits beside it', () => {
+        const root = makeTempDir();
+        const unrelated = join(root, 'data', 'data.json');
+        const contents = '{"someOtherTool":true}';
+        touch(unrelated);
+        writeFileSync(unrelated, contents);
+        const pinned = join(root, 'data.json');
+        clearOverrides();
+
+        expect(resolveMindwtrDataPath(pinned)).toBe(pinned);
+        expect(readFileSync(unrelated, 'utf8')).toBe(contents);
     });
 
     test('honours MINDWTR_DB_PATH and MINDWTR_DATA the same way', () => {

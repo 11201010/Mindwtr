@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -85,6 +85,24 @@ describe('automation script sqlite writes', () => {
             .toEqual({ title: 'Captured through a pinned flat path' });
         expect(existsSync(dbPath)).toBe(false);
         expect(existsSync(dataPath)).toBe(false);
+    });
+
+    test('never rewrites an unrelated data.json that merely shares the name', async () => {
+        const { dataPath } = makeProfile();
+        const root = join(dataPath, '..');
+        const unrelated = join(root, 'data.json');
+        const contents = '{"someOtherTool":true}';
+        writeFileSync(unrelated, contents);
+
+        // A fresh sandbox profile inside a folder that already holds a data.json.
+        const pinnedData = join(root, 'data', 'data.json');
+        const pinnedDb = join(root, 'data', 'mindwtr.db');
+        const storage = createMindwtrAutomationStorage({ dataPath: pinnedData, dbPath: pinnedDb });
+        await storage.saveData(emptyData());
+
+        expect(storage.paths).toEqual({ dataPath: pinnedData, dbPath: pinnedDb });
+        expect(readFileSync(unrelated, 'utf8')).toBe(contents);
+        expect(existsSync(pinnedDb)).toBe(true);
     });
 
     test('refuses to overwrite a newer row with an older revision', async () => {
