@@ -429,7 +429,7 @@ export interface FeatureSettings {
 export interface AppearanceSettings {
     density?: 'comfortable' | 'compact' | 'condensed';
     textSize?: 'small' | 'default' | 'large' | 'extra-large';
-    /** Desktop typeface: empty/undefined = app default, 'system-ui' = OS interface font, else an installed family name (#1244). */
+    /** Desktop typeface: empty/undefined = app default, else the name of a family installed on this machine (#1244). */
     fontFamily?: string;
     showTaskAge?: boolean;
     showFutureStarts?: boolean;
