@@ -38,10 +38,16 @@ function getDataHome(): string {
 }
 
 function getCandidateRoots(): string[] {
+    const platform = process.platform;
     const configHome = getConfigHome();
     const dataHome = getDataHome();
 
     return [
+        // Installed Windows and macOS builds keep the profile under data/ since
+        // v1.3.2 (#1245); a flat root left behind by an older version comes next.
+        // Linux and the portable build never split, so the subfolder is not a
+        // candidate there: an orphan data/ copy must never win over the real one.
+        ...(platform === 'win32' || platform === 'darwin' ? [join(dataHome, APP_DIR, 'data')] : []),
         join(dataHome, APP_DIR),
         join(configHome, APP_DIR),
         join(dataHome, APP_ID),
