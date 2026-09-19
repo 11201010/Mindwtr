@@ -24,6 +24,57 @@ test('stable policy is validated before publishing and forwarded to every produc
   }
 });
 
+test('an open production rollout fails the stable release before any build job', () => {
+  const stable = workflow('release');
+  const preflight = stable.jobs['rollout-preflight'];
+  expect(preflight.needs).toBe('validate');
+  expect(preflight.if).toContain("needs.validate.outputs.rollout_mode == 'staged'");
+  // Forks hold no Store credentials, so the check is skipped there, not failed.
+  expect(preflight.if).toContain("github.repository == 'dongdongbh/Mindwtr'");
+  expect(preflight.concurrency.group).toBe('google-play-production');
+
+  const check = preflight.steps.at(-1);
+  expect(check.run).toContain('--action status');
+  expect(check.run).toContain('google-play-edit.py rollout');
+  expect(check.run).toContain('msstore-rollout.mjs --action status');
+  expect(check.run).toContain('docs/development/store-rollouts.md');
+  expect(check.run).toContain('exit 1');
+  for (const step of preflight.steps) {
+    expect(step.run ?? '').not.toMatch(/(?:upload|publish|--action (?:auto|increase|halt|finalize)|tauri build)/);
+  }
+
+  for (const job of [
+    'android-version-code', 'linux', 'macos', 'windows',
+    'android', 'android-foss', 'ios-appstore', 'macos-appstore',
+  ]) {
+    expect(stable.jobs[job].needs).toContain('rollout-preflight');
+    // A skipped preflight (immediate mode or a fork) must not skip the builds.
+    expect(stable.jobs[job].if).toContain(
+      "(needs['rollout-preflight'].result == 'success' || needs['rollout-preflight'].result == 'skipped')",
+    );
+  }
+});
+
+test('the Windows stable Store path fails instead of exiting zero on an open rollout', () => {
+  const windows = workflow('release-windows');
+  const publish = windows.jobs.standalone.steps.find(
+    (step) => step.id === 'msstore_publish',
+  );
+  expect(publish.if).toContain("steps.version.outputs.store_stable == 'true'");
+  const refusals = [...publish.run.matchAll(/if \(& \$is(RolloutOpen|StoreBusy) \$errText\) \{\n(.*)\n/g)]
+    .map((match) => [match[1], match[2].trim()]);
+  // Every tolerated store-busy skip is preceded by the rollout-open failure.
+  expect(refusals.map(([matcher]) => matcher)).toEqual([
+    'RolloutOpen', 'StoreBusy', 'RolloutOpen', 'StoreBusy',
+  ]);
+  for (const [matcher, body] of refusals) {
+    if (matcher === 'RolloutOpen') expect(body).toBe('throw $rolloutOpenMessage');
+    else expect(body).toStartWith('Write-Warning');
+  }
+  expect(publish.run).toContain('package rollout is still open');
+  expect(publish.run).toContain('Get-StoreErrorText -ErrorRecord $_');
+});
+
 test('release policy shell accepts valid modes and rejects unsafe percentages and unknown modes', () => {
   const gate = workflow('release').jobs.validate.steps.find((step) => step.id === 'rollout');
   const directory = mkdtempSync(join(tmpdir(), 'mindwtr-rollout-policy-'));

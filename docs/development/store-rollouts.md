@@ -42,6 +42,8 @@ credentials and uploads no packages. The default manual action is `status`.
 
 - `store=play`: supply the exact production `version_code` from the release
   summary. Actions: `status`, `increase`, `halt`, `resume`, `finalize`.
+  `status` is the only action that may omit the exact identifier; it then reports
+  the newest production release, which is how the release preflight reads it.
 - `store=msstore`: supply the exact production `submission_id` from the Windows
   release summary or Partner Center. Actions: `status`, `increase`, `halt`,
   `finalize`. Microsoft does not support resuming a halted rollout.
@@ -83,6 +85,21 @@ On Play, halting does not remove an already installed update; see
 [Play staged rollouts](https://support.google.com/googleplay/android-developer/answer/6346149).
 
 ## Corrective hotfixes
+
+**Precondition: the previous staged production rollout must be closed first.**
+Google Play refuses a new staged production release, and the Microsoft Store
+refuses a new submission, while the earlier rollout is still open. A rollout
+stays open for at least three scheduled days (5% → 20% → 50% → finalize), which
+is shorter than the gap between some releases. There are two ways out, both in
+[Operate an existing rollout](#operate-an-existing-rollout): `finalize` the open
+rollout (everyone gets it) or `halt` it (already updated users keep it; Play can
+resume later, Microsoft cannot). Do this on **both** stores before tagging.
+
+The **Store Rollout Preflight** job in `release.yml` reads both stores before
+any build starts and fails the release when either rollout is still open, so a
+forgotten rollout costs a minute instead of an hour of builds. It runs only for
+staged mode in this repository, changes nothing in either store, and names the
+open Play versionCode or Microsoft submission in its failure.
 
 Ordinary hotfixes are staged too. For a critical correction, choose
 `rollout_mode=immediate` when dispatching `release.yml`, or disable

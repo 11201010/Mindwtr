@@ -63,10 +63,13 @@ test('stable Watch release keeps the existing iOS recovery selection gate', () =
   const selected = new Function('github', 'inputs', 'needs', `return Boolean(${expression})`);
   const needs = {
     validate: { result: 'success' },
+    'rollout-preflight': { result: 'success' },
     'android-version-code': { result: 'success' },
   };
   expect(selected({ event_name: 'push' }, {}, needs)).toBe(true);
   expect(selected({ event_name: 'workflow_dispatch' }, {}, needs)).toBe(false);
+  // Immediate mode and forks skip the rollout preflight, which must not skip the build.
+  expect(selected({ event_name: 'push' }, {}, { ...needs, 'rollout-preflight': { result: 'skipped' } })).toBe(true);
   const iosOnly = { run_ios_appstore: true };
   const skipped = {
     ...needs,
@@ -74,7 +77,7 @@ test('stable Watch release keeps the existing iOS recovery selection gate', () =
   };
   expect(selected({ event_name: 'workflow_dispatch' }, iosOnly, skipped)).toBe(true);
   expect(selected({ event_name: 'workflow_dispatch' }, { ...iosOnly, run_android: true }, skipped)).toBe(false);
-  for (const dependency of ['validate', 'android-version-code']) {
+  for (const dependency of ['validate', 'rollout-preflight', 'android-version-code']) {
     expect(selected({ event_name: 'push' }, {}, { ...needs, [dependency]: { result: 'failure' } })).toBe(false);
   }
 });

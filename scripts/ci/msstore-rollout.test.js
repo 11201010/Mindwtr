@@ -81,9 +81,18 @@ test('CLI requires an explicit submission, a supported action, and a bounded per
     action: 'auto',
     percentage: undefined,
   });
+  // A preflight reads production status before it knows the submission ID.
+  expect(parseArgs(['--action', 'status'])).toEqual({
+    submissionId: undefined,
+    action: 'status',
+    percentage: undefined,
+    resultPath: undefined,
+  });
   for (const argv of [
-    ['--action', 'status'],
     ['--submission-id', submissionId],
+    ['--action', 'halt'],
+    ['--action', 'finalize'],
+    ['--action', 'increase', '--percentage', '20'],
     ['--submission-id', '../old', '--action', 'status'],
     ['--submission-id', submissionId, '--action', 'resume'],
     ['--submission-id', submissionId, '--action', 'increase'],
@@ -176,9 +185,31 @@ test('status is read-only and reports the current published rollout', async () =
     isPackageRollout: true,
     percentage: 5,
     status: 'PackageRolloutInProgress',
+    open: true,
     fallbackSubmissionId: '1152921504621000000',
   });
   expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'GET']);
+});
+
+test('status without a submission ID discovers production and reports whether it is open', async () => {
+  for (const [status, open] of [
+    ['PackageRolloutInProgress', true],
+    ['PackageRolloutStopped', false],
+    ['PackageRolloutComplete', false],
+  ]) {
+    const { calls, run } = fixture({ rollout: { packageRolloutStatus: status } });
+    const result = await run({ action: 'status', submissionId: undefined });
+    expect(result.submissionId).toBe(submissionId);
+    expect(result.open).toBe(open);
+    expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'GET']);
+  }
+
+  const mutations = fixture();
+  for (const action of ['increase', 'halt', 'finalize']) {
+    await expect(mutations.run({ action, submissionId: undefined, percentage: 20 }))
+      .rejects.toThrow('Invalid Microsoft Store submission ID.');
+  }
+  expect(mutations.calls).toHaveLength(0);
 });
 
 test('increase is monotonic and uses the documented query endpoint without a body', async () => {

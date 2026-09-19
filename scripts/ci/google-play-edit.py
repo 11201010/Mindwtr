@@ -494,13 +494,15 @@ def control_rollout(
         raise ValueError(
             "Google Play rollout action must be status, increase, halt, resume, finalize, or auto"
         )
-    if normalized_action == "auto":
-        if version_code is not None:
-            raise ValueError("Google Play automatic rollout discovers the production versionCode")
-        validated_version_code: int | None = None
-    else:
-        if version_code is None:
+    if normalized_action == "auto" and version_code is not None:
+        raise ValueError("Google Play automatic rollout discovers the production versionCode")
+    validated_version_code: int | None = None
+    if version_code is None:
+        # A release preflight asks for the production state before it knows the
+        # target, so status alone may discover the newest production release.
+        if normalized_action not in {"auto", "status"}:
             raise ValueError("Google Play rollout versionCode is required")
+    else:
         validated_version_code = _version_code(version_code, "versionCode")
     requested_percentage: float | None = None
     if normalized_action == "increase":
@@ -559,7 +561,7 @@ def control_rollout(
                 maximum_version_code = max(maximum_version_code, *normalized_codes)
             releases.append(release)
 
-        if normalized_action == "auto":
+        if validated_version_code is None:
             if maximum_version_code == 0:
                 raise GooglePlayApiError("Google Play production contains no release to advance")
             matching_indexes = []
@@ -604,6 +606,28 @@ def control_rollout(
         target_index = matching_indexes[0]
         target = releases[target_index]
         status = _string(target.get("status"), "production rollout status")
+        if normalized_action == "status":
+            fraction = (
+                _rollout_fraction(
+                    target.get("userFraction"),
+                    "production rollout userFraction",
+                )
+                if status in {"inProgress", "halted"}
+                else None
+            )
+            _cleanup_edit(validated_package, edit_id, transport)
+            return {
+                "package": validated_package,
+                "track": "production",
+                "versionCode": validated_version_code,
+                "action": normalized_action,
+                "status": status,
+                # Only completed and halted let another staged production release
+                # publish; see _validate_staged_production_state.
+                "open": status not in {"completed", "halted"},
+                "percentage": None if fraction is None else fraction * 100,
+                "committed": False,
+            }
         if status == "draft" and normalized_action == "auto":
             _cleanup_edit(validated_package, edit_id, transport)
             return {
@@ -659,18 +683,6 @@ def control_rollout(
                 raise GooglePlayApiError(
                     "Google Play rollout percentage is outside the automatic 5, 20, 50 schedule"
                 )
-
-        if normalized_action == "status":
-            _cleanup_edit(validated_package, edit_id, transport)
-            return {
-                "package": validated_package,
-                "track": "production",
-                "versionCode": validated_version_code,
-                "action": normalized_action,
-                "status": status,
-                "percentage": None if current_fraction is None else current_fraction * 100,
-                "committed": False,
-            }
 
         if mutation_action == "increase":
             if status != "inProgress" or current_fraction is None:
@@ -938,7 +950,8 @@ def _parser() -> argparse.ArgumentParser:
 
     rollout = subparsers.add_parser("rollout")
     rollout.add_argument("--package", required=True)
-    rollout.add_argument("--version-code", required=True, type=int)
+    # status alone may omit the versionCode; every mutation still names its target.
+    rollout.add_argument("--version-code", type=int)
     rollout.add_argument("--action", required=True, choices=sorted(ROLLOUT_ACTIONS))
     rollout.add_argument("--percentage", type=float)
     rollout.add_argument("--result", type=Path)

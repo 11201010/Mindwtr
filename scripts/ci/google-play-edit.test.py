@@ -653,6 +653,79 @@ class GooglePlayEditTest(unittest.TestCase):
         self.assertFalse(result["committed"])
         self.assertFalse(any("/bundles" in str(call["path"]) for call in transport.calls))
 
+    def test_rollout_status_without_version_code_reports_whether_production_is_open(self) -> None:
+        cases = (
+            ("inProgress", 0.05, True, 5.0),
+            ("draft", None, True, None),
+            ("halted", 0.2, False, 20.0),
+            ("completed", None, False, None),
+        )
+        for status, fraction, expected_open, expected_percentage in cases:
+            with self.subTest(status=status):
+                transport = FakeTransport()
+                target = transport.production_track["releases"][1]
+                target["status"] = status
+                if fraction is None:
+                    target.pop("userFraction", None)
+                else:
+                    target["userFraction"] = fraction
+
+                result = MODULE.control_rollout(
+                    "tech.dongdongbh.mindwtr",
+                    None,
+                    "status",
+                    None,
+                    transport,
+                )
+
+                self.assertEqual(result["versionCode"], 42)
+                self.assertEqual(result["status"], status)
+                self.assertEqual(result["open"], expected_open)
+                self.assertEqual(result["percentage"], expected_percentage)
+                self.assertFalse(result["committed"])
+                self.assertEqual(transport.calls[-1]["method"], "DELETE")
+                self.assertFalse(
+                    any(call["method"] in {"PUT", "POST"} and "/tracks/" in str(call["path"])
+                        for call in transport.calls)
+                )
+
+    def test_rollout_mutations_still_require_an_exact_version_code(self) -> None:
+        for action in ("increase", "halt", "resume", "finalize"):
+            with self.subTest(action=action):
+                transport = FakeTransport()
+                with self.assertRaises(ValueError):
+                    MODULE.control_rollout(
+                        "tech.dongdongbh.mindwtr",
+                        None,
+                        action,
+                        20 if action == "increase" else None,
+                        transport,
+                    )
+                self.assertEqual(transport.calls, [])
+
+    def test_rollout_status_cli_discovers_production_without_a_version_code(self) -> None:
+        transport = FakeTransport()
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "status.json"
+            with patch.object(MODULE, "GooglePlayTransport", return_value=transport):
+                with patch.dict(os.environ, {"GOOGLE_PLAY_ACCESS_TOKEN": "top-secret"}):
+                    exit_code = MODULE.main(
+                        [
+                            "rollout",
+                            "--package",
+                            "tech.dongdongbh.mindwtr",
+                            "--action",
+                            "status",
+                            "--result",
+                            str(result_path),
+                        ]
+                    )
+            self.assertEqual(exit_code, 0)
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(result["versionCode"], 42)
+        self.assertTrue(result["open"])
+        self.assertFalse(result["committed"])
+
     def test_rollout_increase_preserves_target_metadata_and_omits_unrelated_releases(self) -> None:
         transport = FakeTransport()
         original_releases = json.loads(json.dumps(transport.production_track["releases"]))

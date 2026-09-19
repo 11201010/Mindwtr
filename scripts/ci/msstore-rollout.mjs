@@ -1,4 +1,4 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const API = 'https://manage.devcenter.microsoft.com/v1.0/my';
@@ -27,7 +27,7 @@ export function parseArgs(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
-    if (!['--submission-id', '--action', '--percentage'].includes(flag)) {
+    if (!['--submission-id', '--action', '--percentage', '--result'].includes(flag)) {
       throw new Error(`Unknown argument: ${flag || '<empty>'}.`);
     }
     if (values.has(flag)) throw new Error(`Duplicate argument: ${flag}.`);
@@ -40,9 +40,12 @@ export function parseArgs(argv) {
   if (!ACTIONS.has(action)) throw new Error('--action must be one of status, increase, halt, finalize, or auto.');
   if (action === 'auto') {
     if (submissionId) throw new Error('--submission-id is not supported when --action is auto.');
-  } else {
-    if (!submissionId) throw new Error('--submission-id is required.');
+  } else if (submissionId) {
     if (!/^\d+$/.test(submissionId)) throw new Error('--submission-id must be a numeric Store submission ID.');
+    // status alone may omit it and read the current published submission; every
+    // mutation still names its exact target.
+  } else if (action !== 'status') {
+    throw new Error('--submission-id is required.');
   }
 
   const rawPercentage = values.get('--percentage');
@@ -57,6 +60,7 @@ export function parseArgs(argv) {
     submissionId,
     action,
     percentage: rawPercentage === undefined ? undefined : parsePercentage(rawPercentage),
+    resultPath: values.get('--result'),
   };
 }
 
@@ -122,6 +126,9 @@ function rolloutResult(submissionId, action, rollout) {
     isPackageRollout: rollout.isPackageRollout,
     percentage,
     status: rollout.packageRolloutStatus,
+    // An in-progress rollout blocks the next production submission; a halted or
+    // complete one does not.
+    open: rollout.packageRolloutStatus === IN_PROGRESS,
     fallbackSubmissionId: String(rollout.fallbackSubmissionId ?? ''),
   };
 }
@@ -135,13 +142,24 @@ export async function manageRollout({
   log = console.log,
 }) {
   if (!/^[A-Z0-9]+$/.test(appId)) throw new Error('Invalid Microsoft Store application ID.');
-  if (!/^\d+$/.test(submissionId)) throw new Error('Invalid Microsoft Store submission ID.');
   if (!ACTIONS.has(action)) throw new Error('Unsupported Microsoft Store rollout action.');
+  if (submissionId === undefined && action !== 'status') {
+    throw new Error('Invalid Microsoft Store submission ID.');
+  }
+  if (submissionId !== undefined && !/^\d+$/.test(submissionId)) {
+    throw new Error('Invalid Microsoft Store submission ID.');
+  }
   if (action === 'increase') parsePercentage(percentage);
 
   const appPath = `applications/${appId}`;
-  const submissionPath = `${appPath}/submissions/${submissionId}`;
   const app = await request('GET', appPath);
+  if (submissionId === undefined) {
+    submissionId = String(app?.lastPublishedApplicationSubmission?.id ?? '');
+    if (!/^\d+$/.test(submissionId)) {
+      throw new Error('Microsoft Store returned no numeric last-published submission ID.');
+    }
+  }
+  const submissionPath = `${appPath}/submissions/${submissionId}`;
   validateIdentity({ app, appId, submissionId });
 
   const submission = await request('GET', submissionPath);
@@ -305,6 +323,9 @@ export async function runCli({
       request,
       log,
     });
+  if (args.resultPath) {
+    writeFileSync(args.resultPath, `${JSON.stringify(result, null, 2)}\n`);
+  }
   if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
       env.GITHUB_STEP_SUMMARY,

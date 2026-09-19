@@ -656,6 +656,27 @@ jobs:
             return $text -match '(?i)(InvalidState|CommitStarted|PreProcessing|Certification|InCertification|PendingCommit|InProgress|Pending[\s_-]*Submission|Another\s+submission|already\s+.*submission)'
           }
 
+          # An open package rollout is not a busy store: waiting never clears it,
+          # so this release must fail instead of reporting success with no Store
+          # update. Checked before $isStoreBusy, whose pattern also matches the
+          # rollout refusal.
+          $isRolloutOpen = {
+            param([string]$text)
+            if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+            return $text -match '(?i)package[\s_-]*rollout'
+          }
+
+          $rolloutOpenMessage = 'Microsoft Store refused the submission because the previous package rollout is still open. Finalize or halt it first (see docs/development/store-rollouts.md), then rerun this workflow.'
+
+          # PowerShell keeps the HTTP status in Exception.Message and the Store's
+          # own reason in ErrorDetails.Message; both are needed to classify one.
+          function Get-StoreErrorText {
+            param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+            $details = ''
+            try { $details = [string]$ErrorRecord.ErrorDetails.Message } catch { $details = '' }
+            return (@($details, [string]$ErrorRecord.Exception.Message) | Where-Object { $_ }) -join ' '
+          }
+
           function Get-HttpStatusCodeFromError {
             param([System.Management.Automation.ErrorRecord]$ErrorRecord)
             try {
@@ -959,9 +980,12 @@ jobs:
                 -Headers $headers
               Write-Host "Deleted pending submission."
             } catch {
-              $errText = $_.Exception.Message
+              $errText = Get-StoreErrorText -ErrorRecord $_
               if ($errText -match '(?i)created through the API') {
                 throw "Existing pending submission $pendingId was created or edited in Partner Center, so the submission API cannot delete or update it. Delete or publish that draft manually, then rerun this workflow. The workflow now sources listing assets from apps/desktop/screenshots/msstore (falling back to apps/desktop/screenshots) instead of a Partner Center draft."
+              }
+              if (& $isRolloutOpen $errText) {
+                throw $rolloutOpenMessage
               }
               if (& $isStoreBusy $errText) {
                 Write-Warning "Existing submission is in certification; cannot delete. Skipping publish."
@@ -980,9 +1004,13 @@ jobs:
                 -Headers $headers `
                 -MaxAttempts 1
             } catch {
-              $errText = $_.Exception.Message
+              $errText = Get-StoreErrorText -ErrorRecord $_
               $statusCode = Get-HttpStatusCodeFromError -ErrorRecord $_
               $retryable = Test-IsRetryableHttpFailure -ErrorRecord $_
+
+              if (& $isRolloutOpen $errText) {
+                throw $rolloutOpenMessage
+              }
 
               try {
                 $submission = Get-PendingSubmissionFromStore -ApplicationId $applicationId
