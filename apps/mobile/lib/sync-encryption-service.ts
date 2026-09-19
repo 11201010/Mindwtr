@@ -38,6 +38,7 @@ import {
     SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS,
     webdavDeleteFileVersioned,
     webdavGetFileVersioned,
+    webdavMakeDirectory,
     webdavPutFileVersioned,
     SyncCryptoUnsupportedError,
     SyncEncryptionTerminalError,
@@ -285,13 +286,16 @@ const listWebdavAttachmentKeys = async (
     if (options.username && typeof options.password === 'string') {
         headers.Authorization = `Basic ${bytesToBase64(new TextEncoder().encode(`${options.username}:${options.password}`))}`;
     }
-  return fetchWithTimeoutAndConsume(
+  const fetcher = options.fetcher ?? backgroundSafeFetch;
+  // `null` = the collection itself answered 404.
+  const propfind = (): Promise<string[] | null> => fetchWithTimeoutAndConsume(
     collectionUrl,
     { method: 'PROPFIND', headers, body: DAV_PROPFIND_BODY, signal: options.signal },
         options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        options.fetcher ?? backgroundSafeFetch,
+        fetcher,
         'WebDAV attachment inventory timed out',
         async (response, signal) => {
+          if (response.status === 404) return null;
           if (!response.ok) {
             throw new Error(`WebDAV attachment inventory PROPFIND failed (${response.status})`);
           }
@@ -299,6 +303,15 @@ const listWebdavAttachmentKeys = async (
           return parseWebdavAttachmentKeys(xml, collectionUrl);
         },
     );
+  const keys = await propfind();
+  if (keys) return keys;
+  // A sync root that never held an attachment has no `attachments/` collection yet (#1250).
+  // A bare 404 is not proof of an empty inventory, so create the collection and list it
+  // again: only the server's own listing of it counts, and a second 404 still fails closed.
+  await webdavMakeDirectory(collectionUrl, { ...options, fetcher });
+  const created = await propfind();
+  if (!created) throw new Error('WebDAV attachment inventory PROPFIND failed (404)');
+  return created;
 };
 
 const listDropboxAttachmentKeys = async (

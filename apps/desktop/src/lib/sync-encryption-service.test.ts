@@ -358,8 +358,29 @@ describe('WebDAV authoritative attachment inventory', () => {
         }));
     });
 
+    it('creates a missing attachments collection and lists it again (#1250)', async () => {
+        const collectionUrl = `${baseUrl}/attachments/`;
+        let exists = false;
+        const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            if (init?.method === 'MKCOL') {
+                exists = true;
+                return new Response(null, { status: 201 });
+            }
+            return exists
+                ? new Response(davMultistatusXml(davResponseXml(collectionUrl, { collection: true })), { status: 207 })
+                : new Response(null, { status: 404 });
+        });
+
+        await expect(__syncEncryptionServiceTestUtils.listWebdavAttachmentKeys(baseUrl, { fetcher }))
+            .resolves.toEqual([]);
+        expect(fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(['PROPFIND', 'MKCOL', 'PROPFIND']);
+    });
+
     it.each([403, 404])('fails closed on an HTTP %s collection response', async (status) => {
-        const fetcher = vi.fn(async () => new Response(null, { status }));
+        // 404 stays fatal when the collection still cannot be listed after creating it.
+        const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => (
+            new Response(null, { status: init?.method === 'MKCOL' ? 201 : status })
+        ));
         await expect(__syncEncryptionServiceTestUtils.listWebdavAttachmentKeys(baseUrl, { fetcher }))
             .rejects.toThrow(`PROPFIND failed (${status})`);
     });

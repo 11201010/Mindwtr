@@ -16,6 +16,7 @@ Changes collected since the latest stable release.
 - Mobile: a task filed under an area with no project now names that area on the task row, the same as on desktop. (#1246)
 - Mobile: compact dates on the home-screen widgets follow the date format from Settings instead of the app language. (#1242)
 - Mobile: task Preview keeps the checklist input clear of the keyboard suggestion bar while you type and add items. (#1218)
+- WebDAV sync: turning on encryption now works on a sync folder that has never held an attachment. It used to stop with "attachment inventory PROPFIND failed (404)". (#1250)
 - Linux: reminder notifications now carry the Mindwtr logo. (#1232)
 - About: the Terms of Use sits next to Privacy, and every About row shows the address it opens.
 - The occasional notice asking you to support Mindwtr now appears at most once every six months across all the devices that share your data, instead of once per device. Anonymous diagnostics, which you can opt out of in Settings, now carry one id per set of data, so one person on several devices is counted once. (#1237)
