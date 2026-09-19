@@ -883,9 +883,9 @@ function SwipeableTaskItemInner({
                 tc={tc}
                 t={t}
             />
-            {!interactionDisabled ? (
+            {!interactionDisabled && showDestinationPicker ? (
                 <TaskEditDestinationPicker
-                    visible={showDestinationPicker}
+                    visible
                     projects={projects}
                     areas={areas}
                     selectedProjectId={task.projectId}

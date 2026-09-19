@@ -1,9 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import renderer from 'react-test-renderer';
-import { Alert, Text } from 'react-native';
+import { AccessibilityInfo, Alert, Text } from 'react-native';
 
 import { SwipeableTaskItem, readTaskRowRenderCount, type TaskRowActions } from './swipeable-task-item';
+import { TaskEditDestinationPicker } from './task-edit/TaskEditDestinationPicker';
 import { TaskEditModal } from './task-edit-modal';
 
 vi.mock('./task-edit-modal', () => ({ TaskEditModal: vi.fn(() => null) }));
@@ -2883,5 +2884,43 @@ it('can keep the focus star without adding a redundant focus outline', () => {
       storeState.settings = { features: { priorities: false }, appearance: {} } as any;
       expect(rowAccessibilityLabel({ priority: 'high' })).not.toContain('Priority');
     });
+  });
+
+  // List rows mount and unmount while the user scrolls. A closed row must not
+  // mount the destination picker: each one costs a native reduce-motion call,
+  // a listener, and a pass over every project and area.
+  it('mounts no destination picker while the row menu is closed', () => {
+    const addEventListener = vi.spyOn(AccessibilityInfo, 'addEventListener');
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <SwipeableTaskItem
+          task={{
+            id: 'task-picker',
+            title: 'Do laundry',
+            status: 'next',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          } as any}
+          isDark={false}
+          tc={{
+            taskItemBg: '#111111',
+            border: '#222222',
+            text: '#ffffff',
+            secondaryText: '#999999',
+            tint: '#3b82f6',
+            warning: '#f59e0b',
+          } as any}
+          onPress={vi.fn()}
+          onStatusChange={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      );
+    });
+
+    expect(tree.root.findAllByType(TaskEditDestinationPicker)).toHaveLength(0);
+    expect(addEventListener).not.toHaveBeenCalled();
+    renderer.act(() => tree.unmount());
+    addEventListener.mockRestore();
   });
 });
