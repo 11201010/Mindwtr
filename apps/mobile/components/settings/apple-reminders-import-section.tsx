@@ -13,6 +13,7 @@ import {
   updateAppleRemindersImportSettings,
 } from '@/lib/apple-reminders-import';
 import { createMobileRecoverySnapshot } from '@/lib/data-transfer';
+import { flushPendingTaskActionSave } from '@/lib/pending-capture-persistence';
 
 import { styles } from './settings.styles';
 
@@ -190,6 +191,7 @@ export function AppleRemindersImportSection({
       const result = await importAppleRemindersIntoInbox({
         addTask,
         createRecoverySnapshot: createMobileRecoverySnapshot,
+        flushPendingSave: flushPendingTaskActionSave,
         listId: selectedListId,
         deleteImportedReminders,
       });

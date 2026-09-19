@@ -252,6 +252,53 @@ describe('apple-reminders-import', () => {
     );
   });
 
+  // core's addTask only queues a debounced snapshot, so a reminder is not
+  // really imported until that save is on disk. Recording the id first would
+  // make a kill inside that gap skip the reminder forever.
+  it('records the id and deletes the reminder only after the task save is durable', async () => {
+    const order: string[] = [];
+    const addTask = vi.fn(async () => { order.push('addTask'); return { success: true, id: 'task-1' }; });
+    const flushPendingSave = vi.fn(async () => { order.push('flush'); });
+    mockSetItem.mockImplementation((async () => { order.push('setItem'); }) as never);
+    mockDeleteReminderAsync.mockImplementation((async () => { order.push('deleteReminder'); }) as never);
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-1', title: 'First', completed: false },
+    ] as any);
+
+    await importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      flushPendingSave,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    });
+
+    expect(order).toEqual(['addTask', 'flush', 'setItem', 'deleteReminder']);
+  });
+
+  it('leaves the reminder untouched and stops when the task save cannot be flushed', async () => {
+    const addTask = vi.fn(async () => ({ success: true, id: 'task-1' }));
+    const flushPendingSave = vi.fn(async () => { throw new Error('save failed'); });
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-1', title: 'First', completed: false },
+      { id: 'rem-2', title: 'Second', completed: false },
+    ] as any);
+
+    await expect(importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      flushPendingSave,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    })).resolves.toMatchObject({ importedCount: 0, deletedCount: 0, failedCount: 1 });
+
+    // Nothing recorded, nothing deleted, and the run stops rather than piling
+    // up more tasks that cannot be saved either.
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(mockDeleteReminderAsync).not.toHaveBeenCalled();
+    expect(addTask).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps a settings change the user makes while the import runs', async () => {
     mockGetItem.mockResolvedValue(JSON.stringify({
       selectedListId: 'list-1',

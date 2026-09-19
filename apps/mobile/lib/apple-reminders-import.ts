@@ -190,6 +190,12 @@ export async function getAppleReminderLists(): Promise<AppleReminderList[]> {
 export type AppleRemindersImportOptions = {
   addTask: AddInboxTask;
   createRecoverySnapshot: () => Promise<unknown>;
+  /**
+   * Resolves once the store's queued snapshot is on disk. `addTask` only
+   * schedules a debounced save, so without this the import would call a
+   * reminder done while its task lives in memory only.
+   */
+  flushPendingSave?: () => Promise<void>;
   listId: string;
   deleteImportedReminders?: boolean;
 };
@@ -206,7 +212,8 @@ export function importAppleRemindersIntoInbox(options: AppleRemindersImportOptio
 export async function runAppleRemindersAutoImport({
   addTask,
   createRecoverySnapshot,
-}: Pick<AppleRemindersImportOptions, 'addTask' | 'createRecoverySnapshot'>): Promise<AppleRemindersImportResult | null> {
+  flushPendingSave,
+}: Pick<AppleRemindersImportOptions, 'addTask' | 'createRecoverySnapshot' | 'flushPendingSave'>): Promise<AppleRemindersImportResult | null> {
   if (Platform.OS !== 'ios') return null;
   const settings = await loadAppleRemindersImportSettings();
   if (!settings.autoImportOnOpen || !settings.selectedListId) return null;
@@ -214,6 +221,7 @@ export async function runAppleRemindersAutoImport({
   return importAppleRemindersIntoInbox({
     addTask,
     createRecoverySnapshot,
+    flushPendingSave,
     listId: settings.selectedListId,
     deleteImportedReminders: settings.deleteImportedReminders,
   });
@@ -222,6 +230,7 @@ export async function runAppleRemindersAutoImport({
 async function runAppleRemindersImport({
   addTask,
   createRecoverySnapshot,
+  flushPendingSave,
   listId,
   deleteImportedReminders,
 }: AppleRemindersImportOptions): Promise<AppleRemindersImportResult> {
@@ -289,6 +298,18 @@ async function runAppleRemindersImport({
     if (taskResult.success === false) {
       result.failedCount += 1;
       continue;
+    }
+
+    // The task is only in memory until this resolves. Everything that says
+    // "this reminder is done" — the id list and the delete — waits for it, so
+    // a kill in the gap re-imports the reminder instead of losing it.
+    try {
+      await flushPendingSave?.();
+    } catch {
+      // Not recorded and not deleted: the next run picks this reminder up
+      // again. Stop here rather than add tasks that cannot be saved either.
+      result.failedCount += 1;
+      break;
     }
 
     result.importedCount += 1;

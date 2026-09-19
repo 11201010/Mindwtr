@@ -6,6 +6,7 @@ import { resolveI18nText, useTaskStore } from '@mindwtr/core';
 import { runAppleRemindersAutoImport } from '@/lib/apple-reminders-import';
 import { logError, logInfo } from '@/lib/app-log';
 import { createMobileRecoverySnapshot } from '@/lib/data-transfer';
+import { flushPendingTaskActionSave } from '@/lib/pending-capture-persistence';
 
 type ToastOptions = {
     title: string;
@@ -50,6 +51,7 @@ export function useRootLayoutAppleRemindersAutoImport({
             const result = await runAppleRemindersAutoImport({
                 addTask: useTaskStore.getState().addTask,
                 createRecoverySnapshot: createMobileRecoverySnapshot,
+                flushPendingSave: flushPendingTaskActionSave,
             });
             if (!result || !enabledRef.current) return;
             // A foreground where nothing changed is the normal case: say
