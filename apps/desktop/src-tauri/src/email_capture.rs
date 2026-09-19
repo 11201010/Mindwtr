@@ -10,6 +10,12 @@ const EMAIL_CAPTURE_DEFAULT_FOLDER: &str = "Mindwtr";
 // by follow-up polls (`has_more`) instead of one unbounded fetch.
 const EMAIL_CAPTURE_BATCH_LIMIT: usize = 25;
 const EMAIL_CAPTURE_BODY_CHAR_LIMIT: usize = 16_000;
+// Only the head of each message is fetched: headers and the text part come first in
+// normal mail, and nothing past EMAIL_CAPTURE_BODY_CHAR_LIMIT characters is kept anyway.
+// A full `BODY.PEEK[]` would download every attachment into memory.
+const EMAIL_CAPTURE_FETCH_BYTE_LIMIT: usize = 262_144;
+const EMAIL_CAPTURE_FETCH_QUERY: &str = "(UID BODY.PEEK[]<0.262144>)";
+const EMAIL_CAPTURE_FULL_FETCH_QUERY: &str = "(UID BODY.PEEK[])";
 const EMAIL_CAPTURE_SEEN_MESSAGE_ID_LIMIT: usize = 500;
 const EMAIL_CAPTURE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const EMAIL_CAPTURE_IO_TIMEOUT: Duration = Duration::from_secs(60);
@@ -370,6 +376,51 @@ pub(crate) fn build_email_capture_message(
     }
 }
 
+// Did the text part `build_email_capture_message` read finish inside the bytes we were
+// given? A part that closed before the end of the buffer is followed by the next MIME
+// boundary, so its recorded end offset is short of the buffer; a part the fetch cut in
+// half runs to the very end. No text part at all (it sits behind a big attachment)
+// counts as not finished.
+fn text_part_ended_before(raw: &[u8]) -> bool {
+    MessageParser::default()
+        .parse(raw)
+        .and_then(|message| {
+            let part = message.part(*message.text_body.first()?)?;
+            Some((part.offset_end as usize) < raw.len())
+        })
+        .unwrap_or(false)
+}
+
+// A prefix fetch that came back full may have cut the message anywhere. Trust it only
+// when the text provably ended before the cut, or when we already hold every character
+// capture would keep; otherwise the import would silently lose body text.
+fn prefix_fetch_may_have_cut_text(prefix: &[u8], body_text: &str) -> bool {
+    prefix.len() >= EMAIL_CAPTURE_FETCH_BYTE_LIMIT
+        && body_text.chars().count() < EMAIL_CAPTURE_BODY_CHAR_LIMIT
+        && !text_part_ended_before(prefix)
+}
+
+// `FnOnce` is the bound: at most one full refetch per UID per poll. A refetch that fails
+// is a fetch failure like any other and aborts the poll.
+fn email_capture_message_from_prefix<F>(
+    uid: u32,
+    uid_validity: u32,
+    prefix: &[u8],
+    refetch_full: F,
+) -> Result<EmailCaptureMessage, EmailCaptureError>
+where
+    F: FnOnce(u32) -> Result<Option<Vec<u8>>, EmailCaptureError>,
+{
+    let message = build_email_capture_message(uid, uid_validity, prefix);
+    if !prefix_fetch_may_have_cut_text(prefix, &message.body_text) {
+        return Ok(message);
+    }
+    match refetch_full(uid)? {
+        Some(full) => Ok(build_email_capture_message(uid, uid_validity, &full)),
+        None => Ok(message),
+    }
+}
+
 type EmailSession = imap::Session<TlsStream<TcpStream>>;
 
 fn open_email_session(
@@ -631,13 +682,22 @@ fn poll_mailbox(
             .collect::<Vec<_>>()
             .join(",");
         let fetches = session
-            .uid_fetch(set, "(UID BODY.PEEK[])")
+            .uid_fetch(set, EMAIL_CAPTURE_FETCH_QUERY)
             .map_err(|error| classify_imap_error(error, "other"))?;
         for fetch in fetches.iter() {
             let Some(uid) = fetch.uid else { continue };
             max_fetched_uid = max_fetched_uid.max(uid);
             let Some(raw) = fetch.body() else { continue };
-            let message = build_email_capture_message(uid, uid_validity, raw);
+            let message = email_capture_message_from_prefix(uid, uid_validity, raw, |uid| {
+                let refetched = session
+                    .uid_fetch(uid.to_string(), EMAIL_CAPTURE_FULL_FETCH_QUERY)
+                    .map_err(|error| classify_imap_error(error, "other"))?;
+                Ok(refetched
+                    .iter()
+                    .find(|fetch| fetch.uid == Some(uid))
+                    .and_then(|fetch| fetch.body())
+                    .map(|body| body.to_vec()))
+            })?;
             if state.seen_message_ids.contains(&message.message_id) {
                 continue;
             }
@@ -918,6 +978,170 @@ mod tests {
         assert!(!message.body_text.contains('<'));
         // No Message-ID header: falls back to a UID-scoped synthetic id.
         assert_eq!(message.message_id, "uid:7:3");
+    }
+
+    #[test]
+    fn fetch_query_asks_for_a_bounded_part_of_each_message() {
+        assert_eq!(EMAIL_CAPTURE_FETCH_QUERY, "(UID BODY.PEEK[]<0.262144>)");
+        assert_eq!(EMAIL_CAPTURE_FETCH_BYTE_LIMIT, 262_144);
+        assert_eq!(EMAIL_CAPTURE_FULL_FETCH_QUERY, "(UID BODY.PEEK[])");
+    }
+
+    fn text_part(body: &str) -> String {
+        format!("--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n")
+    }
+
+    fn attachment_part(base64_chars: usize) -> String {
+        format!(
+            "--b1\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            "QUJD".repeat(base64_chars / 4)
+        )
+    }
+
+    fn multipart_mail(first: &str, second: &str) -> String {
+        format!(
+            "Message-ID: <report-9@example.com>\r\n\
+             From: Reports <reports@example.com>\r\n\
+             Subject: Report\r\n\
+             Content-Type: multipart/mixed; boundary=\"b1\"\r\n\
+             \r\n\
+             {first}{second}--b1--\r\n"
+        )
+    }
+
+    /// Runs the prefix-fetch path over `raw` the way `poll_mailbox` does: the first
+    /// EMAIL_CAPTURE_FETCH_BYTE_LIMIT bytes are what the server returned. Reports which
+    /// UIDs the code asked to refetch in full.
+    fn message_from_prefix(raw: &str) -> (EmailCaptureMessage, Vec<u32>) {
+        let cut = raw.len().min(EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+        let mut refetched = Vec::new();
+        let message = email_capture_message_from_prefix(9, 7, &raw.as_bytes()[..cut], |uid| {
+            refetched.push(uid);
+            Ok(Some(raw.as_bytes().to_vec()))
+        })
+        .expect("build message from prefix");
+        (message, refetched)
+    }
+
+    #[test]
+    fn prefix_fetch_keeps_a_message_that_fits_in_the_window() {
+        let raw = concat!(
+            "Message-ID: <abc-123@example.com>\r\n",
+            "From: Jane Doe <jane@example.com>\r\n",
+            "Subject: Renew passport\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "\r\n",
+            "Bring the old passport and two photos.\r\n",
+        );
+        assert!(raw.len() < EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+
+        let (message, refetched) = message_from_prefix(raw);
+
+        assert_eq!(message.body_text, "Bring the old passport and two photos.");
+        assert!(
+            refetched.is_empty(),
+            "a message under the window must never be refetched"
+        );
+    }
+
+    #[test]
+    fn prefix_fetch_keeps_text_that_ended_before_the_cut() {
+        let raw = multipart_mail(
+            &text_part("See the attached report."),
+            &attachment_part(400_000),
+        );
+        assert!(raw.len() > EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+
+        let (message, refetched) = message_from_prefix(&raw);
+
+        assert_eq!(message.subject, "Report");
+        assert_eq!(message.from, "Reports <reports@example.com>");
+        assert_eq!(message.message_id, "report-9@example.com");
+        assert_eq!(message.body_text, "See the attached report.");
+        assert!(
+            refetched.is_empty(),
+            "the text part closed inside the fetched bytes, so no refetch is needed"
+        );
+    }
+
+    #[test]
+    fn prefix_fetch_refetches_text_that_starts_after_a_large_attachment() {
+        let raw = multipart_mail(
+            &attachment_part(400_000),
+            &text_part("See the attached report."),
+        );
+        assert!(raw.len() > EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+
+        let (message, refetched) = message_from_prefix(&raw);
+
+        assert_eq!(message.subject, "Report");
+        assert_eq!(message.body_text, "See the attached report.");
+        assert_eq!(refetched, vec![9], "exactly one full refetch of that UID");
+    }
+
+    #[test]
+    fn prefix_fetch_refetches_text_cut_in_the_middle() {
+        let body = "b".repeat(20_000);
+        let raw = multipart_mail(&attachment_part(256_000), &text_part(&body));
+        assert!(raw.len() > EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+
+        let (message, refetched) = message_from_prefix(&raw);
+
+        assert_eq!(refetched, vec![9], "exactly one full refetch of that UID");
+        assert_eq!(
+            message.body_text.chars().count(),
+            EMAIL_CAPTURE_BODY_CHAR_LIMIT + 1
+        );
+        assert!(message.body_text.starts_with("bbb"));
+        assert!(message.body_text.ends_with('…'));
+    }
+
+    // A long plain-text mail is cut by the fetch too, but capture keeps only the first
+    // 16 000 characters, and the prefix already holds them. Refetching it would undo the
+    // whole point of the partial fetch.
+    #[test]
+    fn prefix_fetch_keeps_text_that_already_reached_the_kept_character_cap() {
+        let raw = format!(
+            "Message-ID: <long-1@example.com>\r\n\
+             From: Reports <reports@example.com>\r\n\
+             Subject: Report\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             {}",
+            "c".repeat(300_000)
+        );
+        assert!(raw.len() > EMAIL_CAPTURE_FETCH_BYTE_LIMIT);
+
+        let (message, refetched) = message_from_prefix(&raw);
+
+        assert_eq!(
+            message.body_text.chars().count(),
+            EMAIL_CAPTURE_BODY_CHAR_LIMIT + 1
+        );
+        assert!(
+            refetched.is_empty(),
+            "nothing past the kept-character cap would be stored, so no refetch"
+        );
+    }
+
+    #[test]
+    fn prefix_fetch_reports_a_failed_refetch_like_any_other_fetch_failure() {
+        let raw = multipart_mail(
+            &attachment_part(400_000),
+            &text_part("See the attached report."),
+        );
+
+        let error = email_capture_message_from_prefix(
+            9,
+            7,
+            &raw.as_bytes()[..EMAIL_CAPTURE_FETCH_BYTE_LIMIT],
+            |_| Err(EmailCaptureError::network("Connection lost")),
+        )
+        .expect_err("a failed refetch must surface as a poll error");
+
+        assert_eq!(error.kind, "network");
+        assert_eq!(error.message, "Connection lost");
     }
 
     #[test]
