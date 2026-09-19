@@ -152,11 +152,28 @@ fn validate_managed_audio_path(data_dir: &Path, audio_path: &Path) -> Result<Pat
     Ok(audio_file)
 }
 
+// The model path is stored as an absolute path in device-local settings and
+// wins over a fresh lookup, so #1245 (an installed profile's folders moved down
+// into `data/`) left every stored path naming a file that is no longer there.
+// Retry the same file name under the current install dir; the caller's managed
+// check still has to pass, so this opens no location the app did not install.
+fn rehomed_managed_model_path(data_dir: &Path, install_dir_name: &str, model_path: &Path) -> PathBuf {
+    model_path
+        .file_name()
+        .map(|name| data_dir.join(install_dir_name).join(name))
+        .unwrap_or_else(|| model_path.to_path_buf())
+}
+
 fn validate_managed_whisper_model_path(
     data_dir: &Path,
     model_path: &Path,
 ) -> Result<PathBuf, String> {
-    let model_file = canonicalize_existing_file(model_path, "Whisper model")?;
+    let recorded = if model_path.is_file() {
+        model_path.to_path_buf()
+    } else {
+        rehomed_managed_model_path(data_dir, WHISPER_INSTALL_DIR_NAME, model_path)
+    };
+    let model_file = canonicalize_existing_file(&recorded, "Whisper model")?;
     for model in WHISPER_MODEL_IDS {
         if let Some(expected_path) = whisper_model_path(data_dir, model) {
             if let Ok(expected_file) = fs::canonicalize(expected_path) {
@@ -173,7 +190,12 @@ fn validate_managed_parakeet_model_dir(
     data_dir: &Path,
     model_path: &Path,
 ) -> Result<PathBuf, String> {
-    let model_dir = canonicalize_existing_dir(model_path, "Parakeet model directory")?;
+    let recorded = if model_path.is_dir() {
+        model_path.to_path_buf()
+    } else {
+        parakeet_model_dir(data_dir)
+    };
+    let model_dir = canonicalize_existing_dir(&recorded, "Parakeet model directory")?;
     let expected_dir = fs::canonicalize(parakeet_model_dir(data_dir))
         .map_err(|error| format!("Invalid Parakeet model directory: {error}"))?;
     if model_dir != expected_dir {
@@ -1128,6 +1150,54 @@ mod tests {
             parakeet_model_dir(data_dir),
             PathBuf::from("/home/dd/.local/share/mindwtr/parakeet-model")
         );
+    }
+
+    // #1245 moved an installed Windows/macOS profile's managed folders from
+    // <root>/ down into <root>/data/. The speech model path is stored as an
+    // absolute path in device-local settings and wins over a fresh lookup, so
+    // after the upgrade every transcription failed with "model not found" —
+    // and a voice note recorded in that state was deleted unheard.
+    #[test]
+    fn whisper_model_recorded_at_the_flat_root_resolves_under_the_current_data_dir() {
+        let temp_dir = tempfile::tempdir().expect("should create temp dir");
+        let root = temp_dir.path().join("mindwtr");
+        let data_dir = root.join("data");
+        let model_dir = data_dir.join(WHISPER_INSTALL_DIR_NAME);
+        fs::create_dir_all(&model_dir).expect("should create model dir");
+        let model_file = model_dir.join("ggml-base.bin");
+        fs::write(&model_file, b"weights").expect("should write model");
+
+        let stale = root.join(WHISPER_INSTALL_DIR_NAME).join("ggml-base.bin");
+        assert_eq!(
+            validate_managed_whisper_model_path(&data_dir, &stale).expect("stale path re-homes"),
+            fs::canonicalize(&model_file).expect("canonicalize")
+        );
+
+        // The result must still be a model Mindwtr installed: an unmanaged file
+        // name never resolves, wherever it was recorded.
+        let unmanaged = root.join(WHISPER_INSTALL_DIR_NAME).join("evil.bin");
+        fs::write(model_dir.join("evil.bin"), b"weights").expect("should write file");
+        assert!(validate_managed_whisper_model_path(&data_dir, &unmanaged).is_err());
+    }
+
+    #[test]
+    fn parakeet_model_dir_recorded_at_the_flat_root_resolves_under_the_current_data_dir() {
+        let temp_dir = tempfile::tempdir().expect("should create temp dir");
+        let root = temp_dir.path().join("mindwtr");
+        let data_dir = root.join("data");
+        let model_dir = parakeet_model_dir(&data_dir);
+        fs::create_dir_all(&model_dir).expect("should create model dir");
+
+        let stale = root.join(PARAKEET_INSTALL_DIR_NAME);
+        assert_eq!(
+            validate_managed_parakeet_model_dir(&data_dir, &stale).expect("stale dir re-homes"),
+            fs::canonicalize(&model_dir).expect("canonicalize")
+        );
+
+        // A directory that is neither the recorded one nor the managed one stays refused.
+        let elsewhere = root.join("somewhere-else");
+        fs::create_dir_all(&elsewhere).expect("should create dir");
+        assert!(validate_managed_parakeet_model_dir(&data_dir, &elsewhere).is_err());
     }
 
     #[test]
