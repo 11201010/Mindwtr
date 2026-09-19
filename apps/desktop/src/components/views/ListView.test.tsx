@@ -949,6 +949,51 @@ describe('ListView', () => {
     });
   });
 
+  it('does not count criteria this view never applies as active filters', async () => {
+    useTaskStore.setState({
+      _allTasks: [makeTask('plain', { title: 'Unprioritized task' })],
+      lastDataChangeAt: 1,
+    });
+    useUiStore.setState((state) => ({
+      ...state,
+      listFilters: { criteria: { priority: ['high'] }, open: true },
+    }));
+
+    const view = renderListView('next', 'Next');
+
+    // The priority category is gated off here (no task carries a priority), so
+    // the list is unfiltered and the header claims no filter.
+    await waitFor(() => expect(view.getByText('Unprioritized task')).toBeInTheDocument());
+    expect(view.queryByText('No tasks match these filters.')).not.toBeInTheDocument();
+    const summaryRow = view.getByText('1 tasks').parentElement as HTMLElement;
+    expect(within(summaryRow).queryByText(/High/)).toBeNull();
+
+    // The chip stays, muted and removable, so the selection can be cleared.
+    const chip = view.getByRole('button', { name: 'Remove filter: High' }).parentElement as HTMLElement;
+    expect(chip.className).toContain('opacity-60');
+    fireEvent.click(view.getByRole('button', { name: 'Remove filter: High' }));
+    await waitFor(() => expect(useUiStore.getState().listFilters.criteria).not.toHaveProperty('priority'));
+  });
+
+  it('keeps the filtered empty state for criteria this view does apply', async () => {
+    useTaskStore.setState({
+      _allTasks: [makeTask('prioritized', { title: 'Urgent task', priority: 'urgent' })],
+      lastDataChangeAt: 1,
+    });
+    useUiStore.setState((state) => ({
+      ...state,
+      listFilters: { criteria: { priority: ['high'] }, open: true },
+    }));
+
+    const view = renderListView('next', 'Next');
+
+    await waitFor(() => expect(view.getByText('No tasks match these filters.')).toBeInTheDocument());
+    expect(view.getByRole('button', { name: 'Remove filter: High' }).parentElement?.className)
+      .not.toContain('opacity-60');
+    const summaryRow = view.getByText('0 tasks').parentElement as HTMLElement;
+    expect(within(summaryRow).getByText(/High/)).toBeInTheDocument();
+  });
+
   it('masks context criteria in Reference without clearing them or disabling tag filters', async () => {
     useTaskStore.setState({
       _allTasks: [

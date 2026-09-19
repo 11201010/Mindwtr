@@ -1051,10 +1051,16 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             onRemove: () => setSearchQuery(''),
         });
     }
+    // The list filter criteria are one selection shared by every list view
+    // (#956), so a view can hold criteria it does not apply: contexts in
+    // Reference, and priority / time estimate where the category is gated off.
+    // Those chips stay visible and removable, but muted, and they never count
+    // as an active filter (see activeListFilterCriteria).
     [...(listFilterCriteria.contexts ?? []), ...(listFilterCriteria.tags ?? [])].forEach((token) => {
         activeFilterChips.push({
             id: `token:${token}`,
             label: token,
+            inactive: isReferenceView && !token.trim().startsWith('#'),
             onRemove: () => removeFilterChip(`token:${token}`),
         });
     });
@@ -1063,6 +1069,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             id: `excluded-token:${token}`,
             label: token,
             excluded: true,
+            inactive: isReferenceView && !token.trim().startsWith('#'),
             onRemove: () => removeFilterChip(`excluded-token:${token}`),
         });
     });
@@ -1085,6 +1092,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             label: priority === 'none'
                 ? t('focus.group.noPriority')
                 : t(`priority.${priority}`),
+            inactive: !showPriorityFilters,
             onRemove: () => removeFilterChip(`priority:${priority}`),
         });
     });
@@ -1099,6 +1107,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         activeFilterChips.push({
             id: `time:${estimate}`,
             label: formatEstimate(estimate),
+            inactive: !showTimeEstimateFilters,
             onRemove: () => removeFilterChip(`time:${estimate}`),
         });
     });
@@ -1112,6 +1121,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             label: chip.label,
             dotColor: chip.color,
             isAdvanced: true,
+            inactive: chip.id === 'timeEstimateRange' && !showTimeEstimateFilters,
             onRemove: () => removeFilterChip(`advanced:${chip.id}`),
         });
     });
@@ -1129,10 +1139,15 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             onRemove: () => setIncludeArchivedReferenceProjects(false),
         });
     }
-    const filterSummary = activeFilterChips.map((chip) => (
-        chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label
-    ));
+    const filterSummary = activeFilterChips
+        .filter((chip) => !chip.inactive)
+        .map((chip) => (chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label));
+    // "Filtered" means the list really is narrowed: the header badge, the
+    // empty-state wording and the Inbox mind-sweep action all read this.
     const hasFilters = filterSummary.length > 0;
+    // Whether anything is selected at all — a muted chip must stay reachable
+    // (and clearable) even when the view applies none of the selection.
+    const hasFilterChips = activeFilterChips.length > 0;
     const filterSummaryLabel = filterSummary.slice(0, 3).join(', ');
     const filterSummarySuffix = filterSummary.length > 3 ? ` +${filterSummary.length - 3}` : '';
     const showFiltersPanel = filtersOpen;
@@ -1451,11 +1466,11 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                         </div>
                     )}
 
-                    {showFilters && (showFiltersPanel || hasFilters) && !isProcessing && (
+                    {showFilters && (showFiltersPanel || hasFilterChips) && !isProcessing && (
                         <ListFiltersPanel
                             t={t}
                             activeFilterChips={activeFilterChips}
-                            hasFilters={hasFilters}
+                            hasFilters={hasFilterChips}
                             showFiltersPanel={showFiltersPanel}
                             onClose={() => setFiltersOpen(false)}
                             onClearFilters={() => {

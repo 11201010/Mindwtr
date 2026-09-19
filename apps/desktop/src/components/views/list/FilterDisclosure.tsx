@@ -10,6 +10,8 @@ export type DesktopActiveFilterChip = {
     dotColor?: string;
     isAdvanced?: boolean;
     excluded?: boolean;
+    /** Selected, but this view does not apply it: shown muted, still removable. */
+    inactive?: boolean;
     onRemove?: () => void;
 };
 
@@ -34,6 +36,7 @@ export function ActiveFilterChips({ chips, excludedLabel, removeLabel }: ActiveF
                             : chip.isAdvanced
                                 ? 'border border-dashed border-primary/50 bg-muted/40 text-primary'
                                 : 'bg-muted text-muted-foreground',
+                        chip.inactive && 'opacity-60',
                     )}
                 >
                     {chip.dotColor && (
