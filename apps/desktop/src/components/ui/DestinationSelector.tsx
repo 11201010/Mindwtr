@@ -204,7 +204,8 @@ export function DestinationSelector({
     const canCreateArea = showAreas
         && Boolean(onCreateArea)
         && Boolean(normalizedQuery)
-        && !areas.some((area) => area.name.trim().toLocaleLowerCase() === normalizedQuery);
+        // Against the live areas only: a deleted area's name is free again.
+        && !sortedAreas.some((area) => area.name.trim().toLocaleLowerCase() === normalizedQuery);
 
     // Enter matches ui/ProjectSelector: an empty search picks nothing (it used
     // to file the draft under the alphabetically first project), and with no

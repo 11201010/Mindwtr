@@ -88,6 +88,21 @@ describe('DestinationSelector', () => {
         expect(onChange).toHaveBeenCalledExactlyOnceWith({ kind: 'project', id: 'project-work' });
     });
 
+    it('offers to create an area whose name only a deleted area still holds', () => {
+        const deletedArea: Area = {
+            ...areas[0],
+            id: 'area-garden',
+            name: 'Garden',
+            deletedAt: '2026-01-01T00:00:00.000Z',
+        };
+        const { getByRole, getByLabelText } = renderSelector({ areas: [...areas, deletedArea] });
+
+        fireEvent.click(getByRole('button', { name: 'Destination' }));
+        setInputValue(getByLabelText('Search') as HTMLInputElement, 'Garden');
+
+        expect(getByRole('button', { name: 'New area: “Garden”' })).toBeInTheDocument();
+    });
+
     it('ignores Enter on an empty search instead of picking the first project', () => {
         const onChange = vi.fn();
         const { getByRole, getByLabelText } = renderSelector({ onChange });
