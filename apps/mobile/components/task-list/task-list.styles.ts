@@ -67,6 +67,17 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // With the active-filter count beside the icon the circle grows into a pill.
+  directControlButtonCounted: {
+    width: 'auto',
+    paddingHorizontal: 6,
+  },
+  directControlVisualCounted: {
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 9,
+    width: 'auto',
+  },
   headerAccessoryRight: {
     alignItems: 'center',
     flexDirection: 'row',

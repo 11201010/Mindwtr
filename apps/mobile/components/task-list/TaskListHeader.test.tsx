@@ -107,6 +107,23 @@ describe('TaskListHeader', () => {
     expect(html.indexOf('data-icon="sliders-horizontal"')).toBeLessThan(html.indexOf('Mind Sweep'));
   });
 
+  // A tinted border says "some filter is on" but not how many; a forgotten
+  // second filter then looks like missing tasks.
+  it('shows how many filters are active on the compact Inbox filter button', () => {
+    const html = renderHeader({
+      directControls: true,
+      filterActiveCount: 3,
+      hasActiveFilters: true,
+      onOpenGroup: vi.fn(),
+    } as Partial<React.ComponentProps<typeof TaskListHeader>>);
+
+    expect(html).toContain('aria-label="Filters: 3"');
+    expect(html).toContain('>3<');
+    // No count while nothing is filtered.
+    expect(renderHeader({ directControls: true, onOpenGroup: vi.fn() } as Partial<React.ComponentProps<typeof TaskListHeader>>))
+      .not.toContain('>0<');
+  });
+
   it('keeps inactive filters and view options behind one neutral overflow control', () => {
     const html = renderHeader();
 

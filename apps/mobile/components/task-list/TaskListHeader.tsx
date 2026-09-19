@@ -128,11 +128,12 @@ export function TaskListHeader({
           accessibilityRole="button"
           accessibilityState={{ selected: hasActiveFilters }}
           onPress={onOpenFilters}
-          style={styles.directControlButton}
+          style={[styles.directControlButton, hasActiveFilters ? styles.directControlButtonCounted : null]}
         >
           <View
             style={[
               styles.directControlVisual,
+              hasActiveFilters ? styles.directControlVisualCounted : null,
               {
                 borderColor: hasActiveFilters ? themeColors.tint : themeColors.border,
                 backgroundColor: themeColors.filterBg,
@@ -144,6 +145,12 @@ export function TaskListHeader({
               color={hasActiveFilters ? themeColors.tint : themeColors.secondaryText}
               strokeWidth={2}
             />
+            {/* How many filters are on, not just that some are. */}
+            {hasActiveFilters ? (
+              <Text style={[styles.activeFiltersButtonText, { color: themeColors.tint }]}>
+                {filterActiveCount}
+              </Text>
+            ) : null}
           </View>
         </TouchableOpacity>
       ) : null}
