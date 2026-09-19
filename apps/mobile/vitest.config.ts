@@ -12,6 +12,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     setupFiles: ['vitest.setup.ts'],
+    // Harness timeout, not a performance budget: heavy screen renders cross
+    // Vitest's 5 s default when the machine is busy. Budgets live in the perf suite.
+    testTimeout: 30_000,
     // Vitest 4 narrowed discovery defaults; retain the Vitest 3 boundary.
     exclude: [
       ...configDefaults.exclude,

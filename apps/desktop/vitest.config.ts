@@ -27,6 +27,9 @@ export default defineConfig({
         environment: 'jsdom',
         setupFiles: './src/test/setup.ts',
         css: true,
+        // Harness timeout, not a performance budget: full-screen jsdom mounts cross
+        // Vitest's 5 s default when the machine is busy. Budgets live in the perf suite.
+        testTimeout: 30_000,
         // Vitest 4 narrowed discovery defaults; retain the Vitest 3 boundary.
         exclude: [
             ...configDefaults.exclude,
