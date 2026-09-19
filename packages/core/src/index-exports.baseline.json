@@ -1065,6 +1065,7 @@
     "resolveTextDirection",
     "resolveThemeColorScheme",
     "resolveTimeEstimateOptions",
+    "resolveTrashClearScope",
     "resolveUniqueName",
     "resolveWidgetTaskSort",
     "restoreSectionFromProjectArchive",

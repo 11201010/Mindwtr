@@ -85,6 +85,89 @@ describe('TrashView', () => {
         expect(screen.queryByText('Work deleted project')).not.toBeInTheDocument();
     });
 
+    // Purge cannot be undone, so Clear Trash may only delete what the screen lists.
+    const renderWithHiddenWorkArea = () => {
+        const workTask: Task = { ...recentTask, id: 'work-task', title: 'Work deleted task', areaId: 'area-work' };
+        const workProject: Project = { ...olderProject, id: 'work-project', title: 'Work deleted project', areaId: 'area-work' };
+        useTaskStore.setState({
+            _allAreas: [
+                { id: 'area-work', name: 'Work', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+            ],
+            _allTasks: [recentTask, workTask],
+            _tasksById: new Map([[recentTask.id, recentTask], [workTask.id, workTask]]),
+            _allProjects: [olderProject, workProject],
+            settings: { filters: { excludedAreaIds: ['area-work'] } },
+        });
+
+        render(
+            <LanguageProvider>
+                <TrashView />
+            </LanguageProvider>
+        );
+    };
+
+    it('Clear Trash leaves items hidden by the area filter restorable', async () => {
+        renderWithHiddenWorkArea();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear Trash' }));
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toHaveTextContent('1');            // counts the shown set
+        expect(dialog).not.toHaveTextContent(/all trashed/i);
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Trash' }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState()._allTasks.find((task) => task.id === recentTask.id)?.purgedAt).toBeTruthy();
+            expect(useTaskStore.getState()._allProjects.find((project) => project.id === olderProject.id)?.purgedAt).toBeTruthy();
+        });
+        expect(useTaskStore.getState()._allTasks.find((task) => task.id === 'work-task')?.purgedAt).toBeUndefined();
+        expect(useTaskStore.getState()._allProjects.find((project) => project.id === 'work-project')?.purgedAt).toBeUndefined();
+    });
+
+    it('Clear Trash leaves items hidden by the search box restorable', async () => {
+        const otherTask: Task = { ...recentTask, id: 'other-task', title: 'Another deleted task' };
+        useTaskStore.setState({
+            _allTasks: [recentTask, otherTask],
+            _tasksById: new Map([[recentTask.id, recentTask], [otherTask.id, otherTask]]),
+            _allProjects: [olderProject],
+        });
+
+        render(
+            <LanguageProvider>
+                <TrashView />
+            </LanguageProvider>
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('Search trashed tasks...'), { target: { value: 'Recently' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Clear Trash' }));
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).not.toHaveTextContent(/all trashed/i);
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Trash' }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState()._allTasks.find((task) => task.id === recentTask.id)?.purgedAt).toBeTruthy();
+        });
+        expect(useTaskStore.getState()._allTasks.find((task) => task.id === 'other-task')?.purgedAt).toBeUndefined();
+        expect(useTaskStore.getState()._allProjects.find((project) => project.id === olderProject.id)?.purgedAt).toBeUndefined();
+    });
+
+    it('Clear Trash with nothing hidden keeps the "all trashed" wording', async () => {
+        render(
+            <LanguageProvider>
+                <TrashView />
+            </LanguageProvider>
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear Trash' }));
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toHaveTextContent('all trashed tasks and projects');
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Trash' }));
+
+        await waitFor(() => {
+            expect(useTaskStore.getState()._allTasks.find((task) => task.id === recentTask.id)?.purgedAt).toBeTruthy();
+            expect(useTaskStore.getState()._allProjects.find((project) => project.id === olderProject.id)?.purgedAt).toBeTruthy();
+        });
+    });
+
     it('bulk restores selected trashed tasks and projects', async () => {
         render(
             <LanguageProvider>

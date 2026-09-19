@@ -3,6 +3,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import {
     buildTrashTimeline,
     projectMatchesAreaFilterSelection,
+    resolveTrashClearScope,
     safeFormatDate,
     shallow,
     taskMatchesAreaFilterSelection,
@@ -190,18 +191,34 @@ export function TrashView() {
         exitSelectionMode();
     }, [exitSelectionMode, purgeProject, purgeTasks, requestConfirmation, selectedProjectIds, selectedTaskIds, selectionCount, t]);
 
+    // Purge cannot be undone, so a filtered list may only clear what it shows.
     const handleClearTrash = async () => {
         if (trashedItemCount === 0) return;
-        const confirmed = await requestConfirmation({
-            title: t('trash.clearAllConfirm'),
-            description: trashedProjects.length > 0
-                ? t('trash.clearAllConfirmBodyWithProjects')
-                : t('trash.clearAllConfirmBody'),
-            confirmLabel: t('trash.clearAll'),
-            cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
-        });
+        const scope = resolveTrashClearScope(trashedTasks, trashedProjects, _allTasks, _allProjects);
+        const confirmed = await requestConfirmation(scope.narrowed
+            ? {
+                title: t('trash.deleteConfirm'),
+                description: `${scope.taskIds.length} ${t('common.tasks')} · ${scope.projectIds.length} ${t('projects.title')}. ${t('trash.deleteConfirmBody')}`,
+                confirmLabel: t('trash.clearAll'),
+                cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
+            }
+            : {
+                title: t('trash.clearAllConfirm'),
+                description: trashedProjects.length > 0
+                    ? t('trash.clearAllConfirmBodyWithProjects')
+                    : t('trash.clearAllConfirmBody'),
+                confirmLabel: t('trash.clearAll'),
+                cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
+            });
         if (!confirmed) return;
-        await Promise.all([purgeDeletedTasks(), purgeDeletedProjects()]);
+        if (!scope.narrowed) {
+            await Promise.all([purgeDeletedTasks(), purgeDeletedProjects()]);
+            return;
+        }
+        await Promise.all([
+            scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(),
+            ...scope.projectIds.map((projectId) => purgeProject(projectId)),
+        ]);
     };
 
     const handlePurgeTask = async (taskId: string) => {

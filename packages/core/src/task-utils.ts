@@ -977,6 +977,26 @@ export function buildTrashTimeline(
 }
 
 /**
+ * What "Clear Trash" may purge: exactly the shown items. `narrowed` is true when
+ * a filter hides at least one trashed item, so the caller must purge by id and
+ * say how many items it will delete instead of claiming "all".
+ */
+export function resolveTrashClearScope(
+    shownTasks: readonly Task[],
+    shownProjects: readonly Project[],
+    allTasks: readonly Task[],
+    allProjects: readonly Project[],
+): { narrowed: boolean; taskIds: string[]; projectIds: string[] } {
+    const inTrash = (item: { deletedAt?: string; purgedAt?: string }) => Boolean(item.deletedAt && !item.purgedAt);
+    return {
+        narrowed: shownTasks.length < allTasks.filter(inTrash).length
+            || shownProjects.length < allProjects.filter(inTrash).length,
+        taskIds: shownTasks.map((task) => task.id),
+        projectIds: shownProjects.map((project) => project.id),
+    };
+}
+
+/**
  * Sort tasks by a user-selected sort option.
  * Falls back to default sortTasks when sortBy is 'default' or undefined.
  */

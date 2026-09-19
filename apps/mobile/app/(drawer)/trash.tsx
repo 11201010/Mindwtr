@@ -1,5 +1,5 @@
 import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
-import { buildTrashTimeline, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
+import { buildTrashTimeline, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, resolveTrashClearScope, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
 import type { Project, StoreActionResult, Task } from '@mindwtr/core';
 import { MarkdownInlineText } from '@/components/markdown-text';
 import { assertBulkActionSucceeded } from '@/components/use-task-list-selection';
@@ -413,19 +413,32 @@ export default function TrashScreen() {
     );
   };
 
+  // Purge cannot be undone, so a filtered list may only clear what it shows.
   const handleClearAll = () => {
     if (trashItems.length === 0) return;
+    const scope = resolveTrashClearScope(trashedTasks, trashedProjects, _allTasks, _allProjects);
     Alert.alert(
-      tFallback(t, 'trash.clearAllConfirm', 'Clear trash?'),
-      tFallback(t, 'trash.clearAllConfirmBodyWithProjects', 'This will permanently delete all trashed tasks and projects.'),
+      scope.narrowed
+        ? tFallback(t, 'trash.deleteConfirm', 'Delete permanently?')
+        : tFallback(t, 'trash.clearAllConfirm', 'Clear trash?'),
+      scope.narrowed
+        ? `${scope.taskIds.length} ${tFallback(t, 'common.tasks', 'tasks')} · ${scope.projectIds.length} ${tFallback(t, 'projects.title', 'projects')}. ${tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.')}`
+        : tFallback(t, 'trash.clearAllConfirmBodyWithProjects', 'This will permanently delete all trashed tasks and projects.'),
       [
         { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },
         {
           text: tFallback(t, 'trash.clearAll', 'Clear Trash'),
           style: 'destructive',
-          onPress: () => {
-            void purgeDeletedTasks();
-            void purgeDeletedProjects();
+          onPress: async () => {
+            if (!scope.narrowed) {
+              void purgeDeletedTasks();
+              void purgeDeletedProjects();
+              return;
+            }
+            await runTrashBulkAction(tFallback(t, 'trash.clearAll', 'Clear Trash'), () => Promise.all([
+              scope.taskIds.length > 0 ? purgeTasks(scope.taskIds) : Promise.resolve(undefined),
+              ...scope.projectIds.map((projectId) => purgeProject(projectId)),
+            ]));
           },
         },
       ]

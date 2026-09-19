@@ -18,6 +18,7 @@ import {
     getStatusColor,
     getTaskAgeLabel,
     rescheduleTask,
+    resolveTrashClearScope,
     extractWaitingPerson,
     getFocusSequentialFirstTaskIds,
     getSequentialFirstTaskIds,
@@ -52,6 +53,28 @@ describe('task-utils', () => {
             expect(timeline.map((item) => (
                 item.type === 'task' ? item.task.id : item.project.id
             ))).toEqual(['same-time-a', 'same-time-b', 'older-task']);
+        });
+    });
+
+    describe('resolveTrashClearScope', () => {
+        const all = [
+            { id: 'work', deletedAt: '2026-07-01T12:00:00.000Z' },
+            { id: 'home', deletedAt: '2026-07-02T12:00:00.000Z' },
+            { id: 'gone', deletedAt: '2026-07-03T12:00:00.000Z', purgedAt: '2026-07-04T12:00:00.000Z' },
+            { id: 'live' },
+        ] as Task[];
+
+        it('is not narrowed when every trashed item is shown', () => {
+            const scope = resolveTrashClearScope([all[0], all[1]], [], all, []);
+            expect(scope).toEqual({ narrowed: false, taskIds: ['work', 'home'], projectIds: [] });
+        });
+
+        it('is narrowed when a trashed task or project is hidden', () => {
+            const projects = [{ id: 'p-hidden', deletedAt: '2026-07-01T12:00:00.000Z' }] as Project[];
+            expect(resolveTrashClearScope([all[0]], [], all, []).narrowed).toBe(true);
+            expect(resolveTrashClearScope([all[0], all[1]], [], all, projects)).toEqual({
+                narrowed: true, taskIds: ['work', 'home'], projectIds: [],
+            });
         });
     });
 

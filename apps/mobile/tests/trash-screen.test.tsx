@@ -194,6 +194,67 @@ describe('TrashScreen', () => {
     node.props?.accessibilityLabel === label && typeof node.props?.onPress === 'function'
   ))[0];
 
+  // The Clear Trash button carries no accessibility label, so it is found by the
+  // text it renders. The last match is the innermost pressable holding that text.
+  const instanceText = (node: renderer.ReactTestInstance) => [node, ...node.findAll(() => true)]
+    .flatMap((child) => child.children)
+    .filter((child): child is string => typeof child === 'string')
+    .join('');
+
+  const findPressableByText = (tree: renderer.ReactTestRenderer, text: string) => tree.root.findAll((node) => (
+    typeof node.props?.onPress === 'function' && instanceText(node).includes(text)
+  )).slice(-1)[0];
+
+  // Purge cannot be undone, so Clear Trash may only delete what the screen lists.
+  it('clears only the trashed items the area filter shows', async () => {
+    mocks.areaFilter.areaById = new Map([['a1', { id: 'a1', name: 'Work', order: 0 }]]);
+    mocks.storeState._allTasks.push({
+      ...mocks.storeState._allTasks[0], id: 'work-task', title: 'Work deleted task', areaId: 'a1',
+    });
+    mocks.storeState._allProjects.push({
+      ...mocks.storeState._allProjects[0], id: 'work-project', title: 'Work deleted project', areaId: 'a1',
+    });
+    mocks.areaFilter.resolvedAreaFilter = { included: [], excluded: ['a1'] };
+    const alertSpy = vi.spyOn(Alert, 'alert');
+
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<TrashScreen />);
+    });
+    renderer.act(() => { findPressableByText(tree, 'Clear Trash').props.onPress(); });
+
+    // The counts sentence names the shown set, not "all trashed".
+    expect(alertSpy.mock.calls[0]?.[1]).toContain('1 tasks · 1 Projects');
+    const confirmButton = (alertSpy.mock.calls[0]?.[2] ?? []).find((button) => button.style === 'destructive');
+    await renderer.act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    expect(mocks.storeState.purgeTasks).toHaveBeenCalledWith(['recent-task']);
+    expect(mocks.storeState.purgeProject).toHaveBeenCalledWith('older-project');
+    expect(mocks.storeState.purgeDeletedTasks).not.toHaveBeenCalled();
+    expect(mocks.storeState.purgeDeletedProjects).not.toHaveBeenCalled();
+  });
+
+  it('clears the whole trash when the list hides nothing', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(<TrashScreen />);
+    });
+    renderer.act(() => { findPressableByText(tree, 'Clear Trash').props.onPress(); });
+
+    expect(alertSpy.mock.calls[0]?.[1]).toBe('This will permanently delete all trashed tasks and projects.');
+    const confirmButton = (alertSpy.mock.calls[0]?.[2] ?? []).find((button) => button.style === 'destructive');
+    await renderer.act(async () => {
+      await confirmButton?.onPress?.();
+    });
+
+    expect(mocks.storeState.purgeDeletedTasks).toHaveBeenCalled();
+    expect(mocks.storeState.purgeDeletedProjects).toHaveBeenCalled();
+    expect(mocks.storeState.purgeTasks).not.toHaveBeenCalled();
+  });
+
   it('bulk restores all selected tasks and projects', async () => {
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
