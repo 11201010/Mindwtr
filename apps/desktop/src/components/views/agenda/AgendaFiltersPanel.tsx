@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
-import { tFallback } from '@mindwtr/core';
+import { SAVED_FILTER_NO_PROJECT_ID, tFallback } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, TaskEnergyLevel, TaskPriority, TimeEstimate } from '@mindwtr/core';
 import { Filter, Save } from 'lucide-react';
 
@@ -163,7 +163,7 @@ export function AgendaFiltersPanel({
         ...excludedTokens.map((token) => `${excludedStateLabel}: ${token}`),
     ], allLabel);
     const projectSummary = summarizeFilterValues(selectedProjects.map((projectId) => (
-        projectId === '__no_project__'
+        projectId === SAVED_FILTER_NO_PROJECT_ID
             ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
             : projectTitleById.get(projectId) ?? projectId
     )), allLabel);
@@ -327,11 +327,11 @@ export function AgendaFiltersPanel({
                                 {showNoProjectOption && matchesFilterOption(tFallback(t, 'taskEdit.noProjectOption', 'No project'), projectQuery) && (
                                     <button
                                         type="button"
-                                        onClick={() => onToggleProject('__no_project__')}
-                                        aria-pressed={selectedProjects.includes('__no_project__')}
+                                        onClick={() => onToggleProject(SAVED_FILTER_NO_PROJECT_ID)}
+                                        aria-pressed={selectedProjects.includes(SAVED_FILTER_NO_PROJECT_ID)}
                                         className={cn(
                                             FILTER_OPTION_BASE,
-                                            selectedProjects.includes('__no_project__')
+                                            selectedProjects.includes(SAVED_FILTER_NO_PROJECT_ID)
                                                 ? 'bg-primary text-primary-foreground'
                                                 : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                         )}

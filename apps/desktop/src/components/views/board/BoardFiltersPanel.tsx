@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Filter } from 'lucide-react';
-import { tFallback } from '@mindwtr/core';
+import { SAVED_FILTER_NO_PROJECT_ID, tFallback } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode } from '@mindwtr/core';
 
 import { cn } from '../../../lib/utils';
@@ -113,7 +113,7 @@ export function BoardFiltersPanel({
     ], allLabel);
     const dueSummary = selectedDuePreset ? t(`filters.datePreset.${selectedDuePreset}`) : allLabel;
     const projectSummary = summarizeFilterValues(selectedProjectIds.map((projectId) => (
-        projectId === '__no_project__' ? noProjectLabel : projectTitleById.get(projectId) ?? projectId
+        projectId === SAVED_FILTER_NO_PROJECT_ID ? noProjectLabel : projectTitleById.get(projectId) ?? projectId
     )), allLabel);
 
     const closePanel = () => {
@@ -270,11 +270,11 @@ export function BoardFiltersPanel({
                             {matchesFilterOption(noProjectLabel, projectQuery) && (
                                 <button
                                     type="button"
-                                    onClick={() => onToggleProject('__no_project__')}
-                                    aria-pressed={selectedProjectIds.includes('__no_project__')}
+                                    onClick={() => onToggleProject(SAVED_FILTER_NO_PROJECT_ID)}
+                                    aria-pressed={selectedProjectIds.includes(SAVED_FILTER_NO_PROJECT_ID)}
                                     className={cn(
                                         FILTER_OPTION_BASE,
-                                        selectedProjectIds.includes('__no_project__')
+                                        selectedProjectIds.includes(SAVED_FILTER_NO_PROJECT_ID)
                                             ? 'bg-primary text-primary-foreground'
                                             : 'bg-muted text-muted-foreground hover:bg-muted/80',
                                     )}
