@@ -13,6 +13,7 @@ import {
     cloudRequestJson,
     buildCloudCalendarFeedUrl,
     getCloudCalendarFeedEndpoint,
+    isBlockedAttachmentContentRefusal,
     isValidCloudSyncToken,
 } from './cloud';
 import { MAX_DOWNLOAD_BYTES, ResponseTooLargeError } from './http-utils';
@@ -336,6 +337,61 @@ describe('cloud sync http helpers', () => {
             message: 'Cloud File GET failed (404): Not Found',
             status: 404,
             statusCode: 404,
+        });
+    });
+
+    // Only the server's own "these bytes are not allowed" answers may ever be treated as
+    // final. A `400 Invalid attachment path` is about the server's storage folder and hits
+    // every upload at once, so counting it would soft-delete every waiting attachment.
+    describe('upload refusals', () => {
+        const refusalResponse = (status: number, body: string) =>
+            ({
+                ok: false,
+                status,
+                statusText: 'Bad Request',
+                text: async () => body,
+            }) as unknown as Response;
+
+        const putRejection = async (status: number, body: string): Promise<unknown> => {
+            const fetcher = vi.fn(async () => refusalResponse(status, body));
+            return await cloudPutFile(
+                'https://example.com/v1/attachments/a.txt',
+                new Uint8Array([1]),
+                'application/octet-stream',
+                { fetcher },
+            ).then(() => undefined, (error: unknown) => error);
+        };
+
+        it.each([
+            'Blocked executable attachment signature: elf',
+            'Blocked attachment content type: application/x-msdownload',
+        ])('recognises %s as a refusal of the bytes', async (serverMessage) => {
+            const error = await putRejection(400, JSON.stringify({ error: serverMessage }));
+
+            expect(isBlockedAttachmentContentRefusal(error)).toBe(true);
+            // The server's words stay off the message, which is what reaches the logs.
+            expect((error as Error).message).not.toContain('Blocked');
+        });
+
+        it.each([
+            ['Invalid attachment path', JSON.stringify({ error: 'Invalid attachment path' })],
+            ['a non-JSON body', 'Blocked by the proxy'],
+            ['an empty body', ''],
+        ])('does not treat %s as a refusal of the bytes', async (_label, body) => {
+            expect(isBlockedAttachmentContentRefusal(await putRejection(400, body))).toBe(false);
+        });
+
+        it('reads no body for a status other than 400', async () => {
+            const error = await putRejection(503, JSON.stringify({ error: 'Blocked executable' }));
+
+            expect(isBlockedAttachmentContentRefusal(error)).toBe(false);
+            expect((error as { refusalText?: string }).refusalText).toBeUndefined();
+        });
+
+        it('is false for anything that is not a cloud refusal', () => {
+            expect(isBlockedAttachmentContentRefusal(new Error('boom'))).toBe(false);
+            expect(isBlockedAttachmentContentRefusal(null)).toBe(false);
+            expect(isBlockedAttachmentContentRefusal(undefined)).toBe(false);
         });
     });
 

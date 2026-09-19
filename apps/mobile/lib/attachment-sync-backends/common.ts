@@ -897,6 +897,9 @@ const cancelUploadTask = async (task: unknown): Promise<void> => {
 
 const WEBDAV_STREAM_UPLOAD_TIMEOUT_MS = 30_000;
 const CLOUD_STREAM_UPLOAD_TIMEOUT_MS = 30_000;
+/** A refused upload's response body is kept only to classify the refusal, so a short
+ *  prefix is enough and a huge error page cannot be held in memory. */
+const MAX_UPLOAD_REFUSAL_TEXT_CHARS = 2_000;
 
 const runUploadTask = async <T,>(
   task: { uploadAsync: () => Promise<T> },
@@ -1094,6 +1097,15 @@ export const uploadCloudFileWithFileSystem = async (
     if (status && (status < 200 || status >= 300)) {
       const error = new Error(`Cloud File PUT failed (${status})`);
       (error as { status?: number }).status = status;
+      // Only a 400 needs its words, and only so the caller can tell a refusal of these bytes
+      // from one about the server's storage folder (core's isBlockedAttachmentContentRefusal
+      // reads it). Remote text: it never joins the message, so it cannot reach a log.
+      if (status === 400) {
+        const body = (result as { body?: unknown } | null)?.body;
+        if (typeof body === 'string') {
+          (error as { refusalText?: string }).refusalText = body.slice(0, MAX_UPLOAD_REFUSAL_TEXT_CHARS);
+        }
+      }
       throw error;
     }
     return true;

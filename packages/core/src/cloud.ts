@@ -85,6 +85,13 @@ const CLOUD_TIMEOUT_ERROR = 'Cloud request timed out';
 export class CloudHttpError extends Error {
     status: number;
     statusCode: number;
+    /**
+     * A refused upload's raw response body, set only for a `400` on an attachment PUT.
+     * Remote text, so it never reaches a log or an error message:
+     * `isBlockedAttachmentContentRefusal` is its only reader, and the callers build their
+     * own fixed reason strings.
+     */
+    refusalText?: string;
 
     constructor(message: string, status: number) {
         super(message);
@@ -93,6 +100,37 @@ export class CloudHttpError extends Error {
         this.statusCode = status;
     }
 }
+
+/** The prefix the cloud server uses when it refuses the BYTES of an upload:
+ *  `Blocked attachment content type: …` and `Blocked executable attachment signature: …`
+ *  (apps/cloud/src/server-attachments.ts). */
+const BLOCKED_ATTACHMENT_CONTENT_PREFIX = 'Blocked ';
+
+/**
+ * True only when the server said it will never accept THESE BYTES, which is the one kind
+ * of `400` an upload may treat as final.
+ *
+ * Every other `400` is about the request or the server, not the file: `Invalid attachment
+ * path` answers a storage folder that became a symbolic link or moved after start, and it
+ * hits every upload at once. Giving up on those would soft-delete every attachment still
+ * waiting to upload, and the tombstones would take them off the other devices too. So an
+ * unrecognised body, a non-JSON body (a proxy or firewall page) and a missing body all
+ * return false and stay retryable.
+ */
+export const isBlockedAttachmentContentRefusal = (error: unknown): boolean => {
+    const raw = (error as { refusalText?: unknown } | null | undefined)?.refusalText;
+    if (typeof raw !== 'string') return false;
+    const trimmed = raw.trim();
+    // The cloud server always answers `{"error":"…"}`; anything else is not it talking.
+    if (!trimmed.startsWith('{')) return false;
+    try {
+        const parsed = JSON.parse(trimmed) as { error?: unknown };
+        return typeof parsed.error === 'string'
+            && parsed.error.startsWith(BLOCKED_ATTACHMENT_CONTENT_PREFIX);
+    } catch {
+        return false;
+    }
+};
 
 const cloudHttpError = (label: string, res: Response): CloudHttpError => {
     const hint = res.status === 405 ? ' — this URL may not be a Mindwtr sync server (check host and port)' : '';
@@ -374,7 +412,17 @@ export async function cloudPutFile(
         fetcher,
         CLOUD_TIMEOUT_ERROR,
         async (res, signal) => {
-            if (!res.ok) throw cloudHttpError('Cloud File PUT', res);
+            if (!res.ok) {
+                const error = cloudHttpError('Cloud File PUT', res);
+                // Only a 400 needs its words read, and only so the caller can tell a refusal
+                // of these bytes from one about the server's storage folder. The body never
+                // joins the message, so it cannot reach a log.
+                if (res.status === 400) {
+                    error.refusalText = await readResponseText(res, MAX_ERROR_BODY_BYTES, signal)
+                        .catch(() => '');
+                }
+                throw error;
+            }
             await discardResponseBody(res, signal);
         },
     );

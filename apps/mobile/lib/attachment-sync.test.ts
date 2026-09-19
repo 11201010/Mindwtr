@@ -2830,10 +2830,16 @@ describe('attachment sync', () => {
       settings: {},
     });
 
-    const rejectUploadsWith = async (status: number): Promise<void> => {
+    const BLOCKED_SIGNATURE = 'Blocked executable attachment signature: elf';
+
+    /** `refusalText` is the raw response body both upload transports put on the error. */
+    const rejectUploadsWith = async (status: number, serverMessage?: string): Promise<void> => {
       const core = await import('@mindwtr/core');
       vi.mocked(core.cloudPutFile).mockRejectedValue(
-        Object.assign(new Error(`Cloud File PUT failed (${status})`), { status }),
+        Object.assign(new Error(`Cloud File PUT failed (${status})`), {
+          status,
+          ...(serverMessage === undefined ? {} : { refusalText: JSON.stringify({ error: serverMessage }) }),
+        }),
       );
     };
 
@@ -2862,41 +2868,78 @@ describe('attachment sync', () => {
       vi.mocked(core.cloudPutFile).mockReset();
     });
 
-    it.each([400, 413])('marks a cloud attachment unrecoverable on the third %s answer', async (status) => {
-      await rejectUploadsWith(status);
-      const appData = refusedData();
+    it.each([
+      ['a blocked executable signature', 400, BLOCKED_SIGNATURE],
+      ['a blocked content type', 400, 'Blocked attachment content type: application/x-msdownload'],
+      ['a body over the server limit', 413, undefined],
+    ] as const)(
+      'marks a cloud attachment unrecoverable on the third answer of %s',
+      async (_label, status, serverMessage) => {
+        await rejectUploadsWith(status, serverMessage);
+        const appData = refusedData();
 
-      for (let cycle = 0; cycle < 2; cycle += 1) {
-        const { data } = syncResult(await runCloudUpload(appData), appData);
-        expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
-      }
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+          const { data } = syncResult(await runCloudUpload(appData), appData);
+          expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+        }
 
-      const { didMutate, data } = syncResult(await runCloudUpload(appData), appData);
-      expect(didMutate).toBe(true);
-      const attachment = data.tasks[0].attachments?.[0];
-      expect(attachment?.deletedAt).toBeDefined();
-      expect(attachment?.localStatus).toBe('missing');
-      expect(attachment?.cloudKey).toBeUndefined();
-    });
+        const { didMutate, data } = syncResult(await runCloudUpload(appData), appData);
+        expect(didMutate).toBe(true);
+        const attachment = data.tasks[0].attachments?.[0];
+        expect(attachment?.deletedAt).toBeDefined();
+        expect(attachment?.localStatus).toBe('missing');
+        expect(attachment?.cloudKey).toBeUndefined();
+      },
+    );
 
-    it('keeps a cloud attachment pending when the server answers 503', async () => {
-      await rejectUploadsWith(503);
+    // A 400 the server did not say about the bytes is about the server: a storage folder
+    // that became a symbolic link or moved answers `Invalid attachment path` to EVERY
+    // upload, and giving up on those would soft-delete every waiting attachment at once.
+    it.each([
+      ['400 Invalid attachment path', 400, 'Invalid attachment path'],
+      ['400 with no readable body', 400, undefined],
+      ['503 Unavailable', 503, 'Cloud storage unavailable'],
+    ] as const)('never gives up when the server answers %s', async (_label, status, serverMessage) => {
+      await rejectUploadsWith(status, serverMessage);
       const appData = refusedData();
 
       for (let cycle = 0; cycle < 3; cycle += 1) {
         const { data } = syncResult(await runCloudUpload(appData), appData);
         expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+        expect(data.tasks[0].attachments?.[0]?.localStatus).not.toBe('missing');
       }
     });
 
     it('does not count or mark anything during an activation probe', async () => {
-      await rejectUploadsWith(400);
+      await rejectUploadsWith(400, BLOCKED_SIGNATURE);
       const appData = refusedData();
 
       for (let cycle = 0; cycle < 3; cycle += 1) {
         const { data } = syncResult(await runCloudUpload(appData, { activationProbe: true }), appData);
         expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
       }
+    });
+
+    // The other devices hold the older copy of this attachment. A tombstone would reach
+    // them and their cleanup pass would delete it, leaving the bytes nowhere.
+    it('never tombstones a refused re-upload of edited content', async () => {
+      await rejectUploadsWith(400, BLOCKED_SIGNATURE);
+      const appData = refusedData();
+      Object.assign(appData.tasks[0].attachments![0], {
+        cloudKey: 'attachments/refused.txt',
+        fileHash: sha256Hex(new Uint8Array([1, 2, 3])),
+        pendingContentUpload: true,
+      });
+
+      for (let cycle = 0; cycle < 2; cycle += 1) await runCloudUpload(appData);
+      const { data } = syncResult(await runCloudUpload(appData), appData);
+
+      const attachment = data.tasks[0].attachments?.[0];
+      expect(attachment?.deletedAt).toBeUndefined();
+      expect(attachment?.cloudKey).toBe('attachments/refused.txt');
+      expect(attachment?.localStatus).toBe('available');
+      // Only the "waiting to re-upload" flag goes, which is what unblocks the document.
+      expect(attachment?.pendingContentUpload).toBeUndefined();
     });
   });
 

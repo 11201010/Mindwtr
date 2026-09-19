@@ -682,50 +682,116 @@ describe('desktop sync attachment backends', () => {
         const putCount = (fetcher: ReturnType<typeof vi.fn>): number =>
             fetcher.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PUT').length;
 
+        /** The cloud server's own error shape, `{"error":"…"}`, which is what the rule reads. */
+        const serverRefusal = (status: number, serverMessage: string) => {
+            const body = new TextEncoder().encode(JSON.stringify({ error: serverMessage }));
+            return vi.fn(async () => ({
+                ok: false,
+                status,
+                statusText: 'refused',
+                headers: new Headers(),
+                body: null,
+                arrayBuffer: async () => body.slice().buffer,
+            }) as Response);
+        };
+
+        // What the server says about THESE BYTES. Only these may end in a tombstone.
+        const FINAL_REFUSALS: Array<[string, number, string]> = [
+            [
+                'a blocked executable signature',
+                400,
+                'Blocked executable attachment signature: elf',
+            ],
+            [
+                'a blocked content type',
+                400,
+                'Blocked attachment content type: application/x-msdownload',
+            ],
+            ['a body over the server limit', 413, 'Payload too large'],
+        ];
+
         beforeEach(() => {
             fsMocks.exists.mockResolvedValue(true);
             fsMocks.readFile.mockResolvedValue(REFUSAL_BYTES);
         });
 
-        it.each([400, 413])('keeps a cloud attachment pending after fewer than three %s answers', async (status) => {
-            const fetcher = vi.fn(async () => errorResponse(status, 'refused'));
+        it.each(FINAL_REFUSALS)(
+            'keeps a cloud attachment pending after fewer than three answers of %s',
+            async (_label, status, serverMessage) => {
+                const fetcher = serverRefusal(status, serverMessage);
+                const deps = refusalDeps(fetcher);
+                const appData = pendingUploadData();
+
+                for (const expectedPuts of [1, 2]) {
+                    const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
+                    expect(attachment?.deletedAt).toBeUndefined();
+                    expect(attachment?.cloudKey).toBeUndefined();
+                    expect(putCount(fetcher)).toBe(expectedPuts);
+                }
+            },
+        );
+
+        it.each(FINAL_REFUSALS)(
+            'marks a cloud attachment unrecoverable on the third answer of %s',
+            async (_label, status, serverMessage) => {
+                const fetcher = serverRefusal(status, serverMessage);
+                const logSyncWarning = vi.fn();
+                const deps = refusalDeps(fetcher, logSyncWarning);
+                const appData = pendingUploadData();
+
+                await runCloudUpload(appData, deps);
+                await runCloudUpload(appData, deps);
+                const result = expectFoldedData(await runCloudUpload(appData, deps));
+
+                const attachment = result.tasks[0].attachments?.[0];
+                expect(attachment?.cloudKey).toBeUndefined();
+                expect(attachment?.localStatus).toBe('missing');
+                expect(attachment?.deletedAt).toBeDefined();
+                expect(putCount(fetcher)).toBe(3);
+                // The document handed in is never written to.
+                expect(appData.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+                // Nothing is pending any more, so the next cycle can write the tasks again.
+                expect(findPendingAttachmentUploads(result)).toHaveLength(0);
+                expect(logSyncWarning).toHaveBeenCalledWith(
+                    expect.stringContaining('marking attachment unrecoverable'),
+                );
+                // The server's own words never reach the log.
+                expect(JSON.stringify(logSyncWarning.mock.calls)).not.toContain('Blocked');
+            },
+        );
+
+        // A 400 the server did not say about the bytes is about the server: a storage folder
+        // that became a symbolic link or moved answers `Invalid attachment path` to EVERY
+        // upload. Giving up on those would soft-delete every waiting attachment at once, and
+        // the tombstones would take them off the other devices too.
+        it.each([
+            ['400 Invalid attachment path', 400, JSON.stringify({ error: 'Invalid attachment path' })],
+            ['a 400 with a proxy page for a body', 400, '<html>Blocked by the firewall</html>'],
+            ['a 400 with an empty body', 400, ''],
+            ['503 Unavailable', 503, JSON.stringify({ error: 'Cloud storage unavailable' })],
+        ])('never gives up when the server answers %s', async (_label, status, rawBody) => {
+            const bytes = new TextEncoder().encode(rawBody);
+            const fetcher = vi.fn(async () => ({
+                ok: false,
+                status,
+                statusText: 'refused',
+                headers: new Headers(),
+                body: null,
+                arrayBuffer: async () => bytes.slice().buffer,
+            }) as Response);
             const deps = refusalDeps(fetcher);
             const appData = pendingUploadData();
 
-            for (const expectedPuts of [1, 2]) {
+            for (let cycle = 0; cycle < 3; cycle += 1) {
                 const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
                 expect(attachment?.deletedAt).toBeUndefined();
-                expect(attachment?.cloudKey).toBeUndefined();
-                expect(putCount(fetcher)).toBe(expectedPuts);
+                expect(attachment?.localStatus).not.toBe('missing');
             }
-        });
-
-        it.each([400, 413])('marks a cloud attachment unrecoverable on the third %s answer', async (status) => {
-            const fetcher = vi.fn(async () => errorResponse(status, 'refused'));
-            const logSyncWarning = vi.fn();
-            const deps = refusalDeps(fetcher, logSyncWarning);
-            const appData = pendingUploadData();
-
-            await runCloudUpload(appData, deps);
-            await runCloudUpload(appData, deps);
-            const result = expectFoldedData(await runCloudUpload(appData, deps));
-
-            const attachment = result.tasks[0].attachments?.[0];
-            expect(attachment?.cloudKey).toBeUndefined();
-            expect(attachment?.localStatus).toBe('missing');
-            expect(attachment?.deletedAt).toBeDefined();
             expect(putCount(fetcher)).toBe(3);
-            // The document handed in is never written to.
-            expect(appData.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
-            // Nothing is pending any more, so the next cycle can write the tasks again.
-            expect(findPendingAttachmentUploads(result)).toHaveLength(0);
-            expect(logSyncWarning).toHaveBeenCalledWith(
-                expect.stringContaining('marking attachment unrecoverable'),
-            );
         });
 
         it('a successful upload resets the refusal count', async () => {
-            const fetcher = vi.fn(async () => errorResponse(400, 'refused'));
+            const fetcher = serverRefusal(400, 'Blocked executable attachment signature: elf');
             const deps = refusalDeps(fetcher);
             const appData = pendingUploadData();
 
@@ -741,20 +807,8 @@ describe('desktop sync attachment backends', () => {
             expect(putCount(fetcher)).toBe(5);
         });
 
-        it('keeps a cloud attachment pending when the server answers 503', async () => {
-            const fetcher = vi.fn(async () => errorResponse(503, 'Unavailable'));
-            const deps = refusalDeps(fetcher);
-            const appData = pendingUploadData();
-
-            for (let cycle = 0; cycle < 3; cycle += 1) {
-                const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
-                expect(attachment?.deletedAt).toBeUndefined();
-            }
-            expect(putCount(fetcher)).toBe(3);
-        });
-
         it('does not count or mark anything during an activation probe', async () => {
-            const fetcher = vi.fn(async () => errorResponse(400, 'refused'));
+            const fetcher = serverRefusal(400, 'Blocked executable attachment signature: elf');
             const deps = refusalDeps(fetcher);
             const appData = pendingUploadData();
 
@@ -765,6 +819,40 @@ describe('desktop sync attachment backends', () => {
                 );
                 expect(attachment?.deletedAt).toBeUndefined();
             }
+            expect(putCount(fetcher)).toBe(3);
+        });
+
+        // The other devices hold the older copy of this attachment. A tombstone would reach
+        // them and their cleanup pass would delete it, leaving the bytes nowhere.
+        it('never tombstones a refused re-upload of edited content', async () => {
+            const fetcher = serverRefusal(400, 'Blocked executable attachment signature: elf');
+            const logSyncWarning = vi.fn();
+            const deps = refusalDeps(fetcher, logSyncWarning);
+            const appData = createCandidateAttachmentData();
+            Object.assign(appData.tasks[0].attachments![0], {
+                fileHash: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
+                contentRev: 7,
+                contentMtimeMs: 1000,
+                contentSize: REFUSAL_BYTES.length,
+                pendingContentUpload: true,
+            });
+            const postMergeHelpers = () => ({
+                activationProbe: false,
+                ensureLocalSnapshotFresh: vi.fn(),
+                phase: 'post-merge' as const,
+            });
+
+            await runCloudUpload(appData, deps, postMergeHelpers());
+            await runCloudUpload(appData, deps, postMergeHelpers());
+            const result = expectFoldedData(await runCloudUpload(appData, deps, postMergeHelpers()));
+
+            const attachment = result.tasks[0].attachments?.[0];
+            expect(attachment?.deletedAt).toBeUndefined();
+            expect(attachment?.cloudKey).toBe('attachments/attachment-1.txt');
+            expect(attachment?.localStatus).toBe('available');
+            // Only the "waiting to re-upload" flag goes, which is what unblocks the document.
+            expect(attachment?.pendingContentUpload).toBeUndefined();
+            expect(findPendingAttachmentUploads(result)).toHaveLength(0);
             expect(putCount(fetcher)).toBe(3);
         });
     });

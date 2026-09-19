@@ -6,6 +6,7 @@ import {
   cloudPutFile,
   computeSha256Hex,
   isAbortError,
+  isBlockedAttachmentContentRefusal,
   validateAttachmentHash,
   validateAttachmentForUpload,
   type AppData,
@@ -399,20 +400,25 @@ export const syncCloudAttachments = async (
           throw error;
         }
         const status = Number((error as { status?: unknown } | null)?.status);
-        // The server's answer about these bytes is final (blocked content, or over its size
-        // limit). Bounded like desktop's client-side refusals: count it, and let the third
-        // one take the attachment out of the pending-upload list, which is what lets the
-        // rest of the document reach the other devices again.
-        if ((status === 400 || status === 413) && !options.activationProbe) {
+        // Only what the server said about THESE BYTES may be treated as final: a body over
+        // its limit (413), or content it refuses by name (400 `Blocked …`). Every other 400
+        // is about the server, not the file — `Invalid attachment path` answers a storage
+        // folder that became a symbolic link or moved, and it hits every upload at once — so
+        // it stays an ordinary retryable failure. Both upload transports carry the body:
+        // core's cloudPutFile and the native uploader in ./common both set `refusalText`.
+        // Bounded like desktop's client-side refusals: count it, and let the third one take
+        // the attachment out of the pending-upload list, which is what lets the rest of the
+        // document reach the other devices again.
+        const refusesTheseBytes = status === 413
+          || (status === 400 && isBlockedAttachmentContentRefusal(error));
+        if (refusesTheseBytes && !options.activationProbe) {
           const failure = handleAttachmentUploadRefusal(
             attachment,
             status === 413 ? 'server_file_too_large' : 'server_rejected',
           );
           if (failure.mutated) recordPatch(attachment);
           reportProgress(attachment.id, 'upload', 0, attachment.size ?? 0, 'failed', failure.message);
-          logAttachmentWarn(
-            failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
-          );
+          logAttachmentWarn(failure.logMessage);
           continue;
         }
         reportProgress(

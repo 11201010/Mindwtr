@@ -53,6 +53,23 @@ export const markAttachmentUnrecoverable = (attachment: Attachment): boolean => 
     return mutated;
 };
 
+/**
+ * Terminal step for a refused CONTENT RE-UPLOAD, where the attachment already has a server
+ * copy that the other devices hold and only the edited bytes were refused.
+ *
+ * `markAttachmentUnrecoverable` must not be used here: its tombstone would reach the other
+ * devices and their cleanup pass would delete the good copy they still have. So the record,
+ * its `cloudKey` and the local file all stay, and only the "waiting to re-upload" flag is
+ * cleared — which is what stops this attachment blocking the document write. The edited
+ * bytes then live on this device alone.
+ */
+export const stopRefusedAttachmentContentUpload = (attachment: Attachment): boolean => {
+    if (attachment.pendingContentUpload !== true) return false;
+    attachment.pendingContentUpload = undefined;
+    attachment.updatedAt = new Date().toISOString();
+    return true;
+};
+
 export async function validateAttachmentForUpload(
     attachment: Attachment,
     fileSizeBytes: number | null | undefined,

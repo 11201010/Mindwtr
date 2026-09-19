@@ -18,6 +18,7 @@ import {
   reportProgress,
   sanitizeAttachmentUriForSyncMerge,
   sleep,
+  stopRefusedAttachmentContentUpload,
   validateAttachmentHash,
   type AppData,
   type Attachment,
@@ -81,18 +82,27 @@ export const clearAttachmentUploadRefusals = (): void => {
 export const handleAttachmentUploadRefusal = (
   attachment: Attachment,
   reason: string,
-): { attempts: number; reachedLimit: boolean; mutated: boolean; message: string } => {
+): { attempts: number; reachedLimit: boolean; mutated: boolean; message: string; logMessage: string } => {
   const attempts = (attachmentUploadRefusals.get(attachment.id) || 0) + 1;
   attachmentUploadRefusals.set(attachment.id, attempts);
   // The id, not the title: mobile's attachment warnings never carry the file name.
   const message = `Attachment upload refused (${reason}) for ${attachment.id}`
     + ` [attempt ${attempts}/${ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS}]`;
   if (attempts < ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS) {
-    return { attempts, reachedLimit: false, mutated: false, message };
+    return { attempts, reachedLimit: false, mutated: false, message, logMessage: message };
   }
   attachmentUploadRefusals.delete(attachment.id);
-  const mutated = markAttachmentUnrecoverable(attachment);
-  return { attempts, reachedLimit: true, mutated, message };
+  // A refused RE-UPLOAD of edited content keeps its record: the other devices hold the
+  // server copy this cloudKey names, and a tombstone would make them delete it. Core's
+  // stopRefusedAttachmentContentUpload explains the trade.
+  const keepsRemoteCopy = attachment.pendingContentUpload === true && attachment.cloudKey !== undefined;
+  const mutated = keepsRemoteCopy
+    ? stopRefusedAttachmentContentUpload(attachment)
+    : markAttachmentUnrecoverable(attachment);
+  const logMessage = keepsRemoteCopy
+    ? `${message}; keeping the attachment, dropping only the edited content`
+    : `${message}; marking attachment unrecoverable`;
+  return { attempts, reachedLimit: true, mutated, message, logMessage };
 };
 
 const BASE64_ALPHABET ='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';

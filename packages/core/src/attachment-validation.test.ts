@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateAttachmentForUpload } from './attachment-validation';
+import { stopRefusedAttachmentContentUpload, validateAttachmentForUpload } from './attachment-validation';
 import type { Attachment } from './types';
 
 const baseAttachment: Attachment = {
@@ -11,6 +11,37 @@ const baseAttachment: Attachment = {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
 };
+
+describe('stopRefusedAttachmentContentUpload', () => {
+    const reUpload = (): Attachment => ({
+        ...baseAttachment,
+        cloudKey: 'attachments/att-1.txt',
+        fileHash: 'a'.repeat(64),
+        localStatus: 'available',
+        pendingContentUpload: true,
+    });
+
+    it('keeps the record, the server copy and the local file', () => {
+        const attachment = reUpload();
+
+        expect(stopRefusedAttachmentContentUpload(attachment)).toBe(true);
+
+        expect(attachment.pendingContentUpload).toBeUndefined();
+        expect(attachment.cloudKey).toBe('attachments/att-1.txt');
+        expect(attachment.fileHash).toBe('a'.repeat(64));
+        expect(attachment.localStatus).toBe('available');
+        // The tombstone is the whole point: it would reach the other devices and make
+        // them delete the good copy they still hold.
+        expect(attachment.deletedAt).toBeUndefined();
+    });
+
+    it('changes nothing when no content upload is waiting', () => {
+        const attachment = { ...baseAttachment, cloudKey: 'attachments/att-1.txt' };
+
+        expect(stopRefusedAttachmentContentUpload(attachment)).toBe(false);
+        expect(attachment).toEqual({ ...baseAttachment, cloudKey: 'attachments/att-1.txt' });
+    });
+});
 
 describe('validateAttachmentForUpload', () => {
     it('enforces size limits', async () => {

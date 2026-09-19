@@ -108,6 +108,28 @@ describe('handleAttachmentUploadRefusal', () => {
     expect(message).toContain('attachment-1');
     expect(message).not.toContain('refused.txt');
   });
+
+  // The other devices hold the server copy this cloudKey names; a tombstone would reach
+  // them and their cleanup pass would delete it.
+  it('never tombstones a refused re-upload of edited content', () => {
+    const attachment: Attachment = {
+      ...refusedAttachment(),
+      cloudKey: 'attachments/attachment-1.txt',
+      fileHash: 'a'.repeat(64),
+      pendingContentUpload: true,
+    };
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+
+    const failure = handleAttachmentUploadRefusal(attachment, 'server_rejected');
+
+    expect(failure).toMatchObject({ reachedLimit: true, mutated: true });
+    expect(failure.logMessage).toContain('dropping only the edited content');
+    expect(attachment.deletedAt).toBeUndefined();
+    expect(attachment.cloudKey).toBe('attachments/attachment-1.txt');
+    expect(attachment.localStatus).toBe('available');
+    expect(attachment.pendingContentUpload).toBeUndefined();
+  });
 });
 
 describe('cleanupAttachmentTempFiles', () => {

@@ -21,6 +21,7 @@ import {
     repairMissingRemoteAttachments,
     getErrorStatus,
     isAttachmentUploadAdmissionError,
+    isBlockedAttachmentContentRefusal,
     isSyncRemoteMutationFenceError,
     isWebdavRemoteWriteConflictError,
     isWebdavRateLimitedError,
@@ -822,7 +823,7 @@ export async function syncWebdavAttachments(
                     failure.message,
                 );
                 deps.logSyncWarning(
-                    failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+                    failure.logMessage,
                 );
                 return failure.mutated;
             }
@@ -1103,7 +1104,7 @@ export async function syncCloudAttachments(
                     failure.message,
                 );
                 deps.logSyncWarning(
-                    failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+                    failure.logMessage,
                 );
                 return failure.mutated;
             }
@@ -1140,10 +1141,16 @@ export async function syncCloudAttachments(
                 );
             } catch (error) {
                 const status = getErrorStatus(error);
-                // The server's answer about these bytes is final (blocked content, or over its
-                // size limit). Same bounded rule as a client-side refusal: count it, and let the
-                // third one take the attachment out of the pending-upload list.
-                if ((status === 400 || status === 413) && helpers?.activationProbe !== true) {
+                // Only what the server said about THESE BYTES may be treated as final: a body
+                // over its limit (413), or content it refuses by name (400 `Blocked …`). Every
+                // other 400 is about the server, not the file — `Invalid attachment path`
+                // answers a storage folder that became a symbolic link or moved, and it hits
+                // every upload at once — so it stays an ordinary retryable failure. Same
+                // bounded rule as a client-side refusal: count it, and let the third one take
+                // the attachment out of the pending-upload list.
+                const refusesTheseBytes = status === 413
+                    || (status === 400 && isBlockedAttachmentContentRefusal(error));
+                if (refusesTheseBytes && helpers?.activationProbe !== true) {
                     const failure = handleAttachmentValidationFailure(
                         attachment,
                         status === 413 ? 'server_file_too_large' : 'server_rejected',
@@ -1156,9 +1163,7 @@ export async function syncCloudAttachments(
                         'failed',
                         failure.message,
                     );
-                    deps.logSyncWarning(
-                        failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
-                    );
+                    deps.logSyncWarning(failure.logMessage);
                     return failure.mutated;
                 }
                 throw error;
@@ -1368,7 +1373,7 @@ export async function syncDropboxAttachments(
                     failure.message,
                 );
                 deps.logSyncWarning(
-                    failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+                    failure.logMessage,
                 );
                 return failure.mutated;
             }
@@ -2114,7 +2119,7 @@ export async function syncFileAttachments(
             if (!validation.valid) {
                 const failure = handleAttachmentValidationFailure(attachment, validation.error);
                 deps.logSyncWarning(
-                    failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+                    failure.logMessage,
                 );
                 return failure.mutated;
             }
