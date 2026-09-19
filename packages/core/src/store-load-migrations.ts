@@ -321,15 +321,13 @@ const recoverLegacyProjectReferencesMigration: LoadMigration = {
 
 function shouldPromoteScheduledTask(task: Task, nowMs: number): boolean {
     if (task.deletedAt || task.purgedAt) return false;
-    // Explicit Waiting should remain stable even when dated items become due.
-    // Waiting represents a handoff/follow-up decision, not a transient scheduling bucket.
-    if (
-        task.status === 'next'
-        || task.status === 'waiting'
-        || !isTaskActionable(task)
-    ) {
-        return false;
-    }
+    // Only Inbox means "unclarified", so only Inbox is promoted when its date
+    // arrives. Every other status is a decision the user already made: Waiting
+    // is a handoff, Someday is a tickler. This is the same rule the update path
+    // states in normalizeTaskUpdates (`startPromotingInbox`), and the two must
+    // agree — while they did not, filing a dated task into Someday saved, and
+    // the next load promoted it straight back to Next (#1248).
+    if (task.status !== 'inbox') return false;
     const startMs = safeParseDate(task.startTime)?.getTime() ?? NaN;
     if (Number.isFinite(startMs) && startMs <= nowMs) return true;
     const dueMs = safeParseDate(task.dueDate)?.getTime() ?? NaN;
@@ -340,10 +338,10 @@ function shouldPromoteScheduledTask(task: Task, nowMs: number): boolean {
 const promoteScheduledTasksMigration: LoadMigration = {
     name: 'promote-scheduled-tasks',
     run: (data, ctx) => {
-        let changed = false;
+        let count = 0;
         const tasks = data.tasks.map((task) => {
             if (!shouldPromoteScheduledTask(task, ctx.nowMs)) return task;
-            changed = true;
+            count += 1;
             return {
                 ...task,
                 status: 'next' as const,
@@ -352,7 +350,16 @@ const promoteScheduledTasksMigration: LoadMigration = {
                 revBy: data.settings.deviceId,
             };
         });
-        return changed ? { ...data, tasks } : null;
+        if (count === 0) return null;
+        // The counterpart to #1248: this line names the one status this pass is
+        // still allowed to rewrite, so a later "my status changed back" report
+        // is settled by whether it appears at all.
+        logInfo('Inbox tasks whose date arrived promoted to next during load migration', {
+            scope: 'store',
+            category: 'storage',
+            context: { releaseCheck: 'v1.3.2/scheduled-inbox-promoted', count },
+        });
+        return { ...data, tasks };
     },
 };
 

@@ -40,3 +40,4 @@ Changes collected since the latest stable release.
 - Logs: API keys in the newer formats used by OpenAI, Anthropic, xAI, Groq and OpenRouter are now removed from diagnostic logs, and ordinary words are no longer cut by mistake.
 - Desktop database: nine duplicate search indexes are removed on the first start, which makes saving faster.
 - Mobile: in a task's **Preview**, text typed into the checklist **Add Item** box is now saved when you press **Save**, even if you did not press Enter first.
+- Moving a task to **Someday** now sticks, even when the task has a start or due date that has already passed. It used to change back to **Next** on the next load and send that change to your other devices. Waiting and Reference tasks were already safe; only an unprocessed Inbox task still moves to Next when its date arrives. (#1248)

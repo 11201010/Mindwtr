@@ -241,6 +241,37 @@ describe('TaskStore', () => {
         expect(updatedTask.status).toBe('next');
     });
 
+    // #1248: filing a dated task from Focus into Someday saved, the row left
+    // Focus, and the very next load promoted it back to next -- the load-time
+    // promote rule read "someday with a past date" as unclarified, which the
+    // update path already refuses to do (normalizeTaskUpdates' inbox-only
+    // promotion). The round trip is the repro: edit, persist, load again.
+    it('keeps a Someday edit on a dated task through the next load (#1248)', async () => {
+        vi.setSystemTime(new Date('2026-04-10T12:00:00.000Z'));
+        vi.mocked(mockStorage.getData).mockResolvedValue({
+            tasks: [createStoreTask('task-1', { status: 'next', dueDate: '2026-04-09' })],
+            projects: [],
+            sections: [],
+            areas: [],
+            people: [],
+            settings: { deviceId: 'device-a', analyticsProfileId: 'profile-a' },
+        });
+        await useTaskStore.getState().fetchData({ silent: true });
+
+        await useTaskStore.getState().updateTask('task-1', { status: 'someday' });
+        await flushPendingSave();
+        const saved = vi.mocked(mockStorage.saveData).mock.calls.at(-1)?.[0] as AppData;
+        expect(saved.tasks[0].status).toBe('someday');
+
+        // A later clock, so the load is not skipped as stale by the
+        // concurrent-local-change guard.
+        vi.setSystemTime(new Date('2026-04-10T12:00:05.000Z'));
+        vi.mocked(mockStorage.getData).mockResolvedValue(saved);
+        await useTaskStore.getState().fetchData({ silent: true });
+
+        expect(useTaskStore.getState()._allTasks[0].status).toBe('someday');
+    });
+
     it('persists simple task updates through incremental task storage when available', async () => {
         const saveTask = vi.fn().mockResolvedValue(undefined);
         mockStorage.saveTask = saveTask;
@@ -2947,7 +2978,7 @@ describe('TaskStore', () => {
                 },
                 {
                     id: 't-someday',
-                    title: 'Someday task start passed',
+                    title: 'Someday tickler whose start passed',
                     status: 'someday',
                     startTime: '2026-02-13T08:00:00.000Z',
                     tags: [],
@@ -2977,7 +3008,9 @@ describe('TaskStore', () => {
 
         const byId = new Map(useTaskStore.getState()._allTasks.map((task) => [task.id, task]));
         expect(byId.get('t-inbox')?.status).toBe('next');
-        expect(byId.get('t-someday')?.status).toBe('next');
+        // A dated Someday task is a tickler, not an unclarified one: its start
+        // arriving is not a reason to reopen the decision (#1248).
+        expect(byId.get('t-someday')?.status).toBe('someday');
         expect(byId.get('t-waiting-future')?.status).toBe('waiting');
         expect(byId.get('t-inbox')?.rev).toBe(1);
         expect(typeof byId.get('t-inbox')?.revBy).toBe('string');
