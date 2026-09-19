@@ -113,6 +113,15 @@ const MIGRATED_ENTRIES: &[(&str, Destination)] = &[
     (DB_FILE_NAME, Data),
 ];
 
+/// `mindwtr.db` and its `-wal`/`-shm`/`-journal` sidecars are one unit. SQLite
+/// replays a WAL that passes its own checksums without checking which database
+/// wrote it, so a sidecar next to a different database can corrupt it. Whichever
+/// side already holds the database keeps the sidecars there: none of the family
+/// crosses on its own.
+fn is_database_entry(name: &str) -> bool {
+    name.starts_with(DB_FILE_NAME)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayoutOutcome {
     /// The profile already used the subfolders.
@@ -389,9 +398,17 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
 
     let mut moved = 0;
     let mut kept = 0;
+    // The database already sits in data/, so the root's own database and every
+    // sidecar beside it stay together at the root. Read before the first rename:
+    // what was there when the run started decides for the whole family.
+    let database_kept = root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists();
     for (name, destination) in planned {
         let from = root.join(name);
         let to = root.join(destination.dir_name()).join(name);
+        if database_kept && is_database_entry(name) {
+            kept += 1;
+            continue;
+        }
         // Both ends hold it: an earlier run moved the original and a later flat
         // run recreated the name at the root. The moved copy is the original
         // and wins; the leftover is left alone rather than deleted.
@@ -430,10 +447,14 @@ fn create_subfolders(root: &Path) -> Result<(), String> {
 /// has a free destination; a failure is logged by entry name and left for the
 /// journal to finish on the next start.
 fn roll_back(root: &Path) {
+    // The same unit rule in the other direction: a root that already holds a
+    // database keeps its own sidecars, and the migrated database keeps its own
+    // in data/. The run falling back to the flat root opens the root database.
+    let database_at_root = root.join(DB_FILE_NAME).exists();
     for (name, destination) in MIGRATED_ENTRIES.iter().rev() {
         let from = root.join(destination.dir_name()).join(name);
         let to = root.join(name);
-        if !from.exists() || to.exists() {
+        if !from.exists() || to.exists() || (database_at_root && is_database_entry(name)) {
             continue;
         }
         if let Err(error) = fs::rename(&from, &to) {
@@ -748,6 +769,91 @@ mod tests {
             "sync_path = \"/original\"\n"
         );
         assert!(root.join(CONFIG_FILE_NAME).is_file());
+    }
+
+    // Finding F5: the database and its sidecars are one unit. SQLite replays a
+    // WAL that passes its own checksums without checking which database wrote
+    // it, so a root WAL left by a killed flat session must never be moved next
+    // to the migrated database.
+    #[test]
+    fn a_root_database_sidecar_never_joins_the_migrated_database() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        // The real profile, cleanly closed and already in the subfolders: a
+        // clean close leaves no WAL behind.
+        write(&root.join(DATA_DIR_NAME).join(DB_FILE_NAME), "real db");
+        write(
+            &root.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME),
+            "sync_path = \"/original\"\n",
+        );
+        // What a killed flat-root session left at the root.
+        write(&root.join(DB_FILE_NAME), "flat db");
+        write(&root.join("mindwtr.db-wal"), "flat wal");
+
+        let resumed = migrate_standard_layout(root);
+        assert_eq!(resumed.outcome, LayoutOutcome::Migrated);
+        assert!(resumed.subfolders);
+        assert_eq!(resumed.moved, 0);
+        assert_eq!(
+            resumed.kept, 2,
+            "the database and its WAL are kept as one unit"
+        );
+        assert!(
+            !root.join(DATA_DIR_NAME).join("mindwtr.db-wal").exists(),
+            "the flat session's WAL never lands next to the real database"
+        );
+        assert!(root.join("mindwtr.db-wal").is_file());
+        assert!(root.join(DB_FILE_NAME).is_file());
+        assert_eq!(
+            fs::read_to_string(root.join(DATA_DIR_NAME).join(DB_FILE_NAME)).expect("db"),
+            "real db"
+        );
+    }
+
+    // Finding F5, the same unit rule in reverse: a rollback must not put a
+    // migrated database's WAL next to the different database sitting at the
+    // root, which the falling-back run is about to open.
+    #[cfg(unix)]
+    #[test]
+    fn a_rollback_never_puts_a_sidecar_next_to_a_different_root_database() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        // An earlier run moved the profile; a downgrade then ran on the flat
+        // root and left its own database there, without a WAL.
+        write(&root.join(DATA_DIR_NAME).join(DB_FILE_NAME), "real db");
+        write(&root.join(DATA_DIR_NAME).join("mindwtr.db-wal"), "real wal");
+        write(&root.join(DB_FILE_NAME), "downgrade db");
+        write(&root.join(CONFIG_FILE_NAME), "sync_path = \"/tmp\"\n");
+        write(&root.join(SECRETS_FILE_NAME), "token = \"secret\"\n");
+        write(&root.join("attachments").join("x.png"), "png");
+
+        // A read-only config/ fails the first Config entry, after the data
+        // entries have moved, so the rollback runs with data/ writable.
+        create_subfolders(root).expect("subfolders");
+        let config = root.join(CONFIG_DIR_NAME);
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o500)).expect("lock config dir");
+        let failed = migrate_standard_layout(root);
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).expect("unlock config dir");
+
+        assert_eq!(failed.outcome, LayoutOutcome::Failed);
+        assert_eq!(failed.failed_entry, Some(SECRETS_FILE_NAME));
+        assert!(!failed.subfolders, "the flat root stays authoritative");
+        assert!(
+            !root.join("mindwtr.db-wal").exists(),
+            "the migrated database's WAL is not restored next to another database"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(DATA_DIR_NAME).join("mindwtr.db-wal")).expect("wal"),
+            "real wal"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(DB_FILE_NAME)).expect("db"),
+            "downgrade db"
+        );
+        // Everything else the run touched is back at the root.
+        assert!(root.join("attachments").join("x.png").is_file());
     }
 
     #[test]
