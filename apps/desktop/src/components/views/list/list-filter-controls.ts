@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
-import { removeAdvancedFilterCriteriaChip, selectionsFromCriteria } from '@mindwtr/core';
+import { selectionsFromCriteria } from '@mindwtr/core';
 import type { FilterCriteria, MultiValueFilterMatchMode, TaskPriority, TimeEstimate } from '@mindwtr/core';
 import { useUiStore } from '../../../store/ui-store';
+import { removeFilterChipFromCriteria } from './active-filter-chips';
 
 const EMPTY_ESTIMATES: TimeEstimate[] = [];
 
@@ -88,37 +89,8 @@ export function useListFilterControls() {
     }, [criteria, setListFilters]);
 
     const removeFilterChip = useCallback((chipId: string) => {
-        let next = { ...criteria };
-        const removeValue = (key: keyof FilterCriteria, value: string) => {
-            const current = criteria[key];
-            if (!Array.isArray(current)) return;
-            const values = current.filter((item) => item !== value);
-            if (values.length > 0) {
-                Object.assign(next, { [key]: values });
-            } else {
-                delete next[key];
-            }
-        };
-
-        if (chipId.startsWith('token:')) {
-            const token = chipId.slice('token:'.length);
-            removeValue(token.trim().startsWith('#') ? 'tags' : 'contexts', token);
-        } else if (chipId.startsWith('excluded-token:')) {
-            const token = chipId.slice('excluded-token:'.length);
-            removeValue(token.trim().startsWith('#') ? 'excludedTags' : 'excludedContexts', token);
-        } else if (chipId.startsWith('project:')) {
-            removeValue('projects', chipId.slice('project:'.length));
-        } else if (chipId.startsWith('priority:')) {
-            removeValue('priority', chipId.slice('priority:'.length));
-        } else if (chipId.startsWith('energy:')) {
-            removeValue('energy', chipId.slice('energy:'.length));
-        } else if (chipId.startsWith('time:')) {
-            removeValue('timeEstimates', chipId.slice('time:'.length));
-        } else if (chipId.startsWith('advanced:')) {
-            next = removeAdvancedFilterCriteriaChip(criteria, chipId.slice('advanced:'.length));
-        } else {
-            return;
-        }
+        const next = removeFilterChipFromCriteria(criteria, chipId);
+        if (next === criteria) return;
         setListFilters({ criteria: next });
     }, [criteria, setListFilters]);
 

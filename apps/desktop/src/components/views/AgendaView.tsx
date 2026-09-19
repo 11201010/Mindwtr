@@ -14,11 +14,12 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, TaskPriority, TimeEstimate, TIME_ESTIMATE_OPTIONS, buildFocusPools, buildAdvancedFilterCriteriaChips, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
-    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, SAVED_FILTER_NO_PROJECT_ID, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
+import { shallow, useTaskStore, TaskPriority, TimeEstimate, TIME_ESTIMATE_OPTIONS, buildFocusPools, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
+    getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
 import { DEFAULT_FOCUS_SORT_BY } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
 import { useTaskFilterSelections } from '@mindwtr/core/task-filter-selections';
+import { buildAdvancedChips, buildSelectionChips, type ActiveFilterChipDeps } from './list/active-filter-chips';
 import { useLanguage } from '../../contexts/language-context';
 import { cn } from '../../lib/utils';
 import { useUiStore } from '../../store/ui-store';
@@ -54,7 +55,6 @@ import { FocusStarIcon } from '../FocusStarIcon';
 import { useFutureStartRevealTick, useLocalDayKey } from '../../hooks/useLocalDayKey';
 
 const AGENDA_VIRTUALIZATION_THRESHOLD = 25;
-const NO_PROJECT_FILTER_ID = SAVED_FILTER_NO_PROJECT_ID;
 const AGENDA_ACTIVE_STATUSES: Task['status'][] = ['inbox', 'next', 'waiting', 'someday'];
 const FOCUS_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:focus:v1';
 
@@ -566,13 +566,33 @@ export function AgendaView() {
         ));
         void updateSettings({ savedFilters: nextFilters }).catch(() => undefined);
     }, [activeSavedFilter, settings?.savedFilters, updateSettings]);
-    const removeIncludedToken = useCallback((token: string) => {
-        // Picker tokens are tri-state; summary chips are direct removal controls.
-        // Advancing twice clears included → excluded → neutral without changing
-        // the picker cycle itself.
-        toggleTokenFilter(token);
-        toggleTokenFilter(token);
-    }, [toggleTokenFilter]);
+    const chipDeps = useMemo<ActiveFilterChipDeps>(() => ({
+        t,
+        resolveText,
+        getProject: (projectId) => projectMap.get(projectId),
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+    }), [areaById, projectMap, resolveText, t]);
+    const removeSelectionChip = useCallback((chipId: string) => {
+        if (chipId.startsWith('token:')) {
+            // Picker tokens are tri-state; summary chips are direct removal
+            // controls. Advancing twice clears included → excluded → neutral
+            // without changing the picker cycle itself.
+            const token = chipId.slice('token:'.length);
+            toggleTokenFilter(token);
+            toggleTokenFilter(token);
+        } else if (chipId.startsWith('excluded-token:')) {
+            toggleTokenFilter(chipId.slice('excluded-token:'.length));
+        } else if (chipId.startsWith('project:')) {
+            toggleProjectFilter(chipId.slice('project:'.length));
+        } else if (chipId.startsWith('priority:')) {
+            togglePriorityFilter(chipId.slice('priority:'.length) as TaskPriority);
+        } else if (chipId.startsWith('energy:')) {
+            toggleEnergyFilter(chipId.slice('energy:'.length) as TaskEnergyLevel);
+        } else if (chipId.startsWith('time:')) {
+            toggleTimeFilter(chipId.slice('time:'.length) as TimeEstimate);
+        }
+    }, [toggleEnergyFilter, togglePriorityFilter, toggleProjectFilter, toggleTimeFilter, toggleTokenFilter]);
     const activeFilterChips = useMemo<AgendaActiveFilterChip[]>(() => {
         const chips: AgendaActiveFilterChip[] = [];
         const normalizedSearch = searchQuery.trim();
@@ -583,60 +603,10 @@ export function AgendaView() {
                 onRemove: () => setSearchQuery(''),
             });
         }
-        selectedTokens.forEach((token) => {
-            chips.push({
-                id: `token:${token}`,
-                label: token,
-                onRemove: () => removeIncludedToken(token),
-            });
-        });
-        excludedTokens.forEach((token) => {
-            chips.push({
-                id: `excluded-token:${token}`,
-                label: token,
-                excluded: true,
-                onRemove: () => toggleTokenFilter(token),
-            });
-        });
-        selectedProjects.forEach((projectId) => {
-            if (projectId === NO_PROJECT_FILTER_ID) {
-                chips.push({
-                    id: `project:${projectId}`,
-                    label: resolveText('taskEdit.noProjectOption', 'No project'),
-                    onRemove: () => toggleProjectFilter(projectId),
-                });
-                return;
-            }
-            const project = projectMap.get(projectId);
-            chips.push({
-                id: `project:${projectId}`,
-                label: project?.title ?? projectId,
-                dotColor: project
-                    ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
-                    : undefined,
-                onRemove: () => toggleProjectFilter(projectId),
-            });
-        });
-        selectedPriorities.forEach((priority) => {
-            chips.push({
-                id: `priority:${priority}`,
-                label: t(`priority.${priority}`),
-                onRemove: () => togglePriorityFilter(priority),
-            });
-        });
-        selectedEnergyLevels.forEach((energyLevel) => {
-            chips.push({
-                id: `energy:${energyLevel}`,
-                label: t(`energyLevel.${energyLevel}`),
-                onRemove: () => toggleEnergyFilter(energyLevel),
-            });
-        });
-        selectedTimeEstimates.forEach((estimate) => {
-            chips.push({
-                id: `time:${estimate}`,
-                label: formatEstimate(estimate),
-                onRemove: () => toggleTimeFilter(estimate),
-            });
+        // The pickers are tri-state here, so a chip's Remove maps back to the
+        // hook action that clears that one value rather than to a criteria edit.
+        buildSelectionChips(currentFilterCriteria, chipDeps).forEach((chip) => {
+            chips.push({ ...chip, onRemove: () => removeSelectionChip(chip.id) });
         });
         const normalizedLocationFilter = locationFilter.trim();
         if (normalizedLocationFilter && !activeSavedFilter) {
@@ -647,43 +617,25 @@ export function AgendaView() {
             });
         }
         if (activeSavedFilter) {
-            chips.push(...buildAdvancedFilterCriteriaChips(effectiveFilterCriteria, {
-                getAreaColor: (areaId) => areaById.get(areaId)?.color,
-                getAreaLabel: (areaId) => areaById.get(areaId)?.name,
-                resolveText,
-            }).map((chip) => ({
-                id: `advanced:${chip.id}`,
-                label: chip.label,
-                dotColor: chip.color,
-                isAdvanced: true,
-                onRemove: () => removeAdvancedSavedFilterCriterion(chip.id),
+            // Advanced criteria come from the saved filter, not from the pickers,
+            // so they are built from its own criteria and removed through it.
+            chips.push(...buildAdvancedChips(effectiveFilterCriteria, chipDeps).map((chip) => ({
+                ...chip,
+                onRemove: () => removeAdvancedSavedFilterCriterion(chip.id.slice('advanced:'.length)),
             })));
         }
         return chips;
     }, [
         activeSavedFilter,
-        areaById,
+        chipDeps,
+        currentFilterCriteria,
         effectiveFilterCriteria,
-        formatEstimate,
-        projectMap,
-        removeIncludedToken,
+        removeSelectionChip,
         removeAdvancedSavedFilterCriterion,
         resolveText,
         searchQuery,
-        selectedEnergyLevels,
-        selectedPriorities,
-        selectedTimeEstimates,
         locationFilter,
-        selectedProjects,
-        selectedTokens,
-        excludedTokens,
         setSearchQuery,
-        t,
-        toggleEnergyFilter,
-        togglePriorityFilter,
-        toggleProjectFilter,
-        toggleTimeFilter,
-        toggleTokenFilter,
         updateLocationFilter,
     ]);
     const activeFilterCount = filterSelections.activeCount;

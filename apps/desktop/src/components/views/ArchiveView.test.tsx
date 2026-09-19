@@ -512,6 +512,25 @@ describe('ArchiveView', () => {
             expect(useUiStore.getState().listFilters.criteria).toEqual({});
         });
 
+        // Same rule as ListView: the criteria are shared, so the archive can hold
+        // a priority nothing archived carries. It is not applied here, so the
+        // chip is muted and the header must not claim the list is filtered.
+        it('does not count criteria this view never applies as active filters', () => {
+            useUiStore.setState((state) => ({
+                listFilters: { ...state.listFilters, criteria: { priority: ['high'] }, open: true },
+            }));
+            renderWithBoth();
+
+            expect(rowTitles()).toHaveLength(2);
+            const summaryRow = screen.getByText('2 tasks').parentElement as HTMLElement;
+            expect(within(summaryRow).queryByText(/High/)).toBeNull();
+
+            const remove = screen.getByRole('button', { name: 'Remove filter: High' });
+            expect((remove.parentElement as HTMLElement).className).toContain('opacity-60');
+            fireEvent.click(remove);
+            expect(useUiStore.getState().listFilters.criteria).not.toHaveProperty('priority');
+        });
+
         it('subtracts archived tasks carrying an excluded context (#982)', () => {
             renderWithBoth();
 

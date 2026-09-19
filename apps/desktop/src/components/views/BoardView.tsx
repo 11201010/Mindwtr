@@ -25,7 +25,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { TaskItem } from '../TaskItem';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { buildAdvancedFilterCriteriaChips, formatTimeEstimateLabel, removeAdvancedFilterCriteriaChip, shallow, useTaskStore, sortTasksBy, sortTasksByBoardOrder, buildProjectOrderMap, compareTasksByProjectThenOrder, getSequentialFirstTaskIds, isSequentialChainStatus, translateWithFallback, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, SAVED_FILTER_NO_PROJECT_ID, tFallback } from '@mindwtr/core';
+import { shallow, useTaskStore, sortTasksBy, sortTasksByBoardOrder, buildProjectOrderMap, compareTasksByProjectThenOrder, getSequentialFirstTaskIds, isSequentialChainStatus, translateWithFallback, createTaskFilterPredicate, hasActiveFilterCriteria, getUsedTaskTokens, tFallback } from '@mindwtr/core';
+import { buildActiveFilterChips, removeFilterChipFromCriteria } from './list/active-filter-chips';
 import { resolveBoardDragEnd } from './board-view-dnd';
 import type { Task, TaskStatus, FilterCriteria } from '@mindwtr/core';
 import { useLanguage } from '../../contexts/language-context';
@@ -328,26 +329,6 @@ export function BoardView() {
         const key = kind === 'context' ? 'contextMatchMode' : 'tagMatchMode';
         updateCriteria({ ...criteria, [key]: mode });
     };
-    const removeToken = (token: string, excluded: boolean) => {
-        const isTag = token.trim().startsWith('#');
-        const key = excluded
-            ? (isTag ? 'excludedTags' : 'excludedContexts')
-            : (isTag ? 'tags' : 'contexts');
-        const current = criteria[key] ?? [];
-        const next = current.filter((item) => item !== token);
-        updateCriteria({ ...criteria, [key]: next.length > 0 ? next : undefined });
-    };
-    const removeCriteriaValue = (
-        key: 'projects' | 'priority' | 'energy' | 'timeEstimates',
-        value: string,
-    ) => {
-        const current = criteria[key] ?? [];
-        const values = current.filter((item) => item !== value);
-        const next = { ...criteria };
-        if (values.length > 0) Object.assign(next, { [key]: values });
-        else delete next[key];
-        updateCriteria(next);
-    };
     const clearFilters = () => {
         updateCriteria({});
         setSearchQuery('');
@@ -511,76 +492,16 @@ export function BoardView() {
             onRemove: () => setSearchQuery(''),
         });
     }
-    selectedTokens.forEach((token) => {
-        activeFilterChips.push({
-            id: `token:${token}`,
-            label: token,
-            onRemove: () => removeToken(token, false),
-        });
-    });
-    excludedTokens.forEach((token) => {
-        activeFilterChips.push({
-            id: `excluded-token:${token}`,
-            label: token,
-            excluded: true,
-            onRemove: () => removeToken(token, true),
-        });
-    });
-    selectedProjectIds.forEach((projectId) => {
-        const project = projects.find((candidate) => candidate.id === projectId);
-        activeFilterChips.push({
-            id: `project:${projectId}`,
-            label: projectId === SAVED_FILTER_NO_PROJECT_ID
-                ? resolveText('taskEdit.noProjectOption', 'No project')
-                : project?.title ?? projectId,
-            dotColor: project
-                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
-                : undefined,
-            onRemove: () => removeCriteriaValue('projects', projectId),
-        });
-    });
-    if (selectedDuePreset) {
-        activeFilterChips.push({
-            id: 'dueDateRange',
-            label: `${resolveText('taskEdit.dueDateLabel', 'Due date')}: ${t(`filters.datePreset.${selectedDuePreset}`)}`,
-            onRemove: () => updateCriteria({ ...criteria, dueDateRange: undefined }),
-        });
-    }
-    (criteria.priority ?? []).forEach((priority) => {
-        activeFilterChips.push({
-            id: `priority:${priority}`,
-            label: priority === 'none' ? t('focus.group.noPriority') : t(`priority.${priority}`),
-            isAdvanced: true,
-            onRemove: () => removeCriteriaValue('priority', priority),
-        });
-    });
-    (criteria.energy ?? []).forEach((energy) => {
-        activeFilterChips.push({
-            id: `energy:${energy}`,
-            label: t(`energyLevel.${energy}`),
-            isAdvanced: true,
-            onRemove: () => removeCriteriaValue('energy', energy),
-        });
-    });
-    (criteria.timeEstimates ?? []).forEach((estimate) => {
-        activeFilterChips.push({
-            id: `time:${estimate}`,
-            label: formatTimeEstimateLabel(estimate, { t }),
-            isAdvanced: true,
-            onRemove: () => removeCriteriaValue('timeEstimates', estimate),
-        });
-    });
-    buildAdvancedFilterCriteriaChips({ ...criteria, dueDateRange: undefined }, {
+    buildActiveFilterChips(criteria, {
+        t,
+        resolveText,
+        getProject: (projectId) => projects.find((candidate) => candidate.id === projectId),
         getAreaColor: (areaId) => areaById.get(areaId)?.color,
         getAreaLabel: (areaId) => areaById.get(areaId)?.name,
-        resolveText,
-    }).forEach((chip) => {
+    }, { duePresetAsBasic: true, metadataAsAdvanced: true }).forEach((chip) => {
         activeFilterChips.push({
-            id: `advanced:${chip.id}`,
-            label: chip.label,
-            dotColor: chip.color,
-            isAdvanced: true,
-            onRemove: () => updateCriteria(removeAdvancedFilterCriteriaChip(criteria, chip.id)),
+            ...chip,
+            onRemove: () => updateCriteria(removeFilterChipFromCriteria(criteria, chip.id)),
         });
     });
 

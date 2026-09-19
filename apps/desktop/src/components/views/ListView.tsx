@@ -2,7 +2,6 @@ import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, us
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, ChevronDown, ChevronRight, Folder, HelpCircle } from 'lucide-react';
 import { buildProjectOrderMap,
-    buildAdvancedFilterCriteriaChips,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
     compareAreasByOrder,
@@ -33,7 +32,6 @@ import { buildProjectOrderMap,
     TimeEstimate,
     TIME_ESTIMATE_OPTIONS,
     resolveI18nText,
-    SAVED_FILTER_NO_PROJECT_ID,
     useTaskStore, tFallback,
     baseTextCollator,
 } from '@mindwtr/core';
@@ -98,6 +96,7 @@ import {
     PRIORITY_FILTER_OPTIONS,
     useListFilterControls,
 } from './list/list-filter-controls';
+import { buildActiveFilterChips, type ActiveFilterChipDeps } from './list/active-filter-chips';
 import { useListSelection } from './list/useListSelection';
 import { StoreTaskItem } from './list/StoreTaskItem';
 import {
@@ -1041,6 +1040,13 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     const timeEstimateOptions = TIME_ESTIMATE_OPTIONS;
     const formatEstimate = (value: TimeEstimate) => formatTimeEstimateLabel(value, { t });
     const excludedLabel = resolveText('filters.excluded', 'Excluded');
+    const chipDeps: ActiveFilterChipDeps = {
+        t,
+        resolveText,
+        getProject: (projectId) => projectMap.get(projectId),
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+    };
     const activeFilterChips: DesktopActiveFilterChip[] = [];
     if (normalizedSearchQuery) {
         activeFilterChips.push({
@@ -1056,75 +1062,10 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
     // Reference, and priority / time estimate where the category is gated off.
     // Those chips stay visible and removable, but muted, and they never count
     // as an active filter (see activeListFilterCriteria).
-    [...(listFilterCriteria.contexts ?? []), ...(listFilterCriteria.tags ?? [])].forEach((token) => {
-        activeFilterChips.push({
-            id: `token:${token}`,
-            label: token,
-            inactive: isReferenceView && !token.trim().startsWith('#'),
-            onRemove: () => removeFilterChip(`token:${token}`),
+    buildActiveFilterChips(listFilterCriteria, chipDeps, { appliedCriteria: activeListFilterCriteria })
+        .forEach((chip) => {
+            activeFilterChips.push({ ...chip, onRemove: () => removeFilterChip(chip.id) });
         });
-    });
-    [...(listFilterCriteria.excludedContexts ?? []), ...(listFilterCriteria.excludedTags ?? [])].forEach((token) => {
-        activeFilterChips.push({
-            id: `excluded-token:${token}`,
-            label: token,
-            excluded: true,
-            inactive: isReferenceView && !token.trim().startsWith('#'),
-            onRemove: () => removeFilterChip(`excluded-token:${token}`),
-        });
-    });
-    (listFilterCriteria.projects ?? []).forEach((projectId) => {
-        const project = projectMap.get(projectId);
-        activeFilterChips.push({
-            id: `project:${projectId}`,
-            label: projectId === SAVED_FILTER_NO_PROJECT_ID
-                ? resolveText('taskEdit.noProjectOption', 'No project')
-                : project?.title ?? projectId,
-            dotColor: project
-                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
-                : undefined,
-            onRemove: () => removeFilterChip(`project:${projectId}`),
-        });
-    });
-    (listFilterCriteria.priority ?? []).forEach((priority) => {
-        activeFilterChips.push({
-            id: `priority:${priority}`,
-            label: priority === 'none'
-                ? t('focus.group.noPriority')
-                : t(`priority.${priority}`),
-            inactive: !showPriorityFilters,
-            onRemove: () => removeFilterChip(`priority:${priority}`),
-        });
-    });
-    (listFilterCriteria.energy ?? []).forEach((energy) => {
-        activeFilterChips.push({
-            id: `energy:${energy}`,
-            label: t(`energyLevel.${energy}`),
-            onRemove: () => removeFilterChip(`energy:${energy}`),
-        });
-    });
-    (listFilterCriteria.timeEstimates ?? []).forEach((estimate) => {
-        activeFilterChips.push({
-            id: `time:${estimate}`,
-            label: formatEstimate(estimate),
-            inactive: !showTimeEstimateFilters,
-            onRemove: () => removeFilterChip(`time:${estimate}`),
-        });
-    });
-    buildAdvancedFilterCriteriaChips(listFilterCriteria, {
-        getAreaColor: (areaId) => areaById.get(areaId)?.color,
-        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
-        resolveText,
-    }).forEach((chip) => {
-        activeFilterChips.push({
-            id: `advanced:${chip.id}`,
-            label: chip.label,
-            dotColor: chip.color,
-            isAdvanced: true,
-            inactive: chip.id === 'timeEstimateRange' && !showTimeEstimateFilters,
-            onRemove: () => removeFilterChip(`advanced:${chip.id}`),
-        });
-    });
     if (selectedWaitingPerson) {
         activeFilterChips.push({
             id: 'waiting-person',

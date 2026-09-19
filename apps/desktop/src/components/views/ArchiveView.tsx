@@ -2,14 +2,12 @@ import { memo, useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ErrorBoundary } from '../ErrorBoundary';
 import {
-    buildAdvancedFilterCriteriaChips,
     createTaskFilterPredicate,
     formatTimeEstimateLabel,
     getTaskMetadataFilterVisibility,
     hasActiveFilterCriteria,
     projectMatchesAreaFilterSelection,
     resolveFeatureFlags,
-    SAVED_FILTER_NO_PROJECT_ID,
     safeFormatDate,
     shallow,
     sortDoneTasksForListView,
@@ -46,6 +44,7 @@ import {
     PRIORITY_FILTER_OPTIONS,
     useListFilterControls,
 } from './list/list-filter-controls';
+import { buildActiveFilterChips, type ActiveFilterChipDeps } from './list/active-filter-chips';
 import {
     DONE_AXES,
     groupTasks,
@@ -420,6 +419,13 @@ export function ArchiveView() {
         [t]
     );
     const excludedLabel = tFallback(t, 'filters.excluded', 'Excluded');
+    const chipDeps: ActiveFilterChipDeps = {
+        t,
+        resolveText: (key, fallback) => tFallback(t, key, fallback),
+        getProject: (projectId) => projectById.get(projectId),
+        getAreaColor: (areaId) => areaById.get(areaId)?.color,
+        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
+    };
     const activeFilterChips: DesktopActiveFilterChip[] = [];
     if (searchQuery.trim()) {
         activeFilterChips.push({
@@ -428,72 +434,21 @@ export function ArchiveView() {
             onRemove: () => setSearchQuery(''),
         });
     }
-    [...(listFilterCriteria.contexts ?? []), ...(listFilterCriteria.tags ?? [])].forEach((token) => {
-        activeFilterChips.push({
-            id: `token:${token}`,
-            label: token,
-            onRemove: () => removeFilterChip(`token:${token}`),
+    // The criteria are one selection shared by every desktop list (#956), so the
+    // archive can hold a priority or time estimate its own tasks never carry.
+    // Those chips stay visible and removable, but muted, and they must not make
+    // the header claim the archive is filtered (see activeFilterCriteria).
+    buildActiveFilterChips(listFilterCriteria, chipDeps, { appliedCriteria: activeFilterCriteria })
+        .forEach((chip) => {
+            activeFilterChips.push({ ...chip, onRemove: () => removeFilterChip(chip.id) });
         });
-    });
-    [...(listFilterCriteria.excludedContexts ?? []), ...(listFilterCriteria.excludedTags ?? [])].forEach((token) => {
-        activeFilterChips.push({
-            id: `excluded-token:${token}`,
-            label: token,
-            excluded: true,
-            onRemove: () => removeFilterChip(`excluded-token:${token}`),
-        });
-    });
-    (listFilterCriteria.projects ?? []).forEach((projectId) => {
-        const project = projectById.get(projectId);
-        activeFilterChips.push({
-            id: `project:${projectId}`,
-            label: projectId === SAVED_FILTER_NO_PROJECT_ID
-                ? tFallback(t, 'taskEdit.noProjectOption', 'No project')
-                : project?.title ?? projectId,
-            dotColor: project
-                ? (project.areaId ? areaById.get(project.areaId)?.color : undefined) || project.color || undefined
-                : undefined,
-            onRemove: () => removeFilterChip(`project:${projectId}`),
-        });
-    });
-    (listFilterCriteria.priority ?? []).forEach((priority) => {
-        activeFilterChips.push({
-            id: `priority:${priority}`,
-            label: priority === 'none' ? t('focus.group.noPriority') : t(`priority.${priority}`),
-            onRemove: () => removeFilterChip(`priority:${priority}`),
-        });
-    });
-    (listFilterCriteria.energy ?? []).forEach((energy) => {
-        activeFilterChips.push({
-            id: `energy:${energy}`,
-            label: t(`energyLevel.${energy}`),
-            onRemove: () => removeFilterChip(`energy:${energy}`),
-        });
-    });
-    (listFilterCriteria.timeEstimates ?? []).forEach((estimate) => {
-        activeFilterChips.push({
-            id: `time:${estimate}`,
-            label: formatEstimate(estimate),
-            onRemove: () => removeFilterChip(`time:${estimate}`),
-        });
-    });
-    buildAdvancedFilterCriteriaChips(listFilterCriteria, {
-        getAreaColor: (areaId) => areaById.get(areaId)?.color,
-        getAreaLabel: (areaId) => areaById.get(areaId)?.name,
-        resolveText: (key, fallback) => tFallback(t, key, fallback),
-    }).forEach((chip) => {
-        activeFilterChips.push({
-            id: `advanced:${chip.id}`,
-            label: chip.label,
-            dotColor: chip.color,
-            isAdvanced: true,
-            onRemove: () => removeFilterChip(`advanced:${chip.id}`),
-        });
-    });
-    const filterSummary = activeFilterChips.map((chip) => (
-        chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label
-    ));
+    const filterSummary = activeFilterChips
+        .filter((chip) => !chip.inactive)
+        .map((chip) => (chip.excluded ? `${excludedLabel}: ${chip.label}` : chip.label));
+    // "Filtered" means the archive really is narrowed; hasFilterChips only means
+    // something is selected, so a muted chip stays reachable and clearable.
     const hasFilters = filterSummary.length > 0;
+    const hasFilterChips = activeFilterChips.length > 0;
     const filterSummaryLabel = filterSummary.slice(0, 3).join(', ');
     const filterSummarySuffix = filterSummary.length > 3 ? ` +${filterSummary.length - 3}` : '';
 
@@ -710,11 +665,11 @@ export function ArchiveView() {
                 )}
             </header>
 
-            {segment === 'tasks' && (filtersOpen || hasFilters) && (
+            {segment === 'tasks' && (filtersOpen || hasFilterChips) && (
                 <ListFiltersPanel
                     t={t}
                     activeFilterChips={activeFilterChips}
-                    hasFilters={hasFilters}
+                    hasFilters={hasFilterChips}
                     showFiltersPanel={filtersOpen}
                     onClose={() => setFiltersOpen(false)}
                     onClearFilters={() => {
