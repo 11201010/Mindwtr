@@ -52,7 +52,11 @@ export function createInternalMarkdownLinkContext({
     const projectsById = new Map<string, Project>();
     const deletedProjectsById = new Map<string, Project>();
 
+    // A purged row is the tombstone of a permanent delete and lands in neither
+    // map: the link still reads "(deleted)", but core refuses to restore it, so
+    // offering Restore would only ever fail.
     tasks.forEach((task) => {
+        if (task.purgedAt) return;
         if (task.deletedAt) {
             deletedTasksById.set(task.id, task);
         } else {
@@ -60,6 +64,7 @@ export function createInternalMarkdownLinkContext({
         }
     });
     projects.forEach((project) => {
+        if (project.purgedAt) return;
         if (project.deletedAt) {
             deletedProjectsById.set(project.id, project);
         } else {

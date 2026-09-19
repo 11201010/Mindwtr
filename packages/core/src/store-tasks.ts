@@ -934,17 +934,18 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     },
 
     /**
-     * Restore a soft-deleted task.
+     * Restore a soft-deleted task. A purged task is the compacted tombstone of
+     * a permanent delete, so it counts as missing: reviving it would resurrect
+     * an emptied row and sync it back to every device.
      */
     restoreTask: async (id: string) => {
         return mutateTasks({ set, debouncedSave }, {
             selectTasks: (state) => {
                 const task = state._tasksById.get(id);
-                return task ? [task] : [];
+                return task && !task.purgedAt ? [task] : [];
             },
             buildUpdates: (task, { state }) => ({
                 deletedAt: undefined,
-                purgedAt: undefined,
                 ...sanitizeRestoredTaskContainerReferences(task, state),
             }),
             missingMessage: 'Task not found',
@@ -985,7 +986,6 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             selectTasks: (state) => state._allTasks.filter((task) => idSet.has(task.id) && task.deletedAt && !task.purgedAt),
             buildUpdates: (task, { state }) => ({
                 deletedAt: undefined,
-                purgedAt: undefined,
                 ...sanitizeRestoredTaskContainerReferences(task, state),
             }),
             missingMessage: 'Tasks not found',

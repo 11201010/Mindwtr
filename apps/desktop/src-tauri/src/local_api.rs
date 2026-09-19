@@ -2397,8 +2397,13 @@ fn apply_task_action(
             task.remove("boardOrder");
         }
         "restore" => {
+            // Mirrors core's `restoreTask`: a purged task is the compacted
+            // tombstone of a permanent delete, so reviving it would resurrect
+            // an emptied row and sync it back to every device.
+            if has_non_empty_string(task, "purgedAt") {
+                return Err("Task status conflict: purged task cannot be restored".to_string());
+            }
             task.remove("deletedAt");
-            task.remove("purgedAt");
             sanitize_restored_task_container_references(task, live_containers);
         }
         _ => unreachable!("action already validated above"),
@@ -6030,6 +6035,35 @@ mod tests {
 
         assert!(!task.contains_key("cancelledAt"));
         assert_eq!(task["completedAt"], "2026-02-28T12:00:00Z");
+    }
+
+    #[test]
+    fn task_restore_refuses_a_purged_task_and_leaves_it_untouched() {
+        let mut task = json!({
+            "id": "purged-task", "title": "", "status": "inbox", "rev": 4,
+            "deletedAt": "2026-09-01T00:00:00Z", "purgedAt": "2026-09-01T00:00:00Z"
+        })
+        .as_object()
+        .expect("task object")
+        .clone();
+        let before = task.clone();
+
+        let error = apply_task_action(
+            &mut task,
+            "restore",
+            "inbox",
+            "2026-09-08T12:00:00Z",
+            "device-a",
+            &LiveContainers::default(),
+        )
+        .expect_err("purged task restore is refused");
+
+        assert_eq!(
+            error,
+            "Task status conflict: purged task cannot be restored"
+        );
+        assert_eq!(task, before);
+        assert_eq!(api_error_response(error).status, 409);
     }
 
     fn comparable_local_api_recurring_task(task: Option<Map<String, Value>>) -> Value {

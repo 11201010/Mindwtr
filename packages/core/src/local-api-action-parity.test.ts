@@ -101,7 +101,6 @@ describe('local API write-action parity fixture (kind: action)', () => {
             updatedTask = {
                 ...testCase.task,
                 deletedAt: undefined,
-                purgedAt: undefined,
                 ...sanitized,
                 updatedAt: testCase.now,
                 rev: nextRevision(testCase.task.rev),

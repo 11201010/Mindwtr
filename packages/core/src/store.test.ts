@@ -3738,6 +3738,27 @@ describe('TaskStore', () => {
         expect(restored?.areaId).toBeUndefined();
     });
 
+    it('refuses to restore a purged task and leaves the tombstone untouched', async () => {
+        const { addTask, deleteTask, purgeTask, restoreTask } = useTaskStore.getState();
+        await addTask('Gone for good', { status: 'next' });
+        const task = useTaskStore.getState()._allTasks.find((item) => item.title === 'Gone for good');
+        expect(task).toBeTruthy();
+        if (!task) return;
+
+        await deleteTask(task.id);
+        await purgeTask(task.id);
+        const purged = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        expect(purged.purgedAt).toBeTruthy();
+
+        const result = await restoreTask(task.id);
+
+        expect(result).toEqual({ success: false, error: 'Task not found' });
+        const after = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+        expect(after.purgedAt).toBe(purged.purgedAt);
+        expect(after.deletedAt).toBe(purged.deletedAt);
+        expect(after.rev).toBe(purged.rev);
+    });
+
     it('purges deleted tasks while deriving the visible task slice from all tasks', async () => {
         const archivedTask = {
             id: 'archived-visible',
@@ -5361,6 +5382,63 @@ describe('TaskStore', () => {
             const finalRestoredTask = useTaskStore.getState()._allTasks.find((item) => item.id === restoredTask.id)!;
             expect(finalDeletedTask.deletedAt).toBeTruthy();
             expect(finalRestoredTask.deletedAt).toBeUndefined();
+        });
+
+        it('refuses to restore a purged project and leaves the tombstone untouched', async () => {
+            const { addProject, deleteProject, purgeProject, restoreProject } = useTaskStore.getState();
+            const project = await addProject('Gone for good', '#444444');
+            expect(project).not.toBeNull();
+            if (!project) return;
+
+            await deleteProject(project.id);
+            await purgeProject(project.id);
+            const purged = useTaskStore.getState()._allProjects.find((item) => item.id === project.id)!;
+            expect(purged.purgedAt).toBeTruthy();
+
+            const result = await restoreProject(project.id);
+
+            expect(result).toEqual({ success: false, error: 'Project not found' });
+            const after = useTaskStore.getState()._allProjects.find((item) => item.id === project.id)!;
+            expect(after.purgedAt).toBe(purged.purgedAt);
+            expect(after.deletedAt).toBe(purged.deletedAt);
+            expect(after.rev).toBe(purged.rev);
+            expect(useTaskStore.getState().projects.find((item) => item.id === project.id)).toBeUndefined();
+        });
+
+        // Sections carry no `purgedAt` in the schema, so only tasks can reach
+        // the cascade already purged (a hand-made or not-yet-compacted row).
+        it('leaves a purged task out of the project restore cascade', async () => {
+            const cascadeDeletedAt = '2026-04-02T00:00:00.000Z';
+            // Inside the tombstone retention window, so the load keeps the deleted rows.
+            vi.setSystemTime(new Date('2026-04-03T00:00:00.000Z'));
+            mockStorage.getData = vi.fn().mockResolvedValue({
+                tasks: [
+                    createStoreTask('task-live', { projectId: 'project-1', sectionId: 'section-live', deletedAt: cascadeDeletedAt }),
+                    createStoreTask('task-purged', {
+                        projectId: 'project-1',
+                        deletedAt: cascadeDeletedAt,
+                        purgedAt: cascadeDeletedAt,
+                    }),
+                ],
+                projects: [createStoreProject('project-1', { deletedAt: cascadeDeletedAt })],
+                sections: [
+                    { id: 'section-live', projectId: 'project-1', title: 'Live', order: 0, deletedAt: cascadeDeletedAt, createdAt: '2026-04-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z', rev: 1, revBy: 'device-a' },
+                ],
+                areas: [],
+                settings: { deviceId: 'device-a' },
+            });
+            await useTaskStore.getState().fetchData({ silent: true });
+
+            const result = await useTaskStore.getState().restoreProject('project-1');
+            expect(result).toEqual({ success: true });
+
+            const state = useTaskStore.getState();
+            expect(state._allTasks.find((item) => item.id === 'task-live')!.deletedAt).toBeUndefined();
+            const purgedTask = state._allTasks.find((item) => item.id === 'task-purged')!;
+            expect(purgedTask.purgedAt).toBe(cascadeDeletedAt);
+            expect(purgedTask.deletedAt).toBe(cascadeDeletedAt);
+            expect(purgedTask.rev).toBe(1);
+            expect(state._allSections.find((item) => item.id === 'section-live')!.deletedAt).toBeUndefined();
         });
     });
 

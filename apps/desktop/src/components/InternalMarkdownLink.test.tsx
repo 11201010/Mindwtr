@@ -193,4 +193,57 @@ describe('InternalMarkdownLink', () => {
             window.removeEventListener(MINDWTR_NAVIGATE_EVENT, onNavigate as EventListener);
         }
     });
+
+    it('offers no Restore for purged task and project links', () => {
+        const purgedTask: Task = {
+            id: 'task-1',
+            title: '(deleted)',
+            status: 'inbox',
+            tags: [],
+            contexts: [],
+            createdAt: '2026-04-13T00:00:00.000Z',
+            updatedAt: '2026-04-13T00:00:00.000Z',
+            deletedAt: '2026-04-13T01:00:00.000Z',
+            purgedAt: '2026-04-13T02:00:00.000Z',
+        };
+        const purgedProject: Project = {
+            id: 'project-1',
+            title: '(deleted)',
+            status: 'active',
+            color: '#000000',
+            order: 0,
+            tagIds: [],
+            createdAt: '2026-04-13T00:00:00.000Z',
+            updatedAt: '2026-04-13T00:00:00.000Z',
+            deletedAt: '2026-04-13T01:00:00.000Z',
+            purgedAt: '2026-04-13T02:00:00.000Z',
+        };
+
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [],
+                _allTasks: [purgedTask],
+                projects: [],
+                _allProjects: [purgedProject],
+            }));
+        });
+
+        const linkContext = currentLinkContext();
+        const taskLink = render(
+            <LanguageProvider>
+                <InternalMarkdownLink href="mindwtr://task/task-1" linkContext={linkContext}>Purged task</InternalMarkdownLink>
+            </LanguageProvider>
+        );
+        expect(taskLink.getByText('(deleted task)')).toBeInTheDocument();
+        expect(taskLink.queryByRole('button', { name: /restore/i })).toBeNull();
+
+        const projectLink = render(
+            <LanguageProvider>
+                <InternalMarkdownLink href="mindwtr://project/project-1" linkContext={linkContext}>Purged project</InternalMarkdownLink>
+            </LanguageProvider>
+        );
+        expect(projectLink.getByText('(deleted project)')).toBeInTheDocument();
+        expect(projectLink.queryByRole('button', { name: /restore/i })).toBeNull();
+    });
 });

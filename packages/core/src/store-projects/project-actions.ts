@@ -464,7 +464,11 @@ export const createProjectCoreActions = ({
         let missingProject = false;
         set((state) => {
             const target = state._allProjects.find((project) => project.id === id);
-            if (!target) {
+            // A purged project is the compacted tombstone of a permanent
+            // delete, so it counts as missing: reviving it would turn the
+            // emptied shell into a live project titled "(deleted)" and sync it
+            // to every device.
+            if (!target || target.purgedAt) {
                 missingProject = true;
                 return state;
             }
@@ -479,7 +483,6 @@ export const createProjectCoreActions = ({
             const restoredProject: Project = {
                 ...target,
                 deletedAt: undefined,
-                purgedAt: undefined,
                 areaId: restoredArea ? target.areaId : undefined,
                 areaTitle: restoredArea
                     ? (typeof target.areaTitle === 'string' && target.areaTitle.trim().length > 0
@@ -510,11 +513,10 @@ export const createProjectCoreActions = ({
                     .map((section) => section.id)
             );
             const newAllTasks = state._allTasks.map((task) => (
-                task.projectId === id && task.deletedAt === cascadeDeletedAt
+                task.projectId === id && task.deletedAt === cascadeDeletedAt && !task.purgedAt
                     ? {
                         ...task,
                         deletedAt: undefined,
-                        purgedAt: undefined,
                         sectionId: task.sectionId && restoredSectionIds.has(task.sectionId)
                             ? task.sectionId
                             : undefined,
