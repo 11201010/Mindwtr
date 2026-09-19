@@ -32,11 +32,15 @@ const PRIVATE_CONTENT_KEYS = [
     'notes',
 ];
 
+// One home for provider key shapes (sync error text reuses it through sanitizeLogMessage).
+// `\b` keeps words such as "task-management" from matching; the character class allows
+// the `-` and `_` that current keys contain (sk-proj-…, sk-ant-api03-…, sk-or-v1-…).
 const AI_KEY_PATTERNS = [
-    /sk-[A-Za-z0-9]{10,}/g,
-    /sk-ant-[A-Za-z0-9]{10,}/g,
-    /rk-[A-Za-z0-9]{10,}/g,
-    /AIza[0-9A-Za-z\-_]{10,}/g,
+    /\bsk-[A-Za-z0-9_-]{10,}/g,
+    /\bxai-[A-Za-z0-9]{20,}/g,
+    /\bgsk_[A-Za-z0-9]{20,}/g,
+    /\brk-[A-Za-z0-9]{10,}/g,
+    /\bAIza[0-9A-Za-z\-_]{10,}/g,
 ];
 
 const ICS_URL_PATTERN = /\b(?:https?|webcal|webcals):\/\/[^\s'")]+/gi;

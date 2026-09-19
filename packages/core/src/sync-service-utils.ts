@@ -78,12 +78,6 @@ export type AutoSyncConfig = {
 
 export const SYNC_FILE_NAME = 'data.json';
 export const LEGACY_SYNC_FILE_NAME = 'mindwtr-sync.json';
-const AI_KEY_PATTERNS = [
-    /sk-[A-Za-z0-9-]{10,}/g,
-    /sk-ant-[A-Za-z0-9-]{10,}/g,
-    /rk-[A-Za-z0-9]{10,}/g,
-    /AIza[0-9A-Za-z\-_]{10,}/g,
-];
 const READONLY_ERROR_PATTERN = /isn't writable|not writable|read-only|read only|permission denied|EACCES/i;
 const OFFLINE_ERROR_PATTERNS = [
     /offline state detected/i,
@@ -161,16 +155,10 @@ export const getFileSyncDir = (
     return trimmed;
 };
 
-export const sanitizeSyncErrorMessage = (value: string): string => {
-    // One redactor: sanitizeLogMessage already covers the auth header, query-string
-    // credentials and URL userinfo. Only the AI-key patterns stay on top of it -- these
-    // span hyphens (sk-ant-api03-...), log-sanitize's stop at the first one.
-    let result = sanitizeLogMessage(value);
-    for (const pattern of AI_KEY_PATTERNS) {
-        result = result.replace(pattern, '[redacted]');
-    }
-    return result;
-};
+export const sanitizeSyncErrorMessage = (value: string): string => (
+    // One redactor and one key-pattern list: both live in log-sanitize.
+    sanitizeLogMessage(value)
+);
 
 export const formatSyncErrorMessage = (error: unknown, backend: SyncBackend): string => {
     if (error instanceof SyncFileLockUnavailableError) return error.message;
