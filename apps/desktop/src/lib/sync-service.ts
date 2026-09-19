@@ -3479,7 +3479,20 @@ export class SyncService {
     }
 
     private static runSyncCycle(options: SyncRunOptions): Promise<SyncRunResult> {
-        return runSyncDocumentExclusive(() => SyncService.runSyncCycleExclusive(options));
+        // The orchestrator drops `queued` and starts the follow-up cycle in the same tick,
+        // but the cycle body only reaches its own busy publish after the document lock and
+        // a handful of awaits. Publishing busy here instead means no tick in between reads
+        // as idle, which is what made the footer flicker on every hand-off (#913): the Sync
+        // now button re-enabled under the pointer and animate-spin restarted from 0deg.
+        SyncService.updateSyncStatus({ inFlight: true, step: 'init' });
+        return runSyncDocumentExclusive(() => SyncService.runSyncCycleExclusive(options))
+            .catch((error) => {
+                // The cycle publishes the final idle status itself; it only misses it when
+                // it throws before getting there. `lastResult` is left alone — the caller,
+                // not this guard, decides what a crashed cycle proved.
+                SyncService.updateSyncStatus({ inFlight: false, step: null });
+                throw error;
+            });
     }
 
     private static async runSyncCycleExclusive(options: SyncRunOptions): Promise<SyncRunResult> {
@@ -3523,12 +3536,8 @@ export class SyncService {
             }
         };
 
-        SyncService.updateSyncStatus({
-            inFlight: true,
-            step: 'init',
-            lastResult: SyncService.syncStatus.lastResult,
-            lastResultAt: SyncService.syncStatus.lastResultAt,
-        });
+        // `runSyncCycle` already published the busy status; yield so the footer paints it
+        // before the cycle's first blocking work.
         await yieldToRenderer();
 
         let result: SyncRunResult;

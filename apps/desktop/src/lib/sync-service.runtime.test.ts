@@ -665,6 +665,149 @@ describe('desktop sync-service runtime', () => {
         });
     });
 
+    it('never publishes an idle status while a queued follow-up sync takes over', async () => {
+        const syncServiceModule = await syncServiceModulePromise;
+        const syncedAttachment = {
+            ...localData.tasks[0].attachments?.[0],
+            cloudKey: 'attachments/att-1.txt',
+            uri: '',
+            localStatus: undefined,
+        } as NonNullable<AppData['tasks'][number]['attachments']>[number];
+        const baseData: AppData = {
+            ...structuredClone(localData),
+            tasks: [{
+                ...localData.tasks[0],
+                attachments: [syncedAttachment],
+            }],
+            settings: {},
+        };
+        const mergedData: AppData = {
+            ...structuredClone(baseData),
+            tasks: [{
+                ...baseData.tasks[0],
+                title: 'Merged from remote',
+                updatedAt: '2026-01-01T00:01:00.000Z',
+            }],
+        };
+        // Unlike the local-only case above this edit really diverges, so the follow-up is
+        // not cleared and a second cycle runs — the hand-off this test is about.
+        const editedDuringSync: AppData = {
+            ...structuredClone(mergedData),
+            tasks: [{
+                ...mergedData.tasks[0],
+                title: 'Edited during sync',
+                updatedAt: '2026-01-01T00:02:00.000Z',
+            }],
+        };
+        expect(computeSyncPayloadFingerprint(editedDuringSync)).not.toBe(computeSyncPayloadFingerprint(mergedData));
+
+        // React batches every status published in one tick, so the footer only ever renders
+        // the last of them. Sample the same way, otherwise the same-tick "queued dropped,
+        // busy published" pair reads as a frame the user never sees (#913).
+        const renderedStatuses: Array<{ inFlight: boolean; queued: boolean }> = [];
+        let pendingStatus: { inFlight: boolean; queued: boolean } | null = null;
+        const unsubscribe = syncServiceModule.SyncService.subscribeSyncStatus((status) => {
+            const alreadyScheduled = pendingStatus !== null;
+            pendingStatus = { inFlight: status.inFlight, queued: status.queued };
+            if (alreadyScheduled) return;
+            queueMicrotask(() => {
+                if (pendingStatus) renderedStatuses.push(pendingStatus);
+                pendingStatus = null;
+            });
+        });
+
+        storeStateRef.current = {
+            ...storeStateRef.current,
+            _allTasks: structuredClone(baseData.tasks),
+            settings: {},
+            lastDataChangeAt: 1,
+        };
+        getInMemoryAppDataSnapshotMock.mockImplementation(() => ({
+            tasks: structuredClone(storeStateRef.current._allTasks),
+            projects: [],
+            sections: [],
+            areas: [],
+            people: [],
+            settings: structuredClone(storeStateRef.current.settings),
+        }));
+        invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'get_sync_backend') return 'file';
+            if (command === 'get_sync_path') return '/sync/data.json';
+            if (command === 'create_data_snapshot') return undefined;
+            if (command === 'get_data') return structuredClone(baseData);
+            if (command === 'read_sync_file') return structuredClone(mergedData);
+            if (command === 'save_data') return undefined;
+            if (command === 'write_sync_file') return undefined;
+            throw new Error(`Unexpected command: ${command} ${JSON.stringify(args)}`);
+        });
+        let queuedResult: Promise<unknown> | null = null;
+        performSyncCycleMock.mockImplementation(async (io: {
+            readLocal: () => Promise<AppData>;
+            writeLocal: (data: AppData) => Promise<void>;
+        }) => {
+            const cycle = performSyncCycleMock.mock.calls.length;
+            await io.readLocal();
+            await io.writeLocal(mergedData);
+            if (cycle === 1) {
+                storeStateRef.current = {
+                    ...storeStateRef.current,
+                    _allTasks: structuredClone(editedDuringSync.tasks),
+                    settings: structuredClone(editedDuringSync.settings),
+                    lastDataChangeAt: 2,
+                };
+                queuedResult = syncServiceModule.SyncService.performSync();
+            }
+            return { status: 'success', stats: emptyStats, data: mergedData };
+        });
+
+        try {
+            await syncServiceModule.SyncService.performSync();
+            await queuedResult;
+            expect(await syncServiceModule.SyncService.waitForSyncIdle(5000)).toBe(true);
+        } finally {
+            unsubscribe();
+        }
+
+        expect(performSyncCycleMock).toHaveBeenCalledTimes(2);
+        const busy = renderedStatuses.map((status) => status.inFlight || status.queued);
+        const firstBusy = busy.indexOf(true);
+        const lastBusy = busy.lastIndexOf(true);
+        expect(firstBusy).toBeGreaterThanOrEqual(0);
+        expect(renderedStatuses.slice(firstBusy, lastBusy + 1))
+            .not.toContainEqual({ inFlight: false, queued: false });
+    });
+
+    it('publishes an idle status when a sync cycle throws before its own idle publish', async () => {
+        const syncServiceModule = await syncServiceModulePromise;
+        invokeMock.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'get_sync_backend') return 'file';
+            if (command === 'get_sync_path') return '/sync/data.json';
+            if (command === 'create_data_snapshot') return undefined;
+            if (command === 'get_data') return structuredClone(localData);
+            if (command === 'read_sync_file') return structuredClone(localData);
+            if (command === 'save_data') return undefined;
+            if (command === 'write_sync_file') return undefined;
+            throw new Error(`Unexpected command: ${command} ${JSON.stringify(args)}`);
+        });
+        // The activation log is the last forced write before the cycle's own idle publish,
+        // so a log sink that throws there leaves the cycle without one.
+        logWarnMock.mockImplementation(() => {
+            throw new Error('log sink offline');
+        });
+
+        try {
+            await expect(syncServiceModule.SyncService.performSync({ activationProbe: true }))
+                .rejects.toThrow('log sink offline');
+        } finally {
+            logWarnMock.mockReset();
+        }
+
+        expect(syncServiceModule.SyncService.getSyncStatus()).toMatchObject({
+            inFlight: false,
+            step: null,
+        });
+    });
+
     it('clears the pending remote marker when local edits abort after remote write succeeds', async () => {
         const syncServiceModule = await syncServiceModulePromise;
         const pendingAt = '2026-01-01T00:00:00.000Z';
