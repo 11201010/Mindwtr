@@ -43,4 +43,5 @@ Changes collected since the latest stable release.
 - Mobile: in a task's **Preview**, text typed into the checklist **Add Item** box is now saved when you press **Save**, even if you did not press Enter first.
 - Subscribed calendars: a repeating event whose single occurrence was moved now shows once, at its new time, and a cancelled or deleted occurrence no longer shows at all. (#1249)
 - Desktop: the sidebar **Sync now** button no longer flickers between busy and idle when one sync hands over to the next, so the spinning icon stays steady under the pointer. (#913)
+- Desktop on Windows: task text no longer looks blurry while the sync icon is spinning. (#1251)
 - Moving a task to **Someday** now sticks, even when the task has a start or due date that has already passed. It used to change back to **Next** on the next load and send that change to your other devices. Waiting and Reference tasks were already safe; only an unprocessed Inbox task still moves to Next when its date arrives. (#1248)

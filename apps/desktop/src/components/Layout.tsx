@@ -1104,7 +1104,12 @@ export function Layout({
                 // tabIndex=-1 makes this a programmatic focus target for the
                 // "enter list" fallback; it is never keyboard-tabbable, so it
                 // must not paint a focus ring around the whole list (#890).
-                className="flex-1 overflow-auto focus:outline-none"
+                // bg-background repeats the shell's own colour, so nothing looks different;
+                // it only makes this box opaque in its own right. Chromium keeps subpixel
+                // antialiasing only in a layer it knows is opaque, and the footer's sync
+                // animations can lift this content into one — without a background here the
+                // text drops to grey antialiasing and reads as blurry on Windows (#1251).
+                className="flex-1 overflow-auto bg-background focus:outline-none"
                 data-main-content
                 tabIndex={-1}
                 role="main"
