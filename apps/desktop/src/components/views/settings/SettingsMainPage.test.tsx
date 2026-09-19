@@ -172,14 +172,18 @@ describe('SettingsMainPage', () => {
         fontMocks.loadInstalledFontFamilies.mockResolvedValue(['Inter', 'Roboto']);
         const onFontFamilyChange = vi.fn();
         const { findByRole, getByLabelText, getByRole, queryByRole } = render(
-            <SettingsMainPage {...baseProps} fontFamily="" onFontFamilyChange={onFontFamilyChange} />,
+            <SettingsMainPage {...baseProps} fontFamily="Inter" onFontFamilyChange={onFontFamilyChange} />,
         );
         const listedFonts = () => within(getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
 
-        const input = await findByRole('combobox', { name: 'Font' });
+        const input = await findByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        // With a font already chosen, focusing must still open the whole list: the
+        // field clears for browsing and keeps the current font as its placeholder.
         fireEvent.focus(input);
         await findByRole('option', { name: 'Roboto' });
-        expect(listedFonts()).toEqual(['Inter', 'Roboto']);
+        expect(input.value).toBe('');
+        expect(input.placeholder).toBe('Inter');
+        expect(listedFonts()).toEqual(['App default', 'Inter', 'Roboto']);
 
         fireEvent.change(input, { target: { value: 'rob' } });
         expect(listedFonts()).toEqual(['Roboto']);
@@ -188,13 +192,19 @@ describe('SettingsMainPage', () => {
         fireEvent.mouseDown(within(getByRole('listbox')).getByRole('option', { name: 'Roboto' }));
         expect(onFontFamilyChange).toHaveBeenLastCalledWith('Roboto');
 
-        // A half-typed name is only a filter: it reverts on blur instead of applying.
+        // Leaving without a pick restores the current value instead of clearing it.
         onFontFamilyChange.mockClear();
+        fireEvent.focus(input);
         fireEvent.change(input, { target: { value: 'zzz' } });
         fireEvent.blur(input);
         expect(onFontFamilyChange).not.toHaveBeenCalled();
-        expect((getByLabelText('Font') as HTMLInputElement).value).toBe('');
+        expect((getByLabelText('Font') as HTMLInputElement).value).toBe('Inter');
         expect(queryByRole('listbox')).toBeNull();
+
+        // "App default" is a real entry, so the default is one pick away.
+        fireEvent.focus(input);
+        fireEvent.mouseDown(within(getByRole('listbox')).getByRole('option', { name: 'App default' }));
+        expect(onFontFamilyChange).toHaveBeenLastCalledWith('');
     });
 
     it('falls back to a typed name when no font list is available (#1244)', () => {

@@ -519,10 +519,12 @@ export function SettingsMainPage({
 }
 
 // A combobox over the fonts installed on this computer, listed by the desktop
-// shell (no browser permission involved): click to browse the whole list, type
-// to narrow it, pick to apply. Empty = app default, which already resolves to
-// the OS interface font on every platform. The plain web build has no native
-// list, so there the field takes a typed name as-is (#1244).
+// shell (no browser permission involved). Focusing clears the field so the whole
+// list opens at once (the current font stays visible as the placeholder); typing
+// narrows it; an exact pick applies; leaving without a pick restores the value.
+// "App default" is the first entry and already resolves to the OS interface font
+// on every platform. The plain web build has no native list, so there the field
+// takes a typed name as-is (#1244).
 function FontFamilyControl({
     t,
     value,
@@ -552,45 +554,47 @@ function FontFamilyControl({
     }, []);
 
     const hasList = (installedFonts?.length ?? 0) > 0;
+    const defaultLabel = t.fontFamilyDefault;
     const findInstalled = (name: string) => {
         const key = name.trim().toLowerCase();
         return installedFonts?.find((family) => family.toLowerCase() === key) ?? null;
     };
-    // A name is applied as soon as it is an exact pick (or cleared); a half-typed
-    // name is only a filter and reverts on blur when a list exists.
     const handleChange = (next: string) => {
-        setDraft(next);
-        if (next.trim() === '') {
+        if (hasList && next === defaultLabel) {
+            setDraft('');
             if (value !== '') onChange('');
             return;
         }
-        const installed = findInstalled(next);
+        setDraft(next);
+        const installed = hasList ? findInstalled(next) : null;
         if (installed && installed !== value) onChange(installed);
     };
     const commitDraft = () => {
         const trimmed = draft.trim();
-        if (trimmed === value) return;
         if (!hasList) {
-            onChange(trimmed);
+            if (trimmed !== value) onChange(trimmed);
             return;
         }
-        const installed = findInstalled(trimmed);
-        if (installed) onChange(installed);
+        const installed = trimmed ? findInstalled(trimmed) : null;
+        if (installed && installed !== value) onChange(installed);
         else setDraft(value);
     };
-    const previewFamily = draft.trim().replace(/"/g, '');
+    const previewFamily = (draft.trim() || value).replace(/"/g, '');
 
     return (
         <div className="w-56">
             <AutocompleteTextInput
                 aria-label={t.fontFamily}
-                placeholder={hasList ? t.fontFamilyDefault : t.fontFamilyPlaceholder}
+                placeholder={hasList ? (value || defaultLabel) : t.fontFamilyPlaceholder}
                 value={draft}
                 onChange={handleChange}
-                suggestions={installedFonts ?? []}
-                maxSuggestions={Math.max(installedFonts?.length ?? 0, 1)}
+                suggestions={hasList ? [defaultLabel, ...(installedFonts ?? [])] : []}
+                maxSuggestions={(installedFonts?.length ?? 0) + 1}
                 showAllWhenEmpty
                 style={previewFamily ? { fontFamily: `"${previewFamily}", ui-sans-serif, sans-serif` } : undefined}
+                onFocus={() => {
+                    if (hasList) setDraft('');
+                }}
                 onBlur={commitDraft}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter') {
