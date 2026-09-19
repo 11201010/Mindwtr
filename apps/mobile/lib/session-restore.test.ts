@@ -42,6 +42,31 @@ describe('mobile session restore', () => {
         expect(await readRestorableRoute()).toEqual({ pathname: '/inbox' });
     });
 
+    // Done and Archived became two tabs of one History screen: the pathname
+    // the app records is /history, and /done and /archived only redirect.
+    it('restores History on the tab the user was reading', async () => {
+        await persistLastRoute('/history', { tab: 'archived' });
+        expect(await readRestorableRoute()).toEqual({
+            pathname: '/history',
+            params: { tab: 'archived' },
+        });
+
+        await persistLastRoute('/history', { tab: 'done' });
+        expect(await readRestorableRoute()).toEqual({
+            pathname: '/history',
+            params: { tab: 'done' },
+        });
+
+        // Anything else in that param is dropped rather than replayed.
+        await persistLastRoute('/history', { tab: 'trash' });
+        expect(await readRestorableRoute()).toEqual({ pathname: '/history' });
+
+        // The redirect-only paths are no longer recorded.
+        await persistLastRoute('/done');
+        await persistLastRoute('/archived');
+        expect(await readRestorableRoute()).toEqual({ pathname: '/history' });
+    });
+
     it('expires after the restore window', async () => {
         await persistLastRoute('/board');
         expect(await readRestorableRoute(Date.now() + SESSION_RESTORE_WINDOW_MS + 1000)).toBeNull();

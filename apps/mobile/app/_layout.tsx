@@ -610,22 +610,25 @@ function RootLayoutContentInner() {
 
   // Remember the screen the user is on so a reopen shortly after the OS kills
   // the app resumes there instead of resetting to Focus (#842).
-  const globalSearchParams = useGlobalSearchParams<{ projectId?: string }>();
+  const globalSearchParams = useGlobalSearchParams<{ projectId?: string; tab?: string }>();
   const routeProjectId = typeof globalSearchParams.projectId === 'string' ? globalSearchParams.projectId : undefined;
-  const lastRouteRef = useRef<{ pathname: string; projectId?: string }>({ pathname });
+  // History keeps its Done/Archived choice in this param, so the snapshot must
+  // carry it or the screen comes back on the wrong tab.
+  const routeTab = typeof globalSearchParams.tab === 'string' ? globalSearchParams.tab : undefined;
+  const lastRouteRef = useRef<{ pathname: string; projectId?: string; tab?: string }>({ pathname });
   useEffect(() => {
     if (sandboxMode) return;
-    lastRouteRef.current = { pathname, projectId: routeProjectId };
-    void persistLastRoute(pathname, routeProjectId ? { projectId: routeProjectId } : undefined);
-  }, [pathname, routeProjectId, sandboxMode]);
+    lastRouteRef.current = { pathname, projectId: routeProjectId, tab: routeTab };
+    void persistLastRoute(pathname, { projectId: routeProjectId, tab: routeTab });
+  }, [pathname, routeProjectId, routeTab, sandboxMode]);
   useEffect(() => {
     if (sandboxMode) return;
     // The snapshot timestamp must reflect when the session left the app, not
     // the last navigation — refresh it whenever the app goes to background.
     const subscription = AppState.addEventListener('change', (state) => {
       if (state !== 'background' && state !== 'inactive') return;
-      const { pathname: lastPathname, projectId } = lastRouteRef.current;
-      void persistLastRoute(lastPathname, projectId ? { projectId } : undefined);
+      const { pathname: lastPathname, projectId, tab } = lastRouteRef.current;
+      void persistLastRoute(lastPathname, { projectId, tab });
     });
     return () => subscription.remove();
   }, [sandboxMode]);

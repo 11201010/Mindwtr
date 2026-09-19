@@ -21,8 +21,7 @@ const RESTORABLE_PATHS = new Set([
     '/board',
     '/calendar',
     '/contexts',
-    '/done',
-    '/archived',
+    '/history',
     '/reference',
     '/someday',
     '/waiting',
@@ -36,8 +35,14 @@ const isRestorablePath = (pathname: string): boolean =>
 // Routes whose snapshot may carry an open-project context.
 const PROJECT_CONTEXT_PATHS = new Set(['/projects-screen', '/projects']);
 
+// History is one screen with two tabs (Done and Archived); restoring it on the
+// wrong tab is as wrong as restoring the wrong screen. Only these two values
+// are ever replayed.
+const HISTORY_TAB_PATH = '/history';
+const HISTORY_TABS = new Set(['done', 'archived']);
+
 const TRANSIENT_ACTIVITY_ROOT_ROUTES = new Set(['capture-modal']);
-const SAFE_ACTIVITY_ROUTE_PARAMS = new Set(['id', 'projectId', 'settingsScreen']);
+const SAFE_ACTIVITY_ROUTE_PARAMS = new Set(['id', 'projectId', 'settingsScreen', 'tab']);
 const MAX_ACTIVITY_NAVIGATION_DEPTH = 12;
 const MAX_ACTIVITY_ROUTES_PER_STATE = 64;
 
@@ -144,9 +149,13 @@ export async function persistLastRoute(pathname: string, params?: Record<string,
         const projectId = PROJECT_CONTEXT_PATHS.has(pathname)
             ? explicitProjectId ?? sessionOpenProjectId ?? undefined
             : undefined;
+        const tab = pathname === HISTORY_TAB_PATH && typeof params?.tab === 'string' && HISTORY_TABS.has(params.tab)
+            ? params.tab
+            : undefined;
         await AsyncStorage.setItem(LAST_ROUTE_STORAGE_KEY, JSON.stringify({
             pathname,
             ...(projectId ? { params: { projectId } } : {}),
+            ...(tab ? { params: { tab } } : {}),
             at: Date.now(),
         }));
     } catch {
