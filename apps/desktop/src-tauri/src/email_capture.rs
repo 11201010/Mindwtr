@@ -400,8 +400,10 @@ fn prefix_fetch_may_have_cut_text(prefix: &[u8], body_text: &str) -> bool {
         && !text_part_ended_before(prefix)
 }
 
-// `FnOnce` is the bound: at most one full refetch per UID per poll. A refetch that fails
-// is a fetch failure like any other and aborts the poll.
+// `FnOnce` is the bound: at most one full refetch per UID per poll. A refetch that fails,
+// or comes back without a body, is a fetch failure like any other: it aborts the poll, so
+// the message is left in the mailbox for the next one. Falling back to the cut prefix here
+// would import exactly the empty body the refetch exists to prevent.
 fn email_capture_message_from_prefix<F>(
     uid: u32,
     uid_validity: u32,
@@ -415,10 +417,10 @@ where
     if !prefix_fetch_may_have_cut_text(prefix, &message.body_text) {
         return Ok(message);
     }
-    match refetch_full(uid)? {
-        Some(full) => Ok(build_email_capture_message(uid, uid_validity, &full)),
-        None => Ok(message),
-    }
+    let full = refetch_full(uid)?.ok_or_else(|| {
+        EmailCaptureError::other(format!("Message {uid} was fetched without a body"))
+    })?;
+    Ok(build_email_capture_message(uid, uid_validity, &full))
 }
 
 type EmailSession = imap::Session<TlsStream<TcpStream>>;
@@ -1122,6 +1124,29 @@ mod tests {
         assert!(
             refetched.is_empty(),
             "nothing past the kept-character cap would be stored, so no refetch"
+        );
+    }
+
+    #[test]
+    fn prefix_fetch_reports_a_refetch_reply_without_a_body_like_a_failed_fetch() {
+        let raw = multipart_mail(
+            &attachment_part(400_000),
+            &text_part("See the attached report."),
+        );
+
+        let error = email_capture_message_from_prefix(
+            9,
+            7,
+            &raw.as_bytes()[..EMAIL_CAPTURE_FETCH_BYTE_LIMIT],
+            |_| Ok(None),
+        )
+        .expect_err("a refetch reply without a body must not fall back to the cut prefix");
+
+        assert_eq!(error.kind, "other");
+        assert!(
+            error.message.contains('9'),
+            "the error should name the message: {}",
+            error.message
         );
     }
 
