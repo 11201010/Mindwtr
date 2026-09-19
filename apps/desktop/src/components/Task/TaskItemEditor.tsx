@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type DragEvent, type FormEvent, type React
 import { ContextualHelp } from '../ContextualHelp';
 import { ArrowRight, Check, FolderPlus, HelpCircle, Layers, MapPin, Rows3, Trash2 } from 'lucide-react';
 import {
+    buildTaskMovePatch,
     resolveAutoTextDirection,
     setTaskViewSectionId,
     tFallback,
@@ -173,15 +174,10 @@ export function TaskItemEditor({
             ? { kind: 'area', id: editAreaId }
             : { kind: 'none' };
     const setDestination = (selection: DestinationSelection) => {
-        if (selection.kind === 'project') {
-            if (selection.id !== editProjectId) setEditSectionId('');
-            setEditProjectId(selection.id);
-            setEditAreaId('');
-            return;
-        }
-        setEditProjectId('');
-        setEditSectionId('');
-        setEditAreaId(selection.kind === 'area' ? selection.id : '');
+        const patch = buildTaskMovePatch(selection, { projectId: editProjectId, sectionId: editSectionId });
+        setEditProjectId(patch.projectId ?? '');
+        setEditAreaId(patch.areaId ?? '');
+        setEditSectionId(patch.sectionId ?? '');
     };
     const [schedulingOpen, setSchedulingOpen] = useState(() => sectionOpenDefaults.scheduling || sectionCounts.scheduling > 0);
     const [organizationOpen, setOrganizationOpen] = useState(() => sectionOpenDefaults.organization || sectionCounts.organization > 0);

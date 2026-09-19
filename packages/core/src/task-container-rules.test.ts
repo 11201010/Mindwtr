@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     buildTaskContainerMovePatch,
+    buildTaskMovePatch,
     resolveTaskContainerAssignment,
     resolveTaskContainerHierarchy,
+    type TaskMoveDestination,
 } from './task-container-rules';
 import type { Area, Project, Section, Task } from './types';
 
@@ -75,6 +77,77 @@ describe('resolveTaskContainerHierarchy', () => {
             sectionId: undefined,
             areaId: undefined,
         });
+    });
+});
+
+describe('buildTaskMovePatch', () => {
+    it('keeps a section the destination project owns', () => {
+        expect(buildTaskMovePatch(
+            { kind: 'project', id: 'project-1' },
+            { projectId: 'project-1', sectionId: 'section-1' },
+        )).toEqual({
+            projectId: 'project-1',
+            sectionId: 'section-1',
+            areaId: undefined,
+        });
+    });
+
+    it('drops a section another project owns', () => {
+        expect(buildTaskMovePatch(
+            { kind: 'project', id: 'project-2' },
+            { projectId: 'project-1', sectionId: 'section-1' },
+        )).toEqual({
+            projectId: 'project-2',
+            sectionId: undefined,
+            areaId: undefined,
+        });
+    });
+
+    it('clears the project and its section when moving to an area', () => {
+        expect(buildTaskMovePatch(
+            { kind: 'area', id: 'area-1' },
+            { projectId: 'project-1', sectionId: 'section-1' },
+        )).toEqual({
+            projectId: undefined,
+            sectionId: undefined,
+            areaId: 'area-1',
+        });
+    });
+
+    it('clears every container field for no destination', () => {
+        expect(buildTaskMovePatch(
+            { kind: 'none' },
+            { projectId: 'project-1', sectionId: 'section-1' },
+        )).toEqual({
+            projectId: undefined,
+            sectionId: undefined,
+            areaId: undefined,
+        });
+    });
+
+    // A patch key that is absent means "leave this field alone" to the store
+    // (buildTaskContainerMovePatch tests hasOwnProperty), so a Move that clears a
+    // container has to send the key with an undefined value, not omit it.
+    it('always carries all three container keys', () => {
+        for (const destination of [
+            { kind: 'none' },
+            { kind: 'project', id: 'project-1' },
+            { kind: 'area', id: 'area-1' },
+        ] satisfies TaskMoveDestination[]) {
+            expect(Object.keys(buildTaskMovePatch(destination)).sort())
+                .toEqual(['areaId', 'projectId', 'sectionId']);
+        }
+    });
+
+    it('produces container fields the hierarchy rule leaves untouched', () => {
+        for (const destination of [
+            { kind: 'none' },
+            { kind: 'project', id: 'project-1' },
+            { kind: 'area', id: 'area-1' },
+        ] satisfies TaskMoveDestination[]) {
+            const patch = buildTaskMovePatch(destination, { projectId: 'project-1', sectionId: 'section-1' });
+            expect(resolveTaskContainerHierarchy({ ...patch, sectionProjectId: patch.projectId })).toEqual(patch);
+        }
     });
 });
 

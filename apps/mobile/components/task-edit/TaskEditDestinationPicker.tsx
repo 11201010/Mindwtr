@@ -10,11 +10,13 @@ import {
     View,
 } from 'react-native';
 import {
+    buildTaskMovePatch,
     compareAreasByOrder,
     getProjectChoiceState,
     tFallback,
     type Area,
     type Project,
+    type TaskMoveDestination,
 } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -23,50 +25,22 @@ import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { logError } from '@/lib/app-log';
 import { styles } from './task-edit-modal.styles';
 
-export type TaskEditDestination =
-    | { kind: 'none' }
-    | { kind: 'project'; id: string }
-    | { kind: 'area'; id: string };
+export type TaskEditDestination = TaskMoveDestination;
 
+/** Writes core's move patch into the draft, where '' is this screen's "none". */
 export function applyTaskEditDestination(
     setDraftField: (field: 'projectId' | 'areaId' | 'sectionId', value: string) => void,
     currentProjectId: string | undefined,
     currentSectionId: string | undefined,
     destination: TaskEditDestination,
 ) {
-    if (destination.kind === 'project') {
-        setDraftField('projectId', destination.id);
-        setDraftField('areaId', '');
-        setDraftField('sectionId', currentProjectId === destination.id ? currentSectionId ?? '' : '');
-        return;
-    }
-    if (destination.kind === 'area') {
-        setDraftField('projectId', '');
-        setDraftField('sectionId', '');
-        setDraftField('areaId', destination.id);
-        return;
-    }
-    setDraftField('projectId', '');
-    setDraftField('sectionId', '');
-    setDraftField('areaId', '');
-}
-
-export function buildTaskDestinationUpdates(
-    currentProjectId: string | undefined,
-    currentSectionId: string | undefined,
-    destination: TaskEditDestination,
-): { projectId?: string; areaId?: string; sectionId?: string } {
-    if (destination.kind === 'project') {
-        return {
-            projectId: destination.id,
-            areaId: undefined,
-            sectionId: currentProjectId === destination.id ? currentSectionId : undefined,
-        };
-    }
-    if (destination.kind === 'area') {
-        return { projectId: undefined, sectionId: undefined, areaId: destination.id };
-    }
-    return { projectId: undefined, sectionId: undefined, areaId: undefined };
+    const patch = buildTaskMovePatch(destination, {
+        projectId: currentProjectId,
+        sectionId: currentSectionId,
+    });
+    setDraftField('projectId', patch.projectId ?? '');
+    setDraftField('areaId', patch.areaId ?? '');
+    setDraftField('sectionId', patch.sectionId ?? '');
 }
 
 type DestinationPickerThemeColors = Pick<

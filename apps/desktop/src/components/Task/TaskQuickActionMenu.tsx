@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Calendar, CalendarClock, Check, ChevronRight, Copy, Flag, Folder, Pencil, Tag, Trash2 } from 'lucide-react';
 import {
+    buildTaskMovePatch,
     getAdvancedReviewDate,
     isDueForReview,
     normalizeBulkTaskTokenInput,
@@ -630,23 +631,12 @@ export function TaskQuickActionMenu({
     const handleDestinationSave = async () => {
         setSavingPanel('destination');
         try {
-            const result = await onUpdateTask(destinationDraft.kind === 'project'
-                ? {
-                    projectId: destinationDraft.id,
-                    areaId: undefined,
-                    sectionId: sectionDraft || undefined,
-                }
-                : destinationDraft.kind === 'area'
-                    ? {
-                        projectId: undefined,
-                        areaId: destinationDraft.id,
-                        sectionId: undefined,
-                    }
-                    : {
-                        projectId: undefined,
-                        areaId: undefined,
-                        sectionId: undefined,
-                    });
+            const result = await onUpdateTask(buildTaskMovePatch(
+                destinationDraft,
+                destinationDraft.kind === 'project'
+                    ? { projectId: destinationDraft.id, sectionId: sectionDraft || undefined }
+                    : undefined,
+            ));
             if (!result.success) {
                 throw new Error(result.error || 'Failed to update task destination');
             }

@@ -82,6 +82,35 @@ export const resolveTaskContainerHierarchy = ({
     };
 };
 
+export type TaskMoveDestination =
+    | { kind: 'none' }
+    | { kind: 'project'; id: string }
+    | { kind: 'area'; id: string };
+
+/**
+ * The fields to send when a task moves to a destination. All three keys are always
+ * present; undefined means "clear" (an absent key means "leave alone" to the store).
+ * `section` is a section the caller wants to keep and the project that owns it; it
+ * survives only a move into that same project.
+ */
+export const buildTaskMovePatch = (
+    destination: TaskMoveDestination,
+    section?: { projectId?: string; sectionId?: string },
+): { projectId: string | undefined; sectionId: string | undefined; areaId: string | undefined } => {
+    if (destination.kind === 'project') {
+        return {
+            projectId: destination.id,
+            sectionId: section?.projectId === destination.id ? section.sectionId : undefined,
+            areaId: undefined,
+        };
+    }
+    return {
+        projectId: undefined,
+        sectionId: undefined,
+        areaId: destination.kind === 'area' ? destination.id : undefined,
+    };
+};
+
 export const resolveTaskContainerAssignment = ({
     projectId,
     sectionId,

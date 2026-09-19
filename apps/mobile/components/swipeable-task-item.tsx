@@ -10,6 +10,7 @@ import {
     isTaskFinished,
     normalizeFocusTaskLimit,
     buildQuickAddParseOptions,
+    buildTaskMovePatch,
     flushPendingSave,
     parseProjectNextActionInput,
     resolveFeatureFlags,
@@ -41,7 +42,6 @@ import { CompactText } from '@/components/compact-text';
 import { useSwipeableChecklist } from './swipeable-task-item/useSwipeableChecklist';
 import { settleStoreAction } from './store-action-result';
 import {
-    buildTaskDestinationUpdates,
     TaskEditDestinationPicker,
     type TaskEditDestination,
 } from './task-edit/TaskEditDestinationPicker';
@@ -402,7 +402,10 @@ function SwipeableTaskItemInner({
 
     const handleMoveToDestination = useCallback((destination: TaskEditDestination) => {
         if (interactionDisabled) return;
-        const updates = buildTaskDestinationUpdates(task.projectId, task.sectionId, destination);
+        const updates = buildTaskMovePatch(destination, {
+            projectId: task.projectId,
+            sectionId: task.sectionId,
+        });
         void settleStoreAction(() => updateTask(task.id, updates)).then((outcome) => {
             if (!outcome.ok) showActionFailure(outcome.message);
         });

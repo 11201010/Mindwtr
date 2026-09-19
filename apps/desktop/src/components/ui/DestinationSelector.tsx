@@ -5,6 +5,7 @@ import {
     numericTextCollator,
     type Area,
     type Project,
+    type TaskMoveDestination,
 } from '@mindwtr/core';
 import { ChevronDown, Folder, MapPin, Plus } from 'lucide-react';
 
@@ -12,10 +13,7 @@ import { cn } from '../../lib/utils';
 import { ModalPortal } from '../ModalPortal';
 import { useDropdownPosition } from './use-dropdown-position';
 
-export type DestinationSelection =
-    | { kind: 'none' }
-    | { kind: 'project'; id: string }
-    | { kind: 'area'; id: string };
+export type DestinationSelection = TaskMoveDestination;
 
 type DestinationSelectorProps = {
     projects: Project[];

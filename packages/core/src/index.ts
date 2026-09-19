@@ -19,6 +19,7 @@ export * from './async-utils';
 export * from './storage';
 export * from './range-selection';
 export * from './task-metadata-filter-visibility';
+export { buildTaskMovePatch, type TaskMoveDestination } from './task-container-rules';
 export * from './resolve-feature-flags';
 export * from './bulk-organize';
 export * from './bulk-organize-create';

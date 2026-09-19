@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { applyTaskEditDestination, buildTaskDestinationUpdates } from './TaskEditDestinationPicker';
+import { applyTaskEditDestination } from './TaskEditDestinationPicker';
 
 describe('applyTaskEditDestination', () => {
     it('moves to a project and clears an incompatible area and section', () => {
@@ -39,8 +39,8 @@ describe('applyTaskEditDestination', () => {
 
         expect(setDraftField.mock.calls).toEqual([
             ['projectId', ''],
-            ['sectionId', ''],
             ['areaId', 'area-1'],
+            ['sectionId', ''],
         ]);
     });
 
@@ -51,26 +51,8 @@ describe('applyTaskEditDestination', () => {
 
         expect(setDraftField.mock.calls).toEqual([
             ['projectId', ''],
-            ['sectionId', ''],
             ['areaId', ''],
+            ['sectionId', ''],
         ]);
-    });
-});
-
-describe('buildTaskDestinationUpdates', () => {
-    it('builds one atomic patch for a project move', () => {
-        expect(buildTaskDestinationUpdates('old', 'section-1', { kind: 'project', id: 'new' })).toEqual({
-            projectId: 'new',
-            areaId: undefined,
-            sectionId: undefined,
-        });
-    });
-
-    it('builds one atomic patch for an area move', () => {
-        expect(buildTaskDestinationUpdates('old', 'section-1', { kind: 'area', id: 'area-1' })).toEqual({
-            projectId: undefined,
-            sectionId: undefined,
-            areaId: 'area-1',
-        });
     });
 });

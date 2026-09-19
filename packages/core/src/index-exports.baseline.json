@@ -377,6 +377,7 @@
     "buildSyncPayloadSurfaceTraceExtra",
     "buildSyncPayloadTraceExtra",
     "buildTaskFocusEligibilityContext",
+    "buildTaskMovePatch",
     "buildTaskNotesExportZip",
     "buildTaskUpdatesFromSpeechResult",
     "buildTaskViewSectionUndoUpdates",
