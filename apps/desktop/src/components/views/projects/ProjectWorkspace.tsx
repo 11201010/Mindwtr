@@ -5,6 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Attachment,
     Task,
     collectBulkTaskTokens,
+    collectProjectTaskLinks,
     compareTasksByProjectOrder,
     getProjectSectionsForView,
     getSequentialProjectTaskCues,
@@ -20,7 +21,7 @@ import { Attachment,
     stripMarkdown,
     resolveTaskSortByForFeatures,
     sortTasksBy,
-    splitCompletedTasks, tFallback, useTaskStore, } from '@mindwtr/core';
+    splitCompletedTasks, tFallback, undoProjectDelete, useTaskStore, } from '@mindwtr/core';
 import { useDndMonitor } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
@@ -425,7 +426,6 @@ export function ProjectWorkspace({
         updateProject,
         cancelProject,
         deleteProject,
-        restoreProject,
         updateTask,
         restoreTask,
         batchMoveTasks,
@@ -1563,10 +1563,13 @@ export function ProjectWorkspace({
             if (confirmed && getMutableSelectedProject()?.id === projectId) {
                 setIsProjectDeleting(true);
                 try {
+                    // Deleting detaches the project's tasks, and only Undo can know
+                    // which they were -- the links must be read before the delete.
+                    const detachedTasks = collectProjectTaskLinks(projectId);
                     await Promise.resolve(deleteProject(projectId));
                     setSelectedProjectId(null);
                     showUndoToast(resolveText('projects.deleted', 'Project moved to Trash'), () => {
-                        void Promise.resolve(restoreProject(projectId))
+                        void undoProjectDelete(projectId, detachedTasks)
                             .then(() => setSelectedProjectId(projectId))
                             .catch((error) => {
                                 reportError('Failed to restore project', error);

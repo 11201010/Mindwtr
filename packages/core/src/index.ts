@@ -99,6 +99,7 @@ export * from './reference';
 export * from './project-grouping';
 export * from './focus-utils';
 export * from './undo-task-completion';
+export * from './undo-project-delete';
 export * from './uuid';
 export * from './date';
 export * from './quick-add';

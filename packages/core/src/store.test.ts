@@ -16,6 +16,7 @@ import { shouldShowTaskForStart } from './task-utils';
 import type { StorageAdapter } from './storage';
 import type { AppData, Area, Project, Task } from './types';
 import { runDataTransferTransaction } from './data-transfer-transaction';
+import { collectProjectTaskLinks, undoProjectDelete } from './undo-project-delete';
 
 const waitForExpectation = async (assertion: () => void, maxAttempts = 200): Promise<void> => {
     let lastError: unknown = null;
@@ -5202,6 +5203,61 @@ describe('TaskStore', () => {
             expect(restoredTask.projectId).toBeUndefined();
             expect(restoredTask.sectionId).toBeUndefined();
             expect(restoredSection.deletedAt).toBeUndefined();
+        });
+
+        // Undo has the links the Trash screen lacks: it recorded them before deleting.
+        it('undoing a project delete re-attaches its tasks and sections', async () => {
+            const { addProject, addSection, addTask, deleteProject } = useTaskStore.getState();
+            const project = await addProject('Undo Project', '#333333');
+            if (!project) return;
+            const section = await addSection(project.id, 'Cleanup');
+            if (!section) return;
+
+            await addTask('Undo Project Task', { projectId: project.id, sectionId: section.id, status: 'next' });
+            const task = useTaskStore.getState()._allTasks.find((item) => item.title === 'Undo Project Task')!;
+
+            const links = collectProjectTaskLinks(project.id);
+            expect(links).toEqual([{ id: task.id, sectionId: section.id }]);
+
+            await deleteProject(project.id);
+            const detachedTask = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+            expect(detachedTask.projectId).toBeUndefined();
+
+            await undoProjectDelete(project.id, links);
+
+            const restoredTask = useTaskStore.getState()._allTasks.find((item) => item.id === task.id)!;
+            expect(restoredTask.projectId).toBe(project.id);
+            expect(restoredTask.sectionId).toBe(section.id);
+            expect(useTaskStore.getState()._allProjects.find((item) => item.id === project.id)!.deletedAt).toBeUndefined();
+            expect(restoredTask.rev ?? 0).toBeGreaterThan(detachedTask.rev ?? 0);
+        });
+
+        it('undoing a project delete skips tasks that were filed elsewhere or deleted meanwhile', async () => {
+            const { addProject, addTask, deleteProject, deleteTask, updateTask } = useTaskStore.getState();
+            const project = await addProject('Undo Skip Project', '#333333');
+            if (!project) return;
+            const other = await addProject('Other Project', '#444444');
+            if (!other) return;
+
+            await addTask('Refiled Task', { projectId: project.id, status: 'next' });
+            await addTask('Deleted Task', { projectId: project.id, status: 'next' });
+            const refiled = useTaskStore.getState()._allTasks.find((item) => item.title === 'Refiled Task')!;
+            const deleted = useTaskStore.getState()._allTasks.find((item) => item.title === 'Deleted Task')!;
+
+            const links = collectProjectTaskLinks(project.id);
+            expect(links.map((link) => link.id).sort()).toEqual([refiled.id, deleted.id].sort());
+
+            await deleteProject(project.id);
+            await updateTask(refiled.id, { projectId: other.id });
+            await deleteTask(deleted.id);
+
+            await undoProjectDelete(project.id, links);
+
+            const refiledAfter = useTaskStore.getState()._allTasks.find((item) => item.id === refiled.id)!;
+            const deletedAfter = useTaskStore.getState()._allTasks.find((item) => item.id === deleted.id)!;
+            expect(refiledAfter.projectId).toBe(other.id);
+            expect(deletedAfter.deletedAt).toBeTruthy();
+            expect(deletedAfter.projectId).toBeUndefined();
         });
 
         it('purges deleted projects while keeping detached tasks live', async () => {

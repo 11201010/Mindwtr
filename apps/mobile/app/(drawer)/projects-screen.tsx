@@ -4,7 +4,7 @@ import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, useWindowDimensions } from 'react-native';
 import type { GettingStartedAction } from '@/components/GettingStartedActions';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { AREA_PRESET_COLORS, Attachment, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, shallow, Task, type Section, type TaskSortBy, useTaskStore } from '@mindwtr/core';
+import { AREA_PRESET_COLORS, Attachment, collectProjectTaskLinks, DEFAULT_PROJECT_COLOR, getProjectSectionsForView, Project, shallow, Task, type Section, type TaskSortBy, undoProjectDelete, useTaskStore } from '@mindwtr/core';
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react-native';
 
@@ -83,7 +83,6 @@ export default function ProjectsScreen() {
     addProject,
     updateProject,
     deleteProject,
-    restoreProject,
     duplicateProject,
     toggleProjectFocus,
     addArea,
@@ -102,7 +101,6 @@ export default function ProjectsScreen() {
     addProject: state.addProject,
     updateProject: state.updateProject,
     deleteProject: state.deleteProject,
-    restoreProject: state.restoreProject,
     duplicateProject: state.duplicateProject,
     toggleProjectFocus: state.toggleProjectFocus,
     addArea: state.addArea,
@@ -458,6 +456,9 @@ export default function ProjectsScreen() {
   };
 
   const handleDeleteProject = useCallback((projectIdToDelete: string) => {
+    // Deleting detaches the project's tasks, and only Undo can know which they
+    // were -- the links must be read before the delete.
+    const detachedTasks = collectProjectTaskLinks(projectIdToDelete);
     void Promise.resolve(deleteProject(projectIdToDelete))
       .then(() => {
         if (selectedProject?.id === projectIdToDelete) {
@@ -471,7 +472,7 @@ export default function ProjectsScreen() {
           tone: 'info',
           actionLabel: resolveText('common.undo', 'Undo'),
           onAction: () => {
-            void Promise.resolve(restoreProject(projectIdToDelete))
+            void undoProjectDelete(projectIdToDelete, detachedTasks)
               .catch((error) => {
                 logProjectError('Failed to restore project', error);
                 showToast({
@@ -497,7 +498,6 @@ export default function ProjectsScreen() {
     deleteProject,
     logProjectError,
     resolveText,
-    restoreProject,
     selectedProject?.id,
     showToast,
   ]);
