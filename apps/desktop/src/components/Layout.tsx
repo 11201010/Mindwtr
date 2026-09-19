@@ -28,6 +28,7 @@ import { cn } from '../lib/utils';
 import { isSandboxMode, shallow, useTaskStore, resolveFeatureFlags, safeFormatDate, tFallback, isAllowedInsecureUrl, formatTaskMovedMessage, isSyncFileLockUnavailableError } from '@mindwtr/core';
 import type { StoreActionResult, TaskStatus } from '@mindwtr/core';
 import { showUndoToast } from '../lib/undo-registry';
+import { undoTaskCompletion } from '../lib/undo-task-completion';
 import { useLanguage } from '../contexts/language-context';
 import { useUiStore } from '../store/ui-store';
 import { useObsidianStore } from '../store/obsidian-store';
@@ -545,6 +546,7 @@ export function Layout({
         if (!task || task.status === nextStatus) return;
 
         const previousStatus = task.status;
+        const wasFocusedToday = task.isFocusedToday === true;
         const title = task.title;
         void Promise.resolve(useTaskStore.getState().moveTask(taskId, nextStatus))
             .then((result) => {
@@ -553,6 +555,15 @@ export function Layout({
                     throw new Error(outcome.error || 'Failed to change task status');
                 }
                 showUndoToast(formatTaskMovedMessage(t, title, nextStatus), () => {
+                    // A drop on History completes the task, and completion has side
+                    // effects (the next occurrence of a repeating task, the Today
+                    // star), so undoing it goes through the shared core rule — the
+                    // same branch the status chord uses.
+                    if (nextStatus === 'done') {
+                        void undoTaskCompletion(taskId, previousStatus, wasFocusedToday)
+                            .catch((error) => reportError('Failed to undo task status change', error));
+                        return;
+                    }
                     void Promise.resolve(useTaskStore.getState().moveTask(taskId, previousStatus))
                         .catch((error) => reportError('Failed to undo task status change', error));
                 }, t);

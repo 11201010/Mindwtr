@@ -1124,6 +1124,57 @@ describe('Layout sync security warning', () => {
         await waitFor(() => expect(moveTask).toHaveBeenCalledWith('task-1', 'done'));
     });
 
+    // The drop completes the task, so its Undo must be the completion Undo: a plain
+    // status move leaves the follow-up occurrence behind and loses the Today star.
+    it('undoes a History drop the way a completion is undone', async () => {
+        const stamp = '2026-01-01T00:00:00.000Z';
+        const task = {
+            id: 'task-1',
+            title: 'Water plants',
+            status: 'next',
+            tags: [],
+            contexts: [],
+            recurrence: { rule: 'daily', strategy: 'strict' },
+            isFocusedToday: true,
+            createdAt: stamp,
+            updatedAt: stamp,
+        };
+        act(() => {
+            useTaskStore.setState({
+                tasks: [task],
+                _allTasks: [task],
+                _tasksById: new Map([[task.id, task]]),
+                settings: {},
+            } as never);
+        });
+
+        const { container } = renderLayout();
+        fireEvent.drop(container.querySelector('[data-view="history"]')!, {
+            dataTransfer: {
+                types: [CALENDAR_TASK_DRAG_MIME],
+                getData: (type: string) => (type === CALENDAR_TASK_DRAG_MIME ? 'task-1' : ''),
+                dropEffect: 'none',
+            },
+        });
+
+        const liveTasks = () => useTaskStore.getState()._allTasks.filter((entry) => !entry.deletedAt);
+        // Completing a repeating task creates the next occurrence.
+        await waitFor(() => expect(liveTasks()).toHaveLength(2));
+
+        const latestToast = () => {
+            const toasts = useUiStore.getState().toasts;
+            return toasts[toasts.length - 1];
+        };
+        await waitFor(() => expect(latestToast()?.action?.label).toBe('Undo'));
+        act(() => latestToast()!.action!.onClick());
+
+        await waitFor(() => {
+            expect(liveTasks()).toHaveLength(1);
+            expect(liveTasks()[0].status).toBe('next');
+            expect(liveTasks()[0].isFocusedToday).toBe(true);
+        });
+    });
+
     // Reference and History live in the folded "More" group, so their drop targets
     // cannot be seen or hit during a drag unless the group opens on its own.
     it('opens a folded group while a task is dragged over its header', () => {
