@@ -236,6 +236,153 @@ describe('ics', () => {
     });
 });
 
+describe('ics recurrence overrides (#1249)', () => {
+    // January keeps every time zone clear of a DST switch, so the generated
+    // occurrences and the EXDATE/RECURRENCE-ID instants line up wherever the
+    // tests run. Europe/London is UTC+0 then, so 09:00 there is 09:00Z.
+    const range = {
+        rangeStart: new Date('2026-01-01T00:00:00Z'),
+        rangeEnd: new Date('2026-02-01T00:00:00Z'),
+    };
+
+    const buildIcs = (events: string[][]) => [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        ...events.flatMap((lines) => ['BEGIN:VEVENT', ...lines, 'END:VEVENT']),
+        'END:VCALENDAR',
+    ].join('\n');
+
+    /** Weekly Monday 09:00 London, starting 2026-01-05. */
+    const weeklyMaster = (...extra: string[]) => [
+        'UID:weekly-1',
+        'SUMMARY:Standup',
+        'DTSTART;TZID=Europe/London:20260105T090000',
+        'DTEND;TZID=Europe/London:20260105T093000',
+        'RRULE:FREQ=WEEKLY',
+        ...extra,
+    ];
+
+    it('shows an edited occurrence once, at its new time', () => {
+        const events = parseIcs(buildIcs([
+            weeklyMaster(),
+            [
+                'UID:weekly-1',
+                'SUMMARY:Standup (moved)',
+                'RECURRENCE-ID;TZID=Europe/London:20260119T090000',
+                'DTSTART;TZID=Europe/London:20260119T110000',
+                'DTEND;TZID=Europe/London:20260119T113000',
+            ],
+        ]), { sourceId: 'cal', ...range });
+
+        expect(events.map((event) => [event.start, event.title])).toEqual([
+            ['2026-01-05T09:00:00.000Z', 'Standup'],
+            ['2026-01-12T09:00:00.000Z', 'Standup'],
+            ['2026-01-19T11:00:00.000Z', 'Standup (moved)'],
+            ['2026-01-26T09:00:00.000Z', 'Standup'],
+        ]);
+    });
+
+    it('matches a RECURRENCE-ID written in UTC against a TZID master', () => {
+        const events = parseIcs(buildIcs([
+            weeklyMaster(),
+            [
+                'UID:weekly-1',
+                'SUMMARY:Standup (moved)',
+                'RECURRENCE-ID:20260119T090000Z',
+                'DTSTART:20260119T110000Z',
+                'DTEND:20260119T113000Z',
+            ],
+        ]), { sourceId: 'cal', ...range });
+
+        expect(events.map((event) => event.start)).toEqual([
+            '2026-01-05T09:00:00.000Z',
+            '2026-01-12T09:00:00.000Z',
+            '2026-01-19T11:00:00.000Z',
+            '2026-01-26T09:00:00.000Z',
+        ]);
+    });
+
+    it('drops an occurrence listed in EXDATE', () => {
+        const events = parseIcs(
+            buildIcs([weeklyMaster('EXDATE;TZID=Europe/London:20260119T090000')]),
+            { sourceId: 'cal', ...range },
+        );
+
+        expect(events.map((event) => event.start)).toEqual([
+            '2026-01-05T09:00:00.000Z',
+            '2026-01-12T09:00:00.000Z',
+            '2026-01-26T09:00:00.000Z',
+        ]);
+    });
+
+    it('reads every value of a comma-separated EXDATE and every repeated EXDATE line', () => {
+        const events = parseIcs(buildIcs([weeklyMaster(
+            'EXDATE;TZID=Europe/London:20260112T090000,20260119T090000',
+            'EXDATE;TZID=Europe/London:20260126T090000',
+        )]), { sourceId: 'cal', ...range });
+
+        expect(events.map((event) => event.start)).toEqual(['2026-01-05T09:00:00.000Z']);
+    });
+
+    it('drops an occurrence whose override is STATUS:CANCELLED', () => {
+        // Google's cancelled instances can carry nothing but UID, RECURRENCE-ID and STATUS.
+        const events = parseIcs(buildIcs([
+            weeklyMaster(),
+            ['UID:weekly-1', 'RECURRENCE-ID;TZID=Europe/London:20260119T090000', 'STATUS:CANCELLED'],
+        ]), { sourceId: 'cal', ...range });
+
+        expect(events.map((event) => event.start)).toEqual([
+            '2026-01-05T09:00:00.000Z',
+            '2026-01-12T09:00:00.000Z',
+            '2026-01-26T09:00:00.000Z',
+        ]);
+    });
+
+    it('drops the whole series when the master is STATUS:CANCELLED', () => {
+        const events = parseIcs(
+            buildIcs([weeklyMaster('STATUS:CANCELLED')]),
+            { sourceId: 'cal', ...range },
+        );
+
+        expect(events).toEqual([]);
+    });
+
+    it('drops an all-day occurrence listed in a VALUE=DATE EXDATE', () => {
+        const events = parseIcs(buildIcs([[
+            'UID:allday-1',
+            'SUMMARY:Bin day',
+            'DTSTART;VALUE=DATE:20260105',
+            'DTEND;VALUE=DATE:20260106',
+            'RRULE:FREQ=WEEKLY',
+            'EXDATE;VALUE=DATE:20260112',
+        ]]), {
+            sourceId: 'cal',
+            rangeStart: new Date(2026, 0, 1),
+            rangeEnd: new Date(2026, 1, 1),
+        });
+
+        expect(events.map((event) => event.start)).toEqual(
+            [5, 19, 26].map((day) => new Date(2026, 0, day).toISOString()),
+        );
+    });
+
+    it('keeps an excluded occurrence counted against COUNT', () => {
+        const events = parseIcs(buildIcs([[
+            'UID:counted-1',
+            'SUMMARY:Standup',
+            'DTSTART;TZID=Europe/London:20260105T090000',
+            'DTEND;TZID=Europe/London:20260105T093000',
+            'RRULE:FREQ=WEEKLY;COUNT=3',
+            'EXDATE;TZID=Europe/London:20260112T090000',
+        ]]), { sourceId: 'cal', ...range });
+
+        expect(events.map((event) => event.start)).toEqual([
+            '2026-01-05T09:00:00.000Z',
+            '2026-01-19T09:00:00.000Z',
+        ]);
+    });
+});
+
 describe('ics categories', () => {
     const subscription = { id: 'cal', name: 'Shared feed', url: 'https://example.test/f.ics', enabled: true };
     const range = {

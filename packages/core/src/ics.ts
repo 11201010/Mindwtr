@@ -88,6 +88,16 @@ type ParsedVEvent = {
     end: Date;
     allDay: boolean;
     rrule?: ParsedRRule;
+    /**
+     * `RECURRENCE-ID`: this VEVENT replaces one occurrence of the master with the
+     * same UID. Not supported: `RANGE=THISANDFUTURE` is treated as a single-instance
+     * override — Google Calendar splits the series instead of emitting it.
+     */
+    recurrenceId?: Date;
+    /** `STATUS:CANCELLED`. Kept through parsing so it can still remove the master's occurrence, but never emitted. */
+    cancelled?: boolean;
+    /** Occurrence start instants to skip: this event's `EXDATE`s plus the `RECURRENCE-ID` of every override of it. */
+    excludedStarts?: Set<number>;
     /** First `CATEGORIES` value, if any. An event lands on one calendar only. */
     category?: string;
     /** RFC 7986 COLOR or X-FOSSIFY-CATEGORY-COLOR on this event, if present. */
@@ -527,6 +537,10 @@ function expandRecurringEvent(event: ParsedVEvent, options: ParseIcsOptions): Ex
     const out: ExternalCalendarEvent[] = [];
 
     const addOccurrence = (start: Date) => {
+        // One home for EXDATE/RECURRENCE-ID removals, so every generator path gets
+        // them. The callers still count the instance, because RFC 5545 removes it
+        // from a set COUNT has already bounded.
+        if (event.excludedStarts?.has(start.getTime())) return;
         const end = new Date(start.getTime() + durationMs);
         if (!intersectsRange(start, end, rangeStart, rangeEnd)) return;
         const startIso = start.toISOString();
@@ -542,7 +556,8 @@ function expandRecurringEvent(event: ParsedVEvent, options: ParseIcsOptions): Ex
         });
     };
 
-    const rule = event.rrule;
+    // An override stands for one occurrence only, even if the feed repeats the master's RRULE on it.
+    const rule = event.recurrenceId ? undefined : event.rrule;
     if (!rule) {
         if (intersectsRange(event.start, event.end, rangeStart, rangeEnd)) {
             addOccurrence(event.start);
@@ -788,7 +803,10 @@ export function parseIcsWithMetadata(input: string, options: ParseIcsOptions): P
             if (componentStack[componentStack.length - 1] === component) componentStack.pop();
             if (component === 'VEVENT') {
                 if (!current) continue;
-                if (!current.uid || !current.summary || !current.start) {
+                // A cancelled instance may carry nothing but UID, RECURRENCE-ID and
+                // STATUS, and it still has to remove the master's occurrence.
+                if (!current.start && current.recurrenceId) current.start = current.recurrenceId;
+                if (!current.uid || !current.start || (!current.summary && !current.cancelled)) {
                     current = null;
                     currentDurationMs = null;
                     continue;
@@ -806,13 +824,16 @@ export function parseIcsWithMetadata(input: string, options: ParseIcsOptions): P
 
                 events.push({
                     uid: current.uid,
-                    summary: current.summary,
+                    summary: current.summary ?? '',
                     description: current.description,
                     location: current.location,
                     start: current.start,
                     end,
                     allDay,
                     rrule: current.rrule,
+                    recurrenceId: current.recurrenceId,
+                    cancelled: current.cancelled,
+                    excludedStarts: current.excludedStarts,
                     category: current.category,
                     categoryColor: current.categoryColor,
                 });
@@ -868,6 +889,20 @@ export function parseIcsWithMetadata(input: string, options: ParseIcsOptions): P
         } else if (name === 'RRULE') {
             const rule = parseRRule(value);
             if (rule) current.rrule = rule;
+        } else if (name === 'EXDATE') {
+            // The property may repeat, and one line may hold a comma-separated list.
+            // TZID/VALUE on the line apply to every value on it.
+            for (const entry of value.split(',')) {
+                const dt = parseIcsDateTime(entry, params);
+                if (!dt) continue;
+                if (!current.excludedStarts) current.excludedStarts = new Set();
+                current.excludedStarts.add(dt.date.getTime());
+            }
+        } else if (name === 'RECURRENCE-ID') {
+            const dt = parseIcsDateTime(value, params);
+            if (dt) current.recurrenceId = dt.date;
+        } else if (name === 'STATUS') {
+            current.cancelled = value.trim().toUpperCase() === 'CANCELLED';
         } else if (name === 'CATEGORIES' && !current.category) {
             current.category = splitIcsTextList(value)
                 .map((entry) => unescapeIcsText(entry).trim())
@@ -877,6 +912,23 @@ export function parseIcsWithMetadata(input: string, options: ParseIcsOptions): P
         } else if (name === 'COLOR' && !current.categoryColor) {
             current.categoryColor = resolveCssColorName(value);
         }
+    }
+
+    // An edited occurrence arrives as a second VEVENT with the same UID and a
+    // RECURRENCE-ID, so the master must stop generating that instant or the week
+    // shows twice (#1249). Matched over every parsed VEVENT, not only the in-range
+    // ones, so paging months cannot change what a master generates.
+    const mastersByUid = new Map<string, ParsedVEvent>();
+    for (const event of events) {
+        if (event.recurrenceId || !event.rrule || mastersByUid.has(event.uid)) continue;
+        mastersByUid.set(event.uid, event);
+    }
+    for (const event of events) {
+        if (!event.recurrenceId) continue;
+        const master = mastersByUid.get(event.uid);
+        if (!master) continue;
+        if (!master.excludedStarts) master.excludedStarts = new Set();
+        master.excludedStarts.add(event.recurrenceId.getTime());
     }
 
     // Decided over the whole file, not the requested range, so paging months
@@ -901,6 +953,9 @@ export function parseIcsWithMetadata(input: string, options: ParseIcsOptions): P
     const maxTotal = options.maxTotalOccurrences ?? 5000;
     for (const event of events) {
         if (occurrences.length >= maxTotal) break;
+        // Cancelled events stay in `events` above so the category split still sees
+        // them: a cancelled instance must not make a calendar appear or vanish.
+        if (event.cancelled) continue;
         const expanded = expandRecurringEvent(
             event,
             splitByCategory && event.category
