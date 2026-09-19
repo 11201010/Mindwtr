@@ -1668,6 +1668,22 @@ pub(crate) fn apply_project_delete_or_restore(
     project_id: &str,
     restore: bool,
 ) -> Result<ProjectMutationRows, String> {
+    let now = now_iso();
+    let device_id = device_id_from_data(data);
+    apply_project_delete_or_restore_at(data, project_id, restore, &now, &device_id)
+}
+
+/// The clock and device id are parameters so the shared core/Rust fixture
+/// (`packages/core/src/recurrence-local-api-parity.fixtures.json`, kind
+/// `project-action`) can pin both engines against the same frozen `now`, the
+/// way `apply_task_action` already is.
+fn apply_project_delete_or_restore_at(
+    data: &mut Value,
+    project_id: &str,
+    restore: bool,
+    now: &str,
+    device_id: &str,
+) -> Result<ProjectMutationRows, String> {
     let current = find_project(data, project_id).ok_or("Project not found")?;
     if has_string_field(&current, "purgedAt") {
         return Err("Project update conflict: purged project cannot be changed".to_string());
@@ -1681,8 +1697,6 @@ pub(crate) fn apply_project_delete_or_restore(
         return Ok(ProjectMutationRows::default());
     }
     let mut project = current.as_object().cloned().ok_or("Project is invalid")?;
-    let now = now_iso();
-    let device_id = device_id_from_data(data);
     if restore {
         project.remove("deletedAt");
         project.remove("purgedAt");
@@ -1704,7 +1718,7 @@ pub(crate) fn apply_project_delete_or_restore(
         project.insert("deletedAt".to_string(), json!(now));
     }
     project.insert("updatedAt".to_string(), json!(now));
-    bump_task_revision(&mut project, &device_id);
+    bump_task_revision(&mut project, device_id);
     let mut changed = ProjectMutationRows::default();
     let mut section_ids = HashSet::new();
     let mut live_section_ids = HashSet::new();
@@ -1727,7 +1741,7 @@ pub(crate) fn apply_project_delete_or_restore(
                     object.insert("deletedAt".to_string(), json!(now));
                 }
                 object.insert("updatedAt".to_string(), json!(now));
-                bump_task_revision(object, &device_id);
+                bump_task_revision(object, device_id);
                 changed.sections.push(section.clone());
             }
         }
@@ -1769,7 +1783,7 @@ pub(crate) fn apply_project_delete_or_restore(
                 object.remove("sectionId");
             }
             object.insert("updatedAt".to_string(), json!(now));
-            bump_task_revision(object, &device_id);
+            bump_task_revision(object, device_id);
             changed.tasks.push(task.clone());
         }
     }
@@ -6066,6 +6080,85 @@ mod tests {
         assert_eq!(api_error_response(error).status, 409);
     }
 
+    /// The project counterpart to
+    /// `local_api_apply_task_action_matches_core_write_path_fixture`: drives
+    /// `apply_project_delete_or_restore_at` against the shared fixture's
+    /// `kind: "project-action"` cases, whose `expected` rows are independently
+    /// pinned against core's real `deleteProject`/`restoreProject` in
+    /// packages/core/src/local-api-project-action-parity.test.ts (which also
+    /// owns the case roster).
+    #[test]
+    fn local_api_project_delete_or_restore_matches_core_fixture() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../../packages/core/src/recurrence-local-api-parity.fixtures.json"
+        ))
+        .expect("valid recurrence parity fixture");
+        let cases = cases.as_array().expect("fixture array");
+
+        for test_case in cases {
+            if test_case.get("kind").and_then(Value::as_str) != Some("project-action") {
+                continue;
+            }
+            let name = test_case
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unnamed project action parity case");
+            let mut data = test_case
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| panic!("missing data for {name}"));
+            let before = data.clone();
+            let project_id = test_case
+                .get("projectId")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing projectId for {name}"));
+            let restore = match test_case.get("action").and_then(Value::as_str) {
+                Some("restore") => true,
+                Some("delete") => false,
+                other => panic!("{name}: unsupported project action {other:?}"),
+            };
+            let now = test_case
+                .get("now")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing now for {name}"));
+            let device_id = test_case
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("missing deviceId for {name}"));
+
+            let outcome =
+                apply_project_delete_or_restore_at(&mut data, project_id, restore, now, device_id);
+
+            if test_case.get("expectRefusal").and_then(Value::as_bool) == Some(true) {
+                let error = outcome.expect_err(name);
+                assert_eq!(
+                    error, "Project update conflict: purged project cannot be changed",
+                    "{name}"
+                );
+                assert_eq!(data, before, "{name}: refused action must not write");
+                continue;
+            }
+
+            let changed = outcome.unwrap_or_else(|error| panic!("{name}: {error}"));
+            let expected = test_case
+                .get("expected")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            for (key, rows) in [
+                ("projects", &changed.projects),
+                ("sections", &changed.sections),
+                ("tasks", &changed.tasks),
+            ] {
+                let expected_rows = expected.get(key).cloned().unwrap_or_else(|| json!([]));
+                assert_eq!(
+                    Value::Array(rows.clone()),
+                    expected_rows,
+                    "{name}: changed {key} mismatch"
+                );
+            }
+        }
+    }
+
     fn comparable_local_api_recurring_task(task: Option<Map<String, Value>>) -> Value {
         let Some(mut task) = task else {
             return Value::Null;
@@ -6088,12 +6181,16 @@ mod tests {
         let cases = cases.as_array().expect("fixture array");
 
         for test_case in cases {
-            // The same fixture file also carries `kind: "action"` cases
-            // (complete/archive/restore write-path parity), asserted by
-            // `local_api_apply_task_action_matches_core_write_path_fixture`
-            // instead - this test only owns the recurrence-only cases, which
-            // predate the `kind` field, so its absence means "recurrence".
-            if test_case.get("kind").and_then(Value::as_str) == Some("action") {
+            // The same fixture file also carries `kind: "action"` and
+            // `kind: "project-action"` cases (task and project write-path
+            // parity), asserted by their own tests - this test only owns the
+            // recurrence-only cases, which predate the `kind` field, so its
+            // absence means "recurrence". Mirrors recurrence.test.ts's filter.
+            if test_case
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind != "recurrence")
+            {
                 continue;
             }
             let name = test_case

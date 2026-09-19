@@ -906,5 +906,701 @@
       "createdAt": "2026-08-14T18:00:00.000Z",
       "updatedAt": "2026-08-14T18:00:00.000Z"
     }
+  },
+  {
+    "kind": "project-action",
+    "name": "delete: detaches live tasks, soft-deletes live sections, leaves deleted rows alone",
+    "action": "delete",
+    "projectId": "pa-delete-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-delete-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-old"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-delete-s-live",
+          "projectId": "pa-delete-p",
+          "title": "Live",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old"
+        },
+        {
+          "id": "pa-delete-s-gone",
+          "projectId": "pa-delete-p",
+          "title": "Already gone",
+          "order": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 4,
+          "revBy": "device-old",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-delete-t-direct",
+          "title": "Direct",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "projectId": "pa-delete-p"
+        },
+        {
+          "id": "pa-delete-t-section",
+          "title": "In section",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "sectionId": "pa-delete-s-live"
+        },
+        {
+          "id": "pa-delete-t-gone",
+          "title": "Already trashed",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 7,
+          "revBy": "device-old",
+          "projectId": "pa-delete-p",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        },
+        {
+          "id": "pa-delete-t-other",
+          "title": "Unrelated",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old"
+        }
+      ],
+      "areas": []
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-delete-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 4,
+          "revBy": "device-parity",
+          "deletedAt": "2026-06-15T12:00:00.000Z"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-delete-s-live",
+          "projectId": "pa-delete-p",
+          "title": "Live",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-parity",
+          "deletedAt": "2026-06-15T12:00:00.000Z"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-delete-t-direct",
+          "title": "Direct",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-parity"
+        },
+        {
+          "id": "pa-delete-t-section",
+          "title": "In section",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-parity"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: revives the same cascade and leaves other deletions alone",
+    "action": "restore",
+    "projectId": "pa-restore-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-restore-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-restore-s-cascade",
+          "projectId": "pa-restore-p",
+          "title": "Cascade",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "id": "pa-restore-s-other",
+          "projectId": "pa-restore-p",
+          "title": "Deleted earlier",
+          "order": 1,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 4,
+          "revBy": "device-old",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-restore-t-cascade",
+          "title": "Cascade task",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "projectId": "pa-restore-p",
+          "sectionId": "pa-restore-s-cascade",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "id": "pa-restore-t-other",
+          "title": "Deleted earlier",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-old",
+          "projectId": "pa-restore-p",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        },
+        {
+          "id": "pa-restore-t-detached",
+          "title": "Detached and live",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old"
+        }
+      ],
+      "areas": []
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-restore-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-parity"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-restore-s-cascade",
+          "projectId": "pa-restore-p",
+          "title": "Cascade",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-parity"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-restore-t-cascade",
+          "title": "Cascade task",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-parity",
+          "projectId": "pa-restore-p",
+          "sectionId": "pa-restore-s-cascade"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: task drops a sectionId whose section did not come back",
+    "action": "restore",
+    "projectId": "pa-section-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-section-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-section-s-stale",
+          "projectId": "pa-section-p",
+          "title": "Deleted earlier",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-section-t",
+          "title": "Points at a dead section",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "projectId": "pa-section-p",
+          "sectionId": "pa-section-s-stale",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "areas": []
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-section-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-parity"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-section-t",
+          "title": "Points at a dead section",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-parity",
+          "projectId": "pa-section-p"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: a deleted area drops areaId and areaTitle",
+    "action": "restore",
+    "projectId": "pa-dead-area-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-dead-area-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z",
+          "areaId": "pa-dead-area",
+          "areaTitle": "Old name"
+        }
+      ],
+      "sections": [],
+      "tasks": [],
+      "areas": [
+        {
+          "id": "pa-dead-area",
+          "name": "Gone",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-dead-area-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-parity"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: a live area fills an empty areaTitle from the area name",
+    "action": "restore",
+    "projectId": "pa-live-area-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-live-area-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z",
+          "areaId": "pa-live-area",
+          "areaTitle": "   "
+        }
+      ],
+      "sections": [],
+      "tasks": [],
+      "areas": [
+        {
+          "id": "pa-live-area",
+          "name": "Home",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old"
+        }
+      ]
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-live-area-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-parity",
+          "areaId": "pa-live-area",
+          "areaTitle": "Home"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "delete: an already-deleted project changes no rows",
+    "action": "delete",
+    "projectId": "pa-noop-delete-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-noop-delete-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-noop-delete-s",
+          "projectId": "pa-noop-delete-p",
+          "title": "Section",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "tasks": [],
+      "areas": []
+    },
+    "expected": {}
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: a live project changes no rows",
+    "action": "restore",
+    "projectId": "pa-noop-restore-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-noop-restore-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-old"
+        }
+      ],
+      "sections": [
+        {
+          "id": "pa-noop-restore-s",
+          "projectId": "pa-noop-restore-p",
+          "title": "Section",
+          "order": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 1,
+          "revBy": "device-old"
+        }
+      ],
+      "tasks": [],
+      "areas": []
+    },
+    "expected": {}
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: a purged task stays out of the cascade",
+    "action": "restore",
+    "projectId": "pa-purged-task-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "data": {
+      "projects": [
+        {
+          "id": "pa-purged-task-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "sections": [],
+      "tasks": [
+        {
+          "id": "pa-purged-task-t-live",
+          "title": "Comes back",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "projectId": "pa-purged-task-p",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "id": "pa-purged-task-t-purged",
+          "title": "",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 9,
+          "revBy": "device-old",
+          "projectId": "pa-purged-task-p",
+          "deletedAt": "2026-06-01T00:00:00.000Z",
+          "purgedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "areas": []
+    },
+    "expected": {
+      "projects": [
+        {
+          "id": "pa-purged-task-p",
+          "title": "Ship the thing",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 6,
+          "revBy": "device-parity"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "pa-purged-task-t-live",
+          "title": "Comes back",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-06-15T12:00:00.000Z",
+          "rev": 3,
+          "revBy": "device-parity",
+          "projectId": "pa-purged-task-p"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "project-action",
+    "name": "restore: a purged project is refused",
+    "action": "restore",
+    "projectId": "pa-purged-project-p",
+    "now": "2026-06-15T12:00:00.000Z",
+    "deviceId": "device-parity",
+    "expectRefusal": true,
+    "data": {
+      "projects": [
+        {
+          "id": "pa-purged-project-p",
+          "title": "(deleted)",
+          "status": "active",
+          "color": "#2563EB",
+          "order": 0,
+          "tagIds": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 5,
+          "revBy": "device-old",
+          "deletedAt": "2026-06-01T00:00:00.000Z",
+          "purgedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "sections": [],
+      "tasks": [
+        {
+          "id": "pa-purged-project-t",
+          "title": "Task",
+          "status": "next",
+          "tags": [],
+          "contexts": [],
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "rev": 2,
+          "revBy": "device-old",
+          "projectId": "pa-purged-project-p",
+          "deletedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "areas": []
+    },
+    "expected": {}
   }
 ]
