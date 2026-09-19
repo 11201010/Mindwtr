@@ -177,4 +177,37 @@ describe('buildTaskUpdatesFromSpeechResult', () => {
 
         expect(plan.updates.title).toBe('Buy [AAA] batteries');
     });
+
+    // A date with no clock time must stay date-only: a stored time schedules a
+    // reminder and makes the task due at that minute instead of end of day.
+    const speechPlan = (result: { dueDate?: string; startTime?: string }) => buildTaskUpdatesFromSpeechResult(
+        {
+            title: 'Audio Note',
+            description: undefined,
+            dueDate: undefined,
+            startTime: undefined,
+            tags: [],
+            contexts: [],
+            projectId: undefined,
+        },
+        { transcript: 'Something', title: 'Something', ...result },
+        { ai: { speechToText: { mode: 'smart_parse', fieldStrategy: 'smart' } } },
+    );
+
+    it('keeps a date-only due date date-only', () => {
+        expect(speechPlan({ dueDate: '2026-04-08' }).updates.dueDate).toBe('2026-04-08');
+    });
+
+    it('keeps a date-only start time date-only', () => {
+        expect(speechPlan({ startTime: '2026-04-08' }).updates.startTime).toBe('2026-04-08');
+    });
+
+    it('keeps an instant with a clock time as an instant', () => {
+        expect(speechPlan({ dueDate: '2026-04-08T15:00:00.000Z' }).updates.dueDate)
+            .toBe('2026-04-08T15:00:00.000Z');
+    });
+
+    it('ignores a due date it cannot read', () => {
+        expect(speechPlan({ dueDate: 'not a date' }).updates.dueDate).toBeUndefined();
+    });
 });

@@ -1,9 +1,11 @@
 import { strToU8, zipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { applyTodoistImport, parseTodoistImportSource, type ParsedTodoistProject } from './todoist-import';
+import { hasTimeComponent } from './date';
+import { getTaskReminderPlan } from './schedule-utils';
 import { mockAppData } from './sync-test-utils';
-import type { Person, Project } from './types';
+import type { Person, Project, Task } from './types';
 
 describe('todoist import', () => {
     it('parses a CSV export with sections, labels, notes, subtasks, and recurring tasks', () => {
@@ -245,5 +247,80 @@ describe('todoist import', () => {
         expect(second.data.sections).toHaveLength(first.data.sections.length);
         expect(second.data.tasks).toHaveLength(first.data.tasks.length);
         expect(second.data.tasks.map((task) => task.id)).toEqual(first.data.tasks.map((task) => task.id));
+    });
+});
+
+// A date with no clock time must stay date-only: any stored time schedules a
+// reminder and makes the task due at that minute instead of end of day.
+describe('todoist import > relative and text dates stay date-only', () => {
+    const parseDateCell = (cell: string) => parseTodoistImportSource({
+        fileName: 'Dates.csv',
+        text: [
+            'TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION',
+            `task,Dated task,4,1,${cell},`,
+        ].join('\n'),
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const freeze = () => {
+        vi.useFakeTimers();
+        // Local Tuesday 15 Sep 2026, 14:37.
+        vi.setSystemTime(new Date(2026, 8, 15, 14, 37, 0));
+    };
+
+    it.each([
+        ['today', '2026-09-15'],
+        ['tomorrow', '2026-09-16'],
+        ['in 3 days', '2026-09-18'],
+        ['in 2 weeks', '2026-09-29'],
+        ['friday', '2026-09-18'],
+        ['5 Mar 2027', '2027-03-05'],
+    ])('stores "%s" as %s without a clock time', (cell, expected) => {
+        freeze();
+
+        const dueDate = parseDateCell(cell).parsedProjects[0]?.tasks[0]?.dueDate;
+
+        expect(dueDate).toBe(expected);
+        expect(hasTimeComponent(dueDate ?? '')).toBe(false);
+    });
+
+    it('skips a free-text date without a year instead of inventing one', () => {
+        freeze();
+
+        const result = parseDateCell('Mar 5');
+
+        expect(result.parsedProjects[0]?.tasks[0]?.dueDate).toBeUndefined();
+        expect(result.warnings).toContain('1 Todoist due date could not be parsed and was skipped.');
+    });
+
+    it('keeps a real clock time from the source text', () => {
+        freeze();
+
+        const dueDate = parseDateCell('2026-03-05 14:00').parsedProjects[0]?.tasks[0]?.dueDate;
+
+        expect(hasTimeComponent(dueDate ?? '')).toBe(true);
+    });
+
+    it('plans no reminder for an imported relative date', () => {
+        freeze();
+        const dueDate = parseDateCell('tomorrow').parsedProjects[0]?.tasks[0]?.dueDate;
+        const task: Task = {
+            id: 't',
+            title: 'x',
+            status: 'next',
+            tags: [],
+            contexts: [],
+            createdAt: '2026-09-15T00:00:00.000Z',
+            updatedAt: '2026-09-15T00:00:00.000Z',
+            dueDate,
+        };
+
+        const plan = getTaskReminderPlan(task, new Date());
+
+        expect(plan.next).toBeNull();
+        expect(plan.repeats).toEqual([]);
     });
 });

@@ -6,6 +6,7 @@ import {
     createImportArchiveBudget,
     decodeTextBytes,
     detectDelimiter,
+    formatLocalDate,
     getCell,
     ImportSourceLimitError,
     joinDescription,
@@ -227,16 +228,16 @@ const parseTodoistDate = (
         else if (unit.startsWith('week')) date.setDate(date.getDate() + count * 7);
         else if (unit.startsWith('month')) date.setMonth(date.getMonth() + count);
         else if (unit.startsWith('year')) date.setFullYear(date.getFullYear() + count);
-        return { dueDate: date.toISOString() };
+        return { dueDate: formatLocalDate(date) };
     }
 
     if (normalized === 'today') {
-        return { dueDate: now.toISOString() };
+        return { dueDate: formatLocalDate(now) };
     }
     if (normalized === 'tomorrow') {
         const tomorrow = new Date(now);
         tomorrow.setDate(tomorrow.getDate() + 1);
-        return { dueDate: tomorrow.toISOString() };
+        return { dueDate: formatLocalDate(tomorrow) };
     }
     const weekdayMap: Record<string, number> = {
         sunday: 0,
@@ -257,12 +258,17 @@ const parseTodoistDate = (
         const target = new Date(now);
         const delta = (weekday - target.getDay() + 7) % 7 || 7;
         target.setDate(target.getDate() + delta);
-        return { dueDate: target.toISOString() };
+        return { dueDate: formatLocalDate(target) };
     }
 
-    const parsed = new Date(text);
-    if (Number.isFinite(parsed.getTime())) {
-        return { dueDate: parsed.toISOString() };
+    // Engines invent a year for yearless text ("Mar 5" parses as 2001), so a
+    // free-text date must name its own four-digit year.
+    if (/\b\d{4}\b/u.test(text)) {
+        const parsed = new Date(text);
+        if (Number.isFinite(parsed.getTime())) {
+            const hasClockTime = /\d{1,2}:\d{2}|\d\s*[ap]\.?m\b/iu.test(text);
+            return { dueDate: hasClockTime ? parsed.toISOString() : formatLocalDate(parsed) };
+        }
     }
 
     counters.unparsedDates += 1;
