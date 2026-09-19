@@ -135,6 +135,17 @@ describe('AgendaFiltersPanel', () => {
         expect(screen.getByText('Click to include, again to exclude, and once more to clear.')).toBeInTheDocument();
     });
 
+    it('closes on Escape from inside the panel and ignores Escape from elsewhere', () => {
+        const onToggleFiltersOpen = vi.fn();
+        render(<AgendaFiltersPanel {...createProps({ onToggleFiltersOpen })} />);
+
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+        expect(onToggleFiltersOpen).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Contexts & tags' }), { key: 'Escape' });
+        expect(onToggleFiltersOpen).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps excluded and advanced chips visible and removable while categories are collapsed', () => {
         const removeExcluded = vi.fn();
         const removeAdvanced = vi.fn();

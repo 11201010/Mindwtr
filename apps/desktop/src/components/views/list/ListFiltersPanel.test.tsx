@@ -133,6 +133,17 @@ describe('ListFiltersPanel', () => {
         expect(screen.queryByRole('button', { name: /Contexts & tags/ })).not.toBeInTheDocument();
     });
 
+    it('closes on Escape from inside the panel and ignores Escape from elsewhere', () => {
+        const onClose = vi.fn();
+        render(<ListFiltersPanel {...createProps({ onClose })} />);
+
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+        expect(onClose).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(screen.getByRole('button', { name: 'Contexts & tags' }), { key: 'Escape' });
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
     it('renders the Reference archive toggle as an accessible checkbox', () => {
         render(<ListFiltersPanel {...createProps({
             showIncludeArchivedProjects: true,

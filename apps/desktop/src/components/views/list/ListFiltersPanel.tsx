@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Filter } from 'lucide-react';
 import { tFallback } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, TaskPriority, TimeEstimate } from '@mindwtr/core';
@@ -130,23 +130,21 @@ export function ListFiltersPanel({
         setTokenQuery('');
     }, [showFiltersPanel]);
 
-    useEffect(() => {
-        if (!showFiltersPanel) return;
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape') return;
-            event.preventDefault();
-            closePanel();
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    });
+    // Only Escape raised inside the panel folds it. A window listener also ate
+    // the Escape that closed a dialog or cancelled an edit, and stole focus to
+    // the Filters button one frame later.
+    const handlePanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'Escape' || !showFiltersPanel) return;
+        event.preventDefault();
+        closePanel();
+    };
 
     const toggleCategory = (category: FilterCategoryId) => {
         setExpandedCategory((current) => current === category ? null : category);
     };
 
     return (
-        <div id="list-filters-panel" className="space-y-3 rounded-lg border border-border bg-card p-3">
+        <div id="list-filters-panel" className="space-y-3 rounded-lg border border-border bg-card p-3" onKeyDown={handlePanelKeyDown}>
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <Filter className="h-4 w-4" aria-hidden="true" />

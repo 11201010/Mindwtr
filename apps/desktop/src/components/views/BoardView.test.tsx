@@ -389,6 +389,15 @@ describe('BoardView', () => {
         expect(queryByText('Home task')).not.toBeInTheDocument();
     });
 
+    it('keeps the filters panel open when Escape comes from outside it', () => {
+        const { getByRole } = renderWithProviders();
+
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.keyDown(document.body, { key: 'Escape' });
+
+        expect(getByRole('button', { name: /^filters$/i })).toHaveAttribute('aria-expanded', 'true');
+    });
+
     it('shows the match mode the board actually filters with', () => {
         setBoardStoreState({
             tasks: [
