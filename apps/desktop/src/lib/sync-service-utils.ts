@@ -12,7 +12,7 @@ import {
     type LocalAttachmentPresence,
     type SyncBackend,
 } from '@mindwtr/core';
-import { normalizeAttachmentPathForUrl } from './attachment-paths';
+import { normalizeAttachmentPathForUrl, rehomeManagedSubfolderPath } from './attachment-paths';
 
 export { ATTACHMENTS_DIR_NAME, buildCloudKey, extractExtension };
 
@@ -154,35 +154,46 @@ export const createLocalAttachmentFs = (
     );
     const toRelative = (path: string): string => path.slice(baseDataDir.length).replace(/^[\\/]/, '');
 
-    // A portable profile travels with the install, so a URI recorded at its
-    // previous location is stale even though the file moved along inside
-    // attachments/. Only consulted after the recorded path fails (#1038).
-    const managedFallbackPath = (path: string, attachment: Pick<Attachment, 'id'>): string | null => {
-        if (!deps.managedAttachmentsDir) return null;
+    // Paths that no longer resolve where they were recorded, most specific first:
+    // #1245 re-homing (an installed profile's folders moved down into `data/`),
+    // then the #1038 rule (a portable profile travelled, the file moved along
+    // inside attachments/ under its id name). Only consulted after the recorded
+    // path fails — read, stat and presence must agree, because an attachment that
+    // presence calls "present" while stat cannot reach it blocks every remote write.
+    const managedFallbackPaths = (path: string, attachment: Pick<Attachment, 'id'>): string[] => {
+        if (!deps.managedAttachmentsDir) return [];
         const normalized = normalizeAttachmentFsPath(path);
-        const fileName = normalized.split('/').pop();
-        if (
-            !fileName
-            || (fileName !== attachment.id && !fileName.startsWith(`${attachment.id}.`))
-        ) return null;
         const dir = normalizeAttachmentFsPath(deps.managedAttachmentsDir).replace(/\/+$/, '');
-        const fallback = `${dir}/${fileName}`;
-        return fallback === normalized ? null : fallback;
+        const managedDataDir = dir.slice(0, dir.lastIndexOf('/'));
+        const candidates: string[] = [];
+        const rehomed = managedDataDir ? rehomeManagedSubfolderPath(normalized, managedDataDir) : null;
+        if (rehomed) candidates.push(rehomed);
+        const fileName = normalized.split('/').pop();
+        if (fileName && (fileName === attachment.id || fileName.startsWith(`${attachment.id}.`))) {
+            const byId = `${dir}/${fileName}`;
+            if (byId !== normalized && !candidates.includes(byId)) candidates.push(byId);
+        }
+        return candidates;
     };
 
     const readLocalFile = async (
         path: string,
         attachment: Pick<Attachment, 'id'>,
     ): Promise<Uint8Array> => {
-        if (isWithinDataDir(path)) {
-            return await deps.readFile(toRelative(path), { baseDir: deps.dataBaseDir });
-        }
         try {
+            if (isWithinDataDir(path)) {
+                return await deps.readFile(toRelative(path), { baseDir: deps.dataBaseDir });
+            }
             return await deps.readFile(normalizeAttachmentFsPath(path));
         } catch (error) {
-            const fallback = managedFallbackPath(path, attachment);
-            if (!fallback) throw error;
-            return await deps.readFile(fallback);
+            for (const fallback of managedFallbackPaths(path, attachment)) {
+                try {
+                    return await deps.readFile(fallback);
+                } catch {
+                    // Try the next candidate; the recorded-path error is the one to report.
+                }
+            }
+            throw error;
         }
     };
 
@@ -195,8 +206,7 @@ export const createLocalAttachmentFs = (
                 ? { path: toRelative(path), options: { baseDir: deps.dataBaseDir } }
                 : { path: normalizeAttachmentFsPath(path) },
         ];
-        const fallback = managedFallbackPath(path, attachment);
-        if (fallback) candidates.push({ path: fallback });
+        for (const fallback of managedFallbackPaths(path, attachment)) candidates.push({ path: fallback });
 
         let sawError = false;
         for (const candidate of candidates) {
@@ -229,15 +239,20 @@ export const createLocalAttachmentFs = (
             size: info.size,
         });
         try {
-            if (isWithinDataDir(path)) {
-                return toStat(await deps.stat(toRelative(path), { baseDir: deps.dataBaseDir }));
-            }
             try {
+                if (isWithinDataDir(path)) {
+                    return toStat(await deps.stat(toRelative(path), { baseDir: deps.dataBaseDir }));
+                }
                 return toStat(await deps.stat(normalizeAttachmentFsPath(path)));
             } catch (error) {
-                const fallback = managedFallbackPath(path, attachment);
-                if (!fallback) throw error;
-                return toStat(await deps.stat(fallback));
+                for (const fallback of managedFallbackPaths(path, attachment)) {
+                    try {
+                        return toStat(await deps.stat(fallback));
+                    } catch {
+                        // Try the next candidate; the recorded-path error is the one to report.
+                    }
+                }
+                throw error;
             }
         } catch (error) {
             logSyncWarning(warningMessage, error);

@@ -1,4 +1,5 @@
 use crate::*;
+use std::path::Component;
 
 fn strip_file_scheme(raw: &str) -> Result<String, String> {
     if !raw.to_ascii_lowercase().starts_with("file://") {
@@ -78,6 +79,41 @@ fn allowed_open_roots(app: &tauri::AppHandle) -> Vec<PathBuf> {
     )
 }
 
+// #1245 moved an installed Windows/macOS profile's managed folders from
+// `<root>/` down into `<root>/data/`. Only these two hold files whose absolute
+// path was recorded in an attachment `uri`; `quick-add-images` did not move, so
+// old pasted-image paths must keep resolving exactly where they are.
+const RELOCATED_MANAGED_DIR_NAMES: &[&str] = &["attachments", "audio-captures"];
+
+/// Map a path recorded at the flat profile root onto the same file under the
+/// current managed data dir. Unlike the relocated portable profile of #1038 the
+/// stale path sits inside the OS data dir and its file name need not be the
+/// attachment id (audio captures are named after their timestamp), so the
+/// id-based fallback never reaches it. Every remaining component must be a plain
+/// name — a traversal segment would leave the managed data dir, so it is refused.
+fn rehomed_managed_path(candidate: &Path, managed_attachments_dir: &Path) -> Option<PathBuf> {
+    let managed_data_dir = managed_attachments_dir.parent()?;
+    let rest = candidate.strip_prefix(managed_data_dir.parent()?).ok()?;
+    let mut components = rest.components();
+    let dir_name = match components.next()? {
+        Component::Normal(name) => name.to_str()?,
+        _ => return None,
+    };
+    if !RELOCATED_MANAGED_DIR_NAMES.contains(&dir_name) {
+        return None;
+    }
+    let mut rehomed = managed_data_dir.join(dir_name);
+    let mut has_tail = false;
+    for component in components {
+        match component {
+            Component::Normal(name) => rehomed.push(name),
+            _ => return None,
+        }
+        has_tail = true;
+    }
+    (has_tail && rehomed != candidate).then_some(rehomed)
+}
+
 fn normalize_open_path(
     raw: &str,
     managed_attachments_dir: Option<&Path>,
@@ -99,6 +135,12 @@ fn normalize_open_path(
     // at the previous location is stale even though the file moved along inside
     // the profile's attachments dir. Retry the same file name there before
     // giving up — the recorded path always wins when it still resolves (#1038).
+    if let Some(resolved) = managed_attachments_dir
+        .and_then(|dir| rehomed_managed_path(&candidate, dir))
+        .and_then(|rehomed| rehomed.canonicalize().ok())
+    {
+        return Ok(resolved);
+    }
     let file_name_matches_attachment = candidate.file_name().is_some_and(|name| {
         attachment_id.is_some_and(|attachment_id| {
             let name = name.to_string_lossy();
@@ -1054,6 +1096,76 @@ mod tests {
         );
 
         assert!(normalize_open_path(&stale.to_string_lossy(), Some(&managed_dir), None,).is_err());
+    }
+
+    // #1245 moved an installed Windows/macOS profile's managed folders from
+    // <root>/ down into <root>/data/. Audio captures are the case the #1038
+    // fallback cannot reach: the file name is a timestamp, never the attachment id.
+    #[test]
+    fn normalize_open_path_rehomes_a_flat_root_path_into_the_data_subfolder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("mindwtr");
+        let managed_dir = root.join("data").join("attachments");
+        let capture_dir = root.join("data").join("audio-captures");
+        std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+        std::fs::create_dir_all(&capture_dir).expect("create capture dir");
+
+        let capture = capture_dir.join("mindwtr-audio-1756-abc.wav");
+        std::fs::write(&capture, b"riff").expect("write capture");
+        let stale_capture = root.join("audio-captures").join("mindwtr-audio-1756-abc.wav");
+        let resolved = normalize_open_path(
+            &stale_capture.to_string_lossy(),
+            Some(&managed_dir),
+            Some("attachment-uuid"),
+        )
+        .expect("a capture recorded at the flat root resolves under data/");
+        assert_eq!(resolved, capture.canonicalize().expect("canonicalize"));
+
+        // Same rule for attachments whose file name is not the attachment id.
+        let report = managed_dir.join("report.pdf");
+        std::fs::write(&report, b"pdf").expect("write report");
+        let stale_report = root.join("attachments").join("report.pdf");
+        let resolved = normalize_open_path(&stale_report.to_string_lossy(), Some(&managed_dir), None)
+            .expect("a flat-root attachment resolves under data/");
+        assert_eq!(resolved, report.canonicalize().expect("canonicalize"));
+
+        // A folder the move did not touch keeps failing on its recorded path.
+        let pasted = root.join("quick-add-images").join("pasted-1.png");
+        std::fs::create_dir_all(root.join("data").join("quick-add-images")).expect("create dir");
+        std::fs::write(
+            root.join("data").join("quick-add-images").join("pasted-1.png"),
+            b"png",
+        )
+        .expect("write pasted");
+        assert!(
+            normalize_open_path(&pasted.to_string_lossy(), Some(&managed_dir), None).is_err(),
+            "quick-add-images did not move, so its recorded paths must not be re-homed"
+        );
+    }
+
+    // The re-homed path is still a trust boundary: only names, never traversal.
+    #[test]
+    fn normalize_open_path_refuses_to_rehome_outside_the_managed_data_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("mindwtr");
+        let managed_dir = root.join("data").join("attachments");
+        std::fs::create_dir_all(&managed_dir).expect("create managed dir");
+        // Only reachable by joining the traversal onto the managed dir; the
+        // recorded path itself points at a directory that does not exist.
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).expect("create outside dir");
+        std::fs::write(outside.join("secrets.toml"), b"token").expect("write secret");
+
+        let hostile = root
+            .join("attachments")
+            .join("..")
+            .join("..")
+            .join("outside")
+            .join("secrets.toml");
+        assert!(
+            normalize_open_path(&hostile.to_string_lossy(), Some(&managed_dir), None).is_err(),
+            "a traversal segment must never be re-homed"
+        );
     }
 
     #[test]

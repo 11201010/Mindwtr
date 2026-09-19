@@ -9,11 +9,13 @@ import {
 } from './attachment-paths';
 
 const existsMock = vi.fn<(path: string) => Promise<boolean>>();
+const managedDataDirMock = vi.fn<() => Promise<string>>();
 vi.mock('@tauri-apps/plugin-fs', () => ({
     exists: (path: string) => existsMock(path),
 }));
 vi.mock('./managed-paths', () => ({
-    getManagedPath: async (...segments: string[]) => ['/new-profile', ...segments].join('/'),
+    getManagedDataDir: () => managedDataDirMock(),
+    getManagedPath: async (...segments: string[]) => [await managedDataDirMock(), ...segments].join('/'),
 }));
 
 describe('attachment path helpers', () => {
@@ -41,6 +43,8 @@ describe('attachment path helpers', () => {
 describe('resolveAttachmentReadPath', () => {
     beforeEach(() => {
         existsMock.mockReset();
+        managedDataDirMock.mockReset();
+        managedDataDirMock.mockResolvedValue('/new-profile');
     });
 
     it('keeps the recorded path whenever it still resolves', async () => {
@@ -81,6 +85,45 @@ describe('resolveAttachmentReadPath', () => {
 
         expect(await resolveAttachmentReadPath('/old-profile/attachments/a1.pdf', 'different-id'))
             .toBe('/old-profile/attachments/a1.pdf');
+        expect(existsMock).toHaveBeenCalledTimes(1);
+    });
+
+    // #1245 moved an installed Windows/macOS profile's managed folders from
+    // <root>/ down into <root>/data/. Audio captures are the case the #1038
+    // fallback cannot reach: the file name is a timestamp, never the attachment id.
+    it('re-homes a capture recorded at the flat profile root into the data subfolder', async () => {
+        managedDataDirMock.mockResolvedValue('/os-data/mindwtr/data');
+        const moved = '/os-data/mindwtr/data/audio-captures/mindwtr-audio-1756-abc.wav';
+        existsMock.mockImplementation(async (path) => path === moved);
+
+        expect(await resolveAttachmentReadPath('/os-data/mindwtr/audio-captures/mindwtr-audio-1756-abc.wav', 'attachment-uuid'))
+            .toBe(moved);
+    });
+
+    it('re-homes a flat-root attachment whose file name is not the attachment id', async () => {
+        managedDataDirMock.mockResolvedValue('/os-data/mindwtr/data');
+        const moved = '/os-data/mindwtr/data/attachments/report.pdf';
+        existsMock.mockImplementation(async (path) => path === moved);
+
+        expect(await resolveAttachmentReadPath('/os-data/mindwtr/attachments/report.pdf', 'attachment-uuid'))
+            .toBe(moved);
+    });
+
+    it('refuses to re-home a path that escapes the managed data dir', async () => {
+        managedDataDirMock.mockResolvedValue('/os-data/mindwtr/data');
+        existsMock.mockResolvedValue(false);
+        const hostile = '/os-data/mindwtr/attachments/../../../secrets.toml';
+
+        expect(await resolveAttachmentReadPath(hostile, 'attachment-uuid')).toBe(hostile);
+        expect(existsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves folders outside the moved set on the recorded path', async () => {
+        managedDataDirMock.mockResolvedValue('/os-data/mindwtr/data');
+        existsMock.mockResolvedValue(false);
+        const pasted = '/os-data/mindwtr/quick-add-images/pasted-1.png';
+
+        expect(await resolveAttachmentReadPath(pasted, 'attachment-uuid')).toBe(pasted);
         expect(existsMock).toHaveBeenCalledTimes(1);
     });
 });

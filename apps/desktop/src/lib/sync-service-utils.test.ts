@@ -132,6 +132,88 @@ describe('createLocalAttachmentFs managed-dir fallback', () => {
     });
 });
 
+// #1245 moved an installed Windows/macOS profile's managed folders from <root>/
+// down into <root>/data/. Unlike the relocated portable profile of #1038 the
+// stale path sits INSIDE the OS data dir, the one shape the old fallback skipped:
+// presence said "present" while stat and read still failed, which pins the
+// attachment as a pending upload and stops every remote write for the device.
+describe('createLocalAttachmentFs flat-root fallback after the profile folder move', () => {
+    const OS_DATA_DIR = '/Roaming';
+    const MOVED_ATTACHMENTS_DIR = '/Roaming/mindwtr/data/attachments';
+
+    const createMovedFs = (files: Record<string, Uint8Array>) => {
+        const exists = vi.fn(async (path: string, options?: { baseDir: unknown }) => (
+            !options && path in files
+        ));
+        const readFile = vi.fn(async (path: string, options?: { baseDir: unknown }) => {
+            const bytes = options ? undefined : files[path];
+            if (!bytes) throw new Error(`missing ${path}`);
+            return bytes;
+        });
+        const stat = vi.fn(async (path: string, options?: { baseDir: unknown }) => {
+            const bytes = options ? undefined : files[path];
+            if (!bytes) throw new Error(`missing ${path}`);
+            return { mtime: new Date(1700000000000), size: bytes.length };
+        });
+        return { exists, readFile, stat };
+    };
+
+    const createMovedAttachmentFs = (files: Record<string, Uint8Array>) => {
+        const { exists, readFile, stat } = createMovedFs(files);
+        const fs = createLocalAttachmentFs(vi.fn(), {
+            baseDataDir: OS_DATA_DIR,
+            dataBaseDir: 'data',
+            exists,
+            readFile,
+            stat,
+            managedAttachmentsDir: MOVED_ATTACHMENTS_DIR,
+        });
+        return { fs, exists, readFile, stat };
+    };
+
+    it('reads, stats and confirms a stale flat-root attachment that now lives under data/', async () => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const moved = `${MOVED_ATTACHMENTS_DIR}/a1.pdf`;
+        const { fs } = createMovedAttachmentFs({ [moved]: bytes });
+
+        const attachment = { id: 'a1' };
+        const stale = '/Roaming/mindwtr/attachments/a1.pdf';
+        expect(await fs.localFilePresence(stale, attachment)).toBe('present');
+        expect(await fs.readLocalFile(stale, attachment)).toBe(bytes);
+        expect(await fs.statLocalFile(stale, attachment)).toEqual({ mtimeMs: 1700000000000, size: 3 });
+    });
+
+    it('recovers an audio capture whose file name is not the attachment id', async () => {
+        const bytes = new Uint8Array([4, 5]);
+        const moved = '/Roaming/mindwtr/data/audio-captures/mindwtr-audio-1756-abc.wav';
+        const { fs } = createMovedAttachmentFs({ [moved]: bytes });
+
+        const attachment = { id: 'attachment-uuid' };
+        const stale = '/Roaming/mindwtr/audio-captures/mindwtr-audio-1756-abc.wav';
+        expect(await fs.localFilePresence(stale, attachment)).toBe('present');
+        expect(await fs.readLocalFile(stale, attachment)).toBe(bytes);
+        expect(await fs.statLocalFile(stale, attachment)).toEqual({ mtimeMs: 1700000000000, size: 2 });
+    });
+
+    it('never re-homes a path that escapes the managed data dir', async () => {
+        const { fs, exists } = createMovedAttachmentFs({});
+
+        const hostile = '/Roaming/mindwtr/attachments/../../../secrets.toml';
+        expect(await fs.localFilePresence(hostile, { id: 'a1' })).toBe('confirmed-not-found');
+        expect(exists.mock.calls.every(([path]) => !String(path).includes('secrets.toml') || String(path).includes('..')))
+            .toBe(true);
+        expect(exists).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a folder the move did not touch on its recorded path', async () => {
+        const pasted = '/Roaming/mindwtr/quick-add-images/pasted-1.png';
+        const { fs, exists } = createMovedAttachmentFs({});
+
+        expect(await fs.localFilePresence(pasted, { id: 'a1' })).toBe('confirmed-not-found');
+        expect(exists).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('resolveFileBackendPath', () => {
     const join = vi.fn(async (...paths: string[]) => paths.join('/'));
 

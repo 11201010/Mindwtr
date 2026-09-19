@@ -29,6 +29,7 @@ vi.mock('@mindwtr/core', async (importOriginal) => ({
 
 vi.mock('@tauri-apps/plugin-fs', () => fsMocks);
 vi.mock('./managed-paths', () => ({
+    getManagedDataDir: async () => '/new-profile',
     getManagedPath: async (...segments: string[]) => ['/new-profile', ...segments].join('/'),
 }));
 

@@ -15,6 +15,40 @@ export function isLocalAttachmentPath(uri: string): boolean {
     return !URI_SCHEME_PATTERN.test(trimmed);
 }
 
+// #1245 moved an installed Windows/macOS profile's managed folders from
+// `<root>/` down into `<root>/data/`. Only these two hold files whose absolute
+// path was recorded in an attachment `uri`; `quick-add-images` did not move, so
+// old pasted-image paths must keep resolving exactly where they are.
+const RELOCATED_MANAGED_DIR_NAMES = [ATTACHMENTS_DIR_NAME, 'audio-captures'];
+
+/**
+ * Map a path recorded at the flat profile root onto the same file under the
+ * current managed data dir, or null when the shape does not match. Unlike the
+ * relocated portable profile of #1038 this stale path sits inside the OS data
+ * dir and its file name need not be the attachment id (audio captures are named
+ * after their timestamp), so the id-based fallback never reaches it.
+ *
+ * The result always stays inside the managed data dir: the rest of the path may
+ * not contain `.` or `..`, so this opens no location the app did not already own.
+ */
+export function rehomeManagedSubfolderPath(path: string, managedDataDir: string): string | null {
+    const normalized = normalizeAttachmentPathForUrl(path.trim());
+    const managed = normalizeAttachmentPathForUrl(managedDataDir.trim()).replace(/\/+$/, '');
+    if (!normalized || !managed) return null;
+    const parentEnd = managed.lastIndexOf('/');
+    if (parentEnd < 0) return null;
+    const parent = managed.slice(0, parentEnd);
+    const prefix = parent.endsWith('/') ? parent : `${parent}/`;
+    if (!normalized.startsWith(prefix)) return null;
+    const segments = normalized.slice(prefix.length).split('/');
+    const dirName = segments.shift();
+    if (!dirName || !RELOCATED_MANAGED_DIR_NAMES.includes(dirName)) return null;
+    if (segments.length === 0) return null;
+    if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return null;
+    const rehomed = `${managed}/${dirName}/${segments.join('/')}`;
+    return rehomed === normalized ? null : rehomed;
+}
+
 export function resolveAttachmentOpenTarget(uri: string): string {
     const trimmed = uri.trim();
     if (!trimmed) return trimmed;
@@ -40,12 +74,14 @@ export async function resolveAttachmentReadPath(uri: string, attachmentId: strin
         }
     };
     if (await readable(target)) return target;
+    const { getManagedDataDir, getManagedPath } = await import('./managed-paths');
+    const rehomed = rehomeManagedSubfolderPath(target, await getManagedDataDir());
+    if (rehomed && (await readable(rehomed))) return rehomed;
     const fileName = normalizeAttachmentPathForUrl(target).split('/').pop();
     if (
         !fileName
         || (fileName !== attachmentId && !fileName.startsWith(`${attachmentId}.`))
     ) return target;
-    const { getManagedPath } = await import('./managed-paths');
     const fallback = await getManagedPath(ATTACHMENTS_DIR_NAME, fileName);
     return (await readable(fallback)) ? fallback : target;
 }
