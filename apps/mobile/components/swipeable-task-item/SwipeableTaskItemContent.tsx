@@ -298,15 +298,19 @@ export function SwipeableTaskItemContent({
         );
     }
 
-    if (isReference && area) {
+    // A task filed straight under an area (no project) names the area, like the
+    // desktop row does; a project already carries its area through the dot (#1246).
+    if ((isReference || !project) && area) {
         addMetaPart(
-            <CompactText
-                key="area"
-                style={[styles.metaText, { color: tc.secondaryText }]}
-                numberOfLines={2}
-            >
-                {area.name}
-            </CompactText>,
+            <View key="area" style={styles.inlineMetaItem}>
+                <View style={[styles.projectDot, { backgroundColor: area.color || tc.tint }]} />
+                <CompactText
+                    style={[styles.metaText, { color: tc.secondaryText }]}
+                    numberOfLines={2}
+                >
+                    {area.name}
+                </CompactText>
+            </View>,
             'area'
         );
     }

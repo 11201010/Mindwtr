@@ -2376,6 +2376,42 @@ it('can keep the focus star without adding a redundant focus outline', () => {
     expect(compactRow.props.accessibilityLabel).not.toContain('Pending link');
   });
 
+  it('names the area on a task filed under an area without a project (#1246)', () => {
+    storeState.projects = [];
+    storeState.areas = [{ id: 'area-1', name: 'Home', color: '#10b981' }];
+
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <SwipeableTaskItem
+          task={{
+            id: 'task-area-only',
+            title: 'Fix the fence',
+            status: 'next',
+            areaId: 'area-1',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          } as any}
+          isDark={false}
+          tc={{
+            taskItemBg: '#111111',
+            border: '#222222',
+            text: '#ffffff',
+            secondaryText: '#999999',
+            tint: '#3b82f6',
+            warning: '#f59e0b',
+          } as any}
+          onPress={vi.fn()}
+          onStatusChange={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      );
+    });
+
+    expect(hasText(tree, 'Home')).toBe(true);
+    expect(tree.root.findAll((node) => node.props.style && JSON.stringify(node.props.style).includes('"backgroundColor":"#10b981"'))).not.toHaveLength(0);
+  });
+
   it('renders references as memo rows with useful metadata and no task-only chrome', () => {
     storeState.projects = [{
       id: 'project-1',
