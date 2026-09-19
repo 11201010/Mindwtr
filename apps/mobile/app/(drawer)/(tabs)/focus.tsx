@@ -1581,7 +1581,14 @@ export default function FocusScreen() {
                     },
                   ]}
                 >
-                  <Settings2 size={20} color={(effectiveFocusGroupBy !== 'none' || effectiveFocusSortBy !== DEFAULT_FOCUS_SORT_BY) ? tc.tint : tc.secondaryText} />
+                  {/* Tinted while any option in this sheet is off its default,
+                      Show details included — it lives here now too. */}
+                  <Settings2
+                    size={20}
+                    color={(effectiveFocusGroupBy !== 'none' || effectiveFocusSortBy !== DEFAULT_FOCUS_SORT_BY || showDetails)
+                      ? tc.tint
+                      : tc.secondaryText}
+                  />
                 </Pressable>
                 <Pressable
                   accessibilityLabel={resolveText('filters.label', 'Filters')}

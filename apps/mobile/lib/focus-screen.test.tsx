@@ -1020,6 +1020,28 @@ describe('FocusScreen', () => {
     expect(flippedButton).toBeTruthy();
   });
 
+  // The tint is the only sign that a view option is on, and Show details now
+  // lives in the same sheet as sort and group.
+  it('tints the View options button while details are shown', () => {
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+    const iconColor = () => {
+      const button = findButtonByLabel(tree, 'View options');
+      return button.findAll((node) => typeof node.props.color === 'string' && node.props.size === 20)[0].props.color;
+    };
+
+    expect(iconColor()).toBe('#94a3b8');
+
+    openViewOptions(tree);
+    act(() => {
+      findButtonByText(tree, 'Show details').props.onPress();
+    });
+
+    expect(iconColor()).toBe('#3b82f6');
+  });
+
   it('keeps Focus only as the rightmost toolbar action and Details inside View options', () => {
     let tree!: ReturnType<typeof create>;
     act(() => {
