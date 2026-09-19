@@ -563,6 +563,20 @@ def control_rollout(
 
         if validated_version_code is None:
             if maximum_version_code == 0:
+                # An empty production track accepts a first staged release, so a
+                # status read must report it instead of refusing the release.
+                if normalized_action == "status" and not releases:
+                    _cleanup_edit(validated_package, edit_id, transport)
+                    return {
+                        "package": validated_package,
+                        "track": "production",
+                        "versionCode": None,
+                        "action": normalized_action,
+                        "status": "none",
+                        "open": False,
+                        "percentage": None,
+                        "committed": False,
+                    }
                 raise GooglePlayApiError("Google Play production contains no release to advance")
             matching_indexes = []
             for release_index, release in enumerate(releases):

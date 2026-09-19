@@ -102,7 +102,7 @@ export function createStoreRequest({ token, tenantId, fetchImpl = fetch }) {
   };
 }
 
-function validateIdentity({ app, appId, submissionId }) {
+function validateIdentity({ app, appId, submissionId, allowPending = false }) {
   if (!app || String(app.id) !== appId) {
     throw new Error('Microsoft Store returned the wrong application identity.');
   }
@@ -110,7 +110,10 @@ function validateIdentity({ app, appId, submissionId }) {
   if (String(publishedId ?? '') !== submissionId) {
     throw new Error(`Submission ${submissionId} is not the current last published application submission.`);
   }
-  if (app.pendingApplicationSubmission?.id) {
+  // A pending submission blocks a mutation, not a read: the Windows release job
+  // repairs a leftover draft itself and skips only its own Store publish for one
+  // in certification, so reporting it must not fail a release preflight.
+  if (!allowPending && app.pendingApplicationSubmission?.id) {
     throw new Error(`Application has pending production submission ${app.pendingApplicationSubmission.id}; resolve it before managing rollout ${submissionId}.`);
   }
 }
@@ -153,14 +156,28 @@ export async function manageRollout({
 
   const appPath = `applications/${appId}`;
   const app = await request('GET', appPath);
+  const pendingSubmissionId = String(app?.pendingApplicationSubmission?.id ?? '');
   if (submissionId === undefined) {
     submissionId = String(app?.lastPublishedApplicationSubmission?.id ?? '');
     if (!/^\d+$/.test(submissionId)) {
-      throw new Error('Microsoft Store returned no numeric last-published submission ID.');
+      // Nothing is published, so nothing can be rolling out. Report it; a first
+      // submission is not something a release preflight should refuse.
+      const empty = {
+        submissionId: '',
+        action,
+        isPackageRollout: false,
+        percentage: 0,
+        status: 'NoPublishedSubmission',
+        open: false,
+        fallbackSubmissionId: '',
+        pendingSubmissionId,
+      };
+      log(`Microsoft Store has no published submission to roll out.${pendingSubmissionId ? ` Pending submission ${pendingSubmissionId}.` : ''}`);
+      return empty;
     }
   }
   const submissionPath = `${appPath}/submissions/${submissionId}`;
-  validateIdentity({ app, appId, submissionId });
+  validateIdentity({ app, appId, submissionId, allowPending: action === 'status' });
 
   const submission = await request('GET', submissionPath);
   if (String(submission?.id ?? '') !== submissionId || submission.status !== 'Published') {
@@ -171,8 +188,8 @@ export async function manageRollout({
   const rollout = await request('GET', rolloutPath);
   const current = rolloutResult(submissionId, action, rollout);
   if (action === 'status') {
-    log(`Microsoft Store submission ${submissionId}: ${current.status}, ${current.percentage}% rollout.`);
-    return current;
+    log(`Microsoft Store submission ${submissionId}: ${current.status}, ${current.percentage}% rollout.${pendingSubmissionId ? ` Pending submission ${pendingSubmissionId}.` : ''}`);
+    return { ...current, pendingSubmissionId };
   }
 
   if (current.status === STOPPED) {

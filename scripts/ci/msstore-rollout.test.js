@@ -187,6 +187,7 @@ test('status is read-only and reports the current published rollout', async () =
     status: 'PackageRolloutInProgress',
     open: true,
     fallbackSubmissionId: '1152921504621000000',
+    pendingSubmissionId: '',
   });
   expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'GET']);
 });
@@ -210,6 +211,45 @@ test('status without a submission ID discovers production and reports whether it
       .rejects.toThrow('Invalid Microsoft Store submission ID.');
   }
   expect(mutations.calls).toHaveLength(0);
+});
+
+test('a pending submission is reported by status and still refuses every mutation', async () => {
+  // The Windows job repairs a leftover API draft and skips only the Store publish
+  // for one in certification, so a pending submission must not fail the preflight.
+  const pending = { pendingApplicationSubmission: { id: '1152921505701999999' } };
+  for (const submission of [submissionId, undefined]) {
+    const { calls, run } = fixture({ app: pending });
+    const result = await run({ action: 'status', submissionId: submission });
+    expect(result.submissionId).toBe(submissionId);
+    expect(result.pendingSubmissionId).toBe('1152921505701999999');
+    expect(result.open).toBe(true);
+    expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'GET']);
+  }
+
+  // Only an in-progress rollout of the published submission blocks a release.
+  const settled = fixture({
+    app: pending,
+    rollout: { packageRolloutStatus: 'PackageRolloutComplete' },
+  });
+  expect((await settled.run({ action: 'status' })).open).toBe(false);
+
+  for (const action of ['increase', 'halt', 'finalize']) {
+    const blocked = fixture({ app: pending });
+    await expect(blocked.run({ action, percentage: 20 })).rejects.toThrow('pending production submission');
+    expect(blocked.calls.every(call => call.method === 'GET')).toBe(true);
+  }
+});
+
+test('status reports an app with no published submission instead of failing', async () => {
+  const unpublished = { lastPublishedApplicationSubmission: undefined };
+  const { calls, run } = fixture({ app: unpublished });
+  const result = await run({ action: 'status', submissionId: undefined });
+  expect(result.open).toBe(false);
+  expect(result.status).toBe('NoPublishedSubmission');
+  expect(calls.map(call => call.method)).toEqual(['GET']);
+
+  const mutation = fixture({ app: unpublished });
+  await expect(mutation.run({ action: 'halt' })).rejects.toThrow('not the current last published');
 });
 
 test('increase is monotonic and uses the documented query endpoint without a body', async () => {

@@ -689,6 +689,31 @@ class GooglePlayEditTest(unittest.TestCase):
                         for call in transport.calls)
                 )
 
+    def test_rollout_status_reports_an_empty_production_track_instead_of_failing(self) -> None:
+        transport = FakeTransport()
+        transport.production_track["releases"] = []
+
+        result = MODULE.control_rollout(
+            "tech.dongdongbh.mindwtr",
+            None,
+            "status",
+            None,
+            transport,
+        )
+
+        # A staged publication into an empty production track is accepted, so the
+        # release preflight must not refuse one either.
+        self.assertIsNone(result["versionCode"])
+        self.assertEqual(result["status"], "none")
+        self.assertFalse(result["open"])
+        self.assertFalse(result["committed"])
+        self.assertEqual(transport.calls[-1]["method"], "DELETE")
+
+        empty = FakeTransport()
+        empty.production_track["releases"] = []
+        with self.assertRaises(MODULE.GooglePlayApiError):
+            MODULE.control_rollout("tech.dongdongbh.mindwtr", None, "auto", None, empty)
+
     def test_rollout_mutations_still_require_an_exact_version_code(self) -> None:
         for action in ("increase", "halt", "resume", "finalize"):
             with self.subTest(action=action):
