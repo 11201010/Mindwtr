@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -48,6 +48,43 @@ describe('automation script sqlite writes', () => {
 
         expect(readRow(dbPath, 'SELECT assignedTo, energyLevel, timeSpentMinutes FROM tasks WHERE id = ?', created.id))
             .toEqual({ assignedTo: 'Bob', energyLevel: 'high', timeSpentMinutes: 12 });
+    });
+
+    test('writes into the installed data/ layout instead of orphaning a database at a pinned flat path', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const root = join(dataPath, '..');
+        const movedData = join(root, 'data', 'data.json');
+        const movedDb = join(root, 'data', 'mindwtr.db');
+
+        // The app has already moved this profile; the pinned paths are one folder off.
+        const moved = createMindwtrAutomationStorage({ dataPath: movedData, dbPath: movedDb });
+        await moved.saveData(emptyData());
+        expect(existsSync(movedDb)).toBe(true);
+
+        const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            const pinned = createMindwtrAutomationStorage({ dataPath, dbPath });
+            expect(pinned.paths).toEqual({ dataPath: movedData, dbPath: movedDb });
+            await pinned.saveData({
+                ...emptyData(),
+                tasks: [{
+                    id: 'pinned-path-task',
+                    title: 'Captured through a pinned flat path',
+                    status: 'inbox',
+                    tags: [],
+                    contexts: [],
+                    createdAt: '2026-09-18T12:00:00.000Z',
+                    updatedAt: '2026-09-18T12:00:00.000Z',
+                } as Task],
+            });
+        } finally {
+            errorSpy.mockRestore();
+        }
+
+        expect(readRow(movedDb, 'SELECT title FROM tasks WHERE id = ?', 'pinned-path-task'))
+            .toEqual({ title: 'Captured through a pinned flat path' });
+        expect(existsSync(dbPath)).toBe(false);
+        expect(existsSync(dataPath)).toBe(false);
     });
 
     test('refuses to overwrite a newer row with an older revision', async () => {

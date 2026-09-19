@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { resolveMindwtrDbPath } from './mindwtr-paths';
+import { resolveMindwtrDataPath, resolveMindwtrDbPath } from './mindwtr-paths';
 
 const originalPlatform = process.platform;
 const originalEnv = {
@@ -89,5 +89,74 @@ describe('automation script database discovery', () => {
         clearOverrides();
 
         expect(resolveMindwtrDbPath()).toBe(flatDb);
+    });
+});
+
+describe('automation script explicit paths', () => {
+    test('follows a pinned flat path into the installed data/ layout', () => {
+        const root = makeTempDir();
+        const pinnedDb = join(root, 'mindwtr.db');
+        const movedDb = join(root, 'data', 'mindwtr.db');
+        const pinnedData = join(root, 'data.json');
+        const movedData = join(root, 'data', 'data.json');
+        touch(movedDb);
+        touch(movedData);
+        clearOverrides();
+        const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+
+        try {
+            expect(resolveMindwtrDbPath(pinnedDb)).toBe(movedDb);
+            expect(resolveMindwtrDataPath(pinnedData)).toBe(movedData);
+            expect(errorSpy).toHaveBeenCalledWith(
+                `[mindwtr] Using ${movedDb} (nothing at the configured path: ${pinnedDb})`
+            );
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    test('follows a pinned data/ path back to a flat profile an older version still uses', () => {
+        const root = makeTempDir();
+        const flatDb = join(root, 'mindwtr.db');
+        touch(flatDb);
+        clearOverrides();
+        const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+
+        try {
+            expect(resolveMindwtrDbPath(join(root, 'data', 'mindwtr.db'))).toBe(flatDb);
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    test('still creates the profile at an explicit path when neither layout exists', () => {
+        const root = makeTempDir();
+        const pinnedDb = join(root, 'scratch', 'mindwtr.db');
+        const pinnedData = join(root, 'scratch', 'data.json');
+        clearOverrides();
+
+        // The CLI contract: --data/--db at a fresh path means "make the profile here".
+        expect(resolveMindwtrDbPath(pinnedDb)).toBe(pinnedDb);
+        expect(resolveMindwtrDataPath(pinnedData)).toBe(pinnedData);
+        expect(existsSync(join(root, 'scratch'))).toBe(false);
+    });
+
+    test('honours MINDWTR_DB_PATH and MINDWTR_DATA the same way', () => {
+        const root = makeTempDir();
+        const movedDb = join(root, 'data', 'mindwtr.db');
+        const movedData = join(root, 'data', 'data.json');
+        touch(movedDb);
+        touch(movedData);
+        clearOverrides();
+        process.env.MINDWTR_DB_PATH = join(root, 'mindwtr.db');
+        process.env.MINDWTR_DATA = join(root, 'data.json');
+        const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+
+        try {
+            expect(resolveMindwtrDbPath()).toBe(movedDb);
+            expect(resolveMindwtrDataPath()).toBe(movedData);
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 });
