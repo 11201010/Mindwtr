@@ -43,8 +43,35 @@ describe('log sanitization', () => {
         expect(context).not.toContain(key.slice(-12));
     });
 
+    // The character to the left of a key in a log line is rarely a space: it is
+    // an env-var name, a percent escape or an `=`. Only a LETTER before the
+    // prefix means this is an ordinary word rather than a key.
+    const KEY_CONTEXTS: Array<[string, (key: string) => string]> = [
+        ['an env var name', (key) => `OPENAI_${key}`],
+        ['a percent escape', (key) => `q=%20${key}`],
+        ['an assignment', (key) => `key=${key}`],
+        ['a digit', (key) => `attempt2${key}`],
+        ['the start of the text', (key) => key],
+    ];
+
+    it.each(KEY_CONTEXTS)('redacts every key shape that follows %s', (_name, wrap) => {
+        for (const [provider, key] of FAKE_KEYS) {
+            const text = sanitizeForLog(wrap(key));
+            expect(text, `free text after ${provider}`).not.toContain(key.slice(-12));
+            const context = JSON.stringify(sanitizeLogContext({ detail: wrap(key) }));
+            expect(context, `context value after ${provider}`).not.toContain(key.slice(-12));
+        }
+    });
+
     it('leaves ordinary words that contain "sk-" alone', () => {
         expect(sanitizeForLog('task-management-system and risk-assessment-notes'))
             .toBe('task-management-system and risk-assessment-notes');
+        // Same words at the very start of the text, where `^` also applies.
+        expect(sanitizeForLog('risk-assessment-notes only')).toBe('risk-assessment-notes only');
+    });
+
+    it('keeps the character before a redacted key', () => {
+        expect(sanitizeForLog(`OPENAI_${FAKE_KEYS[0][1]}`)).toBe('OPENAI_[redacted]');
+        expect(sanitizeForLog(`${FAKE_KEYS[0][1]} trailing`)).toBe('[redacted] trailing');
     });
 });

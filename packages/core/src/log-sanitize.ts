@@ -33,14 +33,19 @@ const PRIVATE_CONTENT_KEYS = [
 ];
 
 // One home for provider key shapes (sync error text reuses it through sanitizeLogMessage).
-// `\b` keeps words such as "task-management" from matching; the character class allows
-// the `-` and `_` that current keys contain (sk-proj-…, sk-ant-api03-…, sk-or-v1-…).
+// The character class allows the `-` and `_` that current keys contain (sk-proj-…,
+// sk-ant-api03-…, sk-or-v1-…). Each pattern captures the character BEFORE the
+// prefix and the replacement puts it back, so a key is redacted everywhere except
+// after a letter — which is all that words such as "task-management" and
+// "risk-assessment" need. `\b` cannot express this: it counts `_` and digits as
+// word characters, so `OPENAI_sk-…` and `%20sk-…` went through unredacted. A
+// look-behind would read better, but Hermes (the mobile engine) does not run one.
 const AI_KEY_PATTERNS = [
-    /\bsk-[A-Za-z0-9_-]{10,}/g,
-    /\bxai-[A-Za-z0-9]{20,}/g,
-    /\bgsk_[A-Za-z0-9]{20,}/g,
-    /\brk-[A-Za-z0-9]{10,}/g,
-    /\bAIza[0-9A-Za-z\-_]{10,}/g,
+    /(^|[^A-Za-z])sk-[A-Za-z0-9_-]{10,}/g,
+    /(^|[^A-Za-z])xai-[A-Za-z0-9]{20,}/g,
+    /(^|[^A-Za-z])gsk_[A-Za-z0-9]{20,}/g,
+    /(^|[^A-Za-z])rk-[A-Za-z0-9]{10,}/g,
+    /(^|[^A-Za-z])AIza[0-9A-Za-z\-_]{10,}/g,
 ];
 
 const ICS_URL_PATTERN = /\b(?:https?|webcal|webcals):\/\/[^\s'")]+/gi;
@@ -92,7 +97,7 @@ function redactSensitiveText(value: string): string {
         '$1=[redacted]'
     );
     for (const pattern of AI_KEY_PATTERNS) {
-        result = result.replace(pattern, '[redacted]');
+        result = result.replace(pattern, '$1[redacted]');
     }
     result = result.replace(ICS_URL_PATTERN, (match) => sanitizeUrl(match) ?? '[redacted]');
     return result;
