@@ -664,6 +664,120 @@ describe('TaskEditModal', () => {
     }));
   });
 
+  describe('pending preview checklist item', () => {
+    const checklistTask = {
+      id: 't1',
+      title: 'Test task',
+      status: 'next' as const,
+      checklist: [{ id: 'item-1', title: 'First', isCompleted: false }],
+      tags: [],
+      contexts: [],
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+
+    const openWithDraft = (
+      draft: string,
+      onSave: (taskId: string, updates: Partial<Task>) => unknown,
+      onClose = vi.fn(),
+    ) => {
+      let tree!: renderer.ReactTestRenderer;
+      act(() => {
+        tree = renderer.create(
+          <TaskEditModal visible task={checklistTask} onClose={onClose} onSave={onSave} />
+        );
+      });
+      const viewTab = tree.root.find((node) => (
+        node.props.mergedTask?.id === 't1' && typeof node.props.applyChecklistUpdate === 'function'
+      ));
+      // The preview keeps the typed-but-not-submitted item here; the save path
+      // reads it synchronously instead of waiting for the input to blur.
+      act(() => {
+        viewTab.props.pendingChecklistDraftRef.current = draft;
+      });
+      return tree;
+    };
+
+    const pressSave = async (tree: renderer.ReactTestRenderer) => {
+      const header = tree.root.find((node) => (
+        typeof node.props.onDone === 'function' && typeof node.props.onDelete === 'function'
+      ));
+      await act(async () => {
+        header.props.onDone();
+        await Promise.resolve();
+      });
+    };
+
+    it('saves text typed into the preview add-item input without pressing return', async () => {
+      const onSave = vi.fn();
+      const tree = openWithDraft('Typed but not submitted', onSave);
+
+      await pressSave(tree);
+
+      expect(onSave).toHaveBeenCalledWith('t1', expect.objectContaining({
+        checklist: [
+          expect.objectContaining({ title: 'First' }),
+          expect.objectContaining({ title: 'Typed but not submitted', isCompleted: false }),
+        ],
+      }));
+    });
+
+    it('adds nothing when the pending text is only whitespace', async () => {
+      const onSave = vi.fn();
+      const tree = openWithDraft('   ', onSave);
+
+      await pressSave(tree);
+
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it('does not duplicate an item that was already submitted with return', async () => {
+      const onSave = vi.fn();
+      const tree = openWithDraft('', onSave);
+      const viewTab = tree.root.find((node) => (
+        node.props.mergedTask?.id === 't1' && typeof node.props.applyChecklistUpdate === 'function'
+      ));
+      act(() => {
+        viewTab.props.applyChecklistUpdate([
+          ...checklistTask.checklist,
+          { id: 'item-2', title: 'Submitted', isCompleted: false },
+        ]);
+      });
+
+      await pressSave(tree);
+
+      expect(onSave).toHaveBeenCalledWith('t1', expect.objectContaining({
+        checklist: [
+          expect.objectContaining({ title: 'First' }),
+          expect.objectContaining({ title: 'Submitted' }),
+        ],
+      }));
+    });
+
+    it('counts pending text as an unsaved change and drops it on discard', () => {
+      const onSave = vi.fn();
+      const onClose = vi.fn();
+      const tree = openWithDraft('Typed but not submitted', onSave, onClose);
+      const modal = tree.root.findAll((node) => (
+        node.props.visible === true && typeof node.props.onRequestClose === 'function'
+      ))[0];
+      const alertSpy = vi.spyOn(Alert, 'alert');
+
+      act(() => {
+        modal.props.onRequestClose();
+      });
+
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+      const buttons = (alertSpy.mock.calls[0]?.[2] ?? []) as { text?: string; onPress?: () => void }[];
+      act(() => {
+        buttons[1]?.onPress?.();
+      });
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onSave).not.toHaveBeenCalled();
+    });
+  });
+
   it('does not persist a backdated completion that is reverted before saving', async () => {
     const completedAt = '2026-07-14T18:30:00.000Z';
     const onSave = vi.fn();

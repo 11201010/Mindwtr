@@ -2,6 +2,7 @@ import React from 'react';
 import {
     areDraftAttachmentsDirty,
     flushPendingSave,
+    generateUUID,
     type Attachment,
     type AttachmentDraftSettlementInput,
     type MarkdownSelection,
@@ -184,6 +185,11 @@ export function useTaskEditState({
     const [descriptionDraft, setDescriptionDraft] = React.useState('');
     const descriptionDraftRef = React.useRef('');
     const descriptionDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    // The preview's "add checklist item" input keeps its text here until the
+    // user submits it. Save reads it synchronously: on React Native a press on
+    // the Save button does not reliably blur the input first, so a blur handler
+    // would lose the text (or race the save in the same tick).
+    const checklistDraftRef = React.useRef('');
     const [contextInputDraft, setContextInputDraft] = React.useState('');
     const [tagInputDraft, setTagInputDraft] = React.useState('');
     const [isContextInputFocused, setIsContextInputFocused] = React.useState(false);
@@ -404,6 +410,25 @@ export function useTaskEditState({
             }
         }
 
+        const pendingChecklistTitle = checklistDraftRef.current.trim();
+        if (pendingChecklistTitle) {
+            saveDraftState = {
+                ...saveDraftState,
+                checklist: [
+                    ...(saveDraftState.checklist ?? []),
+                    { id: generateUUID(), title: pendingChecklistTitle, isCompleted: false },
+                ],
+            };
+            // Same rule as applyChecklistUpdate: an unfinished item reopens a
+            // list task that had been completed.
+            if (currentTask.taskMode === 'list' && saveDraftState.draft.status === 'done') {
+                saveDraftState = {
+                    ...saveDraftState,
+                    draft: setTaskDraftField(saveDraftState.draft, 'status', 'next'),
+                };
+            }
+        }
+
         let updates: Partial<Task> | null = buildTaskEditUpdatePatch(saveDraftState, currentTask, {
             title: titleDraftRef.current,
             description: descriptionDraftRef.current,
@@ -453,6 +478,7 @@ export function useTaskEditState({
                 },
             });
         }
+        checklistDraftRef.current = '';
         clearTaskEditActivitySession();
         settleCurrentAttachmentDraft(saveDraftState.attachments ?? currentTask.attachments);
         onClose();
@@ -482,6 +508,7 @@ export function useTaskEditState({
     const hasPendingChanges = React.useCallback(() => {
         const currentTask = baseTaskRef.current ?? liveTask;
         if (!currentTask || !taskEditDraft) return false;
+        if (checklistDraftRef.current.trim()) return true;
         let pendingDraft = taskEditDraft.draft;
         pendingDraft = setTaskDraftField(pendingDraft, 'title', titleDraftRef.current);
         pendingDraft = setTaskDraftField(pendingDraft, 'description', descriptionDraftRef.current);
@@ -579,6 +606,7 @@ export function useTaskEditState({
             setTitleDraft('');
             descriptionDraftRef.current = '';
             setDescriptionDraft('');
+            checklistDraftRef.current = '';
             setContextInputDraft('');
             setTagInputDraft('');
             setIsContextInputFocused(false);
@@ -614,6 +642,7 @@ export function useTaskEditState({
                 const nextDescription = String(liveTask.description ?? '');
                 descriptionDraftRef.current = nextDescription;
                 setDescriptionDraft(nextDescription);
+                checklistDraftRef.current = '';
                 setContextInputDraft((liveTask.contexts ?? []).join(', '));
                 setTagInputDraft((liveTask.tags ?? []).join(', '));
                 setIsContextInputFocused(false);
@@ -636,6 +665,7 @@ export function useTaskEditState({
             setTitleDraft('');
             descriptionDraftRef.current = '';
             setDescriptionDraft('');
+            checklistDraftRef.current = '';
             setContextInputDraft('');
             setTagInputDraft('');
             setIsContextInputFocused(false);
@@ -694,6 +724,7 @@ export function useTaskEditState({
     return {
         aiModal,
         acknowledgeRecoveredActivityInput,
+        checklistDraftRef,
         contextInputDraft,
         customWeekdays,
         descriptionDebounceRef,

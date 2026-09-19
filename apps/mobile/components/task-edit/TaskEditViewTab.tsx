@@ -43,6 +43,10 @@ type TaskEditViewTabProps = {
   getRecurrenceRuleValue: (recurrence: Task['recurrence']) => RecurrenceRule | '';
   getRecurrenceStrategyValue: (recurrence: Task['recurrence']) => RecurrenceStrategy;
   applyChecklistUpdate: (checklist: NonNullable<Task['checklist']>) => void;
+  /** Holds add-item text the user has typed but not submitted, so the Save
+   *  button (which lives outside this tab) can fold it into the saved
+   *  checklist instead of relying on the input blurring first. */
+  pendingChecklistDraftRef?: React.MutableRefObject<string>;
   visibleAttachments: Attachment[];
   openAttachment: (attachment: Attachment) => void;
   isImageAttachment: (attachment: Attachment) => boolean;
@@ -72,6 +76,7 @@ function TaskEditViewTabComponent({
   formatDate,
   formatDueDate,
   applyChecklistUpdate,
+  pendingChecklistDraftRef,
   visibleAttachments,
   openAttachment,
   isImageAttachment,
@@ -87,6 +92,10 @@ function TaskEditViewTabComponent({
   readOnly = false,
 }: TaskEditViewTabProps) {
   const [checklistDraft, setChecklistDraft] = React.useState('');
+  const updateChecklistDraft = React.useCallback((text: string) => {
+    setChecklistDraft(text);
+    if (pendingChecklistDraftRef) pendingChecklistDraftRef.current = text;
+  }, [pendingChecklistDraftRef]);
   const checklistDraftRef = React.useRef<TextInput>(null);
   const previewScrollRef = React.useRef<ScrollView>(null);
   const checklistKeyboard = usePreviewChecklistKeyboard(previewScrollRef, checklistDraftRef);
@@ -336,7 +345,7 @@ function TaskEditViewTabComponent({
             {!readOnly && !isReference ? <TextInput
               ref={checklistDraftRef}
               value={checklistDraft}
-              onChangeText={setChecklistDraft}
+              onChangeText={updateChecklistDraft}
               onFocus={checklistKeyboard.onFocus}
               onBlur={checklistKeyboard.onBlur}
               onLayout={checklistKeyboard.onLayout}
@@ -347,7 +356,7 @@ function TaskEditViewTabComponent({
                   return;
                 }
                 applyChecklistUpdate([...checklist, { id: generateUUID(), title, isCompleted: false }]);
-                setChecklistDraft('');
+                updateChecklistDraft('');
               }}
               placeholder={`+ ${t('taskEdit.addItem')}`}
               placeholderTextColor={tc.secondaryText}

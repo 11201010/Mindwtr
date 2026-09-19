@@ -498,6 +498,76 @@ describe('TaskEditViewTab', () => {
     expect(readOnlyApply).not.toHaveBeenCalled();
   });
 
+  // The Save button lives outside this tab, so typed-but-not-submitted text has
+  // to be readable from the save path without waiting for a blur.
+  it('mirrors unsubmitted add-item text into the pending draft ref', () => {
+    const applyChecklistUpdate = vi.fn();
+    const pendingChecklistDraftRef = { current: '' };
+    let tree!: renderer.ReactTestRenderer;
+    renderer.act(() => {
+      tree = renderer.create(
+        <TaskEditViewTab
+          t={(key) => ({ 'taskEdit.addItem': 'Add Item', 'taskEdit.checklist': 'Checklist' }[key] ?? key)}
+          tc={{
+            text: '#fff',
+            secondaryText: '#aaa',
+            inputBg: '#111',
+            border: '#222',
+            cardBg: '#000',
+            tint: '#3b82f6',
+          } as any}
+          styles={taskEditStyles as any}
+          mergedTask={{
+            id: 'task-1',
+            title: 'Groceries',
+            status: 'next',
+            tags: [],
+            contexts: [],
+            checklist: [{ id: 'item-1', title: 'Bread', isCompleted: false }],
+            createdAt: '2026-04-01T00:00:00.000Z',
+            updatedAt: '2026-04-01T00:00:00.000Z',
+          }}
+          projects={[]}
+          sections={[]}
+          areas={[]}
+          prioritiesEnabled={false}
+          timeEstimatesEnabled={false}
+          formatTimeEstimateLabel={(value) => String(value)}
+          formatDate={(value) => value}
+          formatDueDate={(value) => value}
+          getRecurrenceRuleValue={() => ''}
+          getRecurrenceStrategyValue={() => 'strict'}
+          applyChecklistUpdate={applyChecklistUpdate}
+          pendingChecklistDraftRef={pendingChecklistDraftRef}
+          visibleAttachments={[]}
+          openAttachment={vi.fn()}
+          isImageAttachment={() => false}
+          textDirectionStyle={{}}
+          resolvedDirection="ltr"
+          showStatusField={false}
+        />
+      );
+    });
+    const addInput = () => tree.root.find((node) => (
+      typeof node.type === 'string'
+      && node.props.accessibilityLabel === 'Add Item'
+      && typeof node.props.onSubmitEditing === 'function'
+    ));
+
+    renderer.act(() => {
+      addInput().props.onChangeText('Milk');
+    });
+    expect(pendingChecklistDraftRef.current).toBe('Milk');
+
+    // Return commits the item, so the ref must not keep a copy that the save
+    // path would then add a second time.
+    renderer.act(() => {
+      addInput().props.onSubmitEditing();
+    });
+    expect(applyChecklistUpdate).toHaveBeenCalledTimes(1);
+    expect(pendingChecklistDraftRef.current).toBe('');
+  });
+
   it('hides the status row when the task editor layout hides status', () => {
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {

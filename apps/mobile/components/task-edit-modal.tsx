@@ -257,6 +257,7 @@ function TaskEditModalInner({
     const {
         aiModal,
         acknowledgeRecoveredActivityInput,
+        checklistDraftRef,
         contextInputDraft,
         customWeekdays,
         descriptionDebounceRef,
@@ -1281,6 +1282,7 @@ function TaskEditModalInner({
                                     getRecurrenceRuleValue={getRecurrenceRuleValue}
                                     getRecurrenceStrategyValue={getRecurrenceStrategyValue}
                                     applyChecklistUpdate={applyChecklistUpdate}
+                                    pendingChecklistDraftRef={checklistDraftRef}
                                     visibleAttachments={visibleAttachments}
                                     openAttachment={stableOpenAttachment}
                                     isImageAttachment={isImageAttachment}
