@@ -5281,6 +5281,26 @@ describe('TaskStore', () => {
             expect(deletedAfter.projectId).toBeUndefined();
         });
 
+        // Purge takes its ids when a confirm dialog opens. If a sync merge restores
+        // the project before the user confirms, purging it would trash a live
+        // project and strip its live tasks in one unrecoverable step.
+        it('refuses to purge a project that is not in the trash', async () => {
+            const { addProject, addTask, purgeProject } = useTaskStore.getState();
+            const project = await addProject('Live Project', '#555555');
+            if (!project) return;
+            await addTask('Live Task', { projectId: project.id, status: 'next' });
+            const task = useTaskStore.getState()._allTasks.find((item) => item.title === 'Live Task')!;
+
+            const result = await purgeProject(project.id);
+
+            expect(result).toEqual({ success: false, error: 'Project not found' });
+            const state = useTaskStore.getState();
+            const liveProject = state._allProjects.find((item) => item.id === project.id)!;
+            expect(liveProject.purgedAt).toBeUndefined();
+            expect(liveProject.deletedAt).toBeUndefined();
+            expect(state._allTasks.find((item) => item.id === task.id)!.projectId).toBe(project.id);
+        });
+
         it('purges deleted projects while keeping detached tasks live', async () => {
             const { addProject, addSection, addTask, deleteProject, purgeProject } = useTaskStore.getState();
             const project = await addProject('Purge Project', '#444444', {

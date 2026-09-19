@@ -549,7 +549,13 @@ export const createProjectCoreActions = ({
         const now = new Date().toISOString();
         let missingProject = false;
         set((state) => {
-            const target = state._allProjects.find((project) => project.id === id && !project.purgedAt);
+            // Only a trashed project can be purged, the same rule purgeTasks uses.
+            // Callers take their ids when a confirm dialog opens, so a sync merge can
+            // restore the project before the user confirms; purging it then would
+            // trash a live project and strip its live tasks in one step.
+            const target = state._allProjects.find((project) => (
+                project.id === id && project.deletedAt && !project.purgedAt
+            ));
             if (!target) {
                 missingProject = true;
                 return state;
