@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { closeDb, ensureMindwtrDbPath, openMindwtrDb } from './db.js';
 
 const tempDirs: string[] = [];
+const originalPlatform = process.platform;
+const originalEnv = {
+  APPDATA: process.env.APPDATA,
+  MINDWTR_DB_PATH: process.env.MINDWTR_DB_PATH,
+  MINDWTR_DB: process.env.MINDWTR_DB,
+};
+
+const setPlatform = (platform: string) => {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+};
 
 const createTempDir = (): string => {
   const dir = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-db-'));
@@ -14,6 +24,11 @@ const createTempDir = (): string => {
 };
 
 afterEach(() => {
+  setPlatform(originalPlatform);
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -116,6 +131,29 @@ describe('mcp db bootstrap', () => {
       expect(readdirSync(dir)).toEqual(['data.json']);
     } finally {
       saveSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('bootstraps beside the data.json it is built from, not in the data/ candidate', async () => {
+    const appData = createTempDir();
+    const profile = join(appData, 'mindwtr');
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(
+      join(profile, 'data.json'),
+      JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} })
+    );
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      setPlatform('win32');
+      process.env.APPDATA = appData;
+      delete process.env.MINDWTR_DB_PATH;
+      delete process.env.MINDWTR_DB;
+
+      expect(await ensureMindwtrDbPath()).toBe(join(profile, 'mindwtr.db'));
+      expect(existsSync(join(profile, 'data', 'mindwtr.db'))).toBe(false);
+    } finally {
       warnSpy.mockRestore();
     }
   });

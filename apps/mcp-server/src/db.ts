@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from 'fs';
 import { readFile } from 'fs/promises';
-import { dirname } from 'path';
+import { basename, dirname, join } from 'path';
 
 import type { AppData, SqliteClient } from '@mindwtr/core';
 
@@ -139,12 +139,18 @@ export async function ensureMindwtrDbPath(options: DbOptions = {}): Promise<stri
 
   const dataJsonPath = resolveMindwtrDataJsonPath(options.dbPath);
   if (existsSync(dataJsonPath)) {
+    // Build the database beside the data.json it comes from. Discovery may have
+    // picked the installed data/ candidate on a profile whose data.json is still
+    // flat, and the desktop app only ever looks where its own data.json lives;
+    // a database anywhere else is an orphan it never reads (#1245). With an
+    // explicit --db the two already share a directory, so this keeps that path.
+    const bootstrapPath = join(dirname(dataJsonPath), basename(path));
     try {
       console.warn(`[mindwtr-mcp] Bootstrapping SQLite database from fallback data.json: ${dataJsonPath}`);
-      await bootstrapMindwtrDbFromJson(path, dataJsonPath);
-      if (existsSync(path)) {
-        console.warn(`[mindwtr-mcp] Bootstrapped SQLite database at: ${path}`);
-        return path;
+      await bootstrapMindwtrDbFromJson(bootstrapPath, dataJsonPath);
+      if (existsSync(bootstrapPath)) {
+        console.warn(`[mindwtr-mcp] Bootstrapped SQLite database at: ${bootstrapPath}`);
+        return bootstrapPath;
       }
     } catch (error) {
       throw new Error(

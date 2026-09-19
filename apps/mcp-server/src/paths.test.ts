@@ -5,8 +5,10 @@ import { join } from 'path';
 
 import { resolveMindwtrDbPath } from './paths.js';
 
+const originalPlatform = process.platform;
 const originalEnv = {
   HOME: process.env.HOME,
+  APPDATA: process.env.APPDATA,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   XDG_DATA_HOME: process.env.XDG_DATA_HOME,
   MINDWTR_DB_PATH: process.env.MINDWTR_DB_PATH,
@@ -14,7 +16,12 @@ const originalEnv = {
 };
 const tempDirs: string[] = [];
 
+const setPlatform = (platform: string) => {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+};
+
 afterEach(() => {
+  setPlatform(originalPlatform);
   for (const [key, value] of Object.entries(originalEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -28,8 +35,25 @@ afterEach(() => {
 describe('mcp default database discovery', () => {
   if (process.platform !== 'linux') return;
 
-  test('prefers the data/ subfolder over a flat root an older version left behind', () => {
-    const dataHome = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-layout-'));
+  test('prefers the data/ subfolder on Windows over a flat root an older version left behind', () => {
+    const appData = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-layout-'));
+    tempDirs.push(appData);
+    const flatDb = join(appData, 'mindwtr', 'mindwtr.db');
+    const splitDb = join(appData, 'mindwtr', 'data', 'mindwtr.db');
+    mkdirSync(join(splitDb, '..'), { recursive: true });
+    writeFileSync(flatDb, '');
+    writeFileSync(splitDb, '');
+
+    setPlatform('win32');
+    process.env.APPDATA = appData;
+    delete process.env.MINDWTR_DB_PATH;
+    delete process.env.MINDWTR_DB;
+
+    expect(resolveMindwtrDbPath()).toBe(splitDb);
+  });
+
+  test('keeps the flat root on Linux, where the app never uses a data/ subfolder', () => {
+    const dataHome = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-linux-layout-'));
     tempDirs.push(dataHome);
     const flatDb = join(dataHome, 'mindwtr', 'mindwtr.db');
     const splitDb = join(dataHome, 'mindwtr', 'data', 'mindwtr.db');
@@ -41,7 +65,7 @@ describe('mcp default database discovery', () => {
     delete process.env.MINDWTR_DB_PATH;
     delete process.env.MINDWTR_DB;
 
-    expect(resolveMindwtrDbPath()).toBe(splitDb);
+    expect(resolveMindwtrDbPath()).toBe(flatDb);
   });
 
   test('discovers the Flatpak database when XDG locations are empty', () => {
