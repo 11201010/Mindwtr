@@ -178,15 +178,6 @@ export function DestinationSelector({
             moveOptionFocus(event.key === 'ArrowDown' ? 1 : -1);
         }
     };
-    const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-        if (event.key !== 'Enter') return;
-        const firstProject = filteredProjects[0];
-        const firstArea = filteredAreas[0];
-        if (!firstProject && !firstArea) return;
-        event.preventDefault();
-        if (firstProject) choose({ kind: 'project', id: firstProject.id });
-        else if (firstArea) choose({ kind: 'area', id: firstArea.id });
-    };
     const handleCreate = async (kind: 'project' | 'area') => {
         const name = query.trim();
         const create = kind === 'project' ? onCreateProject : onCreateArea;
@@ -203,6 +194,34 @@ export function DestinationSelector({
         } finally {
             if (mountedRef.current && attemptRef.current === attempt) setCreating(null);
         }
+    };
+
+    const hasMatches = filteredProjects.length > 0 || filteredAreas.length > 0;
+    const canCreateProject = showProjects
+        && Boolean(onCreateProject)
+        && Boolean(normalizedQuery)
+        && !sortedProjects.some((project) => project.title.trim().toLocaleLowerCase() === normalizedQuery);
+    const canCreateArea = showAreas
+        && Boolean(onCreateArea)
+        && Boolean(normalizedQuery)
+        && !areas.some((area) => area.name.trim().toLocaleLowerCase() === normalizedQuery);
+
+    // Enter matches ui/ProjectSelector: an empty search picks nothing (it used
+    // to file the draft under the alphabetically first project), and with no
+    // match it runs the create action only when exactly one is on offer.
+    const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+        if (event.key !== 'Enter' || !normalizedQuery) return;
+        const firstProject = filteredProjects[0];
+        const firstArea = filteredAreas[0];
+        if (firstProject || firstArea) {
+            event.preventDefault();
+            if (firstProject) choose({ kind: 'project', id: firstProject.id });
+            else if (firstArea) choose({ kind: 'area', id: firstArea.id });
+            return;
+        }
+        if (canCreateProject === canCreateArea) return;
+        event.preventDefault();
+        void handleCreate(canCreateProject ? 'project' : 'area');
     };
 
     const renderOption = (
@@ -234,15 +253,6 @@ export function DestinationSelector({
         );
     };
 
-    const hasMatches = filteredProjects.length > 0 || filteredAreas.length > 0;
-    const canCreateProject = showProjects
-        && Boolean(onCreateProject)
-        && Boolean(normalizedQuery)
-        && !sortedProjects.some((project) => project.title.trim().toLocaleLowerCase() === normalizedQuery);
-    const canCreateArea = showAreas
-        && Boolean(onCreateArea)
-        && Boolean(normalizedQuery)
-        && !areas.some((area) => area.name.trim().toLocaleLowerCase() === normalizedQuery);
     return (
         <div ref={containerRef} className={cn('relative', className)} aria-busy={Boolean(creating) || undefined}>
             <button

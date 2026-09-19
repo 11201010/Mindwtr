@@ -88,6 +88,34 @@ describe('DestinationSelector', () => {
         expect(onChange).toHaveBeenCalledExactlyOnceWith({ kind: 'project', id: 'project-work' });
     });
 
+    it('ignores Enter on an empty search instead of picking the first project', () => {
+        const onChange = vi.fn();
+        const { getByRole, getByLabelText } = renderSelector({ onChange });
+
+        fireEvent.click(getByRole('button', { name: 'Destination' }));
+        fireEvent.keyDown(getByLabelText('Search'), { key: 'Enter' });
+
+        expect(onChange).not.toHaveBeenCalled();
+        expect(getByRole('listbox', { name: 'Destination' })).toBeInTheDocument();
+    });
+
+    it('runs the only create action offered when Enter finds no match', async () => {
+        const onChange = vi.fn();
+        const onCreateProject = vi.fn(async () => 'project-garden');
+        const { getByRole, getByLabelText } = renderSelector({
+            onChange,
+            onCreateProject,
+            onCreateArea: undefined,
+        });
+
+        fireEvent.click(getByRole('button', { name: 'Destination' }));
+        setInputValue(getByLabelText('Search') as HTMLInputElement, 'Garden');
+        fireEvent.keyDown(getByLabelText('Search'), { key: 'Enter' });
+
+        await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith('Garden'));
+        await waitFor(() => expect(onChange).toHaveBeenCalledWith({ kind: 'project', id: 'project-garden' }));
+    });
+
     it('invalidates a pending creation when closed and reopened', async () => {
         let finishCreate!: (id: string | null) => void;
         const onChange = vi.fn();
