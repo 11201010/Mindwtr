@@ -1,5 +1,53 @@
 # Plans index
 
+## Review loop from v1.3.0 — September 18, 2026
+
+Planned against `561cfdfa0` (integration branch `agent/integrate-20260918` = main `8fe8c9293` + the phase-1 review fixes and their closure corrections). Phase-1 findings were fixed directly (see `.orchestrator/tasks/impl-20260918/LEDGER.md`, not tracked). This is the phase-2 improve set, selected by default (non-interactive run): every high-confidence actionable finding of the three audits. Plan 116 targets the public docs repository.
+
+| Plan | Finding | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [111](111-clear-trash-purges-only-what-is-shown.md) | PROD-02: Clear Trash deletes items the screen does not show | P1 | S | None | TODO |
+| [112](112-undo-project-delete-restores-its-tasks.md) | PROD-05: Undo after a project delete restores an empty project | P2 | S-M | None | TODO |
+| [113](113-sidebar-drop-onto-history.md) | PROD-01: dropping a task on Done/Archived in the sidebar stopped working | P2 | S | None | TODO |
+| [114](114-save-and-edit-follows-deferred-tasks.md) | PROD-03: Save & edit can land where the new task is hidden | P2 | S | None | TODO |
+| [115](115-trash-retention-notice.md) | PROD-04: Trash never says items are removed after the retention period | P3 | S | 111 (same files) | TODO |
+| [116](116-user-guide-matches-1-3-1-screens.md) | DOCS-01: public guide describes the pre-1.3.1 screens (six languages) | P3 | M | 113 (one sentence) | TODO |
+| [117](117-ai-endpoint-stays-on-device.md) | SEC-02: a synced settings document can choose where the AI API key is sent | P0 | S | None | TODO |
+| [118](118-date-only-imports-stay-date-only.md) | BUG-01: Todoist import and speech-to-task add a clock time to date-only dates | P1 | S | None | TODO |
+| [119](119-server-rejected-attachment-is-terminal.md) | REL-03: a file the self-hosted server refuses blocks every remote write | P1 | M | None | TODO |
+| [120](120-email-capture-deterministic-ids.md) | REL-01: email-captured tasks get random ids, so a replay duplicates them | P2 | S | None | TODO |
+| [121](121-log-sanitizer-current-key-shapes.md) | SEC-01: log sanitizer misses current API key shapes; two drifted copies | P2 | S | None | TODO |
+| [122](122-email-capture-partial-fetch.md) | REL-02: email capture downloads whole messages to keep 16,000 characters | P2 | S | None | TODO |
+| [123](123-capture-webhook-idempotency.md) | REL-04: capture webhook has no idempotency key | P2 | S | None | TODO |
+| [124](124-sync-settings-allowlist-test.md) | TEST-01: no test pins which settings cross devices | P3 | S | 117 | TODO |
+| [125](125-desktop-drop-duplicate-task-indexes.md) | PERF-01 step 1: nine task indexes exist twice in the desktop database | P2 | S | None | TODO |
+| [126](126-msstore-routing-test-asserts-something.md) | DX-01: Store rollout routing test passes when pwsh is missing or broken | P3 | S | None | TODO |
+| [127](127-render-test-timeouts.md) | DX-02: heavy render tests fail at the 5 s harness default under load | P3 | S | None | TODO |
+
+### Moved to the architecture-deepening phase (candidates, not planned here)
+
+ARCH-01 one home for the desktop profile search path (scripts copy still lacks Flatpak and macOS sandbox roots); ARCH-02 one active-filter chip builder (four desktop copies; ArchiveView still shows chips for criteria it does not apply); ARCH-03 import the time-estimate list from core (five hand-typed lists); ARCH-04 Rust project delete/restore in the shared parity fixture (three `purgedAt` differences); ARCH-05 task destination patch written four times; ARCH-06 stale-path fallback order and moved-folder list written three times.
+
+### Direction (recorded for the owner, not built)
+
+D1 "Restore project" from Trash brings its tasks back (needs a new synced field; after 112). D2 finish the partial translations now that the "partly translated" hint is gone (nl 28%, hi/ru 60%, pl/ar/pt/tr ~61%, it 66%, fr 81%). D3 one "where does this task live" rule in core (114 is the first step).
+
+### Deferred (recorded, deliberately not planned this run)
+
+- PERF-01 step 2: retire unused and prefix-covered indexes in core and Rust; needs `EXPLAIN QUERY PLAN` for the MCP `listTasks` sorts and a "full save of 10k tasks" perf row first.
+- REL-03 twin: WebDAV 413/507 on attachment upload is a different seam. Mobile client-side validation failures only log and continue (no bounded seam). Owner decisions: soft-delete vs "keep the record, stop retrying" at the terminal step; a server-specific "file too large" toast (new key).
+- Owner decisions from phase 1: compact mobile rows hide note/tags on the Reference list with no "Show details" control; a replayed Apple Reminders import counts as imported and deletes the reminder when only a tombstone exists (CP-3).
+- Phase-1 closure leftovers: layout migration orphan-WAL double fault (N2); stale-lock live-removal race (C4b); editor attachment draft can drop a kept voice capture (R1); muted unapplied filter chips have no screen-reader cue; desktop row menus without arrow keys; Linux zbus notification connection never reset.
+- Release rollout: no minimum time at a stage; shared concurrency groups can cancel a pending manual halt.
+- Reliability "investigate" list: IMAP host change reuses the old password; synced calendar URLs cause blind GETs to LAN hosts; real Todoist export shapes; email-capture state lock after a panic.
+
+### Considered and rejected (this run)
+
+- Sharing the profile path list through `packages/core` (core must stay free of `fs`/`os`).
+- Raw English store errors in toasts (realistic paths are blocked earlier or have a translated banner).
+- Re-homing `quick-add-images` in the layout migration (old paths keep working because the folder did not move).
+- ARCH-06 as "two TypeScript re-homing functions": there is one function with two callers.
+
 ## Review loop from v1.2.8 — September 16, 2026
 
 Planned against `0b9ea1d0e` (integration branch `agent/integrate-20260916` = main `700c42184` + the 32 phase-1 review fixes). Phase-1 findings were fixed directly (see `.orchestrator/tasks/impl-20260916/LEDGER.md`, not tracked). This is the phase-2 improve set: every high-confidence, actionable finding from the product, reliability/security/tests and architecture audits became a plan; each plan is one commit. Root maintains status and integration.
