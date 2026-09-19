@@ -80,8 +80,8 @@ const NAV_DROP_STATUSES: Record<string, TaskStatus> = {
     someday: 'someday',
     waiting: 'waiting',
     reference: 'reference',
-    done: 'done',
-    archived: 'archived',
+    // Done and Archived share the History entry; it opens on Done, so a drop files there.
+    history: 'done',
 };
 const SECTION_COLLAPSE_STORAGE_KEY = 'mindwtr:sidebar:collapsedSections';
 const DEFAULT_COLLAPSED_SECTION_KEYS = ['secondary'];
@@ -443,6 +443,9 @@ export function Layout({
     // document listener rather than being threaded through every list view.
     const [taskDragActive, setTaskDragActive] = useState(false);
     const [dragOverNavId, setDragOverNavId] = useState<string | null>(null);
+    // A folded group hides its drop targets. Opening it for the length of the drag
+    // is kept out of `collapsedSections`, which is saved as the user's fold choice.
+    const [dragOpenedSectionKey, setDragOpenedSectionKey] = useState<string | null>(null);
 
     useEffect(() => {
         // Neither end-of-drag signal is trustworthy on the path this highlight
@@ -461,6 +464,7 @@ export function Layout({
             }
             setTaskDragActive(false);
             setDragOverNavId(null);
+            setDragOpenedSectionKey(null);
         };
         const keepAlive = () => {
             if (idleTimer !== null) window.clearTimeout(idleTimer);
@@ -884,7 +888,7 @@ export function Layout({
 
                     <nav className="space-y-3.5 pb-2" data-sidebar-nav>
                         {navSections.map((section) => {
-                            const isSectionCollapsed = !isCollapsed && collapsedSections.has(section.key);
+                            const isSectionCollapsed = !isCollapsed && collapsedSections.has(section.key) && dragOpenedSectionKey !== section.key;
                             const sectionId = `sidebar-section-${section.key}`;
                             return (
                             <div key={section.key} className="space-y-1" data-sidebar-section>
@@ -892,6 +896,12 @@ export function Layout({
                                     <button
                                         type="button"
                                         onClick={() => toggleSection(section.key)}
+                                        onDragEnter={(event) => {
+                                            if (!hasCalendarTaskDragData(event.dataTransfer)) return;
+                                            if (section.items.some((item) => item.id === 'calendar' || NAV_DROP_STATUSES[item.id] !== undefined)) {
+                                                setDragOpenedSectionKey(section.key);
+                                            }
+                                        }}
                                         aria-expanded={!isSectionCollapsed}
                                         aria-controls={sectionId}
                                         data-sidebar-section-toggle

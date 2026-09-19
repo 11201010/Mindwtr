@@ -1046,6 +1046,7 @@ describe('Layout sync security warning', () => {
         const { container, getByRole } = renderLayout();
         const calendarItem = getByRole('button', { name: 'Calendar' });
         const somedayItem = container.querySelector('[data-view="someday"]')!;
+        const historyItem = container.querySelector('[data-view="history"]')!;
         const projectsItem = container.querySelector('[data-view="projects"]')!;
         expect(calendarItem.className).not.toContain('outline-dashed');
 
@@ -1054,6 +1055,7 @@ describe('Layout sync security warning', () => {
         // Every destination, not just whichever one the pointer happens to be over.
         expect(calendarItem.className).toContain('outline-dashed');
         expect(somedayItem.className).toContain('outline-dashed');
+        expect(historyItem.className).toContain('outline-dashed');
         // Projects is not a destination and must stay quiet.
         expect(projectsItem.className).not.toContain('outline-dashed');
 
@@ -1095,6 +1097,49 @@ describe('Layout sync security warning', () => {
         // Undo puts it back where it came from.
         latestToast()!.action!.onClick();
         expect(moveTask).toHaveBeenLastCalledWith('task-1', 'inbox');
+    });
+
+    // 1.3.1 merged the Done and Archived entries into History, so the old ids the
+    // drop table used no longer match any sidebar entry.
+    it('marks a task done when it is dropped on History', async () => {
+        const moveTask = vi.fn().mockResolvedValue({ success: true });
+        const task = { id: 'task-1', title: 'Buy milk', status: 'inbox' };
+        useTaskStore.setState({
+            tasks: [task],
+            _allTasks: [task],
+            _tasksById: new Map([[task.id, task]]),
+            moveTask,
+            settings: {},
+        } as never);
+
+        const { container } = renderLayout();
+        fireEvent.drop(container.querySelector('[data-view="history"]')!, {
+            dataTransfer: {
+                types: [CALENDAR_TASK_DRAG_MIME],
+                getData: (type: string) => (type === CALENDAR_TASK_DRAG_MIME ? 'task-1' : ''),
+                dropEffect: 'none',
+            },
+        });
+
+        await waitFor(() => expect(moveTask).toHaveBeenCalledWith('task-1', 'done'));
+    });
+
+    // Reference and History live in the folded "More" group, so their drop targets
+    // cannot be seen or hit during a drag unless the group opens on its own.
+    it('opens a folded group while a task is dragged over its header', () => {
+        const { container } = renderLayout();
+        const panel = container.querySelector('#sidebar-section-secondary')!;
+        const toggle = panel.previousElementSibling as HTMLElement;   // the section header button
+        expect(panel).toHaveAttribute('hidden');
+
+        dispatchDragStartFromRow(true);
+        fireEvent.dragEnter(toggle, { dataTransfer: { types: [CALENDAR_TASK_DRAG_MIME], getData: () => '' } });
+        expect(panel).not.toHaveAttribute('hidden');
+
+        dispatchDrag('dragend', true);
+        expect(panel).toHaveAttribute('hidden');
+        // The temporary open must not be saved as the user's fold choice.
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
     });
 
     // Trash is deliberately not a drop target: a stray drag must never be able to
