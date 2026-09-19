@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
+import { pwshTest } from './pwsh-test.mjs';
 import {
   autoAdvanceRollout,
   createStoreRequest,
@@ -425,7 +426,7 @@ test('Windows stable publication defaults to a five-percent rollout and exposes 
   expect(flight.run).toContain('node scripts/ci/publish-msstore-flight.mjs');
 });
 
-test('Windows rollout payload mutates copied delivery options without replacing unrelated fields', () => {
+pwshTest('Windows rollout payload mutates copied delivery options without replacing unrelated fields', () => {
   const workflow = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
   const publish = workflow.jobs.standalone.steps.find(step => step.id === 'msstore_publish');
   const start = publish.run.indexOf('function Set-RequiredSubmissionProperty');
@@ -499,37 +500,59 @@ test('Windows rollout payload mutates copied delivery options without replacing 
       fallbackSubmissionId: '41',
     },
   });
-});
+}, 30_000);
 
-test('Windows routing rejects invalid rollout policy before resolving a Store package', () => {
+pwshTest('Windows routing rejects invalid rollout policy before resolving a Store package', () => {
   const workflow = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
   const resolve = workflow.jobs.standalone.steps.find(step => step.id === 'version').run;
   const routingStart = resolve.indexOf("$tag = (($lines | Where-Object { $_ -like 'tag=*' })");
   expect(routingStart).toBeGreaterThan(-1);
   const routing = resolve.slice(routingStart);
-  const run = (mode, percentage) => {
-    const command = `$ErrorActionPreference = 'Stop'\n$lines = @('tag=v1.3.0', 'version=1.3.0')\n${routing}`;
-    return execFileSync(
-      'pwsh',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
-      {
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: '/dev/null',
-          GITHUB_EVENT_NAME: 'workflow_dispatch',
-          GITHUB_REF: 'refs/heads/main',
-          RUN_MSSTORE: 'true',
-          RUN_MSSTORE_FLIGHT: 'false',
-          ROLLOUT_MODE: mode,
-          ROLLOUT_PERCENTAGE: percentage,
-          MSSTORE_FLIGHT_ID: '',
-        },
-        stdio: 'pipe',
+
+  const modeRefusal = 'rollout_mode must be staged or immediate before Microsoft Store publication.';
+  const percentageRefusal = 'rollout_percentage must be finite and greater than 0 and less than 100 before Microsoft Store publication.';
+  const cases = [
+    { mode: 'staged', percentage: '5', ok: true, message: '' },
+    { mode: 'immediate', percentage: '5', ok: true, message: '' },
+    { mode: 'resume', percentage: '5', ok: false, message: modeRefusal },
+    ...['NaN', 'Infinity', '-1', '0', '100'].map(percentage => (
+      { mode: 'staged', percentage, ok: false, message: percentageRefusal }
+    )),
+  ];
+
+  // One PowerShell start for every case: each start costs about half a second.
+  // The workflow text runs unchanged inside a script block; a refusal is caught
+  // and reported as JSON, because pwsh's own stderr is CLIXML with a cut-off message.
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    "$lines = @('tag=v1.3.0', 'version=1.3.0')",
+    `$routing = {\n${routing}\n}`,
+    `$cases = '${JSON.stringify(cases.map(({ mode, percentage }) => ({ mode, percentage })))}' | ConvertFrom-Json`,
+    '$results = foreach ($case in $cases) {',
+    '  $env:ROLLOUT_MODE = $case.mode',
+    '  $env:ROLLOUT_PERCENTAGE = $case.percentage',
+    '  try { & $routing | Out-Null; [pscustomobject]@{ mode = $case.mode; percentage = $case.percentage; ok = $true; message = "" } }',
+    '  catch { [pscustomobject]@{ mode = $case.mode; percentage = $case.percentage; ok = $false; message = $_.Exception.Message } }',
+    '}',
+    'ConvertTo-Json -InputObject @($results) -Compress',
+  ].join('\n');
+  const output = execFileSync(
+    'pwsh',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    {
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: '/dev/null',
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+        GITHUB_REF: 'refs/heads/main',
+        RUN_MSSTORE: 'true',
+        RUN_MSSTORE_FLIGHT: 'false',
+        MSSTORE_FLIGHT_ID: '',
       },
-    );
-  };
-  expect(() => run('resume', '5')).toThrow();
-  for (const percentage of ['NaN', 'Infinity', '-1', '0', '100']) {
-    expect(() => run('staged', percentage)).toThrow();
-  }
-});
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  expect(JSON.parse(output.trim().split(/\r?\n/).at(-1))).toEqual(cases);
+}, 30_000);

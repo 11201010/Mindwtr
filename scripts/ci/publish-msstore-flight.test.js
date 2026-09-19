@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { pwshTest } from './pwsh-test.mjs';
 import { msstoreVersion } from './msstore-version.mjs';
 import { compareVersions, createStoreRequest, publishFlight } from './publish-msstore-flight.mjs';
 
@@ -191,7 +192,7 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   expect(download).toContain('[bool]$release.prerelease -ne $isRc');
 });
 
-test('Windows PowerShell validates Store versions only for selected Store routes', () => {
+pwshTest('Windows PowerShell validates Store versions only for selected Store routes', () => {
   const windows = parse(readFileSync('.github/workflows/release-windows.yml', 'utf8'));
   const script = windows.jobs.standalone.steps.find(step => step.id === 'version').run;
   const routingStart = script.indexOf("$tag = (($lines | Where-Object { $_ -like 'tag=*' })");
