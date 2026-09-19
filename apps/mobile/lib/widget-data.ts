@@ -11,6 +11,7 @@ import {
     getTranslator,
     isTaskActionable,
     isTaskInActiveProject,
+    isLocaleDateDayFirst,
     isTaskVisibleInArea,
     loadTranslations,
     resolveAreaFilterSelection,
@@ -308,25 +309,22 @@ const formatShortWeekday = (date: Date, language: string): string => {
     }
 };
 
-// Does this locale write the day before the month? Asked of the device locale
-// directly, because a headless background sync rewrites the widget payload
-// without ever mounting the app, so core's date formatting is unconfigured
-// there and would answer with its US default.
-const isLocaleDayFirst = (locale: string | undefined): boolean => {
+// A headless background sync rewrites the widget payload without ever mounting
+// the app, so core's date formatting is unconfigured there: the widget has to
+// name the device locale itself instead of reading core's ambient state.
+const getDeviceLocaleTag = (): string => {
     try {
-        const parts = new Intl.DateTimeFormat(locale || undefined, { day: 'numeric', month: 'numeric' })
-            .formatToParts(new Date(2000, 0, 5));
-        const day = parts.findIndex((part) => part.type === 'day');
-        const month = parts.findIndex((part) => part.type === 'month');
-        return day >= 0 && month >= 0 && day < month;
+        return String(Intl.DateTimeFormat().resolvedOptions().locale || '');
     } catch {
-        return false;
+        return '';
     }
 };
 
 // The compact date follows the app's date-format setting, not the UI language:
 // "en" alone always produced US month/day order for a dd/MM/yyyy user (#1242).
-// An explicit setting decides the order; System follows the device locale.
+// An explicit setting decides the order; System asks core about the device
+// locale, so the widget and the app can never disagree about a region (core's
+// table calls en-ZA day-first where CLDR does not).
 export const resolveWidgetDayFirst = (
     dateFormat: string | null | undefined,
     systemLocale?: string,
@@ -334,7 +332,7 @@ export const resolveWidgetDayFirst = (
     const setting = normalizeDateFormatSetting(dateFormat);
     if (setting === 'dmy') return true;
     if (setting === 'mdy' || setting === 'ymd') return false;
-    return isLocaleDayFirst(systemLocale);
+    return isLocaleDateDayFirst(systemLocale || getDeviceLocaleTag());
 };
 
 const formatNumericDate = (date: Date, dayFirst: boolean): string => {

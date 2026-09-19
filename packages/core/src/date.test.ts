@@ -3,6 +3,8 @@ import { isValid, parseISO } from 'date-fns';
 import {
     canUseJalaliCalendar,
     configureDateFormatting,
+    isActiveDateFormatDayFirst,
+    isLocaleDateDayFirst,
     formatCalendarInputDate,
     getQuickDate,
     getWeekStartsOnIndex,
@@ -196,6 +198,28 @@ describe('date utils', () => {
         expect(resolveDateLocaleTag({ language: 'de', dateFormat: 'system', systemLocale: 'de-DE' })).toBe('de-DE');
         expect(resolveDateLocaleTag({ language: 'pl', dateFormat: 'system' })).toBe('pl-PL');
         expect(resolveDateLocaleTag({ language: 'nl', dateFormat: 'system' })).toBe('nl-NL');
+    });
+
+    // One rule for "does this locale write the day first", so a headless caller
+    // (the widget payload, built with no app configured) cannot disagree with
+    // the app. Note en-ZA: this repo calls it day-first, CLDR does not.
+    it('answers day-first for a locale tag without any configured state', () => {
+        expect(isLocaleDateDayFirst('en-GB')).toBe(true);
+        expect(isLocaleDateDayFirst('en-ZA')).toBe(true);
+        expect(isLocaleDateDayFirst('en-AU')).toBe(true);
+        expect(isLocaleDateDayFirst('de-DE')).toBe(true);
+        expect(isLocaleDateDayFirst('en-US')).toBe(false);
+        expect(isLocaleDateDayFirst('ja-JP')).toBe(false);
+        expect(isLocaleDateDayFirst('not a locale')).toBe(false);
+        expect(isLocaleDateDayFirst(undefined)).toBe(false);
+    });
+
+    it('gives the System date format the same answer as the pure locale check', () => {
+        for (const systemLocale of ['en-ZA', 'en-GB', 'en-US', 'de-DE', 'ja-JP']) {
+            configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale });
+            expect(isActiveDateFormatDayFirst()).toBe(isLocaleDateDayFirst(systemLocale));
+        }
+        configureDateFormatting({ language: 'en', dateFormat: 'system', timeFormat: 'system', systemLocale: 'en-US' });
     });
 
     it('applies explicit time-format overrides to localized time tokens', () => {

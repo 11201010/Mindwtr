@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadTranslations, type AppData } from '@mindwtr/core';
+import { isLocaleDateDayFirst, loadTranslations, type AppData } from '@mindwtr/core';
 import { buildShortcutsSnapshot, buildWidgetPayload, createWidgetPayloadProjection, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, SHORTCUTS_SNAPSHOT_VERSION, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX,
     resolveWidgetDayFirst,
 } from './widget-data';
@@ -917,6 +917,11 @@ describe('widget-data', () => {
             expect(resolveWidgetDayFirst('system', 'en-GB')).toBe(true);
             expect(resolveWidgetDayFirst('system', 'en-US')).toBe(false);
             expect(resolveWidgetDayFirst('system', 'not a locale')).toBe(false);
+            // The widget must answer exactly as the app does, so it asks core,
+            // whose region table calls en-ZA day-first even though CLDR (and
+            // therefore a raw Intl check) calls it month-first.
+            expect(resolveWidgetDayFirst('system', 'en-ZA')).toBe(isLocaleDateDayFirst('en-ZA'));
+            expect(resolveWidgetDayFirst('system', 'en-ZA')).toBe(true);
             expect(buildDueItem('2000-01-05', 'en', {}, { systemLocale: 'en-GB' }).dueLabel).toBe('5/1');
             expect(buildDueItem('2000-01-05', 'en', {}, { systemLocale: 'en-US' }).dueLabel).toBe('1/5');
             // An explicit setting still wins over the device locale.

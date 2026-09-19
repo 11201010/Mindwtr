@@ -769,6 +769,7 @@
     "isJalaliCalendarLocale",
     "isLikelyOfflineSyncError",
     "isLocalPersistEquivalent",
+    "isLocaleDateDayFirst",
     "isMarkdownEditorAssistEnabled",
     "isMindwtrMirrorCalendar",
     "isMindwtrMirrorEvent",

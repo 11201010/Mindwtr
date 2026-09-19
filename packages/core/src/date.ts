@@ -421,6 +421,19 @@ export function configureDateFormatting(params: {
     setDefaultOptions({ locale: activeLocale });
 }
 
+// The one test for "does this locale put the day before the month": format a
+// date whose day and month cannot be confused and see which number comes first.
+const isDayFirstLocale = (locale: Locale): boolean => {
+    try {
+        const sample = format(new Date(2001, 10, 22), 'P', { locale });
+        const dayIndex = sample.indexOf('22');
+        const monthIndex = sample.indexOf('11');
+        return dayIndex !== -1 && monthIndex !== -1 && dayIndex < monthIndex;
+    } catch {
+        return false;
+    }
+};
+
 /**
  * Whether ambiguous slash dates ("10/8") read day-first under the active date
  * format. Explicit dmy says yes; mdy and ymd say no; System derives it from
@@ -429,14 +442,18 @@ export function configureDateFormatting(params: {
 export function isActiveDateFormatDayFirst(): boolean {
     if (activeDateFormatSetting === 'dmy') return true;
     if (activeDateFormatSetting === 'mdy' || activeDateFormatSetting === 'ymd') return false;
-    try {
-        const sample = format(new Date(2001, 10, 22), 'P', { locale: activeLocale });
-        const dayIndex = sample.indexOf('22');
-        const monthIndex = sample.indexOf('11');
-        return dayIndex !== -1 && monthIndex !== -1 && dayIndex < monthIndex;
-    } catch {
-        return false;
-    }
+    return isDayFirstLocale(activeLocale);
+}
+
+/**
+ * The same day-first answer for a locale tag, with no configured state behind
+ * it. A headless context — the widget payload written by a background sync,
+ * where `configureDateFormatting` never ran — must reach the app's answer, and
+ * that means this repo's region table (en-ZA is day-first here, CLDR disagrees)
+ * rather than a second rule of its own (#1242).
+ */
+export function isLocaleDateDayFirst(systemLocale?: string | null, fallback: Language = 'en'): boolean {
+    return isDayFirstLocale(resolveLocaleFromSystem(systemLocale, fallback));
 }
 
 /** The app language quick-add's locale date parsing is keyed off (#1059). */
