@@ -37,10 +37,10 @@ const SNAPSHOT_RETENTION_RECENT_COUNT: usize = 2;
 const SQLITE_BUSY_TIMEOUT_MS: u64 = 5_000;
 const STORAGE_RETRY_ATTEMPTS: usize = 4;
 const STORAGE_RETRY_BASE_DELAY_MS: u64 = 120;
-// Version 8 adds tasks.cancelledAt and projects.cancelledAt. Increment this whenever SQLITE_SCHEMA or
-// an ensure_* migration changes; otherwise the warm schema-state fast path can
-// incorrectly skip the migration on an existing database.
-const STORAGE_SCHEMA_VERSION: i64 = 8;
+// Version 9 drops the nine snake_case task indexes that duplicated camelCase ones. Increment this
+// whenever SQLITE_SCHEMA or an ensure_* migration changes; otherwise the warm schema-state fast
+// path can incorrectly skip the migration on an existing database.
+const STORAGE_SCHEMA_VERSION: i64 = 9;
 const STORAGE_SCHEMA_STATE_TABLE: &str = "storage_schema_state";
 // Version 4 adds assignedTo to the desktop-native FTS schema and forces one
 // content rebuild after the corrected triggers are installed.
@@ -112,17 +112,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   deletedAt TEXT,
   purgedAt TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(projectId);
-CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updatedAt);
-CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deletedAt);
-CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(dueDate);
-CREATE INDEX IF NOT EXISTS idx_tasks_start_time ON tasks(startTime);
-CREATE INDEX IF NOT EXISTS idx_tasks_review_at ON tasks(reviewAt);
-CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(createdAt);
-CREATE INDEX IF NOT EXISTS idx_tasks_status_deleted_at ON tasks(status, deletedAt);
-CREATE INDEX IF NOT EXISTS idx_tasks_project_status_deleted_at ON tasks(projectId, status, deletedAt);
 
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -504,6 +493,7 @@ fn initialize_sqlite_schema(conn: &mut Connection) -> Result<i64, String> {
         transaction
             .execute_batch(SQLITE_SCHEMA)
             .map_err(|e| e.to_string())?;
+        drop_duplicate_task_indexes(&transaction)?;
         ensure_orphan_section_tombstones_schema(&transaction)?;
         ensure_column(&transaction, "tasks", "energyLevel", "TEXT")?;
         ensure_column(&transaction, "tasks", "assignedTo", "TEXT")?;
@@ -1305,6 +1295,31 @@ fn ensure_tasks_section_column(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Until schema version 9 the schema text created these nine task indexes twice:
+// once under a snake_case name and once under a camelCase name on the same
+// columns. The camelCase twin stays (core's schema uses the same names), so
+// dropping these loses no index. IF EXISTS keeps the step safe to re-run: it
+// runs again whenever another program (MCP, the CLI) changes the schema.
+const DUPLICATE_SNAKE_CASE_TASK_INDEXES: &[&str] = &[
+    "idx_tasks_project_id",
+    "idx_tasks_updated_at",
+    "idx_tasks_deleted_at",
+    "idx_tasks_due_date",
+    "idx_tasks_start_time",
+    "idx_tasks_review_at",
+    "idx_tasks_created_at",
+    "idx_tasks_status_deleted_at",
+    "idx_tasks_project_status_deleted_at",
+];
+
+fn drop_duplicate_task_indexes(conn: &Connection) -> Result<(), String> {
+    for name in DUPLICATE_SNAKE_CASE_TASK_INDEXES {
+        conn.execute(&format!("DROP INDEX IF EXISTS {name}"), [])
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -6601,6 +6616,174 @@ mod tests {
             .expect("read migrated state")
             .expect("migrated state row");
         assert_eq!(state.storage_version, STORAGE_SCHEMA_VERSION);
+    }
+
+    fn task_index_columns(conn: &Connection) -> Vec<(String, Vec<String>)> {
+        let mut names_stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks' AND sql IS NOT NULL ORDER BY name")
+            .expect("prepare index list");
+        let names: Vec<String> = names_stmt
+            .query_map([], |row| row.get(0))
+            .expect("list task indexes")
+            .collect::<Result<_, _>>()
+            .expect("read task index names");
+        names
+            .into_iter()
+            .map(|name| {
+                let mut columns_stmt = conn
+                    .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+                    .expect("prepare index info");
+                let columns: Vec<String> = columns_stmt
+                    .query_map(params![name], |row| row.get(0))
+                    .expect("read index columns")
+                    .collect::<Result<_, _>>()
+                    .expect("collect index columns");
+                (name, columns)
+            })
+            .collect()
+    }
+
+    const DUPLICATE_TASK_INDEX_PAIRS: &[(&str, &str, &[&str])] = &[
+        (
+            "idx_tasks_project_id",
+            "idx_tasks_projectId",
+            &["projectId"],
+        ),
+        (
+            "idx_tasks_updated_at",
+            "idx_tasks_updatedAt",
+            &["updatedAt"],
+        ),
+        (
+            "idx_tasks_deleted_at",
+            "idx_tasks_deletedAt",
+            &["deletedAt"],
+        ),
+        ("idx_tasks_due_date", "idx_tasks_dueDate", &["dueDate"]),
+        (
+            "idx_tasks_start_time",
+            "idx_tasks_startTime",
+            &["startTime"],
+        ),
+        ("idx_tasks_review_at", "idx_tasks_reviewAt", &["reviewAt"]),
+        (
+            "idx_tasks_created_at",
+            "idx_tasks_createdAt",
+            &["createdAt"],
+        ),
+        (
+            "idx_tasks_status_deleted_at",
+            "idx_tasks_status_deletedAt",
+            &["status", "deletedAt"],
+        ),
+        (
+            "idx_tasks_project_status_deleted_at",
+            "idx_tasks_project_status_deletedAt",
+            &["projectId", "status", "deletedAt"],
+        ),
+    ];
+
+    fn assert_one_task_index_per_duplicated_column_set(conn: &Connection) {
+        let indexes = task_index_columns(conn);
+        for (snake, camel, columns) in DUPLICATE_TASK_INDEX_PAIRS {
+            assert!(
+                !indexes.iter().any(|(name, _)| name == snake),
+                "{snake} should have been dropped; indexes: {indexes:?}"
+            );
+            let expected: Vec<String> = columns.iter().map(|column| column.to_string()).collect();
+            let matching: Vec<&String> = indexes
+                .iter()
+                .filter(|(_, index_columns)| *index_columns == expected)
+                .map(|(name, _)| name)
+                .collect();
+            assert_eq!(
+                matching.len(),
+                1,
+                "expected exactly one task index on {columns:?}, found {matching:?}"
+            );
+            assert_eq!(matching[0], camel);
+        }
+    }
+
+    #[test]
+    fn sqlite_open_drops_duplicate_task_indexes_from_a_version_eight_database() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("version-eight-duplicate-indexes.sqlite");
+        let conn = Connection::open(&db_path).expect("open legacy database");
+        conn.execute_batch(SQLITE_SCHEMA)
+            .expect("create version eight schema");
+        for (snake, _, columns) in DUPLICATE_TASK_INDEX_PAIRS {
+            conn.execute(
+                &format!(
+                    "CREATE INDEX IF NOT EXISTS {snake} ON tasks({})",
+                    columns.join(", ")
+                ),
+                [],
+            )
+            .expect("create legacy snake_case index");
+        }
+        // The MCP server and the CLI open the same file and apply core's schema, which
+        // creates camelCase indexes this file does not know about.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_project_deletedAt ON tasks(projectId, deletedAt);
+             CREATE INDEX IF NOT EXISTS idx_tasks_completedAt ON tasks(completedAt);",
+        )
+        .expect("apply core's extra indexes");
+        conn.execute(
+            "INSERT INTO tasks (id, title, status, createdAt, updatedAt) VALUES ('kept-task', 'Keep task', 'next', '2026-09-01', '2026-09-01')",
+            [],
+        )
+        .expect("seed legacy task");
+        let schema_generation = sqlite_schema_generation(&conn).expect("read legacy generation");
+        conn.execute(
+            "INSERT INTO storage_schema_state (id, storage_version, schema_generation) VALUES (1, 8, ?1)",
+            params![schema_generation],
+        )
+        .expect("record version eight schema state");
+        drop(conn);
+
+        let reopened = open_sqlite_path(&db_path).expect("migrate version eight database");
+
+        assert_one_task_index_per_duplicated_column_set(&reopened);
+        let indexes = task_index_columns(&reopened);
+        for kept in [
+            "idx_tasks_status",
+            "idx_tasks_project_deletedAt",
+            "idx_tasks_completedAt",
+        ] {
+            assert!(
+                indexes.iter().any(|(name, _)| name == kept),
+                "{kept} should survive the migration; indexes: {indexes:?}"
+            );
+        }
+        let task_title: String = reopened
+            .query_row(
+                "SELECT title FROM tasks WHERE id = 'kept-task'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read preserved task");
+        assert_eq!(task_title, "Keep task");
+        let state = stored_sqlite_schema_state(&reopened)
+            .expect("read migrated state")
+            .expect("migrated state row");
+        assert_eq!(state.storage_version, STORAGE_SCHEMA_VERSION);
+        drop(reopened);
+
+        let conn = open_sqlite_path(&db_path).expect("reopen migrated database");
+        drop_duplicate_task_indexes(&conn).expect("drop step is safe to re-run");
+        drop_duplicate_task_indexes(&conn).expect("drop step is safe to re-run twice");
+        assert_one_task_index_per_duplicated_column_set(&conn);
+    }
+
+    #[test]
+    fn sqlite_open_creates_no_duplicate_task_indexes_in_a_new_database() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("fresh-indexes.sqlite");
+
+        let conn = open_sqlite_path(&db_path).expect("open fresh database");
+
+        assert_one_task_index_per_duplicated_column_set(&conn);
     }
 
     #[test]
