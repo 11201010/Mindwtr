@@ -39,3 +39,4 @@ Changes collected since the latest stable release.
 - Windows note: while an MCP server is running and holds the database open, the one-time move into `config` and `data` cannot finish. It is rolled back safely and tried again on the next start with no MCP client running.
 - Logs: API keys in the newer formats used by OpenAI, Anthropic, xAI, Groq and OpenRouter are now removed from diagnostic logs, and ordinary words are no longer cut by mistake.
 - Desktop database: nine duplicate search indexes are removed on the first start, which makes saving faster.
+- Mobile: in a task's **Preview**, text typed into the checklist **Add Item** box is now saved when you press **Save**, even if you did not press Enter first.
