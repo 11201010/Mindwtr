@@ -158,6 +158,38 @@ describe('mcp db bootstrap', () => {
     }
   });
 
+  test('follows a pinned flat --db path into the installed data/ layout', async () => {
+    const root = createTempDir();
+    const pinnedPath = join(root, 'mindwtr.db');
+    const movedPath = join(root, 'data', 'mindwtr.db');
+    mkdirSync(join(root, 'data'), { recursive: true });
+    writeFileSync(movedPath, '');
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      expect(await ensureMindwtrDbPath({ dbPath: pinnedPath })).toBe(movedPath);
+      expect(warnSpy).toHaveBeenCalledWith(
+        `[mindwtr-mcp] Using the Mindwtr database at: ${movedPath} (nothing at the configured path: ${pinnedPath})`
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('follows a pinned data/ --db path back to a flat profile an older version still uses', async () => {
+    const root = createTempDir();
+    const pinnedPath = join(root, 'data', 'mindwtr.db');
+    const flatPath = join(root, 'mindwtr.db');
+    writeFileSync(flatPath, '');
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      expect(await ensureMindwtrDbPath({ dbPath: pinnedPath })).toBe(flatPath);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   test('keeps the original error when no db or fallback data exists', async () => {
     const dir = createTempDir();
     const dbPath = join(dir, 'mindwtr.db');

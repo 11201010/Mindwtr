@@ -133,9 +133,30 @@ async function bootstrapMindwtrDbFromJson(dbPath: string, dataJsonPath: string):
   }
 }
 
+// v1.3.2 moved an installed Windows or macOS profile from <root>/ into <root>/data/
+// (#1245). A path pinned in an MCP client config, or copied from docs written for
+// the other side of that move, is one folder off; the database itself is right
+// there. Checked in both directions so a config can also be ahead of the app.
+function findSiblingLayoutDbPath(dbPath: string): string | null {
+  const dir = dirname(dbPath);
+  const sibling = basename(dir) === 'data'
+    ? join(dirname(dir), basename(dbPath))
+    : join(dir, 'data', basename(dbPath));
+  return existsSync(sibling) ? sibling : null;
+}
+
 export async function ensureMindwtrDbPath(options: DbOptions = {}): Promise<string> {
   const path = resolveMindwtrDbPath(options.dbPath);
   if (existsSync(path)) return path;
+
+  const siblingPath = findSiblingLayoutDbPath(path);
+  if (siblingPath) {
+    // stderr only: stdout carries the MCP stdio protocol.
+    console.warn(
+      `[mindwtr-mcp] Using the Mindwtr database at: ${siblingPath} (nothing at the configured path: ${path})`
+    );
+    return siblingPath;
+  }
 
   const dataJsonPath = resolveMindwtrDataJsonPath(options.dbPath);
   if (existsSync(dataJsonPath)) {
