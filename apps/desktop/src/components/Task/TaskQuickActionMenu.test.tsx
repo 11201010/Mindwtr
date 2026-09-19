@@ -752,13 +752,46 @@ describe('TaskQuickActionMenu', () => {
 
         const datesButton = screen.getByRole('menuitem', { name: 'Dates…' });
         datesButton.focus();
-        fireEvent.keyDown(window, { key: 'ArrowRight' });
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
 
         expect(screen.getByRole('dialog', { name: 'Dates…' })).toBeInTheDocument();
 
-        fireEvent.keyDown(window, { key: 'ArrowLeft' });
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
 
         expect(screen.queryByRole('dialog', { name: 'Dates…' })).not.toBeInTheDocument();
+        expect(document.activeElement).toBe(datesButton);
+    });
+
+    it('walks the dates submenu with arrow keys, Home and End', () => {
+        renderMenu();
+
+        const datesButton = screen.getByRole('menuitem', { name: 'Dates…' });
+        datesButton.focus();
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+
+        const submenu = screen.getByRole('menu', { name: 'Dates…' });
+        const startItem = within(submenu).getByRole('menuitem', { name: 'Start Date…' });
+        const dueItem = within(submenu).getByRole('menuitem', { name: 'Due Date…' });
+        const reviewItem = within(submenu).getByRole('menuitem', { name: 'Review Date…' });
+        expect(document.activeElement).toBe(startItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+        expect(document.activeElement).toBe(dueItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'End' });
+        expect(document.activeElement).toBe(reviewItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+        expect(document.activeElement).toBe(startItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+        expect(document.activeElement).toBe(reviewItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+        expect(document.activeElement).toBe(startItem);
+
+        fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+        expect(screen.queryByRole('menu', { name: 'Dates…' })).not.toBeInTheDocument();
         expect(document.activeElement).toBe(datesButton);
     });
 

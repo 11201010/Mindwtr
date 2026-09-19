@@ -313,11 +313,11 @@ export function TaskQuickActionMenu({
             }
             onClose({ restoreFocus: false });
         };
-        const getMenuItems = () => Array.from(
-            menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+        const getMenuItems = (root: HTMLElement | null) => Array.from(
+            root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
         );
-        const moveMenuFocus = (delta: number) => {
-            const items = getMenuItems();
+        const moveMenuFocus = (root: HTMLElement | null, delta: number) => {
+            const items = getMenuItems(root);
             if (items.length === 0) return;
             const currentIndex = items.findIndex((item) => item === document.activeElement);
             const nextIndex = currentIndex < 0
@@ -363,20 +363,25 @@ export function TaskQuickActionMenu({
             }
             const inPanelSurface = inSelectorDropdown
                 || Boolean(target && panelRef.current?.contains(target));
-            if (inPanelSurface) return;
+            // The "Dates…" panel is a menu of its own, so its items walk with the
+            // same keys. The form panels still bail out — their date inputs need
+            // the arrows.
+            const inDatesSubmenu = activePanel === 'dates' && inPanelSurface && !inSelectorDropdown;
+            if (inPanelSurface && !inDatesSubmenu) return;
+            const surface = inDatesSubmenu ? panelRef.current : menuRef.current;
 
             switch (event.key) {
                 case 'ArrowDown':
-                    moveMenuFocus(1);
+                    moveMenuFocus(surface, 1);
                     break;
                 case 'ArrowUp':
-                    moveMenuFocus(-1);
+                    moveMenuFocus(surface, -1);
                     break;
                 case 'Home':
-                    getMenuItems()[0]?.focus();
+                    getMenuItems(surface)[0]?.focus();
                     break;
                 case 'End': {
-                    const items = getMenuItems();
+                    const items = getMenuItems(surface);
                     items[items.length - 1]?.focus();
                     break;
                 }
@@ -384,7 +389,7 @@ export function TaskQuickActionMenu({
                     const active = document.activeElement;
                     if (
                         active instanceof HTMLElement
-                        && menuRef.current?.contains(active)
+                        && surface?.contains(active)
                         && active.getAttribute('aria-haspopup') === 'dialog'
                         && active.getAttribute('aria-expanded') !== 'true'
                     ) {
