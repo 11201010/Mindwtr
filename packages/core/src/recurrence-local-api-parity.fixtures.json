@@ -1495,7 +1495,19 @@
           "deletedAt": "2026-06-01T00:00:00.000Z"
         }
       ],
-      "sections": [],
+      "sections": [
+        {
+          "id": "pa-purged-task-s-compacted",
+          "projectId": "pa-purged-task-p",
+          "title": "",
+          "order": 0,
+          "rev": 4,
+          "revBy": "device-old",
+          "createdAt": "2026-05-01T00:00:00.000Z",
+          "updatedAt": "2026-05-01T00:00:00.000Z",
+          "deletedAt": "2026-05-01T00:00:00.000Z"
+        }
+      ],
       "tasks": [
         {
           "id": "pa-purged-task-t-live",
