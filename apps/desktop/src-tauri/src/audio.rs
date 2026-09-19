@@ -40,7 +40,13 @@ const PARAKEET_MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases
 const PARAKEET_MODEL_ARCHIVE_SHA256: &str =
     "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf";
 const PARAKEET_INSTALL_DIR_NAME: &str = "parakeet-model";
-const WHISPER_MODEL_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+// Download hosts, tried in order. huggingface.co is unreachable on some networks (mainland
+// China); hf-mirror.com serves the same files. Every download is still gated by the pinned
+// sha256, so a mirror cannot substitute a model. Keep in step with core's whisper-models.ts.
+const WHISPER_MODEL_BASE_URLS: [&str; 2] = [
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main",
+    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main",
+];
 const WHISPER_INSTALL_DIR_NAME: &str = "whisper-models";
 const WHISPER_MODEL_IDS: [&str; 5] = [
     "whisper-tiny",
@@ -1002,20 +1008,31 @@ fn download_whisper_model_blocking(app: tauri::AppHandle, model: String) -> Resu
         .tempdir_in(&data_dir)
         .map_err(|error| error.to_string())?;
     let temp_path = temp_dir.path().join(file_name);
-    let url = format!("{WHISPER_MODEL_BASE_URL}/{file_name}");
-
-    download_to_file(
-        &app,
-        WHISPER_PROGRESS_EVENT,
-        "model_download",
-        &url,
-        &temp_path,
-        "Whisper model",
-    )?;
-    verify_file_sha256(&temp_path, "Whisper model", expected_sha256)?;
-
-    fs::rename(&temp_path, &target_path).map_err(|error| error.to_string())?;
-    Ok(target_path.to_string_lossy().to_string())
+    // The first host's error is the one reported: it names the usual download source.
+    let mut first_error: Option<String> = None;
+    for base_url in WHISPER_MODEL_BASE_URLS {
+        let url = format!("{base_url}/{file_name}");
+        let attempt = download_to_file(
+            &app,
+            WHISPER_PROGRESS_EVENT,
+            "model_download",
+            &url,
+            &temp_path,
+            "Whisper model",
+        )
+        .and_then(|_| verify_file_sha256(&temp_path, "Whisper model", expected_sha256));
+        match attempt {
+            Ok(_) => {
+                fs::rename(&temp_path, &target_path).map_err(|error| error.to_string())?;
+                return Ok(target_path.to_string_lossy().to_string());
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temp_path);
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    Err(first_error.unwrap_or_else(|| "Whisper model download failed".to_string()))
 }
 
 #[tauri::command]

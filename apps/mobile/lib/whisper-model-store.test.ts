@@ -241,9 +241,34 @@ describe('whisper-model-store', () => {
       expect(rnfsMock.hash).toHaveBeenCalled();
     });
 
+    it('falls back to the mirror host when the first host cannot be reached', async () => {
+      const urls: string[] = [];
+      rnfsMock.downloadFile.mockImplementation((options: { fromUrl: string; toFile: string }) => {
+        urls.push(options.fromUrl);
+        if (options.fromUrl.includes('huggingface.co')) {
+          return { promise: Promise.reject(new Error('Unable to resolve host "huggingface.co"')) };
+        }
+        fileSystemMock.fileUris.add(normalizeMockUri(`file://${options.toFile}`));
+        fileSystemMock.fileSizes.set(normalizeMockUri(`file://${options.toFile}`), TINY_SIZE);
+        return { promise: Promise.resolve({ statusCode: 200, bytesWritten: TINY_SIZE }) };
+      });
+
+      await expect(download(TINY_ID)).resolves.toBe(DOC_PREFERRED);
+      expect(urls.map((url) => new URL(url).host)).toEqual(['huggingface.co', 'hf-mirror.com']);
+      expect(rnfsMock.hash).toHaveBeenCalled();
+    });
+
+    it('reports the first host\'s error when every host fails', async () => {
+      rnfsMock.downloadFile.mockImplementation((options: { fromUrl: string }) => ({
+        promise: Promise.reject(new Error(`unreachable ${new URL(options.fromUrl).host}`)),
+      }));
+
+      await expect(download(TINY_ID)).rejects.toThrow('unreachable huggingface.co');
+    });
+
     it('rejects a model whose hash does not match the pinned digest and cleans it up', async () => {
-      // Wrong hash on every attempt (once per fallback directory: Documents, Cache).
-      rnfsMock.hash.mockResolvedValueOnce('0'.repeat(64)).mockResolvedValueOnce('0'.repeat(64));
+      // Wrong hash on every attempt: two download hosts in each fallback directory (Documents, Cache).
+      for (let attempt = 0; attempt < 4; attempt += 1) rnfsMock.hash.mockResolvedValueOnce('0'.repeat(64));
       rnfsMock.downloadFile.mockImplementation((options: { toFile: string }) => {
         fileSystemMock.fileUris.add(normalizeMockUri(`file://${options.toFile}`));
         fileSystemMock.fileSizes.set(normalizeMockUri(`file://${options.toFile}`), TINY_SIZE);

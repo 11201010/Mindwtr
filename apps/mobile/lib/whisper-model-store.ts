@@ -20,7 +20,7 @@
 // native-aware resolver, not only synchronous Expo metadata).
 import { Directory, File, Paths } from 'expo-file-system';
 import { NativeModules } from 'react-native';
-import { WHISPER_MODEL_BASE_URL, WHISPER_MODELS } from '@mindwtr/core/whisper-models';
+import { WHISPER_MODEL_BASE_URLS, WHISPER_MODELS } from '@mindwtr/core/whisper-models';
 
 import { logWarn } from './app-log';
 import {
@@ -600,7 +600,6 @@ export const download = async (
   const directories = getWhisperModelDirectories();
   if (!directories.length) throw new Error('Whisper storage unavailable');
 
-  const url = `${WHISPER_MODEL_BASE_URL}/${model.fileName}`;
   let lastError: Error | null = null;
 
   for (const directory of directories) {
@@ -647,8 +646,10 @@ export const download = async (
         }
       }
 
-      try {
-        const nativeFs = resolveWhisperNativeFsModule(await getRNFSModuleAsync());
+      const downloadFromHost = async (
+        url: string,
+        nativeFs: ReturnType<typeof resolveWhisperNativeFsModule>,
+      ): Promise<string> => {
         const { bytesWritten } = await downloadWhisperModelFile({
           url,
           targetFile,
@@ -685,6 +686,24 @@ export const download = async (
           throw error;
         }
         return targetUri;
+      };
+
+      try {
+        const nativeFs = resolveWhisperNativeFsModule(await getRNFSModuleAsync());
+        // Try each host in order; the first host's error is the one reported.
+        let firstHostError: unknown;
+        for (const baseUrl of WHISPER_MODEL_BASE_URLS) {
+          try {
+            return await downloadFromHost(`${baseUrl}/${model.fileName}`, nativeFs);
+          } catch (error) {
+            firstHostError ??= error;
+            void logWarn('Whisper model host failed', {
+              scope: 'speech', force: true,
+              extra: { host: baseUrl, error: error instanceof Error ? error.message : String(error) },
+            });
+          }
+        }
+        throw firstHostError;
       } catch (error) {
         // Only the actual network/streaming attempt is tagged retryable — not
         // the setup/safety checks above (unsafe target, blocked directory),

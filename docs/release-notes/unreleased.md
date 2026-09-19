@@ -18,6 +18,7 @@ Changes collected since the latest stable release.
 - Mobile: task Preview keeps the checklist input clear of the keyboard suggestion bar while you type and add items. (#1218)
 - WebDAV sync: turning on encryption now works on a sync folder that has never held an attachment. It used to stop with "attachment inventory PROPFIND failed (404)". (#1250)
 - Android: a failed speech model download no longer closes the app. When the download host cannot be reached, Mindwtr now shows the download error and lets you try again.
+- Speech to text: when the Whisper model cannot be downloaded from Hugging Face, Mindwtr now tries the hf-mirror.com mirror as well, on desktop and mobile. This helps on networks where Hugging Face is blocked. The file is still checked against its known SHA-256 before it is used.
 - Linux: reminder notifications now carry the Mindwtr logo. (#1232)
 - About: the Terms of Use sits next to Privacy, and every About row shows the address it opens.
 - The occasional notice asking you to support Mindwtr now appears at most once every six months across all the devices that share your data, instead of once per device. Anonymous diagnostics, which you can opt out of in Settings, now carry one id per set of data, so one person on several devices is counted once. (#1237)

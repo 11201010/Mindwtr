@@ -16,6 +16,14 @@ export type WhisperModelDescriptor = {
 
 export const WHISPER_MODEL_BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 
+// Download hosts, tried in order. huggingface.co is unreachable on some networks
+// (mainland China); hf-mirror.com serves the same files. A host is only a transport:
+// every download is still gated by the sha256 below, so a mirror cannot substitute a model.
+export const WHISPER_MODEL_BASE_URLS: readonly string[] = [
+    WHISPER_MODEL_BASE_URL,
+    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main',
+];
+
 export const WHISPER_MODELS: WhisperModelDescriptor[] = [
     { id: 'whisper-tiny', fileName: 'ggml-tiny.bin', label: 'whisper-tiny', minBytes: 77691713, sizeBytes: 77691713, sha256: 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21' },
     { id: 'whisper-tiny.en', fileName: 'ggml-tiny.en.bin', label: 'whisper-tiny.en', minBytes: 77704715, sizeBytes: 77704715, sha256: '921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f' },
