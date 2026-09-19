@@ -583,9 +583,10 @@ export function TaskItemFieldRenderer({
         if (descriptionAudioState !== 'recording') {
             setDescriptionAudioError(null);
             try {
-                descriptionCaptureRef.current = await startAudioCapture({
-                    defaultName: () => 'description-audio.wav',
-                });
+                // No fixed name: a failed transcription keeps this file as an
+                // attachment (below), and a reused name would let the next take
+                // overwrite it and a later success delete it (#1245).
+                descriptionCaptureRef.current = await startAudioCapture();
                 setDescriptionAudioState('recording');
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -645,21 +646,32 @@ export function TaskItemFieldRenderer({
             setDescriptionAudioError(message || tFallback(t, 'attachments.transcriptionFailed', 'Transcription failed. Please try again.'));
             // The transcript was the only thing that would have carried the
             // words, and it never arrived. Keep the recording and attach it to
-            // the task instead of deleting it (#1245).
-            if (capture) {
+            // the task instead of deleting it (#1245). Transcription runs for
+            // many seconds, so the list to append to is the one the store holds
+            // now, never the one captured when this callback was built.
+            const { tasks: currentTasks, updateTask: updateTaskNow } = useTaskStore.getState();
+            const existing = currentTasks.find((item) => item.id === taskId);
+            if (capture && existing) {
                 const nowIso = new Date().toISOString();
-                updateTask(taskId, {
-                    attachments: [...(task.attachments ?? []), {
-                        id: generateUUID(),
-                        kind: 'file',
-                        title: `${tFallback(t, 'quickAdd.audioNoteTitle', 'Audio note')} ${safeFormatDate(new Date(), 'Pp')}`,
-                        uri: capture.path,
-                        mimeType: 'audio/wav',
-                        size: capture.size,
-                        createdAt: nowIso,
-                        updatedAt: nowIso,
-                    }],
-                });
+                try {
+                    await updateTaskNow(taskId, {
+                        attachments: [...(existing.attachments ?? []), {
+                            id: generateUUID(),
+                            kind: 'file',
+                            title: `${tFallback(t, 'quickAdd.audioNoteTitle', 'Audio note')} ${safeFormatDate(new Date(), 'Pp')}`,
+                            uri: capture.path,
+                            mimeType: 'audio/wav',
+                            size: capture.size,
+                            createdAt: nowIso,
+                            updatedAt: nowIso,
+                        }],
+                    });
+                } catch (attachError) {
+                    void logWarn('Failed to keep the dictation audio', {
+                        scope: 'audio',
+                        extra: { error: attachError instanceof Error ? attachError.message : String(attachError) },
+                    });
+                }
             }
         } finally {
             if (transcriptApplied && capture?.path) {
@@ -672,7 +684,7 @@ export function TaskItemFieldRenderer({
             }
             setDescriptionAudioState('idle');
         }
-    }, [descriptionAudioState, insertDescriptionTranscript, t, task.attachments, taskId, updateTask]);
+    }, [descriptionAudioState, insertDescriptionTranscript, t, taskId]);
     const handleEditDescriptionFromPreview = (source?: HTMLElement) => {
         const scrollSnapshot = captureScrollSnapshot(source);
         editDescriptionFromPreview();

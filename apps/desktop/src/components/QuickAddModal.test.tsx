@@ -1357,6 +1357,98 @@ describe('QuickAddModal', () => {
         expect(fsMocks.remove).not.toHaveBeenCalledWith('/data/audio-kept.wav');
     });
 
+    // A transcription that resolves without writing anything to the task — an
+    // empty transcript, a refused write, a project that could not be created —
+    // loses the words just as surely as one that throws. "Did not throw" is not
+    // "the words were saved", so the recording is kept in that case too.
+    it('keeps a voice capture when the transcript never reached the task', async () => {
+        const stoppedCapture = createDeferred<{
+            path: string;
+            sampleRate: number;
+            channels: number;
+            size: number;
+        }>();
+        const addTask = vi.fn(async () => ({ success: true, id: 'audio-task' }));
+        const updateTask = vi.fn(async () => ({ success: true }));
+        const audioTask: Task = {
+            id: 'audio-task',
+            title: 'Audio note',
+            status: 'inbox',
+            tags: [],
+            contexts: [],
+            attachments: [],
+            createdAt: '2026-09-18T00:00:00.000Z',
+            updatedAt: '2026-09-18T00:00:00.000Z',
+        };
+        (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+        tauriMocks.invoke.mockImplementation(async (command?: string) => {
+            if (command === 'start_audio_recording') return undefined;
+            if (command === 'stop_audio_recording') return stoppedCapture.promise;
+            // Silence, or a recording the model could not make out: it returns
+            // an empty transcript instead of failing.
+            if (command === 'transcribe_whisper') return '';
+            return false;
+        });
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                addTask,
+                updateTask,
+                tasks: [audioTask],
+                _allTasks: [audioTask],
+                _tasksById: new Map([[audioTask.id, audioTask]]),
+                settings: {
+                    ...state.settings,
+                    gtd: {
+                        ...(state.settings?.gtd ?? {}),
+                        saveAudioAttachments: false,
+                    },
+                    ai: {
+                        ...state.settings?.ai,
+                        speechToText: {
+                            enabled: true,
+                            provider: 'whisper',
+                            offlineModelPath: '/models/whisper.bin',
+                        },
+                    },
+                },
+            }));
+        });
+        renderQuickAddModal();
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add', { detail: { captureMode: 'audio' } }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            stoppedCapture.resolve({
+                path: '/data/audio-silent.wav',
+                sampleRate: 16_000,
+                channels: 1,
+                size: 128,
+            });
+            await stoppedCapture.promise;
+        });
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(updateTask).toHaveBeenCalledWith('audio-task', {
+            attachments: [expect.objectContaining({
+                kind: 'file',
+                mimeType: 'audio/wav',
+                uri: '/data/audio-silent.wav',
+            })],
+        });
+        expect(fsMocks.remove).not.toHaveBeenCalledWith('/data/audio-silent.wav');
+    });
+
     it('toasts an unreadable date command and keeps Quick Add open', async () => {
         const addTask = vi.fn(async () => ({ success: true, id: 'task-id' }));
         act(() => {

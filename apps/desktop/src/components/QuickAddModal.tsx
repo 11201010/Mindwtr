@@ -434,7 +434,10 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
         setRecordingError(null);
     }, [forcedCaptureMode, isOpen, settings?.gtd?.defaultCaptureMethod]);
 
-    const applySpeechResult = useCallback(async (taskId: string, result: SpeechToTextResult) => {
+    // Returns whether the spoken words actually reached the task. The caller
+    // deletes the recording only on a true, so a run that resolves without
+    // writing anything never throws the words away (#1245).
+    const applySpeechResult = useCallback(async (taskId: string, result: SpeechToTextResult): Promise<boolean> => {
         const {
             tasks: currentTasks,
             projects: currentProjects,
@@ -443,7 +446,7 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             settings: currentSettings,
         } = useTaskStore.getState();
         const existing = currentTasks.find((task) => task.id === taskId);
-        if (!existing) return;
+        if (!existing) return false;
 
         const { updates, suggestedProjectTitle } = buildTaskUpdatesFromSpeechResult(existing, result, currentSettings);
         if (suggestedProjectTitle && !existing.projectId) {
@@ -457,14 +460,14 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                     DEFAULT_PROJECT_COLOR,
                     targetAreaId ? { areaId: targetAreaId } : undefined
                 );
-                if (!created) return;
+                if (!created) return false;
                 updates.projectId = created.id;
             }
         }
 
-        if (Object.keys(updates).length) {
-            await updateTaskNow(taskId, updates);
-        }
+        if (!Object.keys(updates).length) return false;
+        const applied = await updateTaskNow(taskId, updates);
+        return applied?.success !== false;
     }, []);
 
     const hideStandaloneWindow = useCallback(() => {
@@ -819,10 +822,12 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                 });
             };
 
-            const keepCaptureAfterFailure = (message: string, error: unknown) => {
+            const keepCaptureAfterFailure = (message: string, error?: unknown) => {
                 void logWarn(message, {
                     scope: 'audio',
-                    extra: { error: error instanceof Error ? error.message : String(error) },
+                    extra: error === undefined
+                        ? {}
+                        : { error: error instanceof Error ? error.message : String(error) },
                 });
                 keepCaptureAsAttachment().catch((attachError) => {
                     void logWarn('Failed to keep the audio capture', {
@@ -845,8 +850,14 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                     }
                 )
                     .then(async (result) => {
-                        await applySpeechResult(taskId, result);
-                        discardCapture();
+                        if (await applySpeechResult(taskId, result)) {
+                            discardCapture();
+                            return;
+                        }
+                        // It resolved, but nothing reached the task: an empty
+                        // transcript, a refused write, or a project that could
+                        // not be created. The recording is all that is left.
+                        keepCaptureAfterFailure('Speech-to-text saved nothing to the task');
                     })
                     .catch((error) => keepCaptureAfterFailure('Speech-to-text failed', error));
             };

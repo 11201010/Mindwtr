@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { createTaskDraft, setTaskDraftField, taskDraftToUpdatePatch, type Task, type TaskDraft } from '@mindwtr/core';
+import { createTaskDraft, setTaskDraftField, taskDraftToUpdatePatch, useTaskStore, type Task, type TaskDraft } from '@mindwtr/core';
 
 import {
     TaskItemFieldRenderer,
@@ -301,16 +301,36 @@ function AssignedToAutocompleteHarness() {
 // failed on every recording. The dictation WAV was deleted regardless, which
 // threw away the only record of what was said. Keep it and attach it instead.
 describe('TaskItemFieldRenderer description dictation', () => {
+    const initialTaskState = useTaskStore.getState();
+
     afterEach(() => {
         cleanup();
         vi.clearAllMocks();
         audioMocks.resolveSpeechCapture.mockResolvedValue({ ready: true, config: {} });
+        act(() => {
+            useTaskStore.setState(initialTaskState, true);
+        });
     });
 
-    const dictate = async (updateTask: (taskId: string, updates: Partial<Task>) => void) => {
+    const seedStore = (
+        task: Task,
+        updateTask: (taskId: string, updates: Partial<Task>) => unknown,
+    ) => {
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [task],
+                _allTasks: [task],
+                _tasksById: new Map([[task.id, task]]),
+                updateTask,
+            }) as never);
+        });
+    };
+
+    const dictate = async () => {
         const capture = {
-            path: '/data/audio-captures/description-audio.wav',
-            name: 'description-audio.wav',
+            path: '/data/audio-captures/mindwtr-audio-20260918T101112-uuid.wav',
+            name: 'mindwtr-audio-20260918T101112-uuid.wav',
             mimeType: 'audio/wav' as const,
             size: 64,
             bytes: async () => new Uint8Array([1, 2, 3]),
@@ -322,7 +342,7 @@ describe('TaskItemFieldRenderer description dictation', () => {
         });
         const { getByRole } = render(
             <LanguageProvider>
-                <TaskItemFieldRenderer fieldId="description" {...createProps({ actions: { updateTask } })} />
+                <TaskItemFieldRenderer fieldId="description" {...createProps()} />
             </LanguageProvider>
         );
 
@@ -332,14 +352,15 @@ describe('TaskItemFieldRenderer description dictation', () => {
         await act(async () => {
             fireEvent.click(getByRole('button', { name: 'Stop dictation' }));
         });
-        return capture;
+        return { capture, getByRole };
     };
 
     it('keeps the recording as an attachment when transcription fails', async () => {
         audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
-        const updateTask = vi.fn<(taskId: string, updates: Partial<Task>) => void>();
+        const updateTask = vi.fn(async () => ({ success: true }));
+        seedStore(baseTask, updateTask);
 
-        const capture = await dictate(updateTask);
+        const { capture } = await dictate();
 
         await waitFor(() => expect(updateTask).toHaveBeenCalled());
         expect(updateTask).toHaveBeenCalledWith(baseTask.id, expect.objectContaining({
@@ -354,12 +375,81 @@ describe('TaskItemFieldRenderer description dictation', () => {
 
     it('removes the recording once the transcript reached the description', async () => {
         audioMocks.processAudioCapture.mockResolvedValue({ transcript: 'Buy milk' });
-        const updateTask = vi.fn<(taskId: string, updates: Partial<Task>) => void>();
+        const updateTask = vi.fn(async () => ({ success: true }));
+        seedStore(baseTask, updateTask);
 
-        const capture = await dictate(updateTask);
+        const { capture } = await dictate();
 
         await waitFor(() => expect(audioMocks.remove).toHaveBeenCalledWith(capture.path));
         expect(updateTask).not.toHaveBeenCalled();
+    });
+
+    // The web recorder writes to the name the caller asks for. A fixed name
+    // means the next take overwrites the file a kept attachment points at, and
+    // a later success then deletes it — so the kept recording must be unique.
+    it('never pins the capture file name', async () => {
+        audioMocks.processAudioCapture.mockResolvedValue({ transcript: 'Buy milk' });
+        seedStore(baseTask, vi.fn(async () => ({ success: true })));
+
+        await dictate();
+
+        expect(audioMocks.startAudioCapture).toHaveBeenCalledTimes(1);
+        const options = audioMocks.startAudioCapture.mock.calls[0]?.[0] as
+            { defaultName?: unknown } | undefined;
+        expect(options?.defaultName).toBeUndefined();
+    });
+
+    // Transcription runs for many seconds; a sync pass or the editor's own save
+    // can change the attachment list meanwhile. Writing the render-time list
+    // back would drop whatever landed in between.
+    it('appends to the attachment list the store holds at write time', async () => {
+        audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
+        const updateTask = vi.fn(async () => ({ success: true }));
+        seedStore(baseTask, updateTask);
+
+        const started = dictate();
+        const laterAttachment = {
+            id: 'landed-while-transcribing',
+            kind: 'file' as const,
+            title: 'Spec',
+            uri: '/data/attachments/landed-while-transcribing.pdf',
+            createdAt: '2026-09-18T00:00:00.000Z',
+            updatedAt: '2026-09-18T00:00:00.000Z',
+        };
+        seedStore({ ...baseTask, attachments: [laterAttachment] }, updateTask);
+        const { capture } = await started;
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(updateTask).toHaveBeenCalledWith(baseTask.id, {
+            attachments: [
+                laterAttachment,
+                expect.objectContaining({ uri: capture.path }),
+            ],
+        });
+    });
+
+    it('stays in the transcribing state until the kept attachment is written', async () => {
+        audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
+        let releaseWrite!: () => void;
+        const written = new Promise<void>((resolve) => { releaseWrite = resolve; });
+        const updateTask = vi.fn(async () => {
+            await written;
+            return { success: true };
+        });
+        seedStore(baseTask, updateTask);
+
+        const { getByRole } = await dictate();
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(getByRole('button', { name: 'Dictate description' })).toBeDisabled();
+
+        await act(async () => {
+            releaseWrite();
+            await written;
+        });
+        await waitFor(() => (
+            expect(getByRole('button', { name: 'Dictate description' })).not.toBeDisabled()
+        ));
     });
 });
 
