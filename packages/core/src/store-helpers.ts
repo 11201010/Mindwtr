@@ -1212,13 +1212,16 @@ export const stripSensitiveSettings = (settings: AppData['settings']): AppData['
 
 export const normalizeAiSettingsForSync = (ai?: AiSettings): AiSettings | undefined => {
     if (!ai) return ai;
-    const { apiKey: _apiKey, ...rest } = ai;
+    // Device-local fields are dropped here so that editing one of them does not
+    // bump the `ai` group's sync timestamp: they never reach the sync document.
+    const { apiKey: _apiKey, baseUrl: _baseUrl, openAIExtraBodyParams: _extraBody, ...rest } = ai;
     if (!rest.speechToText) return rest;
     return {
         ...rest,
         speechToText: {
             ...rest.speechToText,
             offlineModelPath: undefined,
+            baseUrl: undefined,
         },
     };
 };

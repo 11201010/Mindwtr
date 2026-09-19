@@ -137,15 +137,24 @@ const sanitizeAiForSync = (
     const sanitized: AiSettings = {
         ...ai,
         apiKey: undefined,
+        // Device-local, like apiKey: the sync document must never choose where
+        // this device sends its key or what the request body carries.
+        baseUrl: localAi?.baseUrl,
+        openAIExtraBodyParams: localAi?.openAIExtraBodyParams
+            ? cloneSettingValue(localAi.openAIExtraBodyParams)
+            : undefined,
     };
-    if (sanitized.speechToText) {
+    const localSpeechBaseUrl = localAi?.speechToText?.baseUrl;
+    if (sanitized.speechToText || localSpeechBaseUrl) {
+        const incomingSpeechToText = sanitized.speechToText ?? {};
         const localSpeechToText = localAi?.speechToText;
         const keepLocalOfflineModelPath = Boolean(localSpeechToText?.offlineModelPath)
-            && sanitized.speechToText.provider === localSpeechToText?.provider
-            && sanitized.speechToText.model === localSpeechToText?.model;
+            && incomingSpeechToText.provider === localSpeechToText?.provider
+            && incomingSpeechToText.model === localSpeechToText?.model;
         sanitized.speechToText = {
-            ...sanitized.speechToText,
+            ...incomingSpeechToText,
             offlineModelPath: keepLocalOfflineModelPath ? localSpeechToText?.offlineModelPath : undefined,
+            baseUrl: localSpeechBaseUrl,
         };
     }
     return sanitized;

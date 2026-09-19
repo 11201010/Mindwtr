@@ -15,6 +15,8 @@ import {
 } from './sync-helpers';
 import { GTD_SYNCED_FIELD_KEYS, type GtdSyncedFieldKey } from './settings-options';
 import { mergeSettingsForSync } from './sync-merge-settings';
+import { toRemoteSyncDocument } from './sync-document';
+import { normalizeAiSettingsForSync } from './store-helpers';
 import type { AppData, Attachment, GtdSettings } from './types';
 
 describe('stable sync property-order reuse', () => {
@@ -365,10 +367,13 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
                     enabled: true,
                     provider: 'openai',
                     apiKey: 'secret',
+                    baseUrl: 'http://localhost:1234/v1',
+                    openAIExtraBodyParams: { keep: true },
                     requestTimeoutSeconds: 120,
                     speechToText: {
                         enabled: true,
                         provider: 'whisper',
+                        baseUrl: 'http://localhost:8000/v1',
                         offlineModelPath: '/tmp/model.bin',
                     },
                 },
@@ -401,6 +406,9 @@ describe('sync-helpers sanitizeAppDataForRemote', () => {
         expect(sanitized.settings.ai?.apiKey).toBeUndefined();
         expect(sanitized.settings.ai?.requestTimeoutSeconds).toBe(120);
         expect(sanitized.settings.ai?.speechToText?.offlineModelPath).toBeUndefined();
+        expect(sanitized.settings.ai?.baseUrl).toBeUndefined();
+        expect(sanitized.settings.ai?.openAIExtraBodyParams).toBeUndefined();
+        expect(sanitized.settings.ai?.speechToText?.baseUrl).toBeUndefined();
 
         expect(sanitized.settings.globalQuickAddShortcut).toBeUndefined();
         expect(sanitized.settings.deviceId).toBeUndefined();
@@ -1157,5 +1165,53 @@ describe('sync comparison ignores the order of id-keyed lists (#1136)', () => {
             { ...doc([]), settings: { contexts: ['a', 'b'] } as AppData['settings'] },
             { ...doc([]), settings: { contexts: ['b', 'a'] } as AppData['settings'] },
         )).toBe(false);
+    });
+});
+
+// Plan 117: the endpoint URL and extra request body are device-local, like the
+// API key. An older peer still writes them; this device must ignore them and
+// must not rewrite the remote document just because they are there.
+describe('device-local AI endpoint fields', () => {
+    const baseData = (ai: AppData['settings']['ai']): AppData => ({
+        tasks: [],
+        projects: [],
+        sections: [],
+        areas: [],
+        people: [],
+        settings: { syncPreferences: { ai: true }, ai },
+    });
+
+    it('produces the same remote document whether or not the local copy carries them', () => {
+        const withFields = baseData({
+            enabled: true,
+            provider: 'openai',
+            baseUrl: 'http://localhost:1234/v1',
+            openAIExtraBodyParams: { keep: true },
+            speechToText: { enabled: true, provider: 'openai', baseUrl: 'http://localhost:8000/v1' },
+        });
+        const withoutFields = baseData({
+            enabled: true,
+            provider: 'openai',
+            speechToText: { enabled: true, provider: 'openai' },
+        });
+
+        expect(JSON.parse(JSON.stringify(toRemoteSyncDocument(withFields))))
+            .toEqual(JSON.parse(JSON.stringify(toRemoteSyncDocument(withoutFields))));
+    });
+
+    it('does not count an endpoint-only edit as an AI settings change', () => {
+        expect(normalizeAiSettingsForSync({
+            enabled: true,
+            provider: 'openai',
+            baseUrl: 'http://localhost:1234/v1',
+            openAIExtraBodyParams: { keep: true },
+            speechToText: { enabled: true, baseUrl: 'http://localhost:8000/v1' },
+        })).toEqual(normalizeAiSettingsForSync({
+            enabled: true,
+            provider: 'openai',
+            baseUrl: 'https://other-host.example/v1',
+            openAIExtraBodyParams: { x: 1 },
+            speechToText: { enabled: true, baseUrl: 'https://other-host.example/v1' },
+        }));
     });
 });

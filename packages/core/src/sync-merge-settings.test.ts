@@ -537,3 +537,69 @@ describe('mergeSettingsForSync > dataset identity', () => {
             .toEqual({ lastShownAt: '2026-02-01T00:00:00.000Z' });
     });
 });
+
+// The API key lives only on the device, so the address it is sent to and the
+// extra request body must be device-local too: a sync document must never
+// choose where this device sends its key or what the request carries.
+describe('mergeSettingsForSync > device-local AI fields', () => {
+    it('drops an incoming endpoint and extra body when the local device has none', () => {
+        const local = stamp({ ai: { enabled: true, provider: 'openai' } }, 'ai', OLDER);
+        const incoming = stamp({
+            ai: {
+                enabled: true,
+                provider: 'openai',
+                baseUrl: 'https://other-host.example/v1',
+                openAIExtraBodyParams: { x: 1 },
+                speechToText: { enabled: true, provider: 'openai', baseUrl: 'https://other-host.example/v1' },
+            },
+        }, 'ai', NEWER);
+
+        const merged = mergeSettingsForSync(local, incoming);
+
+        expect(merged.ai?.baseUrl).toBeUndefined();
+        expect(merged.ai?.openAIExtraBodyParams).toBeUndefined();
+        expect(merged.ai?.speechToText?.baseUrl).toBeUndefined();
+        expect(merged.ai?.speechToText?.enabled).toBe(true);
+        expect(mergeSettingsForSync(merged, incoming)).toEqual(merged);
+    });
+
+    it('keeps the local endpoint and extra body while other AI fields still sync', () => {
+        const local = stamp({
+            ai: {
+                provider: 'openai',
+                baseUrl: 'http://localhost:1234/v1',
+                openAIExtraBodyParams: { keep: true },
+                speechToText: { provider: 'openai', baseUrl: 'http://localhost:8000/v1' },
+            },
+        }, 'ai', OLDER);
+        const incoming = stamp({
+            ai: {
+                provider: 'openai',
+                model: 'incoming-model',
+                baseUrl: 'https://other-host.example/v1',
+                openAIExtraBodyParams: { x: 1 },
+                speechToText: { provider: 'openai', baseUrl: 'https://other-host.example/v1' },
+            },
+        }, 'ai', NEWER);
+
+        const merged = mergeSettingsForSync(local, incoming);
+
+        expect(merged.ai?.model).toBe('incoming-model');
+        expect(merged.ai?.baseUrl).toBe('http://localhost:1234/v1');
+        expect(merged.ai?.openAIExtraBodyParams).toEqual({ keep: true });
+        expect(merged.ai?.speechToText?.baseUrl).toBe('http://localhost:8000/v1');
+        expect(mergeSettingsForSync(merged, incoming)).toEqual(merged);
+    });
+
+    it('keeps the local speech endpoint when the incoming side has no speech settings', () => {
+        const local = stamp({
+            ai: { provider: 'openai', speechToText: { baseUrl: 'http://localhost:8000/v1' } },
+        }, 'ai', OLDER);
+        const incoming = stamp({ ai: { provider: 'openai', model: 'incoming-model' } }, 'ai', NEWER);
+
+        const merged = mergeSettingsForSync(local, incoming);
+
+        expect(merged.ai?.speechToText?.baseUrl).toBe('http://localhost:8000/v1');
+        expect(mergeSettingsForSync(merged, incoming)).toEqual(merged);
+    });
+});

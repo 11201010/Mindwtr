@@ -250,10 +250,15 @@ const sanitizeSettingsForRemote = (settings: AppData['settings']): AppData['sett
         next.ai = {
             ...settings.ai,
             apiKey: undefined,
+            // Device-local, like apiKey: the endpoint the key is sent to and the
+            // extra request body never leave this device.
+            baseUrl: undefined,
+            openAIExtraBodyParams: undefined,
             speechToText: settings.ai.speechToText
                 ? {
                     ...settings.ai.speechToText,
                     offlineModelPath: undefined,
+                    baseUrl: undefined,
                 }
                 : settings.ai.speechToText,
         };
