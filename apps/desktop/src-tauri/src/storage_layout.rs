@@ -18,7 +18,9 @@
 //!
 //! * A lock file makes one process at a time mutate the folder. The migration
 //!   runs inside the path lookup, which happens before the single-instance
-//!   plugin exists, so it cannot lean on that plugin.
+//!   plugin exists, so it cannot lean on that plugin. A second process waits a
+//!   few seconds for the holder and then re-reads the folder, because either
+//!   process may be the one the single-instance plugin keeps.
 //! * The journal is published atomically and synced before the first rename,
 //!   and removed only after every rename is durable, so a power loss is always
 //!   visible to the next start.
@@ -31,7 +33,8 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::{
     CONFIG_FILE_NAME, DATA_FILE_NAME, DB_FILE_NAME, LEGACY_SYNC_BACKEND_STATE_FILE_NAME,
@@ -46,6 +49,12 @@ const LOCK_FILE_NAME: &str = "layout-migration.lock";
 /// A migration is a handful of same-volume renames. A lock file older than this
 /// is a crash leftover, not a run in progress.
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(120);
+/// How long a second process waits for the holder's migration before giving up
+/// and reading the flat root for this start. A migration is a handful of
+/// same-volume renames, and this wait happens at process start, before the
+/// window exists, so it stays short.
+const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
+const LOCK_WAIT_POLL: Duration = Duration::from_millis(50);
 /// The pre-TOML settings file. Also a legacy marker: a profile holding only
 /// this one still has settings to import, including a custom data file path.
 const LEGACY_CONFIG_JSON_FILE_NAME: &str = "config.json";
@@ -286,25 +295,34 @@ struct MigrationLock {
 }
 
 impl MigrationLock {
+    /// Waits out another process's migration rather than spending the whole
+    /// session on the flat root: the caller re-reads the folder under the lock,
+    /// so a waiter ends up on the same layout as the holder. The wait is bounded
+    /// because this runs on the first path lookup at process start.
     fn acquire(root: &Path) -> Option<Self> {
         let path = root.join(LOCK_FILE_NAME);
-        match Self::create(&path) {
-            Ok(()) => return Some(Self { path }),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                log::warn!("Failed to take the storage layout migration lock: {error}");
+        let started = Instant::now();
+        loop {
+            match Self::create(&path) {
+                Ok(()) => return Some(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    log::warn!("Failed to take the storage layout migration lock: {error}");
+                    return None;
+                }
+            }
+            if started.elapsed() >= LOCK_WAIT_TIMEOUT {
                 return None;
             }
+            if Self::is_stale(&path) {
+                // A crashed run left this behind. Replacing it is safe: no
+                // migration takes minutes, and the loser of a race here simply
+                // keeps the flat root for this start.
+                fs::remove_file(&path).ok()?;
+            } else {
+                thread::sleep(LOCK_WAIT_POLL);
+            }
         }
-        if !Self::is_stale(&path) {
-            return None;
-        }
-        // A crashed run left this behind. Replacing it is safe: no migration
-        // takes minutes, and the loser of a race here simply keeps the flat
-        // root for this start.
-        fs::remove_file(&path).ok()?;
-        Self::create(&path).ok()?;
-        Some(Self { path })
     }
 
     fn create(path: &Path) -> io::Result<()> {
@@ -350,10 +368,10 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
     }
 
     let Some(_lock) = MigrationLock::acquire(root) else {
-        // Another process is migrating this folder right now. Reading the flat
-        // root is the safe answer: it is where the files still are, or were a
-        // moment ago, and this process writes nothing before it is handed off.
-        log::warn!("Another process holds the storage layout migration lock");
+        // The holder outlasted the wait, or the lock file itself could not be
+        // written. Reading the flat root is the safe answer: it is where the
+        // files still are, or were a moment ago.
+        log::warn!("Gave up waiting for the storage layout migration lock");
         return LayoutMigration::failed("lock");
     };
 
@@ -671,8 +689,48 @@ mod tests {
         assert!(root.join(JOURNAL_FILE_NAME).is_file());
     }
 
+    // Finding F4: a second launch waits for the holder instead of running its
+    // whole session on the flat root. On Windows the loser of the lock race can
+    // be the process the single-instance plugin keeps, so it has to end up on
+    // the same layout as the holder.
+    #[test]
+    fn a_second_process_waits_for_a_fresh_lock_and_uses_the_settled_layout() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().to_path_buf();
+        legacy_profile(&root);
+        write(&root.join(LOCK_FILE_NAME), "");
+
+        // The holder migrates the folder and releases the lock while the second
+        // caller is still waiting.
+        let holder_root = root.clone();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            create_subfolders(&holder_root).expect("subfolders");
+            for (name, destination) in MIGRATED_ENTRIES {
+                let from = holder_root.join(name);
+                if from.exists() {
+                    fs::rename(&from, holder_root.join(destination.dir_name()).join(name))
+                        .expect("holder move");
+                }
+            }
+            fs::remove_file(holder_root.join(LOCK_FILE_NAME)).expect("release lock");
+        });
+
+        let waited = migrate_standard_layout(&root);
+        holder.join().expect("holder thread");
+
+        assert_eq!(waited.outcome, LayoutOutcome::Already);
+        assert!(waited.subfolders, "the waiter reads the settled subfolders");
+        assert_eq!(waited.moved, 0);
+        assert_eq!(waited.failed_entry, None);
+        assert!(root.join(DATA_DIR_NAME).join(DB_FILE_NAME).is_file());
+        assert!(!root.join(DB_FILE_NAME).exists());
+        assert!(!root.join(LOCK_FILE_NAME).exists(), "lock is released");
+    }
+
     // Finding 2: the migration runs before the single-instance plugin exists,
-    // so a second launch must not interleave renames with the first.
+    // so a second launch must not interleave renames with the first. A holder
+    // that never finishes ends the wait at the timeout, on the flat root.
     #[test]
     fn a_lock_held_by_another_process_leaves_the_flat_root_alone() {
         let temp = tempfile::tempdir().expect("temp dir");
