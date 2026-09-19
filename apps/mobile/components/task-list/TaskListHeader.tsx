@@ -2,6 +2,8 @@ import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { ArrowUpDown, Folder, SlidersHorizontal, X } from 'lucide-react-native';
 
+import { tFallback } from '@mindwtr/core';
+
 import { ListOverflowMenu } from '@/components/list-overflow-menu';
 import { styles } from './task-list.styles';
 
@@ -70,15 +72,15 @@ export function TaskListHeader({
   themeColors,
   title,
 }: TaskListHeaderProps) {
-  const filtersLabel = t('filters.label') === 'filters.label' ? 'Filters' : t('filters.label');
-  const groupLabel = t('list.groupBy') === 'list.groupBy' ? 'Group' : t('list.groupBy');
-  const allLabel = t('common.all') === 'common.all' ? 'All' : t('common.all');
-  const moreOptionsLabel = t('taskEdit.moreOptions') === 'taskEdit.moreOptions' ? 'More options' : t('taskEdit.moreOptions');
-  const backLabel = t('common.back') === 'common.back' ? 'Back' : t('common.back');
-  const closeLabel = t('common.close') === 'common.close' ? 'Close' : t('common.close');
-  const clearLabel = t('filters.clear') === 'filters.clear' ? t('common.clear') : t('filters.clear');
-  const removeFilterLabel = t('filters.remove') === 'filters.remove' ? 'Remove filter' : t('filters.remove');
-  const excludedStateLabel = t('filters.excluded') === 'filters.excluded' ? 'Excluded' : t('filters.excluded');
+  const filtersLabel = tFallback(t, 'filters.label', 'Filters');
+  const groupLabel = tFallback(t, 'list.groupBy', 'Group');
+  const allLabel = tFallback(t, 'common.all', 'All');
+  const moreOptionsLabel = tFallback(t, 'taskEdit.moreOptions', 'More options');
+  const backLabel = tFallback(t, 'common.back', 'Back');
+  const closeLabel = tFallback(t, 'common.close', 'Close');
+  const clearLabel = tFallback(t, 'filters.clear', t('common.clear'));
+  const removeFilterLabel = tFallback(t, 'filters.remove', 'Remove filter');
+  const excludedStateLabel = tFallback(t, 'filters.excluded', 'Excluded');
   const activeFiltersLabel = `${filtersLabel} · ${filterActiveCount}`;
   const activeFilterControl = !directControls && showFilterButton && hasActiveFilters ? (
     <TouchableOpacity

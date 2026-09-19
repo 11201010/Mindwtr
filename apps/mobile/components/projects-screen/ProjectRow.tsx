@@ -181,7 +181,9 @@ export function ProjectRow({
                     style={styles.focusButton}
                     disabled={!project.isFocused && focusedCount >= 5}
                     accessibilityRole="button"
-                    accessibilityLabel={project.isFocused ? 'Unfocus project' : 'Focus project'}
+                    accessibilityLabel={project.isFocused
+                        ? tFallback(t, 'projects.removeFromFocus', 'Remove from focus')
+                        : tFallback(t, 'projects.addToFocus', 'Add to focus')}
                     accessibilityState={{ selected: project.isFocused, disabled: !project.isFocused && focusedCount >= 5 }}
                     hitSlop={ROW_ACTION_HIT_SLOP}
                 >

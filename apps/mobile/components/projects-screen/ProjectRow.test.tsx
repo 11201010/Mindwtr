@@ -155,6 +155,38 @@ describe('ProjectRow', () => {
     expect(onToggleProjectFocus).toHaveBeenCalledWith('project-1');
   });
 
+  // The star is icon-only, so its label is the whole affordance for a screen
+  // reader — and it must speak the reader's language.
+  it('names the focus action through the translator', () => {
+    const translate = (key: string) => ({
+      'projects.addToFocus': 'Zum Fokus hinzufügen',
+      'projects.removeFromFocus': 'Aus dem Fokus entfernen',
+    }[key] ?? key);
+    const renderRow = (isFocused: boolean) => {
+      let tree!: renderer.ReactTestRenderer;
+      renderer.act(() => {
+        tree = renderer.create(
+          <ProjectRow
+            project={{ ...project, isFocused }}
+            tc={tc}
+            focusedCount={isFocused ? 1 : 0}
+            statusPalette={statusPalette as any}
+            t={translate}
+            onDeleteProject={vi.fn()}
+            onDuplicateProject={vi.fn()}
+            onOpenProject={vi.fn()}
+            onToggleProjectFocus={vi.fn()}
+          />,
+        );
+      });
+      return tree.root.find((node) => node.props.testID === 'project-row-focus-project-1')
+        .props.accessibilityLabel as string;
+    };
+
+    expect(renderRow(false)).toBe('Zum Fokus hinzufügen');
+    expect(renderRow(true)).toBe('Aus dem Fokus entfernen');
+  });
+
   it('uses the filled star alone for focus without adding a yellow row outline', () => {
     let tree!: renderer.ReactTestRenderer;
     renderer.act(() => {
