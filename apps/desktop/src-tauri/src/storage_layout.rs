@@ -85,8 +85,9 @@ use Destination::{Config, Data};
 ///
 /// Order matters. The files that mark a profile as migrated (`config.toml`,
 /// `data.json`, `mindwtr.db`) move last, and the database moves after its own
-/// `-wal`/`-shm`/`-journal` sidecars, so a run that fails partway always leaves
-/// the database and its sidecars together at the root.
+/// `-wal`/`-shm`/`-journal` sidecars. Together with the family rules in
+/// `migrate_standard_layout` and `roll_back`, that keeps the database and those
+/// sidecars in one folder whether a run finishes, fails or is resumed.
 ///
 /// This list is also how a crashed run is undone: an entry sitting at its
 /// destination while its root name is free was put there by a migration, so a
@@ -416,10 +417,16 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
 
     let mut moved = 0;
     let mut kept = 0;
-    // The database already sits in data/, so the root's own database and every
-    // sidecar beside it stay together at the root. Read before the first rename:
-    // what was there when the run started decides for the whole family.
-    let database_kept = root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists();
+    // The family moves whole or not at all: a root entry left behind while the
+    // rest moves would pair a stale sidecar with a live database. It stays at
+    // the root when data/ already holds a database, and when any root family
+    // entry has a destination that is taken — that entry cannot move, so none of
+    // them may. Read before the first rename: the state the run started from
+    // decides for the whole family.
+    let database_kept = root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists()
+        || planned.iter().any(|(name, destination)| {
+            is_database_entry(name) && root.join(destination.dir_name()).join(name).exists()
+        });
     for (name, destination) in planned {
         let from = root.join(name);
         let to = root.join(destination.dir_name()).join(name);
@@ -465,14 +472,17 @@ fn create_subfolders(root: &Path) -> Result<(), String> {
 /// has a free destination; a failure is logged by entry name and left for the
 /// journal to finish on the next start.
 fn roll_back(root: &Path) {
-    // The same unit rule in the other direction: a root that already holds a
-    // database keeps its own sidecars, and the migrated database keeps its own
-    // in data/. The run falling back to the flat root opens the root database.
-    let database_at_root = root.join(DB_FILE_NAME).exists();
+    // The same unit rule in the other direction, and only when both ends hold a
+    // database: then each keeps the sidecars on its own side. With a database at
+    // the root alone, the sidecars in data/ are that database's own — this run
+    // moved them there moments ago — and they must come back with it, or the
+    // falling-back run opens the database without its WAL.
+    let database_stays =
+        root.join(DB_FILE_NAME).exists() && root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists();
     for (name, destination) in MIGRATED_ENTRIES.iter().rev() {
         let from = root.join(destination.dir_name()).join(name);
         let to = root.join(name);
-        if !from.exists() || to.exists() || (database_at_root && is_database_entry(name)) {
+        if !from.exists() || to.exists() || (database_stays && is_database_entry(name)) {
             continue;
         }
         if let Err(error) = fs::rename(&from, &to) {
@@ -865,6 +875,101 @@ mod tests {
         assert_eq!(
             fs::read_to_string(root.join(DATA_DIR_NAME).join(DB_FILE_NAME)).expect("db"),
             "real db"
+        );
+    }
+
+    // Finding C1, forward direction: an earlier rollback that could not put the
+    // WAL back leaves a stale copy in data/, and a flat session then wrote a new
+    // one at the root. Moving the database in on its own would replay the stale
+    // WAL over it, so the whole family stays at the root instead.
+    #[test]
+    fn a_stale_sidecar_in_data_keeps_the_root_database_at_the_root() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        write(&root.join(DB_FILE_NAME), "root db");
+        write(&root.join("mindwtr.db-wal"), "live wal");
+        write(
+            &root.join(DATA_DIR_NAME).join("mindwtr.db-wal"),
+            "stale wal",
+        );
+        write(
+            &root.join(JOURNAL_FILE_NAME),
+            "{\"version\":1,\"moves\":[]}",
+        );
+
+        let resumed = migrate_standard_layout(root);
+        assert_eq!(resumed.outcome, LayoutOutcome::Migrated);
+        assert_eq!(resumed.moved, 0);
+        assert_eq!(resumed.kept, 2, "the database and its WAL are one unit");
+        assert!(
+            !root.join(DATA_DIR_NAME).join(DB_FILE_NAME).exists(),
+            "the database never lands next to a stale WAL"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("mindwtr.db-wal")).expect("wal"),
+            "live wal"
+        );
+        assert!(root.join(DB_FILE_NAME).is_file());
+    }
+
+    // The boundary of that rule: when the sidecars in data/ are this database's
+    // own, moved by a run that crashed before the database itself, the database
+    // must still follow them in. Nothing else may keep it at the root.
+    #[test]
+    fn a_database_still_follows_its_own_sidecars_into_data() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        write(&root.join(DB_FILE_NAME), "db");
+        write(&root.join(DATA_DIR_NAME).join("mindwtr.db-wal"), "wal");
+        write(&root.join(DATA_DIR_NAME).join("mindwtr.db-shm"), "shm");
+        write(
+            &root.join(JOURNAL_FILE_NAME),
+            "{\"version\":1,\"moves\":[]}",
+        );
+
+        let resumed = migrate_standard_layout(root);
+        assert_eq!(resumed.outcome, LayoutOutcome::Migrated);
+        assert_eq!(resumed.moved, 1);
+        assert!(root.join(DATA_DIR_NAME).join(DB_FILE_NAME).is_file());
+        assert!(!root.join(DB_FILE_NAME).exists());
+    }
+
+    // Finding C1: the plain failed-run shape. The sidecars move before the
+    // database, so a failure on the database itself leaves them in data/ while
+    // the database is still at the root. They belong to that database and must
+    // come back with it, or the falling-back run opens it without its WAL.
+    #[test]
+    fn a_rollback_restores_the_sidecars_of_a_database_that_never_moved() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        // What the forward loop leaves when the database rename fails: the
+        // sidecars and the earlier entries are already in data/.
+        write(&root.join(DB_FILE_NAME), "root db");
+        write(&root.join(DATA_DIR_NAME).join("mindwtr.db-wal"), "root wal");
+        write(&root.join(DATA_DIR_NAME).join("mindwtr.db-shm"), "root shm");
+        write(
+            &root.join(DATA_DIR_NAME).join("attachments").join("x.png"),
+            "png",
+        );
+        write(
+            &root.join(JOURNAL_FILE_NAME),
+            "{\"version\":1,\"moves\":[]}",
+        );
+
+        roll_back(root);
+
+        assert_eq!(
+            fs::read_to_string(root.join("mindwtr.db-wal")).expect("wal"),
+            "root wal",
+            "the database's own WAL comes back with it"
+        );
+        assert!(!root.join(DATA_DIR_NAME).join("mindwtr.db-wal").exists());
+        assert!(root.join("mindwtr.db-shm").is_file());
+        assert!(!root.join(DATA_DIR_NAME).join("mindwtr.db-shm").exists());
+        assert!(root.join("attachments").join("x.png").is_file());
+        assert_eq!(
+            fs::read_to_string(root.join(DB_FILE_NAME)).expect("db"),
+            "root db"
         );
     }
 
