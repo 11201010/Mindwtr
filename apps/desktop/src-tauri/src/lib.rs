@@ -56,6 +56,7 @@ mod obsidian_watcher;
 mod obsidian_writer;
 mod platform;
 mod storage;
+mod storage_layout;
 mod sync;
 mod sync_crypto;
 mod sync_encryption;
@@ -1736,6 +1737,9 @@ pub fn run() {
             log::info!(
                 "macOS native startup reached after runtime loading extra.releaseCheck=v1.3.0/macos-swift-runtime"
             );
+            // Reported here because the migration itself runs before any
+            // logger exists — the first config read is the top of `run()`.
+            crate::storage_layout::log_layout_migration();
             Ok(())
         })
         .manage(AudioRecorderState::default())

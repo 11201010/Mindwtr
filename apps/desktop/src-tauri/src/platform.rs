@@ -786,9 +786,26 @@ fn legacy_webview_data_root() -> Option<PathBuf> {
 
 // A standard (installed) copy of Mindwtr on the same machine stores its data
 // under the OS data dir; its attachment files must never be moved away by a
-// portable copy that references the same paths.
+// portable copy that references the same paths. Since #1245 a standard install
+// on Windows and macOS keeps those files one level down in `data/`, so both
+// layouts count — missing the new one would turn a copy back into a move and
+// take the installed app's attachments with it (#936, #1119).
 fn standard_install_present(legacy_root: &Path) -> bool {
-    legacy_root.join(DATA_FILE_NAME).exists() || legacy_root.join(DB_FILE_NAME).exists()
+    use crate::storage_layout::{CONFIG_DIR_NAME, DATA_DIR_NAME, DATA_JSON_BACKUP_FILE_NAME};
+
+    let data_subfolder = legacy_root.join(DATA_DIR_NAME);
+    let data_present = [legacy_root, &data_subfolder].iter().any(|root| {
+        root.join(DATA_FILE_NAME).exists()
+            || root.join(DB_FILE_NAME).exists()
+            // An interrupted replacement can leave only the recovery copy.
+            || root.join(DATA_JSON_BACKUP_FILE_NAME).exists()
+    });
+    data_present
+        || legacy_root.join(CONFIG_FILE_NAME).exists()
+        || legacy_root
+            .join(CONFIG_DIR_NAME)
+            .join(CONFIG_FILE_NAME)
+            .exists()
 }
 
 #[derive(Serialize)]
@@ -902,6 +919,49 @@ pub(crate) fn open_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Whatever this misses, a portable launch renames the installed app's
+    // attachments away instead of copying them (#936, #1119). Every file an
+    // installed profile can be left holding counts as evidence.
+    #[test]
+    fn a_standard_install_is_recognized_from_every_profile_marker() {
+        use crate::storage_layout::{CONFIG_DIR_NAME, DATA_DIR_NAME, DATA_JSON_BACKUP_FILE_NAME};
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        assert!(!standard_install_present(root), "empty OS data dir");
+
+        let data = root.join(DATA_DIR_NAME);
+        let config = root.join(CONFIG_DIR_NAME);
+        std::fs::create_dir_all(&data).expect("data dir");
+        std::fs::create_dir_all(&config).expect("config dir");
+        // Still not evidence: the two folders alone say nothing.
+        assert!(!standard_install_present(root));
+
+        let markers = [
+            // The flat layout older versions wrote.
+            root.join(DB_FILE_NAME),
+            root.join(DATA_FILE_NAME),
+            root.join(CONFIG_FILE_NAME),
+            // An interrupted Windows replacement can leave only this.
+            root.join(DATA_JSON_BACKUP_FILE_NAME),
+            // The subfolder layout installed builds use since #1245.
+            data.join(DB_FILE_NAME),
+            data.join(DATA_FILE_NAME),
+            data.join(DATA_JSON_BACKUP_FILE_NAME),
+            config.join(CONFIG_FILE_NAME),
+        ];
+        for marker in markers {
+            std::fs::write(&marker, "x").expect("marker");
+            assert!(
+                standard_install_present(root),
+                "{} must count as an installed profile",
+                marker.display()
+            );
+            std::fs::remove_file(&marker).expect("remove marker");
+        }
+        assert!(!standard_install_present(root));
+    }
 
     #[test]
     fn cloudkit_attachment_parser_preserves_only_the_terminal_missing_code() {

@@ -28,6 +28,22 @@ afterEach(() => {
 describe('mcp default database discovery', () => {
   if (process.platform !== 'linux') return;
 
+  test('prefers the data/ subfolder over a flat root an older version left behind', () => {
+    const dataHome = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-layout-'));
+    tempDirs.push(dataHome);
+    const flatDb = join(dataHome, 'mindwtr', 'mindwtr.db');
+    const splitDb = join(dataHome, 'mindwtr', 'data', 'mindwtr.db');
+    mkdirSync(join(splitDb, '..'), { recursive: true });
+    writeFileSync(flatDb, '');
+    writeFileSync(splitDb, '');
+
+    process.env.XDG_DATA_HOME = dataHome;
+    delete process.env.MINDWTR_DB_PATH;
+    delete process.env.MINDWTR_DB;
+
+    expect(resolveMindwtrDbPath()).toBe(splitDb);
+  });
+
   test('discovers the Flatpak database when XDG locations are empty', () => {
     const home = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-flatpak-'));
     tempDirs.push(home);

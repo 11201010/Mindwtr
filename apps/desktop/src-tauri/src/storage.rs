@@ -370,13 +370,42 @@ pub(crate) fn cleanup_portable_os_config_dir(app: &tauri::AppHandle) {
     remove_dir_if_empty(&os_config_dir);
 }
 
+fn os_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_NAME)
+}
+
+fn os_data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_NAME)
+}
+
+/// The two directories a standard install uses. Where the OS resolves both to
+/// the same folder (Windows, macOS) this is where the flat-to-subfolder
+/// migration happens, before anything has read a config file or a database
+/// (#1245).
+fn standard_dirs(app: Option<&tauri::AppHandle>) -> (PathBuf, PathBuf) {
+    let (config_dir, data_dir) = match app {
+        Some(app) => (
+            app.path()
+                .resolve(APP_NAME, BaseDirectory::Config)
+                .unwrap_or_else(|_| os_config_dir()),
+            app.path()
+                .resolve(APP_NAME, BaseDirectory::Data)
+                .unwrap_or_else(|_| os_data_dir()),
+        ),
+        None => (os_config_dir(), os_data_dir()),
+    };
+    crate::storage_layout::standard_dirs(config_dir, data_dir)
+}
+
 pub(crate) fn get_config_dir_for_startup() -> PathBuf {
     if let StorageMode::Portable { profile_root } = detect_storage_mode() {
         return profile_root.join(PORTABLE_CONFIG_DIR_NAME);
     }
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_NAME)
+    standard_dirs(None).0
 }
 
 pub(crate) fn get_config_path_for_startup() -> PathBuf {
@@ -387,21 +416,14 @@ pub(crate) fn get_config_dir(app: &tauri::AppHandle) -> PathBuf {
     if let StorageMode::Portable { profile_root } = detect_storage_mode() {
         return profile_root.join(PORTABLE_CONFIG_DIR_NAME);
     }
-    app.path()
-        .resolve(APP_NAME, BaseDirectory::Config)
-        .unwrap_or_else(|_| get_config_dir_for_startup())
+    standard_dirs(Some(app)).0
 }
 
 pub(crate) fn get_data_dir(app: &tauri::AppHandle) -> PathBuf {
     if let StorageMode::Portable { profile_root } = detect_storage_mode() {
         return profile_root.join(PORTABLE_DATA_DIR_NAME);
     }
-    app.path()
-        .resolve(APP_NAME, BaseDirectory::Data)
-        .unwrap_or_else(|_| {
-            let home = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-            home.join(APP_NAME)
-        })
+    standard_dirs(Some(app)).1
 }
 
 pub(crate) fn get_config_path(app: &tauri::AppHandle) -> PathBuf {
@@ -3808,10 +3830,18 @@ pub(crate) fn get_all_calendar_sync_entries(
 }
 
 fn get_legacy_config_json_path(app: &tauri::AppHandle) -> PathBuf {
-    app.path()
+    // Two places have held the pre-TOML settings file: the bundle-identifier
+    // directory Tauri picks by default, and the app's own config dir. The
+    // second one follows the standard-layout migration into `config/`, so an
+    // un-imported file is still found after the move (#1245).
+    let by_identifier = app
+        .path()
         .app_config_dir()
-        .unwrap_or_else(|_| get_config_dir(app))
-        .join("config.json")
+        .map(|dir| dir.join("config.json"));
+    match by_identifier {
+        Ok(path) if path.exists() => path,
+        _ => get_config_dir(app).join("config.json"),
+    }
 }
 
 fn get_legacy_data_json_path(app: &tauri::AppHandle) -> PathBuf {
@@ -6375,6 +6405,20 @@ mod tests {
             StorageMode::Portable {
                 profile_root: exe_dir.path().join(PORTABLE_PROFILE_DIR_NAME),
             }
+        );
+    }
+
+    // #1245 only reshapes the platforms where the OS collapses the two
+    // directories into one; XDG keeps them apart, so nothing here moves and no
+    // migration ever runs.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_keeps_the_two_xdg_directories_as_they_are() {
+        assert_ne!(os_config_dir(), os_data_dir());
+        assert_eq!(get_config_dir_for_startup(), os_config_dir());
+        assert_eq!(
+            crate::storage_layout::standard_layout_root(&os_config_dir(), &os_data_dir()),
+            None
         );
     }
 

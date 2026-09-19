@@ -65,6 +65,9 @@ function getDefaultStorageDirs(): string[] {
   const configHome = getConfigHome();
   const dataHome = getDataHome();
   const dirs = [
+    // Installed Windows and macOS builds keep the database under data/ since
+    // v1.3.2 (#1245); a flat root left behind by an older version comes after.
+    join(dataHome, APP_DIR, 'data'),
     join(dataHome, APP_DIR),
     join(configHome, APP_DIR),
     join(dataHome, APP_ID),
@@ -79,6 +82,7 @@ function getDefaultStorageDirs(): string[] {
 
   if (process.platform === 'darwin') {
     const sandboxHome = getMacSandboxAppSupportHome();
+    dirs.push(join(sandboxHome, APP_DIR, 'data'));
     dirs.push(join(sandboxHome, APP_DIR));
     dirs.push(join(sandboxHome, APP_ID));
   }
