@@ -1,5 +1,12 @@
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+
+const fontMocks = vi.hoisted(() => ({
+    canListInstalledFonts: vi.fn(() => false),
+    loadInstalledFontFamilies: vi.fn(async () => [] as string[]),
+}));
+
+vi.mock('../../../lib/font-family', () => fontMocks);
 
 import { getEnglishSettingsLabels } from './labels';
 import { SettingsMainPage, type SettingsMainPageProps } from './SettingsMainPage';
@@ -12,6 +19,8 @@ const baseProps: SettingsMainPageProps = {
     onDensityChange: vi.fn(),
     textSizeMode: 'default',
     onTextSizeChange: vi.fn(),
+    fontFamily: '',
+    onFontFamilyChange: vi.fn(),
     showTaskAge: false,
     onShowTaskAgeChange: vi.fn(),
     language: 'en',
@@ -156,5 +165,48 @@ describe('SettingsMainPage', () => {
         });
 
         expect(onTextSizeChange).toHaveBeenCalledWith('large');
+    });
+
+    it('browses and searches the installed fonts, applying only an exact pick (#1244)', async () => {
+        fontMocks.canListInstalledFonts.mockReturnValue(true);
+        fontMocks.loadInstalledFontFamilies.mockResolvedValue(['Inter', 'Roboto']);
+        const onFontFamilyChange = vi.fn();
+        const { findByRole, getByLabelText, getByRole, queryByRole } = render(
+            <SettingsMainPage {...baseProps} fontFamily="" onFontFamilyChange={onFontFamilyChange} />,
+        );
+        const listedFonts = () => within(getByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
+
+        const input = await findByRole('combobox', { name: 'Font' });
+        fireEvent.focus(input);
+        await findByRole('option', { name: 'Roboto' });
+        expect(listedFonts()).toEqual(['Inter', 'Roboto']);
+
+        fireEvent.change(input, { target: { value: 'rob' } });
+        expect(listedFonts()).toEqual(['Roboto']);
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
+
+        fireEvent.mouseDown(within(getByRole('listbox')).getByRole('option', { name: 'Roboto' }));
+        expect(onFontFamilyChange).toHaveBeenLastCalledWith('Roboto');
+
+        // A half-typed name is only a filter: it reverts on blur instead of applying.
+        onFontFamilyChange.mockClear();
+        fireEvent.change(input, { target: { value: 'zzz' } });
+        fireEvent.blur(input);
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
+        expect((getByLabelText('Font') as HTMLInputElement).value).toBe('');
+        expect(queryByRole('listbox')).toBeNull();
+    });
+
+    it('falls back to a typed name when no font list is available (#1244)', () => {
+        fontMocks.canListInstalledFonts.mockReturnValue(false);
+        const onFontFamilyChange = vi.fn();
+        const { getByLabelText } = render(
+            <SettingsMainPage {...baseProps} fontFamily="" onFontFamilyChange={onFontFamilyChange} />,
+        );
+
+        const input = getByLabelText('Font') as HTMLInputElement;
+        fireEvent.change(input, { target: { value: 'Inter' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(onFontFamilyChange).toHaveBeenLastCalledWith('Inter');
     });
 });

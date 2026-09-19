@@ -84,6 +84,7 @@ argon2 = "0.5.3"
 # There is no std facility for this; unicode-normalization is the standard, dependency-free
 # implementation used throughout the Rust ecosystem (idna, url, ...).
 unicode-normalization = "0.1.25"
+fontdb = "0.24.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

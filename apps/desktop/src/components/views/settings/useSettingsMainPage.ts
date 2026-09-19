@@ -30,6 +30,7 @@ import {
     type DesktopThemeMode,
 } from '../../../lib/theme';
 import { coerceDesktopTextSize } from '../../../lib/text-size';
+import { coerceDesktopFontFamily } from '../../../lib/font-family';
 import { resolveCloseBehavior } from '../../../lib/window-behavior';
 import type { SettingsKeyboardWindowProps, SettingsMainPageProps } from './SettingsMainPage';
 
@@ -85,6 +86,7 @@ export function useSettingsMainPage({
                 : 'comfortable'
     ) as MainPageProps['densityMode'];
     const textSizeMode = coerceDesktopTextSize(appearanceSettings?.textSize);
+    const fontFamily = coerceDesktopFontFamily(appearanceSettings?.fontFamily);
     const showTaskAge = appearanceSettings?.showTaskAge === true;
     const dateFormat = normalizeDateFormatSetting(settings?.dateFormat);
     const timeFormat = normalizeTimeFormatSetting(settings?.timeFormat);
@@ -184,6 +186,18 @@ export function useSettingsMainPage({
         })
             .then(showSaved)
             .catch((error) => reportError('Failed to update text size', error));
+    }, [settings?.appearance, showSaved, updateSettings]);
+
+    const onFontFamilyChange = useCallback((value: string) => {
+        const next = coerceDesktopFontFamily(value);
+        updateSettings({
+            appearance: {
+                ...(settings?.appearance ?? {}),
+                fontFamily: next || undefined,
+            },
+        })
+            .then(showSaved)
+            .catch((error) => reportError('Failed to update font', error));
     }, [settings?.appearance, showSaved, updateSettings]);
 
     const onShowTaskAgeChange = useCallback((enabled: boolean) => {
@@ -342,6 +356,8 @@ export function useSettingsMainPage({
         onOpenHelp: openHelp,
         onShowTaskAgeChange,
         onTextSizeChange,
+        fontFamily,
+        onFontFamilyChange,
         onThemeChange,
         onTimeFormatChange,
         onTrayVisibleChange,

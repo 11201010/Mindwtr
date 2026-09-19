@@ -6,13 +6,15 @@ import {
 } from '../../../lib/global-quick-add-shortcut';
 import { normalizeWeekStartSetting, resolveFeatureFlags, useTaskStore } from '@mindwtr/core';
 import type { DesktopThemeMode } from '../../../lib/theme';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Switch } from '../../ui/Switch';
 import { SettingRow, SettingsCard, SettingsDisclosureCard, SettingsSectionHeader } from './SettingRow';
 import { useUiStore } from '../../../store/ui-store';
 import { HIDEABLE_SIDEBAR_VIEW_IDS, type HideableSidebarViewId } from '../../../lib/sidebar-views';
+import { canListInstalledFonts, loadInstalledFontFamilies } from '../../../lib/font-family';
+import { AutocompleteTextInput } from '../../ui/AutocompleteTextInput';
 
 const FLATPAK_QUICK_ADD_COMMAND = 'flatpak run tech.dongdongbh.mindwtr --quick-add';
 
@@ -42,6 +44,10 @@ type Labels = {
     textSizeDefault: string;
     textSizeLarge: string;
     textSizeExtraLarge: string;
+    fontFamily: string;
+    fontFamilyDesc: string;
+    fontFamilyDefault: string;
+    fontFamilyPlaceholder: string;
     showTaskAge: string;
     showTaskAgeDesc: string;
     sidebarViews: string;
@@ -122,6 +128,9 @@ export type SettingsMainPageProps = {
     onDensityChange: (mode: DensityMode) => void;
     textSizeMode: TextSizeMode;
     onTextSizeChange: (mode: TextSizeMode) => void;
+    /** '' = app default, else an installed family name. */
+    fontFamily: string;
+    onFontFamilyChange: (value: string) => void;
     showTaskAge: boolean;
     onShowTaskAgeChange: (enabled: boolean) => void;
     language: Language;
@@ -173,6 +182,8 @@ export function SettingsMainPage({
     onDensityChange,
     textSizeMode,
     onTextSizeChange,
+    fontFamily,
+    onFontFamilyChange,
     showTaskAge,
     onShowTaskAgeChange,
     language,
@@ -284,6 +295,9 @@ export function SettingsMainPage({
                         <option value="large">{t.textSizeLarge}</option>
                         <option value="extra-large">{t.textSizeExtraLarge}</option>
                     </select>
+                </SettingRow>
+                <SettingRow padded settingsKey="fontFamily" title={t.fontFamily} description={t.fontFamilyDesc}>
+                    <FontFamilyControl t={t} value={fontFamily} onChange={onFontFamilyChange} />
                 </SettingRow>
                 <SettingRow padded settingsKey="showTaskAge" title={t.showTaskAge} description={t.showTaskAgeDesc}>
                     <Switch
@@ -500,6 +514,92 @@ export function SettingsMainPage({
                     />
                 </SettingRow>
             </SettingsCard>
+        </div>
+    );
+}
+
+// A combobox over the fonts installed on this computer, listed by the desktop
+// shell (no browser permission involved): click to browse the whole list, type
+// to narrow it, pick to apply. Empty = app default, which already resolves to
+// the OS interface font on every platform. The plain web build has no native
+// list, so there the field takes a typed name as-is (#1244).
+function FontFamilyControl({
+    t,
+    value,
+    onChange,
+}: {
+    t: Labels;
+    value: string;
+    onChange: (value: string) => void;
+}) {
+    const [installedFonts, setInstalledFonts] = useState<string[] | null>(null);
+    const [draft, setDraft] = useState(value);
+    useEffect(() => {
+        setDraft(value);
+    }, [value]);
+    useEffect(() => {
+        if (!canListInstalledFonts()) {
+            setInstalledFonts([]);
+            return;
+        }
+        let active = true;
+        void loadInstalledFontFamilies().then((families) => {
+            if (active) setInstalledFonts(families);
+        });
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    const hasList = (installedFonts?.length ?? 0) > 0;
+    const findInstalled = (name: string) => {
+        const key = name.trim().toLowerCase();
+        return installedFonts?.find((family) => family.toLowerCase() === key) ?? null;
+    };
+    // A name is applied as soon as it is an exact pick (or cleared); a half-typed
+    // name is only a filter and reverts on blur when a list exists.
+    const handleChange = (next: string) => {
+        setDraft(next);
+        if (next.trim() === '') {
+            if (value !== '') onChange('');
+            return;
+        }
+        const installed = findInstalled(next);
+        if (installed && installed !== value) onChange(installed);
+    };
+    const commitDraft = () => {
+        const trimmed = draft.trim();
+        if (trimmed === value) return;
+        if (!hasList) {
+            onChange(trimmed);
+            return;
+        }
+        const installed = findInstalled(trimmed);
+        if (installed) onChange(installed);
+        else setDraft(value);
+    };
+    const previewFamily = draft.trim().replace(/"/g, '');
+
+    return (
+        <div className="w-56">
+            <AutocompleteTextInput
+                aria-label={t.fontFamily}
+                placeholder={hasList ? t.fontFamilyDefault : t.fontFamilyPlaceholder}
+                value={draft}
+                onChange={handleChange}
+                suggestions={installedFonts ?? []}
+                maxSuggestions={Math.max(installedFonts?.length ?? 0, 1)}
+                showAllWhenEmpty
+                style={previewFamily ? { fontFamily: `"${previewFamily}", ui-sans-serif, sans-serif` } : undefined}
+                onBlur={commitDraft}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitDraft();
+                    }
+                }}
+                className={cn(selectCls, 'w-full')}
+            />
         </div>
     );
 }

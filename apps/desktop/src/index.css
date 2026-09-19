@@ -878,3 +878,9 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Font choice (#1244): Settings → Look & feel → Font sets --mindwtr-font-family on
+   the root; without it this is Tailwind's default sans stack, unchanged. */
+html {
+    font-family: var(--mindwtr-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+}

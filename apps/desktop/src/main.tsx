@@ -28,6 +28,7 @@ import {
     resolveSystemThemeCommandPreference,
 } from './lib/theme';
 import { TEXT_SIZE_STORAGE_KEY, applyDesktopTextSize, coerceDesktopTextSize } from './lib/text-size';
+import { FONT_FAMILY_STORAGE_KEY, applyDesktopFontFamily, coerceDesktopFontFamily } from './lib/font-family';
 import { loadStoredFullscreen } from './lib/window-state';
 import { restoreStoredWebviewZoom } from './lib/webview-zoom';
 import { isQuickAddWindowLocation } from './lib/quick-add-window';
@@ -221,6 +222,9 @@ async function bootstrap() {
     }
     applyDesktopTextSize(coerceDesktopTextSize(
         sandboxMode ? sandboxSettings.appearance?.textSize : localStorage.getItem(TEXT_SIZE_STORAGE_KEY),
+    ));
+    applyDesktopFontFamily(coerceDesktopFontFamily(
+        sandboxMode ? sandboxSettings.appearance?.fontFamily : localStorage.getItem(FONT_FAMILY_STORAGE_KEY),
     ));
     if (isTauriRuntime()) {
         void applyNativeTheme(

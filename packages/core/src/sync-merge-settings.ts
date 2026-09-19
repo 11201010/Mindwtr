@@ -409,6 +409,19 @@ export const sanitizeMergedSettingsForSync = (
             };
             didSanitizeAppearance = true;
         }
+        const appearanceWithFont = next.appearance;
+        if (
+            appearanceWithFont
+            && appearanceWithFont.fontFamily !== undefined
+            && (typeof appearanceWithFont.fontFamily !== 'string' || appearanceWithFont.fontFamily.length > 120)
+        ) {
+            next.appearance = {
+                ...fallbackAppearance,
+                ...appearanceWithFont,
+                fontFamily: localSettings.appearance?.fontFamily,
+            };
+            didSanitizeAppearance = true;
+        }
         const appearanceWithTextSize = next.appearance;
         if (
             appearanceWithTextSize

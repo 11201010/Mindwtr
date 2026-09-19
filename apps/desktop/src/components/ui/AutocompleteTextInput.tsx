@@ -7,6 +7,8 @@ type AutocompleteTextInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'v
     onChange: (value: string) => void;
     suggestions: readonly string[];
     maxSuggestions?: number;
+    /** Open the full list on focus with an empty value, so the field also works as a picker. */
+    showAllWhenEmpty?: boolean;
     createLabel?: string;
     onCreate?: (value: string) => void | Promise<void>;
 };
@@ -21,6 +23,7 @@ export function AutocompleteTextInput({
     onChange,
     suggestions,
     maxSuggestions = 6,
+    showAllWhenEmpty = false,
     createLabel,
     onCreate,
     className,
@@ -41,19 +44,20 @@ export function AutocompleteTextInput({
     }, [query, suggestions]);
 
     const matches = useMemo(() => {
-        if (!focused || !query) return [];
+        if (!focused || (!query && !showAllWhenEmpty)) return [];
         const queryKey = query.toLowerCase();
         const seen = new Set<string>();
         const result: string[] = [];
         for (const option of suggestions) {
             const key = option.trim().toLowerCase();
-            if (!key || key === queryKey || seen.has(key) || !key.includes(queryKey)) continue;
+            if (!key || seen.has(key)) continue;
+            if (query && (key === queryKey || !key.includes(queryKey))) continue;
             seen.add(key);
             result.push(option);
             if (result.length >= maxSuggestions) break;
         }
         return result;
-    }, [focused, query, suggestions, maxSuggestions]);
+    }, [focused, query, suggestions, maxSuggestions, showAllWhenEmpty]);
     const showCreate = Boolean(focused && query && hasCreateAction && !hasExactMatch);
     const optionCount = matches.length + (showCreate ? 1 : 0);
 
@@ -136,7 +140,7 @@ export function AutocompleteTextInput({
                 <div
                     id={listboxId}
                     role="listbox"
-                    className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg"
+                    className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-lg"
                 >
                     {matches.map((option, index) => (
                         <button

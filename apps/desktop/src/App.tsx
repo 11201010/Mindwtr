@@ -99,6 +99,7 @@ import {
     applyDesktopTextSize,
     coerceDesktopTextSize,
 } from './lib/text-size';
+import { FONT_FAMILY_STORAGE_KEY, applyDesktopFontFamily, coerceDesktopFontFamily } from './lib/font-family';
 import { saveStoredFullscreen } from './lib/window-state';
 import { installWebviewZoomShortcuts } from './lib/webview-zoom';
 import { isEditableManualSyncShortcutTarget, isManualSyncShortcut } from './lib/manual-sync-shortcut';
@@ -306,6 +307,7 @@ function App() {
     const settingsTheme = useTaskStore((state) => state.settings?.theme);
     const settingsProxyUrl = useTaskStore((state) => state.settings?.network?.proxyUrl);
     const settingsTextSize = useTaskStore((state) => state.settings?.appearance?.textSize);
+    const settingsFontFamily = useTaskStore((state) => state.settings?.appearance?.fontFamily);
     const settingsLanguage = useTaskStore((state) => state.settings?.language);
     const settingsDateFormat = useTaskStore((state) => state.settings?.dateFormat);
     const settingsCalendarSystem = useTaskStore((state) => state.settings?.calendarSystem);
@@ -618,6 +620,17 @@ function App() {
         }
         applyDesktopTextSize(normalizedTextSize);
     }, [hasHydratedSettings, sandboxMode, settingsTextSize]);
+
+    useEffect(() => {
+        if (!hasHydratedSettings) return;
+        const fontFamily = coerceDesktopFontFamily(settingsFontFamily);
+        if (!sandboxMode) {
+            // Mirrors text size: cached so the first paint after launch already uses it.
+            if (fontFamily) localStorage.setItem(FONT_FAMILY_STORAGE_KEY, fontFamily);
+            else localStorage.removeItem(FONT_FAMILY_STORAGE_KEY);
+        }
+        applyDesktopFontFamily(fontFamily);
+    }, [hasHydratedSettings, sandboxMode, settingsFontFamily]);
 
     useEffect(() => {
         if (!hasHydratedSettings) return;

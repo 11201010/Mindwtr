@@ -78,6 +78,8 @@ const mainProps: Parameters<typeof SettingsMainPage>[0] = {
     onDensityChange: noop,
     textSizeMode: 'default',
     onTextSizeChange: noop,
+    fontFamily: '',
+    onFontFamilyChange: noop,
     showTaskAge: false,
     onShowTaskAgeChange: noop,
     language: 'en',

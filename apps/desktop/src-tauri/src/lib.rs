@@ -45,6 +45,7 @@ mod config;
 mod email_capture;
 mod file_sync_attachment_publication;
 mod install;
+mod system_fonts;
 mod linux_calendar;
 mod linux_notification;
 mod local_api;
@@ -82,6 +83,7 @@ use install::{
     check_microsoft_store_update, diagnostics_enabled, get_install_source, get_linux_distro,
     is_flatpak, is_niri_session,
 };
+use system_fonts::list_system_fonts;
 use linux_calendar::{
     create_linux_calendar_event, delete_linux_calendar_event, ensure_linux_mindwtr_calendar,
     get_linux_calendar_events, get_linux_calendar_permission_status, get_linux_writable_calendars,
@@ -1741,6 +1743,7 @@ pub fn run() {
         .manage(ObsidianWatcherState::default())
         .invoke_handler(tauri::generate_handler![
             notify_ui_ready,
+            list_system_fonts,
             check_microsoft_store_update,
             get_data,
             read_data_json,

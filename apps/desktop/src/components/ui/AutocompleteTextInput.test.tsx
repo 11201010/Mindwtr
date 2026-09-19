@@ -9,11 +9,15 @@ function ControlledAutocomplete({
     createLabel,
     onCreate,
     onKeyDown,
+    showAllWhenEmpty,
+    maxSuggestions,
 }: {
     suggestions: readonly string[];
     createLabel?: string;
     onCreate?: (value: string) => void | Promise<void>;
     onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
+    showAllWhenEmpty?: boolean;
+    maxSuggestions?: number;
 }) {
     const [value, setValue] = useState('');
     return (
@@ -25,6 +29,8 @@ function ControlledAutocomplete({
             createLabel={createLabel}
             onCreate={onCreate}
             onKeyDown={onKeyDown}
+            showAllWhenEmpty={showAllWhenEmpty}
+            maxSuggestions={maxSuggestions}
         />
     );
 }
@@ -93,5 +99,17 @@ describe('AutocompleteTextInput', () => {
         fireEvent.keyDown(input, { key: 'Enter' });
 
         expect(input).toHaveValue('Jim Smith');
+    });
+
+    it('opens the whole list on focus when asked, then narrows it as the user types', () => {
+        render(<ControlledAutocomplete suggestions={['Inter', 'Roboto', 'Zilla Slab']} showAllWhenEmpty maxSuggestions={10} />);
+
+        const input = screen.getByRole('combobox', { name: 'Assignee' });
+        expect(screen.queryAllByRole('option')).toHaveLength(0);
+        fireEvent.focus(input);
+        expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Inter', 'Roboto', 'Zilla Slab']);
+
+        fireEvent.change(input, { target: { value: 'rob' } });
+        expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Roboto']);
     });
 });
