@@ -26,3 +26,4 @@ Current policy:
 - Storage growth is bounded instead of permanently accumulating deleted records.
 - Save/export paths must preserve tombstones until cleanup runs; filtering them out early is a data-loss bug.
 - Any future change to the retention window or purge timing must be treated as a sync-behavior decision, not just a storage optimization.
+- A purged row is never restored: restore actions in core and in the desktop local API treat it as missing, so a compacted tombstone cannot come back as a live "(deleted)" item.
