@@ -19,7 +19,12 @@ const daysFromNow = (n: number): Date => {
     d.setDate(d.getDate() + n);
     return d;
 };
-const buildDueItem = (dueDate: string, language = 'en', settings: Partial<AppData['settings']> = {}) => {
+const buildDueItem = (
+    dueDate: string,
+    language = 'en',
+    settings: Partial<AppData['settings']> = {},
+    options: Parameters<typeof buildWidgetPayload>[2] = {},
+) => {
     const now = new Date().toISOString();
     const payload = buildWidgetPayload(
         {
@@ -40,6 +45,7 @@ const buildDueItem = (dueDate: string, language = 'en', settings: Partial<AppDat
             ],
         },
         language as Parameters<typeof buildWidgetPayload>[1],
+        options,
     );
     return payload.items[0];
 };
@@ -902,6 +908,19 @@ describe('widget-data', () => {
             expect(buildDueItem('2000-01-05', 'en', { dateFormat: 'ymd' }).dueLabel).toBe('1/5');
             expect(resolveWidgetDayFirst('dmy')).toBe(true);
             expect(resolveWidgetDayFirst('nonsense')).toBe(resolveWidgetDayFirst('system'));
+        });
+
+        // A headless background sync rewrites the widget without ever mounting
+        // the app, so core's date formatting is still unconfigured there. The
+        // System setting must read the device locale instead.
+        it('orders the System compact date by the device locale', () => {
+            expect(resolveWidgetDayFirst('system', 'en-GB')).toBe(true);
+            expect(resolveWidgetDayFirst('system', 'en-US')).toBe(false);
+            expect(resolveWidgetDayFirst('system', 'not a locale')).toBe(false);
+            expect(buildDueItem('2000-01-05', 'en', {}, { systemLocale: 'en-GB' }).dueLabel).toBe('5/1');
+            expect(buildDueItem('2000-01-05', 'en', {}, { systemLocale: 'en-US' }).dueLabel).toBe('1/5');
+            // An explicit setting still wins over the device locale.
+            expect(buildDueItem('2000-01-05', 'en', { dateFormat: 'mdy' }, { systemLocale: 'en-GB' }).dueLabel).toBe('1/5');
         });
 
         it('labels a task due tomorrow without emphasis', () => {
