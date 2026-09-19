@@ -104,7 +104,11 @@ The **Store Rollout Preflight** job in `release.yml` reads both stores before
 any build starts and fails the release when either rollout is still open, so a
 forgotten rollout costs a minute instead of an hour of builds. It runs only for
 staged mode in this repository, changes nothing in either store, and names the
-open Play versionCode or Microsoft submission in its failure.
+open Play versionCode or Microsoft submission in its failure. It reads only the
+stores the run actually reaches: a dispatch that re-runs package channels alone
+(Scoop/Winget, Flathub, Linux repos, AUR, Chocolatey, or a single desktop build)
+is not checked, so recovering one of those never trips over the open rollout of
+the release being recovered.
 
 Ordinary hotfixes are staged too. For a critical correction, choose
 `rollout_mode=immediate` when dispatching `release.yml`, or disable

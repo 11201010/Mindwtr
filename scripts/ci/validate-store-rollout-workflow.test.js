@@ -33,7 +33,33 @@ test('an open production rollout fails the stable release before any build job',
   expect(preflight.if).toContain("github.repository == 'dongdongbh/Mindwtr'");
   expect(preflight.concurrency.group).toBe('google-play-production');
 
+  // A recovery dispatch that reaches no store must not be refused by its own
+  // tag's open rollout, so only a publishing run is checked, store by store.
+  const selected = new Function('github', 'inputs', 'needs', `return Boolean(${
+    preflight.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/always\(\)/g, 'true')
+      .replace(/\bneeds\.([\w-]+)/g, 'needs["$1"]')
+  })`);
+  const needs = { validate: { result: 'success', outputs: { rollout_mode: 'staged' } } };
+  const repository = 'dongdongbh/Mindwtr';
+  expect(selected({ event_name: 'push', repository }, {}, needs)).toBe(true);
+  expect(selected({ event_name: 'push', repository: 'someone/Mindwtr' }, {}, needs)).toBe(false);
+  expect(selected({ event_name: 'push', repository }, {}, {
+    validate: { result: 'success', outputs: { rollout_mode: 'immediate' } },
+  })).toBe(false);
+  for (const [dispatched, expected] of [
+    [{ run_linux: true, run_macos: true }, false],
+    [{ run_update_packages: true }, false],
+    [{ run_android: true }, true],
+    [{ run_windows: true }, true],
+  ]) {
+    expect(selected({ event_name: 'workflow_dispatch', repository }, dispatched, needs)).toBe(expected);
+  }
+
   const check = preflight.steps.at(-1);
+  expect(check.env.CHECK_PLAY).toContain('inputs.run_android');
+  expect(check.env.CHECK_MSSTORE).toContain('inputs.run_windows');
+  expect(check.run).toContain('if [ "${CHECK_PLAY:-}" != "true" ]');
+  expect(check.run).toContain('if [ "${CHECK_MSSTORE:-}" != "true" ]');
   expect(check.run).toContain('--action status');
   expect(check.run).toContain('google-play-edit.py rollout');
   expect(check.run).toContain('msstore-rollout.mjs --action status');

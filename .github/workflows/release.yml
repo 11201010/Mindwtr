@@ -260,9 +260,13 @@ jobs:
   # Google Play refuses a staged production publication, and Microsoft refuses a
   # new submission, while the previous rollout is still open. Both refusals used
   # to arrive after an hour of builds, so read that state first. Read-only.
+  # Only a run that reaches a store is checked: a recovery dispatch that rebuilds
+  # package channels must not be refused by its own tag's open rollout. The Play
+  # publish is gated by run_android (android-foss never reaches Play) and the
+  # Microsoft submission by run_windows.
   rollout-preflight:
     needs: validate
-    if: ${{ always() && needs.validate.result == 'success' && needs.validate.outputs.rollout_mode == 'staged' && github.repository == 'dongdongbh/Mindwtr' }}
+    if: ${{ always() && needs.validate.result == 'success' && needs.validate.outputs.rollout_mode == 'staged' && github.repository == 'dongdongbh/Mindwtr' && (github.event_name != 'workflow_dispatch' || inputs.run_android || inputs.run_windows) }}
     runs-on: ubuntu-latest
     name: Store Rollout Preflight
     timeout-minutes: 10
@@ -282,6 +286,7 @@ jobs:
           node-version: 22
 
       - name: Authenticate Google Play API
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_android }}
         id: play_auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
@@ -291,6 +296,8 @@ jobs:
 
       - name: Refuse a stable release while a production rollout is open
         env:
+          CHECK_PLAY: ${{ github.event_name != 'workflow_dispatch' || inputs.run_android }}
+          CHECK_MSSTORE: ${{ github.event_name != 'workflow_dispatch' || inputs.run_windows }}
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
@@ -300,7 +307,9 @@ jobs:
           set -euo pipefail
           blocked=0
 
-          if [ -z "${GOOGLE_PLAY_ACCESS_TOKEN:-}" ]; then
+          if [ "${CHECK_PLAY:-}" != "true" ]; then
+            echo "This run does not reach Google Play; skipped the Play rollout check."
+          elif [ -z "${GOOGLE_PLAY_ACCESS_TOKEN:-}" ]; then
             echo "No Google Play credentials; skipped the Play rollout check."
           else
             play_result="$RUNNER_TEMP/play-rollout-status.json"
@@ -316,7 +325,9 @@ jobs:
             fi
           fi
 
-          if [ -z "${MS_CLIENT_SECRET:-}" ]; then
+          if [ "${CHECK_MSSTORE:-}" != "true" ]; then
+            echo "This run does not reach the Microsoft Store; skipped the Microsoft rollout check."
+          elif [ -z "${MS_CLIENT_SECRET:-}" ]; then
             echo "No Microsoft Store credentials; skipped the Microsoft rollout check."
           else
             ms_result="$RUNNER_TEMP/msstore-rollout-status.json"
