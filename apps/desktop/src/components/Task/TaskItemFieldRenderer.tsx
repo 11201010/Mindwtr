@@ -8,6 +8,7 @@ import {
     continueMarkdownOnEnter,
     computeRelativeStartTime,
     editRRuleString,
+    generateUUID,
     getProjectedRecurringTaskCalendarDate,
     getRecurrenceCompletedOccurrencesValue,
     getTaskDateCoherenceIssues,
@@ -600,7 +601,8 @@ export function TaskItemFieldRenderer({
             return;
         }
 
-        let capture: { path: string } | null = null;
+        let capture: { path: string; size?: number } | null = null;
+        let transcriptApplied = false;
         setDescriptionAudioError(null);
         try {
             const stopped = await session.stop();
@@ -637,11 +639,30 @@ export function TaskItemFieldRenderer({
                 throw new Error(tFallback(t, 'attachments.transcriptionFailed', 'Transcription failed. Please try again.'));
             }
             insertDescriptionTranscript(transcript);
+            transcriptApplied = true;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             setDescriptionAudioError(message || tFallback(t, 'attachments.transcriptionFailed', 'Transcription failed. Please try again.'));
+            // The transcript was the only thing that would have carried the
+            // words, and it never arrived. Keep the recording and attach it to
+            // the task instead of deleting it (#1245).
+            if (capture) {
+                const nowIso = new Date().toISOString();
+                updateTask(taskId, {
+                    attachments: [...(task.attachments ?? []), {
+                        id: generateUUID(),
+                        kind: 'file',
+                        title: `${tFallback(t, 'quickAdd.audioNoteTitle', 'Audio note')} ${safeFormatDate(new Date(), 'Pp')}`,
+                        uri: capture.path,
+                        mimeType: 'audio/wav',
+                        size: capture.size,
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
+                    }],
+                });
+            }
         } finally {
-            if (capture?.path) {
+            if (transcriptApplied && capture?.path) {
                 remove(capture.path).catch((error) => {
                     void logWarn('Description audio cleanup failed', {
                         scope: 'audio',
@@ -651,7 +672,7 @@ export function TaskItemFieldRenderer({
             }
             setDescriptionAudioState('idle');
         }
-    }, [descriptionAudioState, insertDescriptionTranscript, t]);
+    }, [descriptionAudioState, insertDescriptionTranscript, t, task.attachments, taskId, updateTask]);
     const handleEditDescriptionFromPreview = (source?: HTMLElement) => {
         const scrollSnapshot = captureScrollSnapshot(source);
         editDescriptionFromPreview();

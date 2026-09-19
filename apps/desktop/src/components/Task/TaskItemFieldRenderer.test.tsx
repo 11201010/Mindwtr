@@ -10,6 +10,24 @@ import {
 } from './TaskItemFieldRenderer';
 import { LanguageProvider } from '../../contexts/language-context';
 
+const audioMocks = vi.hoisted(() => ({
+    startAudioCapture: vi.fn(),
+    processAudioCapture: vi.fn(),
+    resolveSpeechCapture: vi.fn(async () => ({ ready: true, config: {} })),
+    remove: vi.fn(async () => undefined),
+}));
+
+vi.mock('../../lib/audio-capture', () => ({
+    startAudioCapture: audioMocks.startAudioCapture,
+}));
+vi.mock('../../lib/speech-to-text', () => ({
+    processAudioCapture: audioMocks.processAudioCapture,
+    resolveSpeechCapture: audioMocks.resolveSpeechCapture,
+}));
+vi.mock('@tauri-apps/plugin-fs', () => ({
+    remove: audioMocks.remove,
+}));
+
 const baseTask: Task = {
     id: 'task-1',
     title: 'Test task',
@@ -278,6 +296,72 @@ function AssignedToAutocompleteHarness() {
         />
     );
 }
+
+// #1245 left every stored speech-model path stale, so offline transcription
+// failed on every recording. The dictation WAV was deleted regardless, which
+// threw away the only record of what was said. Keep it and attach it instead.
+describe('TaskItemFieldRenderer description dictation', () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        audioMocks.resolveSpeechCapture.mockResolvedValue({ ready: true, config: {} });
+    });
+
+    const dictate = async (updateTask: (taskId: string, updates: Partial<Task>) => void) => {
+        const capture = {
+            path: '/data/audio-captures/description-audio.wav',
+            name: 'description-audio.wav',
+            mimeType: 'audio/wav' as const,
+            size: 64,
+            bytes: async () => new Uint8Array([1, 2, 3]),
+        };
+        audioMocks.startAudioCapture.mockResolvedValue({
+            backend: 'native',
+            stop: async () => capture,
+            cancel: async () => undefined,
+        });
+        const { getByRole } = render(
+            <LanguageProvider>
+                <TaskItemFieldRenderer fieldId="description" {...createProps({ actions: { updateTask } })} />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            fireEvent.click(getByRole('button', { name: 'Dictate description' }));
+        });
+        await act(async () => {
+            fireEvent.click(getByRole('button', { name: 'Stop dictation' }));
+        });
+        return capture;
+    };
+
+    it('keeps the recording as an attachment when transcription fails', async () => {
+        audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
+        const updateTask = vi.fn<(taskId: string, updates: Partial<Task>) => void>();
+
+        const capture = await dictate(updateTask);
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(updateTask).toHaveBeenCalledWith(baseTask.id, expect.objectContaining({
+            attachments: [expect.objectContaining({
+                kind: 'file',
+                mimeType: 'audio/wav',
+                uri: capture.path,
+            })],
+        }));
+        expect(audioMocks.remove).not.toHaveBeenCalled();
+    });
+
+    it('removes the recording once the transcript reached the description', async () => {
+        audioMocks.processAudioCapture.mockResolvedValue({ transcript: 'Buy milk' });
+        const updateTask = vi.fn<(taskId: string, updates: Partial<Task>) => void>();
+
+        const capture = await dictate(updateTask);
+
+        await waitFor(() => expect(audioMocks.remove).toHaveBeenCalledWith(capture.path));
+        expect(updateTask).not.toHaveBeenCalled();
+    });
+});
 
 describe('TaskItemFieldRenderer date clear buttons', () => {
     afterEach(() => {

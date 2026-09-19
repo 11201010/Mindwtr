@@ -751,21 +751,19 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             if (!isSubmissionCurrent()) return;
             const saveAudioAttachments = settings.gtd?.saveAudioAttachments !== false || !speechReady;
 
-            const attachment: Attachment | null = saveAudioAttachments
-                ? {
-                    id: generateUUID(),
-                    kind: 'file',
-                    title: displayTitle,
-                    uri: absolutePath,
-                    mimeType: 'audio/wav',
-                    size: audioByteSize,
-                    createdAt: nowIso,
-                    updatedAt: nowIso,
-                }
-                : null;
+            const audioAttachment: Attachment = {
+                id: generateUUID(),
+                kind: 'file',
+                title: displayTitle,
+                uri: absolutePath,
+                mimeType: 'audio/wav',
+                size: audioByteSize,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+            };
 
             const attachments = [...(initialProps?.attachments ?? [])];
-            if (attachment) attachments.push(attachment);
+            if (saveAudioAttachments) attachments.push(audioAttachment);
             const props: Partial<Task> = {
                 status: 'inbox',
                 ...initialProps,
@@ -797,6 +795,43 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
             if (!addTaskResult.id) return;
             const taskId = addTaskResult.id;
 
+            const discardCapture = () => {
+                if (saveAudioAttachments) return;
+                remove(absolutePath).catch((error) => {
+                    void logWarn('Audio cleanup failed', {
+                        scope: 'audio',
+                        extra: { error: error instanceof Error ? error.message : String(error) },
+                    });
+                });
+            };
+
+            // The transcript was the only thing that would have carried the
+            // words, and it never arrived. Keep the recording and attach it
+            // instead of deleting it, or the note is lost for good (#1245).
+            const keepCaptureAsAttachment = async () => {
+                if (saveAudioAttachments) return;
+                const { tasks: currentTasks, updateTask: updateTaskNow } = useTaskStore.getState();
+                const existing = currentTasks.find((task) => task.id === taskId);
+                if (!existing) return;
+                if (existing.attachments?.some((item) => item.id === audioAttachment.id)) return;
+                await updateTaskNow(taskId, {
+                    attachments: [...(existing.attachments ?? []), audioAttachment],
+                });
+            };
+
+            const keepCaptureAfterFailure = (message: string, error: unknown) => {
+                void logWarn(message, {
+                    scope: 'audio',
+                    extra: { error: error instanceof Error ? error.message : String(error) },
+                });
+                keepCaptureAsAttachment().catch((attachError) => {
+                    void logWarn('Failed to keep the audio capture', {
+                        scope: 'audio',
+                        extra: { error: attachError instanceof Error ? attachError.message : String(attachError) },
+                    });
+                });
+            };
+
             const runSpeech = async (bytes: Uint8Array) => {
                 const timeZone = typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
                     ? Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -809,42 +844,17 @@ export function QuickAddModal({ standaloneWindow = false }: QuickAddModalProps) 
                         timeZone,
                     }
                 )
-                    .then((result) => applySpeechResult(taskId, result))
-                    .catch((error) => void logWarn('Speech-to-text failed', {
-                        scope: 'audio',
-                        extra: { error: error instanceof Error ? error.message : String(error) },
-                    }))
-                    .finally(() => {
-                        if (!saveAudioAttachments) {
-                            remove(absolutePath).catch((error) => {
-                                void logWarn('Audio cleanup failed', {
-                                    scope: 'audio',
-                                    extra: { error: error instanceof Error ? error.message : String(error) },
-                                });
-                            });
-                        }
-                    });
+                    .then(async (result) => {
+                        await applySpeechResult(taskId, result);
+                        discardCapture();
+                    })
+                    .catch((error) => keepCaptureAfterFailure('Speech-to-text failed', error));
             };
 
             if (speechReady) {
                 void capture.bytes()
                     .then((bytes) => runSpeech(bytes))
-                    .catch((error) => {
-                        void logWarn('Failed to load audio for transcription', {
-                            scope: 'audio',
-                            extra: { error: error instanceof Error ? error.message : String(error) },
-                        });
-                        if (!saveAudioAttachments) {
-                            remove(absolutePath).catch((cleanupError) => {
-                                void logWarn('Audio cleanup failed', {
-                                    scope: 'audio',
-                                    extra: {
-                                        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-                                    },
-                                });
-                            });
-                        }
-                    });
+                    .catch((error) => keepCaptureAfterFailure('Failed to load audio for transcription', error));
             } else if (!saveAudioAttachments) {
                 remove(absolutePath).catch((error) => {
                     void logWarn('Audio cleanup failed', {

@@ -1267,6 +1267,96 @@ describe('QuickAddModal', () => {
         await waitFor(() => expect(addTask).toHaveBeenCalledTimes(1));
     });
 
+    // #1245 left every stored speech-model path stale, so offline transcription
+    // failed on every recording. With "save audio attachments" off the WAV was
+    // then deleted: no transcript, no file, the words gone for good. A failed
+    // transcription must keep the recording and attach it instead.
+    it('keeps a voice capture as an attachment when transcription fails', async () => {
+        const stoppedCapture = createDeferred<{
+            path: string;
+            sampleRate: number;
+            channels: number;
+            size: number;
+        }>();
+        const addTask = vi.fn(async () => ({ success: true, id: 'audio-task' }));
+        const updateTask = vi.fn(async () => ({ success: true }));
+        const audioTask: Task = {
+            id: 'audio-task',
+            title: 'Audio note',
+            status: 'inbox',
+            tags: [],
+            contexts: [],
+            attachments: [],
+            createdAt: '2026-09-18T00:00:00.000Z',
+            updatedAt: '2026-09-18T00:00:00.000Z',
+        };
+        (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+        tauriMocks.invoke.mockImplementation(async (command?: string) => {
+            if (command === 'start_audio_recording') return undefined;
+            if (command === 'stop_audio_recording') return stoppedCapture.promise;
+            if (command === 'transcribe_whisper') throw new Error('Whisper model not found');
+            return false;
+        });
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                addTask,
+                updateTask,
+                tasks: [audioTask],
+                _allTasks: [audioTask],
+                _tasksById: new Map([[audioTask.id, audioTask]]),
+                settings: {
+                    ...state.settings,
+                    gtd: {
+                        ...(state.settings?.gtd ?? {}),
+                        saveAudioAttachments: false,
+                    },
+                    ai: {
+                        ...state.settings?.ai,
+                        speechToText: {
+                            enabled: true,
+                            provider: 'whisper',
+                            offlineModelPath: '/models/whisper.bin',
+                        },
+                    },
+                },
+            }));
+        });
+        renderQuickAddModal();
+
+        await act(async () => {
+            window.dispatchEvent(new CustomEvent('mindwtr:quick-add', { detail: { captureMode: 'audio' } }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Start recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            stoppedCapture.resolve({
+                path: '/data/audio-kept.wav',
+                sampleRate: 16_000,
+                channels: 1,
+                size: 128,
+            });
+            await stoppedCapture.promise;
+        });
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(updateTask).toHaveBeenCalledWith('audio-task', expect.objectContaining({
+            attachments: [expect.objectContaining({
+                kind: 'file',
+                mimeType: 'audio/wav',
+                uri: '/data/audio-kept.wav',
+            })],
+        }));
+        expect(fsMocks.remove).not.toHaveBeenCalledWith('/data/audio-kept.wav');
+    });
+
     it('toasts an unreadable date command and keeps Quick Add open', async () => {
         const addTask = vi.fn(async () => ({ success: true, id: 'task-id' }));
         act(() => {
