@@ -113,6 +113,47 @@ describe('AutocompleteTextInput', () => {
         expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Roboto']);
     });
 
+    it('scrolls the highlighted option into view', () => {
+        const scrollIntoView = vi.fn();
+        const original = Element.prototype.scrollIntoView;
+        Element.prototype.scrollIntoView = scrollIntoView;
+        try {
+            render(<ControlledAutocomplete suggestions={['Inter', 'Roboto', 'Zilla Slab']} showAllWhenEmpty maxSuggestions={10} />);
+
+            const input = screen.getByRole('combobox', { name: 'Assignee' });
+            fireEvent.focus(input);
+            fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+            expect(screen.getByRole('option', { name: 'Inter' })).toHaveAttribute('aria-selected', 'true');
+            expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+            expect(scrollIntoView.mock.instances[0]).toBe(screen.getByRole('option', { name: 'Inter' }));
+        } finally {
+            Element.prototype.scrollIntoView = original;
+        }
+    });
+
+    it('wraps ArrowUp from the untouched field to the last option', () => {
+        render(<ControlledAutocomplete suggestions={['Inter', 'Roboto', 'Zilla Slab']} showAllWhenEmpty maxSuggestions={10} />);
+
+        const input = screen.getByRole('combobox', { name: 'Assignee' });
+        fireEvent.focus(input);
+        fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+        expect(screen.getByRole('option', { name: 'Zilla Slab' })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('keeps the option buttons out of the tab order', () => {
+        render(<ControlledAutocomplete suggestions={['Inter', 'Roboto']} showAllWhenEmpty createLabel="New Person" onCreate={vi.fn()} />);
+
+        const input = screen.getByRole('combobox', { name: 'Assignee' });
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: 'Ro' } });
+
+        for (const option of screen.getAllByRole('option')) {
+            expect(option).toHaveAttribute('tabindex', '-1');
+        }
+    });
+
     it('keeps the list open when its scrollbar is pressed', () => {
         render(<ControlledAutocomplete suggestions={['Inter', 'Roboto']} showAllWhenEmpty />);
 

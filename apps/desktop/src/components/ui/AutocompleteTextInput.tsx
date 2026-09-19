@@ -65,6 +65,14 @@ export function AutocompleteTextInput({
         setActiveIndex(hasCreateAction ? 0 : -1);
     }, [hasCreateAction, query]);
 
+    // The list scrolls (max-h-64) and DOM focus stays on the input, so nothing
+    // else follows the highlight — the font picker's few hundred rows left it
+    // below the fold (#1244). scrollIntoView is missing in jsdom.
+    useEffect(() => {
+        if (activeIndex < 0) return;
+        document.getElementById(`${listboxId}-option-${activeIndex}`)?.scrollIntoView?.({ block: 'nearest' });
+    }, [activeIndex, listboxId, optionCount]);
+
     const selectSuggestion = (option: string) => {
         onChange(option);
         setActiveIndex(-1);
@@ -87,7 +95,8 @@ export function AutocompleteTextInput({
             }
             if (event.key === 'ArrowUp') {
                 event.preventDefault();
-                setActiveIndex((index) => (index - 1 + optionCount) % optionCount);
+                // From the idle field (index -1) this lands on the last option.
+                setActiveIndex((index) => (index <= 0 ? optionCount - 1 : index - 1));
                 return;
             }
             if (event.key === 'Enter' && (hasCreateAction || activeIndex >= 0)) {
@@ -151,6 +160,7 @@ export function AutocompleteTextInput({
                             id={`${listboxId}-option-${index}`}
                             type="button"
                             role="option"
+                            tabIndex={-1}
                             aria-selected={index === activeIndex}
                             onMouseDown={(event) => {
                                 event.preventDefault();
@@ -171,6 +181,7 @@ export function AutocompleteTextInput({
                             id={`${listboxId}-option-${matches.length}`}
                             type="button"
                             role="option"
+                            tabIndex={-1}
                             aria-label={`${createLabel}: ${query}`}
                             aria-selected={activeIndex === matches.length}
                             onMouseDown={(event) => {
