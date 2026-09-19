@@ -140,6 +140,9 @@ export function AutocompleteTextInput({
                 <div
                     id={listboxId}
                     role="listbox"
+                    // A press on the list's own scrollbar must not blur the input, or the
+                    // list closes before it can be scrolled (#1244).
+                    onMouseDown={(event) => event.preventDefault()}
                     className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-lg"
                 >
                     {matches.map((option, index) => (

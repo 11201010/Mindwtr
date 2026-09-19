@@ -112,4 +112,14 @@ describe('AutocompleteTextInput', () => {
         fireEvent.change(input, { target: { value: 'rob' } });
         expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Roboto']);
     });
+
+    it('keeps the list open when its scrollbar is pressed', () => {
+        render(<ControlledAutocomplete suggestions={['Inter', 'Roboto']} showAllWhenEmpty />);
+
+        const input = screen.getByRole('combobox', { name: 'Assignee' });
+        fireEvent.focus(input);
+        // A prevented mousedown on the list itself never blurs the input.
+        expect(fireEvent.mouseDown(screen.getByRole('listbox'))).toBe(false);
+        expect(screen.getAllByRole('option')).toHaveLength(2);
+    });
 });
