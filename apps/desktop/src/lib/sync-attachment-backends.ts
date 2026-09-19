@@ -1107,37 +1107,63 @@ export async function syncCloudAttachments(
                 );
                 return failure.mutated;
             }
-            clearAttachmentValidationFailure(attachment.id);
             reportProgress(attachment.id, 'upload', 0, fileData.length, 'active');
-            await withRetry(
-                async () => {
-                    await helpers?.assertRemoteMutationFenceHeld?.(UPLOAD_TIMEOUT_MS + 5_000);
-                    return await cloudPutFile(
-                        `${baseSyncUrl}/${cloudKey}`,
-                        fileData,
-                        attachment.mimeType || 'application/octet-stream',
-                        {
-                            allowInsecureHttp: cloudConfig.allowInsecureHttp,
-                            token: cloudConfig.token,
-                            fetcher,
-                            timeoutMs: UPLOAD_TIMEOUT_MS,
-                            onProgress: (loaded, total) =>
-                                reportProgress(attachment.id, 'upload', loaded, total, 'active'),
-                        },
-                    );
-                },
-                {
-                    ...CLOUD_ATTACHMENT_RETRY_OPTIONS,
-                    onRetry: (error, attempt, delayMs) => {
-                        deps.logSyncInfo('Retrying cloud attachment upload', {
-                            id: attachment.id,
-                            attempt: String(attempt + 1),
-                            delayMs: String(delayMs),
-                            error: describeAttachmentErrorForLog(error).message,
-                        });
+            try {
+                await withRetry(
+                    async () => {
+                        await helpers?.assertRemoteMutationFenceHeld?.(UPLOAD_TIMEOUT_MS + 5_000);
+                        return await cloudPutFile(
+                            `${baseSyncUrl}/${cloudKey}`,
+                            fileData,
+                            attachment.mimeType || 'application/octet-stream',
+                            {
+                                allowInsecureHttp: cloudConfig.allowInsecureHttp,
+                                token: cloudConfig.token,
+                                fetcher,
+                                timeoutMs: UPLOAD_TIMEOUT_MS,
+                                onProgress: (loaded, total) =>
+                                    reportProgress(attachment.id, 'upload', loaded, total, 'active'),
+                            },
+                        );
                     },
-                },
-            );
+                    {
+                        ...CLOUD_ATTACHMENT_RETRY_OPTIONS,
+                        onRetry: (error, attempt, delayMs) => {
+                            deps.logSyncInfo('Retrying cloud attachment upload', {
+                                id: attachment.id,
+                                attempt: String(attempt + 1),
+                                delayMs: String(delayMs),
+                                error: describeAttachmentErrorForLog(error).message,
+                            });
+                        },
+                    },
+                );
+            } catch (error) {
+                const status = getErrorStatus(error);
+                // The server's answer about these bytes is final (blocked content, or over its
+                // size limit). Same bounded rule as a client-side refusal: count it, and let the
+                // third one take the attachment out of the pending-upload list.
+                if ((status === 400 || status === 413) && helpers?.activationProbe !== true) {
+                    const failure = handleAttachmentValidationFailure(
+                        attachment,
+                        status === 413 ? 'server_file_too_large' : 'server_rejected',
+                    );
+                    reportProgress(
+                        attachment.id,
+                        'upload',
+                        0,
+                        attachment.size ?? fileData.length,
+                        'failed',
+                        failure.message,
+                    );
+                    deps.logSyncWarning(
+                        failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+                    );
+                    return failure.mutated;
+                }
+                throw error;
+            }
+            clearAttachmentValidationFailure(attachment.id);
             attachment.cloudKey = cloudKey;
             attachment.localStatus = 'available';
             reportProgress(attachment.id, 'upload', fileData.length, fileData.length, 'completed');

@@ -14,6 +14,8 @@ import {
   type LocalFileStat,
 } from '@mindwtr/core';
 import {
+  clearAttachmentUploadRefusal,
+  handleAttachmentUploadRefusal,
   isAttachmentPresenceReconciliationDue,
   logAttachmentInfo,
   logAttachmentWarn,
@@ -396,6 +398,23 @@ export const syncCloudAttachments = async (
           // here could erase another device's winning blob.
           throw error;
         }
+        const status = Number((error as { status?: unknown } | null)?.status);
+        // The server's answer about these bytes is final (blocked content, or over its size
+        // limit). Bounded like desktop's client-side refusals: count it, and let the third
+        // one take the attachment out of the pending-upload list, which is what lets the
+        // rest of the document reach the other devices again.
+        if ((status === 400 || status === 413) && !options.activationProbe) {
+          const failure = handleAttachmentUploadRefusal(
+            attachment,
+            status === 413 ? 'server_file_too_large' : 'server_rejected',
+          );
+          if (failure.mutated) recordPatch(attachment);
+          reportProgress(attachment.id, 'upload', 0, attachment.size ?? 0, 'failed', failure.message);
+          logAttachmentWarn(
+            failure.reachedLimit ? `${failure.message}; marking attachment unrecoverable` : failure.message,
+          );
+          continue;
+        }
         reportProgress(
           attachment.id,
           'upload',
@@ -416,6 +435,7 @@ export const syncCloudAttachments = async (
   }
 
   for (const pending of pendingUploadMutations) {
+    clearAttachmentUploadRefusal(pending.attachment.id);
     pending.attachment.cloudKey = pending.cloudKey;
     pending.attachment.pendingContentUpload = undefined;
     applyAttachmentContentStat(pending.attachment, pending.stat, pending.fileHash);

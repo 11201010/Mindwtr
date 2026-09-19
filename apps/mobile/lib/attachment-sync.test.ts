@@ -2799,6 +2799,107 @@ describe('attachment sync', () => {
     });
   });
 
+  // The self-hosted server refuses some uploads for good: 400 for blocked content, 413
+  // over its size limit. Retrying them every cycle also keeps every task edit on this
+  // device from reaching the other devices, so the third refusal is the last one.
+  describe('self-hosted uploads the server refuses for good', () => {
+    const REFUSED_URI = 'file://document/attachments/refused.txt';
+
+    const refusedData = (): AppData => ({
+      tasks: [{
+        id: 'task-1',
+        title: 'Task',
+        status: 'inbox',
+        tags: [],
+        contexts: [],
+        attachments: [{
+          id: 'refused',
+          kind: 'file',
+          title: 'refused.txt',
+          uri: REFUSED_URI,
+          localStatus: 'available',
+          createdAt: '2026-09-18T10:00:00.000Z',
+          updatedAt: '2026-09-18T10:00:00.000Z',
+        }],
+        createdAt: '2026-09-18T10:00:00.000Z',
+        updatedAt: '2026-09-18T10:00:00.000Z',
+      }],
+      projects: [],
+      sections: [],
+      areas: [],
+      settings: {},
+    });
+
+    const rejectUploadsWith = async (status: number): Promise<void> => {
+      const core = await import('@mindwtr/core');
+      vi.mocked(core.cloudPutFile).mockRejectedValue(
+        Object.assign(new Error(`Cloud File PUT failed (${status})`), { status }),
+      );
+    };
+
+    const runCloudUpload = (
+      appData: AppData,
+      options?: Parameters<typeof attachmentSync.syncCloudAttachments>[3],
+    ) => attachmentSync.syncCloudAttachments(
+      appData,
+      { url: 'https://cloud.example/v1/data', token: 'token' },
+      'https://cloud.example/v1',
+      options,
+    );
+
+    beforeEach(async () => {
+      const { clearAttachmentUploadRefusals } = await import('./attachment-sync-utils');
+      clearAttachmentUploadRefusals();
+      fileSystemMock.getInfoAsync.mockImplementation(async (uri: string) => (
+        uri === REFUSED_URI ? { exists: true, size: 3 } : { exists: false }
+      ));
+      fileSystemMock.readAsStringAsync.mockResolvedValue('AQID');
+    });
+
+    afterEach(async () => {
+      // mockRejectedValue survives vi.clearAllMocks(), and later tests upload successfully.
+      const core = await import('@mindwtr/core');
+      vi.mocked(core.cloudPutFile).mockReset();
+    });
+
+    it.each([400, 413])('marks a cloud attachment unrecoverable on the third %s answer', async (status) => {
+      await rejectUploadsWith(status);
+      const appData = refusedData();
+
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        const { data } = syncResult(await runCloudUpload(appData), appData);
+        expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+      }
+
+      const { didMutate, data } = syncResult(await runCloudUpload(appData), appData);
+      expect(didMutate).toBe(true);
+      const attachment = data.tasks[0].attachments?.[0];
+      expect(attachment?.deletedAt).toBeDefined();
+      expect(attachment?.localStatus).toBe('missing');
+      expect(attachment?.cloudKey).toBeUndefined();
+    });
+
+    it('keeps a cloud attachment pending when the server answers 503', async () => {
+      await rejectUploadsWith(503);
+      const appData = refusedData();
+
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        const { data } = syncResult(await runCloudUpload(appData), appData);
+        expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+      }
+    });
+
+    it('does not count or mark anything during an activation probe', async () => {
+      await rejectUploadsWith(400);
+      const appData = refusedData();
+
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        const { data } = syncResult(await runCloudUpload(appData, { activationProbe: true }), appData);
+        expect(data.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+      }
+    });
+  });
+
   it('proves an existing candidate cloud attachment with a bounded GET and hash check', async () => {
     const remoteBytes = new Uint8Array([1, 2, 3]);
     mockMissingTargetWithDownloadStage(remoteBytes);

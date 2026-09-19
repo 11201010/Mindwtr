@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import desktopCapability from '../../src-tauri/capabilities/default.json';
 import {
+    findPendingAttachmentUploads,
     globalProgressTracker,
     MAX_DOWNLOAD_BYTES,
     SyncRemoteMutationFenceLostError,
@@ -13,6 +14,7 @@ import {
     isAttachmentPresenceReconciliationDue,
     markAttachmentPresenceReconciled,
 } from './attachment-presence-scope';
+import { clearAttachmentValidationFailures } from './sync-attachment-validation';
 import {
     clearAttachmentSyncState,
     syncCloudAttachments,
@@ -193,6 +195,7 @@ describe('desktop sync attachment backends', () => {
         installerMocks.installAttachmentDownload.mockReset();
         installerMocks.installAttachmentDownload.mockResolvedValue({ kind: 'installed' });
         clearAttachmentSyncState();
+        clearAttachmentValidationFailures();
         pathMocks.dataDir.mockResolvedValue('/app-data');
         pathMocks.dirname.mockImplementation(async (path: string) => path.replace(/[\\/][^\\/]+$/, ''));
         pathMocks.join.mockImplementation(async (...parts: string[]) => parts.join('/'));
@@ -637,6 +640,133 @@ describe('desktop sync attachment backends', () => {
             expect.stringContaining('Failed to upload attachment'),
             expect.anything(),
         );
+    });
+
+    describe('self-hosted uploads the server refuses for good', () => {
+        const REFUSAL_BYTES = new Uint8Array([1, 2, 3]);
+
+        const refusalDeps = (
+            fetcher: ReturnType<typeof vi.fn>,
+            logSyncWarning = vi.fn(),
+        ): AttachmentBackendDeps => ({
+            getTauriFetch: async () => fetcher as unknown as typeof fetch,
+            isTauriRuntimeEnv: () => true,
+            logSyncInfo: vi.fn(),
+            logSyncWarning,
+            resolveWebdavPassword: vi.fn(),
+        });
+
+        const pendingUploadData = (): AppData => {
+            const appData = createCandidateAttachmentData();
+            appData.tasks[0].attachments![0].cloudKey = undefined;
+            return appData;
+        };
+
+        const runCloudUpload = (
+            appData: AppData,
+            deps: AttachmentBackendDeps,
+            helpers?: Parameters<typeof syncCloudAttachments>[4],
+        ): Promise<AppData | false> => syncCloudAttachments(
+            appData,
+            { url: 'https://cloud.example/v1/data', token: 'token' },
+            'https://cloud.example/v1',
+            deps,
+            helpers,
+        );
+
+        // A refusal below the limit changes nothing, so the backend returns false and the
+        // attachment to look at is still the one in the document that was handed in.
+        const refusedAttachment = (result: AppData | false, appData: AppData) =>
+            (result === false ? appData : result).tasks[0].attachments?.[0];
+
+        const putCount = (fetcher: ReturnType<typeof vi.fn>): number =>
+            fetcher.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PUT').length;
+
+        beforeEach(() => {
+            fsMocks.exists.mockResolvedValue(true);
+            fsMocks.readFile.mockResolvedValue(REFUSAL_BYTES);
+        });
+
+        it.each([400, 413])('keeps a cloud attachment pending after fewer than three %s answers', async (status) => {
+            const fetcher = vi.fn(async () => errorResponse(status, 'refused'));
+            const deps = refusalDeps(fetcher);
+            const appData = pendingUploadData();
+
+            for (const expectedPuts of [1, 2]) {
+                const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
+                expect(attachment?.deletedAt).toBeUndefined();
+                expect(attachment?.cloudKey).toBeUndefined();
+                expect(putCount(fetcher)).toBe(expectedPuts);
+            }
+        });
+
+        it.each([400, 413])('marks a cloud attachment unrecoverable on the third %s answer', async (status) => {
+            const fetcher = vi.fn(async () => errorResponse(status, 'refused'));
+            const logSyncWarning = vi.fn();
+            const deps = refusalDeps(fetcher, logSyncWarning);
+            const appData = pendingUploadData();
+
+            await runCloudUpload(appData, deps);
+            await runCloudUpload(appData, deps);
+            const result = expectFoldedData(await runCloudUpload(appData, deps));
+
+            const attachment = result.tasks[0].attachments?.[0];
+            expect(attachment?.cloudKey).toBeUndefined();
+            expect(attachment?.localStatus).toBe('missing');
+            expect(attachment?.deletedAt).toBeDefined();
+            expect(putCount(fetcher)).toBe(3);
+            // The document handed in is never written to.
+            expect(appData.tasks[0].attachments?.[0]?.deletedAt).toBeUndefined();
+            // Nothing is pending any more, so the next cycle can write the tasks again.
+            expect(findPendingAttachmentUploads(result)).toHaveLength(0);
+            expect(logSyncWarning).toHaveBeenCalledWith(
+                expect.stringContaining('marking attachment unrecoverable'),
+            );
+        });
+
+        it('a successful upload resets the refusal count', async () => {
+            const fetcher = vi.fn(async () => errorResponse(400, 'refused'));
+            const deps = refusalDeps(fetcher);
+            const appData = pendingUploadData();
+
+            await runCloudUpload(appData, deps);
+            await runCloudUpload(appData, deps);
+            fetcher.mockImplementationOnce(async () => new Response(null, { status: 200 }));
+            const uploaded = expectFoldedData(await runCloudUpload(appData, deps));
+            expect(uploaded.tasks[0].attachments?.[0]?.cloudKey).toBe('attachments/attachment-1.txt');
+
+            await runCloudUpload(appData, deps);
+            const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
+            expect(attachment?.deletedAt).toBeUndefined();
+            expect(putCount(fetcher)).toBe(5);
+        });
+
+        it('keeps a cloud attachment pending when the server answers 503', async () => {
+            const fetcher = vi.fn(async () => errorResponse(503, 'Unavailable'));
+            const deps = refusalDeps(fetcher);
+            const appData = pendingUploadData();
+
+            for (let cycle = 0; cycle < 3; cycle += 1) {
+                const attachment = refusedAttachment(await runCloudUpload(appData, deps), appData);
+                expect(attachment?.deletedAt).toBeUndefined();
+            }
+            expect(putCount(fetcher)).toBe(3);
+        });
+
+        it('does not count or mark anything during an activation probe', async () => {
+            const fetcher = vi.fn(async () => errorResponse(400, 'refused'));
+            const deps = refusalDeps(fetcher);
+            const appData = pendingUploadData();
+
+            for (let cycle = 0; cycle < 3; cycle += 1) {
+                const attachment = refusedAttachment(
+                    await runCloudUpload(appData, deps, activationHelpers()),
+                    appData,
+                );
+                expect(attachment?.deletedAt).toBeUndefined();
+            }
+            expect(putCount(fetcher)).toBe(3);
+        });
     });
 
     it('uploads a candidate-cleared local attachment during a self-hosted activation probe', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type { Attachment } from '@mindwtr/core';
 
 const fileSystemMock = vi.hoisted(() => ({
   __esModule: true,
@@ -34,10 +35,80 @@ import {
   attachmentNeedsManagedLocalCopy,
   canUploadAttachmentFrom,
   cleanupAttachmentTempFiles,
+  clearAttachmentUploadRefusal,
+  clearAttachmentUploadRefusals,
   deleteManagedAttachmentFile,
   getLocalAttachmentPresence,
+  handleAttachmentUploadRefusal,
   writeBytesSafely,
 } from './attachment-sync-utils';
+
+describe('handleAttachmentUploadRefusal', () => {
+  const refusedAttachment = (): Attachment => ({
+    id: 'attachment-1',
+    kind: 'file',
+    title: 'refused.txt',
+    uri: 'file:///documents/attachments/refused.txt',
+    localStatus: 'available',
+    createdAt: '2026-09-18T00:00:00.000Z',
+    updatedAt: '2026-09-18T00:00:00.000Z',
+  });
+
+  beforeEach(() => {
+    clearAttachmentUploadRefusals();
+  });
+
+  it('leaves the attachment alone for the first two refusals', () => {
+    const attachment = refusedAttachment();
+
+    for (const attempts of [1, 2]) {
+      expect(handleAttachmentUploadRefusal(attachment, 'server_rejected')).toMatchObject({
+        attempts,
+        reachedLimit: false,
+        mutated: false,
+      });
+      expect(attachment.deletedAt).toBeUndefined();
+    }
+  });
+
+  it('marks the attachment unrecoverable on the third refusal', () => {
+    const attachment = refusedAttachment();
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+
+    expect(handleAttachmentUploadRefusal(attachment, 'server_file_too_large')).toMatchObject({
+      attempts: 3,
+      reachedLimit: true,
+      mutated: true,
+    });
+    expect(attachment.deletedAt).toBeDefined();
+    expect(attachment.localStatus).toBe('missing');
+    expect(attachment.cloudKey).toBeUndefined();
+  });
+
+  it('restarts the count after the refusal is cleared', () => {
+    const attachment = refusedAttachment();
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+    handleAttachmentUploadRefusal(attachment, 'server_rejected');
+    clearAttachmentUploadRefusal(attachment.id);
+
+    expect(handleAttachmentUploadRefusal(attachment, 'server_rejected')).toMatchObject({
+      attempts: 1,
+      reachedLimit: false,
+      mutated: false,
+    });
+    expect(attachment.deletedAt).toBeUndefined();
+  });
+
+  it('names the attachment by id, never by title', () => {
+    const attachment = refusedAttachment();
+
+    const { message } = handleAttachmentUploadRefusal(attachment, 'server_rejected');
+
+    expect(message).toContain('attachment-1');
+    expect(message).not.toContain('refused.txt');
+  });
+});
 
 describe('cleanupAttachmentTempFiles', () => {
   beforeEach(() => {

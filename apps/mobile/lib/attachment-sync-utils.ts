@@ -65,7 +65,37 @@ export const CLOUD_PROVIDER_DROPBOX = 'dropbox';
 
 export { markAttachmentUnrecoverable, sleep };
 
-const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+// Mobile twin of apps/desktop/src/lib/sync-attachment-validation.ts: a per-session count of
+// permanent upload refusals; the third one marks the attachment unrecoverable.
+const ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS = 3;
+const attachmentUploadRefusals = new Map<string, number>();
+
+export const clearAttachmentUploadRefusal = (attachmentId: string): void => {
+  attachmentUploadRefusals.delete(attachmentId);
+};
+
+export const clearAttachmentUploadRefusals = (): void => {
+  attachmentUploadRefusals.clear();
+};
+
+export const handleAttachmentUploadRefusal = (
+  attachment: Attachment,
+  reason: string,
+): { attempts: number; reachedLimit: boolean; mutated: boolean; message: string } => {
+  const attempts = (attachmentUploadRefusals.get(attachment.id) || 0) + 1;
+  attachmentUploadRefusals.set(attachment.id, attempts);
+  // The id, not the title: mobile's attachment warnings never carry the file name.
+  const message = `Attachment upload refused (${reason}) for ${attachment.id}`
+    + ` [attempt ${attempts}/${ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS}]`;
+  if (attempts < ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS) {
+    return { attempts, reachedLimit: false, mutated: false, message };
+  }
+  attachmentUploadRefusals.delete(attachment.id);
+  const mutated = markAttachmentUnrecoverable(attachment);
+  return { attempts, reachedLimit: true, mutated, message };
+};
+
+const BASE64_ALPHABET ='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_LOOKUP = (() => {
   const map = new Uint8Array(256);
   map.fill(255);
