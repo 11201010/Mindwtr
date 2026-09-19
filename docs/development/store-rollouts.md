@@ -49,6 +49,11 @@ credentials and uploads no packages. The default manual action is `status`.
   `finalize`. Microsoft does not support resuming a halted rollout.
 - `percentage` is used only by `increase`, must exceed the current percentage,
   and must be below 100. Use `finalize` to complete the rollout.
+  Prefer a value the daily schedule knows: 5, 20, or 50. The scheduled run only
+  advances from one of those three, so an off-schedule percentage (30%, say)
+  makes every later scheduled run for that release fail, every day, until
+  someone raises it to the next listed stage or finalizes it by hand. The
+  failure is deliberate: the controller never guesses the next stage.
 
 For example, after reviewing health evidence:
 
