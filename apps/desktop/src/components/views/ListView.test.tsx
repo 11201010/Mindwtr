@@ -1034,7 +1034,9 @@ describe('ListView', () => {
     expect(view.getByText('@missing')).toBeInTheDocument();
     expect(view.getByText('@blocked')).toBeInTheDocument();
     fireEvent.click(view.getByRole('button', { name: 'Contexts & tags' }));
-    expect(view.getByRole('button', { name: '#reading' })).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => {
+      expect(view.getByRole('button', { name: '#reading' })).toHaveAttribute('aria-pressed', 'true');
+    });
     expect(useUiStore.getState().listFilters.criteria).toMatchObject({
       contexts: ['@missing'],
       excludedContexts: ['@blocked'],
