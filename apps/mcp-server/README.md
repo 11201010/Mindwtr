@@ -32,13 +32,19 @@ npm install -g --allow-scripts=better-sqlite3 mindwtr-mcp
 
 In MCP client configurations using `npx`, add `"--allow-scripts=better-sqlite3"` before `"mindwtr-mcp"` in `args`. For an existing project-local install, run `npm install-scripts approve better-sqlite3`, then `npm rebuild better-sqlite3` from that project. Review the dependency before approving; do not enable all dependency scripts.
 
-Default database locations:
-- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`)
-- macOS: `~/Library/Application Support/mindwtr/mindwtr.db`
-- Windows: `%APPDATA%\mindwtr\mindwtr.db`
+Default database locations. The installed Windows and macOS apps keep the database in a `data` subfolder from version 1.3.2 on; Linux and the portable builds are unchanged. The server looks in both places, so it finds the database either way.
 
-Additional macOS path for sandboxed builds:
-- `~/Library/Containers/tech.dongdongbh.mindwtr/Data/Library/Application Support/mindwtr/mindwtr.db`
+- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`)
+- macOS, 1.3.2 and later: `~/Library/Application Support/mindwtr/data/mindwtr.db`
+- macOS, 1.3.1 and earlier: `~/Library/Application Support/mindwtr/mindwtr.db`
+- Windows, 1.3.2 and later: `%APPDATA%\mindwtr\data\mindwtr.db`
+- Windows, 1.3.1 and earlier: `%APPDATA%\mindwtr\mindwtr.db`
+
+Additional macOS paths for sandboxed builds:
+- 1.3.2 and later: `~/Library/Containers/tech.dongdongbh.mindwtr/Data/Library/Application Support/mindwtr/data/mindwtr.db`
+- 1.3.1 and earlier: `~/Library/Containers/tech.dongdongbh.mindwtr/Data/Library/Application Support/mindwtr/mindwtr.db`
+
+A `--db` path pinned in an MCP client configuration keeps working across that move: if the file is not at the configured path, the server checks the matching `data` subfolder (or the parent folder) and reports on stderr which database it opened.
 
 If `mindwtr.db` is missing but `data.json` exists in the same desktop data folder, the MCP server will bootstrap a fresh SQLite database from that local data snapshot on first start.
 Desktop Settings → Sync → Local Data shows the exact storage location used by the app.
