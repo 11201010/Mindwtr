@@ -859,12 +859,79 @@ pub(crate) struct PortableAttachmentMigration {
     migrated_file_names: Vec<String>,
 }
 
+// Where a pre-#855 attachment file can still be sitting in the OS data dir.
+// Since #1245 an installed build on the same machine keeps those files one
+// level down in `data/`, so both layouts count — the same rule
+// `standard_install_present` already follows. The dir REPORTED to the webview
+// stays the flat one: that is what the stored URIs name.
+fn legacy_portable_attachment_dirs(legacy_root: &Path) -> Vec<PathBuf> {
+    use crate::storage_layout::DATA_DIR_NAME;
+
+    [legacy_root.to_path_buf(), legacy_root.join(DATA_DIR_NAME)]
+        .into_iter()
+        .map(|root| root.join("attachments"))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
+fn migrate_portable_attachment_files(
+    source_dirs: &[PathBuf],
+    managed_dir: &Path,
+    keep_legacy_copy: bool,
+    file_names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut migrated = Vec::new();
+    for file_name in file_names {
+        // Reject anything that could escape the legacy attachments dir.
+        if file_name.is_empty()
+            || file_name.contains('/')
+            || file_name.contains('\\')
+            || file_name == "."
+            || file_name == ".."
+        {
+            continue;
+        }
+        let Some(source) = source_dirs
+            .iter()
+            .map(|dir| dir.join(&file_name))
+            .find(|candidate| candidate.is_file())
+        else {
+            continue;
+        };
+        let target = managed_dir.join(&file_name);
+        if target.exists() {
+            migrated.push(file_name);
+            continue;
+        }
+        if let Err(error) = fs::create_dir_all(managed_dir) {
+            return Err(format!("Failed to create attachments directory: {error}"));
+        }
+        let moved = if keep_legacy_copy {
+            fs::copy(&source, &target).map(|_| ())
+        } else {
+            fs::rename(&source, &target).or_else(|_| {
+                // Profile dir may sit on another volume (USB stick).
+                fs::copy(&source, &target).map(|_| {
+                    let _ = fs::remove_file(&source);
+                })
+            })
+        };
+        match moved {
+            Ok(()) => migrated.push(file_name),
+            Err(error) => {
+                log::warn!("Failed to migrate portable attachment {file_name}: {error}");
+            }
+        }
+    }
+    Ok(migrated)
+}
+
 // One-time, idempotent re-home of attachment files a portable install wrote to
 // the OS data dir before portable mode covered webview-managed files (#855).
-// Only the requested file names are touched, sources must live inside the
-// legacy attachments dir, and files are copied (not moved) when a standard
-// install shares the machine. Runs off the UI thread because it copies
-// attachment files at startup, often from a USB profile dir.
+// Only the requested file names are touched, sources must live inside a legacy
+// attachments dir, and files are copied (not moved) when a standard install
+// shares the machine. Runs off the UI thread because it copies attachment files
+// at startup, often from a USB profile dir.
 #[tauri::command(async)]
 pub(crate) fn migrate_portable_attachments(
     app: tauri::AppHandle,
@@ -888,49 +955,20 @@ pub(crate) fn migrate_portable_attachments(
     let Some(legacy_root) = legacy_root else {
         return Ok(result);
     };
-    if legacy_dir == managed_dir || !legacy_dir.is_dir() {
+    let source_dirs: Vec<PathBuf> = legacy_portable_attachment_dirs(&legacy_root)
+        .into_iter()
+        .filter(|dir| *dir != managed_dir)
+        .collect();
+    if source_dirs.is_empty() {
         return Ok(result);
     }
     let keep_legacy_copy = standard_install_present(&legacy_root);
-    for file_name in file_names {
-        // Reject anything that could escape the legacy attachments dir.
-        if file_name.is_empty()
-            || file_name.contains('/')
-            || file_name.contains('\\')
-            || file_name == "."
-            || file_name == ".."
-        {
-            continue;
-        }
-        let source = legacy_dir.join(&file_name);
-        if !source.is_file() {
-            continue;
-        }
-        let target = managed_dir.join(&file_name);
-        if target.exists() {
-            result.migrated_file_names.push(file_name);
-            continue;
-        }
-        if let Err(error) = fs::create_dir_all(&managed_dir) {
-            return Err(format!("Failed to create attachments directory: {error}"));
-        }
-        let moved = if keep_legacy_copy {
-            fs::copy(&source, &target).map(|_| ())
-        } else {
-            fs::rename(&source, &target).or_else(|_| {
-                // Profile dir may sit on another volume (USB stick).
-                fs::copy(&source, &target).map(|_| {
-                    let _ = fs::remove_file(&source);
-                })
-            })
-        };
-        match moved {
-            Ok(()) => result.migrated_file_names.push(file_name),
-            Err(error) => {
-                log::warn!("Failed to migrate portable attachment {file_name}: {error}");
-            }
-        }
-    }
+    result.migrated_file_names = migrate_portable_attachment_files(
+        &source_dirs,
+        &managed_dir,
+        keep_legacy_copy,
+        file_names,
+    )?;
     Ok(result)
 }
 
@@ -1003,6 +1041,71 @@ mod tests {
             std::fs::remove_file(&marker).expect("remove marker");
         }
         assert!(!standard_install_present(root));
+    }
+
+    // #1245: once an installed build on the same machine moved its managed
+    // folders into `data/`, a portable copy that still references pre-#855
+    // files there found nothing to copy. Both layouts are searched — and an
+    // installed profile's files are still COPIED, never moved (#936, #1119).
+    #[test]
+    fn portable_migration_finds_legacy_files_in_both_layouts() {
+        use crate::storage_layout::DATA_DIR_NAME;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let legacy_root = temp.path().join("os-data").join("mindwtr");
+        let flat_dir = legacy_root.join("attachments");
+        let moved_dir = legacy_root.join(DATA_DIR_NAME).join("attachments");
+        let managed_dir = temp.path().join("portable").join("data").join("attachments");
+        std::fs::create_dir_all(&flat_dir).expect("flat dir");
+        std::fs::create_dir_all(&moved_dir).expect("moved dir");
+        std::fs::write(flat_dir.join("flat.pdf"), b"flat").expect("flat file");
+        std::fs::write(moved_dir.join("moved.pdf"), b"moved").expect("moved file");
+
+        let source_dirs = legacy_portable_attachment_dirs(&legacy_root);
+        assert_eq!(source_dirs, vec![flat_dir.clone(), moved_dir.clone()]);
+
+        let migrated = migrate_portable_attachment_files(
+            &source_dirs,
+            &managed_dir,
+            true,
+            vec![
+                "flat.pdf".to_string(),
+                "moved.pdf".to_string(),
+                "../escape.pdf".to_string(),
+            ],
+        )
+        .expect("migration runs");
+
+        assert_eq!(migrated, vec!["flat.pdf".to_string(), "moved.pdf".to_string()]);
+        assert_eq!(
+            std::fs::read(managed_dir.join("moved.pdf")).expect("copy"),
+            b"moved"
+        );
+        // The installed app still references both originals.
+        assert!(flat_dir.join("flat.pdf").is_file());
+        assert!(moved_dir.join("moved.pdf").is_file());
+        assert!(!managed_dir.join("escape.pdf").exists());
+    }
+
+    #[test]
+    fn portable_migration_moves_files_when_no_installed_profile_shares_them() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let legacy_dir = temp.path().join("os-data").join("mindwtr").join("attachments");
+        let managed_dir = temp.path().join("portable").join("data").join("attachments");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy dir");
+        std::fs::write(legacy_dir.join("a1.pdf"), b"bytes").expect("legacy file");
+
+        let migrated = migrate_portable_attachment_files(
+            std::slice::from_ref(&legacy_dir),
+            &managed_dir,
+            false,
+            vec!["a1.pdf".to_string()],
+        )
+        .expect("migration runs");
+
+        assert_eq!(migrated, vec!["a1.pdf".to_string()]);
+        assert!(managed_dir.join("a1.pdf").is_file());
+        assert!(!legacy_dir.join("a1.pdf").exists());
     }
 
     #[test]
