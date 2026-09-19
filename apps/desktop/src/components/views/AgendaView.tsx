@@ -14,7 +14,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { shallow, useTaskStore, TaskPriority, TimeEstimate, buildFocusPools, buildAdvancedFilterCriteriaChips, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
+import { shallow, useTaskStore, TaskPriority, TimeEstimate, TIME_ESTIMATE_OPTIONS, buildFocusPools, buildAdvancedFilterCriteriaChips, compareProjectsByOrder, removeAdvancedFilterCriteriaChip, formatFocusTaskLimitText,
     getFocusStarBlockedText, formatTimeEstimateLabel, generateUUID, getUsedTaskTokens, deriveFocusTaskLists, getProjectDeadlineBoostLabel, getTaskMetadataFilterVisibility, markSavedFilterDeleted, normalizeFocusTaskLimit, resolveFeatureFlags, resolveTaskPerspectiveForFeatures, safeFormatDate, safeParseDate, isDueForReview, SAVED_FILTER_NO_PROJECT_ID, shouldShowTaskForStart, splitTodayTasksByStartTime, translateWithFallback, tFallback } from '@mindwtr/core';
 import { DEFAULT_FOCUS_SORT_BY } from '@mindwtr/core';
 import type { MultiValueFilterMatchMode, SavedFilter, SortField, Task, TaskEnergyLevel } from '@mindwtr/core';
@@ -465,7 +465,7 @@ export function AgendaView() {
     }, [baseActiveTasks, localDayKey, futureStartTick]);
     const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
     const energyLevelOptions: TaskEnergyLevel[] = ['low', 'medium', 'high'];
-    const timeEstimateOptions: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
+    const timeEstimateOptions = TIME_ESTIMATE_OPTIONS;
     const metadataFilterVisibility = useMemo(() => getTaskMetadataFilterVisibility(activeTasks, {
         prioritiesEnabled,
         timeEstimatesEnabled,

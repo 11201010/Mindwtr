@@ -16,6 +16,7 @@ import {
     sortTasksBy,
     taskMatchesAreaFilterSelection,
     tFallback,
+    TIME_ESTIMATE_OPTIONS,
     useTaskStore,
 } from '@mindwtr/core';
 import type { FilterCriteria, Task, Project, TimeEstimate } from '@mindwtr/core';
@@ -43,7 +44,6 @@ import { ViewControls } from './list/ViewControls';
 import { ViewHeaderActions } from './list/ViewHeaderActions';
 import {
     PRIORITY_FILTER_OPTIONS,
-    TIME_ESTIMATE_FILTER_OPTIONS,
     useListFilterControls,
 } from './list/list-filter-controls';
 import {
@@ -735,7 +735,7 @@ export function ArchiveView() {
                     selectedPriorities={selectedPriorities}
                     onTogglePriority={togglePriority}
                     showTimeEstimateFilters={showTimeEstimateFilters}
-                    timeEstimateOptions={TIME_ESTIMATE_FILTER_OPTIONS}
+                    timeEstimateOptions={TIME_ESTIMATE_OPTIONS}
                     selectedTimeEstimates={selectedTimeEstimates}
                     onToggleEstimate={toggleEstimate}
                     formatEstimate={formatEstimate}

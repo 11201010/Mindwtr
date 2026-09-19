@@ -4,7 +4,15 @@ import { fileURLToPath } from 'url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { sanitizeForLog, sanitizeLogContext, setLogger, TASK_STATUS_VALUES, type LogPayload } from '@mindwtr/core';
+import {
+  sanitizeForLog,
+  sanitizeLogContext,
+  setLogger,
+  TASK_STATUS_VALUES,
+  TIME_ESTIMATE_OPTIONS,
+  type LogPayload,
+  type TimeEstimate,
+} from '@mindwtr/core';
 import * as z from 'zod';
 
 import { createCloudService } from './cloud-service.js';
@@ -249,7 +257,8 @@ const taskStatusOrAllSchema = z.enum(
 const projectStatusSchema = z.enum(['active', 'someday', 'waiting', 'archived']);
 const taskPrioritySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 const timeEstimateSchema = z.union([
-  z.enum(['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+']),
+  // Same reason as the status enum above: core owns the list of pickable estimates.
+  z.enum(TIME_ESTIMATE_OPTIONS as [TimeEstimate, ...TimeEstimate[]]),
   z.string().refine((value) => {
     const minutes = value.startsWith('custom:') ? value.slice('custom:'.length) : '';
     const parsed = Number(minutes);

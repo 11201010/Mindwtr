@@ -9,6 +9,7 @@
 // isolation.
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { TIME_ESTIMATE_OPTIONS } from '@mindwtr/core';
 import { TASK_SYNC_FIELD_SCHEMA } from '@mindwtr/core/task-sync-schema';
 
 import { addTaskSchema, updateTaskSchema } from './index.js';
@@ -85,6 +86,15 @@ describe('MCP task write-surface derivation (TASK_SYNC_FIELD_SCHEMA -> Zod tool 
     for (const value of ['2026-09-07', 'tomorrow', '', 123]) {
       expect(updateTaskSchema.safeParse({ id: 'task-1', cancelledAt: value }).success).toBe(false);
     }
+  });
+
+  test('the time-estimate enum stays core\'s list, custom values still parse', () => {
+    for (const estimate of TIME_ESTIMATE_OPTIONS) {
+      expect(addTaskSchema.safeParse({ title: 'Task', timeEstimate: estimate }).success).toBe(true);
+      expect(updateTaskSchema.safeParse({ id: 'task-1', timeEstimate: estimate }).success).toBe(true);
+    }
+    expect(updateTaskSchema.safeParse({ id: 'task-1', timeEstimate: 'custom:75' }).success).toBe(true);
+    expect(updateTaskSchema.safeParse({ id: 'task-1', timeEstimate: '7min' }).success).toBe(false);
   });
 
   test('task write schemas accept positive custom time estimates', () => {

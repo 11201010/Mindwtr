@@ -26,6 +26,7 @@ import {
     isCustomTimeEstimate,
     parseTimeEstimateInput,
     tFallback,
+    TIME_ESTIMATE_OPTIONS,
     timeEstimateToMinutes,
     type TaskEnergyLevel,
     type TaskPriority,
@@ -825,15 +826,11 @@ export function TimeEstimateField({
                 className="text-xs bg-muted/50 border border-border rounded px-2 py-1 w-full text-foreground"
             >
                 <option value="">{t('common.none')}</option>
-                <option value="5min">5m</option>
-                <option value="10min">10m</option>
-                <option value="15min">15m</option>
-                <option value="30min">30m</option>
-                <option value="1hr">1h</option>
-                <option value="2hr">2h</option>
-                <option value="3hr">3h</option>
-                <option value="4hr">4h</option>
-                <option value="4hr+">4h+</option>
+                {/* The fixed list only — `resolveTimeEstimateOptions` would append the
+                    task's own custom value, which the Custom… entry already covers. */}
+                {TIME_ESTIMATE_OPTIONS.map((estimate) => (
+                    <option key={estimate} value={estimate}>{formatTimeEstimateLabel(estimate, { t })}</option>
+                ))}
                 <option value={customTimeEstimateOptionValue}>{t('recurrence.custom')}</option>
             </select>
             {isCustom && (

@@ -31,6 +31,7 @@ import { buildProjectOrderMap,
     sortTasksBy,
     TaskPriority,
     TimeEstimate,
+    TIME_ESTIMATE_OPTIONS,
     resolveI18nText,
     SAVED_FILTER_NO_PROJECT_ID,
     useTaskStore, tFallback,
@@ -95,7 +96,6 @@ import { GroupedTaskList } from './list/GroupedTaskSections';
 import { useCollapsedGroupsViewState, useTaskGroupCollapse } from './list/useTaskGroupCollapse';
 import {
     PRIORITY_FILTER_OPTIONS,
-    TIME_ESTIMATE_FILTER_OPTIONS,
     useListFilterControls,
 } from './list/list-filter-controls';
 import { useListSelection } from './list/useListSelection';
@@ -1038,7 +1038,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         );
     }, [areas, newTaskTitle, projects, quickAddParseOptions, showQuickAdd, t]);
     const priorityOptions = PRIORITY_FILTER_OPTIONS;
-    const timeEstimateOptions = TIME_ESTIMATE_FILTER_OPTIONS;
+    const timeEstimateOptions = TIME_ESTIMATE_OPTIONS;
     const formatEstimate = (value: TimeEstimate) => formatTimeEstimateLabel(value, { t });
     const excludedLabel = resolveText('filters.excluded', 'Excluded');
     const activeFilterChips: DesktopActiveFilterChip[] = [];

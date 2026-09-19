@@ -2,10 +2,10 @@ import React from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { styles } from '../inbox-processing-modal.styles';
-import { formatTimeEstimateChipLabel } from '../time-estimate-filter-utils';
 import { InboxSuggestionList } from './InboxSuggestionList';
 import { PriorityFlag } from '@/components/priority-flag';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
+import { formatTimeEstimateLabel } from '@mindwtr/core';
 import type { TaskPriority, TaskEnergyLevel, TimeEstimate } from '@mindwtr/core';
 
 type Props = {
@@ -163,7 +163,7 @@ export function InboxOrganizationSection({
                   onPress={() => setSelectedTimeEstimate(isSelected ? undefined : estimate)}
                 >
                   <Text style={[styles.priorityChipText, { color: isSelected ? tc.onTint : tc.text }]}>
-                    {formatTimeEstimateChipLabel(estimate)}
+                    {formatTimeEstimateLabel(estimate)}
                   </Text>
                 </TouchableOpacity>
               );

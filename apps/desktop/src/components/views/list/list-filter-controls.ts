@@ -147,6 +147,3 @@ export function useListFilterControls() {
 }
 
 export const PRIORITY_FILTER_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
-export const TIME_ESTIMATE_FILTER_OPTIONS: TimeEstimate[] = [
-    '5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+',
-];
