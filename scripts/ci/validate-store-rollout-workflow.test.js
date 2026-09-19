@@ -131,6 +131,10 @@ test('rollout workflow schedules one automatic stage per day and retains explici
   expect(rollout.jobs.msstore.concurrency.group).toBe('msstore-production');
   expect(rollout.jobs.play.if).toContain("github.event_name == 'schedule'");
   expect(rollout.jobs.msstore.if).toContain("github.event_name == 'schedule'");
+  // A fork holds no Store credentials, so the daily schedule must not run there.
+  for (const job of Object.values(rollout.jobs)) {
+    expect(job.if).toContain("github.repository == 'dongdongbh/Mindwtr'");
+  }
   const play = rollout.jobs.play.steps.find((step) => step.env?.VERSION_CODE);
   expect(play.run).toContain('--version-code "$VERSION_CODE"');
   expect(play.run).toContain('auto-rollout --package tech.dongdongbh.mindwtr');

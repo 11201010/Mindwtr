@@ -33,7 +33,8 @@ permissions:
 
 jobs:
   play:
-    if: github.event_name == 'schedule' || inputs.store == 'play'
+    # Forks hold no Store credentials, so the daily schedule must not run there.
+    if: github.repository == 'dongdongbh/Mindwtr' && (github.event_name == 'schedule' || inputs.store == 'play')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -73,7 +74,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   msstore:
-    if: github.event_name == 'schedule' || inputs.store == 'msstore'
+    if: github.repository == 'dongdongbh/Mindwtr' && (github.event_name == 'schedule' || inputs.store == 'msstore')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
