@@ -328,12 +328,17 @@ impl MigrationLock {
             }
             if Self::is_stale(&path) {
                 // A crashed run left this behind. Replacing it is safe: no
-                // migration takes minutes.
-                fs::remove_file(&path).ok()?;
+                // migration takes minutes. A removal that fails means another
+                // waiter is clearing the same lock — contention, not an I/O
+                // failure — and that one may be about to migrate the folder, so
+                // look again instead of settling for the flat root.
+                if fs::remove_file(&path).is_ok() {
+                    continue;
+                }
             } else {
                 waited_for_holder = true;
-                thread::sleep(LOCK_WAIT_POLL);
             }
+            thread::sleep(LOCK_WAIT_POLL);
         }
     }
 
@@ -757,6 +762,46 @@ mod tests {
         assert!(root.join(DATA_DIR_NAME).join(DB_FILE_NAME).is_file());
         assert!(!root.join(DB_FILE_NAME).exists());
         assert!(!root.join(LOCK_FILE_NAME).exists(), "lock is released");
+    }
+
+    // Finding C4: a stale lock this process cannot remove means another waiter
+    // is clearing it right now. That is contention, not an I/O failure, so the
+    // wait runs its course instead of dropping to the flat root at once — the
+    // other waiter may be about to migrate the folder.
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_lock_that_cannot_be_removed_is_waited_out() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::SystemTime;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        legacy_profile(root);
+        let lock = root.join(LOCK_FILE_NAME);
+        write(&lock, "");
+        File::options()
+            .write(true)
+            .open(&lock)
+            .expect("lock handle")
+            .set_modified(SystemTime::now() - LOCK_STALE_AFTER * 2)
+            .expect("age the lock");
+        // A read-only profile folder fails every removal, the way losing the
+        // race to another waiter does.
+        fs::set_permissions(root, fs::Permissions::from_mode(0o500)).expect("lock root");
+
+        let started = Instant::now();
+        let blocked = migrate_standard_layout(root);
+        let waited = started.elapsed();
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).expect("unlock root");
+
+        assert_eq!(blocked.outcome, LayoutOutcome::Failed);
+        assert_eq!(blocked.failed_entry, Some("lock"));
+        assert!(
+            waited >= LOCK_WAIT_TIMEOUT,
+            "the whole wait was used, not {waited:?}"
+        );
+        assert!(lock.is_file(), "the other waiter's lock is left alone");
+        assert!(root.join(DB_FILE_NAME).is_file(), "nothing was moved");
     }
 
     // Finding C3: a holder that releases the lock with the folder still
