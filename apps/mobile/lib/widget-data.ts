@@ -17,6 +17,8 @@ import {
     resolveI18nText,
     resolveTaskSortByForFeatures,
     resolveThemeColorScheme,
+    isActiveDateFormatDayFirst,
+    normalizeDateFormatSetting,
     safeParseDate,
     safeParseDueDate,
     sortTasksBy,
@@ -307,12 +309,21 @@ const formatShortWeekday = (date: Date, language: string): string => {
     }
 };
 
-const formatNumericDate = (date: Date, language: string): string => {
-    try {
-        return new Intl.DateTimeFormat(language, { month: 'numeric', day: 'numeric' }).format(date);
-    } catch {
-        return `${date.getMonth() + 1}/${date.getDate()}`;
-    }
+// The compact date follows the app's date-format setting, not the UI language:
+// "en" alone always produced US month/day order for a dd/MM/yyyy user (#1242).
+// An explicit setting decides the order; System asks core, which mobile has
+// already configured from the device locale at startup.
+export const resolveWidgetDayFirst = (dateFormat: string | null | undefined): boolean => {
+    const setting = normalizeDateFormatSetting(dateFormat);
+    if (setting === 'dmy') return true;
+    if (setting === 'mdy' || setting === 'ymd') return false;
+    return isActiveDateFormatDayFirst();
+};
+
+const formatNumericDate = (date: Date, dayFirst: boolean): string => {
+    const day = date.getDate();
+    const month = date.getMonth() + 1;
+    return dayFirst ? `${day}/${month}` : `${month}/${day}`;
 };
 
 // Today / Tomorrow / weekday inside the week / a short date, shared by the row
@@ -321,28 +332,30 @@ const formatRelativeDayLabel = (
     date: Date,
     tr: Record<string, string>,
     language: string,
+    dayFirst: boolean,
     startOfToday: Date,
     endOfToday: Date,
 ): string => {
-    if (date < startOfToday) return formatNumericDate(date, language);
+    if (date < startOfToday) return formatNumericDate(date, dayFirst);
     if (date <= endOfToday) return tr['quickDate.today'] ?? 'Today';
     const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const daysAhead = Math.round((dayStart.getTime() - startOfToday.getTime()) / DAY_MS);
     if (daysAhead === 1) return tr['quickDate.tomorrow'] ?? 'Tomorrow';
     if (daysAhead <= 6) return formatShortWeekday(date, language);
-    return formatNumericDate(date, language);
+    return formatNumericDate(date, dayFirst);
 };
 
 const computeDueLabel = (
     dueDate: string | undefined | null,
     tr: Record<string, string>,
     language: string,
+    dayFirst: boolean,
     startOfToday: Date,
     endOfToday: Date,
 ): Pick<WidgetTaskItem, 'dueLabel' | 'dueEmphasis' | 'dueTone'> => {
     const due = safeParseDueDate(dueDate);
     if (!due) return { dueLabel: null, dueEmphasis: false, dueTone: 'normal' };
-    const dueLabel = formatRelativeDayLabel(due, tr, language, startOfToday, endOfToday);
+    const dueLabel = formatRelativeDayLabel(due, tr, language, dayFirst, startOfToday, endOfToday);
     if (due < startOfToday) return { dueLabel, dueEmphasis: true, dueTone: 'overdue' };
     if (due <= endOfToday) return { dueLabel, dueEmphasis: true, dueTone: 'today' };
     return { dueLabel, dueEmphasis: false, dueTone: 'normal' };
@@ -477,6 +490,7 @@ export function createWidgetPayloadProjection(
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const dayFirst = resolveWidgetDayFirst(data.settings?.dateFormat);
     const palette = resolveWidgetPalette(
         typeof data.settings?.theme === 'string' ? data.settings.theme : undefined,
         options?.systemColorScheme,
@@ -515,7 +529,7 @@ export function createWidgetPayloadProjection(
     const peekStartLabel = (task: Task): string | undefined => {
         const start = safeParseDate(task.startTime);
         if (!start) return undefined;
-        const day = formatRelativeDayLabel(start, tr, language, startOfToday, endOfToday);
+        const day = formatRelativeDayLabel(start, tr, language, dayFirst, startOfToday, endOfToday);
         return hasTimeComponent(task.startTime) ? `${day} ${formatDueTime(start, language)}` : day;
     };
     const itemById = new Map<string, WidgetTaskItem>();
@@ -536,7 +550,7 @@ export function createWidgetPayloadProjection(
             completionToken: buildWidgetCompletionToken(task),
             title: task.title,
             statusLabel: tr[`status.${task.status}`] || task.status,
-            ...computeDueLabel(task.dueDate, tr, language, startOfToday, endOfToday),
+            ...computeDueLabel(task.dueDate, tr, language, dayFirst, startOfToday, endOfToday),
             openUri: `mindwtr://open?task=${encodeURIComponent(task.id)}`,
             priorityColor: prioritiesEnabled && task.priority ? TASK_PRIORITY_COLORS[task.priority] ?? null : null,
             contextLabel: project?.title ?? area?.name ?? null,

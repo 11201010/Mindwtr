@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadTranslations, type AppData } from '@mindwtr/core';
-import { buildShortcutsSnapshot, buildWidgetPayload, createWidgetPayloadProjection, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, SHORTCUTS_SNAPSHOT_VERSION, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX } from './widget-data';
+import { buildShortcutsSnapshot, buildWidgetPayload, createWidgetPayloadProjection, resolveWidgetLanguage, SHORTCUTS_SNAPSHOT_ITEM_CAP, SHORTCUTS_SNAPSHOT_PROJECT_CAP, SHORTCUTS_SNAPSHOT_VERSION, WIDGET_PEEK_DESCRIPTION_MAX, WIDGET_PEEK_TOKEN_MAX,
+    resolveWidgetDayFirst,
+} from './widget-data';
 
 const baseData: AppData = {
     tasks: [],
@@ -17,11 +19,12 @@ const daysFromNow = (n: number): Date => {
     d.setDate(d.getDate() + n);
     return d;
 };
-const buildDueItem = (dueDate: string, language = 'en') => {
+const buildDueItem = (dueDate: string, language = 'en', settings: Partial<AppData['settings']> = {}) => {
     const now = new Date().toISOString();
     const payload = buildWidgetPayload(
         {
             ...baseData,
+            settings: { ...baseData.settings, ...settings } as AppData['settings'],
             tasks: [
                 {
                     id: 'due-task',
@@ -886,13 +889,19 @@ describe('widget-data', () => {
         });
 
         it('labels an overdue task with a compact numeric date and emphasis', () => {
-            const item = buildDueItem('2000-01-01');
-            expect(item.dueLabel).toBe(
-                new Intl.DateTimeFormat('en', { month: 'numeric', day: 'numeric' }).format(
-                    new Date(2000, 0, 1),
-                ),
-            );
+            const item = buildDueItem('2000-01-05');
+            // Default (System) resolves month-first in this test locale.
+            expect(item.dueLabel).toBe('1/5');
             expect(item.dueEmphasis).toBe(true);
+        });
+
+        // #1242: the widget must follow the app's date format, not the UI language.
+        it('orders the compact date by the date-format setting', () => {
+            expect(buildDueItem('2000-01-05', 'en', { dateFormat: 'dmy' }).dueLabel).toBe('5/1');
+            expect(buildDueItem('2000-01-05', 'en', { dateFormat: 'mdy' }).dueLabel).toBe('1/5');
+            expect(buildDueItem('2000-01-05', 'en', { dateFormat: 'ymd' }).dueLabel).toBe('1/5');
+            expect(resolveWidgetDayFirst('dmy')).toBe(true);
+            expect(resolveWidgetDayFirst('nonsense')).toBe(resolveWidgetDayFirst('system'));
         });
 
         it('labels a task due tomorrow without emphasis', () => {
