@@ -40,6 +40,7 @@ export const CLOUD_LOG_MESSAGES = [
     'Capture audio retained after failed document write',
     'Capture token created',
     'Capture webhook request accepted',
+    'Capture webhook replay ignored',
     'Cloud task Focus write policy applied',
     'Cloud task reopened archived project',
     'Cloud search tolerated malformed assignee text',

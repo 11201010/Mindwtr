@@ -431,6 +431,103 @@ describe('POST /v1/capture', () => {
         expect(task.projectId).toBeUndefined();
     });
 
+    // A sender whose connection drops after the server committed cannot tell success from
+    // failure, so it retries. With a captureId the retry lands on the same task instead of
+    // creating a second one.
+    const REPLAY_ID = '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b';
+
+    test('a retried multipart capture with the same captureId adds nothing', async () => {
+        const audio = { bytes: AUDIO_BYTES, type: 'audio/mp4', name: 'recording.m4a' } as const;
+        const first = await postFormCapture({
+            transcription: 'Buy milk',
+            audio,
+            extra: { captureId: REPLAY_ID },
+        });
+        expect(first.status).toBe(201);
+        expect(((await first.json()) as { task: Task }).task.id).toBe(REPLAY_ID);
+
+        const second = await postFormCapture({
+            transcription: 'Buy milk',
+            audio,
+            extra: { captureId: REPLAY_ID },
+        });
+        expect(second.status).toBe(200);
+        expect(await second.json()).toEqual({ task: { id: REPLAY_ID }, attachment: null, replayed: true });
+
+        const stored = await readStoredTasks();
+        expect(stored).toHaveLength(1);
+        expect(stored[0].id).toBe(REPLAY_ID);
+        expect(stored[0].attachments).toHaveLength(1);
+    });
+
+    test('a retried JSON capture with the same captureId adds nothing', async () => {
+        const first = await postJsonCapture({ transcription: 'Call Dave', captureId: REPLAY_ID });
+        expect(first.status).toBe(201);
+
+        const second = await postJsonCapture({ transcription: 'Call Dave', captureId: REPLAY_ID });
+        expect(second.status).toBe(200);
+        expect(await second.json()).toEqual({ task: { id: REPLAY_ID }, attachment: null, replayed: true });
+
+        expect(await readStoredTasks()).toHaveLength(1);
+    });
+
+    // A capture-only token must never be able to read tasks, so the replay reply carries
+    // the id and nothing that was stored.
+    test('a replay reply never contains the stored text', async () => {
+        await postJsonCapture({ transcription: 'Call Dave', captureId: REPLAY_ID });
+
+        const second = await postJsonCapture({ transcription: 'Call Dave', captureId: REPLAY_ID });
+        expect(second.status).toBe(200);
+        expect(await second.text()).not.toContain('Call Dave');
+    });
+
+    test('a replay after the task was deleted leaves it deleted', async () => {
+        const first = await postJsonCapture({ transcription: 'Water the plants', captureId: REPLAY_ID });
+        expect(first.status).toBe(201);
+
+        // The owner's device deletes the captured task and pushes that document back.
+        const getResponse = await fetch(`${harness.url}/v1/data`, { headers: AUTH });
+        const data = (await getResponse.json()) as AppData;
+        const deletedAt = new Date().toISOString();
+        for (const task of data.tasks) {
+            if (task.id !== REPLAY_ID) continue;
+            task.deletedAt = deletedAt;
+            task.updatedAt = deletedAt;
+            task.rev = (task.rev ?? 1) + 1;
+        }
+        const putResponse = await fetch(`${harness.url}/v1/data`, {
+            method: 'PUT',
+            headers: { ...AUTH, 'content-type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        expect(putResponse.status).toBe(200);
+
+        const second = await postJsonCapture({ transcription: 'Water the plants', captureId: REPLAY_ID });
+        expect(second.status).toBe(200);
+
+        const stored = await readStoredTasks();
+        expect(stored.filter((item) => item.id === REPLAY_ID)).toHaveLength(1);
+        expect(stored.find((item) => item.id === REPLAY_ID)?.deletedAt).toBe(deletedAt);
+    });
+
+    test('rejects a malformed captureId without writing anything', async () => {
+        const response = await postFormCapture({
+            transcription: 'Buy milk',
+            extra: { captureId: 'not-a-uuid' },
+        });
+        expect(response.status).toBe(400);
+        expect(await readStoredTasks()).toHaveLength(0);
+    });
+
+    test('normalises an upper-case captureId', async () => {
+        const response = await postJsonCapture({
+            transcription: 'Buy milk',
+            captureId: REPLAY_ID.toUpperCase(),
+        });
+        expect(response.status).toBe(201);
+        expect(((await response.json()) as { task: Task }).task.id).toBe(REPLAY_ID);
+    });
+
     test('does not run the quick-add parser on spoken text', async () => {
         const response = await postJsonCapture({ transcription: 'Call Dave #urgent @phone tomorrow !1' });
         const task = ((await response.json()) as { task: Task }).task;

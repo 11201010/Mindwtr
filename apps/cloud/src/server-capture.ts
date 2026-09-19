@@ -115,6 +115,20 @@ export type CapturePayload = {
     transcription: string;
     recordedAtMs: number | null;
     audio: CaptureAudio | null;
+    captureId: string | null;
+};
+
+// Same shape core accepts for a replay-safe capture id (packages/core/src/store-tasks.ts,
+// CAPTURE_ID_PATTERN). Kept private there, so the pattern is repeated here on purpose.
+const CAPTURE_ID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
+
+/** `null` = not supplied; a Response = supplied but malformed. */
+const parseCaptureId = (value: unknown): string | null | Response => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !CAPTURE_ID_PATTERN.test(value.trim())) {
+        return errorResponse('Invalid captureId', 400);
+    }
+    return value.trim().toLowerCase();
 };
 
 const isBlobLike = (value: unknown): value is Blob => (
@@ -135,7 +149,7 @@ export function parseCaptureBody(
 ): CapturePayload | Response {
     if (contentType === 'application/json') {
         const text = new TextDecoder().decode(bytes).trim();
-        if (!text) return { transcription: '', recordedAtMs: null, audio: null };
+        if (!text) return { transcription: '', recordedAtMs: null, audio: null, captureId: null };
         let parsed: unknown;
         try {
             parsed = JSON.parse(text);
@@ -146,16 +160,20 @@ export function parseCaptureBody(
             return errorResponse('Invalid JSON body');
         }
         const record = parsed as Record<string, unknown>;
+        const captureId = parseCaptureId(record.captureId);
+        if (captureId instanceof Response) return captureId;
         return {
             transcription: firstString(record.transcription, record.text, record.title),
             recordedAtMs: parseRecordedAtMs(record.recordedAt),
             audio: null,
+            captureId,
         };
     }
     return {
         transcription: new TextDecoder().decode(bytes),
         recordedAtMs: null,
         audio: null,
+        captureId: null,
     };
 }
 
@@ -227,10 +245,13 @@ async function parseCaptureMultipart(
         const value = form.get(name);
         return typeof value === 'string' ? value : '';
     };
+    const captureId = parseCaptureId(readField('captureId'));
+    if (captureId instanceof Response) return captureId;
     return {
         transcription: firstString(readField('transcription'), readField('text'), readField('title')),
         recordedAtMs: parseRecordedAtMs(readField('recordedAt')),
         audio: audio && audio.bytes.byteLength > 0 ? audio : null,
+        captureId,
     };
 }
 
@@ -354,7 +375,7 @@ export async function handleCaptureRequest(
     const attachment = audio ? buildCaptureAttachment(audio, title, createdAt, nowIso) : null;
 
     const task: Task = {
-        id: generateUUID(),
+        id: payload.captureId ?? generateUUID(),
         title,
         status: 'inbox',
         tags: [],
@@ -372,6 +393,15 @@ export async function handleCaptureRequest(
         const dataResult = loadAppDataOrError(options.filePath);
         if ('error' in dataResult) return dataResult.error;
         const data = dataResult;
+        if (payload.captureId && data.tasks.some((item) => item.id === payload.captureId)) {
+            // A retry of a capture that already landed (deleted tasks count: it stays deleted).
+            // Only the id goes back — a capture-only token must never read task content.
+            logInfo('Capture webhook replay ignored', { tokenScope: options.tokenScope });
+            return jsonResponse(
+                { task: { id: payload.captureId }, attachment: null, replayed: true },
+                { status: 200 },
+            );
+        }
         data.tasks.push(task);
         const finalized = options.finalizeForWrite(data, nowIso);
         if ('error' in finalized) return finalized.error;
