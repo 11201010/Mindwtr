@@ -102,6 +102,114 @@ describe('preview checklist keyboard visibility', () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
+  it('pads by the occluded space plus the clearance it scrolls for', () => {
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardDidShow')?.({ endCoordinates: { screenY: 500, height: 300 } });
+    });
+    settle();
+    // Visible area is 400px, so the clearance is 18% of it.
+    expect(api.bottomInset).toBe(250);
+    expect(api.contentBottomPadding).toBeCloseTo(250 + 400 * 0.18);
+    expect(inputTop - offset + 40).toBeCloseTo(500 - 400 * 0.18);
+  });
+
+  it('pads enough for a last-content input to clear the keyboard', () => {
+    // The input is the last thing in the preview, so the scroll can only reach
+    // what the hook's own bottom padding makes scrollable.
+    scrollTo.mockImplementation(({ y }: { y: number }) => {
+      const inputBottomInContent = inputTop - 100 + 40;
+      const maxOffset = Math.max(0, inputBottomInContent + api.contentBottomPadding - viewportHeight);
+      offset = Math.min(y, maxOffset);
+    });
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardDidShow')?.({ endCoordinates: { screenY: 500, height: 300 } });
+    });
+    settle();
+    expect(inputTop - offset + 40).toBeCloseTo(500 - 400 * 0.18);
+  });
+
+  it('clears the iOS predictive bar when it joins the keyboard after the first frame', () => {
+    // iOS reports the keyboard before its animation, and the 44pt QuickType bar
+    // can arrive in a later frame that makes the keyboard taller.
+    const withoutBar = 520;
+    const withBar = withoutBar - 44;
+    scrollTo.mockImplementation(({ y }: { y: number }) => {
+      const inputBottomInContent = inputTop - 100 + 40;
+      const maxOffset = Math.max(0, inputBottomInContent + api.contentBottomPadding - viewportHeight);
+      offset = Math.min(y, maxOffset);
+    });
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardWillShow')?.({ endCoordinates: { screenY: withoutBar, height: 280 } });
+    });
+    settle();
+    renderer.act(() => listeners.get('keyboardDidChangeFrame')?.({ endCoordinates: { screenY: withBar, height: 324 } }));
+    settle();
+    const clearance = (withBar - 100) * 0.18;
+    expect(api.bottomInset).toBe(100 + viewportHeight - withBar);
+    expect(inputTop - offset + 40).toBeCloseTo(withBar - clearance);
+    // The whole predictive bar plus a margin stays free below the typed line.
+    expect(withBar - (inputTop - offset + 40)).toBeGreaterThan(44);
+  });
+
+  it('keeps a floor under the clearance when the visible area is short', () => {
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardDidShow')?.({ endCoordinates: { screenY: 400, height: 400 } });
+    });
+    settle();
+    // 18% of the 300px visible area is 54px, below the 56px floor.
+    expect(api.bottomInset).toBe(350);
+    expect(api.contentBottomPadding).toBe(350 + 56);
+    expect(inputTop - offset + 40).toBe(400 - 56);
+  });
+
+  it('handles the iOS keyboardWillShow frame', () => {
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardWillShow')?.({ endCoordinates: { screenY: 500, height: 300 } });
+    });
+    settle();
+    expect(api.bottomInset).toBe(250);
+    expect(inputTop - offset + 40).toBeCloseTo(500 - 400 * 0.18);
+  });
+
+  it('never shrinks the space while the input stays focused', () => {
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardDidShow')?.({ endCoordinates: { screenY: 500, height: 300 } });
+    });
+    settle();
+    expect(api.bottomInset).toBe(250);
+    // A later frame without the predictive bar must not pull the input back down.
+    renderer.act(() => listeners.get('keyboardDidChangeFrame')?.({ endCoordinates: { screenY: 560, height: 240 } }));
+    settle();
+    expect(api.bottomInset).toBe(250);
+    // A taller keyboard still grows the space and re-reveals the input.
+    renderer.act(() => listeners.get('keyboardDidChangeFrame')?.({ endCoordinates: { screenY: 460, height: 340 } }));
+    settle();
+    expect(api.bottomInset).toBe(290);
+    expect(api.contentBottomPadding).toBeCloseTo(290 + 360 * 0.18);
+    expect(inputTop - offset + 40).toBeCloseTo(460 - 360 * 0.18);
+    renderer.act(() => listeners.get('keyboardDidHide')?.());
+    expect(api.bottomInset).toBe(0);
+    expect(api.contentBottomPadding).toBe(0);
+  });
+
+  it('gives the space back on blur', () => {
+    renderer.act(() => {
+      api.onFocus();
+      listeners.get('keyboardDidShow')?.({ endCoordinates: { screenY: 500, height: 300 } });
+    });
+    settle();
+    expect(api.contentBottomPadding).toBeGreaterThan(0);
+    renderer.act(() => api.onBlur());
+    expect(api.bottomInset).toBe(0);
+    expect(api.contentBottomPadding).toBe(0);
+  });
+
   it('clears the added space when the keyboard closes', () => {
     renderer.act(() => {
       api.onFocus();

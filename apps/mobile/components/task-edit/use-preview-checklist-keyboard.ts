@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Dimensions, Keyboard, type ScrollView, type TextInput } from 'react-native';
 
+/** Share of the visible area kept free below the input, when that is generous. */
+const CLEARANCE_RATIO = 0.18;
+/** The iOS predictive-text bar is 44pt tall; keep it plus a visible margin. */
+const MIN_CLEARANCE = 56;
+const NO_SPACE = { inset: 0, padding: 0 };
+
 /** The preview owns its vertical scroll; the sibling Edit tab must not move it. */
 export function usePreviewChecklistKeyboard(
   scrollRef: RefObject<ScrollView | null>,
   inputRef: RefObject<TextInput | null>,
 ) {
-  const [bottomInset, setBottomInset] = useState(0);
-  const insetRef = useRef(0);
+  const [space, setSpace] = useState(NO_SPACE);
+  const spaceRef = useRef(NO_SPACE);
   const offsetRef = useRef(0);
   const keyboardTopRef = useRef<number | null>(null);
   const focusedRef = useRef(false);
@@ -32,17 +38,20 @@ export function usePreviewChecklistKeyboard(
       // Use the measured viewport, including when Android already resized the
       // window. Adding the full keyboard height would double-count that resize.
       const inset = Math.max(0, scrollY + scrollHeight - keyboardTop);
-      if (insetRef.current !== inset) {
-        insetRef.current = inset;
-        setBottomInset(inset);
-        return; // Re-measure after the new scrollable space commits below.
-      }
       const visibleBottom = Math.min(scrollY + scrollHeight, keyboardTop);
       const visibleHeight = Math.max(0, visibleBottom - scrollY);
       if (!visibleHeight) return;
+      const clearance = Math.max(visibleHeight * CLEARANCE_RATIO, MIN_CLEARANCE);
+      // Padding = occluded space + clearance, so scrolling can still reach the
+      // clearance when the input is the last thing in the preview.
+      const padding = inset + clearance;
+      if (spaceRef.current.inset !== inset || spaceRef.current.padding !== padding) {
+        spaceRef.current = { inset, padding };
+        setSpace(spaceRef.current);
+        return; // Re-measure after the new scrollable space commits below.
+      }
       input.measureInWindow((_ix, inputY, _iw, inputHeight) => {
         if (!isCurrent() || !Number.isFinite(inputY) || !Number.isFinite(inputHeight)) return;
-        const clearance = visibleHeight * 0.18;
         const overlap = inputY + inputHeight + clearance - visibleBottom;
         const delta = overlap > 0 ? overlap : Math.min(0, inputY - scrollY);
         if (!delta) return;
@@ -63,8 +72,8 @@ export function usePreviewChecklistKeyboard(
 
   const clearInset = useCallback(() => {
     cancelPending();
-    insetRef.current = 0;
-    setBottomInset(0);
+    spaceRef.current = NO_SPACE;
+    setSpace(NO_SPACE);
   }, [cancelPending]);
 
   useEffect(() => {
@@ -72,15 +81,27 @@ export function usePreviewChecklistKeyboard(
       const coordinates = event.endCoordinates;
       const screenHeight = Dimensions.get('screen').height;
       const top = coordinates?.screenY ?? (screenHeight - (coordinates?.height ?? 0));
-      keyboardTopRef.current = Number.isFinite(top) && top < screenHeight ? top : null;
-      if (keyboardTopRef.current == null) clearInset();
-      else scheduleReveal();
+      if (!Number.isFinite(top) || top >= screenHeight) {
+        keyboardTopRef.current = null;
+        clearInset();
+        return;
+      }
+      // iOS can report a shorter keyboard in a later frame (the predictive bar
+      // is not in it). Letting that shrink the space would drop the line being
+      // typed back under the bar, so while the input keeps focus the space only
+      // grows; hide or blur gives it back.
+      if (focusedRef.current && keyboardTopRef.current != null && top > keyboardTopRef.current) return;
+      keyboardTopRef.current = top;
+      scheduleReveal();
     };
     const hide = () => {
       keyboardTopRef.current = null;
       clearInset();
     };
     const subscriptions = [
+      // keyboardWillShow is iOS-only: it lands before the show animation, so
+      // the scroll happens with it instead of after it.
+      Keyboard.addListener('keyboardWillShow', updateFrame),
       Keyboard.addListener('keyboardDidShow', updateFrame),
       Keyboard.addListener('keyboardWillChangeFrame', updateFrame),
       Keyboard.addListener('keyboardDidChangeFrame', updateFrame),
@@ -93,10 +114,12 @@ export function usePreviewChecklistKeyboard(
     };
   }, [cancelPending, clearInset, scheduleReveal]);
 
-  useEffect(scheduleReveal, [bottomInset, scheduleReveal]);
+  useEffect(scheduleReveal, [space, scheduleReveal]);
 
   return {
-    bottomInset,
+    bottomInset: space.inset,
+    /** paddingBottom the preview must add while the keyboard covers the input. */
+    contentBottomPadding: space.padding,
     onFocus: () => {
       focusedRef.current = true;
       scheduleReveal();

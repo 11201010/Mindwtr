@@ -195,7 +195,9 @@ function TaskEditViewTabComponent({
       style={styles.content}
       contentContainerStyle={[
         styles.contentContainer,
-        checklistKeyboard.bottomInset > 0 ? { paddingBottom: 32 + checklistKeyboard.bottomInset } : null,
+        checklistKeyboard.contentBottomPadding > 0
+          ? { paddingBottom: checklistKeyboard.contentBottomPadding }
+          : null,
       ]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
