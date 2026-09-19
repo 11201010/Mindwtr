@@ -6,7 +6,7 @@ Mindwtr keeps translations under this folder so community contributions are easy
 - `zh-Hans.ts`, `zh-Hant.ts`: full Chinese dictionaries.
 - Every other `*.ts`: an override dictionary. A key the file does not translate falls back to English on screen.
 
-Each locale carries a `translatedKeyFloor` in `i18n-locales.ts`, and CI enforces it. It is an absolute **number of keys**, not a percentage: deleting a translation always fails the gate, and adding a new English string never does. Raise a floor when real translation work lands; never lower it. A floor of `'all'` means every key in `en.ts` has to be translated. The Chinese files carry it because they are full dictionaries; `es`, `fa`, `hu`, `ja` and `sv` carry it because they are maintained at full parity even though they load as override dictionaries.
+Each locale carries a `translatedKeyFloor` in `i18n-locales.ts`, and CI enforces it. It is an absolute **number of keys**, not a percentage: deleting a translation always fails the gate, and adding a new English string never does. Raise a floor when real translation work lands; never lower it. A floor of `'all'` means every key in `en.ts` has to be translated. The Chinese files carry it because they are full dictionaries; several override dictionaries carry it too, because they are maintained at full parity. A new English string has to be translated in every one of them. Read `LOCALES` in `i18n-locales.ts` for the current list rather than trusting a list written here: adding a new English key means adding a line to each locale whose floor is `'all'`.
 
 ## What an untranslated string shows
 

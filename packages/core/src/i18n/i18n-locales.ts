@@ -66,8 +66,10 @@ export type LocaleDescriptor =
     // load time), so it is always an 'all' commitment.
     | (LocaleDescriptorCommon & { mode: 'full'; translatedKeyFloor: 'all' })
     // A partial dictionary merged onto the English base at load time; missing keys fall back
-    // to English. Usually a count, but da, fa, and sv are maintained at full parity and are held
-    // to it — 'mode' is about how the dictionary loads, the floor is about what we promise.
+    // to English. Usually a count, but an override locale maintained at full parity carries a
+    // floor of 'all' and is held to it — 'mode' is about how the dictionary loads, the floor is
+    // about what we promise. Read the table below for which locales those are; naming them here
+    // went stale twice.
     | (LocaleDescriptorCommon & { mode: 'overrides'; translatedKeyFloor: TranslationCommitment });
 
 // Whether a locale is still checked for mixed-in English fragments (see
