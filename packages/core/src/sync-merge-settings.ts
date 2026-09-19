@@ -160,6 +160,55 @@ const sanitizeAiForSync = (
     return sanitized;
 };
 
+/**
+ * Put this device's own AI endpoint, extra request body and offline speech model
+ * path back onto a merged document.
+ *
+ * `sanitizeAiForSync` takes those fields from the merge's FIRST argument, because
+ * against a remote document the local side is the only safe source. The sync run
+ * also uses the same merge to join the copy it read from disk with the live
+ * in-memory store, and there the disk copy comes first — so an endpoint edited
+ * while a cycle was running would be put back to the value on disk. The in-memory
+ * store is this device's newest truth, so that one caller restores it here.
+ *
+ * `apiKey` is deliberately not in this list: it is stripped from every document,
+ * local storage included (`sanitizeAppDataForStorage`), and the runtime reads the
+ * key from its own store instead.
+ *
+ * Returns `merged` itself when nothing has to change, so a caller can tell by
+ * identity whether its document still matches the one on disk.
+ */
+export const restoreDeviceLocalAiSettings = (merged: AppData, deviceLocal: AppData): AppData => {
+    const source = deviceLocal.settings.ai;
+    const mergedAi = merged.settings.ai;
+    if (!source || !mergedAi) return merged;
+    const mergedSpeech = mergedAi.speechToText;
+    const sourceSpeech = source.speechToText;
+    const sameExtraBody = JSON.stringify(mergedAi.openAIExtraBodyParams ?? null)
+        === JSON.stringify(source.openAIExtraBodyParams ?? null);
+    if (mergedAi.baseUrl === source.baseUrl
+        && sameExtraBody
+        && mergedSpeech?.baseUrl === sourceSpeech?.baseUrl
+        && mergedSpeech?.offlineModelPath === sourceSpeech?.offlineModelPath) {
+        return merged;
+    }
+    const ai: AiSettings = {
+        ...mergedAi,
+        baseUrl: source.baseUrl,
+        openAIExtraBodyParams: source.openAIExtraBodyParams
+            ? cloneSettingValue(source.openAIExtraBodyParams)
+            : undefined,
+    };
+    if (mergedSpeech || sourceSpeech?.baseUrl || sourceSpeech?.offlineModelPath) {
+        ai.speechToText = {
+            ...mergedSpeech,
+            baseUrl: sourceSpeech?.baseUrl,
+            offlineModelPath: sourceSpeech?.offlineModelPath,
+        };
+    }
+    return { ...merged, settings: { ...merged.settings, ai } };
+};
+
 const SETTINGS_SYNC_GROUP_KEYS: SettingsSyncGroup[] = ['appearance', 'language', 'gtd', 'externalCalendars', 'ai', 'savedFilters'];
 const SETTINGS_SYNC_UPDATED_AT_KEYS: Array<SettingsSyncGroup | 'preferences'> = ['preferences', ...SETTINGS_SYNC_GROUP_KEYS];
 

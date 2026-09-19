@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSettingsForSync, mergeSupportPromptSettings, sanitizeMergedSettingsForSync } from './sync-merge-settings';
+import {
+    mergeSettingsForSync,
+    mergeSupportPromptSettings,
+    restoreDeviceLocalAiSettings,
+    sanitizeMergedSettingsForSync,
+} from './sync-merge-settings';
 import type { AppData, SettingsSyncGroup } from './types';
 
 type Settings = AppData['settings'];
@@ -601,5 +606,69 @@ describe('mergeSettingsForSync > device-local AI fields', () => {
 
         expect(merged.ai?.speechToText?.baseUrl).toBe('http://localhost:8000/v1');
         expect(mergeSettingsForSync(merged, incoming)).toEqual(merged);
+    });
+});
+
+// The sync run reconciles the copy it read from disk with the live store and
+// passes the disk copy first, so the merge's device-local AI fields come from
+// the wrong side there. This puts them back.
+describe('restoreDeviceLocalAiSettings', () => {
+    const data = (ai: AppData['settings']['ai']): AppData => ({
+        tasks: [], projects: [], sections: [], areas: [], people: [], settings: { ai },
+    });
+
+    it('takes the endpoint, extra body and offline model path from the live store', () => {
+        const merged = data({
+            provider: 'openai',
+            baseUrl: 'http://old/v1',
+            openAIExtraBodyParams: { old: true },
+            speechToText: { enabled: true, baseUrl: 'http://old-speech/v1', offlineModelPath: '/old/model.bin' },
+        });
+        const inMemory = data({
+            provider: 'openai',
+            baseUrl: 'http://new/v1',
+            openAIExtraBodyParams: { fresh: true },
+            speechToText: { baseUrl: 'http://new-speech/v1', offlineModelPath: '/new/model.bin' },
+        });
+
+        const restored = restoreDeviceLocalAiSettings(merged, inMemory);
+
+        expect(restored.settings.ai?.baseUrl).toBe('http://new/v1');
+        expect(restored.settings.ai?.openAIExtraBodyParams).toEqual({ fresh: true });
+        expect(restored.settings.ai?.speechToText?.baseUrl).toBe('http://new-speech/v1');
+        expect(restored.settings.ai?.speechToText?.offlineModelPath).toBe('/new/model.bin');
+        // Fields outside the device-local set are left as the merge decided.
+        expect(restored.settings.ai?.speechToText?.enabled).toBe(true);
+    });
+
+    it('carries a cleared endpoint over instead of reviving the old one', () => {
+        const merged = data({ provider: 'openai', baseUrl: 'http://old/v1' });
+
+        const restored = restoreDeviceLocalAiSettings(merged, data({ provider: 'openai' }));
+
+        expect(restored.settings.ai?.baseUrl).toBeUndefined();
+    });
+
+    // The caller reads this identity to decide whether its snapshot still matches
+    // the document on disk, so an unchanged call must not build a new object.
+    it('returns the same object when nothing has to change', () => {
+        const ai = {
+            provider: 'openai' as const,
+            baseUrl: 'http://same/v1',
+            openAIExtraBodyParams: { keep: true },
+            speechToText: { baseUrl: 'http://same-speech/v1', offlineModelPath: '/same/model.bin' },
+        };
+        const merged = data({ ...ai });
+
+        expect(restoreDeviceLocalAiSettings(merged, data({ ...ai }))).toBe(merged);
+    });
+
+    it('leaves the document alone when the store holds no AI settings yet', () => {
+        const merged = data({ provider: 'openai', baseUrl: 'http://disk/v1' });
+
+        const restored = restoreDeviceLocalAiSettings(merged, data(undefined));
+
+        expect(restored).toBe(merged);
+        expect(restored.settings.ai?.baseUrl).toBe('http://disk/v1');
     });
 });

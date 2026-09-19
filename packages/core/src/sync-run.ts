@@ -52,6 +52,7 @@ import { cloneAppData } from './sync-runtime-utils';
 import { buildMergeSummaryLog, buildPendingAttachmentUploadLogExtra } from './sync-log-utils';
 import { CLOCK_SKEW_THRESHOLD_MS } from './sync-types';
 import { appendSyncHistory, mergeAppData, performSyncCycle } from './sync';
+import { restoreDeviceLocalAiSettings } from './sync-merge-settings';
 import { hasUncompactedPurgedTombstones } from './tombstone-compaction';
 import {
     isSyncRemoteMutationFenceError,
@@ -906,7 +907,13 @@ class SharedSyncRunMachine {
                 && computeAttachmentIdentityDigest(preSynced) === computeAttachmentIdentityDigest(inMemorySnapshot);
             // The pre-synced side carries this cycle's attachment patches, so it
             // is the side that must survive — exactly as `persisted` is below.
-            baseData = aligned ? preSynced : mergeAppData(preSynced, inMemorySnapshot);
+            // The device-local AI fields are the exception: neither the merge nor
+            // the change fingerprint sees them, so an endpoint edited during this
+            // cycle would be put back to the value read at cycle start.
+            baseData = restoreDeviceLocalAiSettings(
+                aligned ? preSynced : mergeAppData(preSynced, inMemorySnapshot),
+                inMemorySnapshot,
+            );
             this.notifier.logInfo('Sync local reconcile', {
                 reconcile: aligned ? 'aligned-skip-presynced' : 'merged-presynced',
                 durationMs: String(Date.now() - reconcileStart),
@@ -916,8 +923,11 @@ class SharedSyncRunMachine {
             const persisted = await this.storage.readPersistedLocal();
             const reconcileStart = Date.now();
             const aligned = computeSyncChangeFingerprint(persisted) === computeSyncChangeFingerprint(inMemorySnapshot);
-            baseData = aligned ? persisted : mergeAppData(persisted, inMemorySnapshot);
-            matchesDisk = aligned;
+            const reconciled = aligned ? persisted : mergeAppData(persisted, inMemorySnapshot);
+            baseData = restoreDeviceLocalAiSettings(reconciled, inMemorySnapshot);
+            // A restored endpoint means this snapshot holds content the disk copy
+            // does not, so it can no longer stand in for the disk document.
+            matchesDisk = aligned && baseData === reconciled;
             // One line per cycle so a diagnostics log shows whether whale-scale
             // cycles take the cheap aligned path and what a miss costs (#766).
             this.notifier.logInfo('Sync local reconcile', {
@@ -970,7 +980,10 @@ class SharedSyncRunMachine {
         if (!this.state.preSyncedLocalData || this.state.wroteLocal) return;
         this.state.localSnapshotChangeAt = this.store.getLastDataChangeAt();
         const inMemorySnapshot = this.store.getInMemorySnapshot();
-        const reconciledData = mergeAppData(this.state.preSyncedLocalData, inMemorySnapshot);
+        const reconciledData = restoreDeviceLocalAiSettings(
+            mergeAppData(this.state.preSyncedLocalData, inMemorySnapshot),
+            inMemorySnapshot,
+        );
         await this.persistLocalDataWithTracking(reconciledData);
     }
 

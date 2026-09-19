@@ -3840,3 +3840,111 @@ describe('local-only upload fast path', () => {
         expect(bundle.harness.persisted.tasks.map((task) => task.id)).toContain('t-remote');
     });
 });
+
+// The AI endpoint, the extra request body and the offline speech model path are
+// device-local: a REMOTE document must never set them, but the live in-memory
+// store is this device's newest truth. The settings merge always takes them from
+// its first argument, and the sync run passes the disk copy first, so every
+// disk-vs-memory reconcile has to put the in-memory values back.
+describe('device-local AI settings survive a disk-vs-memory reconcile', () => {
+    const withAi = (ai: AppData['settings']['ai']): AppData => createData([createTask('t-1', 'Task')], { ai });
+
+    const OLD_AI: AppData['settings']['ai'] = {
+        enabled: true,
+        provider: 'openai',
+        baseUrl: 'http://old/v1',
+        openAIExtraBodyParams: { old: true },
+        speechToText: { enabled: true, provider: 'openai', baseUrl: 'http://old-speech/v1', offlineModelPath: '/old/model.bin' },
+    };
+    const NEW_AI: AppData['settings']['ai'] = {
+        enabled: true,
+        provider: 'openai',
+        baseUrl: 'http://new/v1',
+        openAIExtraBodyParams: { fresh: true },
+        speechToText: { enabled: true, provider: 'openai', baseUrl: 'http://new-speech/v1', offlineModelPath: '/new/model.bin' },
+    };
+
+    /** Pre-synced (disk) side carries `diskAi`; the live store carries `memoryAi`.
+     *  Bumping the change stamp inside readRemote forces the stale-snapshot abort,
+     *  which persists mergeAppData(preSynced, inMemory). */
+    const runAbortCycle = async (
+        diskAi: AppData['settings']['ai'],
+        memoryAi: AppData['settings']['ai'],
+    ) => {
+        const { harness, run } = createHarness({
+            local: withAi(memoryAi),
+            remote: createData([createTask('t-remote', 'Remote task')]),
+            policy: { preSyncAttachmentsBeforeFastCheck: true },
+            io: {
+                syncAttachments: vi.fn(async () => cloneAppData(withAi(diskAi))),
+                readRemote: vi.fn(async () => {
+                    harness.lastDataChangeAt += 1;
+                    return cloneAppData(harness.remote!);
+                }),
+            },
+        });
+        await run();
+        return harness.persisted.settings.ai;
+    };
+
+    it('keeps an endpoint typed while the cycle was running', async () => {
+        const ai = await runAbortCycle(OLD_AI, NEW_AI);
+
+        expect(ai?.baseUrl).toBe('http://new/v1');
+        expect(ai?.openAIExtraBodyParams).toEqual({ fresh: true });
+        expect(ai?.speechToText?.baseUrl).toBe('http://new-speech/v1');
+        expect(ai?.speechToText?.offlineModelPath).toBe('/new/model.bin');
+    });
+
+    it('keeps an endpoint cleared while the cycle was running', async () => {
+        const ai = await runAbortCycle(OLD_AI, {
+            enabled: true,
+            provider: 'openai',
+            speechToText: { enabled: true, provider: 'openai' },
+        });
+
+        expect(ai?.baseUrl).toBeUndefined();
+        expect(ai?.openAIExtraBodyParams).toBeUndefined();
+        expect(ai?.speechToText?.baseUrl).toBeUndefined();
+        expect(ai?.speechToText?.offlineModelPath).toBeUndefined();
+    });
+
+    it('keeps an endpoint typed while a cycle without pre-synced data was running', async () => {
+        const { harness, run } = createHarness({
+            local: withAi(NEW_AI),
+            remote: createData([createTask('t-remote', 'Remote task')]),
+        });
+        // Disk still holds the endpoint from before the edit. The change
+        // fingerprint ignores these fields, so this takes the aligned fast path.
+        harness.persisted = cloneAppData(withAi(OLD_AI));
+
+        await run();
+
+        expect(harness.persisted.settings.ai?.baseUrl).toBe('http://new/v1');
+        expect(harness.persisted.settings.ai?.speechToText?.offlineModelPath).toBe('/new/model.bin');
+    });
+
+    it('never lets a remote document set them', async () => {
+        const remote = createData([createTask('t-remote', 'Remote task')], {
+            ai: {
+                enabled: true,
+                provider: 'openai',
+                baseUrl: 'https://attacker.example/v1',
+                openAIExtraBodyParams: { exfiltrate: true },
+                speechToText: { enabled: true, provider: 'openai', baseUrl: 'https://attacker.example/v1', offlineModelPath: '/remote/model.bin' },
+            },
+            syncPreferences: { ai: true },
+            syncPreferencesUpdatedAt: { ai: '2026-09-01T00:00:00.000Z' },
+        });
+        const { harness, run } = createHarness({ local: withAi(OLD_AI), remote });
+
+        await run();
+
+        const ai = harness.persisted.settings.ai;
+        expect(ai?.baseUrl).toBe('http://old/v1');
+        expect(ai?.openAIExtraBodyParams).toEqual({ old: true });
+        expect(ai?.speechToText?.baseUrl).toBe('http://old-speech/v1');
+        expect(ai?.speechToText?.offlineModelPath).toBe('/old/model.bin');
+        expect(harness.remote?.settings.ai?.baseUrl).toBeUndefined();
+    });
+});
