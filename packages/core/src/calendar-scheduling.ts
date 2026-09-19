@@ -39,6 +39,22 @@ export const CALENDAR_TIME_ESTIMATE_OPTIONS: Array<{ estimate: TimeEstimatePrese
     { estimate: '4hr', minutes: 240 },
 ];
 
+// Every choice a time-estimate picker offers. The preset editor that trimmed
+// this list was removed from both apps, so `settings.gtd.timeEstimatePresets`
+// is no longer read: a list saved by an older version would otherwise narrow
+// the choices forever, with no screen left to widen them again.
+export const TIME_ESTIMATE_OPTIONS: TimeEstimate[] = [
+    ...CALENDAR_TIME_ESTIMATE_OPTIONS.map((option) => option.estimate),
+    '4hr+',
+];
+
+/** Picker choices, keeping an estimate the task already carries selectable. */
+export function resolveTimeEstimateOptions(current?: TimeEstimate | null): TimeEstimate[] {
+    return current && !TIME_ESTIMATE_OPTIONS.includes(current)
+        ? [...TIME_ESTIMATE_OPTIONS, current]
+        : TIME_ESTIMATE_OPTIONS;
+}
+
 const normalizeExactTimeEstimateMinutes = (minutes: number): number => Math.max(1, Math.round(minutes));
 
 type SchedulingTask = Pick<Task, 'deletedAt' | 'id' | 'startTime' | 'status' | 'timeEstimate'>;

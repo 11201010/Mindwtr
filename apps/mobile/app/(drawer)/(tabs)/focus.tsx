@@ -58,6 +58,7 @@ import {
   hasTimeComponent,
   shallow,
   type Project,
+  TIME_ESTIMATE_OPTIONS,
   type Task,
   type FocusGroupBy,
   type SavedFilter,
@@ -83,7 +84,6 @@ import {
   NO_PROJECT_FILTER_ID,
 } from '@/lib/focus-screen-utils';
 import { FilterChip, TaskFilterSheet } from '@/components/task-filter-sheet';
-import { resolveTimeEstimateFilterOptions } from '@/components/time-estimate-filter-utils';
 import { useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { PullSyncIndicator } from '@/components/PullSyncIndicator';
@@ -316,10 +316,6 @@ export default function FocusScreen() {
       })
   ), [activeProjectIds, visibleProjects]);
   const showNoProjectOption = useMemo(() => activeTasks.some((task) => !task.projectId), [activeTasks]);
-  const effectiveTimeEstimatePresets = useMemo(
-    () => resolveTimeEstimateFilterOptions(settings?.gtd?.timeEstimatePresets),
-    [settings?.gtd?.timeEstimatePresets],
-  );
   const savedFocusFilters = useMemo(
     () => (settings?.savedFilters ?? []).filter((filter) => filter.view === 'focus' && !filter.deletedAt),
     [settings?.savedFilters],
@@ -1893,7 +1889,7 @@ export default function FocusScreen() {
         options={{
           tokens: tokenOptions,
           projects: projectFilterOptions,
-          timeEstimates: effectiveTimeEstimatePresets,
+          timeEstimates: TIME_ESTIMATE_OPTIONS,
           visibility: metadataFilterVisibility,
         }}
         themeColors={tc}

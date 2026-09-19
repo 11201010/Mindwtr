@@ -17,6 +17,8 @@ import {
     normalizeCalendarDurationMinutes,
     parseTimeEstimateInput,
     parseCalendarTimeOnDate,
+    resolveTimeEstimateOptions,
+    TIME_ESTIMATE_OPTIONS,
     timeEstimateToFilterBucket,
     timeEstimateToMinutes,
 } from './calendar-scheduling';
@@ -84,6 +86,15 @@ describe('calendar scheduling helpers', () => {
         expect(timeEstimateToMinutes(createCustomTimeEstimate(150))).toBe(150);
         expect(timeEstimateToMinutes(undefined)).toBe(30);
         expect(timeEstimateToMinutes('2hr', { enabled: false })).toBe(30);
+    });
+
+    // The preset editor is gone from both apps, so a list saved by an older
+    // version must not narrow the choices any more.
+    it('offers every time estimate, plus a custom one the task already has', () => {
+        expect(TIME_ESTIMATE_OPTIONS).toEqual(['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+']);
+        expect(resolveTimeEstimateOptions()).toEqual(TIME_ESTIMATE_OPTIONS);
+        expect(resolveTimeEstimateOptions('30min')).toEqual(TIME_ESTIMATE_OPTIONS);
+        expect(resolveTimeEstimateOptions(createCustomTimeEstimate(75))).toEqual([...TIME_ESTIMATE_OPTIONS, 'custom:75']);
     });
 
     it('maps calendar minutes back to exact Mindwtr time estimates', () => {

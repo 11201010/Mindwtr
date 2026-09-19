@@ -41,6 +41,7 @@ import {
   resolveAutoTextDirection,
   useTaskStore,
   type AIProviderId,
+  resolveTimeEstimateOptions,
   type ProcessInboxDecision,
   type ProcessInboxSession,
   type Task,
@@ -54,7 +55,6 @@ import {
 } from '@mindwtr/core/process-inbox-workflow';
 
 import type { AIResponseAction } from '../ai-response-modal';
-import { MOBILE_TIME_ESTIMATE_OPTIONS } from '../time-estimate-filter-utils';
 import { useLanguage } from '../../contexts/language-context';
 import { useTheme } from '../../contexts/theme-context';
 import { useToast } from '../../contexts/toast-context';
@@ -259,18 +259,10 @@ export function useInboxProcessingController({
       return null;
     }
   }, [showToast, t]);
-  const timeEstimateOptions = useMemo<TimeEstimate[]>(() => {
-    const savedPresets = settings?.gtd?.timeEstimatePresets ?? [];
-    const normalizedPresets = MOBILE_TIME_ESTIMATE_OPTIONS.filter((value) => savedPresets.includes(value));
-    if (normalizedPresets.length > 0) {
-      return selectedTimeEstimate && !normalizedPresets.includes(selectedTimeEstimate)
-        ? [...normalizedPresets, selectedTimeEstimate]
-        : normalizedPresets;
-    }
-    return selectedTimeEstimate && !MOBILE_TIME_ESTIMATE_OPTIONS.includes(selectedTimeEstimate)
-      ? [...MOBILE_TIME_ESTIMATE_OPTIONS, selectedTimeEstimate]
-      : MOBILE_TIME_ESTIMATE_OPTIONS;
-  }, [selectedTimeEstimate, settings?.gtd?.timeEstimatePresets]);
+  const timeEstimateOptions = useMemo<TimeEstimate[]>(
+    () => resolveTimeEstimateOptions(selectedTimeEstimate),
+    [selectedTimeEstimate],
+  );
 
   const { areaById, projectById } = useVisibleTaskContext();
   const inboxTasks = useMemo(

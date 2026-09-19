@@ -13,6 +13,7 @@ import {
   sortTasksBy,
   sortViewSectionDefinitions,
   tFallback,
+  TIME_ESTIMATE_OPTIONS,
   useTaskStore,
 } from '@mindwtr/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,7 +33,6 @@ import { getBulkMoveStatusOptions } from '../task-list/TaskListBulkBar';
 import { assertBulkActionSucceeded, usePruneSelectionToVisible, useTaskListSelection } from '../use-task-list-selection';
 import { TaskListView } from '../task-list-view';
 import { FilterChip, TaskFilterSheet } from '../task-filter-sheet';
-import { resolveTimeEstimateFilterOptions } from '../time-estimate-filter-utils';
 import { DeferredProjectsSection, selectDeferredProjects } from './deferred-projects-section';
 import { SomedaySectionPicker } from '../someday-section-picker';
 import { createSomedaySection } from '@/lib/someday-section-actions';
@@ -187,10 +187,6 @@ export function SomedayView() {
       option !== 'timeEstimate' || resolvedFeatureFlags.timeEstimates
     )),
     [resolvedFeatureFlags.timeEstimates],
-  );
-  const timeEstimateFilterOptions = useMemo(
-    () => resolveTimeEstimateFilterOptions(settings?.gtd?.timeEstimatePresets),
-    [settings?.gtd?.timeEstimatePresets],
   );
   const somedayTasks = useMemo(() => {
     const filtered = baseSomedayTasks.filter((task) => taskMatchesFilterSelections(task, {
@@ -488,7 +484,7 @@ export function SomedayView() {
         options={{
           tokens: tokenFilterOptions,
           projects: projectFilterOptions,
-          timeEstimates: timeEstimateFilterOptions,
+          timeEstimates: TIME_ESTIMATE_OPTIONS,
           visibility: metadataFilterVisibility,
         }}
         themeColors={tc}

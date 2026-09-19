@@ -489,4 +489,35 @@ describe('useTaskEditDerivedState', () => {
         expect(derived?.detailsFields).not.toContain('checklist');
         renderer.act(() => view.unmount());
     });
+    // The preset editor is gone from Settings, so a one-item list saved by an
+    // older version must not narrow the task editor's choices any more.
+    it('offers every time estimate although an old preset list is stored', () => {
+        let derived: ReturnType<typeof useTaskEditDerivedState> | undefined;
+        const task: Task = { ...baseTask, timeEstimate: '15min' };
+        function Probe() {
+            derived = useTaskEditDerivedState({
+                task,
+                checklist: [],
+                draft: createTaskDraft(task),
+                settings: { gtd: { timeEstimatePresets: ['5min'] } },
+                projects: [],
+                sections: [],
+                prioritiesEnabled: true,
+                timeEstimatesEnabled: true,
+                contextInputDraft: '',
+                descriptionDraft: '',
+                tagInputDraft: '',
+                visibleAttachmentsLength: 0,
+                t: (key) => key,
+            });
+            return null;
+        }
+        let view!: renderer.ReactTestRenderer;
+        renderer.act(() => { view = renderer.create(React.createElement(Probe)); });
+
+        expect(derived?.timeEstimateOptions.map((option) => option.value)).toEqual([
+            '', '5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+',
+        ]);
+        renderer.act(() => view.unmount());
+    });
 });

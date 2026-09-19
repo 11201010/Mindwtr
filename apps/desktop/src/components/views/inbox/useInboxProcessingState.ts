@@ -13,6 +13,7 @@ import {
     setTaskDraftField,
     type AppData,
     type Area,
+    resolveTimeEstimateOptions,
     type ProcessInboxSession,
     type Project,
     type Task,
@@ -38,7 +39,6 @@ import {
 
 type ProcessingMode = 'guided' | 'quick';
 
-const ALL_TIME_ESTIMATE_OPTIONS: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
 
 /** Nothing being processed: an all-empty draft built by the same core factory
  *  that hydrates a real task, so reset and hydrate cannot drift apart. */
@@ -457,19 +457,10 @@ export function useInboxProcessingState({
         setScheduleDateOnly,
     ]);
 
-    const timeEstimateOptions = useMemo<TimeEstimate[]>(() => {
-        const selectedTimeEstimate = draft.timeEstimate || undefined;
-        const savedPresets = settings?.gtd?.timeEstimatePresets ?? [];
-        const normalizedPresets = ALL_TIME_ESTIMATE_OPTIONS.filter((value) => savedPresets.includes(value));
-        if (normalizedPresets.length > 0) {
-            return selectedTimeEstimate && !normalizedPresets.includes(selectedTimeEstimate)
-                ? [...normalizedPresets, selectedTimeEstimate]
-                : normalizedPresets;
-        }
-        return selectedTimeEstimate && !ALL_TIME_ESTIMATE_OPTIONS.includes(selectedTimeEstimate)
-            ? [...ALL_TIME_ESTIMATE_OPTIONS, selectedTimeEstimate]
-            : ALL_TIME_ESTIMATE_OPTIONS;
-    }, [draft.timeEstimate, settings?.gtd?.timeEstimatePresets]);
+    const timeEstimateOptions = useMemo<TimeEstimate[]>(
+        () => resolveTimeEstimateOptions(draft.timeEstimate || undefined),
+        [draft.timeEstimate],
+    );
 
     return {
         processInboxPlan,

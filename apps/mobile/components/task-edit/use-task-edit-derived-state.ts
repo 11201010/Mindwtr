@@ -11,6 +11,7 @@ import {
     normalizeTaskEditorOrder,
     parseRRuleString,
     REFERENCE_HIDDEN_TASK_FIELDS,
+    resolveTimeEstimateOptions,
     safeParseDate,
     TASK_EDITOR_FIXED_FIELDS,
     type AppData,
@@ -33,8 +34,6 @@ import {
 import { STATUS_OPTIONS } from './task-edit-modal.utils';
 import type { PickerOption } from './TaskEditFieldRenderer.types';
 
-const DEFAULT_TIME_ESTIMATE_PRESETS: TimeEstimate[] = ['5min', '10min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
-const ALL_TIME_ESTIMATES: TimeEstimate[] = ['5min', '10min', '15min', '30min', '1hr', '2hr', '3hr', '4hr', '4hr+'];
 const PRIORITY_OPTIONS: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
 const ENERGY_LEVEL_OPTIONS: NonNullable<Task['energyLevel']>[] = ['low', 'medium', 'high'];
 const REFERENCE_HIDDEN_FIELDS = new Set<TaskEditorFieldId>(REFERENCE_HIDDEN_TASK_FIELDS);
@@ -121,18 +120,16 @@ export function useTaskEditDerivedState({
     const currentEstimate = draft ? draft.timeEstimate : task?.timeEstimate;
     const timeEstimateOptions: { value: TimeEstimate | ''; label: string }[] = useMemo(
         () => {
-            const savedPresets = settings.gtd?.timeEstimatePresets;
-            const basePresets = savedPresets?.length ? savedPresets : DEFAULT_TIME_ESTIMATE_PRESETS;
-            const normalizedPresets = ALL_TIME_ESTIMATES.filter((value) => basePresets.includes(value));
-            const effectivePresets = currentEstimate && !isCustomTimeEstimate(currentEstimate) && !normalizedPresets.includes(currentEstimate)
-                ? [...normalizedPresets, currentEstimate]
-                : normalizedPresets;
+            // A custom estimate has its own input; it never joins the presets.
+            const effectivePresets = resolveTimeEstimateOptions(
+                currentEstimate && !isCustomTimeEstimate(currentEstimate) ? currentEstimate : undefined,
+            );
             return [
                 { value: '', label: t('common.none') },
                 ...effectivePresets.map((value) => ({ value, label: formatTimeEstimateLabel(value) })),
             ];
         },
-        [currentEstimate, formatTimeEstimateLabel, settings.gtd?.timeEstimatePresets, t]
+        [currentEstimate, formatTimeEstimateLabel, t]
     );
 
     const savedOrder = useMemo(() => settings.gtd?.taskEditor?.order ?? [], [settings.gtd?.taskEditor?.order]);

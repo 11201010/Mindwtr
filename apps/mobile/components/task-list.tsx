@@ -28,6 +28,7 @@ import {
   taskMatchesAreaFilterSelection,
   DONE_TASK_LIST_SORT_OPTIONS,
   TASK_LIST_SORT_OPTIONS,
+  TIME_ESTIMATE_OPTIONS,
 } from '@mindwtr/core';
 
 import { TaskEditModal } from './task-edit-modal';
@@ -88,7 +89,6 @@ import {
   sortProjectTasksByOrder,
 } from './task-list-utils';
 import { TaskFilterSheet } from './task-filter-sheet';
-import { resolveTimeEstimateFilterOptions } from './time-estimate-filter-utils';
 import {
   taskMatchesFilterSelections,
   useTaskFilterSelections,
@@ -611,10 +611,6 @@ function TaskListComponent({
     onClear: resetReferenceFilters,
   });
   const { criteria: filterCriteria, searchQuery: filterSearchQuery } = selections;
-  const timeEstimateFilterOptions = useMemo(
-    () => resolveTimeEstimateFilterOptions(settings?.gtd?.timeEstimatePresets),
-    [settings?.gtd?.timeEstimatePresets],
-  );
   // Scanning every visible task for its tokens only pays off once the sheet is
   // open; until then the selected ones are all the chips anyone can see.
   const tokenFilterOptions = useMemo(() => {
@@ -1718,7 +1714,7 @@ function TaskListComponent({
         options={{
           tokens: tokenFilterOptions,
           projects: referenceProjectFilterOptions,
-          timeEstimates: timeEstimateFilterOptions,
+          timeEstimates: TIME_ESTIMATE_OPTIONS,
           visibility: metadataFilterVisibility,
         }}
         hasAdditionalActiveFilters={archivedReferenceFilterActive}

@@ -17,13 +17,13 @@ import {
     sortTasksBy,
     taskMatchesAreaFilterSelection,
     tFallback,
+    TIME_ESTIMATE_OPTIONS,
     useTaskStore,
     type Project,
     type Task,
     type TaskSortBy,
 } from '@mindwtr/core';
 import { TaskFilterSheet } from '@/components/task-filter-sheet';
-import { resolveTimeEstimateFilterOptions } from '@/components/time-estimate-filter-utils';
 import { taskMatchesFilterSelections, useTaskFilterSelections } from '@/hooks/use-task-filter-selections';
 import { useLocalDayKey } from '@/hooks/use-local-day-key';
 import { buildTaskGroupSections, getTaskGroupByLabel, type TaskGroupItem } from '@/lib/task-group-sections';
@@ -408,10 +408,6 @@ export default function ArchivedScreen() {
         t,
         visibility: metadataFilterVisibility,
     });
-    const timeEstimateFilterOptions = useMemo(
-        () => resolveTimeEstimateFilterOptions(settings?.gtd?.timeEstimatePresets),
-        [settings?.gtd?.timeEstimatePresets],
-    );
     // Only worth scanning every row for its tokens once the sheet is open; until
     // then the selected ones are the only chips anybody can see.
     const tokenFilterOptions = useMemo(() => {
@@ -959,7 +955,7 @@ export default function ArchivedScreen() {
                     selections={selections}
                     options={{
                         tokens: tokenFilterOptions,
-                        timeEstimates: timeEstimateFilterOptions,
+                        timeEstimates: TIME_ESTIMATE_OPTIONS,
                         visibility: metadataFilterVisibility,
                     }}
                     themeColors={tc}
