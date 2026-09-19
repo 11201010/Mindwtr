@@ -223,8 +223,9 @@ describe('TrashScreen', () => {
     });
     renderer.act(() => { findPressableByText(tree, 'Clear Trash').props.onPress(); });
 
-    // The counts sentence names the shown set, not "all trashed".
-    expect(alertSpy.mock.calls[0]?.[1]).toContain('1 tasks · 1 Projects');
+    // The counts sentence names the shown set, not "all trashed", and the counts
+    // and the translated sentence are two lines — no hard-coded ". " join.
+    expect(alertSpy.mock.calls[0]?.[1]).toBe('1 tasks · 1 Projects\nThis action cannot be undone.');
     const confirmButton = (alertSpy.mock.calls[0]?.[2] ?? []).find((button) => button.style === 'destructive');
     await renderer.act(async () => {
       await confirmButton?.onPress?.();

@@ -418,7 +418,9 @@ export default function TrashScreen() {
         ? tFallback(t, 'trash.deleteConfirm', 'Delete permanently?')
         : tFallback(t, 'trash.clearAllConfirm', 'Clear trash?'),
       scope.narrowed
-        ? `${scope.taskIds.length} ${tFallback(t, 'common.tasks', 'tasks')} · ${scope.projectIds.length} ${tFallback(t, 'projects.title', 'projects')}. ${tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.')}`
+        // Two lines, not one sentence: a hard-coded ". " join would be user-visible
+        // text no locale file controls (zh and ja end a sentence with 。).
+        ? `${scope.taskIds.length} ${tFallback(t, 'common.tasks', 'tasks')} · ${scope.projectIds.length} ${tFallback(t, 'projects.title', 'projects')}\n${tFallback(t, 'trash.deleteConfirmBody', 'This action cannot be undone.')}`
         : tFallback(t, 'trash.clearAllConfirmBodyWithProjects', 'This will permanently delete all trashed tasks and projects.'),
       [
         { text: tFallback(t, 'common.cancel', 'Cancel'), style: 'cancel' },

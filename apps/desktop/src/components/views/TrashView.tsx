@@ -196,7 +196,10 @@ export function TrashView() {
         const confirmed = await requestConfirmation(scope.narrowed
             ? {
                 title: t('trash.deleteConfirm'),
-                description: `${scope.taskIds.length} ${t('common.tasks')} · ${scope.projectIds.length} ${t('projects.title')}. ${t('trash.deleteConfirmBody')}`,
+                // Two lines, not one sentence: a hard-coded ". " join would be
+                // user-visible text no locale file controls (zh and ja end a
+                // sentence with 。). The dialog renders \n (whitespace-pre-line).
+                description: `${scope.taskIds.length} ${t('common.tasks')} · ${scope.projectIds.length} ${t('projects.title')}\n${t('trash.deleteConfirmBody')}`,
                 confirmLabel: t('trash.clearAll'),
                 cancelLabel: tFallback(t, 'common.cancel', 'Cancel'),
             }

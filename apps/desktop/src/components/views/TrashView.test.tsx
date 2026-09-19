@@ -118,6 +118,11 @@ describe('TrashView', () => {
         const dialog = screen.getByRole('dialog');
         expect(dialog).toHaveTextContent('1');            // counts the shown set
         expect(dialog).not.toHaveTextContent(/all trashed/i);
+        // The counts and the translated sentence are two lines, never joined by a
+        // hard-coded ". " that no locale controls.
+        const description = dialog.querySelector('p')!;
+        expect(description.textContent).toBe('1 tasks · 1 Projects\nThis action cannot be undone.');
+        expect(description.className).toContain('whitespace-pre-line');
         fireEvent.click(within(dialog).getByRole('button', { name: 'Clear Trash' }));
 
         await waitFor(() => {
