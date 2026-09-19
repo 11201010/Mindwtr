@@ -6,25 +6,27 @@ Planned against `561cfdfa0` (integration branch `agent/integrate-20260918` = mai
 
 | Plan | Finding | Priority | Effort | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
-| [111](111-clear-trash-purges-only-what-is-shown.md) | PROD-02: Clear Trash deletes items the screen does not show | P1 | S | None | TODO |
-| [112](112-undo-project-delete-restores-its-tasks.md) | PROD-05: Undo after a project delete restores an empty project | P2 | S-M | None | TODO |
-| [113](113-sidebar-drop-onto-history.md) | PROD-01: dropping a task on Done/Archived in the sidebar stopped working | P2 | S | None | TODO |
-| [114](114-save-and-edit-follows-deferred-tasks.md) | PROD-03: Save & edit can land where the new task is hidden | P2 | S | None | TODO |
-| [115](115-trash-retention-notice.md) | PROD-04: Trash never says items are removed after the retention period | P3 | S | 111 (same files) | TODO |
-| [116](116-user-guide-matches-1-3-1-screens.md) | DOCS-01: public guide describes the pre-1.3.1 screens (six languages) | P3 | M | 113 (one sentence) | TODO |
-| [117](117-ai-endpoint-stays-on-device.md) | SEC-02: a synced settings document can choose where the AI API key is sent | P0 | S | None | TODO |
-| [118](118-date-only-imports-stay-date-only.md) | BUG-01: Todoist import and speech-to-task add a clock time to date-only dates | P1 | S | None | TODO |
-| [119](119-server-rejected-attachment-is-terminal.md) | REL-03: a file the self-hosted server refuses blocks every remote write | P1 | M | None | TODO |
-| [120](120-email-capture-deterministic-ids.md) | REL-01: email-captured tasks get random ids, so a replay duplicates them | P2 | S | None | TODO |
-| [121](121-log-sanitizer-current-key-shapes.md) | SEC-01: log sanitizer misses current API key shapes; two drifted copies | P2 | S | None | TODO |
-| [122](122-email-capture-partial-fetch.md) | REL-02: email capture downloads whole messages to keep 16,000 characters | P2 | S | None | TODO |
-| [123](123-capture-webhook-idempotency.md) | REL-04: capture webhook has no idempotency key | P2 | S | None | TODO |
-| [124](124-sync-settings-allowlist-test.md) | TEST-01: no test pins which settings cross devices | P3 | S | 117 | TODO |
-| [125](125-desktop-drop-duplicate-task-indexes.md) | PERF-01 step 1: nine task indexes exist twice in the desktop database | P2 | S | None | TODO |
-| [126](126-msstore-routing-test-asserts-something.md) | DX-01: Store rollout routing test passes when pwsh is missing or broken | P3 | S | None | TODO |
-| [127](127-render-test-timeouts.md) | DX-02: heavy render tests fail at the 5 s harness default under load | P3 | S | None | TODO |
+| [111](111-clear-trash-purges-only-what-is-shown.md) | PROD-02: Clear Trash deletes items the screen does not show | P1 | S | None | DONE |
+| [112](112-undo-project-delete-restores-its-tasks.md) | PROD-05: Undo after a project delete restores an empty project | P2 | S-M | None | DONE |
+| [113](113-sidebar-drop-onto-history.md) | PROD-01: dropping a task on Done/Archived in the sidebar stopped working | P2 | S | None | DONE |
+| [114](114-save-and-edit-follows-deferred-tasks.md) | PROD-03: Save & edit can land where the new task is hidden | P2 | S | None | DONE |
+| [115](115-trash-retention-notice.md) | PROD-04: Trash never says items are removed after the retention period | P3 | S | 111 (same files) | DONE |
+| [116](116-user-guide-matches-1-3-1-screens.md) | DOCS-01: public guide describes the pre-1.3.1 screens (six languages) | P3 | M | 113 (one sentence) | DONE |
+| [117](117-ai-endpoint-stays-on-device.md) | SEC-02: a synced settings document can choose where the AI API key is sent | P0 | S | None | DONE |
+| [118](118-date-only-imports-stay-date-only.md) | BUG-01: Todoist import and speech-to-task add a clock time to date-only dates | P1 | S | None | DONE |
+| [119](119-server-rejected-attachment-is-terminal.md) | REL-03: a file the self-hosted server refuses blocks every remote write | P1 | M | None | DONE |
+| [120](120-email-capture-deterministic-ids.md) | REL-01: email-captured tasks get random ids, so a replay duplicates them | P2 | S | None | DONE |
+| [121](121-log-sanitizer-current-key-shapes.md) | SEC-01: log sanitizer misses current API key shapes; two drifted copies | P2 | S | None | DONE |
+| [122](122-email-capture-partial-fetch.md) | REL-02: email capture downloads whole messages to keep 16,000 characters | P2 | S | None | DONE |
+| [123](123-capture-webhook-idempotency.md) | REL-04: capture webhook has no idempotency key | P2 | S | None | DONE |
+| [124](124-sync-settings-allowlist-test.md) | TEST-01: no test pins which settings cross devices | P3 | S | 117 | DONE |
+| [125](125-desktop-drop-duplicate-task-indexes.md) | PERF-01 step 1: nine task indexes exist twice in the desktop database | P2 | S | None | DONE |
+| [126](126-msstore-routing-test-asserts-something.md) | DX-01: Store rollout routing test passes when pwsh is missing or broken | P3 | S | None | DONE |
+| [127](127-render-test-timeouts.md) | DX-02: heavy render tests fail at the 5 s harness default under load | P3 | S | None | DONE |
 
-### Moved to the architecture-deepening phase (candidates, not planned here)
+### Architecture deepening (phase 3, implemented from `.orchestrator/tasks/impl-20260918/ARCH-BRIEFS.md`)
+
+DONE: ARCH-01, ARCH-02, ARCH-03, ARCH-04 (plus the core fix "a purged row is never restored"), ARCH-05. Not selected: ARCH-06.
 
 ARCH-01 one home for the desktop profile search path (scripts copy still lacks Flatpak and macOS sandbox roots); ARCH-02 one active-filter chip builder (four desktop copies; ArchiveView still shows chips for criteria it does not apply); ARCH-03 import the time-estimate list from core (five hand-typed lists); ARCH-04 Rust project delete/restore in the shared parity fixture (three `purgedAt` differences); ARCH-05 task destination patch written four times; ARCH-06 stale-path fallback order and moved-folder list written three times.
 
@@ -39,6 +41,7 @@ D1 "Restore project" from Trash brings its tasks back (needs a new synced field;
 - Owner decisions from phase 1: compact mobile rows hide note/tags on the Reference list with no "Show details" control; a replayed Apple Reminders import counts as imported and deletes the reminder when only a tombstone exists (CP-3).
 - Phase-1 closure leftovers: layout migration orphan-WAL double fault (N2); stale-lock live-removal race (C4b); editor attachment draft can drop a kept voice capture (R1); muted unapplied filter chips have no screen-reader cue; desktop row menus without arrow keys; Linux zbus notification connection never reset.
 - Release rollout: no minimum time at a stage; shared concurrency groups can cancel a pending manual halt.
+- Closure leftovers from phases 2-3: a device-local setting edited during a sync cycle is invisible to the change fingerprint (the AI endpoint and offline model path are restored explicitly; a general rule needs its own plan; mobile `applyDataToStore` not audited); `purgeDeletedTasks` / `purgeDeletedProjects` have no app caller left; Focus view shows no chip for a selection in a hidden category (needs a core hook change); email capture counts a replay as imported; the capture replay answer reveals whether an id exists to a capture token; core and Rust word the purged-restore refusal differently; narrowed Clear Trash text reads "1 tasks".
 - Reliability "investigate" list: IMAP host change reuses the old password; synced calendar URLs cause blind GETs to LAN hosts; real Todoist export shapes; email-capture state lock after a panic.
 
 ### Considered and rejected (this run)
