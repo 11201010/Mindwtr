@@ -408,12 +408,14 @@ pub(crate) fn migrate_standard_layout(root: &Path) -> LayoutMigration {
             };
         }
         Classification::Unfinished => {
-            // A holder was running and the folder is still unfinished, so its
-            // run failed and rolled back. That process is already reading the
-            // flat root and may be the instance the single-instance plugin
-            // keeps; migrating now would empty the root under it. Both stay
-            // flat and the journal makes the next start retry.
-            if lock.waited_for_holder {
+            // A holder was running and left its journal behind, so its run
+            // failed and rolled back: every run that succeeds clears the
+            // journal, and leftovers kept on purpose at both ends make even a
+            // successful folder read as unfinished. The failed holder is already
+            // reading the flat root and may be the instance the single-instance
+            // plugin keeps; migrating now would empty the root under it. Both
+            // stay flat and the journal makes the next start retry.
+            if lock.waited_for_holder && root.join(JOURNAL_FILE_NAME).exists() {
                 log::warn!("Another process gave up on the storage layout migration");
                 return LayoutMigration::failed("lock");
             }
@@ -802,6 +804,54 @@ mod tests {
         );
         assert!(lock.is_file(), "the other waiter's lock is left alone");
         assert!(root.join(DB_FILE_NAME).is_file(), "nothing was moved");
+    }
+
+    // Finding N1: a folder with leftovers kept on purpose at both ends reads as
+    // unfinished on every start, including after a run that fully succeeded. The
+    // waiter must tell that apart from a holder that gave up, or it spends its
+    // session on the root leftovers while the holder reads data/.
+    #[test]
+    fn a_waiter_uses_the_subfolders_when_the_holder_succeeded() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().to_path_buf();
+        // What a downgrade leaves: the real profile in the subfolders, plus the
+        // older build's own files at the root.
+        write(&root.join(DATA_DIR_NAME).join(DB_FILE_NAME), "real db");
+        write(
+            &root.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME),
+            "sync_path = \"/original\"\n",
+        );
+        write(&root.join(DB_FILE_NAME), "leftover db");
+        write(&root.join(CONFIG_FILE_NAME), "sync_path = \"/leftover\"\n");
+        write(&root.join(LOCK_FILE_NAME), "");
+
+        // The holder keeps both leftovers, clears its journal and releases.
+        let holder_root = root.clone();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            fs::remove_file(holder_root.join(LOCK_FILE_NAME)).expect("release lock");
+        });
+
+        let waited = migrate_standard_layout(&root);
+        holder.join().expect("holder thread");
+
+        assert_eq!(waited.outcome, LayoutOutcome::Migrated);
+        assert!(
+            waited.subfolders,
+            "the waiter reads the same profile as the holder"
+        );
+        assert_eq!(waited.kept, 2);
+        assert_eq!(waited.moved, 0);
+        // The leftovers are still there, and the real profile is untouched.
+        assert!(root.join(DB_FILE_NAME).is_file());
+        assert_eq!(
+            fs::read_to_string(root.join(DATA_DIR_NAME).join(DB_FILE_NAME)).expect("db"),
+            "real db"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)).expect("config"),
+            "sync_path = \"/original\"\n"
+        );
     }
 
     // Finding C3: a holder that releases the lock with the folder still
