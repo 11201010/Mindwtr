@@ -10,7 +10,7 @@ const reminders = vi.hoisted(() => ({
   importAppleRemindersIntoInbox: vi.fn(),
   loadAppleRemindersImportSettings: vi.fn(),
   requestAppleRemindersPermission: vi.fn(),
-  saveAppleRemindersImportSettings: vi.fn(),
+  updateAppleRemindersImportSettings: vi.fn(),
 }));
 
 vi.mock('@/lib/apple-reminders-import', () => reminders);
@@ -50,7 +50,7 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
     vi.clearAllMocks();
     (Platform as { OS: string }).OS = 'ios';
     reminders.loadAppleRemindersImportSettings.mockResolvedValue(settings);
-    reminders.saveAppleRemindersImportSettings.mockResolvedValue(undefined);
+    reminders.updateAppleRemindersImportSettings.mockResolvedValue(settings);
   });
 
   const renderSection = async () => {
@@ -92,7 +92,7 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
 
   it('stays busy while reminder list preferences are being written', async () => {
     const pendingSave = deferred<void>();
-    reminders.saveAppleRemindersImportSettings.mockReturnValue(pendingSave.promise);
+    reminders.updateAppleRemindersImportSettings.mockReturnValue(pendingSave.promise);
     await renderSection();
     onBusyChange.mockClear();
 
@@ -101,7 +101,7 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
       await Promise.resolve();
     });
 
-    expect(reminders.saveAppleRemindersImportSettings).toHaveBeenCalledOnce();
+    expect(reminders.updateAppleRemindersImportSettings).toHaveBeenCalledOnce();
     expect(onBusyChange).toHaveBeenLastCalledWith(true);
 
     await act(async () => {
@@ -119,9 +119,11 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
       await Promise.resolve();
     });
 
-    expect(reminders.saveAppleRemindersImportSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ autoImportOnOpen: true, selectedListId: 'list-1' }),
-    );
+    // The write is queued behind any running import and re-reads the stored
+    // settings, so the screen hands it a change instead of a whole blob.
+    const apply = reminders.updateAppleRemindersImportSettings.mock.calls.at(-1)?.[0] as
+      (current: typeof settings) => typeof settings;
+    expect(apply(settings)).toEqual({ ...settings, autoImportOnOpen: true });
   });
 
   it('hides the auto-import toggle until a list is chosen', async () => {

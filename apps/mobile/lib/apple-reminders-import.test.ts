@@ -50,6 +50,7 @@ import {
   loadAppleRemindersImportSettings,
   requestAppleRemindersPermission,
   runAppleRemindersAutoImport,
+  updateAppleRemindersImportSettings,
 } from './apple-reminders-import';
 
 describe('apple-reminders-import', () => {
@@ -92,7 +93,6 @@ describe('apple-reminders-import', () => {
       addTask,
       createRecoverySnapshot: mockCreateRecoverySnapshot,
       listId: 'list-1',
-      listTitle: 'Inbox',
     })).resolves.toEqual({
       importedCount: 1,
       deletedCount: 0,
@@ -109,11 +109,11 @@ describe('apple-reminders-import', () => {
     });
     expect(mockCreateRecoverySnapshot).toHaveBeenCalledOnce();
     expect(mockCreateRecoverySnapshot.mock.invocationCallOrder[0]).toBeLessThan(addTask.mock.invocationCallOrder[0]);
+    // The import owns the imported-id list only: the list choice and both
+    // switches belong to the settings screen.
     expect(mockSetItem).toHaveBeenCalledWith(
       APPLE_REMINDERS_IMPORT_SETTINGS_KEY,
       JSON.stringify({
-        selectedListId: 'list-1',
-        selectedListTitle: 'Inbox',
         importedReminderIds: ['rem-1'],
         deleteImportedReminders: false,
         autoImportOnOpen: false,
@@ -152,9 +152,8 @@ describe('apple-reminders-import', () => {
     expect(mockSetItem).toHaveBeenCalledWith(
       APPLE_REMINDERS_IMPORT_SETTINGS_KEY,
       JSON.stringify({
-        selectedListId: 'list-1',
         importedReminderIds: ['rem-1'],
-        deleteImportedReminders: true,
+        deleteImportedReminders: false,
         autoImportOnOpen: false,
       }),
     );
@@ -182,9 +181,8 @@ describe('apple-reminders-import', () => {
     expect(mockSetItem).toHaveBeenCalledWith(
       APPLE_REMINDERS_IMPORT_SETTINGS_KEY,
       JSON.stringify({
-        selectedListId: 'list-1',
         importedReminderIds: ['rem-1'],
-        deleteImportedReminders: true,
+        deleteImportedReminders: false,
         autoImportOnOpen: false,
       }),
     );
@@ -224,6 +222,130 @@ describe('apple-reminders-import', () => {
         autoImportOnOpen: false,
       }),
     );
+  });
+
+  // The import runs on every foreground now (#1238), so iOS can end the app in
+  // the middle of it. Every reminder already added must be written down before
+  // the next one is attempted, or the next run adds it a second time.
+  it('saves the imported ids after each add, so an interrupted run cannot re-import', async () => {
+    const addTask = vi.fn()
+      .mockResolvedValueOnce({ success: true, id: 'task-1' })
+      .mockRejectedValueOnce(new Error('app closed'));
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-1', title: 'First', completed: false },
+      { id: 'rem-2', title: 'Second', completed: false },
+    ] as any);
+
+    await expect(importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      listId: 'list-1',
+    })).rejects.toThrow('app closed');
+
+    expect(mockSetItem).toHaveBeenCalledWith(
+      APPLE_REMINDERS_IMPORT_SETTINGS_KEY,
+      JSON.stringify({
+        importedReminderIds: ['rem-1'],
+        deleteImportedReminders: false,
+        autoImportOnOpen: false,
+      }),
+    );
+  });
+
+  it('keeps a settings change the user makes while the import runs', async () => {
+    mockGetItem.mockResolvedValue(JSON.stringify({
+      selectedListId: 'list-1',
+      importedReminderIds: [],
+      deleteImportedReminders: true,
+      autoImportOnOpen: true,
+    }));
+    const addTask = vi.fn(async () => {
+      // The user turns both switches off on the settings screen mid-import.
+      mockGetItem.mockResolvedValue(JSON.stringify({
+        selectedListId: 'list-1',
+        importedReminderIds: [],
+        deleteImportedReminders: false,
+        autoImportOnOpen: false,
+      }));
+      return { success: true, id: 'task-1' };
+    });
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-1', title: 'First', completed: false },
+    ] as any);
+
+    await importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    });
+
+    const calls = (mockSetItem as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(JSON.parse(String(calls[calls.length - 1]?.[1]))).toEqual({
+      selectedListId: 'list-1',
+      importedReminderIds: ['rem-1'],
+      deleteImportedReminders: false,
+      autoImportOnOpen: false,
+    });
+  });
+
+  it('passes a UUID reminder id as the capture id so a replay adds one task', async () => {
+    const addTask = vi.fn(async () => ({ success: true, id: 'task-id' }));
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: '3F2504E0-4F89-11D3-9A0C-0305E82C3301', title: 'Modern id', completed: false },
+      { id: 'rem-legacy', title: 'Legacy id', completed: false },
+    ] as any);
+
+    await importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      listId: 'list-1',
+    });
+
+    expect(addTask).toHaveBeenNthCalledWith(
+      1,
+      'Modern id',
+      { status: 'inbox' },
+      { captureId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301' },
+    );
+    expect(addTask).toHaveBeenNthCalledWith(2, 'Legacy id', { status: 'inbox' });
+  });
+
+  it('queues a settings write behind a running import', async () => {
+    let releaseAdd!: () => void;
+    const addTask = vi.fn(async () => {
+      await new Promise<void>((resolve) => { releaseAdd = resolve; });
+      return { success: true, id: 'task-1' };
+    });
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-1', title: 'First', completed: false },
+    ] as any);
+    // Mirror what the app stores so each read sees the previous write.
+    mockSetItem.mockImplementation((async (_key: string, value: string) => {
+      mockGetItem.mockResolvedValue(value);
+    }) as never);
+
+    const importing = importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      listId: 'list-1',
+    });
+    await vi.waitFor(() => expect(addTask).toHaveBeenCalled());
+    let flipped: Promise<unknown> | undefined;
+    try {
+      flipped = updateAppleRemindersImportSettings((current) => ({ ...current, autoImportOnOpen: true }));
+    } finally {
+      // Always let the import finish: a wedged import would wedge the queue.
+      releaseAdd();
+    }
+    await importing;
+    await flipped;
+
+    await expect(loadAppleRemindersImportSettings()).resolves.toEqual({
+      importedReminderIds: ['rem-1'],
+      deleteImportedReminders: false,
+      autoImportOnOpen: true,
+    });
   });
 
   it('does not create a recovery snapshot when there is nothing to import', async () => {

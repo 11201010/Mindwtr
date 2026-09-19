@@ -32,7 +32,16 @@ export type AppleRemindersImportResult = {
   failedCount: number;
 };
 
-export type AddInboxTask = (title: string, props?: Partial<Task>) => Promise<StoreActionResult>;
+export type AddInboxTask = (
+  title: string,
+  props?: Partial<Task>,
+  options?: { captureId: string },
+) => Promise<StoreActionResult>;
+
+// A reminder id in this shape doubles as core's capture id, which makes it the
+// task id: adding the same reminder twice then returns the first task instead
+// of a duplicate. Older ids keep the legacy path. Same rule as pending captures.
+const UUID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 const DEFAULT_IMPORT_SETTINGS: AppleRemindersImportSettings = {
   importedReminderIds: [],
@@ -113,6 +122,30 @@ export async function saveAppleRemindersImportSettings(settings: AppleRemindersI
   await AsyncStorage.setItem(APPLE_REMINDERS_IMPORT_SETTINGS_KEY, JSON.stringify(normalized));
 }
 
+// The imported-id list is the only setting the import owns. It re-reads the
+// rest right before writing, so a list or switch the user changed during the
+// run keeps its new value. One write per imported reminder: imports are rare
+// and bounded by the list, and the id must be durable before the next add.
+const persistImportedIds = async (importedIds: Set<string>): Promise<void> => {
+  const latest = await loadAppleRemindersImportSettings();
+  await saveAppleRemindersImportSettings({ ...latest, importedReminderIds: Array.from(importedIds) });
+};
+
+/**
+ * Read, change and write the stored settings in one queued step. Settings
+ * writes share the import queue so a switch flipped while an import is running
+ * is neither lost nor put back to its old value when the run ends (#1238).
+ */
+export function updateAppleRemindersImportSettings(
+  apply: (current: AppleRemindersImportSettings) => AppleRemindersImportSettings,
+): Promise<AppleRemindersImportSettings> {
+  return serializeImport(async () => {
+    const next = normalizeAppleRemindersImportSettings(apply(await loadAppleRemindersImportSettings()));
+    await saveAppleRemindersImportSettings(next);
+    return next;
+  });
+}
+
 export async function getAppleRemindersPermissionStatus(): Promise<AppleRemindersPermissionStatus> {
   if (Platform.OS !== 'ios') return 'unavailable';
   try {
@@ -158,7 +191,6 @@ export type AppleRemindersImportOptions = {
   addTask: AddInboxTask;
   createRecoverySnapshot: () => Promise<unknown>;
   listId: string;
-  listTitle?: string;
   deleteImportedReminders?: boolean;
 };
 
@@ -183,7 +215,6 @@ export async function runAppleRemindersAutoImport({
     addTask,
     createRecoverySnapshot,
     listId: settings.selectedListId,
-    listTitle: settings.selectedListTitle,
     deleteImportedReminders: settings.deleteImportedReminders,
   });
 }
@@ -192,7 +223,6 @@ async function runAppleRemindersImport({
   addTask,
   createRecoverySnapshot,
   listId,
-  listTitle,
   deleteImportedReminders,
 }: AppleRemindersImportOptions): Promise<AppleRemindersImportResult> {
   if (Platform.OS !== 'ios') {
@@ -247,10 +277,14 @@ async function runAppleRemindersImport({
       await createRecoverySnapshot();
       recoverySnapshotCreated = true;
     }
+    const reminderId = normalizeString(reminder.id);
+    const captureOptions: [{ captureId: string }?] = reminderId && UUID_PATTERN.test(reminderId)
+      ? [{ captureId: reminderId.toLowerCase() }]
+      : [];
     const taskResult = await addTask(title, {
       status: 'inbox',
       ...(description ? { description } : {}),
-    });
+    }, ...captureOptions);
 
     if (taskResult.success === false) {
       result.failedCount += 1;
@@ -259,9 +293,11 @@ async function runAppleRemindersImport({
 
     result.importedCount += 1;
     importedIds.add(reminderKey);
+    // Written down before the next reminder is touched: if iOS ends the app
+    // mid-run, what was already added is never imported a second time.
+    await persistImportedIds(importedIds);
 
     if (shouldDeleteImported) {
-      const reminderId = normalizeString(reminder.id);
       if (!reminderId) {
         result.deleteFailedCount += 1;
         continue;
@@ -275,14 +311,6 @@ async function runAppleRemindersImport({
       }
     }
   }
-
-  await saveAppleRemindersImportSettings({
-    selectedListId: normalizedListId,
-    ...(normalizeString(listTitle) ? { selectedListTitle: normalizeString(listTitle) } : {}),
-    importedReminderIds: Array.from(importedIds),
-    deleteImportedReminders: shouldDeleteImported,
-    autoImportOnOpen: settings.autoImportOnOpen,
-  });
 
   return result;
 }

@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, Switch, Text, TouchableOpacity, View } from 'react-native';
-import type { StoreActionResult, Task } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import { logSettingsError } from '@/lib/settings-utils';
 import {
+  type AddInboxTask,
   type AppleReminderList,
   getAppleReminderLists,
   importAppleRemindersIntoInbox,
   loadAppleRemindersImportSettings,
   requestAppleRemindersPermission,
-  saveAppleRemindersImportSettings,
+  updateAppleRemindersImportSettings,
 } from '@/lib/apple-reminders-import';
 import { createMobileRecoverySnapshot } from '@/lib/data-transfer';
 
@@ -26,7 +26,7 @@ type ToastOptions = {
 };
 
 type Props = {
-  addTask: (title: string, initialProps?: Partial<Task>) => Promise<StoreActionResult>;
+  addTask: AddInboxTask;
   disabled: boolean;
   onBusyChange: (busy: boolean) => void;
   showToast: (options: ToastOptions) => void;
@@ -116,12 +116,11 @@ export function AppleRemindersImportSection({
     if (disabled || internalBusy) return;
     setSavingSettings(true);
     try {
-      const current = await loadAppleRemindersImportSettings();
-      await saveAppleRemindersImportSettings({
+      await updateAppleRemindersImportSettings((current) => ({
         ...current,
         selectedListId: list.id,
         selectedListTitle: list.title,
-      });
+      }));
       setSelectedListId(list.id);
       setSelectedListTitle(list.title);
       setPickerOpen(false);
@@ -142,11 +141,10 @@ export function AppleRemindersImportSection({
     if (disabled || internalBusy) return;
     setSavingSettings(true);
     try {
-      const current = await loadAppleRemindersImportSettings();
-      await saveAppleRemindersImportSettings({
+      await updateAppleRemindersImportSettings((current) => ({
         ...current,
         deleteImportedReminders: value,
-      });
+      }));
       setDeleteImportedReminders(value);
     } catch (error) {
       logSettingsError(error);
@@ -165,8 +163,7 @@ export function AppleRemindersImportSection({
     if (disabled || internalBusy) return;
     setSavingSettings(true);
     try {
-      const current = await loadAppleRemindersImportSettings();
-      await saveAppleRemindersImportSettings({ ...current, autoImportOnOpen: value });
+      await updateAppleRemindersImportSettings((current) => ({ ...current, autoImportOnOpen: value }));
       setAutoImportOnOpen(value);
     } catch (error) {
       logSettingsError(error);
@@ -194,7 +191,6 @@ export function AppleRemindersImportSection({
         addTask,
         createRecoverySnapshot: createMobileRecoverySnapshot,
         listId: selectedListId,
-        listTitle: selectedListTitle,
         deleteImportedReminders,
       });
       const skippedCount = result.skippedDuplicateCount + result.skippedCompletedCount + result.skippedEmptyTitleCount;
@@ -233,7 +229,7 @@ export function AppleRemindersImportSection({
     } finally {
       setImporting(false);
     }
-  }, [addTask, deleteImportedReminders, disabled, internalBusy, openListPicker, selectedListId, selectedListTitle, showToast, tr]);
+  }, [addTask, deleteImportedReminders, disabled, internalBusy, openListPicker, selectedListId, showToast, tr]);
 
   if (Platform.OS !== 'ios') return null;
 
