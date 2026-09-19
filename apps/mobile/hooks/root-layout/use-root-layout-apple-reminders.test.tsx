@@ -14,8 +14,38 @@ vi.mock('@mindwtr/core', async () => {
   return { ...actual, useTaskStore };
 });
 
-const importMocks = vi.hoisted(() => ({ runAppleRemindersAutoImport: vi.fn() }));
+const importMocks = vi.hoisted(() => ({
+  runAppleRemindersAutoImport: vi.fn(),
+  requestAppleRemindersPermission: vi.fn(),
+}));
 vi.mock('@/lib/apple-reminders-import', () => importMocks);
+
+// The real AppState shim drops its listeners; the hook's whole job is what it
+// does on each foreground, so the test keeps them.
+const appStateListeners = vi.hoisted(() => ({ current: [] as ((state: string) => void)[] }));
+vi.mock('react-native', async () => {
+  const actual = await vi.importActual<typeof import('react-native')>('react-native');
+  return {
+    ...actual,
+    AppState: {
+      currentState: 'active',
+      addEventListener: (_event: string, listener: (state: string) => void) => {
+        appStateListeners.current.push(listener);
+        return {
+          remove: () => {
+            appStateListeners.current = appStateListeners.current.filter((entry) => entry !== listener);
+          },
+        };
+      },
+    },
+  };
+});
+const foreground = async () => {
+  await act(async () => {
+    appStateListeners.current.forEach((listener) => listener('active'));
+    await Promise.resolve();
+  });
+};
 
 const logMocks = vi.hoisted(() => ({
   logError: vi.fn(async () => undefined),
@@ -56,6 +86,8 @@ const mount = async (props: { dataReady?: boolean; disabled?: boolean } = {}) =>
 describe('useRootLayoutAppleRemindersAutoImport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
+    appStateListeners.current = [];
     importMocks.runAppleRemindersAutoImport.mockResolvedValue(null);
   });
 
@@ -78,5 +110,81 @@ describe('useRootLayoutAppleRemindersAutoImport', () => {
     expect(logMocks.logInfo).toHaveBeenCalledOnce();
     expect(showToast).toHaveBeenCalledOnce();
     act(() => tree.unmount());
+  });
+  it('does not run before the data is ready or while it is disabled', async () => {
+    const notReady = await mount({ dataReady: false });
+    const disabled = await mount({ disabled: true });
+
+    expect(importMocks.runAppleRemindersAutoImport).not.toHaveBeenCalled();
+    act(() => { notReady.unmount(); disabled.unmount(); });
+  });
+
+  // A foreground burst (unlock, switcher, share sheet) fires several 'active'
+  // events in a row; reading the Reminders store each time is wasted work.
+  it('waits 30 seconds between runs', async () => {
+    vi.useFakeTimers();
+    const tree = await mount();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledOnce();
+
+    await foreground();
+    await foreground();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledOnce();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+    await foreground();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledTimes(2);
+    act(() => tree.unmount());
+  });
+
+  it('never starts a second run while one is still in flight', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    importMocks.runAppleRemindersAutoImport.mockReturnValue(new Promise((resolve) => {
+      release = () => resolve(null);
+    }));
+    const tree = await mount();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledOnce();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await foreground();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledOnce();
+
+    await act(async () => { release(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await foreground();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledTimes(2);
+    act(() => tree.unmount());
+  });
+
+  // The user did not ask for anything on this foreground: a failure is logged
+  // and nothing else, and it must not wedge later runs.
+  it('swallows an import failure without a toast and keeps running later', async () => {
+    vi.useFakeTimers();
+    importMocks.runAppleRemindersAutoImport.mockRejectedValueOnce(new Error('reminders unavailable'));
+    const tree = await mount();
+
+    expect(logMocks.logError).toHaveBeenCalledOnce();
+    expect(showToast).not.toHaveBeenCalled();
+
+    importMocks.runAppleRemindersAutoImport.mockResolvedValue({ ...emptyResult, importedCount: 1 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+    await foreground();
+    expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledTimes(2);
+    act(() => tree.unmount());
+  });
+
+  it('never asks for the Reminders permission itself', async () => {
+    const tree = await mount();
+    await foreground();
+
+    expect(importMocks.requestAppleRemindersPermission).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it('stops listening once the screen goes away', async () => {
+    const tree = await mount();
+    act(() => tree.unmount());
+
+    expect(appStateListeners.current).toHaveLength(0);
   });
 });
