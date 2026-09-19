@@ -1,0 +1,15 @@
+diff --git a/android/src/main/java/com/rnfs/RNFSManager.java b/android/src/main/java/com/rnfs/RNFSManager.java
+index 351ac066dd7936bba7f35627a0730db1dd272b2c..d7dc2f1b2c1ae4e0c9b94770a06e2585ec03eed0 100755
+--- a/android/src/main/java/com/rnfs/RNFSManager.java
++++ b/android/src/main/java/com/rnfs/RNFSManager.java
+@@ -975,7 +975,9 @@ public class RNFSManager extends ReactContextBaseJavaModule {
+       return;
+     }
+ 
+-    promise.reject(null, ex.getMessage());
++    // React Native's Kotlin PromiseImpl requires a non-null code; null here threw a
++    // NullPointerException that killed the app on any failed download or file call.
++    promise.reject("EUNSPECIFIED", ex.getMessage());
+   }
+ 
+   private void rejectFileNotFound(Promise promise, String filepath) {
