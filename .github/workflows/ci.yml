@@ -527,7 +527,12 @@ jobs:
 
       - name: MCP paths coverage floor
         if: always()
-        run: node scripts/ci/write-lcov-summary.js "MCP paths.ts Coverage" apps/mcp-server/coverage/lcov.info --include-prefix=src/paths.ts --min-lines=29 --min-statements=29 --min-functions=17
+        # paths.ts is now the repository's only copy of the desktop profile folder list
+        # (scripts/mindwtr-paths.ts imports it), so the floor is worth more than the nominal
+        # minimum it was left at. Measured 92.41% lines / 88.89% functions; the floor keeps a wide
+        # margin below that because CI and local runners pin different bun versions and coverage
+        # counting can differ between them.
+        run: node scripts/ci/write-lcov-summary.js "MCP paths.ts Coverage" apps/mcp-server/coverage/lcov.info --include-prefix=src/paths.ts --min-lines=80 --min-statements=80 --min-functions=75
 
       - name: Upload MCP coverage artifact
         if: always()

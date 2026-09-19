@@ -70,7 +70,14 @@ function dedupe(paths: Array<string | null | undefined>): string[] {
   return Array.from(new Set(paths.filter((value): value is string => typeof value === 'string' && value.length > 0)));
 }
 
-function getDefaultStorageDirs(): string[] {
+/**
+ * Every folder the desktop app may keep its profile in, most likely first.
+ *
+ * Exported because this is the repository's only copy of that list: `scripts/mindwtr-paths.ts`
+ * (the CLI and script API) imports it. Keep it exported — a second copy drifted twice in three
+ * days and left Flatpak and macOS-sandbox users with a database the app never reads.
+ */
+export function getDesktopProfileDirs(): string[] {
   const configHome = getConfigHome();
   const dataHome = getDataHome();
   const dirs = [
@@ -109,7 +116,7 @@ export function resolveMindwtrDataJsonPath(overridePath?: string): string {
     return join(dirname(explicitDbPath), DATA_FILE_NAME);
   }
   const candidates = dedupe([
-    ...getDefaultStorageDirs().map((dir) => join(dir, DATA_FILE_NAME)),
+    ...getDesktopProfileDirs().map((dir) => join(dir, DATA_FILE_NAME)),
   ]);
 
   return firstExisting(candidates) || candidates[0];
@@ -118,7 +125,7 @@ export function resolveMindwtrDataJsonPath(overridePath?: string): string {
 export function resolveMindwtrDbPath(overridePath?: string): string {
   const explicitDbPath = getExplicitDbPath(overridePath);
   if (explicitDbPath) return explicitDbPath;
-  const candidates = getDefaultStorageDirs().map((dir) => join(dir, DB_FILE_NAME));
+  const candidates = getDesktopProfileDirs().map((dir) => join(dir, DB_FILE_NAME));
 
   return firstExisting(candidates) || candidates[0];
 }

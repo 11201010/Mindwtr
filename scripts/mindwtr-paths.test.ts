@@ -7,6 +7,9 @@ import { resolveMindwtrDataPath, resolveMindwtrDbPath } from './mindwtr-paths';
 
 const originalPlatform = process.platform;
 const originalEnv = {
+    // HOME is restored too: discovery now reads it (Flatpak roots), and a developer with the
+    // Flatpak app installed must never have their real profile opened by a test.
+    HOME: process.env.HOME,
     APPDATA: process.env.APPDATA,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     XDG_DATA_HOME: process.env.XDG_DATA_HOME,
@@ -51,6 +54,7 @@ const clearOverrides = () => {
 
 describe('automation script database discovery', () => {
     test('prefers the data/ subfolder on Windows over a flat root an older version left behind', () => {
+        process.env.HOME = makeTempDir();
         const appData = makeTempDir();
         const flatDb = join(appData, 'mindwtr', 'mindwtr.db');
         const splitDb = join(appData, 'mindwtr', 'data', 'mindwtr.db');
@@ -65,6 +69,7 @@ describe('automation script database discovery', () => {
     });
 
     test('still finds a flat Windows root written by 1.3.1 and earlier', () => {
+        process.env.HOME = makeTempDir();
         const appData = makeTempDir();
         const flatDb = join(appData, 'mindwtr', 'mindwtr.db');
         touch(flatDb);
@@ -77,6 +82,7 @@ describe('automation script database discovery', () => {
     });
 
     test('keeps the flat root on Linux, where the app never uses a data/ subfolder', () => {
+        process.env.HOME = makeTempDir();
         const dataHome = makeTempDir();
         const flatDb = join(dataHome, 'mindwtr', 'mindwtr.db');
         const splitDb = join(dataHome, 'mindwtr', 'data', 'mindwtr.db');
@@ -89,6 +95,26 @@ describe('automation script database discovery', () => {
         clearOverrides();
 
         expect(resolveMindwtrDbPath()).toBe(flatDb);
+    });
+
+    // A Flatpak install keeps the profile under ~/.var/app/<app id>/, which no XDG root covers.
+    // Without this root the CLI found nothing, fell back to the first candidate and created a
+    // second database the app never reads.
+    test('finds a Flatpak profile on Linux when the XDG roots are empty', () => {
+        const home = makeTempDir();
+        const xdgHome = makeTempDir();
+        const flatpakDb = join(
+            home, '.var', 'app', 'tech.dongdongbh.mindwtr', 'data', 'mindwtr', 'mindwtr.db'
+        );
+        touch(flatpakDb);
+
+        setPlatform('linux');
+        process.env.HOME = home;
+        process.env.XDG_DATA_HOME = join(xdgHome, 'share');
+        process.env.XDG_CONFIG_HOME = join(xdgHome, 'config');
+        clearOverrides();
+
+        expect(resolveMindwtrDbPath()).toBe(flatpakDb);
     });
 });
 
