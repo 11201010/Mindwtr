@@ -675,7 +675,10 @@ export function BoardView() {
                         <BoardFiltersPanel
                             activeFilterChips={activeFilterChips}
                             allTokens={allTokens}
-                            contextMatchMode={criteria.contextMatchMode ?? 'all'}
+                            // The board filter passes no tokenMatchMode, so core
+                            // matches with "any" — the control shows that, unlike
+                            // the List and Focus panels which filter with "all".
+                            contextMatchMode={criteria.contextMatchMode ?? 'any'}
                             duePresets={DUE_DATE_PRESETS}
                             excludedTokens={excludedTokens}
                             hasFilters={hasBoardFilters}
@@ -695,7 +698,7 @@ export function BoardView() {
                             selectedProjectIds={selectedProjectIds}
                             selectedTokens={selectedTokens}
                             showFiltersPanel={showFiltersPanel}
-                            tagMatchMode={criteria.tagMatchMode ?? 'all'}
+                            tagMatchMode={criteria.tagMatchMode ?? 'any'}
                             t={t}
                         />
                     )}

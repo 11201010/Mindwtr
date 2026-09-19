@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import { KeyboardSensor } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { BoardView } from './BoardView';
@@ -387,6 +387,48 @@ describe('BoardView', () => {
 
         expect(getByText('Work task')).toBeInTheDocument();
         expect(queryByText('Home task')).not.toBeInTheDocument();
+    });
+
+    it('shows the match mode the board actually filters with', () => {
+        setBoardStoreState({
+            tasks: [
+                {
+                    id: 'work-task',
+                    title: 'Work task',
+                    status: 'next',
+                    contexts: ['@work'],
+                    tags: [],
+                    createdAt: '2026-05-18T12:00:00.000Z',
+                    updatedAt: '2026-05-18T12:00:00.000Z',
+                },
+                {
+                    id: 'both-task',
+                    title: 'Both task',
+                    status: 'next',
+                    contexts: ['@work', '@home'],
+                    tags: [],
+                    createdAt: '2026-05-18T12:00:00.000Z',
+                    updatedAt: '2026-05-18T12:00:00.000Z',
+                },
+            ],
+            projects: [],
+            areas: [],
+            settings: {},
+        });
+        useUiStore.setState({ boardFilters: { criteria: { contexts: ['@work', '@home'] } } });
+
+        const { getByRole, getByText } = renderWithProviders();
+
+        fireEvent.click(getByRole('button', { name: /^filters$/i }));
+        fireEvent.click(getByRole('button', { name: /^Contexts & tags$/i }));
+
+        const matchGroup = getByRole('group', { name: /context match/i });
+        expect(within(matchGroup).getByRole('button', { name: 'Any' })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(matchGroup).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false');
+        // "Any" is what the board filters with: a card carrying only one of the
+        // two selected contexts stays on the board.
+        expect(getByText('Work task')).toBeInTheDocument();
+        expect(getByText('Both task')).toBeInTheDocument();
     });
 
     it('cycles a board token chip included → excluded → neutral', () => {
