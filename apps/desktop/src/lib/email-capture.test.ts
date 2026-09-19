@@ -129,6 +129,7 @@ describe('createEmailCaptureController', () => {
                     status: 'inbox',
                     description: 'From: Jane Doe <jane@example.com>\n\nBring the old passport.',
                 },
+                captureId: expect.any(String),
             },
         ]);
         expect(calls).toEqual(['addTasks', 'flush', 'commit']);
@@ -137,6 +138,55 @@ describe('createEmailCaptureController', () => {
             lastSeenUid: 11,
             messageIds: ['id-11@example.com'],
         });
+    });
+
+    // `createController` types addTasks as the option, not as the mock, so reading the
+    // recorded call needs the cast.
+    const capturedItems = (addTasks: unknown): Array<Record<string, unknown>> =>
+        (addTasks as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Array<Record<string, unknown>>;
+
+    const capturedIds = (addTasks: unknown): Array<unknown> =>
+        capturedItems(addTasks).map((item) => item.captureId);
+
+    // The "already imported" mark lives on one desktop, so the same email arrives twice
+    // whenever a second desktop watches the mailbox, the app stops between the save and
+    // the mark, or the server renumbers the folder. A capture id computed from the
+    // Message-ID makes core treat all three as the same task.
+    it('passes a stable capture id derived from the Message-ID', async () => {
+        const first = createController();
+        await first.controller.pollNow();
+        const second = createController();
+        await second.controller.pollNow();
+
+        const [firstId] = capturedIds(first.deps.addTasks);
+        const [secondId] = capturedIds(second.deps.addTasks);
+        expect(firstId).toMatch(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i);
+        expect(secondId).toBe(firstId);
+    });
+
+    it('gives different messages different capture ids', async () => {
+        const { controller, deps } = createController({
+            poll: vi.fn(async () => pollResult({
+                messages: [message(), message({ uid: 12, messageId: 'id-12@example.com' })],
+                maxFetchedUid: 12,
+            })),
+        });
+        await controller.pollNow();
+
+        const [firstId, secondId] = capturedIds(deps.addTasks);
+        expect(firstId).toBeDefined();
+        expect(secondId).toBeDefined();
+        expect(secondId).not.toBe(firstId);
+    });
+
+    it('uses no capture id for the uid fallback Message-ID', async () => {
+        const { controller, deps } = createController({
+            poll: vi.fn(async () => pollResult({ messages: [message({ messageId: 'uid:7:11' })] })),
+        });
+        await controller.pollNow();
+
+        const items = capturedItems(deps.addTasks);
+        expect(items[0]).not.toHaveProperty('captureId');
     });
 
     it('still commits the watermark when every message was already seen', async () => {

@@ -1,4 +1,4 @@
-import type { Task } from '@mindwtr/core';
+import { generateDeterministicUUID, type Task } from '@mindwtr/core';
 
 import { invokeNative, invokeNativeOr } from './tauri-invoke';
 
@@ -11,6 +11,16 @@ const DEFAULT_INITIAL_POLL_DELAY_MS = 20_000;
 // cycle; anything left waits for the next interval.
 const DEFAULT_MAX_ROUNDS_PER_CYCLE = 10;
 const EMAIL_TITLE_FROM_BODY_MAX_CHARS = 100;
+
+// Rust falls back to `uid:<uidValidity>:<uid>` when an email has no Message-ID header.
+// That value changes when the server renumbers the folder, so it cannot name the task.
+const UID_FALLBACK_MESSAGE_ID = /^uid:\d+:\d+$/;
+
+export const emailCaptureIdFor = (messageId: string): string | undefined => {
+    const trimmed = messageId.trim();
+    if (!trimmed || UID_FALLBACK_MESSAGE_ID.test(trimmed)) return undefined;
+    return generateDeterministicUUID(`email-capture:${trimmed}`);
+};
 
 export type EmailCaptureConfig = {
     enabled: boolean;
@@ -165,7 +175,9 @@ type EmailCaptureControllerOptions = {
     getConfig?: () => Promise<EmailCaptureConfig>;
     poll?: () => Promise<EmailCapturePollResult>;
     commit?: (args: { uidValidity: number; lastSeenUid: number; messageIds: string[] }) => Promise<void>;
-    addTasks: (items: Array<{ title: string; initialProps?: Partial<Task> }>) => Promise<AddTasksResult>;
+    addTasks: (
+        items: Array<{ title: string; initialProps?: Partial<Task>; captureId?: string }>,
+    ) => Promise<AddTasksResult>;
     flushPendingSave: () => Promise<void>;
     reportError: (label: string, error: unknown) => void;
     logInfo?: (message: string, extra?: Record<string, string>) => void;
@@ -233,12 +245,14 @@ export const createEmailCaptureController = (
                 if (result.messages.length > 0) {
                     const items = result.messages.map((message) => {
                         const { title, description } = buildTaskFromEmailMessage(message);
+                        const captureId = emailCaptureIdFor(message.messageId);
                         return {
                             title,
                             initialProps: {
                                 status: 'inbox',
                                 ...(description ? { description } : {}),
                             } as Partial<Task>,
+                            ...(captureId ? { captureId } : {}),
                         };
                     });
                     const added = await options.addTasks(items);
