@@ -1107,8 +1107,11 @@ export function Layout({
                                     type="button"
                                     onClick={handleManualSyncNow}
                                     disabled={manualSyncBusy}
-                                    // overflow-hidden is load-bearing (#1251). Chromium cannot bound a
-                                    // running rotate animation, so it assumes the spinner may reach
+                                    // overflow-hidden matters on engines where the spinner still turns on
+                                    // the compositor (no `@property`; see `.animate-spin` in index.css).
+                                    // Elsewhere the spinner has no layer at all and this is a no-op.
+                                    // There (#1251): Chromium cannot bound a running rotate animation, so
+                                    // it assumes the spinner may reach
                                     // anywhere inside its nearest clip. With no clip that was the whole
                                     // window: every positioned box painted after the sidebar (each task
                                     // row) was lifted into its own transparent layer for "overlap", and

@@ -884,3 +884,34 @@
 html {
     font-family: var(--mindwtr-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
 }
+
+/* Spinners are redrawn on every frame instead of turned by the compositor (#913, #1251).
+   A `transform` animation runs on the compositor: the icon is drawn once into a texture and
+   the GPU rotates that picture. On some Windows machines the rotated picture wobbles around
+   a point about a pixel off-centre and looks soft, worse at other zoom levels, and the layer
+   it needs also pulled task rows into layers of their own (#1251). A custom property cannot
+   be animated on the compositor, so animating the angle through one keeps the rotation on
+   the main thread: no texture, no layer, a crisp icon each frame.
+   Ceiling: a main-thread animation hitches while the main thread is busy (a heavy sync). A
+   spinner that stutters for a moment beats one that wobbles all the time.
+   Fallback without JS: on an engine with no `@property`, `--mindwtr-spin-animation` is not
+   registered, so the `var()` below falls back to Tailwind's own compositor `spin`. Without
+   that, 0deg and 360deg would swap discretely and the icon would stand still. */
+@property --mindwtr-spin-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+@property --mindwtr-spin-animation {
+    syntax: '*';
+    inherits: false;
+    initial-value: mindwtr-spin-redraw 1s linear infinite;
+}
+@keyframes mindwtr-spin-redraw {
+    to { --mindwtr-spin-angle: 360deg; }
+}
+.animate-spin {
+    animation: var(--mindwtr-spin-animation, spin 1s linear infinite);
+    /* `rotate`, not `transform`, so it composes with any transform utility on the element. */
+    rotate: var(--mindwtr-spin-angle, 0deg);
+}

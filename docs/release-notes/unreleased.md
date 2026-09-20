@@ -44,6 +44,7 @@ Changes collected since the latest stable release.
 - Desktop database: nine duplicate search indexes are removed on the first start, which makes saving faster.
 - Mobile: in a task's **Preview**, text typed into the checklist **Add Item** box is now saved when you press **Save**, even if you did not press Enter first.
 - Subscribed calendars: a repeating event whose single occurrence was moved now shows once, at its new time, and a cancelled or deleted occurrence no longer shows at all. (#1249)
+- Desktop: spinning icons (the sync icon and every other loading spinner) now turn cleanly. On some Windows machines they wobbled about a pixel off-centre and looked soft while turning, more so at other zoom levels. They are now redrawn on each frame instead of being rotated as a picture. (#913)
 - Desktop: the sidebar **Sync now** button no longer flickers between busy and idle when one sync hands over to the next, so the spinning icon stays steady under the pointer. (#913)
 - Desktop on Windows: task text no longer looks blurry while the sync icon is spinning. (#1251)
 - Desktop calendar: the **All day** strip in Day and Week view now says how many items it is holding back (**+5 more**) and shows them all with one click. It used to show four and hide the rest with no hint.
