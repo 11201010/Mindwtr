@@ -471,6 +471,33 @@ describe('CalendarView', () => {
         expect(screen.queryByText('+2 more')).not.toBeInTheDocument();
     });
 
+    // The all-day strip used to cut to four rows and say nothing: a tester's event was one of
+    // the hidden ones and read as missing from the calendar.
+    it('says how many all-day items the day strip is holding back, and shows them on request', async () => {
+        storeMocks.taskStoreState.tasks = Array.from({ length: 6 }, (_, index) => makeTask({
+            id: `all-day-task-${index}`,
+            title: `All day task ${index + 1}`,
+            startTime: '2026-04-04',
+            status: 'next',
+        }));
+
+        // Week view: the mocked date parser reads a date-only start as UTC, so which column
+        // the tasks land in depends on the machine's zone. The week holds both candidates.
+        window.history.replaceState(null, '', '/?calendarView=week&calendarDate=2026-04-03');
+        renderCalendar();
+        await flushCalendarEffects();
+
+        const strip = Array.from(document.querySelectorAll<HTMLElement>('[data-calendar-all-day-drop-date]'))
+            .find((column) => column.querySelector('[data-task-id]')) as HTMLElement;
+        expect(strip.querySelectorAll('[data-task-id]')).toHaveLength(4);
+        const more = strip.querySelector('[data-calendar-all-day-more]') as HTMLButtonElement;
+        expect(more).toHaveTextContent('+2 more');
+
+        fireEvent.click(more);
+        expect(strip.querySelectorAll('[data-task-id]')).toHaveLength(6);
+        expect(more).toHaveAttribute('aria-expanded', 'true');
+    });
+
     it('opens an empty month day from the keyboard', async () => {
         renderCalendar();
         await flushCalendarEffects();

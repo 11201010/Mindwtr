@@ -46,4 +46,7 @@ Changes collected since the latest stable release.
 - Subscribed calendars: a repeating event whose single occurrence was moved now shows once, at its new time, and a cancelled or deleted occurrence no longer shows at all. (#1249)
 - Desktop: the sidebar **Sync now** button no longer flickers between busy and idle when one sync hands over to the next, so the spinning icon stays steady under the pointer. (#913)
 - Desktop on Windows: task text no longer looks blurry while the sync icon is spinning. (#1251)
+- Desktop calendar: the **All day** strip in Day and Week view now says how many items it is holding back (**+5 more**) and shows them all with one click. It used to show four and hide the rest with no hint.
+- Desktop calendar: in the selected-day list, task and event names stay visible in a narrow window. They used to be squeezed out, leaving rows that showed only a time or **All day**. The **Schedule** search box now sits beside the list only when the panel is wide enough for both.
+- Desktop on macOS: the calendar chips keep one order (by name) instead of swapping places each time the calendar opens, and each Apple Calendar now shows in its own colour instead of one Mindwtr picked.
 - Moving a task to **Someday** now sticks, even when the task has a start or due date that has already passed. It used to change back to **Next** on the next load and send that change to your other devices. Waiting and Reference tasks were already safe; only an unprocessed Inbox task still moves to Next when its date arrives. (#1248)

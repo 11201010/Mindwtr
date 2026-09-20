@@ -49,7 +49,8 @@ import { useDesktopCalendarController } from './calendar/useDesktopCalendarContr
 import { getWorkspaceCache } from '../../lib/workspace-cache';
 
 const PROJECTED_RECURRENCE_LABEL_DATE_FORMAT = 'MMM d';
-const CALENDAR_PLANNING_PANEL_COLLAPSED_KEY = 'mindwtr.calendar.planningPanelCollapsed';
+const ALL_DAY_COLLAPSED_ROWS = 4;
+const CALENDAR_PLANNING_PANEL_COLLAPSED_KEY ='mindwtr.calendar.planningPanelCollapsed';
 
 const readPlanningPanelCollapsedPreference = (): boolean => {
     if (typeof window === 'undefined') return true;
@@ -73,6 +74,9 @@ export function CalendarView() {
     const timelineScrollRef = useRef<HTMLDivElement | null>(null);
     const [timelineScrollbarWidth, setTimelineScrollbarWidth] = useState(0);
     const [timelineHeight, setTimelineHeight] = useState<number | null>(null);
+    // The all-day strip shows a few rows and says how many it is holding back; one
+    // click opens every column at once so the week stays aligned.
+    const [allDayExpanded, setAllDayExpanded] = useState(false);
     const [isPlanningPanelCollapsed, setIsPlanningPanelCollapsed] = useState(readPlanningPanelCollapsedPreference);
     const controller = useDesktopCalendarController();
     const {
@@ -752,7 +756,9 @@ export function CalendarView() {
                                 {t('calendar.allDay')}
                             </div>
                             {timelineDays.map((day) => {
-                                const allDayItems = orderCalendarDayItemsForLimitedSlots(getAllDayItemsForDay(day)).slice(0, 4);
+                                const orderedAllDayItems = orderCalendarDayItemsForLimitedSlots(getAllDayItemsForDay(day));
+                                const allDayItems = allDayExpanded ? orderedAllDayItems : orderedAllDayItems.slice(0, ALL_DAY_COLLAPSED_ROWS);
+                                const allDayOverflowCount = orderedAllDayItems.length - ALL_DAY_COLLAPSED_ROWS;
                                 return (
                                     <div
                                         key={dayKey(day)}
@@ -815,6 +821,19 @@ export function CalendarView() {
                                                 </button>
                                             );
                                         })}
+                                        {allDayOverflowCount > 0 && (
+                                            <button
+                                                type="button"
+                                                data-calendar-all-day-more
+                                                aria-expanded={allDayExpanded}
+                                                className="w-full rounded px-1.5 pt-0.5 text-left text-[11px] font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                                onClick={() => setAllDayExpanded((expanded) => !expanded)}
+                                            >
+                                                {allDayExpanded
+                                                    ? resolveText('common.less', 'Less')
+                                                    : `+${allDayOverflowCount} ${resolveText('calendar.more', 'more')}`}
+                                            </button>
+                                        )}
                                     </div>
                                 );
                             })}

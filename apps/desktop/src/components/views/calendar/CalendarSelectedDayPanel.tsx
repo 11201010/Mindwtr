@@ -96,7 +96,10 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
     if (!selectedDate) return null;
 
     return (
-        <div className="rounded-lg border border-border bg-card">
+        // A size container: the two-column layout below asks how wide THIS panel is, not the
+        // window. The sidebar and the planning panel both take width from it, so a viewport
+        // breakpoint went two-column while the list column had room for a time label only.
+        <div className="rounded-lg border border-border bg-card [container-type:inline-size]">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
                     <div className="text-sm font-semibold">{format(selectedDate, 'PPPP')}</div>
@@ -125,7 +128,7 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                 </div>
             </div>
 
-            <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="grid gap-4 p-4 [@container_(min-width:58rem)]:grid-cols-[minmax(0,1fr)_18rem]">
                 <div className="space-y-5">
                     {selectedAllDayEvents.length > 0 && (
                         <section className="space-y-2">
@@ -176,11 +179,12 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                                 return (
                                     <div
                                         key={event.id}
-                                        className="flex items-center gap-3 rounded-md border-l-[3px] bg-muted/50 px-3 py-2 text-sm"
+                                        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border-l-[3px] bg-muted/50 px-3 py-2 text-sm"
                                         style={{ borderLeftColor: getExternalCalendarColor(event.sourceId) }}
                                     >
                                         <span className="w-28 shrink-0 text-xs font-medium text-muted-foreground">{timeLabel}</span>
-                                        <span className="min-w-0 flex-1 truncate">{event.title}</span>
+                                        {/* The title keeps a floor; in a narrow panel the source and the button wrap under it. */}
+                                        <span className="min-w-[8rem] flex-1 truncate">{event.title}</span>
                                         {sourceLabel && <span className="truncate text-xs text-muted-foreground">{sourceLabel}</span>}
                                         <button
                                             type="button"
@@ -250,13 +254,15 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                                             onClick={() => {
                                                 if (!projected) openTaskFromCalendar(task);
                                             }}
-                                            className="min-w-0 flex-1 truncate text-left text-foreground focus:outline-none focus:underline"
+                                            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-left text-foreground focus:outline-none focus:underline"
                                         >
-                                            <span className="mr-2 inline-flex w-28 items-center gap-1 text-xs font-medium text-muted-foreground">
+                                            <span className="inline-flex w-28 shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
                                                 {kind === 'scheduled' && <Clock className="h-3 w-3" aria-hidden="true" />}
                                                 {timeLabel}
                                             </span>
-                                            {task.title}
+                                            {/* One truncating button clipped the title to nothing once the label
+                                                filled it. The title has a floor now and drops under the label. */}
+                                            <span className="min-w-[8rem] flex-1 truncate">{task.title}</span>
                                         </button>
                                         {projected && (
                                             <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">

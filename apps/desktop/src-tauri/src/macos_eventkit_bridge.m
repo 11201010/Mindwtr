@@ -279,13 +279,29 @@ char *mindwtr_macos_calendar_events_json(const char *range_start, const char *ra
             if (!title || [title length] == 0) title = @"Calendar";
             NSString *encoded = [identifier stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
             if (!encoded) encoded = identifier;
-            [calendarPayload addObject:@{
+            NSMutableDictionary *calendarItem = [NSMutableDictionary dictionaryWithDictionary:@{
                 @"id": [@"system:" stringByAppendingString:identifier],
                 @"name": title,
                 @"url": [@"system://" stringByAppendingString:encoded],
                 @"enabled": @YES
             }];
+            // The calendar's own colour, as the Linux reader already sends it. Without it every
+            // Mac calendar fell back to the eight-colour id hash and several shared a blue.
+            NSString *color = mindwtr_calendar_color_hex(calendar);
+            if (color) calendarItem[@"color"] = color;
+            [calendarPayload addObject:calendarItem];
         }
+        // EventKit returns calendars in no promised order, and the order did change between
+        // reads: the calendar chips swapped places each time the view opened.
+        [calendarPayload sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            NSString *aName = a[@"name"] ?: @"";
+            NSString *bName = b[@"name"] ?: @"";
+            NSComparisonResult result = [aName localizedCaseInsensitiveCompare:bName];
+            if (result != NSOrderedSame) return result;
+            NSString *aId = a[@"id"] ?: @"";
+            NSString *bId = b[@"id"] ?: @"";
+            return [aId compare:bId];
+        }];
 
         NSPredicate *predicate = [store predicateForEventsWithStartDate:startDate endDate:endDate calendars:selectedCalendars];
         NSArray<EKEvent *> *events = [store eventsMatchingPredicate:predicate];
