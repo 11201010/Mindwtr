@@ -526,7 +526,11 @@ function formatCalendarPushTaskMarker(taskId: string): string {
 /** Exact, delimited marker emitted by the shared push builder; prose mentions do not count. */
 export function hasCalendarPushTaskMarker(description: unknown): boolean {
     if (typeof description !== 'string') return false;
-    const normalized = description.replace(/\r\n?/g, '\n');
+    // Calendar services append a newline or pad a line on the way through, and only some
+    // readers trim the notes (the macOS bridge does, expo-calendar does not). Trailing
+    // whitespace is not prose, so drop it before the exact match; one stray newline used
+    // to be enough to show every pushed task a second time.
+    const normalized = description.replace(/\r\n?/g, '\n').replace(/[ \t\u00a0]+$/gm, '').trim();
     CALENDAR_PUSH_MIRROR_RE.lastIndex = 0;
     for (const match of normalized.matchAll(CALENDAR_PUSH_MIRROR_RE)) {
         try {

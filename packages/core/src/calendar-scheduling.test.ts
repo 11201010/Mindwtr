@@ -501,6 +501,18 @@ describe('buildCalendarPushEventFields (#743)', () => {
         expect(hasCalendarPushTaskMarker(result.notes.replace(/\n/g, '\r\n'))).toBe(true);
     });
 
+    // A tester's pushed events came back through Google and Apple Calendar. A service that adds
+    // one trailing newline must not bring every pushed task back as a duplicate event.
+    it('still finds the marker when a calendar service pads the notes with trailing whitespace', () => {
+        const notes = 'Project: Update Will\nStatus: Next\n\n[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: 3f7e355c-620d-4ee9-a8d6-23cc15f1903a\n[/Mindwtr Calendar Mirror]';
+        expect(hasCalendarPushTaskMarker(notes)).toBe(true);
+        expect(hasCalendarPushTaskMarker(`${notes}\n`)).toBe(true);
+        expect(hasCalendarPushTaskMarker(`${notes} \r\n\r\n`)).toBe(true);
+        expect(hasCalendarPushTaskMarker(notes.replace(/\n/g, ' \n'))).toBe(true);
+        // Still exact about what surrounds it: glued to prose is not a marker.
+        expect(hasCalendarPushTaskMarker(notes.replace('\n\n[Mindwtr', '\n[Mindwtr'))).toBe(false);
+    });
+
     it('rejects malformed markers and incidental prose mentions', () => {
         const marker = '[Mindwtr Calendar Mirror]\nMindwtr-Task-ID: task-123\n[/Mindwtr Calendar Mirror]';
         expect(hasCalendarPushTaskMarker(`Please read ${marker}`)).toBe(false);
