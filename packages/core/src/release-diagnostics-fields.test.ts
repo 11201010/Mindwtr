@@ -34,8 +34,6 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // Apple development evaluations (#915, #1194, #1214, #1195).
     // apple-pcc-evaluation: fixed synthetic fixture identifier and elapsed request time.
     'fixtureId', 'durationMs',
-    // sync-spinner-geometry (#913): where the footer sync icon sits, and in which engine.
-    'dpr', 'rootFontPx', 'fontFamily', 'iconX', 'iconY', 'iconW', 'iconH', 'engine',
     'statusIncluded', 'associationCount', 'dateCount', 'failureClass',
     'matchCount', 'acceptedCount', 'droppedCount',
     'snapshotVersion', 'publishedCount', 'omittedCount', 'exactLinkCount',

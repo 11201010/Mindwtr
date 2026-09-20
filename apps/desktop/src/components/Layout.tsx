@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
     Calendar,
     Inbox,
@@ -41,7 +41,6 @@ import { getCalendarTaskDragTaskId, hasCalendarTaskDragData } from '../lib/calen
 import { stageCalendarDropLanding } from '../lib/calendar-view-params';
 import { SandboxBanner } from './sandbox/SandboxBanner';
 import { getWorkspaceCache } from '../lib/workspace-cache';
-import { logInfo } from '../lib/app-log';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -593,33 +592,8 @@ export function Layout({
         updateSettings({ sidebarCollapsed: !userSidebarCollapsed }).catch((error) => reportError('Failed to update settings', error));
     };
 
-    const handleManualSyncNow = useCallback(async (event?: MouseEvent<HTMLButtonElement>) => {
+    const handleManualSyncNow = useCallback(async () => {
         if (manualSyncBusy) return;
-        // #913: the spinner wobbles on one tester's Windows machine and nowhere we can
-        // reproduce it. The suspect is an icon that lands on a fractional pixel, so record
-        // where it actually sits, and in which engine, at the moment it starts to turn.
-        const iconRect = event?.currentTarget.querySelector('svg')?.getBoundingClientRect();
-        if (iconRect) {
-            const round = (value: number) => Math.round(value * 1000) / 1000;
-            void logInfo('Sync spinner geometry at manual sync start', {
-                scope: 'ui',
-                extra: {
-                    releaseCheck: 'v1.3.2/sync-spinner-geometry',
-                    dpr: window.devicePixelRatio,
-                    rootFontPx: getComputedStyle(document.documentElement).fontSize,
-                    fontFamily: getComputedStyle(document.body).fontFamily.split(',')[0]?.trim(),
-                    iconX: round(iconRect.x),
-                    iconY: round(iconRect.y),
-                    iconW: round(iconRect.width),
-                    iconH: round(iconRect.height),
-                    // Most specific name first. One alternation matched whichever name came first
-                    // in the string, and every Chromium user agent starts with "AppleWebKit/537.36".
-                    engine: [/Edg\/[\d.]+/, /Chrome\/[\d.]+/, /AppleWebKit\/[\d.]+/]
-                        .map((pattern) => pattern.exec(navigator.userAgent)?.[0])
-                        .find(Boolean) ?? 'unknown',
-                },
-            });
-        }
         setIsManualSyncing(true);
         try {
             const result = await SyncService.performSync({ manual: true });
