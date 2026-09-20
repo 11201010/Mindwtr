@@ -217,7 +217,9 @@ export function SyncStatusSection({
                             onClick={onSyncNow}
                             disabled={isSyncing}
                             className={cn(
-                                'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-primary-foreground transition-colors',
+                                // overflow-hidden bounds the spinner for Chromium's overlap test; see the
+                                // footer Sync now button in Layout.tsx (#1251).
+                                'flex items-center gap-2 overflow-hidden px-4 py-2 rounded-md text-sm font-medium text-primary-foreground transition-colors',
                                 isSyncing ? 'bg-muted text-muted-foreground cursor-not-allowed' : 'bg-primary hover:bg-primary/90',
                             )}
                         >

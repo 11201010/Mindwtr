@@ -1081,8 +1081,15 @@ export function Layout({
                                     type="button"
                                     onClick={handleManualSyncNow}
                                     disabled={manualSyncBusy}
+                                    // overflow-hidden is load-bearing (#1251). Chromium cannot bound a
+                                    // running rotate animation, so it assumes the spinner may reach
+                                    // anywhere inside its nearest clip. With no clip that was the whole
+                                    // window: every positioned box painted after the sidebar (each task
+                                    // row) was lifted into its own transparent layer for "overlap", and
+                                    // text in a transparent layer drops from ClearType to grey
+                                    // antialiasing. Clipping here keeps the spinner's reach to the button.
                                     className={cn(
-                                        "inline-flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60",
+                                        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60",
                                         "hover:bg-accent/70 hover:text-accent-foreground",
                                         isCollapsed ? "h-10 w-10" : "h-9 w-9"
                                     )}
@@ -1104,12 +1111,7 @@ export function Layout({
                 // tabIndex=-1 makes this a programmatic focus target for the
                 // "enter list" fallback; it is never keyboard-tabbable, so it
                 // must not paint a focus ring around the whole list (#890).
-                // bg-background repeats the shell's own colour, so nothing looks different;
-                // it only makes this box opaque in its own right. Chromium keeps subpixel
-                // antialiasing only in a layer it knows is opaque, and the footer's sync
-                // animations can lift this content into one — without a background here the
-                // text drops to grey antialiasing and reads as blurry on Windows (#1251).
-                className="flex-1 overflow-auto bg-background focus:outline-none"
+                className="flex-1 overflow-auto focus:outline-none"
                 data-main-content
                 tabIndex={-1}
                 role="main"

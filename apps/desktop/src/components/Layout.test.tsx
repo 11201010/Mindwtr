@@ -347,6 +347,9 @@ describe('Layout sync conflict surface', () => {
 
         expect(getByRole('button', { name: /Sync now/i })).toBeDisabled();
         expect(container.querySelector('[data-sidebar-sync-dot]')).toHaveClass('animate-pulse');
+        // The spinner must sit inside a clip, or Chromium lifts every task row into its own
+        // layer while it turns and the row text loses ClearType (#1251).
+        expect(container.querySelector('.animate-spin')?.parentElement).toHaveClass('overflow-hidden');
 
         statusSpy.mockRestore();
         subscribeSpy.mockRestore();
