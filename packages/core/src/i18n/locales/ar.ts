@@ -892,6 +892,7 @@ export const arOverrides: Record<string, string> = {
         'settings.logFile': 'ملف السجل',
         'settings.clearLog': 'مسح السجل',
         'settings.shareLog': 'سجل المشاركة',
+        'settings.saveLog': 'حفظ السجل',
         'settings.logMissing': 'لم يتم العثور على ملف السجل بعد. تمكين التسجيل وإعادة إظهار المشكلة أولاً.',
         'settings.logCleared': 'تم مسح ملف السجل.',
         'settings.shareUnavailable': 'المشاركة غير متاحة على هذا الجهاز.',

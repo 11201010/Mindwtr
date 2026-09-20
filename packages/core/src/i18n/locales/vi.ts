@@ -1074,6 +1074,7 @@ export const viOverrides: Record<string, string> = {
         'settings.logFile': 'Tệp nhật ký',
         'settings.clearLog': 'Xóa nhật ký',
         'settings.shareLog': 'Chia sẻ nhật ký',
+        'settings.saveLog': 'Lưu nhật ký',
         'settings.logMissing': 'Chưa tìm thấy tệp nhật ký. Bật ghi nhật ký và tái hiện sự cố trước.',
         'settings.logCleared': 'Đã xóa tệp nhật ký.',
         'settings.shareUnavailable': 'Chia sẻ không khả dụng trên thiết bị này.',

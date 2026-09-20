@@ -80,7 +80,7 @@ For detailed instructions, please see the [Diagnostics and Logs docs](https://do
 1. Go to **Settings → Data** and find **Diagnostics**.
 2. Turn on **Debug logging**.
 3. Reproduce the issue.
-4. Return to **Diagnostics** and attach the log here: use **Share log** on mobile, or the file at **Log file path** on desktop.
+4. Return to **Diagnostics** and attach the log here: use **Share log** on mobile, or **Save log** on desktop (v1.3.2 and later; on older versions attach the file shown at **Log file**).
 
 *Note: Logs are local-only and redact common credentials.*
 </details>

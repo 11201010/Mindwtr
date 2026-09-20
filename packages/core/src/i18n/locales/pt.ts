@@ -866,6 +866,7 @@ export const ptOverrides: Record<string, string> = {
         'settings.logFile': 'Arquivo de registro',
         'settings.clearLog': 'Limpar registro',
         'settings.shareLog': 'Compartilhar registro',
+        'settings.saveLog': 'Salvar registro',
         'settings.logMissing': 'Arquivo de log ainda não encontrado. Ative o registro e reproduza o problema primeiro.',
         'settings.logCleared': 'Arquivo de log limpo.',
         'settings.shareUnavailable': 'O compartilhamento não está disponível neste dispositivo.',

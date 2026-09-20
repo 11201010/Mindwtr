@@ -871,6 +871,7 @@ export const deOverrides: Record<string, string> = {
         'settings.logFile': 'Protokolldatei',
         'settings.clearLog': 'Protokoll löschen',
         'settings.shareLog': 'Protokoll teilen',
+        'settings.saveLog': 'Protokoll speichern',
         'settings.logMissing': 'Noch keine Protokolldatei. Aktiviere die Protokollierung und reproduziere das Problem.',
         'settings.logCleared': 'Protokoll gelöscht.',
         'settings.shareUnavailable': 'Teilen ist auf diesem Gerät nicht verfügbar.',

@@ -1101,6 +1101,7 @@ export const daOverrides: Record<string, string> = {
     'settings.logFile': 'Log fil',
     'settings.clearLog': 'Ryd log',
     'settings.shareLog': 'Del log',
+    'settings.saveLog': 'Gem log',
     'settings.logMissing': 'Logfilen er ikke fundet endnu. Aktiver logning og reproducer problemet først.',
     'settings.logCleared': 'Logfilen er ryddet.',
     'settings.shareUnavailable': 'Deling er ikke tilgængelig på denne enhed.',

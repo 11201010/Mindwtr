@@ -111,6 +111,41 @@ export async function clearLog(): Promise<void> {
     }
 }
 
+export type SaveLogCopyResult = 'saved' | 'cancelled' | 'missing';
+
+/**
+ * The desktop counterpart of the phone's "Share log": hand the tester one file they can
+ * attach to an email. A save dialog rather than "reveal in folder" on purpose: the log
+ * lives in a hidden or sandbox-redirected directory (App Store container, Flatpak, MS
+ * Store LocalCache), and a save dialog is the one file action every one of those allows.
+ * The rotated history comes first so the copy reads oldest to newest in a single file.
+ */
+export async function saveLogCopy(): Promise<SaveLogCopyResult> {
+    if (!isTauriRuntime()) return 'missing';
+    const logFile = await getLogPath();
+    if (!logFile) return 'missing';
+    const readOrEmpty = async (path: string) => {
+        try {
+            return await readTextFile(path);
+        } catch {
+            return '';
+        }
+    };
+    const parts = [await readOrEmpty(`${logFile}.1`), await readOrEmpty(logFile)]
+        .map((part) => part.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return 'missing';
+
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const selected = await save({
+        defaultPath: LOG_FILE_NAME,
+        filters: [{ name: 'Log', extensions: ['log', 'txt'] }],
+    });
+    if (!selected || typeof selected !== 'string') return 'cancelled';
+    await writeTextFile(selected, `${parts.join('\n')}\n`);
+    return 'saved';
+}
+
 export async function readRecentLogText(maxChars = RECENT_LOG_MAX_CHARS): Promise<string | null> {
     if (!isTauriRuntime()) return null;
     try {

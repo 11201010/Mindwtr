@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { safeFormatDate, useTaskStore, type AppData } from '@mindwtr/core';
 
-import { clearLog } from '../../../lib/app-log';
+import { clearLog, saveLogCopy } from '../../../lib/app-log';
 import {
     isDesktopAnalyticsHeartbeatConfigured,
     resetDesktopAnalyticsOptOutMarker,
@@ -138,6 +138,16 @@ export function useSettingsDataPage({
         showSaved();
     }, [showSaved]);
 
+    const onSaveLog = useCallback(async () => {
+        try {
+            const result = await saveLogCopy();
+            if (result === 'saved') showSaved();
+            else if (result === 'missing') showToast(translate('settings.logMissing'), 'info');
+        } catch (error) {
+            reportError('Failed to save a copy of the log', error);
+        }
+    }, [showSaved, showToast, translate]);
+
     const onRunAttachmentsCleanup = useCallback(async () => {
         if (!isTauri) return;
         try {
@@ -226,6 +236,7 @@ export function useSettingsDataPage({
         onToggleLogging,
         onAnalyticsHeartbeatChange,
         onClearLog,
+        onSaveLog,
         ...dataTransferProps,
         attachmentsLastCleanupDisplay,
         pendingRemoteDeleteCount,

@@ -4,14 +4,20 @@ const invokeMock = vi.hoisted(() => vi.fn());
 const mkdirMock = vi.hoisted(() => vi.fn());
 const writeTextFileMock = vi.hoisted(() => vi.fn());
 const getManagedPathMock = vi.hoisted(() => vi.fn());
+const readTextFileMock = vi.hoisted(() => vi.fn());
+const saveDialogMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@tauri-apps/plugin-fs', async () => {
     return {
         mkdir: mkdirMock,
-        readTextFile: vi.fn(),
+        readTextFile: readTextFileMock,
         remove: vi.fn(),
         writeTextFile: writeTextFileMock,
     };
+});
+
+vi.mock('@tauri-apps/plugin-dialog', async () => {
+    return { save: saveDialogMock };
 });
 
 vi.mock('@tauri-apps/api/path', async () => {
@@ -33,7 +39,7 @@ vi.mock('./managed-paths', async () => {
     };
 });
 
-import { getLogPath, logInfo } from './app-log';
+import { getLogPath, logInfo, saveLogCopy } from './app-log';
 
 const setTauriRuntime = (enabled: boolean) => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -49,6 +55,8 @@ afterEach(() => {
     mkdirMock.mockReset();
     writeTextFileMock.mockReset();
     getManagedPathMock.mockReset();
+    readTextFileMock.mockReset();
+    saveDialogMock.mockReset();
 });
 
 describe('getLogPath', () => {
@@ -136,6 +144,42 @@ describe('appendLogLine', () => {
 
         expect(await logInfo('hello', { force: true })).toBeNull();
         expect(invokeMock).not.toHaveBeenCalled();
+        expect(writeTextFileMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('saveLogCopy', () => {
+    const logPath = '/data/logs/mindwtr.log';
+    const withLogFiles = (files: Record<string, string>) => {
+        setTauriRuntime(true);
+        invokeMock.mockResolvedValue(logPath);
+        readTextFileMock.mockImplementation(async (path: string) => {
+            if (path in files) return files[path];
+            throw new Error('not found');
+        });
+    };
+
+    it('writes the rotated history then the current log to the file the tester picked', async () => {
+        withLogFiles({ [`${logPath}.1`]: 'older line\n', [logPath]: 'newer line\n' });
+        saveDialogMock.mockResolvedValue('/home/a/Desktop/mindwtr.log');
+
+        expect(await saveLogCopy()).toBe('saved');
+        expect(saveDialogMock).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: 'mindwtr.log' }));
+        expect(writeTextFileMock).toHaveBeenCalledWith('/home/a/Desktop/mindwtr.log', 'older line\nnewer line\n');
+    });
+
+    it('reports a missing log without opening a dialog', async () => {
+        withLogFiles({ [logPath]: '  \n' });
+
+        expect(await saveLogCopy()).toBe('missing');
+        expect(saveDialogMock).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when the dialog is cancelled', async () => {
+        withLogFiles({ [logPath]: 'a line\n' });
+        saveDialogMock.mockResolvedValue(null);
+
+        expect(await saveLogCopy()).toBe('cancelled');
         expect(writeTextFileMock).not.toHaveBeenCalled();
     });
 });

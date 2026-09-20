@@ -63,6 +63,7 @@ export type SettingsSyncLabels = {
     debugLoggingDesc: string;
     logFile: string;
     clearLog: string;
+    saveLog: string;
     sync: string;
     syncDescription: string;
     syncBackend: string;
@@ -363,6 +364,7 @@ export type SettingsDiagnosticsProps = {
     onToggleLogging: () => void;
     onAnalyticsHeartbeatChange: (enabled: boolean) => Promise<void> | void;
     onClearLog: () => void;
+    onSaveLog: () => void;
 };
 
 export type TransferAction =

@@ -250,6 +250,7 @@ const dataProps: Parameters<typeof SettingsDataPage>[0] = {
     onToggleLogging: noop,
     onAnalyticsHeartbeatChange: noop,
     onClearLog: noop,
+    onSaveLog: noop,
     transferAction: null,
     onExportBackup: noop,
     onExportCsv: noop,

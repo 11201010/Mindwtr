@@ -833,6 +833,7 @@ export const trOverrides: Record<string, string> = {
         'settings.logFile': 'Günlük dosyası',
         'settings.clearLog': 'Günlüğü temizle',
         'settings.shareLog': 'Günlüğü paylaş',
+        'settings.saveLog': 'Günlüğü kaydet',
         'settings.logMissing': 'Günlük dosyası henüz bulunamadı. Günlüğe kaydetmeyi etkinleştirin ve önce sorunu yeniden oluşturun.',
         'settings.logCleared': 'Günlük dosyası temizlendi.',
         'settings.shareUnavailable': 'Bu cihazda paylaşım kullanılamıyor.',

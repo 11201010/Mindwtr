@@ -378,6 +378,7 @@ export const SETTINGS_LABEL_KEYS = [
     'debugLoggingDesc',
     'logFile',
     'clearLog',
+    'saveLog',
     'sync',
     'syncDescription',
     'syncBackend',

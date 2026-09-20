@@ -978,6 +978,7 @@ export const frOverrides: Record<string, string> = {
         'settings.logFile': 'Fichier journal',
         'settings.clearLog': 'Effacer le journal',
         'settings.shareLog': 'Partager le journal',
+        'settings.saveLog': 'Enregistrer le journal',
         'settings.logMissing': 'Fichier journal introuvable pour l’instant. Activez la journalisation et reproduisez d’abord le problème.',
         'settings.logCleared': 'Fichier journal effacé.',
         'settings.shareUnavailable': 'Le partage n’est pas disponible sur cet appareil.',

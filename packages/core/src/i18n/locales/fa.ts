@@ -1085,6 +1085,7 @@ export const faOverrides: Record<string, string> = {
         'settings.logFile': 'فایل ثبت',
         'settings.clearLog': 'پاک کردن ثبت',
         'settings.shareLog': 'اشتراک‌گذاری ثبت',
+        'settings.saveLog': 'ذخیره ثبت',
         'settings.logMissing': 'فایل ثبت هنوز یافت نشد. ابتدا ثبت رویداد را فعال کرده و مشکل را دوباره ایجاد کنید.',
         'settings.logCleared': 'فایل ثبت پاک شد.',
         'settings.shareUnavailable': 'اشتراک‌گذاری در این دستگاه در دسترس نیست.',

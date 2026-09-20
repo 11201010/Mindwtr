@@ -13,6 +13,7 @@ const baseProps: Parameters<typeof DiagnosticsSection>[0] = {
         debugLoggingDesc: 'Record errors locally.',
         logFile: 'Log file',
         clearLog: 'Clear log',
+        saveLog: 'Save log',
     } as any,
     analyticsHeartbeatAvailable: true,
     analyticsHeartbeatEnabled: true,
@@ -21,6 +22,7 @@ const baseProps: Parameters<typeof DiagnosticsSection>[0] = {
     onAnalyticsHeartbeatChange: vi.fn(),
     onToggleLogging: vi.fn(),
     onClearLog: vi.fn(),
+    onSaveLog: vi.fn(),
 };
 
 describe('DiagnosticsSection', () => {
@@ -56,5 +58,15 @@ describe('DiagnosticsSection', () => {
         expect(optOutSwitch).toHaveAttribute('aria-checked', 'true');
         fireEvent.click(optOutSwitch);
         expect(onAnalyticsHeartbeatChange).toHaveBeenCalledWith(true);
+    });
+
+    // Desktop had only the log's path as text; a tester could not get the file out of a
+    // hidden or sandboxed folder.
+    it('offers Save log next to Clear log', () => {
+        const onSaveLog = vi.fn();
+        const { getByRole } = render(<DiagnosticsSection {...baseProps} onSaveLog={onSaveLog} />);
+
+        fireEvent.click(getByRole('button', { name: 'Save log' }));
+        expect(onSaveLog).toHaveBeenCalledTimes(1);
     });
 });

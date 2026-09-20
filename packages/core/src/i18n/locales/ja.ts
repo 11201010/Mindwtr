@@ -1115,6 +1115,7 @@ export const jaOverrides: Record<string, string> = {
         'settings.logFile': 'ログファイル',
         'settings.clearLog': 'ログを消去',
         'settings.shareLog': 'ログを共有',
+        'settings.saveLog': 'ログを保存',
         'settings.logMissing': 'ログファイルがまだありません。ログを有効にしてから、問題を再現させてください。',
         'settings.logCleared': 'ログファイルを消去しました。',
         'settings.shareUnavailable': 'この端末では共有機能を利用できません。',

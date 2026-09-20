@@ -916,6 +916,7 @@ export const itOverrides: Record<string, string> = {
         'settings.logFile': 'File di log',
         'settings.clearLog': 'Cancella log',
         'settings.shareLog': 'Condividi log',
+        'settings.saveLog': 'Salva log',
         'settings.logMissing': 'File di log non ancora presente. Abilita il log e riproduci prima il problema.',
         'settings.logCleared': 'File di log cancellato.',
         'settings.shareUnavailable': 'La condivisione non è disponibile su questo dispositivo.',

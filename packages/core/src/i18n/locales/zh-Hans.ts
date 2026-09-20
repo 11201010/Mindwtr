@@ -1058,6 +1058,7 @@ export const zhHans: Record<string, string> = {
         'settings.logFile': '日志文件',
         'settings.clearLog': '清除日志',
         'settings.shareLog': '分享日志',
+        'settings.saveLog': '保存日志',
         'settings.logMissing': '日志尚未生成，请先开启日志并复现问题。',
         'settings.logCleared': '日志已清除。',
         'settings.shareUnavailable': '此设备不支持分享。',

@@ -823,6 +823,7 @@ export const hiOverrides: Record<string, string> = {
         'settings.logFile': 'बोटा दस्तावेज',
         'settings.clearLog': 'लॉग साफ करें',
         'settings.shareLog': 'लॉग साझा करें',
+        'settings.saveLog': 'लॉग सहेजें',
         'settings.logMissing': 'लॉग फ़ाइल अभी तक नहीं मिली. लॉगिंग सक्षम करें और पहले समस्या को पुन: उत्पन्न करें।',
         'settings.logCleared': 'लॉग फ़ाइल साफ़ की गई.',
         'settings.shareUnavailable': 'इस डिवाइस पर साझाकरण उपलब्ध नहीं है.',

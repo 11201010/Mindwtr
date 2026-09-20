@@ -1109,6 +1109,7 @@ export const en: Record<string, string> = {
         'settings.logFile': 'Log file',
         'settings.clearLog': 'Clear log',
         'settings.shareLog': 'Share log',
+        'settings.saveLog': 'Save log',
         'settings.logMissing': 'Log file not found yet. Enable logging and reproduce the issue first.',
         'settings.logCleared': 'Log file cleared.',
         'settings.shareUnavailable': 'Sharing is not available on this device.',

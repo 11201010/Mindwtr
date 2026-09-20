@@ -1066,6 +1066,7 @@ export const huOverrides: Record<string, string> = {
     'settings.logFile': 'Naplófájl',
     'settings.clearLog': 'Napló törlése',
     'settings.shareLog': 'Napló megosztása',
+    'settings.saveLog': 'Napló mentése',
     'settings.logMissing': 'Még nem található naplófájl. Kapcsolja be a naplózást, és idézze elő újra a problémát.',
     'settings.logCleared': 'A naplófájl törölve.',
     'settings.shareUnavailable': 'A megosztás nem érhető el ezen az eszközön.',

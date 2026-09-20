@@ -1058,6 +1058,7 @@ export const zhHant: Record<string, string> = {
         'settings.logFile': '日誌文件',
         'settings.clearLog': '清除日誌',
         'settings.shareLog': '分享日誌',
+        'settings.saveLog': '儲存日誌',
         'settings.logMissing': '日誌尚未生成，請先開啓日誌並復現問題。',
         'settings.logCleared': '日誌已清除。',
         'settings.shareUnavailable': '此設備不支持分享。',

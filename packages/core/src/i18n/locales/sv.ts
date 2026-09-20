@@ -1085,6 +1085,7 @@ export const svOverrides: Record<string, string> = {
         'settings.logFile': 'Loggfil',
         'settings.clearLog': 'Rensa logg',
         'settings.shareLog': 'Dela logg',
+        'settings.saveLog': 'Spara logg',
         'settings.logMissing': 'Loggfilen hittades inte än. Aktivera loggning och återskapa problemet först.',
         'settings.logCleared': 'Loggfilen rensades.',
         'settings.shareUnavailable': 'Delning är inte tillgängligt på den här enheten.',

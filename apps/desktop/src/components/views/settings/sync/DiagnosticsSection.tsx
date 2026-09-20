@@ -48,6 +48,7 @@ type DiagnosticsSectionProps = Pick<
     | 'onAnalyticsHeartbeatChange'
     | 'onToggleLogging'
     | 'onClearLog'
+    | 'onSaveLog'
 >;
 
 export function DiagnosticsSection({
@@ -57,6 +58,7 @@ export function DiagnosticsSection({
     loggingEnabled,
     onAnalyticsHeartbeatChange,
     onClearLog,
+    onSaveLog,
     onToggleLogging,
     t,
 }: DiagnosticsSectionProps) {
@@ -99,13 +101,16 @@ export function DiagnosticsSection({
                         onCheckedChange={onToggleLogging}
                     />
                 </SettingRow>
-                {loggingEnabled && logPath && (
-                    <div data-settings-key="logFile" className="text-xs text-muted-foreground">
-                        <span className="font-medium">{t.logFile}:</span>{' '}
-                        <span className="font-mono break-all">{logPath}</span>
-                    </div>
-                )}
                 <div className="flex items-center gap-2">
+                    {/* Named for what it does here: the phone's "Share log" opens a share sheet,
+                        this one saves a copy the tester can attach. */}
+                    <button
+                        type="button"
+                        onClick={onSaveLog}
+                        className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                        {t.saveLog}
+                    </button>
                     <button
                         type="button"
                         onClick={onClearLog}
@@ -114,6 +119,15 @@ export function DiagnosticsSection({
                         {t.clearLog}
                     </button>
                 </div>
+                {/* Below the actions on purpose: Save log is the way to get the file out. The path is
+                    a detail for people who follow the file live, and on sandboxed installs the only
+                    way to learn where it really is. */}
+                {loggingEnabled && logPath && (
+                    <div data-settings-key="logFile" className="text-xs text-muted-foreground">
+                        <span className="font-medium">{t.logFile}:</span>{' '}
+                        <span className="font-mono break-all">{logPath}</span>
+                    </div>
+                )}
             </div>
         </section>
     );
