@@ -272,7 +272,9 @@ export function ReviewView() {
                         aria-label={t('common.search')}
                         value={searchQuery}
                         onChange={(event) => setSearchQuery(event.target.value)}
-                        className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        // lg:min-w-48: beside the filter cluster the box needs a floor, or the
+                        // cluster keeps its full width and squeezes it down to its padding.
+                        className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 lg:min-w-48"
                     />
                     <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                         <ReviewFiltersBar
