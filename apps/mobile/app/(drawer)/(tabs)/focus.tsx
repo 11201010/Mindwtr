@@ -51,6 +51,7 @@ import {
   getAdvancedReviewDate,
   isTaskActionable,
   isDueForReview,
+  isTodayScheduleCandidate,
   safeFormatDate,
   safeParseDate,
   safeParseDueDate,
@@ -471,7 +472,10 @@ export default function FocusScreen() {
     startDate.setHours(0, 0, 0, 0);
     const startTime = formatDateOnly(startDate);
     const previousStartTime = task.startTime;
-    const previousFocused = task.isFocusedToday === true;
+    // "Today" is a start date too (#1252): it files the task under Today without
+    // starring it. Only a later date is a deferral, and only a deferral drops the star.
+    const startsToday = startDate.getTime() <= getStartDateOffset(0).getTime();
+    const previousFocused = !startsToday && task.isFocusedToday === true;
     const deferUpdates: Partial<Task> = {
       startTime,
       ...(previousFocused ? { isFocusedToday: false } : {}),
@@ -485,7 +489,9 @@ export default function FocusScreen() {
         }
         showToast({
           title: task.title,
-          message: `${resolveText('review.startTime', 'Defer until')} ${safeFormatDate(startDate, 'PP', startTime)}`,
+          message: startsToday
+            ? `${resolveText('taskEdit.startDateLabel', 'Start Date')}: ${resolveText('quickDate.today', 'Today')}`
+            : `${resolveText('review.startTime', 'Defer until')} ${safeFormatDate(startDate, 'PP', startTime)}`,
           tone: 'info',
           actionLabel: resolveText('common.undo', 'Undo'),
           onAction: async () => {
@@ -577,9 +583,14 @@ export default function FocusScreen() {
   }, []);
   const openDeferMenu = useCallback((task: Task) => {
     Alert.alert(
-      resolveText('review.startTime', 'Defer until'),
+      resolveText('taskEdit.startDateLabel', 'Start Date'),
       task.title,
       [
+        // Not offered to a task that already sits under Today: it would change nothing.
+        ...(isTodayScheduleCandidate(task, new Date()) ? [] : [{
+          text: resolveText('quickDate.today', 'Today'),
+          onPress: () => deferTaskUntil(task, getStartDateOffset(0)),
+        }]),
         {
           text: resolveText('quickDate.tomorrow', 'Tomorrow'),
           onPress: () => deferTaskUntil(task, getStartDateOffset(1)),
@@ -1337,7 +1348,7 @@ export default function FocusScreen() {
     const longPressActionLabel = canMarkReviewed
       ? resolveText('review.markReviewed', 'Mark reviewed')
       : canDeferTask
-        ? resolveText('review.startTime', 'Defer until')
+        ? resolveText('taskEdit.startDateLabel', 'Start Date')
         : undefined;
     const projectDeadlineLabel = getProjectDeadlineBoostLabel(
       projectDeadlineBoosts.get(item.task.id),

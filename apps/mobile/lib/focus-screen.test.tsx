@@ -513,6 +513,42 @@ describe('FocusScreen', () => {
     vi.useRealTimers();
   });
 
+  // #1252: the star makes a task today's focus; this files it under Today without that.
+  it('offers Today in the row menu, sets the start date, and keeps the star', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 4, 2, 10, 0, 0, 0));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    storeState.tasks = [
+      makeTask('focused-next', { title: 'Focused next', isFocusedToday: true }),
+      makeTask('starts-today', { title: 'Starts today', startTime: '2026-05-02' }),
+    ];
+
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+    const rowFor = (id: string) => tree.root.findAllByType(SwipeableTaskItem).find((node) => node.props.task.id === id);
+    const menuFor = (id: string) => {
+      alertSpy.mockClear();
+      act(() => {
+        rowFor(id)?.props.onLongPressAction(rowFor(id)?.props.task);
+      });
+      return alertSpy.mock.calls[0]?.[2] as Array<{ text?: string; onPress?: () => void }>;
+    };
+
+    expect(menuFor('starts-today').map((button) => button.text)).not.toContain('Today');
+
+    const today = menuFor('focused-next').find((button) => button.text === 'Today');
+    await act(async () => {
+      today?.onPress?.();
+      await Promise.resolve();
+    });
+
+    expect(storeState.updateTask).toHaveBeenCalledWith('focused-next', { startTime: '2026-05-02' });
+    expect(showToastMock).toHaveBeenCalledWith(expect.objectContaining({ message: 'Start Date: Today' }));
+    vi.useRealTimers();
+  });
+
   // Pomodoro's Mark done dropped the store result, so a refused write left the
   // task untouched with nothing on screen.
   it('reports a failed Pomodoro Mark done', async () => {
