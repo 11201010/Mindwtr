@@ -612,7 +612,11 @@ export function Layout({
                     iconY: round(iconRect.y),
                     iconW: round(iconRect.width),
                     iconH: round(iconRect.height),
-                    engine: /(Edg|Chrome|AppleWebKit)\/[\d.]+/.exec(navigator.userAgent)?.[0] ?? 'unknown',
+                    // Most specific name first. One alternation matched whichever name came first
+                    // in the string, and every Chromium user agent starts with "AppleWebKit/537.36".
+                    engine: [/Edg\/[\d.]+/, /Chrome\/[\d.]+/, /AppleWebKit\/[\d.]+/]
+                        .map((pattern) => pattern.exec(navigator.userAgent)?.[0])
+                        .find(Boolean) ?? 'unknown',
                 },
             });
         }
