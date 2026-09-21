@@ -10,13 +10,14 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import {
     AlignLeft,
+    Check,
     Eye,
     ListChecks,
+    Navigation,
     Paperclip,
     Pencil,
-    Trash2,
-    Navigation,
     Plus,
+    Trash2,
 } from 'lucide-react-native';
 import {
     generateUUID,
@@ -815,7 +816,7 @@ export function TaskEditContentField({
                                                         { borderColor: tc.tint },
                                                         item.isCompleted && { backgroundColor: tc.tint },
                                                     ]}>
-                                                        {item.isCompleted && <Text style={[styles.checkmark, { color: tc.onTint }]}>✓</Text>}
+                                                        {item.isCompleted && <Check size={12} color={tc.onTint} strokeWidth={3} />}
                                                     </View>
                                                 </TouchableOpacity>
                                             )}

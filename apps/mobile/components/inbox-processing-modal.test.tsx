@@ -1069,7 +1069,7 @@ describe('InboxProcessingModal', () => {
 
     const root = tree!.root;
 
-    expect(root.findAllByProps({ children: '✅ inbox.doneIt' })).toHaveLength(0);
+    expect(root.findAllByProps({ children: 'inbox.doneIt' })).toHaveLength(0);
   });
 
   it('hides the contexts and tags section when disabled', () => {

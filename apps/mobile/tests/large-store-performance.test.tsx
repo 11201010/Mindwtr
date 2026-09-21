@@ -341,6 +341,13 @@ vi.mock('lucide-react-native', () => {
   return {
     Archive: Icon,
     AlertTriangle: Icon,
+    // lib/task-status-icons (#1256) and the vector check marks that replaced text glyphs.
+    ArrowUpCircle: Icon,
+    Book: Icon,
+    Clock3: Icon,
+    Inbox: Icon,
+    PauseCircle: Icon,
+    Sprout: Icon,
     ArrowDown: Icon,
     ArrowRight: Icon,
     ArrowUp: Icon,

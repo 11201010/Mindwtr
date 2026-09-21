@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Check } from 'lucide-react-native';
 
 import { AI_REQUEST_TIMEOUT_OPTIONS, tFallback, type AIProviderId, type AIReasoningEffort } from '@mindwtr/core';
 
@@ -431,7 +432,7 @@ export function AiSettingsAssistantCard({
                                                         <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>
                                                             {label}
                                                         </Text>
-                                                        {selected && <Text style={{ color: tc.tint, fontSize: 18 }}>✓</Text>}
+                                                        {selected && <Check size={18} color={tc.tint} strokeWidth={2.5} />}
                                                     </TouchableOpacity>
                                                 );
                                             })}

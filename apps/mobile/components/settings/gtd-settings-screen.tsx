@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Check } from 'lucide-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -979,7 +980,7 @@ export function GtdSettingsScreen({
                                     }}
                                 >
                                     <Text style={[styles.settingLabel, { color: tc.text }]}>{formatAutoArchiveLabel(days)}</Text>
-                                    {selected && <Text style={{ color: '#3B82F6', fontSize: 20 }}>✓</Text>}
+                                    {selected && <Check size={20} color="#3B82F6" strokeWidth={2.5} />}
                                 </TouchableOpacity>
                             );
                         })}

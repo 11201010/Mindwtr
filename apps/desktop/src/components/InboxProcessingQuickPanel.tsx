@@ -5,6 +5,7 @@ import { INCUBATE_ICON as IncubateIcon, START_LATER_ICON as StartLaterIcon, TASK
 // One status, one glyph: these come from the shared map, never picked here (#1256).
 const SomedayIcon = TASK_STATUS_ICONS.someday;
 const ReferenceIcon = TASK_STATUS_ICONS.reference;
+const NextIcon = TASK_STATUS_ICONS.next;
 import { DEFAULT_PROJECT_COLOR, filterProjectsBySelectedArea, formatTimeEstimateLabel, safeFormatDate, safeParseDate, setTaskViewSectionId, tFallback, type AppData, type Project, type Task, type TaskDraft, type TaskDraftSetter, type TaskPriority, type TimeEstimate,
     numericTextCollator,
 } from '@mindwtr/core';
@@ -701,6 +702,7 @@ export function InboxProcessingQuickPanel({
                                             : 'bg-muted/40 border-border hover:bg-muted/70'
                                     )}
                                 >
+                                    <NextIcon className="w-3.5 h-3.5 inline mr-1.5" />
                                     {t('process.doIt')}
                                 </button>
                                 <button

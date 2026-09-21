@@ -200,6 +200,8 @@ vi.mock('react-native-gesture-handler', () => ({
 
 vi.mock('lucide-react-native', () => ({
   Archive: (props: any) => React.createElement('Archive', props),
+  Check: (props: any) => React.createElement('Check', props),
+  Trash2: (props: any) => React.createElement('Trash2', props),
   ArrowUpDown: (props: any) => React.createElement('ArrowUpDown', props),
   ChevronLeft: (props: any) => React.createElement('ChevronLeft', props),
   ChevronDown: (props: any) => React.createElement('ChevronDown', props),

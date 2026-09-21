@@ -5,6 +5,7 @@ import { formatI18nTemplate, safeFormatDate, safeParseDate, type Task } from '@m
 import {
     Brain,
     Calendar as CalendarIcon,
+    Check,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
@@ -579,7 +580,7 @@ export function ReviewModal({ visible, onClose }: ReviewModalProps) {
                                                     },
                                                 ]}
                                             >
-                                                {aiSelectedIds.has(suggestion.id) && <Text style={[styles.aiCheckboxText, { color: tc.onTint }]}>✓</Text>}
+                                                {aiSelectedIds.has(suggestion.id) && <Check size={12} color={tc.onTint} strokeWidth={3} />}
                                             </View>
                                             <View style={{ flex: 1 }}>
                                                 <Text style={[styles.aiItemTitle, { color: tc.text }]}>

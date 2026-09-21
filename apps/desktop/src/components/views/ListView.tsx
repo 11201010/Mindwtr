@@ -1,6 +1,6 @@
 import React, { memo, useState, useMemo, useDeferredValue, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, ChevronDown, ChevronRight, Folder, HelpCircle } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Folder, HelpCircle, Sparkles } from 'lucide-react';
 import { buildProjectOrderMap,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
@@ -1472,7 +1472,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                             />
                             {aiEnabled && pendingCopilotParts.length > 0 && (
                                 <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
-                                    <span>✨ {t('copilot.suggested')}</span>
+                                    <span className="inline-flex items-center gap-1"><Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />{t('copilot.suggested')}</span>
                                     {pendingCopilotParts.map((part) => (
                                         <button
                                             key={`${part.kind}:${part.value}`}
@@ -1497,7 +1497,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                             )}
                             {aiEnabled && (copilotContext || copilotTags.length > 0) && (
                                 <div className="mt-2 rounded border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
-                                    ✅ {t('copilot.applied')}{' '}
+                                    <Check className="mr-1 inline h-3 w-3 align-[-0.125em]" aria-hidden="true" />{t('copilot.applied')}{' '}
                                     {copilotContext ? `${copilotContext} ` : ''}
                                     {copilotTags.length ? copilotTags.join(' ') : ''}
                                 </div>

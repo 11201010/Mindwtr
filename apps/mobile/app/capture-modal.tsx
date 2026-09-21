@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Check, Sparkles } from 'lucide-react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation, usePreventRemove } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -861,7 +862,7 @@ export default function CaptureScreen() {
           {pendingCopilotParts.length > 0 && (
             <View style={[styles.copilotPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}>
               <View style={styles.copilotChipRow}>
-                <Text style={[styles.copilotText, { color: tc.text }]}>✨</Text>
+                <Sparkles size={13} color={tc.text} />
                 <Text style={[styles.copilotText, { color: tc.text }]}>{t('copilot.suggested')}</Text>
                 {pendingCopilotParts.map((part) => (
                   <TouchableOpacity
@@ -893,7 +894,7 @@ export default function CaptureScreen() {
           {hasAppliedCopilot && (
             <View style={[styles.copilotPill, { borderColor: tc.border, backgroundColor: tc.inputBg }]}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', columnGap: 4 }}>
-                <Text style={[styles.copilotText, { color: tc.text }]}>✅</Text>
+                <Check size={13} color={tc.text} style={{ marginTop: 1 }} />
                 <Text style={[styles.copilotText, { color: tc.text, flexShrink: 1 }]}>
                   {t('copilot.applied')}{' '}
                   {copilotContext ? `${copilotContext} ` : ''}

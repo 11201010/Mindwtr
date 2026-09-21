@@ -50,7 +50,7 @@ import { settleStoreAction } from '@/components/store-action-result';
 import { useToast } from '@/contexts/toast-context';
 import { TASK_LIST_WINDOWING_PROPS } from '@/components/task-list-windowing';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Archive, ArrowUpDown, ChevronDown, ChevronRight, Folder, SlidersHorizontal } from 'lucide-react-native';
+import { Archive, ArrowUpDown, Check, ChevronDown, ChevronRight, Folder, SlidersHorizontal, Trash2 } from 'lucide-react-native';
 import { ListOverflowMenu } from '@/components/list-overflow-menu';
 
 function ArchivedTaskItem({
@@ -117,7 +117,8 @@ function ArchivedTaskItem({
                 onDelete();
             }}
         >
-            <Text style={styles.swipeActionText}>🗑️ {deleteLabel}</Text>
+            <Trash2 size={18} color="#FFFFFF" />
+            <Text style={[styles.swipeActionText, { marginTop: 4 }]}>{deleteLabel}</Text>
         </Pressable>
     );
 
@@ -149,7 +150,7 @@ function ArchivedTaskItem({
                             { borderColor: tc.tint, backgroundColor: isSelected ? tc.tint : 'transparent' },
                         ]}
                     >
-                        {isSelected && <Text style={[styles.selectionMark, { color: tc.onTint }]}>✓</Text>}
+                        {isSelected && <Check size={14} color={tc.onTint} strokeWidth={3} />}
                     </View>
                 )}
                 <View style={styles.taskContent}>
@@ -246,7 +247,8 @@ function ArchivedProjectItem({
                 onDelete();
             }}
         >
-            <Text style={styles.swipeActionText}>🗑️ {deleteLabel}</Text>
+            <Trash2 size={18} color="#FFFFFF" />
+            <Text style={[styles.swipeActionText, { marginTop: 4 }]}>{deleteLabel}</Text>
         </Pressable>
     );
 

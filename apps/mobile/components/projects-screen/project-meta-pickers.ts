@@ -6,7 +6,6 @@ import { normalizeProjectTag } from '@/components/projects-screen/projects-scree
 
 type AreaColorMeta = {
     nameKey: string;
-    swatch: string;
 };
 
 type ProjectLookup = (projectId: string) => Project | undefined;
@@ -58,24 +57,26 @@ export const applyLiveProjectUpdate = ({
  * every new swatch needs a row.
  */
 export const AREA_COLOR_DISPLAY_BY_HEX: Record<string, AreaColorMeta> = {
-    '#3b82f6': { nameKey: 'projects.colorBlue', swatch: '🔵' },
-    '#10b981': { nameKey: 'projects.colorGreen', swatch: '🟢' },
-    '#f59e0b': { nameKey: 'projects.colorAmber', swatch: '🟠' },
-    '#ef4444': { nameKey: 'projects.colorRed', swatch: '🔴' },
-    '#8b5cf6': { nameKey: 'projects.colorPurple', swatch: '🟣' },
-    '#ec4899': { nameKey: 'projects.colorPink', swatch: '🩷' },
-    '#f97316': { nameKey: 'projects.colorOrange', swatch: '🟠' },
-    '#14b8a6': { nameKey: 'projects.colorTeal', swatch: '🩵' },
-    '#06b6d4': { nameKey: 'projects.colorCyan', swatch: '🩵' },
-    '#6366f1': { nameKey: 'projects.colorIndigo', swatch: '🔵' },
-    '#f43f5e': { nameKey: 'projects.colorRose', swatch: '🔴' },
-    '#64748b': { nameKey: 'projects.colorSlate', swatch: '🩶' },
+    '#3b82f6': { nameKey: 'projects.colorBlue' },
+    '#10b981': { nameKey: 'projects.colorGreen' },
+    '#f59e0b': { nameKey: 'projects.colorAmber' },
+    '#ef4444': { nameKey: 'projects.colorRed' },
+    '#8b5cf6': { nameKey: 'projects.colorPurple' },
+    '#ec4899': { nameKey: 'projects.colorPink' },
+    '#f97316': { nameKey: 'projects.colorOrange' },
+    '#14b8a6': { nameKey: 'projects.colorTeal' },
+    '#06b6d4': { nameKey: 'projects.colorCyan' },
+    '#6366f1': { nameKey: 'projects.colorIndigo' },
+    '#f43f5e': { nameKey: 'projects.colorRose' },
+    '#64748b': { nameKey: 'projects.colorSlate' },
 };
 
 const areaColorLabel = (t: TranslateFn, color: string): string => {
-    const meta = AREA_COLOR_DISPLAY_BY_HEX[color] ?? { nameKey: '', swatch: '◯' };
-    const name = meta.nameKey ? t(meta.nameKey) : color.toUpperCase();
-    return `${meta.swatch} ${name}`;
+    // The name alone: a native action sheet cannot draw a colour dot, and emoji circles stood
+    // in badly (two colours shared one circle, and the newer ones are empty boxes on iOS
+    // before 16.4).
+    const nameKey = AREA_COLOR_DISPLAY_BY_HEX[color]?.nameKey;
+    return nameKey ? t(nameKey) : color.toUpperCase();
 };
 
 type OpenProjectAreaPickerArgs = {

@@ -89,7 +89,7 @@ export function useRootLayoutStartup({
         if (storageInitError && !storageWarningShown.current) {
             storageWarningShown.current = true;
             Alert.alert(
-                '⚠️ Storage Error',
+                'Storage Error',
                 'Failed to initialize storage. Your data will NOT be saved. Please restart the app.\n\nError: ' + storageInitError.message,
                 [{ text: 'OK' }]
             );
@@ -232,7 +232,7 @@ export function useRootLayoutStartup({
                 }
                 setDataReady(true);
                 Alert.alert(
-                    '⚠️ Data Load Error',
+                    'Data Load Error',
                     'Failed to load your data. Some tasks may be missing.\n\nError: ' + (error as Error).message,
                     [{ text: 'OK' }]
                 );

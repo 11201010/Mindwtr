@@ -1,4 +1,5 @@
 import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
+import { Check, Trash2 } from 'lucide-react-native';
 import { buildTrashTimeline, DEFAULT_TOMBSTONE_RETENTION_DAYS, formatI18nTemplate, getInlineMarkdownPreview, projectMatchesAreaFilterSelection, resolveTrashClearScope, shallow, taskMatchesAreaFilterSelection, tFallback, useTaskStore } from '@mindwtr/core';
 import type { Project, StoreActionResult, Task } from '@mindwtr/core';
 import { MarkdownInlineText } from '@/components/markdown-text';
@@ -51,7 +52,8 @@ function TrashSwipeRow({
         onDelete();
       }}
     >
-      <Text style={styles.swipeActionText}>🗑️ {deleteLabel}</Text>
+      <Trash2 size={18} color="#FFFFFF" />
+      <Text style={[styles.swipeActionText, { marginTop: 4 }]}>{deleteLabel}</Text>
     </Pressable>
   );
 
@@ -76,7 +78,7 @@ function TrashSelectionIndicator({ isSelected, tc }: { isSelected: boolean; tc: 
         { borderColor: tc.tint, backgroundColor: isSelected ? tc.tint : 'transparent' },
       ]}
     >
-      {isSelected && <Text style={[styles.selectionMark, { color: tc.onTint }]}>✓</Text>}
+      {isSelected && <Check size={14} color={tc.onTint} strokeWidth={3} />}
     </View>
   );
 }
@@ -573,7 +575,7 @@ export default function TrashScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>🗑️</Text>
+              <Trash2 size={40} color={tc.secondaryText} style={styles.emptyIcon} />
               <Text style={[styles.emptyTitle, { color: tc.text }]}>
                 {tFallback(t, 'trash.empty', 'Trash is empty')}
               </Text>
@@ -707,7 +709,6 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
   },
   emptyIcon: {
-    fontSize: 40,
     marginBottom: 12,
   },
   emptyTitle: {

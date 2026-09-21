@@ -988,13 +988,13 @@ export const daOverrides: Record<string, string> = {
     'process.incubateDateRequired': 'Vælg en dato for at bringe dette tilbage.',
     'process.returningItem': 'Tilbage for at afklare',
     'process.returningItemHint': 'Du inkuberede dette. Beslut hvad det er nu.',
-    'process.twoMin': '⏱️ Tager det mindre end 2 minutter?',
+    'process.twoMin': 'Tager det mindre end 2 minutter?',
     'process.twoMinDesc': 'Hvis ja, så gør det nu!',
     'process.doneIt': 'gjort det!',
     'process.takesLonger': 'Tager længere tid',
     'process.nextStep': 'Hvad er det næste?',
     'process.nextStepDesc': 'Skal du gøre det, eller uddelegere det?',
-    'process.doIt': '📋 Jeg gør det',
+    'process.doIt': 'Jeg gør det',
     'process.delegate': 'Uddelegere',
     'process.delegateTitle': 'Uddelegere',
     'process.delegateDesc': 'Notér eventuelt hvem og en opfølgningsdato.',
@@ -2696,11 +2696,11 @@ export const daOverrides: Record<string, string> = {
     'settings.pomodoroAlertPermissionAction': 'Åbn indstillinger for Android',
     'settings.aiUsageTitle': 'Hvor og hvordan man bruger AI',
     'settings.aiUsageClarify':
-        'Afklar: Åbn en opgave, klik på ✨-knappen i editoren, og vælg Afklar for at omforme en vag opgave til en tydelig næste handling.',
+        'Afklar: Åbn en opgave, klik på AI-knappen i editoren, og vælg Afklar for at omforme en vag opgave til en tydelig næste handling.',
     'settings.aiUsageBreakdown':
-        'Opdel: i den samme ✨-menu skal du vælge Opdel for at opdele en opgave eller et projekt i konkrete trin.',
+        'Opdel: i den samme AI-menu skal du vælge Opdel for at opdele en opgave eller et projekt i konkrete trin.',
     'settings.aiUsageSuggestions':
-        'Forslag: Mens du skriver en opgavetitel eller noter, vises et ✨ forslag til kontekst, tidsestimat og tags nedenfor - klik på det for at anvende.',
+        'Forslag: Mens du skriver en opgavetitel eller noter, vises et AI-forslag til kontekst, tidsestimat og tags nedenfor - klik på det for at anvende.',
     'settings.aiUsageReview':
         'Ugentlig gennemgang: åbn Ugentlig gennemgang, gå til AI-trinnet, og klik på Kør for at få foreslåede handlinger til forældede opgaver.',
     'settings.aiBaseUrlModelHint':

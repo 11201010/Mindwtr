@@ -1,6 +1,6 @@
 import React, { type ReactNode, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { CircleDot, History, Hourglass, ListChecks, Paperclip, Repeat, UserRound } from 'lucide-react-native';
+import { Check, CircleDot, History, Hourglass, ListChecks, Paperclip, Repeat, UserRound } from 'lucide-react-native';
 import { useThemeTokens } from '../../hooks/use-theme-tokens';
 import { useStatusColors } from '../../hooks/use-status-colors';
 import {
@@ -608,7 +608,7 @@ export function SwipeableTaskItemContent({
                     ]}
                     pointerEvents="none"
                 >
-                    {isMultiSelected && <Text style={styles.selectionIndicatorText}>✓</Text>}
+                    {isMultiSelected && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
                 </View>
             )}
             <View style={styles.taskContent}>

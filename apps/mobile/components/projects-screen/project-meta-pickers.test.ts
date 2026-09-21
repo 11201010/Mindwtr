@@ -5,10 +5,9 @@ import { applyLiveProjectUpdate, AREA_COLOR_DISPLAY_BY_HEX } from './project-met
 
 describe('AREA_COLOR_DISPLAY_BY_HEX', () => {
     it('names every preset color for the iOS action sheets', () => {
-        // Without a row the sheet falls back to a raw hex like "◯ #F97316".
+        // Without a row the sheet falls back to a raw hex like "#F97316".
         for (const color of AREA_PRESET_COLORS) {
             expect(AREA_COLOR_DISPLAY_BY_HEX[color]?.nameKey).toBeTruthy();
-            expect(AREA_COLOR_DISPLAY_BY_HEX[color]?.swatch).toBeTruthy();
         }
     });
 

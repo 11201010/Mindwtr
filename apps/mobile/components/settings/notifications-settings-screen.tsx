@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Check } from 'lucide-react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -332,7 +333,7 @@ export function NotificationsSettingsScreen() {
                                             <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>
                                                 {label}
                                             </Text>
-                                            {selected && <Text style={{ color: tc.tint, fontSize: 18 }}>✓</Text>}
+                                            {selected && <Check size={18} color={tc.tint} strokeWidth={2.5} />}
                                         </TouchableOpacity>
                                     );
                                 })}

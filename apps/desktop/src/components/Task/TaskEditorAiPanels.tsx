@@ -1,4 +1,4 @@
-import { Loader2, Sparkles } from 'lucide-react';
+import { Check, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { useTaskItemAi } from './useTaskItemAi';
 
@@ -117,7 +117,7 @@ export function TaskEditorAiPanels({ ai, timeEstimatesEnabled, t }: TaskEditorAi
         <>
             {pendingCopilotParts.length > 0 && (
                 <div className="text-xs px-2 py-1 rounded bg-muted/30 border border-border text-muted-foreground flex flex-wrap items-center gap-1.5">
-                    <span>✨ {t('copilot.suggested')}</span>
+                    <span className="inline-flex items-center gap-1"><Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />{t('copilot.suggested')}</span>
                     {pendingCopilotParts.map((part) => (
                         <button
                             key={`${part.kind}:${part.value}`}
@@ -142,7 +142,7 @@ export function TaskEditorAiPanels({ ai, timeEstimatesEnabled, t }: TaskEditorAi
             )}
             {hasAppliedCopilot && (
                 <div className="text-xs px-2 py-1 rounded bg-muted/30 border border-border text-muted-foreground">
-                    ✅ {t('copilot.applied')}{' '}
+                    <Check className="mr-1 inline h-3 w-3 align-[-0.125em]" aria-hidden="true" />{t('copilot.applied')}{' '}
                     {copilotContext ? `${copilotContext} ` : ''}
                     {timeEstimatesEnabled && copilotEstimate ? `${copilotEstimate}` : ''}
                     {copilotTags.length ? copilotTags.join(' ') : ''}

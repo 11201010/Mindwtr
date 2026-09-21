@@ -5,6 +5,7 @@ import { INCUBATE_ICON as IncubateIcon, START_LATER_ICON as StartLaterIcon, TASK
 // One status, one glyph: these come from the shared map, never picked here (#1256).
 const SomedayIcon = TASK_STATUS_ICONS.someday;
 const ReferenceIcon = TASK_STATUS_ICONS.reference;
+const NextIcon = TASK_STATUS_ICONS.next;
 import { DEFAULT_PROJECT_COLOR, filterProjectsBySelectedArea, formatTimeEstimateLabel, safeFormatDate, safeParseDate, setTaskViewSectionId, tFallback, type AppData, type Area, type Project, type Task, type TaskDraft, type TaskDraftSetter, type TaskPriority, type TimeEstimate,
     numericTextCollator,
 } from '@mindwtr/core';
@@ -786,7 +787,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                             onClick={handleDefer}
                             className={DECISION_CHOICE_BUTTON_CLASS}
                         >
-                            {t('process.doIt')}
+                            <NextIcon className="h-4 w-4 shrink-0" /> {t('process.doIt')}
                         </button>
                     </div>
                 </div>

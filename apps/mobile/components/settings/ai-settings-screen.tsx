@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Constants from 'expo-constants';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Check } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -717,7 +718,7 @@ export function AISettingsScreen() {
                                                 <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>
                                                     {option}
                                                 </Text>
-                                                {selected && <Text style={{ color: tc.tint, fontSize: 18 }}>✓</Text>}
+                                                {selected && <Check size={18} color={tc.tint} strokeWidth={2.5} />}
                                             </TouchableOpacity>
                                         );
                                     })}

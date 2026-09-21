@@ -283,11 +283,12 @@ describe('TaskEditContentField', () => {
       accessibilityRole: 'checkbox',
     });
     const checkboxVisual = checkbox.findByType(View);
-    const checkmark = checkbox.findByType(Text);
+    // A vector check, not a "✓" text glyph: text glyphs depend on the device font.
+    const checkmark = checkbox.findByType('Icon' as never);
 
     expect(checkbox.props.accessibilityState).toEqual({ checked: true });
     expect(flattenStyle(checkboxVisual.props.style).backgroundColor).toBe(baseProps.tc.tint);
-    expect(flattenStyle(checkmark.props.style).color).toBe(baseProps.tc.onTint);
+    expect(checkmark.props.color).toBe(baseProps.tc.onTint);
   });
 
   it('edits a draft Reference checklist as a plain list without changing completion state', () => {

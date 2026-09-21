@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Folder } from 'lucide-react-native';
+import { Folder, X } from 'lucide-react-native';
 
 import { styles } from '../inbox-processing-modal.styles';
 import type { ThemeColors } from '@/hooks/use-theme-colors';
@@ -275,7 +275,7 @@ export function InboxProjectSection({
                 onPress={() => setExtraActionDrafts(extraActionDrafts.filter((_, i) => i !== index))}
                 style={styles.extraActionRemove}
               >
-                <Text style={[styles.extraActionRemoveText, { color: tc.secondaryText }]}>✕</Text>
+                <X size={16} color={tc.secondaryText} />
               </TouchableOpacity>
             </View>
           ))}

@@ -576,7 +576,7 @@ export const nlOverrides: Record<string, string> = {
         'keybindings.list.open': 'Geselecteerde taak openen',
         'keybindings.list.select': 'Taak selecteren/deselecteren',
         'keybindings.style.vim': 'Vim',
-        'process.doIt': '📋 Ik doe het',
+        'process.doIt': 'Ik doe het',
         'process.addAnotherAction': 'Nog een actie toevoegen',
         'process.removeAction': 'Actie verwijderen',
         'recurrence.onLabel': 'Op',
