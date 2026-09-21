@@ -92,6 +92,27 @@ To be re-measured before any comparison with the React Native app: the during-sy
 
 Next, in this order (approved by the maintainer on 2026-09-21): an independent review of the experiment's source, harness, raw samples and fixture; and a baseline of the current React Native app on the same phone, fixture and core revision, reporting the same core operations (inside its packaged Hermes, which runs precompiled bytecode and is not the same thing as a just-in-time compiler) separately from the real screen experience. A slow baseline would not excuse a slow native host; the targets stay. Only after that: a second engine behind the experiment's `Engine` interface, and, if blocking is still unacceptable, a merge computed by a second engine instance from snapshots while one owner keeps the store and persistence. That last step is a concurrency change with its own data-transfer, reconciliation and memory costs. If Focus stays expensive across engines, profile the derivation itself: one fix in the shared core helps every client. The Rust option stays out of scope. The core's computations and scheduling may need work; that is not a reason to replace its language.
 
+### Gate 1 correction pass (2026-09-22)
+
+The one correction pass answered the review. Originals are kept under the tag `gate1-result-20260921`; corrected data is under `results-corrected/`, tagged `gate1-corrected-20260922`. The coordinator recomputed the during-merge waits, the Focus split, memory and the edit timing from the raw corrected files; they match the worker's figures within rounding. The cold-launch figure is the worker's.
+
+| Figure | Original | After correction |
+| --- | ---: | --- |
+| Boundary round trip, warm Inbox, Focus total, complete → notice / → list, warm write, process-kill and failed-write tests, push and pull, STOP conditions | as above | stand |
+| Focus split | 444 / 19 / 13 ms from three runs | one clock per iteration: boundary (JSON + Kotlin decode) 23.94 ms p50, 65.72 ms p95, about 5% of the total at the median |
+| First write after launch | not reported | 322.08 ms, against a 22.14 ms warm p95 |
+| Cold launch → first usable Inbox | 497.41 ms p95 from `onCreate`, 4,398 rows | 559.65 ms p95 from process start, full 5,000-row fixture, the 25.96 ms bundle read now attributed |
+| Query during an unchanged sync | "p95" 1,107.70 (n=17) | n=98 at random arrival: p50 601.88, p95 1,311.70 |
+| Query during a merge with 250 changes | "p95" 1,792.07 (n=16) | n=98 at random arrival: p50 677.59, p95 1,421.63 |
+| Incremental memory | 59.17 MiB, one reading | 52.73 MiB, three readings per state after forced garbage collection |
+| Parity | ids and positions | 24,180 field values, 0 differences, reference file committed |
+
+New correctness results:
+
+- **Edit during a merge.** With one engine thread an edit cannot land inside a merge; it queues. An edit submitted 1,200 ms in (inside merge round 1) waited 677 ms, was applied the instant the round ended, and survived ten further rounds with one row in the database. When the experiment forced a gap between the merge's read of the store and its save, an edit made in that gap was written to the database and then deleted by the merge's save of the older snapshot: still visible in memory, gone after the next load, and neither of the core's guards fired. Nothing in the host as written can reach that gap, because nothing yields there. This is the experiment's simplified merge path, not the apps' sync cycle, which has its own local-change guard; it shows concretely why any change that lets edits and merge computation interleave must be its own reviewed patch with this test in it.
+- **Failed and partial reads.** A read that throws fails boot loudly and writes nothing. An empty database boots clean. A partial read (projects returning no rows) boots without any error into a silently wrong store with 0 projects; a following write succeeds; the 125 project rows survive only because the core deletes only rows the adapter has seen. The experiment now has a boot guard that throws when rows exist and the store loads none.
+- **Collation.** Phone and workstation agree exactly with the stand-in, so the engine and the storage port add no difference. The stand-in differs from real ICU in all three orderings tested: capitals sort first, accented letters sort after `z`, NFC and NFD forms of the same word swap places, and four pairs that ICU treats as equal under `sensitivity: 'base'` are not equal. Numeric ordering agrees. All performance numbers here were measured with this simplified collation; real ICU would be slower. An engine without `Intl` is not acceptable for production as it stands.
+
 ### Baseline of the current React Native app (2026-09-21, corrected after independent review)
 
 Same phone, same frozen 5,000-task dataset (generator copied verbatim from Gate 1; every seeding produced 2,350,532 bytes with hash `6b34f324`), same reference time and the same core revision, in an isolated build (`tech.dongdongbh.mindwtr.rnbaseline`) that the review confirmed is release, non-debuggable, `__DEV__` false, Hermes "for RN 0.81.5" running precompiled bytecode (version 96), debugger off. The work lives on the local branch `experiment/rn-baseline` under `experiments/rn-baseline/`.
