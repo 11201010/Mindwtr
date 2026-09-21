@@ -43,6 +43,7 @@ Changes collected since the latest stable release.
 - Logs: API keys in the newer formats used by OpenAI, Anthropic, xAI, Groq and OpenRouter are now removed from diagnostic logs, and ordinary words are no longer cut by mistake.
 - Desktop database: nine duplicate search indexes are removed on the first start, which makes saving faster.
 - Mobile: in a task's **Preview**, text typed into the checklist **Add Item** box is now saved when you press **Save**, even if you did not press Enter first.
+- Desktop on macOS: the month arrows in the date picker now page the calendar. Clicking one used to close the picker, so a date in another month could only be typed. This affected every date field. (#1254)
 - Desktop: deleting an attachment file that is already gone no longer logs a warning on every sync. On Windows the check missed it because the error arrives as plain text, in the system language. The same warning also wrote the file's full path into the log; the path is now hidden.
 - Desktop File Sync: when an attachment upload is refused, the diagnostics log now names the rule that refused it, so a shared log is enough to find the cause.
 - Calendar: a task that Mindwtr pushed to your calendar stays hidden from the calendar view even when the calendar service adds a blank line or spaces to the end of the event notes. Before, that small change was enough to show the task a second time as a calendar event.

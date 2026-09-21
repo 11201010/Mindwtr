@@ -60,6 +60,41 @@ describe('DateField', () => {
         expect(screen.getByRole('dialog', { name: 'Host dialog' }).contains(popover)).toBe(true);
     });
 
+    // #1254, macOS only: WebKit there does not focus a button on click. Pressing a month arrow
+    // blurred the field to nothing and the popover closed instead of paging. Every popover
+    // button has to cancel the press so the field keeps focus; jsdom cannot play WebKit's focus
+    // rule, so the cancelled mousedown is the part a test can pin.
+    it('keeps the calendar open and pages it when a month arrow is pressed', () => {
+        render(
+            <DateField
+                t={t}
+                label="Due"
+                dateAriaLabel="Due"
+                dateValue="2026-04-19"
+                selectedDate={new Date(2026, 3, 19)}
+                nativeDateInputLocale="en-US"
+                dateInputClassName="border"
+                hasValue
+                onDateChange={vi.fn()}
+                onClear={vi.fn()}
+            />
+        );
+        fireEvent.click(screen.getByRole('button', { name: 'Due Calendar' }));
+        const popover = screen.getByRole('dialog', { name: 'Due Calendar' });
+
+        for (const name of ['Calendar: Next month', 'Calendar: Previous month']) {
+            // fireEvent returns false when the handler called preventDefault.
+            expect(fireEvent.mouseDown(screen.getByRole('button', { name }))).toBe(false);
+        }
+        for (const button of Array.from(popover.querySelectorAll('button'))) {
+            expect(fireEvent.mouseDown(button)).toBe(false);
+        }
+
+        expect(popover.textContent).toContain('April 2026');
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar: Next month' }));
+        expect(screen.getByRole('dialog', { name: 'Due Calendar' }).textContent).toContain('May 2026');
+    });
+
     it('drops the label and the clear control when the host owns them', () => {
         const { container } = render(
             <DateField
