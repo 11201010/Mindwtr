@@ -1370,6 +1370,15 @@ export const TaskItem = memo(function TaskItem({
     }, []);
 
     const handleTitleSuggestionAccept = useCallback((suggestion: TaskInputAcceptedSuggestion): boolean => {
+        // %Person was the one title token with no home here (#1255): the input offered the
+        // suggestion, nothing claimed it, and "%Stefan" was typed into the title as plain text.
+        // A field with a value is revealed by the layout, so the person shows up at once.
+        if (suggestion.kind === 'person') {
+            const name = suggestion.value.trim();
+            if (!name) return false;
+            setField('assignedTo', name);
+            return true;
+        }
         if (suggestion.kind !== 'command') return false;
         const value = suggestion.value.trim();
 
@@ -1486,6 +1495,7 @@ export const TaskItem = memo(function TaskItem({
             renderField={renderField}
             language={language}
             inputContexts={allContexts}
+            inputPeople={assignedToOptions}
             onAcceptTitleSuggestion={handleTitleSuggestionAccept}
             isDoneActionActive={draft.status === 'done'}
             onMarkDone={canCompleteFromEditor ? handleEditorMarkDone : undefined}

@@ -65,6 +65,8 @@ interface TaskItemEditorProps {
     renderField: (fieldId: TaskEditorFieldId) => ReactNode;
     language: string;
     inputContexts: string[];
+    /** Known people for the title's %Person suggestions; without it `%` offers nothing (#1255). */
+    inputPeople?: string[];
     onAcceptTitleSuggestion?: (suggestion: TaskInputAcceptedSuggestion) => boolean | Promise<boolean>;
     isDoneActionActive?: boolean;
     onMarkDone?: () => void;
@@ -127,6 +129,7 @@ export function TaskItemEditor({
     renderField,
     language,
     inputContexts,
+    inputPeople,
     onAcceptTitleSuggestion,
     isDoneActionActive = false,
     onMarkDone,
@@ -339,6 +342,7 @@ export function TaskItemEditor({
                         }}
                         projects={projects}
                         contexts={inputContexts}
+                        people={inputPeople}
                         areas={areas}
                         onCreateProject={onCreateProject}
                         onAcceptSuggestion={handleTitleSuggestionAccept}

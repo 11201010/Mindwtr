@@ -860,6 +860,74 @@ describe('TaskItem', () => {
         });
     });
 
+    // #1255: %Person was the one title token nothing claimed, so an accepted suggestion was typed
+    // into the title as "%Stefan" and Assigned To stayed empty.
+    it('applies an accepted %person suggestion to Assigned To without keeping the token in the title', async () => {
+        const editableTask: Task = {
+            ...mockTask,
+            id: 'editor-title-person-task',
+            title: 'Call',
+            status: 'next',
+        };
+        const personSourceTask: Task = {
+            ...mockTask,
+            id: 'editor-title-person-source',
+            title: 'Person source',
+            assignedTo: 'Stefan',
+        };
+        act(() => {
+            useTaskStore.setState((state) => ({
+                ...state,
+                tasks: [editableTask, personSourceTask],
+                _allTasks: [editableTask, personSourceTask],
+                _tasksById: new Map([
+                    [editableTask.id, editableTask],
+                    [personSourceTask.id, personSourceTask],
+                ]),
+                projects: [],
+                _allProjects: [],
+                _projectsById: new Map(),
+                sections: [],
+                _allSections: [],
+                _sectionsById: new Map(),
+                areas: [],
+                _allAreas: [],
+                _areasById: new Map(),
+            }));
+        });
+
+        const { findByRole, getAllByRole, getByDisplayValue, getByRole } = render(
+            <LanguageProvider>
+                <TaskItem task={editableTask} />
+            </LanguageProvider>
+        );
+
+        await act(async () => {
+            fireEvent.click(getAllByRole('button', { name: /edit/i })[0]);
+        });
+        const titleInput = getByDisplayValue('Call') as HTMLInputElement;
+        fireEvent.change(titleInput, { target: { value: 'Call %St today' } });
+        titleInput.setSelectionRange('Call %St'.length, 'Call %St'.length);
+        fireEvent.click(titleInput);
+
+        expect(await findByRole('option', { name: /Stefan/ })).toBeInTheDocument();
+        await act(async () => {
+            fireEvent.keyDown(titleInput, { key: 'Enter' });
+        });
+
+        await waitFor(() => expect(titleInput.value).toBe('Call today'));
+
+        await act(async () => {
+            fireEvent.click(getByRole('button', { name: 'Save' }));
+        });
+
+        await waitFor(() => {
+            const updatedTask = useTaskStore.getState()._allTasks.find((task) => task.id === 'editor-title-person-task');
+            expect(updatedTask?.title).toBe('Call today');
+            expect(updatedTask?.assignedTo).toBe('Stefan');
+        });
+    });
+
     it('applies accepted slash date commands as metadata without keeping the command in the title', async () => {
         const editableTask: Task = {
             ...mockTask,
