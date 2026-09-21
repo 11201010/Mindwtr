@@ -48,6 +48,7 @@ body:
     id: channel
     attributes:
       label: Install channel
+      multiple: true
       options:
         - "Play Store"
         - "F-Droid"
@@ -83,6 +84,7 @@ body:
     id: impact
     attributes:
       label: Impact
+      multiple: true
       options:
         - "Blocks core workflow"
         - "Data loss or data mismatch"

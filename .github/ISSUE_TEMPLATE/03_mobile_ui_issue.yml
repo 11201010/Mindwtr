@@ -24,6 +24,7 @@ body:
     id: channel
     attributes:
       label: Install channel
+      multiple: true
       options:
         - "Play Store"
         - "F-Droid"

@@ -27,6 +27,7 @@ body:
     id: channel
     attributes:
       label: Install channel
+      multiple: true
       options:
         - "Play Store"
         - "F-Droid"
@@ -70,6 +71,7 @@ body:
     id: frequency
     attributes:
       label: Frequency
+      multiple: true
       options:
         - "Happened once"
         - "Happens sometimes"
