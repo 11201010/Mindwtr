@@ -1,0 +1,97 @@
+name: "📱 Mobile UI Issue"
+description: Report mobile layout, interaction, keyboard, or touch-target problems
+title: "[MOBILE-UI] "
+labels: ["bug", "platform:mobile", "area:ui", "status:needs-triage"]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - "Android"
+        - "iOS"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: v1.3.1
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Install channel
+      options:
+        - "Play Store"
+        - "F-Droid"
+        - "App Store"
+        - "TestFlight"
+        - "Release file / sideloaded APK"
+        - "Source / dev build"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: Android 15
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      placeholder: Pixel 8
+    validations:
+      required: true
+  - type: dropdown
+    id: ui-type
+    attributes:
+      label: UI type
+      multiple: true
+      options:
+        - "Layout / spacing"
+        - "Keyboard overlap / input focus"
+        - "Tap target / gesture handling"
+        - "Modal / sheet behavior"
+        - "Navigation / back behavior"
+        - "Theme / visual rendering"
+        - "Other"
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What do you see?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots / screen recording
+      description: |
+        Drag files into the box to attach them.
+
+        To record with fictional tasks instead of private content: **Settings → Data → Open sandbox**, then **Enter sandbox**; leave it from the sandbox banner. Some issues need your own data to reproduce. Details: https://docs.mindwtr.app/data-sync/diagnostics-logs#record-with-sample-data
+  - type: input
+    id: display
+    attributes:
+      label: Display size / font scale / orientation
+      description: Optional, but it often explains a layout problem.

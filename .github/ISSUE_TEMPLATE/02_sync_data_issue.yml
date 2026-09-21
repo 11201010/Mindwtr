@@ -1,0 +1,110 @@
+name: "🔄 Sync / Data Issue"
+description: Report sync conflicts, missing data, duplicated tasks, or attachment sync problems
+title: "[SYNC] "
+labels: ["bug", "area:sync", "status:needs-triage"]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platforms involved
+      description: Every device that takes part in the sync.
+      multiple: true
+      options:
+        - "Desktop (Linux)"
+        - "Desktop (macOS)"
+        - "Desktop (Windows)"
+        - "Mobile (Android)"
+        - "Mobile (iOS)"
+        - "Cloud / WebDAV server"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Sync backend
+      options:
+        - "WebDAV"
+        - "File Sync (a folder, e.g. Syncthing / Dropbox folder)"
+        - "Self-hosted cloud server"
+        - "Dropbox"
+        - "iCloud"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version(s)
+      description: One per device if they differ.
+      placeholder: desktop v1.3.1, Android v1.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Install channel(s)
+      multiple: true
+      options:
+        - "Play Store"
+        - "F-Droid"
+        - "App Store (iOS)"
+        - "TestFlight"
+        - "Mac App Store"
+        - "Microsoft Store"
+        - "winget"
+        - "Homebrew"
+        - "Flathub"
+        - "APT"
+        - "AUR"
+        - "Distro package"
+        - "Release file (.deb / .rpm / AppImage / .dmg / .exe / .msi / APK)"
+        - "Source / dev build"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS version(s)
+      description: All devices involved.
+    validations:
+      required: true
+  - type: dropdown
+    id: clocks
+    attributes:
+      label: Device clocks set automatically?
+      options:
+        - "Yes, on every device"
+        - "No, at least one device is set by hand"
+        - "Unknown"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe the mismatch, for example a description that disappeared, a duplicate task, a missing attachment.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic data
+      description: |
+        Very helpful: sync logs from all affected devices, example task or attachment ids if visible, the approximate time window (with timezone and local time on each device), and whether it happens on every sync or only sometimes.
+
+        How to collect logs: https://docs.mindwtr.app/data-sync/diagnostics-logs

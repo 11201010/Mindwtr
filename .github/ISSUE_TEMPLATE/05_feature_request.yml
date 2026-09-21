@@ -1,0 +1,63 @@
+name: "\U0001F680 Feature Request"
+description: Suggest an idea for this project
+title: "[FEAT] "
+labels: ["enhancement", "status:needs-triage"]
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions
+          required: true
+        - label: This is one request (not multiple unrelated features)
+          required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Target platform
+      multiple: true
+      options:
+        - "Desktop"
+        - "Mobile"
+        - "Cloud / Sync / MCP"
+        - "Cross-platform"
+        - "Other"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - "Inbox / review workflow"
+        - "Projects / areas / sections"
+        - "Search / filter"
+        - "Notifications / recurrence / calendar"
+        - "Sync / attachments"
+        - "UI / accessibility / i18n"
+        - "Release / distribution"
+        - "Other"
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: For example "I'm always frustrated when..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots or anything else that helps.
