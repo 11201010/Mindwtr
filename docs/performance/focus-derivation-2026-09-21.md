@@ -99,7 +99,10 @@ Four edits. None of them changes what Focus returns.
    so that rule runs on its own. `normalizeFilterCriteria` only ever writes a
    key it means, so "no keys" is exactly "no criteria". A criterion added there
    later appears as a key and takes the full path, which is the safe direction.
-   This one helps every list in the app, not only Focus.
+   Only three callers go through `applyFilter`: the Focus pools and the two
+   mobile widget payload builders (`widget-data.ts`, `widget-lists.ts`). The
+   filtered lists in both apps call `createTaskFilterPredicate`, which this
+   patch does not change, so they are not faster.
 
 After the change the same derivation makes 23,117 `safeParseDate` calls instead
 of 39,820, and the remaining ones are one per task per pass.
@@ -163,7 +166,11 @@ each pool and each section, the order they are in, the whole task object of
 each one, the project-deadline boost map, and the set of blocked sequential
 steps. The old code is a frozen copy in
 `packages/core/src/__fixtures__/focus-derivation-frozen.ts`, so a later edit to
-the live code cannot move the reference too.
+the copied functions cannot move the reference too. The copy still imports ten
+live helpers (for example `safeParseDate`, `shouldShowTaskForStart` and
+`sortTasksBySavedPreference`), so an edit to one of those moves both sides.
+Delete the frozen copy and the comparison half of the test after one shipped
+release; keep the `applyFilter` short-cut cases.
 
 It runs over the generated 5,000-task store and a hand-written store of the
 awkward cases: date-only and timed due and start values, the local day
@@ -196,3 +203,16 @@ calls in screen order. Measured on this workstation under load: 3.39 ms at
   changes the Next-actions sort by about 17%.
 - The machine was under other load throughout. That is why every comparison
   alternates old and new inside one process.
+
+## On the phone (added by the maintainer's session, 2026-09-22)
+
+Measured in the baseline app of ADR 0029 on the same phone (OnePlus CPH2655,
+Hermes, release build, 5,000 tasks, 200 samples): unpatched build, then the same
+app rebuilt with the three patched core files. Focus derivation p50 207.05 ms →
+113.99 ms (p95 213.00 → 115.87), about 45 percent less. The Inbox control did
+not move (2.58 → 2.57 ms), so both runs were in the same sustained-load state.
+The phone is nearly twice as fast in the first seconds after a launch (the
+unpatched derivation cost 116 ms there); the patched cost in that state was not
+observed. An independent review found no behavior difference, verified the
+frozen reference against `main`, and caught all seven of its own mutations with
+the parity test.
