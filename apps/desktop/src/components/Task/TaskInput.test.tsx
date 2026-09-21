@@ -217,6 +217,32 @@ describe('TaskInput autocomplete', () => {
         expect(document.querySelectorAll('[data-priority-flag]')).toHaveLength(0);
     });
 
+    it('opens the popup for a second slash command after one that already has a value (#1259)', async () => {
+        const { getByRole, getAllByRole } = render(<TaskInputHarness initialValue="Sample task /start:now /no" />);
+        const input = getByRole('combobox') as HTMLInputElement;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        fireEvent.click(input);
+
+        expect(getAllByRole('option').map((option) => option.textContent)).toEqual(['/note:<text>']);
+
+        fireEvent.keyDown(input, { key: 'Enter' });
+
+        await waitFor(() => {
+            expect(input.value).toBe('Sample task /start:now /note:');
+        });
+    });
+
+    it('keeps a value with spaces and slashes inside one slash command', () => {
+        const { getByRole, getAllByRole } = render(<TaskInputHarness initialValue="/start:next fri" />);
+        const input = getByRole('combobox') as HTMLInputElement;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        fireEvent.click(input);
+
+        expect(getAllByRole('option').map((option) => option.textContent)).toEqual(['/start:next fri']);
+    });
+
     it('suggests the valid energy levels after /energy: and inserts the canonical token', async () => {
         const { getByRole, getAllByRole } = render(<TaskInputHarness initialValue="/energy:" />);
         const input = getByRole('combobox') as HTMLInputElement;
