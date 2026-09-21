@@ -84,10 +84,20 @@ const describeAttachmentCleanupErrorForLog = (error: unknown): Error => {
 // Tauri plugin-fs surfaces a missing file as an ENOENT-style io error. Deleting
 // an already-gone orphan is the cleanup succeeding, not failing (device test,
 // 2026-09-02 logged a warning every cycle for work that was already done).
+//
+// Tauri rejects with a plain STRING, not an Error ("failed to get metadata of path: ... (os error
+// 2)"), and Windows localizes the sentence in front of the code. A tester's Russian Windows log
+// carried this warning 35 times per file because only Error objects were recognised here.
+const readCleanupErrorText = (error: unknown): string | null => {
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return error.message;
+    return null;
+};
+
 const isMissingLocalFileError = (error: unknown): boolean => {
-    if (!(error instanceof Error)) return false;
-    if ((error as Error & { code?: string }).code === 'ENOENT') return true;
-    return /no such file or directory|os error 2\b/i.test(error.message);
+    if (error instanceof Error && (error as Error & { code?: string }).code === 'ENOENT') return true;
+    const text = readCleanupErrorText(error);
+    return text !== null && /no such file or directory|os error 2\b/i.test(text);
 };
 
 // The path we tried to operate on is the one piece of this error that can carry
@@ -95,7 +105,13 @@ const isMissingLocalFileError = (error: unknown): boolean => {
 // paths included) — redact exactly that known substring rather than guessing
 // at path shapes in general.
 const redactKnownPathFromError = (error: unknown, path: string | undefined): unknown => {
-    if (!path || !(error instanceof Error) || !error.message.includes(path)) return error;
+    if (!path) return error;
+    // Tauri's errors are plain strings; redacting only Error objects let the full path, Windows
+    // user name included, through into a tester's log.
+    if (typeof error === 'string') {
+        return error.includes(path) ? error.split(path).join('[attachment-path]') : error;
+    }
+    if (!(error instanceof Error) || !error.message.includes(path)) return error;
     const redacted = new Error(error.message.split(path).join('[attachment-path]'));
     redacted.name = error.name;
     return redacted;

@@ -108,6 +108,85 @@ const observeNativeFailure = (error: unknown): ObservedNativeFailure => {
     return { errorType: fallbackType, nativeCode: 'unknown' };
 };
 
+/**
+ * Why the native side refused, when the refusal is one of OUR OWN fixed sentences.
+ *
+ * A tester's log showed `stage: generation-reserve` with no OS error code: the reserve step has
+ * some forty rules of its own (journal full, lease gone, directory identity, path shape...), and
+ * the generic error text told us none of them. The text cannot be logged as it comes, because
+ * other native errors are built with `format!` and can carry a path or a file name. So only an
+ * EXACT match against this list is logged; everything else is `unlisted`. Each entry is a string
+ * literal in `src-tauri/src/file_sync_attachment_publication.rs` (or the lease wrapper in
+ * `sync.rs`), and `file-sync-attachment-diagnostics.test.ts` fails when the two drift apart.
+ */
+export const KNOWN_FILE_SYNC_PUBLICATION_REASONS: ReadonlySet<string> = new Set([
+    'File Sync filesystem does not expose a stable directory identity',
+    'File Sync directory identity is unsupported on this platform',
+    'File Sync root must be absolute and normalized',
+    'Attachment publication journal directory identity no longer matches the held lease',
+    'File Sync attachments directory is not bound',
+    'Attachment publication SHA-256 must be 64 hexadecimal characters',
+    'Attachment publication journal must be a real directory',
+    'Attachment publication paths must be absolute and normalized',
+    'Attachment publication target must be a direct child of the leased attachments directory',
+    'Attachment publication target has no valid file name',
+    'Attachment publication target is not hash-qualified',
+    'Attachment publication journal version is unsupported',
+    'Attachment publication operation id is invalid',
+    'Attachment publication journal belongs to a different sync folder',
+    'Attachment publication private namespace ownership is invalid',
+    'Attachment publication scratch ownership is invalid',
+    'Attachment publication journal entry is too large',
+    'Attachment publication journal must not be a reparse point',
+    'Attachment publication journal is not a bounded regular file',
+    'Attachment publication journal is invalid',
+    'Attachment publication journal file name is invalid',
+    'Attachment publication journal has no parent',
+    'Attachment publication journal must be a regular file',
+    'Attachment publication private namespace was not fully reserved',
+    'Attachment publication private namespace changed',
+    'Attachment publication namespace has no parent',
+    'Attachment publication private namespace ownership was not recorded; preserving it',
+    'Journal-owned attachment scratch is not a regular file',
+    'Attachment publication journal is full',
+    'Attachment generation stage size changed before publication',
+    'Attachment generation stage size overflow',
+    'Attachment generation stage failed integrity verification',
+    'Attachment publication target has no file name',
+    'Attachment publication journal exceeds its entry limit',
+]);
+
+export const KNOWN_FILE_SYNC_LEASE_REASONS: ReadonlySet<string> = new Set([
+    'File Sync lease state is unavailable',
+    'Unknown or already released File Sync lease',
+    'File Sync lease belongs to a different renderer window',
+]);
+
+// `format!("File Sync {label} path must be ...")`: the label is one of three fixed words, never
+// user data. Lowercase letters and spaces only, so a path can never satisfy it.
+const TEMPLATED_REASON_PATTERNS = [
+    /^File Sync [a-z][a-z ]{0,30} path must be a real directory, not a link or reparse point$/,
+    /^File Sync [a-z][a-z ]{0,30} path must be a directory$/,
+    /^File Sync [a-z][a-z ]{0,30} directory changed while its lease was held$/,
+];
+
+const readKnownReason = (error: unknown): string => {
+    const seen = new Set<unknown>();
+    let current: unknown = error;
+    for (let depth = 0; depth < MAX_CAUSE_DEPTH && current !== undefined; depth += 1) {
+        if (seen.has(current)) break;
+        seen.add(current);
+        const text = readErrorText(current)?.trim();
+        if (text && (
+            KNOWN_FILE_SYNC_PUBLICATION_REASONS.has(text)
+            || KNOWN_FILE_SYNC_LEASE_REASONS.has(text)
+            || TEMPLATED_REASON_PATTERNS.some((pattern) => pattern.test(text))
+        )) return text;
+        current = readCause(current);
+    }
+    return 'unlisted';
+};
+
 export const buildFileSyncAttachmentFailureExtra = (
     stage: FileSyncAttachmentFailureStage,
     error: unknown,
@@ -117,6 +196,7 @@ export const buildFileSyncAttachmentFailureExtra = (
     operation: 'upload',
     stage,
     ...observeNativeFailure(error),
+    reason: readKnownReason(error),
 });
 
 export const reportFileSyncAttachmentFailure = (

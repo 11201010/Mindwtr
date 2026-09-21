@@ -301,4 +301,46 @@ describe('deleteAttachmentFile', () => {
 
         expect(logSyncWarning).not.toHaveBeenCalled();
     });
+
+    // Feedback log, Russian Windows 10: Tauri rejects with a plain STRING and Windows localizes
+    // the sentence, so only the code is stable. The warning repeated 35 times per file.
+    it('treats a localized string rejection for a missing file as cleaned', async () => {
+        fsMocks.remove.mockReset();
+        fsMocks.exists.mockResolvedValue(true);
+        const logSyncWarning = vi.fn();
+        fsMocks.remove.mockRejectedValueOnce(
+            'failed to get metadata of path: /new-profile/attachments/a1.pdf with error: Не удается найти указанный файл. (os error 2)',
+        );
+
+        await expect(deleteAttachmentFile(
+            attachment('/new-profile/attachments/a1.pdf'),
+            { logSyncWarning },
+            { ensureLocalSnapshotFresh: vi.fn() },
+        )).resolves.toBeUndefined();
+
+        expect(logSyncWarning).not.toHaveBeenCalled();
+    });
+
+    // The same log printed the whole path, Windows user name included, because only Error
+    // objects went through the redaction.
+    it('redacts the attachment path from a string rejection before it is logged', async () => {
+        fsMocks.remove.mockReset();
+        fsMocks.exists.mockResolvedValue(true);
+        const logSyncWarning = vi.fn();
+        fsMocks.remove.mockRejectedValueOnce(
+            'failed to remove path: /new-profile/attachments/a1.pdf with error: Access is denied. (os error 5)',
+        );
+
+        await deleteAttachmentFile(
+            attachment('/new-profile/attachments/a1.pdf'),
+            { logSyncWarning },
+            { ensureLocalSnapshotFresh: vi.fn() },
+        );
+
+        expect(logSyncWarning).toHaveBeenCalledTimes(1);
+        const logged = JSON.stringify(logSyncWarning.mock.calls.map(([message, error]) => [message, String((error as Error)?.message ?? error)]));
+        expect(logged).toContain('[attachment-path]');
+        expect(logged).toContain('os error 5');
+        expect(logged).not.toContain('/new-profile/attachments/a1.pdf');
+    });
 });

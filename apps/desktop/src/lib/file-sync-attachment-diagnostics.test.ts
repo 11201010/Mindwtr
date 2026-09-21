@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    KNOWN_FILE_SYNC_LEASE_REASONS,
+    KNOWN_FILE_SYNC_PUBLICATION_REASONS,
     buildFileSyncAttachmentFailureExtra,
     runFileSyncAttachmentStage,
 } from './file-sync-attachment-diagnostics';
@@ -22,6 +26,7 @@ describe('File Sync attachment failure diagnostics', () => {
             stage: 'existing-generation-verify',
             errorType: 'native-os-error',
             nativeCode: '32',
+            reason: 'unlisted',
         });
         expect(JSON.stringify(extra)).not.toContain(privatePath);
         expect(JSON.stringify(extra)).not.toContain('process cannot access');
@@ -65,6 +70,7 @@ describe('File Sync attachment failure diagnostics', () => {
                 stage: 'native-publication',
                 errorType: 'error',
                 nativeCode: 'unknown',
+                reason: 'unlisted',
             },
         );
     });
@@ -80,5 +86,42 @@ describe('File Sync attachment failure diagnostics', () => {
             async () => 'published',
         )).resolves.toBe('published');
         expect(logSyncWarning).not.toHaveBeenCalled();
+    });
+
+    // A tester's log said `generation-reserve`, no OS code, and nothing more. The reserve step
+    // refuses for reasons of its own; naming the rule is what the next log has to do.
+    it('names the native refusal only when it is one of our own fixed sentences', () => {
+        expect(buildFileSyncAttachmentFailureExtra('generation-reserve', 'Attachment publication journal is full'))
+            .toMatchObject({ errorType: 'string', nativeCode: 'unknown', reason: 'Attachment publication journal is full' });
+        expect(buildFileSyncAttachmentFailureExtra('generation-reserve', 'Unknown or already released File Sync lease'))
+            .toMatchObject({ reason: 'Unknown or already released File Sync lease' });
+        expect(buildFileSyncAttachmentFailureExtra(
+            'generation-reserve',
+            'File Sync private publication path must be a real directory, not a link or reparse point',
+        )).toMatchObject({ reason: 'File Sync private publication path must be a real directory, not a link or reparse point' });
+
+        // Built with format!, so it can carry a path: never logged, not even partly.
+        const leaky = 'Failed to inspect attachment publication namespace C:\\Users\\roman\\Sync\\attachments: denied';
+        const extra = buildFileSyncAttachmentFailureExtra('generation-reserve', leaky);
+        expect(extra.reason).toBe('unlisted');
+        expect(JSON.stringify(extra)).not.toContain('roman');
+        // A path dressed up as a label does not get through the templated patterns either.
+        expect(buildFileSyncAttachmentFailureExtra('generation-reserve', 'File Sync C:/Users/roman path must be a directory').reason)
+            .toBe('unlisted');
+    });
+
+    it('keeps the reason list in step with the native source', () => {
+        const nativeDir = path.join(__dirname, '..', '..', 'src-tauri', 'src');
+        const publication = readFileSync(path.join(nativeDir, 'file_sync_attachment_publication.rs'), 'utf8');
+        const productionSource = publication.slice(0, publication.indexOf('#[cfg(test)]\nmod '));
+        const nativeLiterals = new Set(
+            Array.from(productionSource.matchAll(/"((?:Attachment|File Sync|Journal)[^"\\{}]{6,160})"/g), (match) => match[1]),
+        );
+
+        expect([...nativeLiterals].filter((literal) => !KNOWN_FILE_SYNC_PUBLICATION_REASONS.has(literal))).toEqual([]);
+        expect([...KNOWN_FILE_SYNC_PUBLICATION_REASONS].filter((reason) => !nativeLiterals.has(reason))).toEqual([]);
+
+        const leaseSource = readFileSync(path.join(nativeDir, 'sync.rs'), 'utf8');
+        for (const reason of KNOWN_FILE_SYNC_LEASE_REASONS) expect(leaseSource).toContain(`"${reason}"`);
     });
 });

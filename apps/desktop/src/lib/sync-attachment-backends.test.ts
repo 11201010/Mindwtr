@@ -1753,6 +1753,8 @@ describe('desktop sync attachment backends', () => {
                     stage,
                     errorType: 'native-os-error',
                     nativeCode,
+                    // These fixtures fail with an OS error, which carries a path: never a named reason.
+                    reason: 'unlisted',
                 },
             );
             const calls = JSON.stringify(vi.mocked(deps.logSyncWarning).mock.calls);
