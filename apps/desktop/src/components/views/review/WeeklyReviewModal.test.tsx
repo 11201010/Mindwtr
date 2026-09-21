@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetForTests, useTaskStore, type Task } from '@mindwtr/core';
 
@@ -247,6 +247,31 @@ describe('WeeklyReviewGuideModal', () => {
         expect(screen.getByText('Estimated: 1h')).toBeInTheDocument();
         // Pomodoro still defaults OFF, so the tracked line stays hidden.
         expect(screen.queryByText('Tracked on those tasks: 45m')).not.toBeInTheDocument();
+    });
+
+    it('keeps a stale task listed after it is edited during the review (#1262)', () => {
+        const staleTask = makeTask({ id: 'stale-1', title: 'Old next action', updatedAt: '2025-10-01T00:00:00.000Z', createdAt: '2025-10-01T00:00:00.000Z' });
+        useTaskStore.setState({ _allTasks: [staleTask], tasks: [staleTask] });
+        render(<WeeklyReviewGuideModal onClose={vi.fn()} />);
+
+        expect(screen.getByTestId('task-stale-1')).toBeInTheDocument();
+        expect(screen.getByText(/days inactive|staleDaysInactive/)).toBeInTheDocument();
+
+        // Saving anything (a checklist item, a title) stamps updatedAt with "now".
+        const touched = { ...staleTask, updatedAt: new Date().toISOString() };
+        act(() => {
+            useTaskStore.setState({ _allTasks: [touched], tasks: [touched] });
+        });
+
+        expect(screen.getByTestId('task-stale-1')).toBeInTheDocument();
+        expect(screen.queryByText(/days inactive|staleDaysInactive/)).not.toBeInTheDocument();
+
+        // A task that leaves Next/Waiting is done with this step.
+        const done = { ...touched, status: 'done' as const };
+        act(() => {
+            useTaskStore.setState({ _allTasks: [done], tasks: [done] });
+        });
+        expect(screen.queryByTestId('task-stale-1')).not.toBeInTheDocument();
     });
 
     it('opens on the inbox step when there is an inbox task to process', () => {
