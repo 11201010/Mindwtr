@@ -619,7 +619,7 @@ describe('FocusScreen', () => {
     vi.useRealTimers();
   });
 
-  it('does not offer defer on due-dated Focus rows', () => {
+  it('does not offer a start date on a Focus row that is due today or overdue', () => {
     storeState.tasks = [
       makeTask('due-next', {
         title: 'Due next',
@@ -636,6 +636,39 @@ describe('FocusScreen', () => {
     const row = tree.root.findAllByType(SwipeableTaskItem).find((node) => node.props.task.id === 'due-next');
     expect(row?.props.onLongPressAction).toBeUndefined();
     expect(row?.props.onLongPressActionLabel).toBeUndefined();
+  });
+
+  it('offers only start dates on or before the due date (#1252)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 4, 2, 10, 0, 0, 0));
+    const alertSpy = vi.spyOn(Alert, 'alert');
+    storeState.tasks = [
+      makeTask('due-soon', { title: 'Due soon', dueDate: '2026-05-05' }),
+    ];
+
+    let tree!: ReturnType<typeof create>;
+
+    act(() => {
+      tree = create(<FocusScreen />);
+    });
+
+    const row = tree.root.findAllByType(SwipeableTaskItem).find((node) => node.props.task.id === 'due-soon');
+    expect(row?.props.onLongPressAction).toBeTypeOf('function');
+
+    act(() => {
+      row?.props.onLongPressAction(row.props.task);
+    });
+
+    const buttons = alertSpy.mock.calls[0]?.[2] as Array<{ text?: string; onPress?: () => void }>;
+    expect(buttons.map((button) => button.text)).toEqual(['Today', 'Tomorrow', 'Custom...', 'Cancel']);
+
+    await act(async () => {
+      buttons[0]?.onPress?.();
+      await Promise.resolve();
+    });
+
+    expect(storeState.updateTask).toHaveBeenCalledWith('due-soon', { startTime: '2026-05-02' });
+    vi.useRealTimers();
   });
 
   it('bounds SectionList rendering for larger Focus lists', () => {

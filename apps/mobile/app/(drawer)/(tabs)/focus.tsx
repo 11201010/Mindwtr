@@ -51,6 +51,7 @@ import {
   getAdvancedReviewDate,
   isTaskActionable,
   isDueForReview,
+  isTaskDateCoherent,
   isTodayScheduleCandidate,
   safeFormatDate,
   safeParseDate,
@@ -166,6 +167,12 @@ const getStartDateOffset = (days: number): Date => {
 };
 
 const formatDateOnly = (date: Date): string => safeFormatDate(date, 'yyyy-MM-dd');
+
+// A start date must not fall after the due date (#1252): a task due on Friday can start
+// tomorrow, but not next week.
+const canStartOn = (task: Task, date: Date): boolean => (
+  isTaskDateCoherent({ dueDate: task.dueDate, startTime: formatDateOnly(date) })
+);
 
 function normalizeFocusGroupBy(value: unknown): FocusGroupBy {
   return FOCUS_GROUP_BY_OPTIONS.includes(value as FocusGroupBy) ? value as FocusGroupBy : 'none';
@@ -471,6 +478,11 @@ export default function FocusScreen() {
     const startDate = new Date(selectedDate);
     startDate.setHours(0, 0, 0, 0);
     const startTime = formatDateOnly(startDate);
+    // The menu hides the choices that cannot work; this catches the custom date.
+    if (!canStartOn(task, startDate)) {
+      showTaskUpdateError(resolveText('task.dateIssue.startAfterDue', 'Starts after due date'));
+      return;
+    }
     const previousStartTime = task.startTime;
     // "Today" is a start date too (#1252): it files the task under Today without
     // starring it. Only a later date is a deferral, and only a deferral drops the star.
@@ -595,10 +607,10 @@ export default function FocusScreen() {
           text: resolveText('quickDate.tomorrow', 'Tomorrow'),
           onPress: () => deferTaskUntil(task, getStartDateOffset(1)),
         },
-        {
+        ...(canStartOn(task, getStartDateOffset(7)) ? [{
           text: resolveText('quickDate.nextWeek', 'Next week'),
           onPress: () => deferTaskUntil(task, getStartDateOffset(7)),
-        },
+        }] : []),
         {
           text: resolveText('recurrence.custom', 'Custom...'),
           onPress: () => openDeferDatePicker(task),
@@ -1337,7 +1349,10 @@ export default function FocusScreen() {
     }
 
     const canMarkReviewed = section.type === 'reviewDue' && Boolean(item.task.reviewAt);
-    const canDeferTask = !canMarkReviewed && !item.task.dueDate && (item.task.isFocusedToday === true || item.task.status === 'next');
+    // A task due today or overdue has no later start date left to choose, so it gets no menu.
+    const canDeferTask = !canMarkReviewed
+      && canStartOn(item.task, getStartDateOffset(1))
+      && (item.task.isFocusedToday === true || item.task.status === 'next');
     // Passed by reference, not wrapped: both already take the task, and a fresh
     // arrow here would defeat the row's memo boundary (#766).
     const longPressAction = canMarkReviewed
@@ -2046,6 +2061,7 @@ export default function FocusScreen() {
           mode="date"
           display="default"
           minimumDate={getStartDateOffset(1)}
+          maximumDate={safeParseDueDate(deferPickerTask.dueDate) ?? undefined}
           onChange={handleDeferDateChange}
         />
       ) : null}
