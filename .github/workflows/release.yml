@@ -519,7 +519,9 @@ jobs:
   release:
     if: ${{ github.event_name != 'workflow_dispatch' || (inputs.run_linux && inputs.run_macos && inputs.run_windows && inputs.run_android && inputs.run_android_foss) }}
     needs: [validate, linux, macos, windows, android, android-foss]
-    runs-on: ubuntu-latest
+    # Pinned on purpose: this job builds or packages with tools from the runner image,
+    # and `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19. Bump CI first, then this.
+    runs-on: ubuntu-24.04
     name: Create Release
     timeout-minutes: 60
     permissions:
@@ -1096,7 +1098,9 @@ jobs:
 
   update-aur:
     needs: [validate, release]
-    runs-on: ubuntu-latest
+    # Pinned on purpose: this job builds or packages with tools from the runner image,
+    # and `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19. Bump CI first, then this.
+    runs-on: ubuntu-24.04
     name: Update AUR (mindwtr-bin)
     timeout-minutes: 30
     permissions:

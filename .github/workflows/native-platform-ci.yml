@@ -304,7 +304,9 @@ jobs:
   android-native:
     if: needs.changes.outputs.android == 'true'
     needs: changes
-    runs-on: ubuntu-latest
+    # Pinned on purpose: this job builds or packages with tools from the runner image,
+    # and `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19. Bump CI first, then this.
+    runs-on: ubuntu-24.04
     name: Android native compile
     timeout-minutes: 45
     steps:

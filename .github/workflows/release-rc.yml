@@ -356,7 +356,9 @@ jobs:
   prerelease:
     if: ${{ always() && needs.validate.outputs.existing_release != 'true' && needs.validate.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && needs.windows.result == 'success' && needs.android.result == 'success' && needs.android-foss.result == 'success' && (needs.ios-appstore.result == 'success' || needs.ios-appstore.result == 'skipped') && (needs.macos-appstore.result == 'success' || needs.macos-appstore.result == 'skipped') }}
     needs: [validate, linux, macos, windows, android, android-foss, ios-appstore, macos-appstore]
-    runs-on: ubuntu-latest
+    # Pinned on purpose: this job builds or packages with tools from the runner image,
+    # and `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19. Bump CI first, then this.
+    runs-on: ubuntu-24.04
     name: Create GitHub Prerelease
     timeout-minutes: 60
     permissions:
