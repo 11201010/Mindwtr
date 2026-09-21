@@ -209,10 +209,19 @@ calls in screen order. Measured on this workstation under load: 3.39 ms at
 Measured in the baseline app of ADR 0029 on the same phone (OnePlus CPH2655,
 Hermes, release build, 5,000 tasks, 200 samples): unpatched build, then the same
 app rebuilt with the three patched core files. Focus derivation p50 207.05 ms →
-113.99 ms (p95 213.00 → 115.87), about 45 percent less. The Inbox control did
-not move (2.58 → 2.57 ms), so both runs were in the same sustained-load state.
-The phone is nearly twice as fast in the first seconds after a launch (the
-unpatched derivation cost 116 ms there); the patched cost in that state was not
-observed. An independent review found no behavior difference, verified the
+113.99 ms (p95 213.00 → 115.87). The Inbox control was unchanged (2.58 → 2.57
+ms). Focus took about 45 percent less time in these recorded before and after
+runs; device-state sensitivity limits how precisely that percentage
+generalizes. The unpatched run cost about 116 ms for its first 30 samples and
+about 207 ms afterwards, and the patched run stayed near 114 ms throughout, so
+the phone runs alone do not isolate how much of the difference is the patch and
+how much is the state each run happened to be in; a short Inbox operation need
+not react to device state the way a long Focus computation does. The evidence
+that the patch itself is the cause is the removed work (39,820 date parses down
+to 23,117, four empty filter passes gone) and the interleaved workstation runs
+on two engines. The dataset is the 5,000-row generated store, of which 4,398
+tasks are visible (the rest are deleted or purged rows the fixture includes on
+purpose). The patched cost in the first seconds after a launch was not
+measured. An independent review found no behavior difference, verified the
 frozen reference against `main`, and caught all seven of its own mutations with
 the parity test.
