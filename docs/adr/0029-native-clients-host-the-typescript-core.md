@@ -52,6 +52,38 @@ Success means a user cannot feel the boundary: call overhead in the low millisec
 
 Outcomes: works well → keep the TypeScript core and start Gate 2. Works with one bottleneck → fix the boundary, the engine or a port, and measure again. Does not work → write down the concrete limit, and only then reopen the Rust option under the conditions of ADR 0028.
 
+### Gate 1 result (2026-09-21): works, with one named bottleneck
+
+Run on a OnePlus CPH2655 (Android 16), release build, 5,000 generated tasks, 20 warm-ups and 200 samples per measure, 50 cold launches. Engine: QuickJS through `wang.harlon.quickjs:wrapper-android` 3.2.0, with AndroidX bundled SQLite (this phone's system SQLite has no FTS5). The core was not changed. 419 lines of Kotlin supply the ports; the Kotlin side knows no table or column name. The experiment lives on the local branch `experiment/gate1-embedded-core` under `experiments/embedded-core/` (report, raw samples, reproduction steps).
+
+| Measure (p95, ms) | Result | Target | Red flag |
+| --- | ---: | ---: | ---: |
+| Empty native → JS → native call | 0.05 | 3 | 10 |
+| Warm Inbox query, decoded in Kotlin | 7.15 | 30 | 100 |
+| Complete task → change notice | 20.40 | 30 | 100 |
+| Complete task → updated Inbox decoded | 29.57 | 100 | 250 |
+| Write → confirmed local persistence | 20.35 | 200 | 500 |
+| Cold launch → first usable Inbox (no screen drawn) | 497.41 | 700 | 1,500 |
+| Incremental memory (total PSS) | 59.17 MiB | 60 MiB | 120 MiB |
+| **Warm Focus query, decoded in Kotlin** | **484.99** | 50 | 150 |
+| **Query sent during an unchanged sync** | **1,107.70** | 100 | 300 |
+| **Query sent during a merge with 250 changes** | **1,792.07** | 100 | 300 |
+
+Correctness held everywhere it was checked: Inbox, Focus and search matched the workstation id for id and position for position; a write survived a process kill right after its persistence acknowledgment; an injected storage failure never reported success; a local edit made during a merge survived; a push and a pull went through the ADR 0014 seams with nothing copied from `apps/mobile`. No STOP condition fired.
+
+Both red flags have one cause, and it is not the boundary. The boundary is 7% of the Focus time (444 ms core derivation, 19 ms JSON, 13 ms Kotlin decode). During a merge the query runs in 5 ms and waits about 890 ms, because the merge is one unbroken block of JavaScript on the single engine thread. QuickJS interprets code; the same bundle under a compiling engine on the workstation was 20 to 35 times faster on every query, Focus included. So the open questions are the engine and where heavy work runs, not whether a native host can reach the core.
+
+Findings that stand on their own:
+
+- 95% of the 5.10 MB bundle is the 23 non-English locale files (an English-only bundle is 0.43 MB). A native host should deliver languages as files it reads, not inside the bundle. Evaluating the full bundle costs about 109 ms; loading the store from SQLite is two thirds of the cold launch.
+- `packages/core/src/task-utils.ts` builds three `Intl.Collator` objects at module scope, so an engine without `Intl` cannot even load the core. The experiment used a code-point polyfill; sorting of non-English titles can then differ from the current app, and the ASCII dataset did not test it.
+- The core's guard against overwriting data with an empty snapshot fixes the start order for any host: open the database, make sure the data is there, and only then attach storage and load the store.
+- Reading SQLite column names before the first step silently lost every row in an early run. Host ports need their own tests.
+
+Not measured: a second engine, the current React Native app's Focus and merge times on the same phone and data, the full sync cycle (retries, fingerprints, attachments, encryption), non-English sort parity, and anything about screens.
+
+Before Gate 2, answer the bottleneck with measurements: (1) the same operations in the current React Native app on the same phone, because Hermes also has no compiler on Android and the app may carry the same costs today; (2) a second engine (Hermes with precompiled bytecode) behind the experiment's `Engine` interface; (3) whether the sync merge can run on its own engine instance so queries never wait for it. The Rust option stays closed: nothing here points at the TypeScript core as the limit.
+
 ### Gate 2: the product question
 
 With Gate 1 passed, build Inbox, the task editor and Focus in Compose on the same core, the same database and the same phone as the React Native app. Exercise the failure families from ADR 0028's evidence: large lists, keyboard and insets, sheets, navigation and deep links. Compare startup to a usable Inbox, list frame behavior, open, complete and save latency, memory, responsiveness during sync, code size, and the amount of workaround code. Record how it feels as well as the numbers.
