@@ -52,7 +52,7 @@ Success means a user cannot feel the boundary: call overhead in the low millisec
 
 Outcomes: works well → keep the TypeScript core and start Gate 2. Works with one bottleneck → fix the boundary, the engine or a port, and measure again. Does not work → write down the concrete limit, and only then reopen the Rust option under the conditions of ADR 0028.
 
-### Gate 1 result (2026-09-21): works, with one named bottleneck
+### Gate 1 result (2026-09-21): feasibility shown, performance conditional
 
 Run on a OnePlus CPH2655 (Android 16), release build, 5,000 generated tasks, 20 warm-ups and 200 samples per measure, 50 cold launches. Engine: QuickJS through `wang.harlon.quickjs:wrapper-android` 3.2.0, with AndroidX bundled SQLite (this phone's system SQLite has no FTS5). The core was not changed. 419 lines of Kotlin supply the ports; the Kotlin side knows no table or column name. The experiment lives on the local branch `experiment/gate1-embedded-core` under `experiments/embedded-core/` (report, raw samples, reproduction steps).
 
@@ -71,7 +71,7 @@ Run on a OnePlus CPH2655 (Android 16), release build, 5,000 generated tasks, 20 
 
 Correctness held everywhere it was checked: Inbox, Focus and search matched the workstation id for id and position for position; a write survived a process kill right after its persistence acknowledgment; an injected storage failure never reported success; a local edit made during a merge survived; a push and a pull went through the ADR 0014 seams with nothing copied from `apps/mobile`. No STOP condition fired.
 
-Both red flags have one cause, and it is not the boundary. The boundary is 7% of the Focus time (444 ms core derivation, 19 ms JSON, 13 ms Kotlin decode). During a merge the query runs in 5 ms and waits about 890 ms, because the merge is one unbroken block of JavaScript on the single engine thread. QuickJS interprets code; the same bundle under a compiling engine on the workstation was 20 to 35 times faster on every query, Focus included. So the open questions are the engine and where heavy work runs, not whether a native host can reach the core.
+The two red flags are related but not the same, and neither is the boundary. (1) Focus: the boundary is 7% of the time (444 ms core derivation, 19 ms JSON, 13 ms Kotlin decode), so shrinking the boundary cannot fix it. This does not show that QuickJS alone is responsible; the algorithm, allocations and runtime services may share the cost. (2) Contention: during a merge the query runs in 5 ms and waits about 890 ms, because the merge is one unbroken block of JavaScript on the single engine thread. A faster engine shortens the block; it does not remove the waiting. The same bundle ran 20 to 35 times faster on the workstation under a just-in-time compiling engine, but that comparison changes the hardware and the engine at once, so it predicts nothing about a phone. These results are unreviewed measurements with a simplified collation (see below), and the correctness coverage is incomplete.
 
 Findings that stand on their own:
 
@@ -82,7 +82,7 @@ Findings that stand on their own:
 
 Not measured: a second engine, the current React Native app's Focus and merge times on the same phone and data, the full sync cycle (retries, fingerprints, attachments, encryption), non-English sort parity, and anything about screens.
 
-Before Gate 2, answer the bottleneck with measurements: (1) the same operations in the current React Native app on the same phone, because Hermes also has no compiler on Android and the app may carry the same costs today; (2) a second engine (Hermes with precompiled bytecode) behind the experiment's `Engine` interface; (3) whether the sync merge can run on its own engine instance so queries never wait for it. The Rust option stays closed: nothing here points at the TypeScript core as the limit.
+Next, in this order (approved by the maintainer on 2026-09-21): an independent review of the experiment's source, harness, raw samples and fixture; and a baseline of the current React Native app on the same phone, fixture and core revision, reporting the same core operations (inside its packaged Hermes, which runs precompiled bytecode and is not the same thing as a just-in-time compiler) separately from the real screen experience. A slow baseline would not excuse a slow native host; the targets stay. Only after that: a second engine behind the experiment's `Engine` interface, and, if blocking is still unacceptable, a merge computed by a second engine instance from snapshots while one owner keeps the store and persistence. That last step is a concurrency change with its own data-transfer, reconciliation and memory costs. If Focus stays expensive across engines, profile the derivation itself: one fix in the shared core helps every client. The Rust option stays out of scope. The core's computations and scheduling may need work; that is not a reason to replace its language.
 
 ### Gate 2: the product question
 
