@@ -1,12 +1,13 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { AppState } from 'react-native';
+import { AppRegistry, AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { flushPendingSave } from '@mindwtr/core';
 
 import type { SyncBackend } from './sync-service-utils';
 import { logInfo, logWarn } from './app-log';
 import { areJsTimersPaused } from './js-timers';
+import { drainPendingCapturesInBackground } from './pending-capture-drain';
 import { quiesceMobileStorage } from './storage-adapter';
 import { abortMobileSync, getMobileSyncConfigurationStatus, performMobileSync, setMobileSyncRequestDeadline } from './sync-service';
 import {
@@ -16,6 +17,10 @@ import {
 } from './sync-constants';
 
 export const MOBILE_BACKGROUND_SYNC_TASK_NAME = 'mindwtr-background-sync';
+/** Started by the Android capture dialog right after Save (#1257); the name is
+ *  repeated in modules/android-widget CaptureSyncHeadlessService.kt. */
+export const MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME = 'MindwtrCaptureSync';
+type BackgroundSyncTrigger = 'scheduled' | 'capture';
 export const MOBILE_BACKGROUND_SYNC_MINIMUM_INTERVAL_MINUTES = 15;
 export const MOBILE_BACKGROUND_SYNC_INTERVAL = '15m' as const;
 // JobScheduler stops a WorkManager job that is still running after its
@@ -203,10 +208,28 @@ const performBackgroundSyncWork = async (): Promise<BackgroundTask.BackgroundTas
   return BackgroundTask.BackgroundTaskResult.Failed;
 };
 
-const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskResult> => {
+const quiesceWithinDeadline = (): Promise<void> => (
+  withDeadline(quiesceMobileStorage(), MOBILE_BACKGROUND_SYNC_QUIESCE_DEADLINE_MS, () => {
+    logBackgroundSyncWarning('Mobile background sync storage quiesce did not finish before its deadline');
+  })
+);
+
+const runMobileBackgroundSync = async (
+  trigger: BackgroundSyncTrigger = 'scheduled',
+): Promise<BackgroundTask.BackgroundTaskResult> => {
   const startedAt = Date.now();
+  // Captures and widget check-offs made while the app was closed only exist as
+  // queue files; import them first so this sync has them to send (#1257). It is
+  // local work, so it runs even when the network part below is skipped.
+  const drained = await drainPendingCapturesInBackground(trigger).catch((error) => {
+    logBackgroundSyncWarning('Background capture import failed', error);
+    return 0;
+  });
+  // A Save that the visible app already imported has nothing left to send from here.
+  if (trigger === 'capture' && drained === 0) return BackgroundTask.BackgroundTaskResult.Success;
   const failureState = await readBackgroundSyncFailureState();
-  if (failureState) {
+  // The cooldown spares the battery from scheduled retries; a Save is the user acting now.
+  if (failureState && trigger === 'scheduled') {
     const cooldownMs = backgroundSyncFailureCooldownMs(failureState.consecutiveFailures);
     const waitedMs = startedAt - failureState.lastFailureAt;
     // A clock that moved backwards reads as a negative wait; run rather than
@@ -220,6 +243,7 @@ const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskR
           waitedMs: String(waitedMs),
         },
       });
+      if (drained > 0) await quiesceWithinDeadline();
       return BackgroundTask.BackgroundTaskResult.Success;
     }
   }
@@ -255,9 +279,7 @@ const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskR
     // This runs in a headless RN instance that is destroyed the moment the task
     // promise settles; deferred storage work must land before that, not after.
     // It gets its own short deadline for the same reason as the sync above.
-    await withDeadline(quiesceMobileStorage(), MOBILE_BACKGROUND_SYNC_QUIESCE_DEADLINE_MS, () => {
-      logBackgroundSyncWarning('Mobile background sync storage quiesce did not finish before its deadline');
-    });
+    await quiesceWithinDeadline();
     // Written here for the same reason as the quiesce above: the headless
     // instance is destroyed as soon as this promise settles.
     await recordBackgroundSyncOutcome(run.outcome === 'success', failureState);
@@ -277,20 +299,32 @@ const runMobileBackgroundSync = async (): Promise<BackgroundTask.BackgroundTaskR
 // other's snapshots and widened the teardown window above, so they share one run.
 let inFlightBackgroundSync: Promise<BackgroundTask.BackgroundTaskResult> | null = null;
 
+const runSharedBackgroundSync = (trigger: BackgroundSyncTrigger): Promise<BackgroundTask.BackgroundTaskResult> => {
+  if (!inFlightBackgroundSync) {
+    inFlightBackgroundSync = runMobileBackgroundSync(trigger).finally(() => {
+      inFlightBackgroundSync = null;
+    });
+  }
+  return inFlightBackgroundSync;
+};
+
 const defineMobileBackgroundSyncTask = () => {
   if (TaskManager.isTaskDefined(MOBILE_BACKGROUND_SYNC_TASK_NAME)) return;
 
-  TaskManager.defineTask(MOBILE_BACKGROUND_SYNC_TASK_NAME, async () => {
-    if (!inFlightBackgroundSync) {
-      inFlightBackgroundSync = runMobileBackgroundSync().finally(() => {
-        inFlightBackgroundSync = null;
-      });
-    }
-    return inFlightBackgroundSync;
-  });
+  TaskManager.defineTask(MOBILE_BACKGROUND_SYNC_TASK_NAME, () => runSharedBackgroundSync('scheduled'));
 };
 
 defineMobileBackgroundSyncTask();
+
+/** A second Save during a run waits for it, then imports and sends its own capture. */
+export const runCaptureSyncHeadlessTask = async (): Promise<void> => {
+  if (inFlightBackgroundSync) await inFlightBackgroundSync.catch(() => undefined);
+  await runSharedBackgroundSync('capture');
+};
+
+if (Platform.OS === 'android') {
+  AppRegistry.registerHeadlessTask(MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME, () => runCaptureSyncHeadlessTask);
+}
 
 type MobileBackgroundSyncRegistrationSnapshot = {
   configuration: Awaited<ReturnType<typeof getMobileSyncConfigurationStatus>>;

@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 import { useTaskStore } from '@mindwtr/core';
 
 import { logError, logInfo } from '@/lib/app-log';
-import { ingestPendingCaptures } from '@/lib/pending-captures';
+import { drainPendingCapturesFromStore } from '@/lib/pending-capture-drain';
 import { flushPendingTaskActionSave } from '@/lib/pending-capture-persistence';
 import { ingestIosWidgetCompletions } from '@/lib/ios-widget-completions';
 import { updateMobileWidgetFromStore } from '@/lib/widget-service';
@@ -37,18 +37,7 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
         try {
             do {
                 pendingRef.current = false;
-                const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
-                const ingested = await ingestPendingCaptures({
-                    addTask,
-                    updateTask,
-                    addProject,
-                    projects,
-                    areas,
-                    tasks,
-                    people,
-                    settings,
-                    getTasks: () => useTaskStore.getState()._allTasks,
-                    flushPendingSave: flushPendingTaskActionSave,
+                const ingested = await drainPendingCapturesFromStore({
                     transcribeAudio: transcribePendingAudio,
                     applyPomodoroCommand: (command) => {
                         const pomodoroSettings = useTaskStore.getState().settings.gtd?.pomodoro;
@@ -78,6 +67,7 @@ export function useRootLayoutPendingCaptures({ dataReady, disabled = false }: { 
                     }
                 }
                 if (enabledRef.current) {
+                    const { updateTask, tasks } = useTaskStore.getState();
                     await ingestIosWidgetCompletions({
                         updateTask,
                         tasks,

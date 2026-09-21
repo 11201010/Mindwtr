@@ -43,6 +43,9 @@ vi.mock('@mindwtr/core', () => ({
 vi.mock('@/lib/pending-captures', () => ({
   ingestPendingCaptures: mocks.ingestPendingCaptures,
 }));
+// The shared drain module also serves the background path, which owns these two.
+vi.mock('@/lib/storage-adapter', () => ({ mobileStorage: {} }));
+vi.mock('@/lib/file-system', () => ({ documentDirectory: null, getInfoAsync: vi.fn(), readDirectoryAsync: vi.fn() }));
 vi.mock('@/lib/pending-capture-persistence', () => ({
   flushPendingTaskActionSave: mocks.flushPendingTaskActionSave,
 }));

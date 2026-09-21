@@ -2,5 +2,11 @@
     <!-- The receiver, list service and QuickCaptureActivity are registered in the
          app manifest by plugins/android-widget.js, which also owns the
          appwidget-provider XML, the launcher label and the dialog theme. -->
-    <application />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application>
+        <!-- Started by QuickCaptureActivity after Save to import and sync the queue (#1257). -->
+        <service
+            android:name="tech.dongdongbh.mindwtr.androidwidget.CaptureSyncHeadlessService"
+            android:exported="false" />
+    </application>
 </manifest>

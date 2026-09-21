@@ -75,8 +75,23 @@ const appLogMock = vi.hoisted(() => ({
 }));
 vi.mock('./app-log', () => appLogMock);
 vi.mock('./js-timers', () => ({ areJsTimersPaused: vi.fn(() => true) }));
-const reactNativeMock = vi.hoisted(() => ({ AppState: { currentState: 'active' as string } }));
+const reactNativeMock = vi.hoisted(() => {
+  const headlessTasks = new Map<string, () => () => Promise<void>>();
+  return {
+    headlessTasks,
+    AppState: { currentState: 'active' as string },
+    Platform: { OS: 'android' },
+    AppRegistry: {
+      registerHeadlessTask: vi.fn((name: string, provider: () => () => Promise<void>) => {
+        headlessTasks.set(name, provider);
+      }),
+    },
+  };
+});
 vi.mock('react-native', () => reactNativeMock);
+
+const captureDrainMock = vi.hoisted(() => ({ drainPendingCapturesInBackground: vi.fn() }));
+vi.mock('./pending-capture-drain', () => captureDrainMock);
 
 const loadModule = async () => import('./background-sync-task');
 
@@ -101,6 +116,7 @@ describe('mobile background sync task', () => {
     syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'off', configured: false });
     syncServiceMock.performMobileSync.mockResolvedValue({ success: true });
     storageAdapterMock.quiesceMobileStorage.mockResolvedValue(undefined);
+    captureDrainMock.drainPendingCapturesInBackground.mockResolvedValue(0);
     asyncStorageMock.store.clear();
     asyncStorageMock.getItem.mockClear();
     asyncStorageMock.setItem.mockClear();
@@ -619,6 +635,65 @@ describe('mobile background sync task', () => {
 
       syncFinished.resolve({ success: true });
       await activeRun;
+    });
+  });
+  describe('queued captures (#1257)', () => {
+    const configureSync = () => {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+    };
+
+    it('imports queued captures before a scheduled sync', async () => {
+      configureSync();
+      const order: string[] = [];
+      captureDrainMock.drainPendingCapturesInBackground.mockImplementation(async () => {
+        order.push('drain');
+        return 1;
+      });
+      syncServiceMock.performMobileSync.mockImplementation(async () => {
+        order.push('sync');
+        return { success: true };
+      });
+      await loadModule();
+
+      await taskManagerMock.state.executor?.();
+
+      expect(captureDrainMock.drainPendingCapturesInBackground).toHaveBeenCalledWith('scheduled');
+      expect(order).toEqual(['drain', 'sync']);
+    });
+
+    it('syncs right after a Save from the capture dialog, even during a failure cooldown', async () => {
+      configureSync();
+      asyncStorageMock.store.set('@mindwtr_background_sync_failure_state_v1', JSON.stringify({
+        lastFailureAt: Date.now(),
+        consecutiveFailures: 3,
+      }));
+      captureDrainMock.drainPendingCapturesInBackground.mockResolvedValue(1);
+      const { MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME } = await loadModule();
+
+      await reactNativeMock.headlessTasks.get(MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME)?.()();
+
+      expect(captureDrainMock.drainPendingCapturesInBackground).toHaveBeenCalledWith('capture');
+      expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(1);
+      expect(storageAdapterMock.quiesceMobileStorage).toHaveBeenCalled();
+    });
+
+    it('does not sync from the capture trigger when the visible app already imported the queue', async () => {
+      configureSync();
+      const { MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME } = await loadModule();
+
+      await reactNativeMock.headlessTasks.get(MOBILE_CAPTURE_SYNC_HEADLESS_TASK_NAME)?.()();
+
+      expect(syncServiceMock.performMobileSync).not.toHaveBeenCalled();
+    });
+
+    it('still runs the scheduled sync when the capture import throws', async () => {
+      configureSync();
+      captureDrainMock.drainPendingCapturesInBackground.mockRejectedValue(new Error('disk'));
+      await loadModule();
+
+      await taskManagerMock.state.executor?.();
+
+      expect(syncServiceMock.performMobileSync).toHaveBeenCalledTimes(1);
     });
   });
 });

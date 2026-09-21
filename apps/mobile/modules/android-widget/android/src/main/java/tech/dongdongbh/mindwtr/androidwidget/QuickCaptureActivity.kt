@@ -297,6 +297,7 @@ class QuickCaptureActivity : AppCompatActivity() {
     Toast.makeText(this, labels.added, Toast.LENGTH_SHORT).show()
     WidgetPayloadStore.incrementInboxCount(this)
     WidgetRenderer.refreshAll(this)
+    CaptureSyncHeadlessService.start(this)
   }
 
   private class AudioSessionModel(val session: QuickCaptureAudioSession) : ViewModel() {

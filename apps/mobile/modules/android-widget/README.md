@@ -102,6 +102,13 @@ through `PendingCaptureWriter` (temp file + rename), then bumps the stored
 payload's `inboxCount` and redraws every widget. The tile, app shortcut,
 capture notification and all three widgets launch it by explicit class name.
 
+After a text **Save** it starts `CaptureSyncHeadlessService` (not exported), which
+wakes the JS task `MindwtrCaptureSync` in `apps/mobile/lib/background-sync-task.ts`:
+that imports the queue through the store and runs one sync, so the task reaches
+other devices without opening the app (#1257). Native code still never writes
+task data. A refused service start is logged and ignored; the queue is then
+imported at the next app opening or scheduled background sync.
+
 When speech-to-text is enabled in the app, the dialog also shows a microphone
 button. Recording uses the existing microphone permission only while the native
 dialog is visible, with a five-minute limit. It writes a 16 kHz mono PCM16 WAV
