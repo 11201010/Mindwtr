@@ -31,7 +31,9 @@ concurrency:
 jobs:
   open-flathub-pr:
     name: Open Flathub PR
-    runs-on: ubuntu-latest
+    # Pinned on purpose: this job installs system packages, and `ubuntu-latest`
+    # moves to Ubuntu 26 on 2026-10-19. Bump it in a commit so CI shows the result first.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY || secrets.VITE_DROPBOX_APP_KEY }}
