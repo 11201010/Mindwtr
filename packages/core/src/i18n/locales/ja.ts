@@ -987,7 +987,7 @@ export const jaOverrides: Record<string, string> = {
         'process.refineDelete': '削除',
         'process.actionable': 'これは行動に移せますか？',
         'process.actionableDesc': '具体的に実行できる行動がありますか？',
-        'process.yesActionable': '✅ はい、行動に移せます',
+        'process.yesActionable': 'はい、行動に移せます',
         'process.moreThanOneStep': '2つ以上の手順が必要ですか？',
         'process.moreThanOneStepDesc': '複数の行動が必要で、プロジェクトとして扱うべきものですか？',
         'process.moreThanOneStepYes': 'はい、プロジェクトにする',

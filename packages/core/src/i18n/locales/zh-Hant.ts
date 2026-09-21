@@ -934,7 +934,7 @@ export const zhHant: Record<string, string> = {
         'process.refineDelete': '刪除',
         'process.actionable': '是否可執行？',
         'process.actionableDesc': '你是否可以對此採取具體行動？',
-        'process.yesActionable': '✅ 是的，可執行',
+        'process.yesActionable': '是的，可執行',
         'process.moreThanOneStep': '是否超過一步？',
         'process.moreThanOneStepDesc': '如果需要多個行動，請將其作爲專案處理。',
         'process.moreThanOneStepYes': '是，設爲專案',

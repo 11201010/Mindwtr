@@ -980,7 +980,7 @@ export const en: Record<string, string> = {
         'process.refineDelete': 'Delete',
         'process.actionable': 'Is this actionable?',
         'process.actionableDesc': 'Can you take a physical action on this?',
-        'process.yesActionable': '✅ Yes, it\'s actionable',
+        'process.yesActionable': 'Yes, it\'s actionable',
         'process.moreThanOneStep': 'More than one step?',
         'process.moreThanOneStepDesc': 'Does this require multiple actions and belong in a project?',
         'process.moreThanOneStepYes': 'Yes, make it a project',

@@ -1,7 +1,8 @@
 import React from 'react';
 import type { RefObject } from 'react';
 import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { ChevronDown, ChevronUp, Hourglass, Sparkles } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react-native';
+import { INCUBATE_ICON as IncubateIcon } from '@/lib/task-status-icons';
 import { stripMarkdown, tFallback, type Task } from '@mindwtr/core';
 
 import { styles } from '../inbox-processing-modal.styles';
@@ -71,7 +72,7 @@ export function InboxCaptureCard({
     <View style={[styles.anchorCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
       {isReturningItem ? (
         <View style={styles.anchorActionsRow}>
-          <Hourglass size={13} color={tc.secondaryText} />
+          <IncubateIcon size={13} color={tc.secondaryText} />
           <Text style={[styles.anchorActionText, { color: tc.secondaryText }]}>
             {tFallback(t, 'process.returningItem', 'Back to clarify')}
           </Text>

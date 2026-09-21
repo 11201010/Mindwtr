@@ -716,7 +716,7 @@ export const plOverrides: Record<string, string> = {
         'process.refineDelete': 'Usuń',
         'process.actionable': 'Czy to jest wykonalne?',
         'process.actionableDesc': 'Czy możesz podjąć w tej sprawie konkretne działanie?',
-        'process.yesActionable': '✅ Tak, to wykonalne',
+        'process.yesActionable': 'Tak, to wykonalne',
         'process.moreThanOneStep': 'Czy to więcej niż jeden krok?',
         'process.moreThanOneStepDesc': 'Czy to wymaga wielu działań i powinno trafić do projektu?',
         'process.moreThanOneStepYes': 'Tak, zamień to w projekt',

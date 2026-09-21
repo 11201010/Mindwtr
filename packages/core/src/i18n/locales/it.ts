@@ -803,7 +803,7 @@ export const itOverrides: Record<string, string> = {
         'process.refineDelete': 'Elimina',
         'process.actionable': 'È un\'azione concreta?',
         'process.actionableDesc': 'Puoi compiere un\'azione fisica su questa voce?',
-        'process.yesActionable': '✅ Sì, è un\'azione concreta',
+        'process.yesActionable': 'Sì, è un\'azione concreta',
         'process.moreThanOneStep': 'Richiede più di un passaggio?',
         'process.moreThanOneStepDesc': 'Servono più azioni e quindi appartiene a un progetto?',
         'process.moreThanOneStepYes': 'Sì, trasformalo in progetto',

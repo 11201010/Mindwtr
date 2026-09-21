@@ -935,7 +935,7 @@ export const ukOverrides: Record<string, string> = {
     "process.refineDelete": "Видалити",
     "process.actionable": "Це підлягає позову?",
     "process.actionableDesc": "Чи можете ви вжити фізичних заходів щодо цього?",
-    "process.yesActionable": "✅ Так, це дієво",
+    "process.yesActionable": "Так, це дієво",
     "process.moreThanOneStep": "Більше одного кроку?",
     "process.moreThanOneStepDesc": "Це потребує кількох дій і належить до проекту?",
     "process.moreThanOneStepYes": "Так, зробіть це проектом",

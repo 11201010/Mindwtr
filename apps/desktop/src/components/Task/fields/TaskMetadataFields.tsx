@@ -1,16 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
-    Archive,
-    ArrowRight,
     AtSign,
     BatteryCharging,
     BatteryFull,
     BatteryLow,
     BatteryMedium,
-    BookOpen,
-    CalendarDays,
-    Check,
-    CircleDot,
     CircleSlash,
     Flag,
     Hourglass,
@@ -20,6 +14,7 @@ import {
     User,
     type LucideIcon,
 } from 'lucide-react';
+import { TASK_STATUS_ICONS } from '../../../lib/task-status-icons';
 import {
     createCustomTimeEstimate,
     formatTimeEstimateLabel,
@@ -63,15 +58,8 @@ const selectedPillClassName = 'border-primary bg-primary text-primary-foreground
 // Choice-chip icons added in front of each option's label (never replacing it,
 // except for the icon-only None pill above). Statuses and energy levels map to
 // a fixed lucide glyph so options stay scannable without text length alone.
-const STATUS_OPTION_ICONS: Record<TaskStatus, LucideIcon> = {
-    inbox: CircleDot,
-    next: ArrowRight,
-    waiting: Hourglass,
-    someday: CalendarDays,
-    reference: BookOpen,
-    done: Check,
-    archived: Archive,
-};
+// One status, one glyph across the app: the map lives in lib/task-status-icons (#1256).
+const STATUS_OPTION_ICONS = TASK_STATUS_ICONS;
 
 const ENERGY_OPTION_ICONS: Record<TaskEnergyLevel, LucideIcon> = {
     low: BatteryLow,

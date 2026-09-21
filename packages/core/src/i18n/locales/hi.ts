@@ -715,7 +715,7 @@ export const hiOverrides: Record<string, string> = {
         'process.refineDelete': 'मिटाना',
         'process.actionable': 'क्या यह कार्रवाई योग्य है?',
         'process.actionableDesc': 'क्या आप इस पर कोई भौतिक कार्रवाई कर सकते हैं?',
-        'process.yesActionable': '✅ हां, यह कार्रवाई योग्य है',
+        'process.yesActionable': 'हां, यह कार्रवाई योग्य है',
         'process.moreThanOneStep': 'एक से अधिक कदम?',
         'process.moreThanOneStepDesc': 'क्या इसके लिए एकाधिक कार्रवाइयों की आवश्यकता है और यह एक प्रोजेक्ट में शामिल है?',
         'process.moreThanOneStepYes': 'हां, इसे एक प्रोजेक्ट बनाएं',

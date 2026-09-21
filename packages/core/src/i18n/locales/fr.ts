@@ -859,7 +859,7 @@ export const frOverrides: Record<string, string> = {
         'process.refineDelete': 'Supprimer',
         'process.actionable': 'Est-ce actionnable ?',
         'process.actionableDesc': 'Pouvez-vous agir concrètement sur ce sujet ?',
-        'process.yesActionable': '✅ Oui, c’est actionnable',
+        'process.yesActionable': 'Oui, c’est actionnable',
         'process.moreThanOneStep': 'Plus d’une étape ?',
         'process.moreThanOneStepDesc': 'Cela nécessite-t-il plusieurs actions et appartient-elle donc à un projet ?',
         'process.moreThanOneStepYes': 'Oui, fais-en un projet',

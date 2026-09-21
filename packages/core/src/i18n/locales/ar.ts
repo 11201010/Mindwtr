@@ -785,7 +785,7 @@ export const arOverrides: Record<string, string> = {
         'process.refineDelete': 'يمسح',
         'process.actionable': 'هل هذا قابل للتنفيذ؟',
         'process.actionableDesc': 'هل يمكنك اتخاذ إجراء جسدي بشأن هذا؟',
-        'process.yesActionable': '✅نعم، قابل للتنفيذ',
+        'process.yesActionable': 'نعم، قابل للتنفيذ',
         'process.moreThanOneStep': 'أكثر من خطوة؟',
         'process.moreThanOneStepDesc': 'هل يتطلب هذا إجراءات متعددة وينتمي إلى مشروع؟',
         'process.moreThanOneStepYes': 'نعم اجعله مشروعا',

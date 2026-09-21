@@ -1,5 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BookOpen, Check, CheckCircle, ChevronLeft, ClipboardList, Clock, Hourglass, Loader2, Sparkles, Trash2, User, X } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle, ChevronLeft, ClipboardList, Loader2, Sparkles, Trash2, User, X } from 'lucide-react';
+import { INCUBATE_ICON as IncubateIcon, START_LATER_ICON as StartLaterIcon, TASK_STATUS_ICONS } from '../lib/task-status-icons';
+
+// One status, one glyph: these come from the shared map, never picked here (#1256).
+const SomedayIcon = TASK_STATUS_ICONS.someday;
+const ReferenceIcon = TASK_STATUS_ICONS.reference;
 import { DEFAULT_PROJECT_COLOR, filterProjectsBySelectedArea, formatTimeEstimateLabel, safeFormatDate, safeParseDate, setTaskViewSectionId, tFallback, type AppData, type Area, type Project, type Task, type TaskDraft, type TaskDraftSetter, type TaskPriority, type TimeEstimate,
     numericTextCollator,
 } from '@mindwtr/core';
@@ -439,7 +444,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                 {isReturningItem && (
                     <div className="flex flex-col items-center gap-1">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-status-someday/10 px-2.5 py-1 text-[11px] font-medium text-status-someday">
-                            <Hourglass className="h-3 w-3" /> {tFallback(t, 'process.returningItem', 'Back to clarify')}
+                            <IncubateIcon className="h-3 w-3" /> {tFallback(t, 'process.returningItem', 'Back to clarify')}
                         </span>
                         <span className="text-xs text-muted-foreground">
                             {tFallback(t, 'process.returningItemHint', 'You incubated this. Decide what it is now.')}
@@ -613,7 +618,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 onClick={() => setActionableChoice('later')}
                                 className="mx-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-info transition-colors hover:bg-info/10"
                             >
-                                <Clock className="h-4 w-4" /> {laterLabel}
+                                <StartLaterIcon className="h-4 w-4" /> {laterLabel}
                             </button>
                         </div>
                     )}
@@ -637,14 +642,14 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                     onClick={() => handleNotActionable('someday')}
                                     className="flex items-center justify-center gap-1.5 rounded-lg bg-status-someday/10 py-2.5 text-xs font-medium text-status-someday transition-colors hover:bg-status-someday/20"
                                 >
-                                    <Clock className="h-3.5 w-3.5" /> {t('process.someday')}
+                                    <SomedayIcon className="h-3.5 w-3.5" /> {t('process.someday')}
                                 </button>
                                 {showReferenceOption && (
                                     <button
                                         onClick={() => handleNotActionable('reference')}
                                         className="flex items-center justify-center gap-1.5 rounded-lg bg-status-reference/10 py-2.5 text-xs font-medium text-status-reference transition-colors hover:bg-status-reference/20"
                                     >
-                                        <BookOpen className="h-3.5 w-3.5" /> {t('process.reference')}
+                                        <ReferenceIcon className="h-3.5 w-3.5" /> {t('process.reference')}
                                     </button>
                                 )}
                                 <button
@@ -652,7 +657,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                     onClick={() => setActionableChoice('incubate')}
                                     className="flex items-center justify-center gap-1.5 rounded-lg bg-status-someday/10 py-2.5 text-xs font-medium text-status-someday transition-colors hover:bg-status-someday/20"
                                 >
-                                    <Hourglass className="h-3.5 w-3.5" /> {incubateLabel}
+                                    <IncubateIcon className="h-3.5 w-3.5" /> {incubateLabel}
                                 </button>
                             </div>
                         </div>
@@ -679,7 +684,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 onClick={handleLater}
                                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-info py-2.5 text-sm font-medium text-info-foreground transition-colors hover:bg-info/90"
                             >
-                                <Clock className="h-4 w-4" /> {laterLabel}
+                                <StartLaterIcon className="h-4 w-4" /> {laterLabel}
                             </button>
                         </div>
                     )}
@@ -706,7 +711,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 onClick={handleIncubate}
                                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-status-someday py-2.5 text-sm font-medium text-white transition-colors hover:bg-status-someday/90"
                             >
-                                <Hourglass className="h-4 w-4" /> {incubateLabel}
+                                <IncubateIcon className="h-4 w-4" /> {incubateLabel}
                             </button>
                         </div>
                     )}

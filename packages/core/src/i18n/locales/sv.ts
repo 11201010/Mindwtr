@@ -957,7 +957,7 @@ export const svOverrides: Record<string, string> = {
         'process.refineDelete': 'Ta bort',
         'process.actionable': 'Går det att göra något åt detta?',
         'process.actionableDesc': 'Kan du ta en konkret åtgärd för det här?',
-        'process.yesActionable': '✅ Ja, det går att agera på',
+        'process.yesActionable': 'Ja, det går att agera på',
         'process.moreThanOneStep': 'Mer än ett steg?',
         'process.moreThanOneStepDesc': 'Kräver det här flera åtgärder och hör hemma i ett projekt?',
         'process.moreThanOneStepYes': 'Ja, gör det till ett projekt',

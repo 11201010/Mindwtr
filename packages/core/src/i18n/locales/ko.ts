@@ -964,7 +964,7 @@ export const koOverrides: Record<string, string> = {
         'process.refineDelete': '삭제',
         'process.actionable': '이것이 실행 가능한가?',
         'process.actionableDesc': '당장 구체적인 행동으로 옮길 수 있나요?',
-        'process.yesActionable': '✅ 예, 실행 가능합니다',
+        'process.yesActionable': '예, 실행 가능합니다',
         'process.moreThanOneStep': '한 단계 이상인가요?',
         'process.moreThanOneStepDesc': '여러 할 일이 필요하고 프로젝트에 속합니까?',
         'process.moreThanOneStepYes': '예, 프로젝트로 변환합니다',

@@ -939,7 +939,7 @@ export const huOverrides: Record<string, string> = {
     'process.refineDelete': 'Törlés',
     'process.actionable': 'Végrehajtható ez?',
     'process.actionableDesc': 'Végezhet ezzel kapcsolatban konkrét cselekvést?',
-    'process.yesActionable': '✅ Igen, végrehajtható',
+    'process.yesActionable': 'Igen, végrehajtható',
     'process.moreThanOneStep': 'Több lépésből áll?',
     'process.moreThanOneStepDesc': 'Több lépést igényel, és egy projektbe tartozik?',
     'process.moreThanOneStepYes': 'Igen, legyen belőle projekt',

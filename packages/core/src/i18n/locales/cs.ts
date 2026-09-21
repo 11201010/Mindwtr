@@ -926,7 +926,7 @@ export const csOverrides: Record<string, string> = {
         'process.refineDelete': 'Smazat',
         'process.actionable': 'Vyžaduje to akci?',
         'process.actionableDesc': 'Můžete s tím fyzicky něco udělat?',
-        'process.yesActionable': '✅ Ano, vyžaduje to akci',
+        'process.yesActionable': 'Ano, vyžaduje to akci',
         'process.moreThanOneStep': 'Víc než jeden krok?',
         'process.moreThanOneStepDesc': 'Vyžaduje to více kroků a patří do projektu?',
         'process.moreThanOneStepYes': 'Ano, udělat z toho projekt',

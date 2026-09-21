@@ -1113,12 +1113,18 @@ describe('TaskItemFieldRenderer date clear buttons', () => {
         // The active status pill wears its own status color, not the generic primary.
         expect(selectedStatus).toHaveClass('border-[hsl(var(--status-inbox))]', 'text-[hsl(var(--status-inbox))]');
         expect(getByRole('button', { name: 'Archived' })).toBeInTheDocument();
-        // Every status pill leads with its fixed glyph and keeps its text label.
+        // Every status pill leads with its fixed glyph and keeps its text label. The glyphs
+        // are the shared ones the sidebar wears too (lib/task-status-icons, #1256).
+        // lucide spells some class names without a hyphen before a digit, so match by prefix.
         const statusGlyphCount = statusGroup.querySelectorAll(
-            '.lucide-circle-dot, .lucide-arrow-right, .lucide-hourglass, .lucide-calendar-days, .lucide-book-open, .lucide-check, .lucide-archive'
+            '.lucide-inbox, .lucide-arrow-right, .lucide-pause-circle, [class*="lucide-clock"], .lucide-book, .lucide-check, .lucide-archive'
         );
         expect(statusGlyphCount).toHaveLength(7);
+        expect(getByRole('button', { name: 'Someday' }).querySelector('[class*="lucide-calendar"]')).toBeNull();
         expect(getByRole('button', { name: 'Next' }).querySelector('.lucide-arrow-right')).not.toBeNull();
+        // Waiting must not wear the hourglass: this editor uses it for Time estimate.
+        expect(getByRole('button', { name: 'Waiting' }).querySelector('.lucide-hourglass')).toBeNull();
+        expect(getByRole('button', { name: 'Waiting' }).querySelector('.lucide-pause-circle')).not.toBeNull();
 
         fireEvent.click(getByRole('button', { name: 'Waiting' }));
 

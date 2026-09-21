@@ -939,7 +939,7 @@ export const esOverrides: Record<string, string> = {
 'process.refineDelete': "Eliminar",
 'process.actionable': "¿Es accionable?",
 'process.actionableDesc': "¿Puedes realizar una acción física al respecto?",
-'process.yesActionable': "✅ Sí, es accionable",
+'process.yesActionable': "Sí, es accionable",
 'process.moreThanOneStep': "¿Requiere más de un paso?",
 'process.moreThanOneStepDesc': "¿Requiere varias acciones y encaja en un proyecto?",
 'process.moreThanOneStepYes': "Sí, convertir en proyecto",

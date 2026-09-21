@@ -972,7 +972,7 @@ export const daOverrides: Record<string, string> = {
     'process.refineDelete': 'Slet',
     'process.actionable': 'Kan dette handles?',
     'process.actionableDesc': 'Kan du tage en fysisk handling på dette?',
-    'process.yesActionable': '✅ Ja, det kan handles',
+    'process.yesActionable': 'Ja, det kan handles',
     'process.moreThanOneStep': 'Mere end et skridt?',
     'process.moreThanOneStepDesc': 'Kræver dette flere handlinger og hører det hjemme i et projekt?',
     'process.moreThanOneStepYes': 'Ja, gør det til et projekt',

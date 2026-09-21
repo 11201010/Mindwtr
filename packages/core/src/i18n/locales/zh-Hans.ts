@@ -934,7 +934,7 @@ export const zhHans: Record<string, string> = {
         'process.refineDelete': '删除',
         'process.actionable': '是否可执行？',
         'process.actionableDesc': '你是否可以对此采取具体行动？',
-        'process.yesActionable': '✅ 是的，可执行',
+        'process.yesActionable': '是的，可执行',
         'process.moreThanOneStep': '是否超过一步？',
         'process.moreThanOneStepDesc': '如果需要多个行动，请将其作为项目处理。',
         'process.moreThanOneStepYes': '是，设为项目',

@@ -957,7 +957,7 @@ export const faOverrides: Record<string, string> = {
         'process.refineDelete': 'حذف',
         'process.actionable': 'آیا این قابل اقدام است؟',
         'process.actionableDesc': 'آیا می‌توانید اقدامی فیزیکی روی آن انجام دهید؟',
-        'process.yesActionable': '✅ بله، قابل اقدام است',
+        'process.yesActionable': 'بله، قابل اقدام است',
         'process.moreThanOneStep': 'بیش از یک قدم؟',
         'process.moreThanOneStepDesc': 'آیا این نیاز به چند اقدام دارد و باید یک پروژه شود؟',
         'process.moreThanOneStepYes': 'بله، آن را پروژه کن',

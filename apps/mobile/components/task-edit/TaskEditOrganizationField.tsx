@@ -9,15 +9,10 @@ import {
     translateWithFallback,
 } from '@mindwtr/core';
 import {
-    Archive,
-    ArrowRight,
     BatteryCharging,
     BatteryFull,
     BatteryLow,
     BatteryMedium,
-    BookOpen,
-    CalendarDays,
-    Check,
     CircleDot,
     CircleSlash,
     Flag,
@@ -30,6 +25,7 @@ import {
     X,
     type LucideIcon,
 } from 'lucide-react-native';
+import { TASK_STATUS_ICONS } from '@/lib/task-status-icons';
 
 import { PriorityFlag } from '@/components/priority-flag';
 import { CompactText } from '@/components/compact-text';
@@ -48,14 +44,8 @@ type OrganizationFieldId =
 
 // Status chips pair each offered status with a leading glyph so the row scans
 // faster. The icon is decorative: the text label stays the accessible name.
-const STATUS_ICON_BY_STATUS: Record<string, LucideIcon> = {
-    next: ArrowRight,
-    waiting: Hourglass,
-    someday: CalendarDays,
-    reference: BookOpen,
-    done: Check,
-    archived: Archive,
-};
+// One status, one glyph across the app: the map lives in lib/task-status-icons (#1256).
+const STATUS_ICON_BY_STATUS: Record<string, LucideIcon> = TASK_STATUS_ICONS;
 
 const getStatusIcon = (status: string): LucideIcon => STATUS_ICON_BY_STATUS[status] ?? CircleDot;
 

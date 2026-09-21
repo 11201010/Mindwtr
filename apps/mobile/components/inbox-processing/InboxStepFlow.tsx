@@ -2,18 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Platform, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
-  BookOpen,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Clock3,
-  Cloud,
-  Folder,
-  Hourglass,
-  Trash2,
-  UserRound,
-  type LucideIcon,
+    CheckCircle2,
+    ChevronDown,
+    ChevronUp,
+    Folder,
+    Trash2,
+    UserRound,
+    type LucideIcon,
 } from 'lucide-react-native';
+import { INCUBATE_ICON, START_LATER_ICON, TASK_STATUS_ICONS } from '@/lib/task-status-icons';
 import {
   formatTaskMarkedDoneMessage,
   formatTaskMovedMessage,
@@ -434,7 +431,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
               )}
               <ChoiceButton
                 compact
-                icon={Clock3}
+                icon={START_LATER_ICON}
                 tc={tc}
                 label={tFallback(t, 'process.later', 'Start later')}
                 onPress={() => chooseQuick('later')}
@@ -448,21 +445,21 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
               />
               <ChoiceButton
                 compact
-                icon={Cloud}
+                icon={TASK_STATUS_ICONS.someday}
                 tc={tc}
                 label={t('inbox.someday')}
                 onPress={() => setActionabilityChoice('someday')}
               />
               <ChoiceButton
                 compact
-                icon={Hourglass}
+                icon={INCUBATE_ICON}
                 tc={tc}
                 label={tFallback(t, 'process.incubate', 'Incubate')}
                 onPress={() => setActionabilityChoice('incubate')}
               />
               <ChoiceButton
                 compact
-                icon={BookOpen}
+                icon={TASK_STATUS_ICONS.reference}
                 tc={tc}
                 label={t('nav.reference')}
                 onPress={() => { void commit('reference', () => handleNotActionable('reference')); }}
@@ -494,28 +491,28 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
               />
               <ChoiceButton
                 compact
-                icon={Clock3}
+                icon={START_LATER_ICON}
                 tc={tc}
                 label={tFallback(t, 'process.later', 'Start later')}
                 onPress={() => setActionabilityChoice('later')}
               />
               <ChoiceButton
                 compact
-                icon={Cloud}
+                icon={TASK_STATUS_ICONS.someday}
                 tc={tc}
                 label={t('inbox.someday')}
                 onPress={() => setActionabilityChoice('someday')}
               />
               <ChoiceButton
                 compact
-                icon={Hourglass}
+                icon={INCUBATE_ICON}
                 tc={tc}
                 label={tFallback(t, 'process.incubate', 'Incubate')}
                 onPress={() => setActionabilityChoice('incubate')}
               />
               <ChoiceButton
                 compact
-                icon={BookOpen}
+                icon={TASK_STATUS_ICONS.reference}
                 tc={tc}
                 label={t('nav.reference')}
                 onPress={() => { void commit('reference', () => handleNotActionable('reference')); }}

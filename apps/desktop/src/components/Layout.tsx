@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
     Calendar,
-    Inbox,
     GanttChartSquare,
     Kanban,
     Tag,
@@ -14,9 +13,6 @@ import {
     ChevronsLeft,
     ChevronsRight,
     Trash2,
-    PauseCircle,
-    Book,
-    Clock3,
     History as HistoryIcon,
     BookOpen,
     AlertTriangle,
@@ -41,6 +37,7 @@ import { getCalendarTaskDragTaskId, hasCalendarTaskDragData } from '../lib/calen
 import { stageCalendarDropLanding } from '../lib/calendar-view-params';
 import { SandboxBanner } from './sandbox/SandboxBanner';
 import { getWorkspaceCache } from '../lib/workspace-cache';
+import { TASK_STATUS_ICONS } from '../lib/task-status-icons';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -345,7 +342,7 @@ export function Layout({
             label: tFallback(t, 'nav.sectionFocus', 'Focus'),
             items: [
                 { id: 'agenda', labelKey: 'nav.agenda', icon: Target, tone: 'primary' },
-                { id: 'inbox', labelKey: 'nav.inbox', icon: Inbox, count: inboxCount, tone: 'primary' },
+                { id: 'inbox', labelKey: 'nav.inbox', icon: TASK_STATUS_ICONS.inbox, count: inboxCount, tone: 'primary' },
             ],
         },
         {
@@ -353,8 +350,8 @@ export function Layout({
             label: tFallback(t, 'nav.sectionLists', 'Lists'),
             items: [
                 { id: 'projects', labelKey: 'nav.projects', icon: Folder, tone: 'primary' },
-                { id: 'someday', labelKey: 'nav.someday', icon: Clock3 },
-                { id: 'waiting', labelKey: 'nav.waiting', icon: PauseCircle },
+                { id: 'someday', labelKey: 'nav.someday', icon: TASK_STATUS_ICONS.someday },
+                { id: 'waiting', labelKey: 'nav.waiting', icon: TASK_STATUS_ICONS.waiting },
             ],
         },
         {
@@ -370,7 +367,7 @@ export function Layout({
             key: 'secondary',
             label: tFallback(t, 'common.more', 'More'),
             items: [
-                { id: 'reference', labelKey: 'nav.reference', icon: Book },
+                { id: 'reference', labelKey: 'nav.reference', icon: TASK_STATUS_ICONS.reference },
                 ...(isObsidianEnabled
                     ? [{ id: 'obsidian', labelKey: 'nav.obsidian', fallbackLabel: 'Obsidian', icon: BookOpen }]
                     : []),

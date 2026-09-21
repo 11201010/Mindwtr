@@ -718,7 +718,7 @@ export const ruOverrides: Record<string, string> = {
         'process.refineDelete': 'Удалить',
         'process.actionable': 'Это действенно?',
         'process.actionableDesc': 'Можете ли вы предпринять физические действия по этому поводу?',
-        'process.yesActionable': '✅ Да, это действенно',
+        'process.yesActionable': 'Да, это действенно',
         'process.moreThanOneStep': 'Больше одного шага?',
         'process.moreThanOneStepDesc': 'Требует ли это нескольких действий и принадлежит ли это проекту?',
         'process.moreThanOneStepYes': 'Да, сделайте это проектом',

@@ -955,7 +955,7 @@ export const viOverrides: Record<string, string> = {
         'process.refineDelete': 'Xóa',
         'process.actionable': 'Đây có thể thực hiện không?',
         'process.actionableDesc': 'Bạn có thể thực hiện hành động vật lý trên cái này không?',
-        'process.yesActionable': '✅ Có, có thể thực hiện',
+        'process.yesActionable': 'Có, có thể thực hiện',
         'process.moreThanOneStep': 'Nhiều hơn một bước?',
         'process.moreThanOneStepDesc': 'Điều này có cần nhiều hành động và thuộc về một dự án không?',
         'process.moreThanOneStepYes': 'Có, tạo thành dự án',

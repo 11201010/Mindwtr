@@ -756,7 +756,7 @@ export const ptOverrides: Record<string, string> = {
         'process.refineDelete': 'Excluir',
         'process.actionable': 'Isso é acionável?',
         'process.actionableDesc': 'Você pode realizar uma ação física sobre isso?',
-        'process.yesActionable': '✅ Sim, é acionável',
+        'process.yesActionable': 'Sim, é acionável',
         'process.moreThanOneStep': 'Mais de um passo?',
         'process.moreThanOneStepDesc': 'Isso requer múltiplas ações e pertence a um projeto?',
         'process.moreThanOneStepYes': 'Sim, faça disso um projeto',

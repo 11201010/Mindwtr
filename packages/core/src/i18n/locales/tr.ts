@@ -725,7 +725,7 @@ export const trOverrides: Record<string, string> = {
         'process.refineDelete': 'Silmek',
         'process.actionable': 'Bu işlem yapılabilir mi?',
         'process.actionableDesc': 'Bu konuda fiziksel bir işlem yapabilir misiniz?',
-        'process.yesActionable': '✅ Evet, uygulanabilir',
+        'process.yesActionable': 'Evet, uygulanabilir',
         'process.moreThanOneStep': 'Birden fazla adım mı?',
         'process.moreThanOneStepDesc': 'Bu birden fazla eylem gerektiriyor mu ve bir projeye mi ait?',
         'process.moreThanOneStepYes': 'Evet, bunu bir proje haline getir',

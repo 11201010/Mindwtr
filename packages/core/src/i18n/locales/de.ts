@@ -767,7 +767,7 @@ export const deOverrides: Record<string, string> = {
         'process.refineDelete': 'Löschen',
         'process.actionable': 'Ist dies ausführbar?',
         'process.actionableDesc': 'Kannst Du eine physische Handlung ausführen?',
-        'process.yesActionable': '✅ Ja, es ist ausführbar',
+        'process.yesActionable': 'Ja, es ist ausführbar',
         'process.moreThanOneStep': 'Ist mehr als ein Schritt nötig?',
         'process.moreThanOneStepDesc': 'Erfordert es mehrere Aktionen und gehört damit zu einem Projekt?',
         'process.moreThanOneStepYes': 'Ja, erstelle ein Projekt',
