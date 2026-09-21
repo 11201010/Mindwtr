@@ -15,6 +15,7 @@ follow-ups before acting on an older report's next-step recommendation.
 ### Desktop and shared core
 
 - [Desktop Settings loading](desktop-settings-2026-09.md)
+- [Focus derivation](focus-derivation-2026-09-21.md)
 - [Full-merge allocation](merge-allocation-2026-09.md)
 - [Native desktop interactions and Android scrolling](native-interactions-2026-09.md)
 - [Native snapshot statement reuse](native-snapshot-save-2026-09.md)

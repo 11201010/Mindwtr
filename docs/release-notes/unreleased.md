@@ -4,6 +4,7 @@ Changes collected since the latest stable release.
 
 ## Full Change List
 
+- The Focus screen works out its sections about twice as fast on a large task list. Nothing on the screen changed: the same tasks appear in the same sections in the same order. Filtered lists elsewhere in the app get a smaller share of the same speed-up.
 - Mindwtr is now fully available in Danish, bringing the app to 23 language options across desktop and mobile.
 - Desktop and mobile: task screens show fewer choices at once. Desktop gains direct **Sort** and **Group** controls, simpler filters and a tidier project layout. Done and Archived are now two tabs of one **History** destination, and the mobile Menu is a compact grid. The old Done and Archived links still open the matching tab, and nothing changed about how tasks are stored, synced, completed, archived or restored.
 - Desktop: **Settings -> General -> Look & feel** gains a **Font** box. Click it to browse the fonts installed on this computer, type to narrow the list, and pick one to apply. Leave it empty to keep the app default. The choice syncs, and a font that is missing on another computer falls back to the default. (#1244)

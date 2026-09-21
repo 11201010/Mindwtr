@@ -896,7 +896,7 @@ export function getTaskFocusEligibility(
  * parses — not the sort — were the cost (#766). The comparison itself is
  * unchanged, and `sort` stays stable, so the resulting order is identical.
  */
-function sortByPrecomputedKey<T, K>(
+export function sortByPrecomputedKey<T, K>(
     tasks: readonly T[],
     toKey: (task: T) => K,
     compare: (a: K, b: K) => number
@@ -1312,6 +1312,9 @@ export function sortFocusNextActions(tasks: Task[], options: SortFocusNextAction
     // Date parsing belongs to the O(n) preparation, not the O(n log n)
     // comparator. Keep keys local so edits and the moving due-soon window
     // always take effect, and return the original task references.
+    // Every value the comparator reads more than once — the boost lookup and the
+    // priority rank included — is read once per task here. Same reason as the
+    // date parses above (#766): the comparator runs O(n log n) times.
     return sortByPrecomputedKey(tasks, (task) => {
         const due = safeDueTime(task.dueDate, Number.POSITIVE_INFINITY);
         return {
@@ -1320,6 +1323,8 @@ export function sortFocusNextActions(tasks: Task[], options: SortFocusNextAction
             bucket: getFocusNextActionBucket(due, nowMs, dueSoonWindowMs),
             start: safeTime(task.startTime, Number.POSITIVE_INFINITY),
             created: safeTime(task.createdAt, 0),
+            boost: projectDeadlineBoosts.get(task.id),
+            priority: TASK_PRIORITY_SORT_RANK[task.priority as TaskPriority] || 0,
         };
     }, (keyA, keyB) => {
         const { task: a, bucket: bucketA } = keyA;
@@ -1331,18 +1336,12 @@ export function sortFocusNextActions(tasks: Task[], options: SortFocusNextAction
         }
 
         if (bucketA === 1) {
-            const projectBoostDiff = compareProjectDeadlineBoosts(
-                projectDeadlineBoosts.get(a.id),
-                projectDeadlineBoosts.get(b.id),
-                a,
-                b,
-            );
+            const projectBoostDiff = compareProjectDeadlineBoosts(keyA.boost, keyB.boost, a, b);
             if (projectBoostDiff !== 0) return projectBoostDiff;
         }
 
         if (prioritizeByPriority) {
-            const priorityDiff = (TASK_PRIORITY_SORT_RANK[b.priority as TaskPriority] || 0)
-                - (TASK_PRIORITY_SORT_RANK[a.priority as TaskPriority] || 0);
+            const priorityDiff = keyB.priority - keyA.priority;
             if (priorityDiff !== 0) return priorityDiff;
         }
 

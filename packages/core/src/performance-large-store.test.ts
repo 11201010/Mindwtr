@@ -14,6 +14,8 @@ import { buildEntityMap, computeTaskDerivedState } from './store-helpers';
 import { computeSyncChangeFingerprint } from './sync-helpers';
 import { mergeAppDataWithStats } from './sync';
 import { buildQuickAddParseOptions } from './quick-add';
+import { buildFocusPools, buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
+import { isTaskActionable } from './task-status';
 import type {
     AppData,
     Area,
@@ -44,6 +46,7 @@ type BudgetedOperationId =
     | 'projectDetailLookupAndSort'
     | 'taskDerivedState'
     | 'focusDerivation'
+    | 'focusScreenDerivation'
     | 'searchFilterSort'
     | 'syncChangeFingerprint'
     | 'captureParseOptions';
@@ -74,6 +77,7 @@ const LARGE_STORE_PERFORMANCE_BUDGETS_MS: Record<LargeStoreSize, Record<Budgeted
         projectDetailLookupAndSort: 25,
         taskDerivedState: 50,
         focusDerivation: 40,
+        focusScreenDerivation: 40,
         searchFilterSort: 30,
         syncChangeFingerprint: 20,
         captureParseOptions: 25,
@@ -82,6 +86,7 @@ const LARGE_STORE_PERFORMANCE_BUDGETS_MS: Record<LargeStoreSize, Record<Budgeted
         projectDetailLookupAndSort: 90,
         taskDerivedState: 250,
         focusDerivation: 500,
+        focusScreenDerivation: 200,
         searchFilterSort: 130,
         syncChangeFingerprint: 80,
         captureParseOptions: 90,
@@ -90,6 +95,7 @@ const LARGE_STORE_PERFORMANCE_BUDGETS_MS: Record<LargeStoreSize, Record<Budgeted
         projectDetailLookupAndSort: 450,
         taskDerivedState: 1_200,
         focusDerivation: 2_500,
+        focusScreenDerivation: 1_200,
         searchFilterSort: 650,
         syncChangeFingerprint: 350,
         captureParseOptions: 450,
@@ -354,6 +360,34 @@ const operations: BudgetedOperation[] = [
                 projectDeadlineBoosts,
                 projects: fixture.projects,
             }).slice(0, 100).length;
+        },
+    },
+    {
+        // The whole path the Focus screen runs, in the order it runs it, not
+        // just the Next-actions sort above: narrow to actionable tasks, build
+        // the pools, bucket and sort them, then build the sections. This is
+        // what a phone with a big store actually pays to open Focus.
+        id: 'focusScreenDerivation',
+        label: 'Focus screen derivation',
+        maxGrowthFrom10kTo50k: 12,
+        run: (fixture) => {
+            const actionable = fixture.tasks.filter(isTaskActionable);
+            const pools = buildFocusPools({
+                tasks: actionable,
+                visibleTasks: actionable,
+                projects: fixture.projects,
+                criteria: undefined,
+                now: NOW,
+            });
+            const lists = deriveFocusTaskLists(pools, {
+                now: NOW,
+                projects: fixture.projects,
+                sections: fixture.sections,
+                sortBy: 'default',
+                prioritiesEnabled: true,
+            });
+            return buildFocusTaskSections(lists, () => undefined)
+                .reduce((total, section) => total + section.items.length, 0);
         },
     },
     {

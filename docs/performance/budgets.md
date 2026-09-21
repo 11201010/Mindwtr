@@ -34,10 +34,18 @@ Budgets are intentionally explicit and conservative. They should only change in 
 | Project detail lookup and sort | 25ms | 90ms | 450ms | 50k <= 12x 10k |
 | Production task-derived state | 50ms | 250ms | 1200ms | 50k <= 8x 10k |
 | Focus derivation | 40ms | 500ms | 2500ms | 50k <= 12x 10k |
+| Focus screen derivation | 40ms | 200ms | 1200ms | 50k <= 12x 10k |
 | Search/filter/sort derivation | 30ms | 130ms | 650ms | 50k <= 12x 10k |
 | Production sync-change fingerprint | 20ms | 80ms | 350ms | 50k <= 8x 10k |
 | Capture parser options | 25ms | 90ms | 450ms | 50k <= 8x 10k |
 | Full snapshot merge | 150ms | 1500ms | 7500ms | 50k <= 8x 10k |
+
+The "Focus derivation" row measures the Next-actions sort on its own. The "Focus screen
+derivation" row measures the whole path the Focus screen runs, in the order it runs it:
+narrow to actionable tasks, `buildFocusPools`, `deriveFocusTaskLists`, `buildFocusTaskSections`.
+Its budgets come from measurements on a loaded workstation (3.39ms at 1k, 14.87ms at 10k,
+102.81ms at 50k) with about 10x headroom, matching the other rows. See
+[Focus derivation](focus-derivation-2026-09-21.md) for how those numbers were taken.
 
 The capture-options gate exercises the production parser-options builder, including context
 and tag discovery. Its broad CPU/scaling limits are not native interaction-latency targets.

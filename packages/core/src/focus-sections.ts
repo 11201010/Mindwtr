@@ -21,6 +21,7 @@ import {
     getUpcomingDeferredTasks,
     PRIORITY_RANK,
     shouldShowTaskForStart,
+    sortByPrecomputedKey,
     sortFocusNextActions,
     sortTasksByFocusOrder,
     sortTasksBySavedPreference,
@@ -43,13 +44,22 @@ export function getTodayBounds(now: Date): { startOfToday: Date; endOfToday: Dat
  * "Due today or starting today" — the ONE answer to what belongs in Today, read
  * by the Today bucket below and by the widget selection's starred rule. A change
  * to what counts as today is an edit to this function and nothing else.
+ *
+ * `bounds` is the same pair `getTodayBounds(now)` returns; a caller testing many
+ * tasks against one `now` passes it so the two `Date` objects are built once for
+ * the loop instead of once per task. Leaving it out is exactly as before.
  */
-export function isTodayScheduleCandidate(task: Task, now: Date): boolean {
-    const { startOfToday, endOfToday } = getTodayBounds(now);
-    const due = safeParseDueDate(task.dueDate);
-    const start = safeParseDate(task.startTime);
-    const startsToday = Boolean(start && start >= startOfToday && start <= endOfToday);
-    return Boolean(due && due <= endOfToday) || startsToday;
+export function isTodayScheduleCandidate(
+    task: Task,
+    now: Date,
+    bounds: { startOfToday: Date; endOfToday: Date } = getTodayBounds(now),
+): boolean {
+    const startOfTodayMs = bounds.startOfToday.getTime();
+    const endOfTodayMs = bounds.endOfToday.getTime();
+    const due = safeParseDueDate(task.dueDate)?.getTime();
+    const start = safeParseDate(task.startTime)?.getTime();
+    const startsToday = start !== undefined && start >= startOfTodayMs && start <= endOfTodayMs;
+    return (due !== undefined && due <= endOfTodayMs) || startsToday;
 }
 
 /**
@@ -166,17 +176,27 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
 
     // Equal times fall back to priority (when the feature is on) and then to
     // creation order — one rule for Today and Review Due on every surface.
-    const sortWith = (items: Task[], getTime: (task: Task) => number) => [...items].sort((a, b) => {
-        const timeDiff = getTime(a) - getTime(b);
-        if (timeDiff !== 0) return timeDiff;
-        if (prioritiesEnabled) {
-            const priorityDiff = (PRIORITY_RANK[b.priority as TaskPriority] || 0) - (PRIORITY_RANK[a.priority as TaskPriority] || 0);
-            if (priorityDiff !== 0) return priorityDiff;
-        }
-        const aCreated = safeParseDate(a.createdAt)?.getTime() ?? 0;
-        const bCreated = safeParseDate(b.createdAt)?.getTime() ?? 0;
-        return aCreated - bCreated;
-    });
+    // The three values are read once per task, not once per comparison: the
+    // comparator used to parse `createdAt` (and, through `getTime`, the due and
+    // start strings) on every one of the O(n log n) comparisons, which was the
+    // cost here — the same finding as #766, and the same fix.
+    const sortWith = (items: Task[], getTime: (task: Task) => number) => sortByPrecomputedKey(
+        items,
+        (task) => ({
+            time: getTime(task),
+            priority: PRIORITY_RANK[task.priority as TaskPriority] || 0,
+            created: safeParseDate(task.createdAt)?.getTime() ?? 0,
+        }),
+        (a, b) => {
+            const timeDiff = a.time - b.time;
+            if (timeDiff !== 0) return timeDiff;
+            if (prioritiesEnabled) {
+                const priorityDiff = b.priority - a.priority;
+                if (priorityDiff !== 0) return priorityDiff;
+            }
+            return a.created - b.created;
+        },
+    );
 
     const sequentialProjectIds = new Set<string>();
     const sequentialWithinSectionProjectIds = new Set<string>();
@@ -196,11 +216,13 @@ export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): 
         return !sequentialFirstTaskIds.has(task.id);
     };
 
+    // One pair of Date objects for the whole loop, not one pair per task.
+    const todayBounds = getTodayBounds(now);
     const scheduleItems = pools.schedule.filter((task) => {
         if (task.isFocusedToday) return false;
         if (task.status !== 'next') return false;
         if (isSequentialBlocked(task)) return false;
-        return isTodayScheduleCandidate(task, now);
+        return isTodayScheduleCandidate(task, now, todayBounds);
     });
     const scheduleIds = new Set(scheduleItems.map((task) => task.id));
 

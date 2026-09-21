@@ -431,12 +431,31 @@ export function createTaskFilterPredicate(
     return (task: Task) => taskMatchesPreparedFilterCriteria(task, context);
 }
 
+/**
+ * True when the normalized criteria ask for nothing. `normalizeFilterCriteria`
+ * only ever writes a key it means — no key is set to `undefined` or to an empty
+ * array, and the two match-mode keys ride along with the tokens they belong to
+ * — so an empty object is exactly "no criterion". A criterion added there later
+ * shows up here as a key and takes the full path, which is the safe direction.
+ */
+const hasNoCriteria = (context: PreparedFilterContext): boolean => (
+    Object.keys(context.normalized).length === 0
+);
+
 export function applyFilter<T extends Task>(
     tasks: readonly T[],
     criteria: FilterCriteria | undefined,
     options: ApplyFilterOptions = {}
 ): T[] {
-    return tasks.filter(createTaskFilterPredicate(criteria, options));
+    const context = prepareFilterContext(criteria, options);
+    // With no criteria, every one of the ~20 checks below passes and only the
+    // deleted-task rule is left, so run that rule alone. This is the common
+    // case, not a corner: Focus narrows four pools through here on every
+    // derivation and the screen has no saved filter until the user picks one.
+    // On an engine without a JIT those four passes were the single largest
+    // cost in the whole derivation.
+    if (hasNoCriteria(context)) return tasks.filter((task) => !task.deletedAt);
+    return tasks.filter((task) => taskMatchesPreparedFilterCriteria(task, context));
 }
 
 export function normalizeSavedFilter(value: unknown): SavedFilter | null {
