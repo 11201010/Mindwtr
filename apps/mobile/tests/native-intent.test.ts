@@ -160,6 +160,28 @@ describe('redirectSystemPath', () => {
             .toBe('/capture-modal?origin=system');
     });
 
+    // The iOS Control Center control cannot be tried off-device. Its app-side intent tags the
+    // link, and the log line is the only proof a tester can share that the tap was routed.
+    it('logs a Control Center quick capture, and only that one', async () => {
+        expect(redirectSystemPath({ path: 'mindwtr:///capture-quick?mode=text', initial: true }))
+            .toBe('/capture-modal?origin=system');
+        await vi.dynamicImportSettled();
+        expect(appLogMocks.logInfo).not.toHaveBeenCalled();
+
+        expect(redirectSystemPath({ path: 'mindwtr:///capture-quick?mode=text&source=control', initial: true }))
+            .toBe('/capture-modal?origin=system');
+        await vi.waitFor(() => expect(appLogMocks.logInfo).toHaveBeenCalledTimes(1));
+        expect(appLogMocks.logInfo).toHaveBeenCalledWith('Control Center quick capture routed', {
+            scope: 'routing',
+            extra: {
+                releaseCheck: 'v1.3.2/ios-control-capture',
+                stage: 'capture-routed',
+                delivery: 'cold',
+            },
+            force: true,
+        });
+    });
+
     it.each([true, false])('keeps shortcut links off the blank capture tab (initial=%s)', (initial) => {
         for (const path of [
             'mindwtr://capture?title=Buy%20milk',

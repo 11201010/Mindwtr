@@ -36,6 +36,28 @@ const logDropboxCallbackRouted = (): void => {
     }
 };
 
+// The Control Center control cannot be tested off-device, and its tap runs native code a tester
+// never sees. The app-side intent tags its link with `source=control`, so this line proves the
+// tap reached the app and was routed to the capture sheet.
+const logControlCaptureRouted = (path: string, initial: boolean): void => {
+    try {
+        if (new URL(path).searchParams.get('source') !== 'control') return;
+        void import('@/lib/app-log')
+            .then(({ logInfo }) => logInfo('Control Center quick capture routed', {
+                scope: 'routing',
+                extra: {
+                    releaseCheck: 'v1.3.2/ios-control-capture',
+                    stage: 'capture-routed',
+                    delivery: initial ? 'cold' : 'warm',
+                },
+                force: true,
+            }))
+            .catch(() => undefined);
+    } catch {
+        // Diagnostics must never become part of system URL routing.
+    }
+};
+
 const isQuickCaptureUrl = (path: string): boolean => {
     const url = new URL(path);
     if (url.protocol !== 'mindwtr:') return false;
@@ -87,6 +109,7 @@ export function redirectSystemPath({ path, initial }: { path: string; initial: b
         // origin=system lets the modal send the app back behind the previous
         // screen after the capture ends (#1169); in-app openers never set it.
         if (isQuickCaptureUrl(path)) {
+            logControlCaptureRouted(path, initial);
             return '/capture-modal?origin=system';
         }
     } catch {

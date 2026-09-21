@@ -436,3 +436,30 @@ describe('ios-widgets-and-shortcuts', () => {
     ]);
   });
 });
+
+// The Control Center control names its action in the widget extension, but iOS runs a
+// foreground control intent inside the app, and only if the app target has a type with the same
+// name. One copy alone is a control that does nothing (feedback 4bf8d547).
+describe('Control Center quick capture intent', () => {
+  const read = (relativePath) => fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
+  const intentBlock = (source) => {
+    const start = source.indexOf('struct MindwtrOpenQuickCaptureIntent: AppIntent');
+    expect(start).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf('\n}\n', start));
+  };
+
+  it('exists in both targets with the same title and foreground mode', () => {
+    const appCopy = intentBlock(read('ios-app-intents/MindwtrSiriCaptureIntents.swift'));
+    const extensionCopy = intentBlock(read('widgets-ios/MindwtrCaptureLockWidget.swift'));
+
+    for (const copy of [appCopy, extensionCopy]) {
+      expect(copy).toContain('"Add Task"');
+      expect(copy).toContain('.foreground(.immediate)');
+      expect(copy).toMatch(/openAppWhenRun: Bool \{\s*true/);
+      expect(copy).toContain('-> some IntentResult {');
+    }
+    // Only the app can open the screen; the extension copy must not try to open a URL.
+    expect(appCopy).toContain('MindwtrSiriCaptureLauncher.openQuickCapture()');
+    expect(extensionCopy).not.toContain('OpenURLIntent(');
+  });
+});

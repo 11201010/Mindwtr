@@ -100,9 +100,12 @@ struct MindwtrCaptureControl: ControlWidget {
     }
 }
 
-// Lives in the widget extension because the control's action must be
-// resolvable in this target; the app's Siri capture intents are a separate
-// surface and stay in ios-app-intents.
+// The control must be able to name its action in this target, so the type lives here. It is
+// only half of the pair: the app target carries a type with the SAME name
+// (ios-app-intents/MindwtrSiriCaptureIntents.swift). With both present, iOS brings the app to
+// the front and runs the app's copy, which opens quick capture. This copy used to return an
+// `OpenURLIntent` for `mindwtr:///capture-quick`, which does nothing for a custom URL scheme,
+// and with no app-side copy the tap did nothing at all. Keep name, title and modes identical.
 @available(iOSApplicationExtension 18.0, iOS 18.0, *)
 struct MindwtrOpenQuickCaptureIntent: AppIntent {
     static var title: LocalizedStringResource { "Add Task" }
@@ -121,11 +124,8 @@ struct MindwtrOpenQuickCaptureIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult & OpensIntent {
-        // The fallback payload is the Swift-side home of the quick-capture URI
-        // (mirrors WIDGET_QUICK_CAPTURE_URI in apps/mobile/lib/widget-data.ts).
-        let uri = MindwtrTasksWidgetPayload.fallback.quickCaptureUri
-        return .result(opensIntent: OpenURLIntent(URL(string: uri) ?? URL(fileURLWithPath: "/")))
+    func perform() async throws -> some IntentResult {
+        .result()
     }
 }
 

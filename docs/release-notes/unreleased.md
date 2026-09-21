@@ -50,6 +50,7 @@ Changes collected since the latest stable release.
 - Desktop on Windows: task text no longer looks blurry while the sync icon is spinning. (#1251)
 - Desktop calendar: the **All day** strip in Day and Week view now says how many items it is holding back (**+5 more**) and shows them all with one click. It used to show four and hide the rest with no hint.
 - Desktop calendar: in the selected-day list, task and event names stay visible in a narrow window. They used to be squeezed out, leaving rows that showed only a time or **All day**. The **Schedule** search box now sits beside the list only when the panel is wide enough for both.
+- iPhone and iPad: the **Add Task** control in Control Center should now open quick capture. Tapping it did nothing before. This fix could not be tried on a device, so please tell us if it still fails.
 - Mobile: long-pressing a task in **Focus** now also offers **Today**. It sets today as the start date, so the task moves under **Today** without being starred as today's focus. The menu is now titled **Start Date**. (#1252)
 - Desktop: **Settings → Data → Diagnostics** has a **Save log** button. It saves one copy of the log (older entries first) to a place you choose, so you can attach it to an email. Before, the desktop app only showed the log's path, which sits in a hidden folder.
 - Desktop on macOS: the calendar chips keep one order (by name) instead of swapping places each time the calendar opens, and each Apple Calendar now shows in its own colour instead of one Mindwtr picked.

@@ -95,6 +95,52 @@ private enum MindwtrSiriCaptureLauncher {
         }
         open(url)
     }
+
+    // Same route as WIDGET_QUICK_CAPTURE_URI (apps/mobile/lib/widget-data.ts). `source=control`
+    // changes nothing about the routing; it lets the app log that the control's tap arrived.
+    @MainActor
+    static func openQuickCapture() {
+        guard let url = appURL(
+            path: "/capture-quick",
+            queryItems: [
+                URLQueryItem(name: "mode", value: "text"),
+                URLQueryItem(name: "source", value: "control")
+            ]
+        ) else {
+            return
+        }
+        open(url)
+    }
+}
+
+// The Control Center "Add Task" control (widgets-ios/MindwtrCaptureLockWidget.swift) names a
+// type with this exact name. A control's foreground intent runs in the APP process only when
+// the app target contains the type as well; living in the widget extension alone, the tap did
+// nothing, and `OpenURLIntent` there cannot open a custom `mindwtr://` URL (it is for universal
+// links). This is the app's copy: it runs here and opens quick capture the way the Siri intents
+// above do. Keep the name, title and modes identical in both copies.
+@available(iOS 16.0, *)
+struct MindwtrOpenQuickCaptureIntent: AppIntent {
+    static var title: LocalizedStringResource = "Add Task"
+    static var description = IntentDescription("Opens Mindwtr quick capture.")
+
+#if compiler(>=6.0)
+    @available(iOS 26.0, *)
+    static var supportedModes: IntentModes {
+        .foreground(.immediate)
+    }
+#endif
+
+    @available(*, deprecated, message: "Use supportedModes with newer App Intents SDKs.")
+    static var openAppWhenRun: Bool {
+        true
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        MindwtrSiriCaptureLauncher.openQuickCapture()
+        return .result()
+    }
 }
 
 @available(iOS 16.0, *)
