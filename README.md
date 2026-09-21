@@ -8,7 +8,7 @@
 
 A free to-do app built on Getting Things Done (GTD). Works offline, no account needed.
 
-20,000+ users · Windows · macOS · Linux · iOS · Android
+25,000+ users · Windows · macOS · Linux · iOS · Android
 
 [**Download**](https://mindwtr.app/#download) · [Features](#highlights) · [Docs](https://docs.mindwtr.app/) · [中文](./README_zh.md)
 
