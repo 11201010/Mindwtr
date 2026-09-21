@@ -92,6 +92,28 @@ To be re-measured before any comparison with the React Native app: the during-sy
 
 Next, in this order (approved by the maintainer on 2026-09-21): an independent review of the experiment's source, harness, raw samples and fixture; and a baseline of the current React Native app on the same phone, fixture and core revision, reporting the same core operations (inside its packaged Hermes, which runs precompiled bytecode and is not the same thing as a just-in-time compiler) separately from the real screen experience. A slow baseline would not excuse a slow native host; the targets stay. Only after that: a second engine behind the experiment's `Engine` interface, and, if blocking is still unacceptable, a merge computed by a second engine instance from snapshots while one owner keeps the store and persistence. That last step is a concurrency change with its own data-transfer, reconciliation and memory costs. If Focus stays expensive across engines, profile the derivation itself: one fix in the shared core helps every client. The Rust option stays out of scope. The core's computations and scheduling may need work; that is not a reason to replace its language.
 
+### Baseline of the current React Native app (2026-09-21)
+
+Same phone, same frozen 5,000-task dataset (hash identical on both sides), same reference time and the same core revision, in an isolated non-debuggable build (`tech.dongdongbh.mindwtr.rnbaseline`, Hermes "for RN 0.81.5", bytecode version 96, debugger off). Dataset integrity was asserted before and after every batch. The work lives on the local branch `experiment/rn-baseline` under `experiments/rn-baseline/`. It has not been independently reviewed.
+
+Layer A, the same core calls inside each engine (ms):
+
+| Measure | Hermes p50 / p95 | QuickJS p50 / p95 (Gate 1) |
+| --- | ---: | ---: |
+| Focus, core derivation only (section sizes returned) | 202.83 / 209.46 | 443.67 / 452.89 |
+| Focus, plus the JSON text | 213.49 / 219.84 | 462.72 / 471.24 |
+| Inbox, plus the JSON text (Gate 1's figure also decodes in Kotlin) | 3.77 / 4.13 | 6.72 / 7.15 |
+| Core merge step, unchanged sync, p50 of 15 rounds | 726.42 | 869.19 |
+| Core merge step, 250 changed tasks, p50 of 15 rounds | 738.51 | 1,074 average round (Gate 1 reported one round, 1,704.78) |
+
+JavaScript thread blocking, probed from a native thread: each merge blocks the thread once, for about 725 ms (unchanged) and 740 ms (250 changed); every other probe got through in under 1 ms. The sum of the long waits gives 737 and 741 ms per round, which matches the core merge step from a separate clock.
+
+Layer B, the real screen (not comparable with Gate 1, which drew nothing): launch to first frame 288 ms p50; launch to an interactive Focus 1,027 ms p50 (on a build with the startup profiler on); a warm return to Focus costs one frame, about 25 ms, because the screen is cached and does not re-derive. Scrolling during a 250-change merge: 702 frames, 4 janky, no missed vsync, but 465 frames flagged high input latency, and the merge itself took 60 to 80 percent longer while someone scrolled (1,175 and 1,325 ms), because the list and the merge share one thread.
+
+What this establishes: both Gate 1 red flags describe costs the shipping app already has. About half of Gate 1's Focus derivation cost and about 80 percent of its merge stall exist today on Hermes, with no native boundary. Measured against the same targets, the current app is also past the red flag on both (203 ms against 150 ms; about 725 ms against 300 ms). QuickJS roughly doubled the Focus cost and added about a fifth to the merge; it did not create either problem. A better engine alone does not reach the 50 ms Focus target: the derivation itself is about four times over it on Hermes. So the first fix belongs in the shared core, where it helps the current app and any future client: profile and cut the Focus derivation, and stop the merge from holding the thread in one block.
+
+Not done: network sync, non-English sorting (ASCII data, the same limit as Gate 1), and the existing macrobenchmark runner (its build accepts only the lab app id). A Focus-screen log marker never reached logcat and the cause was not found; Layer B used the app's own interactive-ready marker instead.
+
 ### Gate 2: the product question
 
 With Gate 1 passed, build Inbox, the task editor and Focus in Compose on the same core, the same database and the same phone as the React Native app. Exercise the failure families from ADR 0028's evidence: large lists, keyboard and insets, sheets, navigation and deep links. Compare startup to a usable Inbox, list frame behavior, open, complete and save latency, memory, responsiveness during sync, code size, and the amount of workaround code. Record how it feels as well as the numbers.
