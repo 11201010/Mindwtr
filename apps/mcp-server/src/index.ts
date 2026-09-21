@@ -301,7 +301,9 @@ export const addTaskSchema = z.object({
   description: z.string().optional().describe('Task description/notes'),
   priority: taskPrioritySchema.optional().describe('Priority level: low, medium, high, urgent'),
   energyLevel: z.enum(['low', 'medium', 'high']).optional().describe('Energy level: low, medium, high'),
-  assignedTo: z.string().optional().describe('Person this task is assigned to or waiting for'),
+  // Deliberately says status is untouched (#1253): the old wording, "assigned to or waiting for",
+  // read as if a person implied Waiting. A person on a Next task is a valid agenda item.
+  assignedTo: z.string().optional().describe('Person this task involves: someone it is delegated to, or someone to talk to about it. Setting it does not change status; set status "waiting" for delegated work'),
   timeEstimate: timeEstimateSchema.optional().describe('Time estimate preset or custom:<positive minutes>'),
   attachments: linkAttachmentsCreateSchema.optional(),
   // Every other create-writable Task field (checklist, areaId, reviewAt, isFocusedToday,
