@@ -61,6 +61,8 @@ export function useProjectFiltering({
             orderedAreas: sortedAreas,
             areaFilter: selectedAreaFilter,
             tagFilter,
+            // This list has no drag order on the phone; the star is how a project moves up.
+            pinFocused: true,
         });
     }, [
         allTagsValue,

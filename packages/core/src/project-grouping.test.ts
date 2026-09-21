@@ -129,6 +129,31 @@ describe('buildProjectGroups', () => {
         expect(result.active[0]?.projects.map((entry) => entry.id)).toEqual(['missing', 'unassigned']);
     });
 
+    it('pins starred projects to the top of their own area group only when asked (#1263)', () => {
+        const home = area('home', 0);
+        const work = area('work', 1);
+        const projects = [
+            project('home-first', 'active', { areaId: 'home', order: 0 }),
+            project('home-starred', 'active', { areaId: 'home', order: 5, isFocused: true }),
+            project('work-starred-late', 'active', { areaId: 'work', order: 9, isFocused: true }),
+            project('work-starred-early', 'active', { areaId: 'work', order: 2, isFocused: true }),
+            project('work-plain', 'active', { areaId: 'work', order: 1 }),
+        ];
+        const input = { projects, orderedAreas: [home, work], areaFilter: { included: [], excluded: [] }, tagFilter: { kind: 'all' as const } };
+        const ids = (groups: ReturnType<typeof buildProjectGroups>) => groups.active.map((group) => group.projects.map((item) => item.id));
+
+        // A drag list keeps the stored order.
+        expect(ids(buildProjectGroups(input))).toEqual([
+            ['home-first', 'home-starred'],
+            ['work-plain', 'work-starred-early', 'work-starred-late'],
+        ]);
+        // Starred first, each half still in the stored order, and never across areas.
+        expect(ids(buildProjectGroups({ ...input, pinFocused: true }))).toEqual([
+            ['home-starred', 'home-first'],
+            ['work-starred-early', 'work-starred-late', 'work-plain'],
+        ]);
+    });
+
     it('treats non-finite order as zero without mutating caller arrays', () => {
         const work = area('work', 0);
         const projects = [

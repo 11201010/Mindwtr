@@ -26,6 +26,12 @@ type BuildProjectGroupsInput = {
     orderedAreas: Area[];
     areaFilter: AreaFilterSelection;
     tagFilter: ProjectTagFilter;
+    /**
+     * Starred projects first inside each area group (#1263). Only for a list the
+     * user cannot drag: a drag list must show the stored `order`, or a starred
+     * project dragged lower jumps back and drops land in the wrong place.
+     */
+    pinFocused?: boolean;
 };
 
 const projectOrder = (project: Project): number => (
@@ -61,10 +67,12 @@ export function buildProjectGroups({
     orderedAreas,
     areaFilter,
     tagFilter,
+    pinFocused = false,
 }: BuildProjectGroupsInput): ProjectGroups {
     const visibleProjects = projects
         .filter((project) => !project.deletedAt)
         .sort((a, b) => {
+            if (pinFocused && (a.isFocused === true) !== (b.isFocused === true)) return a.isFocused === true ? -1 : 1;
             const orderDiff = projectOrder(a) - projectOrder(b);
             return orderDiff || a.title.localeCompare(b.title);
         });
