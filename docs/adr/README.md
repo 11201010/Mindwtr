@@ -31,6 +31,7 @@ This folder contains small, focused decision documents that explain **why** we m
 - [ADR 0025: No encryption of the server-merged sync payload; passphrase-encrypted blob backends are first-party](0025-no-first-party-payload-encryption.md)
 - [ADR 0026: Apple Watch companion and durable capture boundary](0026-watch-companion-boundary.md)
 - [ADR 0027: Cancellation as an archived outcome](0027-cancellation-outcome.md)
+- [ADR 0028: How native surfaces run core commands while the app is closed](0028-native-surfaces-run-core-commands.md) (Proposed)
 
 ## Template
 
