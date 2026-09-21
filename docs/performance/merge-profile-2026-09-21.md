@@ -157,6 +157,12 @@ small changes rather than one.
 Listed strongest first. None of these was implemented; each needs its own
 reviewed patch.
 
+> Follow-up, 2026-09-21: options 1 and 3 were investigated and **closed as not
+> worth building**. In the real apps no task object is ever handed to two merges,
+> and the `nowIso` catch named in option 1 turned out to be real — the merge clock
+> can change a task's comparable content. See
+> `merge-signature-reuse-2026-09-21.md`. Option 2 is still open.
+
 1. **Key the signature cache on the store's entity object instead of the
    normalized copy.** The local half of the signatures would then hit on every
    merge after the first, because the store replaces task objects rather than
