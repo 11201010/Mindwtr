@@ -1,5 +1,13 @@
 # Plans index
 
+## Native client direction — September 21, 2026
+
+Decision inputs for ADR 0028 and ADR 0029 (both Proposed). Nothing here ships to users.
+
+| Plan | Purpose | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [128](128-gate-1-embedded-core-android-host.md) | Gate 1: run the TypeScript core inside a native Android host without React Native, and measure the boundary | P2 | L | ADR 0029; budgets confirmed by the maintainer | TODO |
+
 ## Review loop from v1.3.0 — September 18, 2026
 
 Planned against `561cfdfa0` (integration branch `agent/integrate-20260918` = main `8fe8c9293` + the phase-1 review fixes and their closure corrections). Phase-1 findings were fixed directly (see `.orchestrator/tasks/impl-20260918/LEDGER.md`, not tracked). This is the phase-2 improve set, selected by default (non-interactive run): every high-confidence actionable finding of the three audits. Plan 116 targets the public docs repository.

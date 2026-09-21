@@ -59,9 +59,33 @@ Reopen the Rust option only on evidence, not on expectation:
 5. Benchmarks on the existing large-store budgets show a latency or throughput ceiling caused by running commands in JS.
 6. A plan exists in which Rust **replaces** the TypeScript core instead of living beside it, with parity tests and an owner for every high-risk rule, across desktop, cloud and MCP as well.
 
+## Evidence from recent mobile issues
+
+To estimate how much mobile maintenance comes from React Native rather than from product logic, 204 mobile issues created between 2026-07-02 and 2026-09-21 (#804 to #1258, open and closed) were classified on 2026-09-21. Each issue got one category, a severity guess, and an effort weight taken from its fix (small = 1, medium = 3, large = 8; the weights are guesses). The per-issue table is kept outside the repository.
+
+| Category | Issues | Share | Effort share |
+| --- | ---: | ---: | ---: |
+| A. Native screens would likely have avoided it | 30 | 14.7% | 16.3% |
+| B. Boundary between native code and the core | 30 | 14.7% | 17.9% |
+| C. Core, data, sync or date logic | 38 | 18.6% | 14.1% |
+| D. Product or screen work where the framework is irrelevant | 101 | 49.5% | 51.7% |
+| E. Unknown, duplicate or not a bug | 5 | 2.5% | 0% |
+
+- Among the 97 bugs: A 29 (29.9%, about 37.4% of bug-fix effort), C 31 (32.0%), D 23, B 9, E 5. A and C hold 21 of the 25 high-severity issues.
+- 41 of 204 fixes (20.1%) added code that exists only because of React Native: keyboard hooks, library patches, build plugins, a URL polyfill, bridge queues.
+- Category A repeats in families: the keyboard covering the focused field (6), lists that crash, flicker or jump (4), the SQLite library and storage fallback (4), network and background behavior (4), navigation and deep links (4), modals and sheets (3).
+- 15 issues were marked uncertain.
+
+Two qualifications:
+
+1. Five category-A issues (#1150, #1136, #1139, #1132, #853) come from React Native runtime parts that sit below the screens: networking, storage and timers. Replacing only the screens while the core keeps running on that runtime would leave them. Read that way, A is 25.
+2. Native screens alone do not shrink category B. B shrinks only when native code can reach the core: this ADR for surfaces that run while the app is closed, ADR 0029 for a native application.
+
+The review shows a real, recurring React Native cost. It does not justify a rewrite by itself: half of all issues are product work that any client must build. It also cannot see responsiveness, animation quality, accessibility ergonomics or platform feel, because people rarely file those. They need a measured native-client experiment.
+
 ## Non-goals
 
-This ADR does not decide whether the Android or iOS screens move to Compose or SwiftUI, whether `@mindwtr/core` ever moves to Rust, or anything about desktop. Those need their own evidence: a classification of recent mobile issues, and a small Compose experiment judged on architecture, maintenance cost, measured performance and platform feel. Such an experiment must write through this same path and must not write SQLite from Kotlin.
+This ADR does not decide whether the Android or iOS screens move to Compose or SwiftUI, whether `@mindwtr/core` ever moves to Rust, or anything about desktop. Those need their own evidence. The issue classification is recorded above. How a native application would reach the core in its own process is a different question from this ADR's and is proposed in ADR 0029. Whatever path a native client uses, it must write through the core and must not write SQLite from Kotlin or Swift.
 
 ## Consequences
 
