@@ -82,6 +82,32 @@ bun mobile:ios
 - Android Studio (for emulator) OR
 - Xcode (for iOS Simulator)
 
+## Xcode Cloud
+
+The `Mindwtr iOS Manual` workflow builds the `Mindwtr` scheme from
+`apps/mobile/ios/Mindwtr.xcworkspace`, using Xcode 27 and a manual branch trigger.
+Keep **Clean** off to allow Xcode Cloud to reuse DerivedData and caches.
+
+Only `ios/ci_scripts/ci_post_clone.sh` is tracked. It runs
+`scripts/ci/xcode-cloud-post-clone.sh` to install Node 22 and the Bun version in
+`.bun-version`, install locked JS dependencies, generate the native project,
+and install CocoaPods. Xcode's build phases get the Node path through the
+generated `.xcode.env.local`. No Apple signing credentials are needed by this script.
+
+This workflow is a build check; App Store and TestFlight distribution still use
+GitHub Actions. Watch targets default to off, matching the iOS release workflow;
+set `MINDWTR_WATCH_ENABLED=true` in the cloud workflow to include them. Set
+`DROPBOX_APP_KEY` in the cloud environment before distributing a cloud build.
+
+Apple [warns that dynamically generated projects may fail in Xcode Cloud](https://developer.apple.com/documentation/xcode/setting-up-your-project-to-use-xcode-cloud).
+The post-clone hook must finish before Xcode opens the workspace. After a local
+`expo prebuild --clean`, restore the tracked hook from the repository root:
+
+```bash
+git restore -- apps/mobile/ios/ci_scripts
+bun test scripts/ci/xcode-cloud-post-clone.test.js
+```
+
 ## Building APK Locally
 
 To build an Android APK locally (without using Expo cloud builds):

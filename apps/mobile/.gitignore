@@ -39,7 +39,8 @@ yarn-error.*
 app-example
 
 # generated native folders
-/ios
+/ios/*
+!/ios/ci_scripts/
 /android
 
 # Build artifacts and logs
