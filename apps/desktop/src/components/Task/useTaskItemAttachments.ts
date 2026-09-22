@@ -12,7 +12,7 @@ import {
     fetchWebCloudAttachmentText,
     retainOpenedWebAttachmentUrl,
 } from '../../lib/web-attachment-source';
-import { logWarn } from '../../lib/app-log';
+import { logInfo, logWarn } from '../../lib/app-log';
 import { getManagedDataDir, getManagedPath } from '../../lib/managed-paths';
 import { ATTACHMENTS_DIR_NAME } from '../../lib/sync-service-utils';
 import { processAudioCapture, resolveSpeechCapture } from '../../lib/speech-to-text';
@@ -84,6 +84,7 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
     const editAttachmentsRef = useRef(editAttachments);
     editAttachmentsRef.current = editAttachments;
     const baselineAttachmentsRef = useRef<Attachment[]>(task.attachments || []);
+    const observedStoreFileGenerationsRef = useRef(new Set<string>());
     // Once an attachment-bearing task update reaches the optimistic store, both
     // the old persisted file and the new draft file may still be needed until
     // SQLite confirms the write. A failed durability barrier deliberately keeps
@@ -578,6 +579,16 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         attachment: Attachment,
         latestStoreAttachments: Attachment[],
     ) => {
+        for (const stored of latestStoreAttachments) {
+            if (stored.kind !== 'file' || !stored.uri || stored.deletedAt) continue;
+            const generation = `${stored.id}\0${stored.uri}`;
+            const wasAlreadyBaseline = baselineAttachmentsRef.current.some(
+                (baseline) => baseline.kind === 'file'
+                    && baseline.id === stored.id
+                    && baseline.uri === stored.uri,
+            );
+            if (!wasAlreadyBaseline) observedStoreFileGenerationsRef.current.add(generation);
+        }
         setEditAttachments((currentDraft) => {
             const merged = new Map<string, Attachment>();
             for (const stored of latestStoreAttachments) merged.set(stored.id, stored);
@@ -589,12 +600,31 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         });
     }, []);
 
-    const settleAttachmentFiles = useCallback((committedAttachments: Attachment[]) => {
-        const removable = planAttachmentDraftSettlement({
+    const settleAttachmentFiles = useCallback((
+        committedAttachments: Attachment[],
+        preserveObservedStoreFiles = false,
+    ) => {
+        const settlement = planAttachmentDraftSettlement({
             baselineAttachments: baselineAttachmentsRef.current,
             draftAttachments: editAttachmentsRef.current,
             committedAttachments,
-        }).map((candidate) => candidate.attachment);
+        });
+        let protectedStoreFile = false;
+        const removable = settlement
+            .filter(({ attachment }) => {
+                const protectedGeneration = preserveObservedStoreFiles
+                    && observedStoreFileGenerationsRef.current.has(`${attachment.id}\0${attachment.uri}`);
+                protectedStoreFile ||= protectedGeneration;
+                return !protectedGeneration;
+            })
+            .map((candidate) => candidate.attachment);
+        if (protectedStoreFile) {
+            void logInfo('Store attachment files protected during draft settlement', {
+                scope: 'attachment',
+                extra: { releaseCheck: 'v1.3.2/dictation-store-files-protected' },
+                force: true,
+            });
+        }
         if (removable.length > 0) void deleteOrphanedAttachmentFiles(removable);
         baselineAttachmentsRef.current = committedAttachments;
     }, []);
@@ -614,18 +644,19 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
 
     const settlePersistedAttachmentSave = useCallback((committedAttachments: Attachment[]) => {
         settleAttachmentFiles(committedAttachments);
+        observedStoreFileGenerationsRef.current.clear();
         attachmentSaveAwaitingDurabilityRef.current = false;
     }, [settleAttachmentFiles]);
 
     useEffect(() => () => {
         if (attachmentSaveAwaitingDurabilityRef.current) return;
-        settleAttachmentFiles(baselineAttachmentsRef.current);
+        settleAttachmentFiles(baselineAttachmentsRef.current, true);
     }, [settleAttachmentFiles]);
 
     const resetAttachmentState = useCallback((attachments: Attachment[] | undefined) => {
         const nextList = attachments || [];
         if (!attachmentSaveAwaitingDurabilityRef.current) {
-            settleAttachmentFiles(nextList);
+            settleAttachmentFiles(nextList, true);
         }
         setEditAttachments(nextList);
         setAttachmentError(null);
