@@ -4,6 +4,35 @@ import { dismissOnboarding, seedAppData } from './seed';
 const PROJECT_TITLE = 'Kitchen Renovation';
 const TASK_TITLE = 'E2E Clarify Task';
 
+test('quick processing keeps each new title visible after fresh captures', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await dismissOnboarding(page);
+    await seedAppData(page, { tasks: [], settings: { language: 'en' } });
+    await page.goto('/?view=inbox');
+
+    const capture = page.getByPlaceholder(/Add Task.*Call mom/);
+    for (let index = 1; index <= 5; index += 1) {
+        await capture.fill(`Capture ${index}`);
+        await capture.press('Enter');
+        await expect(capture).toHaveValue('');
+    }
+    await page.getByRole('button', { name: 'Process Inbox (5)' }).click();
+    await page.getByRole('button', { name: 'Quick', exact: true }).click();
+
+    const title = page.getByRole('textbox', { name: 'Title', exact: true });
+    const next = page.getByRole('button', { name: 'Next', exact: true });
+    for (let index = 0; index < 3; index += 1) {
+        const previousTitle = await title.inputValue();
+        await next.scrollIntoViewIfNeeded();
+        expect((await title.boundingBox())!.y).toBeLessThan(0);
+        await next.click();
+        await expect(title).not.toHaveValue(previousTitle);
+        // A delayed list reveal used to undo the processing card's initial scroll.
+        await page.waitForTimeout(500);
+        await expect(title).toBeInViewport({ ratio: 1 });
+    }
+});
+
 /** Each guided step is identified by its own label before its choice is made. */
 const chooseAtStep = async (page: Page, step: string, choice: string) => {
     const main = page.getByRole('main');

@@ -78,10 +78,11 @@ function revealTaskRow(taskId: string): void {
  * (#1014). Bounded retries cover a virtualized row that mounts a frame after
  * its scroll was requested. Never steals focus from a text field.
  */
-export function focusTaskRowWhenMounted(taskId: string): void {
-    if (typeof document === 'undefined') return;
+export function focusTaskRowWhenMounted(taskId: string, signal?: AbortSignal): void {
+    if (typeof document === 'undefined' || signal?.aborted) return;
     let attempts = 0;
     const tryFocus = () => {
+        if (signal?.aborted) return;
         const active = document.activeElement;
         if (
             active instanceof HTMLElement

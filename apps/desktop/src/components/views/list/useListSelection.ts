@@ -124,6 +124,7 @@ export function useListSelection({
     const pendingSelectionFocusRef = useRef(false);
     // Last highlight id whose row was handed DOM focus (#1014).
     const focusedHighlightIdRef = useRef<string | null>(null);
+    const highlightFocusControllerRef = useRef<AbortController | null>(null);
 
     const requestSelectionScroll = useCallback(() => {
         pendingSelectionScrollRef.current = true;
@@ -190,6 +191,10 @@ export function useListSelection({
     ]);
 
     useLayoutEffect(() => {
+        if (isProcessing) {
+            pendingSelectionScrollRef.current = false;
+            return;
+        }
         if (!pendingSelectionScrollRef.current) return;
         pendingSelectionScrollRef.current = false;
         const task = filteredTasks[selectedIndex];
@@ -204,7 +209,7 @@ export function useListSelection({
         if (element && typeof (element as { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }).scrollIntoView === 'function') {
             element.scrollIntoView({ block: 'nearest' });
         }
-    }, [filteredTasks, scrollToVirtualIndex, selectedIndex, selectionScrollVersion, shouldVirtualize]);
+    }, [filteredTasks, isProcessing, scrollToVirtualIndex, selectedIndex, selectionScrollVersion, shouldVirtualize]);
 
     // Keyboard navigation moves DOM focus to the newly selected task's title
     // toggle so no stale input-looking ring lingers on the previously focused
@@ -213,6 +218,10 @@ export function useListSelection({
     // Scrolling is handled by the layout effect above, so we focus with
     // preventScroll to avoid fighting it.
     useLayoutEffect(() => {
+        if (isProcessing) {
+            pendingSelectionFocusRef.current = false;
+            return;
+        }
         if (!pendingSelectionFocusRef.current) return;
         pendingSelectionFocusRef.current = false;
         if (typeof document === 'undefined') return;
@@ -250,12 +259,24 @@ export function useListSelection({
             if (typeof activeToggle.blur === 'function') activeToggle.blur();
         });
         return () => cancelAnimationFrame(frame);
-    }, [filteredTasks, selectedIndex, selectionScrollVersion]);
+    }, [filteredTasks, isProcessing, selectedIndex, selectionScrollVersion]);
 
     useEffect(() => {
+        if (isProcessing) {
+            highlightFocusControllerRef.current?.abort();
+            highlightFocusControllerRef.current = null;
+            if (highlightTaskId) setHighlightTask(null);
+            return;
+        }
         if (!highlightTaskId) {
+            highlightFocusControllerRef.current?.abort();
+            highlightFocusControllerRef.current = null;
             focusedHighlightIdRef.current = null;
             return;
+        }
+        if (focusedHighlightIdRef.current !== highlightTaskId) {
+            highlightFocusControllerRef.current?.abort();
+            highlightFocusControllerRef.current = null;
         }
         const index = filteredTasks.findIndex((task) => task.id === highlightTaskId);
         if (index < 0) return;
@@ -266,7 +287,8 @@ export function useListSelection({
         // the user already opened on the revealed task.
         if (focusedHighlightIdRef.current !== highlightTaskId) {
             focusedHighlightIdRef.current = highlightTaskId;
-            focusTaskRowWhenMounted(highlightTaskId);
+            highlightFocusControllerRef.current = new AbortController();
+            focusTaskRowWhenMounted(highlightTaskId, highlightFocusControllerRef.current.signal);
         }
         if (shouldVirtualize) {
             scrollToVirtualIndex(index, 'center');
@@ -296,7 +318,9 @@ export function useListSelection({
 
         const timer = window.setTimeout(() => setHighlightTask(null), 4000);
         return () => window.clearTimeout(timer);
-    }, [filteredTasks, highlightTaskId, scrollToVirtualIndex, setHighlightTask, shouldVirtualize]);
+    }, [filteredTasks, highlightTaskId, isProcessing, scrollToVirtualIndex, setHighlightTask, shouldVirtualize]);
+
+    useEffect(() => () => highlightFocusControllerRef.current?.abort(), []);
 
     // Keyboard navigation only requests the follow-up: the layout effects above
     // own the virtualization-aware scroll and the #860 rule that focus follows
