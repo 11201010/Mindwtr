@@ -1,6 +1,14 @@
 name: Native Platform CI
 
 on:
+  workflow_call:
+    inputs:
+      platform:
+        type: string
+        default: ios
+      source_sha:
+        type: string
+        required: true
   pull_request:
     branches: [main, master]
     paths:
@@ -42,6 +50,8 @@ on:
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
+      - "scripts/ci/dispatch-macmini.sh"
+      - "scripts/ci/prepare-apple-cache.sh"
       - "scripts/ci/collect-ios27-environment.sh"
       - "scripts/ci/select-ios27-simulator.sh"
       - "scripts/ci/smoke-ios27-simulator.sh"
@@ -90,6 +100,8 @@ on:
       - "scripts/check-synced-field-parity.ts"
       - "scripts/ci/setup-android-sdk.sh"
       - "scripts/ci/setup-ruby.sh"
+      - "scripts/ci/dispatch-macmini.sh"
+      - "scripts/ci/prepare-apple-cache.sh"
       - "scripts/ci/collect-ios27-environment.sh"
       - "scripts/ci/select-ios27-simulator.sh"
       - "scripts/ci/smoke-ios27-simulator.sh"
@@ -99,6 +111,11 @@ on:
       - "bun.lock"
   workflow_dispatch:
     inputs:
+      apple_runner:
+        description: Override Apple routing for a hosted benchmark
+        type: choice
+        default: auto
+        options: [auto, github]
       platform:
         description: Native platform to validate
         type: choice
@@ -133,15 +150,60 @@ jobs:
     runs-on: ubuntu-latest
     name: Detect native changes
     outputs:
+      ios_matrix: ${{ steps.routing.outputs.matrix }}
+      macmini: ${{ steps.routing.outputs.macmini }}
       android: ${{ steps.filter.outputs.android }}
       ios: ${{ steps.filter.outputs.ios }}
       macos: ${{ steps.filter.outputs.macos }}
       windows: ${{ steps.filter.outputs.windows }}
     steps:
+      - name: Validate private runner request
+        if: github.repository == 'dongdongbh/Mindwtr-native-ci'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CALLER_REF" = refs/heads/main
+          test "$CALLER_EVENT" = workflow_dispatch
+
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          repository: dongdongbh/Mindwtr
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
+
+      - name: Require a commit already merged into public main
+        if: github.repository == 'dongdongbh/Mindwtr-native-ci'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+
+      - name: Route Apple validation
+        id: routing
+        env:
+          PRIVATE_MACMINI: ${{ github.repository == 'dongdongbh/Mindwtr-native-ci' }}
+          USE_MACMINI: ${{ vars.MACMINI_NATIVE_CI == 'true' && github.repository == 'dongdongbh/Mindwtr' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.apple_runner != 'github' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          baseline = dict(lane='xcode26', label='Xcode 26 baseline', runner='macos-15')
+          preview = dict(lane='xcode27', label='Xcode 27 preview validation', runner='xcode-27')
+          private = os.environ['PRIVATE_MACMINI'] == 'true'
+          dispatch = os.environ['USE_MACMINI'] == 'true' and not private
+          if private:
+              preview['runner'] = ['self-hosted', 'macOS', 'ARM64', 'mindwtr-apple']
+              lanes = [preview]
+          else:
+              lanes = [baseline] if dispatch else [baseline, preview]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': lanes}) + '\n')
+              output.write('macmini=' + str(dispatch).lower() + '\n')
+          PY
 
       - name: Filter changed paths
         id: filter
@@ -189,7 +251,7 @@ jobs:
                 ;;
             esac
             case "$path" in
-              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/modules/apple-foundation-models/Package.swift|apps/mobile/modules/apple-task-search/Package.swift|apps/mobile/modules/apple-task-search/tests/*|apps/mobile/modules/apple-foundation-models/Tests/*|apps/mobile/modules/apple-image-capture/Package.swift|apps/mobile/modules/apple-image-capture/ios/Tests/*|scripts/ci/select-apple-sdk.sh|scripts/ci/probe-apple-sdk.sh|scripts/ci/select-apple-sdk.test.js|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+              apps/mobile/ios-app-intents/*|apps/mobile/widgets-ios/*|apps/mobile/targets/watch/*|apps/mobile/modules/*/ios/*|apps/mobile/modules/*/expo-module.config.json|apps/mobile/modules/cloudkit-sync/Package.swift|apps/mobile/modules/cloudkit-sync/tests/*|apps/mobile/modules/watch-connectivity/Package.swift|apps/mobile/modules/watch-connectivity/tests/*|apps/mobile/modules/ios-widget/Package.swift|apps/mobile/modules/ios-widget/tests/*|apps/mobile/modules/ios-scene-lifecycle/*|apps/mobile/modules/ios-siri-actions/*|apps/mobile/modules/apple-foundation-models/Package.swift|apps/mobile/modules/apple-task-search/Package.swift|apps/mobile/modules/apple-task-search/tests/*|apps/mobile/modules/apple-foundation-models/Tests/*|apps/mobile/modules/apple-image-capture/Package.swift|apps/mobile/modules/apple-image-capture/ios/Tests/*|scripts/ci/select-apple-sdk.sh|scripts/ci/probe-apple-sdk.sh|scripts/ci/select-apple-sdk.test.js|apps/mobile/plugins/*|apps/mobile/hooks/use-ios-scene-diagnostics.ts|apps/mobile/app/_layout.tsx|apps/mobile/app.config.ts|apps/mobile/app.json|apps/mobile/package.json|scripts/ci/prepare-apple-cache.sh|scripts/ci/dispatch-macmini.sh|scripts/ci/setup-ruby.sh|scripts/ci/collect-ios27-environment.sh|scripts/ci/select-ios27-simulator.sh|scripts/ci/smoke-ios27-simulator.sh|scripts/ci/validate-ios-scene-lifecycle.js|scripts/ci/validate-ios-scene-lifecycle.test.js|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 ios=true
                 ;;
             esac
@@ -443,20 +505,21 @@ jobs:
     needs: changes
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - lane: xcode26
-            label: Xcode 26 baseline
-            runner: macos-15
-          - lane: xcode27
-            label: Xcode 27 preview validation
-            runner: xcode-27
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: ${{ matrix.runner }}
     name: iOS Swift compile (${{ matrix.label }})
     timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: dongdongbh/Mindwtr
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+          clean: ${{ github.repository != 'dongdongbh/Mindwtr-native-ci' }}
+
+      - name: Prepare persistent Apple build caches
+        run: bash scripts/ci/prepare-apple-cache.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -530,34 +593,34 @@ jobs:
             apps/mobile/modules/watch-connectivity/ios/MindwtrWatchConnectivityReceiver.swift
 
       - name: Run attachment installer Swift recovery tests
-        run: swift test --package-path apps/mobile/modules/attachment-file-installer/ios
+        run: swift test --package-path apps/mobile/modules/attachment-file-installer/ios --scratch-path "$MINDWTR_SWIFT_CACHE/attachment-file-installer"
 
       - name: Run File Sync stable-lock Swift tests
-        run: swift test --package-path apps/mobile/modules/sync-file-lock/ios
+        run: swift test --package-path apps/mobile/modules/sync-file-lock/ios --scratch-path "$MINDWTR_SWIFT_CACHE/sync-file-lock"
 
       - name: Run CloudKit attachment error classifier tests
-        run: swift test --package-path apps/mobile/modules/cloudkit-sync
+        run: swift test --package-path apps/mobile/modules/cloudkit-sync --scratch-path "$MINDWTR_SWIFT_CACHE/cloudkit-sync"
 
       - name: Run Watch payload and receipt recovery tests
-        run: swift test --package-path apps/mobile/modules/watch-connectivity
+        run: swift test --package-path apps/mobile/modules/watch-connectivity --scratch-path "$MINDWTR_SWIFT_CACHE/watch-connectivity"
 
       - name: Test iOS widget durable action queue
-        run: swift test --package-path apps/mobile/modules/ios-widget
+        run: swift test --package-path apps/mobile/modules/ios-widget --scratch-path "$MINDWTR_SWIFT_CACHE/ios-widget"
 
       - name: Test iOS Siri durable action transport
-        run: swift test --package-path apps/mobile/modules/ios-siri-actions
+        run: swift test --package-path apps/mobile/modules/ios-siri-actions --scratch-path "$MINDWTR_SWIFT_CACHE/ios-siri-actions"
 
       - name: Test Apple clarification request cancellation
-        run: swift test --package-path apps/mobile/modules/apple-foundation-models
+        run: swift test --package-path apps/mobile/modules/apple-foundation-models --scratch-path "$MINDWTR_SWIFT_CACHE/apple-foundation-models"
 
       - name: Test Apple search result completion
-        run: swift test --package-path apps/mobile/modules/apple-task-search
+        run: swift test --package-path apps/mobile/modules/apple-task-search --scratch-path "$MINDWTR_SWIFT_CACHE/apple-task-search"
 
       - name: Test Apple image input bounds
-        run: swift test --package-path apps/mobile/modules/apple-image-capture
+        run: swift test --package-path apps/mobile/modules/apple-image-capture --scratch-path "$MINDWTR_SWIFT_CACHE/apple-image-capture"
 
       - name: Run Watch outbox retry tests
-        run: swift test --package-path apps/mobile/targets/watch
+        run: swift test --package-path apps/mobile/targets/watch --scratch-path "$MINDWTR_SWIFT_CACHE/watch"
 
       - name: Generate iOS native project
         working-directory: apps/mobile
@@ -644,10 +707,12 @@ jobs:
         run: |
           set -euo pipefail
           ARTIFACTS_DIR="$RUNNER_TEMP/ios27-artifacts"
-          DERIVED_DATA="$RUNNER_TEMP/ios27-simulator-derived-data"
+          DERIVED_DATA="$MINDWTR_NATIVE_CACHE/simulator"
           BUILD_LOG="$ARTIFACTS_DIR/release-simulator-build.log"
           mkdir -p "$ARTIFACTS_DIR"
 
+          # Repackage the app from current resources while retaining compiled dependencies.
+          rm -rf "$DERIVED_DATA/Build/Products/Release-iphonesimulator/Mindwtr.app"
           set +e
           xcodebuild \
             -workspace apps/mobile/ios/Mindwtr.xcworkspace \
@@ -657,7 +722,8 @@ jobs:
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            clean build > "$BUILD_LOG" 2>&1
+            -jobs 4 \
+            build > "$BUILD_LOG" 2>&1
           BUILD_STATUS=$?
           set -e
           if [ "$BUILD_STATUS" -ne 0 ]; then
@@ -702,11 +768,12 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
-            -derivedDataPath "$RUNNER_TEMP/ios27-archive-derived-data" \
+            -derivedDataPath "$MINDWTR_NATIVE_CACHE/archive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
-            clean archive > "$ARCHIVE_LOG" 2>&1
+            -jobs 4 \
+            archive > "$ARCHIVE_LOG" 2>&1
           ARCHIVE_STATUS=$?
           set -e
           if [ "$ARCHIVE_STATUS" -ne 0 ]; then
@@ -735,7 +802,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Delete the disposable Mac mini simulator
+        if: ${{ always() && runner.environment == 'self-hosted' && steps.ios27_simulator.outputs.simulator_udid != '' }}
+        env:
+          SIMULATOR_UDID: ${{ steps.ios27_simulator.outputs.simulator_udid }}
+        run: |
+          xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
+          xcrun simctl delete "$SIMULATOR_UDID"
+
       - name: Record archive validation limits
         if: matrix.lane == 'xcode27'
         run: |
           echo 'Unsigned Release archive compiled. Signing, AppIntentsTesting in the built app, Siri, and on-device model quality remain separate validation gates.' >> "$GITHUB_STEP_SUMMARY"
+
+  ios-macmini:
+    if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini == 'true'
+    needs: changes
+    runs-on: ubuntu-latest
+    name: iOS Swift compile (Mac mini Xcode 27)
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Dispatch trusted commit to the private runner repository
+        env:
+          GH_TOKEN: ${{ secrets.MACMINI_CI_DISPATCH_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: bash scripts/ci/dispatch-macmini.sh
+      - name: Upload Mac mini validation evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios27-native-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios27-artifacts
+          if-no-files-found: warn
+          retention-days: 14

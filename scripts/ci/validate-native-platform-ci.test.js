@@ -129,7 +129,7 @@ test("native CI keeps the Xcode 26 baseline and adds isolated Xcode 27 evidence"
   const workflow = parse(workflowText);
   const job = workflow.jobs["ios-native"];
   const lanes = Object.fromEntries(
-    job.strategy.matrix.include.map((entry) => [entry.lane, entry]),
+    appleRouting(false, false).matrix.include.map((entry) => [entry.lane, entry]),
   );
 
   expect(job.strategy["fail-fast"]).toBe(false);
@@ -485,4 +485,44 @@ test("macOS native CI links the release Rust and Swift bridges", () => {
   expect(loadStep.run).toContain("path /usr/lib/swift (offset");
   expect(loadStep.run).toContain("ctypes.CDLL(sys.argv[1])");
   expect(loadStep.run).toContain("env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH");
+});
+
+function appleRouting(privateRunner, enabled) {
+  const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
+  const step = workflow.jobs.changes.steps.find((step) => step.id === "routing");
+  const root = mkdtempSync(join(tmpdir(), "mindwtr-routing-"));
+  try {
+    const output = join(root, "output");
+    execFileSync("bash", ["-c", step.run], { env: {
+      ...process.env, GITHUB_OUTPUT: output,
+      PRIVATE_MACMINI: String(privateRunner), USE_MACMINI: String(enabled),
+    }});
+    const values = Object.fromEntries(readFileSync(output, "utf8").trim().split("\n")
+      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+    return { matrix: JSON.parse(values.matrix), macmini: values.macmini };
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test("Apple routing keeps hosted fallback and isolates the private Mac runner", () => {
+  expect(appleRouting(false, false).matrix.include.map((lane) => lane.runner))
+    .toEqual(["macos-15", "xcode-27"]);
+  expect(appleRouting(false, true)).toMatchObject({
+    matrix: { include: [{ lane: "xcode26", runner: "macos-15" }] }, macmini: "true",
+  });
+  const privateRoute = appleRouting(true, true);
+  expect(privateRoute.macmini).toBe("false");
+  expect(privateRoute.matrix.include).toHaveLength(1);
+  expect(privateRoute.matrix.include[0].runner).toEqual(["self-hosted", "macOS", "ARM64", "mindwtr-apple"]);
+  const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
+  const steps = workflow.jobs.changes.steps;
+  const routing = steps.find((step) => step.id === "routing");
+  expect(routing.env.USE_MACMINI).toContain("github.ref == 'refs/heads/main'");
+  expect(routing.env.USE_MACMINI).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
+  expect(routing.env.USE_MACMINI).toContain("inputs.apple_runner != 'github'");
+  expect(routing.env.PRIVATE_MACMINI).toContain("github.repository == 'dongdongbh/Mindwtr-native-ci'");
+  const guard = steps.find((step) => step.name === "Require a commit already merged into public main");
+  expect(guard.run).toBe('git merge-base --is-ancestor "$SOURCE_SHA" origin/main');
+  expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(routing));
+  expect(workflow.jobs["ios-native"].needs).toBe("changes");
+  expect(workflow.jobs["ios-macmini"]["runs-on"]).toBe("ubuntu-latest");
 });

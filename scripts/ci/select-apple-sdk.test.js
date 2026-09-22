@@ -62,7 +62,7 @@ test('ordinary CI continues to select iOS 26 and rejects arbitrary input', () =>
 
 test('iOS 27 matrix validation includes an unsigned archive and states its limits', () => {
   const workflow = parse(readFileSync('.github/workflows/native-platform-ci.yml', 'utf8'));
-  expect(workflow.jobs['ios-native'].strategy.matrix.include.map((lane) => lane.lane)).toEqual(['xcode26', 'xcode27']);
+  expect(workflow.jobs['ios-native'].strategy.matrix).toBe('${{ fromJSON(needs.changes.outputs.ios_matrix) }}');
   const steps = workflow.jobs['ios-native'].steps;
   expect(steps.find((step) => step.name === 'Select the requested Apple SDK').run).toContain('select-apple-sdk.sh');
   const archive = steps.find((step) => step.name === 'Create unsigned Release device archive with Xcode 27');

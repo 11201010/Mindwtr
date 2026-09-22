@@ -44,6 +44,7 @@ for runtime in ios27:
             str(runtime.get('version', 'unknown')),
             selected.get('name', 'unknown'),
             selected['udid'],
+            selected['deviceTypeIdentifier'],
         ]))
         raise SystemExit(0)
 
@@ -56,7 +57,12 @@ raise SystemExit(1)
 PY
 )"
 
-IFS=$'\t' read -r RUNTIME_ID RUNTIME_VERSION SIMULATOR_NAME SIMULATOR_UDID <<< "$SELECTION"
+IFS=$'\t' read -r RUNTIME_ID RUNTIME_VERSION SIMULATOR_NAME SIMULATOR_UDID DEVICE_TYPE <<< "$SELECTION"
+if [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
+  # Never install the smoke app into a developer's persistent simulator.
+  SIMULATOR_NAME="Mindwtr CI ${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+  SIMULATOR_UDID="$(xcrun simctl create "$SIMULATOR_NAME" "$DEVICE_TYPE" "$RUNTIME_ID")"
+fi
 {
   echo "runtime_id=$RUNTIME_ID"
   echo "runtime_version=$RUNTIME_VERSION"
