@@ -29,7 +29,11 @@ exit "$FIXTURE_INSTALL_EXIT"
 set -eu
 if [ "$1" = -p ]; then echo 22; exit; fi
 if [ "$1" = scripts/ci/validate-ios-app-intents-availability.js ]; then exit; fi
-test "$*" = 'node_modules/expo/bin/cli prebuild --platform ios --non-interactive --no-install'
+exit 1
+`, { mode: 0o755 });
+    writeFileSync(join(bin, 'npx'), `#!/bin/sh
+set -eu
+test "$*" = '--no-install expo prebuild --platform ios --non-interactive --no-install'
 test "$CI" = 1
 test "$APP_VARIANT" = production
 rm -rf ios

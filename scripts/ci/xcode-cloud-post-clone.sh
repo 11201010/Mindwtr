@@ -25,7 +25,7 @@ export DONATION_PROMPT_ENABLED="${DONATION_PROMPT_ENABLED:-true}"
 bun install --frozen-lockfile
 node scripts/ci/validate-ios-app-intents-availability.js
 cd apps/mobile
-node node_modules/expo/bin/cli prebuild --platform ios --non-interactive --no-install
+npx --no-install expo prebuild --platform ios --non-interactive --no-install
 
 # A fresh clone contains only ci_scripts under ios/. Expo replaces that incomplete
 # project; restore the tracked entry point for subsequent actions and local use.
