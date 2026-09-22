@@ -103,6 +103,9 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'action', 'focusCount', 'timerPhase', 'timerRunning',
     // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)
     'operation',
+    // font-family-applied (apps/desktop/src/App.tsx, #1244) — the chosen font's name, and
+    // whether the renderer found a real bold face for it or is faking one.
+    'family', 'boldFace',
     // ios-share-capture (mobile incoming share host and capture form)
     'stage', 'type', 'providerReady', 'dataReady', 'disabled',
     'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',

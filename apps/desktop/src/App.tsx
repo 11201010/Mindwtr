@@ -99,7 +99,7 @@ import {
     applyDesktopTextSize,
     coerceDesktopTextSize,
 } from './lib/text-size';
-import { FONT_FAMILY_STORAGE_KEY, applyDesktopFontFamily, coerceDesktopFontFamily } from './lib/font-family';
+import { FONT_FAMILY_STORAGE_KEY, applyDesktopFontFamily, checkBoldFace, coerceDesktopFontFamily } from './lib/font-family';
 import { saveStoredFullscreen } from './lib/window-state';
 import { installWebviewZoomShortcuts } from './lib/webview-zoom';
 import { isEditableManualSyncShortcutTarget, isManualSyncShortcut } from './lib/manual-sync-shortcut';
@@ -630,6 +630,18 @@ function App() {
             else localStorage.removeItem(FONT_FAMILY_STORAGE_KEY);
         }
         applyDesktopFontFamily(fontFamily);
+        // #1244: the font list now only offers families that have a real bold face, because
+        // a family without one makes the renderer fake it and every bold label looks blurry.
+        // `boldFace` is the renderer's own answer, which is the one thing a screenshot of
+        // blurry text cannot give us; a font name carries nothing private.
+        void logInfo('Desktop font family applied', {
+            scope: 'ui',
+            extra: {
+                releaseCheck: 'v1.3.2/font-family-applied',
+                family: fontFamily || 'app-default',
+                boldFace: fontFamily ? checkBoldFace(fontFamily) : 'app-default',
+            },
+        });
     }, [hasHydratedSettings, sandboxMode, settingsFontFamily]);
 
     useEffect(() => {

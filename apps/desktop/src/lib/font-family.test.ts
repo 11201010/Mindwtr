@@ -11,10 +11,26 @@ vi.mock('./tauri-invoke', () => ({ invokeNativeOr: mocks.invokeNativeOr }));
 import {
     applyDesktopFontFamily,
     canListInstalledFonts,
+    checkBoldFace,
     coerceDesktopFontFamily,
     loadInstalledFontFamilies,
     resolveDesktopFontStack,
 } from './font-family';
+
+/** Stands in for the canvas: every family gets a width per weight, and anything not
+ *  listed measures like the fallback font, the way an unresolved family really does. */
+function measuringCanvas(widths: Record<string, Record<number, number>>) {
+    const fallback: Record<number, number> = { 400: 100, 700: 111 };
+    const context = {
+        font: '',
+        measureText: () => {
+            const [, weight, family] = /^(\d+) 40px "(.*)"$/.exec(context.font) ?? [];
+            const perWeight = widths[family] ?? fallback;
+            return { width: perWeight[Number(weight)] ?? fallback[400] };
+        },
+    };
+    return vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never);
+}
 
 describe('font-family (#1244)', () => {
     afterEach(() => {
@@ -53,5 +69,30 @@ describe('font-family (#1244)', () => {
         expect(canListInstalledFonts()).toBe(true);
         await expect(loadInstalledFontFamilies()).resolves.toEqual(['Cascadia Code', 'Inter']);
         expect(mocks.invokeNativeOr).toHaveBeenCalledWith([], 'list_system_fonts');
+    });
+
+    it('tells a real bold face from one the renderer fakes', () => {
+        // Faking a bold moves nothing, so the fake measures the same at both weights.
+        const canvas = measuringCanvas({
+            Liberation: { 400: 211, 700: 227 },
+            Caskaydia: { 400: 190, 700: 190 },
+        });
+        expect(checkBoldFace('Liberation')).toBe('real');
+        expect(checkBoldFace('Caskaydia')).toBe('synthesized');
+        // A family the renderer cannot find measures like the fallback, which has its own
+        // bold face and would otherwise be read as a real one.
+        expect(checkBoldFace('Uninstalled')).toBe('fallback');
+        expect(checkBoldFace('')).toBe('unknown');
+        canvas.mockRestore();
+    });
+
+    it('reports unknown rather than guessing when it cannot measure', () => {
+        const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+        expect(checkBoldFace('Inter')).toBe('unknown');
+        canvas.mockImplementation(() => {
+            throw new Error('no canvas in this webview');
+        });
+        expect(checkBoldFace('Inter')).toBe('unknown');
+        canvas.mockRestore();
     });
 });

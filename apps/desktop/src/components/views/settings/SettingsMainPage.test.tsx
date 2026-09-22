@@ -208,6 +208,24 @@ describe('SettingsMainPage', () => {
         expect(onFontFamilyChange).toHaveBeenLastCalledWith('');
     });
 
+    it('keeps a chosen font that the list no longer offers (#1244)', async () => {
+        // The list now leaves out families with no real bold face, so a font chosen before
+        // this version can be missing from it. It must stay chosen, not be silently cleared.
+        fontMocks.canListInstalledFonts.mockReturnValue(true);
+        fontMocks.loadInstalledFontFamilies.mockResolvedValue(['Inter', 'Roboto']);
+        const onFontFamilyChange = vi.fn();
+        const { findByRole, getByLabelText } = render(
+            <SettingsMainPage {...baseProps} fontFamily="Ink Free" onFontFamilyChange={onFontFamilyChange} />,
+        );
+
+        const input = await findByRole('combobox', { name: 'Font' }) as HTMLInputElement;
+        expect(input.value).toBe('Ink Free');
+        fireEvent.focus(input);
+        fireEvent.blur(input);
+        expect(onFontFamilyChange).not.toHaveBeenCalled();
+        expect((getByLabelText('Font') as HTMLInputElement).value).toBe('Ink Free');
+    });
+
     it('falls back to a typed name when no font list is available (#1244)', () => {
         fontMocks.canListInstalledFonts.mockReturnValue(false);
         const onFontFamilyChange = vi.fn();
