@@ -5,7 +5,7 @@
  * chrome staying optional for hosts that supply their own.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { JALALI_LOCALE_TAG } from '@mindwtr/core';
 
 import { Dialog, DialogBody } from './Dialog';
@@ -21,6 +21,15 @@ const translations: Record<string, string> = {
 };
 
 const t = (key: string) => translations[key] ?? key;
+
+async function pressButtonLikeMac(button: HTMLElement, input: HTMLInputElement) {
+    input.focus();
+    fireEvent.pointerDown(button);
+    if (fireEvent.mouseDown(button)) input.blur();
+    fireEvent.pointerUp(button);
+    fireEvent.click(button);
+    await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+}
 
 afterEach(() => {
     cleanup();
@@ -93,6 +102,80 @@ describe('DateField', () => {
         expect(popover.textContent).toContain('April 2026');
         fireEvent.click(screen.getByRole('button', { name: 'Calendar: Next month' }));
         expect(screen.getByRole('dialog', { name: 'Due Calendar' }).textContent).toContain('May 2026');
+    });
+
+    it('keeps the calendar open on the first macOS-style button press (#1265)', async () => {
+        render(
+            <DateField
+                t={t}
+                label="Due"
+                dateAriaLabel="Due"
+                dateValue="2026-04-19"
+                selectedDate={new Date(2026, 3, 19)}
+                nativeDateInputLocale="en-US"
+                dateInputClassName="border"
+                hasValue
+                onDateChange={vi.fn()}
+                onClear={vi.fn()}
+            />
+        );
+
+        await pressButtonLikeMac(
+            screen.getByRole('button', { name: 'Due Calendar' }),
+            screen.getByRole('textbox', { name: 'Due' }) as HTMLInputElement,
+        );
+
+        expect(screen.getByRole('dialog', { name: 'Due Calendar' })).toBeTruthy();
+    });
+
+    it('keeps a cleared value empty after a macOS-style button press (#1266)', async () => {
+        const onClear = vi.fn();
+        render(
+            <DateField
+                t={t}
+                label="Due"
+                dateAriaLabel="Due"
+                dateValue="2026-04-19"
+                selectedDate={new Date(2026, 3, 19)}
+                nativeDateInputLocale="en-US"
+                dateInputClassName="border"
+                hasValue
+                onDateChange={vi.fn()}
+                onClear={onClear}
+            />
+        );
+        const input = screen.getByRole('textbox', { name: 'Due' }) as HTMLInputElement;
+
+        await pressButtonLikeMac(screen.getByRole('button', { name: 'Clear Due' }), input);
+
+        expect(onClear).toHaveBeenCalledOnce();
+        expect(input.value).toBe('');
+    });
+
+    it('preserves the date draft through a macOS-style Date only press', async () => {
+        const onDateOnly = vi.fn();
+        render(
+            <DateField
+                t={t}
+                label="Due"
+                dateAriaLabel="Due"
+                dateValue="2026-04-19"
+                selectedDate={new Date(2026, 3, 19)}
+                nativeDateInputLocale="en-US"
+                dateInputClassName="border"
+                hasValue
+                onDateChange={vi.fn()}
+                onClear={vi.fn()}
+                onDateOnly={onDateOnly}
+            />
+        );
+        const input = screen.getByRole('textbox', { name: 'Due' }) as HTMLInputElement;
+        fireEvent.change(input, { target: { value: '04/' } });
+
+        await pressButtonLikeMac(screen.getByRole('button', { name: 'Date only: Due' }), input);
+
+        expect(onDateOnly).toHaveBeenCalledOnce();
+        expect(input.value).toBe('04/');
     });
 
     it('drops the label and the clear control when the host owns them', () => {

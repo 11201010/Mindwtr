@@ -386,11 +386,10 @@ export function DateField({
     // the attribute each time makes a screen reader call the field invalid before
     // the user has finished entering a date that will parse fine.
     const announceInvalid = isDraftInvalid && announceDraftInvalid;
-    // Every button in the popover keeps focus on the text field while it is pressed. WebKit on
-    // macOS does not focus a button on click, so without this the field blurs to nothing, the
-    // blur handler finds focus outside the field, and the popover closes under the pointer: the
-    // month arrows paged nothing and just dismissed the calendar (#1254). Chromium and WebKitGTK
-    // focus the clicked button, which is why it never showed on Windows or Linux.
+    // Date-field buttons keep focus on the text field while pressed. WebKit on macOS does not
+    // focus a button on click, so without this the field blurs to nothing and deferred cleanup
+    // can undo the button action (#1254, #1265, #1266). Chromium and WebKitGTK focus the clicked
+    // button, which is why it never showed on Windows or Linux.
     const keepFieldFocus = (event: ReactMouseEvent<HTMLButtonElement>) => event.preventDefault();
     const applyCalendarDate = (date: Date) => {
         const nextDateValue = safeFormatDate(date, 'yyyy-MM-dd');
@@ -467,6 +466,7 @@ export function DateField({
                         aria-label={calendarAriaLabel}
                         aria-haspopup="dialog"
                         aria-expanded={isCalendarOpen}
+                        onMouseDown={keepFieldFocus}
                         onClick={openCalendar}
                         className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     >
@@ -477,6 +477,7 @@ export function DateField({
                 {onDateOnly ? (
                     <button
                         type="button"
+                        onMouseDown={keepFieldFocus}
                         onClick={onDateOnly}
                         className="shrink-0 whitespace-nowrap rounded px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         aria-label={`${dateOnlyText}: ${accessibleName}`}
@@ -487,6 +488,7 @@ export function DateField({
                 {!onClear ? null : hasValue ? (
                     <button
                         type="button"
+                        onMouseDown={keepFieldFocus}
                         onClick={() => {
                             setDraftDateValue('');
                             onClear();

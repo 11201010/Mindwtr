@@ -1,0 +1,64 @@
+import { expect, test } from '@playwright/test';
+import { dismissOnboarding, seedAppData } from './seed';
+
+for (const [field, label] of [
+    ['startTime', 'Start Date'],
+    ['dueDate', 'Due Date'],
+    ['reviewAt', 'Review Date'],
+] as const) {
+    test.describe(label, () => {
+        test.beforeEach(async ({ page }) => {
+            await dismissOnboarding(page);
+            await seedAppData(page, {
+                projects: [{ id: 'garden', title: 'Garden project' }],
+                tasks: [{ id: 'dated-task', title: 'Order seeds', status: 'next', projectId: 'garden', [field]: '2026-09-01' }],
+                settings: { language: 'en', dateFormat: 'ymd' },
+            });
+            await page.goto('/?view=projects');
+            await page.locator('[data-project-navigation-item][data-project-id="garden"]').click();
+            await page.getByText('Order seeds', { exact: true }).click({ button: 'right' });
+            await page.getByRole('menuitem', { name: 'Dates…', exact: true }).click();
+            await page.getByRole('menuitem', { name: `${label}…`, exact: true }).click();
+        });
+
+        test(`${label} calendar stays open on its first click`, async ({ page }) => {
+            const input = page.getByRole('textbox', { name: label, exact: true });
+            await expect(input).toBeFocused();
+            await page.getByRole('button', { name: `${label} Calendar`, exact: true }).click();
+            // Let the pointer-release blur timer run before asserting persistence.
+            await page.waitForTimeout(150);
+            const calendar = page.getByRole('dialog', { name: `${label} Calendar`, exact: true });
+            await expect(calendar).toBeVisible();
+            await calendar.getByRole('button', { name: 'Calendar: Next month', exact: true }).click();
+            await expect(calendar).toBeVisible();
+            await calendar.getByRole('button', { name: 'Calendar: Previous month', exact: true }).click();
+            await expect(calendar).toBeVisible();
+            await calendar.getByRole('button', { name: 'Wednesday, September 2, 2026', exact: true }).click();
+            await expect(input).toHaveValue('2026-09-02');
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await expect.poll(() => page.evaluate((field) => {
+                const data = JSON.parse(localStorage.getItem('mindwtr-data')!);
+                return data.tasks.find((task: { id: string }) => task.id === 'dated-task')[field];
+            }, field)).toBe('2026-09-02');
+        });
+
+        test(`${label} clears visibly before Save and remains cleared after reload`, async ({ page }) => {
+            const input = page.getByRole('textbox', { name: label, exact: true });
+            await expect(input).toHaveValue('2026-09-01');
+            await expect(input).toBeFocused();
+            await page.getByRole('button', { name: `Clear ${label}`, exact: true }).click();
+            await page.waitForTimeout(150);
+            await expect(input).toHaveValue('');
+            const savedDate = () => page.evaluate(({ field }) => {
+                const data = JSON.parse(localStorage.getItem('mindwtr-data')!);
+                return data.tasks.find((task: { id: string }) => task.id === 'dated-task')[field] ?? null;
+            }, { field });
+            expect(await savedDate()).toBe('2026-09-01');
+            await page.getByRole('button', { name: 'Save', exact: true }).click();
+            await expect.poll(savedDate).toBeNull();
+            await page.reload();
+            await expect(page.getByText('Order seeds', { exact: true })).toBeVisible();
+            expect(await savedDate()).toBeNull();
+        });
+    });
+}
