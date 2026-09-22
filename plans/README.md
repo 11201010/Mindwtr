@@ -6,9 +6,9 @@ Planned against `59d0e575e` (public docs `89ac579b`). GPT-6 Astra reviewed all n
 
 | Plan | Finding | Priority | Effort | Dependencies | Status |
 | --- | --- | --- | --- | --- | --- |
-| [129](129-authenticated-developer-examples.md) | DOCS-01: developer examples omit required authentication | P3 | S | None | TODO |
-| [130](130-cloud-quick-add-capture-parity.md) | CORRECTNESS-01: Cloud quick-add drops project/date capture metadata | P2 | S | None | TODO |
-| [131](131-widget-shared-focus-pools.md) | ARCH-01: widget duplicates core Focus pool policy through an obsolete adapter | P3 | S | None | TODO |
+| [129](129-authenticated-developer-examples.md) | DOCS-01: developer examples omit required authentication | P3 | S | None | DONE (web183b164e) |
+| [130](130-cloud-quick-add-capture-parity.md) | CORRECTNESS-01: Cloud quick-add drops project/date capture metadata | P2 | S | None | DONE (8dd02f92f) |
+| [131](131-widget-shared-focus-pools.md) | ARCH-01: widget duplicates core Focus pool policy through an obsolete adapter | P3 | S | None | DONE (6e3eff2ee) |
 
 Plans may run independently in isolated worktrees. Plan129 changes only the public-doc repository;130 reuses core capture inside the existing single Cloud write;131 is the sole additional Strong architecture candidate, deleting the obsolete adapter and duplicate policy. AUTO-04 already handles the CLI capture deepening, so it is not a second architecture refactor. Root maintains status and creates one commit per finding.
 
