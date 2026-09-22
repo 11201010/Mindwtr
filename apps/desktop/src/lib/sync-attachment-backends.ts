@@ -60,7 +60,6 @@ import {
     exists as syncFsExists,
     mkdir as syncFsMkdir,
     publishAttachmentGeneration as syncFsPublishAttachmentGeneration,
-    remove as syncFsRemoveFile,
     reserveAttachmentGeneration as syncFsReserveAttachmentGeneration,
     stat as syncFsStat,
 } from './sync-fs';
@@ -150,29 +149,15 @@ class FileSyncGenerationIntegrityError extends Error {
 }
 
 /**
- * Generation paths this process has already rewritten once after finding the sync folder's
- * copy corrupt. A generation key is content-addressed, so rewriting it is always safe — but
- * it must not become a per-cycle habit, which is what happened before: a corrupt existing
- * generation failed verification, returned, and was re-read identically every cycle forever.
- *
- * ponytail: process-local, cleared with the rest of the attachment sync state when the sync
- * configuration is reset. A restart therefore grants one more rewrite, exactly like the
- * attempt counter in `sync-attachment-validation.ts`, and that is the safer direction: the
- * terminal verdict soft-deletes an attachment whose local bytes are still fine. Upgrade path
- * if a restart loop is ever observed: a durable marker beside the presence stamp.
- */
-const fileSyncGenerationRewrites = new Set<string>();
-
-/**
- * Generation paths this process has stopped trying to publish: the rewrite above was spent
- * and the sync folder's copy verified wrong again, so another attempt can only repeat itself.
+ * Generation paths this process has stopped trying to publish because the sync folder's copy
+ * verified wrong. Another attempt can only repeat the same read and warning.
  *
  * The attachment record is left exactly as it is — cloudKey included. The local bytes are the
  * good copy here, and the remote-404 path's `markAttachmentUnrecoverable` is not the right
  * seam for that: there the local copy is already gone, while here a tombstone would delete a
  * recoverable attachment on every device over what may be a flaky mount. Skipping the upload
  * for this process is all that is needed to honour P8's "no unbounded retries"; a restart
- * grants one more rewrite, the same posture as `fileSyncGenerationRewrites`.
+ * grants one more verification attempt.
  */
 const fileSyncGenerationGaveUp = new Set<string>();
 
@@ -434,7 +419,6 @@ let webdavAttachmentRateLimitedUntil = 0;
 export const clearAttachmentSyncState = (): void => {
     webdavDownloadBackoff.clear();
     webdavAttachmentRateLimitedUntil = 0;
-    fileSyncGenerationRewrites.clear();
     fileSyncGenerationGaveUp.clear();
 };
 
@@ -1941,21 +1925,13 @@ export async function syncFileAttachments(
                 return true;
             } catch (error) {
                 if (!(error instanceof FileSyncGenerationIntegrityError) || !error.corrupt) throw error;
-                if (fileSyncGenerationRewrites.has(targetPath)) {
-                    fileSyncGenerationGaveUp.add(targetPath);
-                    deps.logSyncWarning(
-                        'File Sync attachment generation stayed corrupt after a rewrite; leaving it alone until the next restart',
-                    );
-                    return false;
-                }
-                // Self-heal once. The key is content-addressed and the replacement bytes come
-                // from the same upload snapshot, so this can only ever restore the file the
-                // key already promises. Removing the corrupt copy first is what lets the
-                // ordinary create-new + sequential write + publish protocol below run: nothing
-                // is ever written over in place.
-                fileSyncGenerationRewrites.add(targetPath);
-                deps.logSyncWarning('Rewriting a corrupt File Sync attachment generation');
-                await syncFsRemoveFile(targetPath);
+                fileSyncGenerationGaveUp.add(targetPath);
+                deps.logSyncWarning(
+                    'Preserved invalid File Sync attachment generation; refusing replacement',
+                    undefined,
+                    { releaseCheck: 'v1.3.2/file-generation-preserved' },
+                );
+                return false;
             }
         }
 
