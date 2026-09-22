@@ -189,11 +189,20 @@ describe('widget-service', () => {
 
     it('skips the native render when nothing any widget shows changed (#766)', async () => {
         const data = buildData(3);
+        const releaseMarkerCalls = () => mockLogInfo.mock.calls.filter(
+            ([message]) => message === 'Widget Focus pools published to native host',
+        );
         expect(await updateMobileWidgetFromData(data)).toBe(true);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
+        expect(mockLogInfo).toHaveBeenCalledWith('Widget Focus pools published to native host', {
+            scope: 'widget',
+            force: true,
+            extra: { releaseCheck: 'v1.3.2/widget-focus-pools' },
+        });
 
         expect(await updateMobileWidgetFromData({ ...data, tasks: data.tasks.map((task) => ({ ...task })) })).toBe(true);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(1);
+        expect(releaseMarkerCalls()).toHaveLength(1);
 
         const changed = {
             ...data,
@@ -201,6 +210,7 @@ describe('widget-service', () => {
         };
         expect(await updateMobileWidgetFromData(changed)).toBe(true);
         expect(mockAndroidWidgetSetPayload).toHaveBeenCalledTimes(2);
+        expect(releaseMarkerCalls()).toHaveLength(2);
     });
 
     it('publishes an honestly capped Android Focus + Today payload, then refreshes', async () => {
@@ -772,6 +782,9 @@ describe('widget-service', () => {
 
         expect(await updateMobileWidgetFromStore()).toBe(false);
         expect(vi.mocked(createWidgetPayloadProjection)).toHaveBeenCalledTimes(1);
+        expect(mockLogInfo.mock.calls.some(
+            ([message]) => message === 'Widget Focus pools published to native host',
+        )).toBe(false);
 
         // Retry with unchanged inputs (the immediate + 800ms pair callers
         // use): gate 0 must not have cached the failed render, so the

@@ -146,6 +146,96 @@ describe('widget-data', () => {
         expect(sectionTitles(titleSorted, 'schedule')).toEqual(['Alpha today', 'Zebra today']);
     });
 
+    it('preserves Focus pools, saved sort direction, and widget curation', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-22T12:00:00.000Z'));
+        try {
+            const now = new Date().toISOString();
+            const task = (id: string, title: string, overrides: Partial<AppData['tasks'][number]> = {}) => ({
+                id,
+                title,
+                status: 'next' as const,
+                tags: [],
+                contexts: [],
+                createdAt: now,
+                updatedAt: now,
+                ...overrides,
+            });
+            const data: AppData = {
+                ...baseData,
+                areas: [
+                    { id: 'work', name: 'Work', order: 0, createdAt: now, updatedAt: now },
+                    { id: 'home', name: 'Home', order: 1, createdAt: now, updatedAt: now },
+                ],
+                projects: [{
+                    id: 'sequential',
+                    title: 'Sequential',
+                    status: 'active',
+                    isSequential: true,
+                    sequentialScope: 'section',
+                    areaId: 'work',
+                    color: '#123456',
+                    order: 0,
+                    tagIds: [],
+                    createdAt: now,
+                    updatedAt: now,
+                }],
+                sections: [
+                    { id: 'section-a', projectId: 'sequential', title: 'A', order: 0, createdAt: now, updatedAt: now },
+                    { id: 'section-b', projectId: 'sequential', title: 'B', order: 1, createdAt: now, updatedAt: now },
+                ],
+                settings: { filters: { areaIds: ['work'] } } as AppData['settings'],
+                tasks: [
+                    task('focus-visible', 'Alpha focus', { isFocusedToday: true, areaId: 'work' }),
+                    task('focus-hidden', 'Gamma hidden focus', {
+                        isFocusedToday: true,
+                        areaId: 'home',
+                        startTime: '2026-09-23T09:00:00.000Z',
+                    }),
+                    task('section-a-first', 'Beta today', {
+                        projectId: 'sequential', sectionId: 'section-a', order: 0, dueDate: '2026-09-22',
+                    }),
+                    task('section-a-blocked', 'Aardvark blocked today', {
+                        projectId: 'sequential', sectionId: 'section-a', order: 1, dueDate: '2026-09-22',
+                    }),
+                    task('section-b-first', 'Delta today', {
+                        projectId: 'sequential', sectionId: 'section-b', order: 2, dueDate: '2026-09-22',
+                    }),
+                    task('future', 'Future upcoming', { areaId: 'work', startTime: '2026-09-23T09:00:00.000Z' }),
+                    task('review', 'Review due', { areaId: 'work', reviewAt: '2026-09-21T09:00:00.000Z' }),
+                    task('ordinary', 'Ordinary next', { areaId: 'work' }),
+                ],
+            };
+            const projection = (sortOrder: 'asc' | 'desc') => buildWidgetPayload(data, 'en', {
+                maxItems: 20,
+                focusFilter: { criteria: {}, sortBy: 'title', sortOrder },
+            });
+
+            const ascending = projection('asc');
+            expect(ascending.sections.map((section) => [
+                section.key,
+                section.items.map((item) => item.id),
+            ])).toEqual([
+                ['focus', ['focus-visible', 'focus-hidden']],
+                ['schedule', ['section-a-first', 'section-b-first']],
+            ]);
+            expect(ascending.items.map((item) => item.id)).toEqual([
+                'focus-visible', 'focus-hidden', 'section-a-first', 'section-b-first',
+            ]);
+
+            const descending = projection('desc');
+            expect(descending.sections.map((section) => [
+                section.key,
+                section.items.map((item) => item.id),
+            ])).toEqual([
+                ['focus', ['focus-hidden', 'focus-visible']],
+                ['schedule', ['section-b-first', 'section-a-first']],
+            ]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('carries the task-sheet details, trimmed, and leaves empty ones out (#1173)', () => {
         const now = new Date().toISOString();
         const today = new Date(); today.setHours(9, 0, 0, 0);

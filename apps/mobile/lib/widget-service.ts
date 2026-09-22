@@ -457,6 +457,11 @@ export async function updateMobileWidgetFromData(data: AppData): Promise<boolean
             // function's promise settles, so a fire-and-forget write could
             // never land (correction #5).
             await AsyncStorage.setItem(WIDGET_FINGERPRINT_STORAGE_KEY, widgetFingerprint).catch(() => undefined);
+            void logInfo('Widget Focus pools published to native host', {
+                scope: 'widget',
+                force: true,
+                extra: { releaseCheck: 'v1.3.2/widget-focus-pools' },
+            });
         }
     }
 

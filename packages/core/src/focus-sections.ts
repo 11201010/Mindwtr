@@ -156,23 +156,16 @@ export interface FocusListContext {
     prioritiesEnabled: boolean;
     /** The saved filter's direction, honoured by a non-default sort. */
     sortOrder?: 'asc' | 'desc';
-    /**
-     * Escape hatch for a caller that already owns its saved-perspective sort.
-     * `apps/mobile/lib/widget-data.ts` is the only one; drop this parameter and
-     * that argument together.
-     */
-    sortBySavedPerspective?: (items: Task[]) => Task[];
 }
 
 export function deriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): FocusTaskLists {
     const { now, projects, sections, sortBy, prioritiesEnabled } = ctx;
     const isDefaultSort = sortBy === DEFAULT_FOCUS_SORT_BY;
-    const sortBySavedPerspective = ctx.sortBySavedPerspective
-        ?? ((items: Task[]) => (isDefaultSort ? items : sortTasksBySavedPreference(items, sortBy, {
-            projects,
-            prioritizeByPriority: prioritiesEnabled,
-            sortOrder: ctx.sortOrder,
-        })));
+    const sortBySavedPerspective = (items: Task[]) => (isDefaultSort ? items : sortTasksBySavedPreference(items, sortBy, {
+        projects,
+        prioritizeByPriority: prioritiesEnabled,
+        sortOrder: ctx.sortOrder,
+    }));
 
     // Equal times fall back to priority (when the feature is on) and then to
     // creation order — one rule for Today and Review Due on every surface.

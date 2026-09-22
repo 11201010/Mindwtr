@@ -33,6 +33,10 @@ import type {
     FocusTaskSection,
 } from '../focus-sections';
 
+type FrozenFocusListContext = FocusListContext & {
+    sortBySavedPerspective?: (items: Task[]) => Task[];
+};
+
 export const DEFAULT_FOCUS_SORT_BY: SortField = 'default';
 
 // --- copies of task-utils' module-private helpers ---------------------------
@@ -291,7 +295,7 @@ export function frozenBuildFocusPools({
     };
 }
 
-export function frozenDeriveFocusTaskLists(pools: FocusPools, ctx: FocusListContext): FocusTaskLists {
+export function frozenDeriveFocusTaskLists(pools: FocusPools, ctx: FrozenFocusListContext): FocusTaskLists {
     const { now, projects, sections, sortBy, prioritiesEnabled } = ctx;
     const isDefaultSort = sortBy === DEFAULT_FOCUS_SORT_BY;
     const sortBySavedPerspective = ctx.sortBySavedPerspective

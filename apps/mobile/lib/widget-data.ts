@@ -1,12 +1,12 @@
 import {
-    applyFilter,
+    buildFocusPools,
+    buildFocusTaskSections,
     computeTodayFocusTasks,
+    deriveFocusTaskLists,
     getAccentTint,
     getTaskAccentColor,
-    getUpcomingDeferredTasks,
     hasTimeComponent,
     resolveFeatureFlags,
-    shouldShowTaskForStart,
     getTranslationsSync,
     getTranslator,
     isTaskActionable,
@@ -22,7 +22,6 @@ import {
     safeParseDate,
     safeParseDueDate,
     sortTasksBy,
-    sortTasksBySavedPreference,
     stripMarkdown,
     SUPPORTED_LANGUAGES,
     type AppData,
@@ -33,7 +32,6 @@ import {
     TASK_PRIORITY_COLORS,
 } from '@mindwtr/core';
 import { THEME_PRESETS, type ThemePresetName } from '../constants/theme-presets';
-import { buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
 import { NO_FOCUS_WIDGET_FILTER, type FocusWidgetFilter } from './focus-widget-filter';
 import { buildWidgetCompletionToken } from './widget-completion-token';
 import {
@@ -526,9 +524,8 @@ export function createWidgetPayloadProjection(
         resolvedAreaFilter: resolveAreaFilterSelection(data.settings?.filters, sortedAreas),
     };
 
-    const activeTasks = tasks.filter((task) => {
-        if (task.deletedAt) return false;
-        if (!isTaskActionable(task)) return false;
+    const undeletedActionableTasks = tasks.filter((task) => !task.deletedAt && isTaskActionable(task));
+    const activeTasks = undeletedActionableTasks.filter((task) => {
         if (!isTaskInActiveProject(task, projectById)) return false;
         return isTaskVisibleInArea(task, areaVisibility);
     });
@@ -586,36 +583,20 @@ export function createWidgetPayloadProjection(
     // Focus keeps drawing from every starred task, as it does on the screen:
     // area visibility and start times must never eat one of its slots.
     const focusFilter = options?.focusFilter ?? NO_FOCUS_WIDGET_FILTER;
-    const filterOptions = { projects, tokenMatchMode: 'all' } as const;
-    const matchingFocusCriteria = <T extends Task>(pool: T[]): T[] => applyFilter(pool, focusFilter.criteria, filterOptions);
-    const sequentialProjects = projects.filter((project) => project.isSequential && !project.deletedAt);
-    const lists = deriveFocusTaskLists({
+    const pools = buildFocusPools({
+        tasks: undeletedActionableTasks,
+        visibleTasks: activeTasks,
+        projects,
+        criteria: focusFilter.criteria,
         now,
-        focusedPool: matchingFocusCriteria(
-            tasks.filter((task) => !task.deletedAt && isTaskActionable(task) && task.isFocusedToday === true),
-        ),
-        filteredActiveTasks: matchingFocusCriteria(
-            activeTasks.filter((task) => shouldShowTaskForStart(task, { now, granularity: 'time' })),
-        ),
-        scheduleCandidates: matchingFocusCriteria(activeTasks.filter((task) => shouldShowTaskForStart(task, { now }))),
-        upcomingCandidates: getUpcomingDeferredTasks(
-            matchingFocusCriteria(activeTasks.filter((task) => !task.isFocusedToday)),
-            { now },
-        ).map((entry) => entry.task),
-        baseActiveTasks: activeTasks,
+    });
+    const lists = deriveFocusTaskLists(pools, {
+        now,
         projects,
         sections: data.sections || [],
-        sequentialProjectIds: new Set(sequentialProjects.map((project) => project.id)),
-        sequentialWithinSectionProjectIds: new Set(
-            sequentialProjects.filter((project) => project.sequentialScope === 'section').map((project) => project.id),
-        ),
         sortBy: focusFilter.sortBy,
         prioritiesEnabled,
-        sortBySavedPerspective: (list) => sortTasksBySavedPreference(list, focusFilter.sortBy, {
-            projects,
-            prioritizeByPriority: prioritiesEnabled,
-            sortOrder: focusFilter.sortOrder,
-        }),
+        sortOrder: focusFilter.sortOrder,
     });
     // A home-screen glance should stay calm: reuse the app's canonical Focus
     // derivation, but publish only Today's Focus followed by Today. The other
