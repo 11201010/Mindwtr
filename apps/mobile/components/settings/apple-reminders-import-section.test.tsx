@@ -83,7 +83,10 @@ describe('AppleRemindersImportSection workspace busy boundary', () => {
     expect(reminders.importAppleRemindersIntoInbox).toHaveBeenCalledOnce();
     // The manual button owes the same durability as the foreground run.
     expect(reminders.importAppleRemindersIntoInbox).toHaveBeenCalledWith(
-      expect.objectContaining({ flushPendingSave: expect.any(Function) }),
+      expect.objectContaining({
+        flushPendingSave: expect.any(Function),
+        getTaskById: expect.any(Function),
+      }),
     );
     expect(onBusyChange).toHaveBeenLastCalledWith(true);
 

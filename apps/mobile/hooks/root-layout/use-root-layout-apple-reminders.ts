@@ -52,6 +52,7 @@ export function useRootLayoutAppleRemindersAutoImport({
                 addTask: useTaskStore.getState().addTask,
                 createRecoverySnapshot: createMobileRecoverySnapshot,
                 flushPendingSave: flushPendingTaskActionSave,
+                getTaskById: (id) => useTaskStore.getState()._tasksById.get(id),
             });
             if (!result || !enabledRef.current) return;
             // A foreground where nothing changed is the normal case: say

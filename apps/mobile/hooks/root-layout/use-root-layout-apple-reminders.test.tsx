@@ -105,11 +105,14 @@ describe('useRootLayoutAppleRemindersAutoImport', () => {
 
   // Without a flush the import records a reminder as done while its task is
   // still only in memory, so the hook must hand one in.
-  it('hands the import a way to flush the pending task save', async () => {
+  it('hands the import ways to flush and resolve the pending task save', async () => {
     const tree = await mount();
 
     expect(importMocks.runAppleRemindersAutoImport).toHaveBeenCalledWith(
-      expect.objectContaining({ flushPendingSave: expect.any(Function) }),
+      expect.objectContaining({
+        flushPendingSave: expect.any(Function),
+        getTaskById: expect.any(Function),
+      }),
     );
     act(() => tree.unmount());
   });

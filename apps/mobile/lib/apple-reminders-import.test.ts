@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Task } from '@mindwtr/core';
 
 const {
   mockGetItem,
@@ -10,6 +11,7 @@ const {
   mockRequestRemindersPermissionsAsync,
   mockPlatform,
   mockCreateRecoverySnapshot,
+  mockLogWarn,
 } = vi.hoisted(() => ({
   mockGetItem: vi.fn(async () => null as string | null),
   mockSetItem: vi.fn(async () => undefined),
@@ -20,6 +22,7 @@ const {
   mockRequestRemindersPermissionsAsync: vi.fn(async () => ({ status: 'granted' })),
   mockPlatform: { OS: 'ios' },
   mockCreateRecoverySnapshot: vi.fn(async () => 'snapshot.json'),
+  mockLogWarn: vi.fn(async () => undefined),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -43,15 +46,41 @@ vi.mock('expo-calendar', () => ({
   requestRemindersPermissionsAsync: mockRequestRemindersPermissionsAsync,
 }));
 
+vi.mock('./app-log', () => ({
+  logWarn: mockLogWarn,
+}));
+
+// eslint-disable-next-line import/first
 import {
   APPLE_REMINDERS_IMPORT_SETTINGS_KEY,
+  type AppleRemindersImportOptions,
   getAppleReminderLists,
-  importAppleRemindersIntoInbox,
+  importAppleRemindersIntoInbox as importAppleRemindersIntoInboxRaw,
   loadAppleRemindersImportSettings,
   requestAppleRemindersPermission,
   runAppleRemindersAutoImport,
   updateAppleRemindersImportSettings,
 } from './apple-reminders-import';
+
+const liveTask = (id: string, overrides: Partial<Task> = {}): Task => ({
+  id,
+  title: 'Imported reminder',
+  status: 'inbox',
+  tags: [],
+  contexts: [],
+  createdAt: '2026-09-22T00:00:00.000Z',
+  updatedAt: '2026-09-22T00:00:00.000Z',
+  ...overrides,
+});
+
+type ImportTestOptions = Omit<AppleRemindersImportOptions, 'flushPendingSave' | 'getTaskById'>
+  & Partial<Pick<AppleRemindersImportOptions, 'flushPendingSave' | 'getTaskById'>>;
+
+const importAppleRemindersIntoInbox = (options: ImportTestOptions) => importAppleRemindersIntoInboxRaw({
+  flushPendingSave: async () => undefined,
+  getTaskById: (id) => liveTask(id),
+  ...options,
+});
 
 describe('apple-reminders-import', () => {
   beforeEach(() => {
@@ -259,6 +288,10 @@ describe('apple-reminders-import', () => {
     const order: string[] = [];
     const addTask = vi.fn(async () => { order.push('addTask'); return { success: true, id: 'task-1' }; });
     const flushPendingSave = vi.fn(async () => { order.push('flush'); });
+    const getTaskById = vi.fn((id: string) => {
+      order.push('lookup');
+      return liveTask(id);
+    });
     mockSetItem.mockImplementation((async () => { order.push('setItem'); }) as never);
     mockDeleteReminderAsync.mockImplementation((async () => { order.push('deleteReminder'); }) as never);
     mockGetRemindersAsync.mockResolvedValue([
@@ -269,16 +302,18 @@ describe('apple-reminders-import', () => {
       addTask,
       createRecoverySnapshot: mockCreateRecoverySnapshot,
       flushPendingSave,
+      getTaskById,
       listId: 'list-1',
       deleteImportedReminders: true,
     });
 
-    expect(order).toEqual(['addTask', 'flush', 'setItem', 'deleteReminder']);
+    expect(order).toEqual(['addTask', 'flush', 'lookup', 'setItem', 'deleteReminder']);
   });
 
   it('leaves the reminder untouched and stops when the task save cannot be flushed', async () => {
     const addTask = vi.fn(async () => ({ success: true, id: 'task-1' }));
     const flushPendingSave = vi.fn(async () => { throw new Error('save failed'); });
+    const getTaskById = vi.fn((id: string) => liveTask(id));
     mockGetRemindersAsync.mockResolvedValue([
       { id: 'rem-1', title: 'First', completed: false },
       { id: 'rem-2', title: 'Second', completed: false },
@@ -288,6 +323,7 @@ describe('apple-reminders-import', () => {
       addTask,
       createRecoverySnapshot: mockCreateRecoverySnapshot,
       flushPendingSave,
+      getTaskById,
       listId: 'list-1',
       deleteImportedReminders: true,
     })).resolves.toMatchObject({ importedCount: 0, deletedCount: 0, failedCount: 1 });
@@ -296,6 +332,7 @@ describe('apple-reminders-import', () => {
     // up more tasks that cannot be saved either.
     expect(mockSetItem).not.toHaveBeenCalled();
     expect(mockDeleteReminderAsync).not.toHaveBeenCalled();
+    expect(getTaskById).not.toHaveBeenCalled();
     expect(addTask).toHaveBeenCalledTimes(1);
   });
 
@@ -336,26 +373,114 @@ describe('apple-reminders-import', () => {
     });
   });
 
-  it('passes a UUID reminder id as the capture id so a replay adds one task', async () => {
-    const addTask = vi.fn(async () => ({ success: true, id: 'task-id' }));
+  it('accepts a live UUID replay after flush and records the reminder once', async () => {
+    const reminderId = '3F2504E0-4F89-11D3-9A0C-0305E82C3301';
+    const taskId = reminderId.toLowerCase();
+    const addTask = vi.fn(async () => ({ success: true, id: taskId }));
+    const getTaskById = vi.fn((id: string) => liveTask(id));
     mockGetRemindersAsync.mockResolvedValue([
-      { id: '3F2504E0-4F89-11D3-9A0C-0305E82C3301', title: 'Modern id', completed: false },
+      { id: reminderId, title: 'Modern id', completed: false },
+    ] as any);
+
+    await expect(importAppleRemindersIntoInbox({
+      addTask,
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      getTaskById,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    })).resolves.toMatchObject({ importedCount: 1, deletedCount: 1, failedCount: 0 });
+
+    expect(addTask).toHaveBeenCalledWith(
+      'Modern id',
+      { status: 'inbox' },
+      { captureId: taskId },
+    );
+    expect(getTaskById).toHaveBeenCalledWith(taskId);
+    expect(mockSetItem).toHaveBeenCalledOnce();
+    expect(mockDeleteReminderAsync).toHaveBeenCalledWith(reminderId);
+    expect(mockLogWarn).not.toHaveBeenCalled();
+  });
+
+  it('resolves a non-UUID import by the generated task id', async () => {
+    const addTask = vi.fn(async () => ({ success: true, id: 'generated-task-id' }));
+    const getTaskById = vi.fn((id: string) => liveTask(id));
+    mockGetRemindersAsync.mockResolvedValue([
       { id: 'rem-legacy', title: 'Legacy id', completed: false },
     ] as any);
 
-    await importAppleRemindersIntoInbox({
+    await expect(importAppleRemindersIntoInbox({
       addTask,
       createRecoverySnapshot: mockCreateRecoverySnapshot,
+      getTaskById,
       listId: 'list-1',
+    })).resolves.toMatchObject({ importedCount: 1, failedCount: 0 });
+
+    expect(addTask).toHaveBeenCalledWith('Legacy id', { status: 'inbox' });
+    expect(getTaskById).toHaveBeenCalledWith('generated-task-id');
+  });
+
+  it.each([
+    ['deleted', { deletedAt: '2026-09-22T00:00:00.000Z' }],
+    ['purged', {
+      deletedAt: '2026-09-22T00:00:00.000Z',
+      purgedAt: '2026-09-22T01:00:00.000Z',
+    }],
+  ])('keeps a %s UUID replay in Apple Reminders when core resolves a tombstone', async (_state, tombstone) => {
+    const reminderId = '3F2504E0-4F89-11D3-9A0C-0305E82C3301';
+    const taskId = reminderId.toLowerCase();
+    const flushPendingSave = vi.fn(async () => undefined);
+    const getTaskById = vi.fn(() => liveTask(taskId, tombstone));
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: reminderId, title: 'Replay', completed: false },
+    ] as any);
+
+    await expect(importAppleRemindersIntoInbox({
+      addTask: vi.fn(async () => ({ success: true, id: taskId })),
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      flushPendingSave,
+      getTaskById,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    })).resolves.toMatchObject({
+      importedCount: 0,
+      deletedCount: 0,
+      failedCount: 1,
     });
 
-    expect(addTask).toHaveBeenNthCalledWith(
-      1,
-      'Modern id',
-      { status: 'inbox' },
-      { captureId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301' },
-    );
-    expect(addTask).toHaveBeenNthCalledWith(2, 'Legacy id', { status: 'inbox' });
+    expect(flushPendingSave).toHaveBeenCalledOnce();
+    expect(getTaskById).toHaveBeenCalledWith(taskId);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(mockDeleteReminderAsync).not.toHaveBeenCalled();
+    expect(mockLogWarn).toHaveBeenCalledWith('Apple Reminders import kept source because the resolved task is not live', {
+      scope: 'import',
+      extra: { releaseCheck: 'v1.3.2/reminder-live-import-guard' },
+    });
+  });
+
+  it('keeps the source reminder when a successful add returns no task id', async () => {
+    const flushPendingSave = vi.fn(async () => undefined);
+    const getTaskById = vi.fn((id: string) => liveTask(id));
+    mockGetRemindersAsync.mockResolvedValue([
+      { id: 'rem-legacy', title: 'Missing result id', completed: false },
+    ] as any);
+
+    await expect(importAppleRemindersIntoInbox({
+      addTask: vi.fn(async () => ({ success: true })),
+      createRecoverySnapshot: mockCreateRecoverySnapshot,
+      flushPendingSave,
+      getTaskById,
+      listId: 'list-1',
+      deleteImportedReminders: true,
+    })).resolves.toMatchObject({ importedCount: 0, deletedCount: 0, failedCount: 1 });
+
+    expect(flushPendingSave).toHaveBeenCalledOnce();
+    expect(getTaskById).not.toHaveBeenCalled();
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(mockDeleteReminderAsync).not.toHaveBeenCalled();
+    expect(mockLogWarn).toHaveBeenCalledWith('Apple Reminders import kept source because the resolved task is not live', {
+      scope: 'import',
+      extra: { releaseCheck: 'v1.3.2/reminder-live-import-guard' },
+    });
   });
 
   it('queues a settings write behind a running import', async () => {
@@ -456,8 +581,10 @@ describe('apple-reminders-import', () => {
       ...extra,
     });
     const options = () => ({
-      addTask: vi.fn(async () => ({ success: true })) as never,
+      addTask: vi.fn(async () => ({ success: true, id: 'task-id' })) as never,
       createRecoverySnapshot: mockCreateRecoverySnapshot,
+      flushPendingSave: vi.fn(async () => undefined),
+      getTaskById: (id: string) => liveTask(id),
     });
 
     it('does nothing when the toggle is off or no list is chosen', async () => {

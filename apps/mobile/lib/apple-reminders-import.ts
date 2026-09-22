@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 import * as Calendar from 'expo-calendar';
 import type { StoreActionResult, Task } from '@mindwtr/core';
 
+import { logWarn } from './app-log';
+
 export const APPLE_REMINDERS_IMPORT_SETTINGS_KEY = 'mindwtr-apple-reminders-import-v1';
 
 export type AppleRemindersPermissionStatus = 'unavailable' | 'undetermined' | 'granted' | 'denied';
@@ -195,7 +197,9 @@ export type AppleRemindersImportOptions = {
    * schedules a debounced save, so without this the import would call a
    * reminder done while its task lives in memory only.
    */
-  flushPendingSave?: () => Promise<void>;
+  flushPendingSave: () => Promise<void>;
+  /** Reads the current store after the flush so tombstone replays stay failed. */
+  getTaskById: (id: string) => Task | undefined;
   listId: string;
   deleteImportedReminders?: boolean;
 };
@@ -213,7 +217,8 @@ export async function runAppleRemindersAutoImport({
   addTask,
   createRecoverySnapshot,
   flushPendingSave,
-}: Pick<AppleRemindersImportOptions, 'addTask' | 'createRecoverySnapshot' | 'flushPendingSave'>): Promise<AppleRemindersImportResult | null> {
+  getTaskById,
+}: Pick<AppleRemindersImportOptions, 'addTask' | 'createRecoverySnapshot' | 'flushPendingSave' | 'getTaskById'>): Promise<AppleRemindersImportResult | null> {
   if (Platform.OS !== 'ios') return null;
   const settings = await loadAppleRemindersImportSettings();
   if (!settings.autoImportOnOpen || !settings.selectedListId) return null;
@@ -222,6 +227,7 @@ export async function runAppleRemindersAutoImport({
     addTask,
     createRecoverySnapshot,
     flushPendingSave,
+    getTaskById,
     listId: settings.selectedListId,
     deleteImportedReminders: settings.deleteImportedReminders,
   });
@@ -231,6 +237,7 @@ async function runAppleRemindersImport({
   addTask,
   createRecoverySnapshot,
   flushPendingSave,
+  getTaskById,
   listId,
   deleteImportedReminders,
 }: AppleRemindersImportOptions): Promise<AppleRemindersImportResult> {
@@ -304,12 +311,22 @@ async function runAppleRemindersImport({
     // "this reminder is done" — the id list and the delete — waits for it, so
     // a kill in the gap re-imports the reminder instead of losing it.
     try {
-      await flushPendingSave?.();
+      await flushPendingSave();
     } catch {
       // Not recorded and not deleted: the next run picks this reminder up
       // again. Stop here rather than add tasks that cannot be saved either.
       result.failedCount += 1;
       break;
+    }
+
+    const resolvedTask = taskResult.id ? getTaskById(taskResult.id) : undefined;
+    if (!resolvedTask || resolvedTask.deletedAt || resolvedTask.purgedAt) {
+      result.failedCount += 1;
+      await logWarn('Apple Reminders import kept source because the resolved task is not live', {
+        scope: 'import',
+        extra: { releaseCheck: 'v1.3.2/reminder-live-import-guard' },
+      });
+      continue;
     }
 
     result.importedCount += 1;
