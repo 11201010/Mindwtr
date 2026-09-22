@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { useState, type ComponentProps } from 'react';
+import { flushSync } from 'react-dom';
 import type { Task } from '@mindwtr/core';
 import { reportError } from '../../lib/report-error';
 import { TaskQuickActionMenu } from './TaskQuickActionMenu';
@@ -140,6 +141,33 @@ describe('TaskQuickActionMenu', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
         await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: expected }));
     });
+
+    it.each(['pointer', 'keyboard'] as const)(
+        'keeps the quick menu open when selecting a suggested context with the %s (#1267)',
+        async (selectionMethod) => {
+            const props = renderClosableMenu({ contextSuggestions: ['@garden'] });
+            fireEvent.click(screen.getByRole('menuitem', { name: 'Contexts…' }));
+            const input = screen.getByRole('textbox', { name: 'task.aria.contexts' });
+            fireEvent.focus(input);
+            fireEvent.change(input, { target: { value: 'gard' } });
+
+            if (selectionMethod === 'pointer') {
+                // Real browsers can commit the list removal before this event reaches window.
+                // Flush at document to reproduce that ordering in jsdom.
+                document.addEventListener('mousedown', () => flushSync(() => undefined), { once: true });
+                fireEvent.mouseDown(screen.getByRole('option', { name: '@garden' }));
+                fireEvent.mouseUp(window);
+                fireEvent.click(window);
+            } else {
+                fireEvent.keyDown(input, { key: 'Enter' });
+            }
+
+            expect(screen.getByRole('menu')).toBeInTheDocument();
+            expect(input).toHaveValue('@garden');
+            fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+            await waitFor(() => expect(props.onUpdateTask).toHaveBeenCalledExactlyOnceWith({ contexts: ['@garden'] }));
+        },
+    );
 
     it('allows explicitly saving a legacy bare context without changing other task fields (#1189)', async () => {
         const props = renderMenu({ task: { ...task, contexts: ['garden', '@garden'], tags: ['#keep'] } });

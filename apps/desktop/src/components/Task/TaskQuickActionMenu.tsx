@@ -288,15 +288,14 @@ export function TaskQuickActionMenu({
     }, []);
 
     useEffect(() => {
-        const isInsideMenuSurface = (target: Node | null) => {
-            if (!target) return false;
+        const isInsideMenuSurface = (event: Event) => event.composedPath().some((target) => {
+            if (!(target instanceof Node)) return false;
             if (menuRef.current?.contains(target) || panelRef.current?.contains(target)) return true;
             const targetElement = target instanceof Element ? target : target.parentElement;
             return Boolean(targetElement?.closest('[data-selector-dropdown="true"]'));
-        };
+        });
         const handlePointer = (event: Event) => {
-            const target = event.target as Node | null;
-            if (isInsideMenuSurface(target)) return;
+            if (isInsideMenuSurface(event)) return;
             // Only mousedown has a click that could follow it in the same
             // gesture — contextmenu (a right-click elsewhere) never fires one.
             if (event.type === 'mousedown') suppressDismissClick();
@@ -310,8 +309,7 @@ export function TaskQuickActionMenu({
                 // item on mousedown scrolls it into view — closing here killed
                 // the click before mouseup, a menu tap that silently did
                 // nothing. The list scrolling behind the menu still closes it.
-                const scrollTarget = event.target instanceof Node ? event.target : null;
-                if (isInsideMenuSurface(scrollTarget)) return;
+                if (isInsideMenuSurface(event)) return;
             }
             onClose({ restoreFocus: false });
         };

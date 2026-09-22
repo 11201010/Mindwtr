@@ -20,6 +20,7 @@ export type SeedTask = {
     reviewAt?: string;
     isFocusedToday?: boolean;
     projectId?: string;
+    contexts?: string[];
     areaId?: string;
     attachments?: Attachment[];
 };
@@ -78,7 +79,7 @@ export const seedAppData = async (page: Page, data: SeedData): Promise<void> => 
             title: task.title,
             status: task.status,
             tags: [],
-            contexts: [],
+            contexts: task.contexts ?? [],
             createdAt: SEED_TIMESTAMP,
             updatedAt: SEED_TIMESTAMP,
             ...(task.dueDate ? { dueDate: task.dueDate } : {}),
