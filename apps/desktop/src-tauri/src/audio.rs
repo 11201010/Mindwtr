@@ -783,6 +783,13 @@ fn stop_audio_recording_blocking(
     let target_path = target_dir.join(&file_name);
 
     write_audio_capture_wav(&target_path, &info, &samples)?;
+    let nonzero_samples = samples.iter().filter(|sample| **sample != 0).count();
+    log::info!(
+        "Audio capture WAV saved with sampled signal \
+         extra.releaseCheck=v1.3.2/macos-microphone-capture \
+         total={} count={nonzero_samples}",
+        samples.len()
+    );
 
     Ok(AudioCaptureResult {
         path: target_path.to_string_lossy().to_string(),

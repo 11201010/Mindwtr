@@ -12,5 +12,7 @@
     <string>Mindwtr uses your calendars to show upcoming events during planning and review.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Mindwtr connects to sync servers and calendar feeds on your local network when you configure them, such as a self-hosted sync server behind your router.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Mindwtr uses your microphone to record audio for task transcription.</string>
 </dict>
 </plist>

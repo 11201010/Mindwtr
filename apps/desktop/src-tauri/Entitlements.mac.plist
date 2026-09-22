@@ -8,6 +8,8 @@
     <string>5X9JC5PL7T</string>
     <key>com.apple.security.personal-information.calendars</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <key>com.apple.developer.icloud-services</key>
     <array>
         <string>CloudKit</string>

@@ -20,11 +20,41 @@ def tracked_plists() -> list[Path]:
 def main() -> int:
     failures: list[str] = []
     paths = tracked_plists()
+    plists: dict[Path, object] = {}
     for path in paths:
         try:
-            plistlib.loads(path.read_bytes())
+            plists[path] = plistlib.loads(path.read_bytes())
         except (OSError, plistlib.InvalidFileException, ValueError) as error:
             failures.append(f"{path}: {error}")
+
+    required_values = {
+        Path("apps/desktop/src-tauri/Info.plist"): {
+            "NSMicrophoneUsageDescription": str,
+        },
+        Path("apps/desktop/src-tauri/Info.appstore.plist"): {
+            "NSMicrophoneUsageDescription": str,
+        },
+        Path("apps/desktop/src-tauri/Entitlements.mas.plist"): {
+            "com.apple.security.device.audio-input": True,
+            "com.apple.security.device.microphone": True,
+        },
+        Path("apps/desktop/src-tauri/Entitlements.mac.plist"): {
+            "com.apple.security.device.audio-input": True,
+        },
+    }
+    for path, requirements in required_values.items():
+        plist = plists.get(path)
+        if not isinstance(plist, dict):
+            continue
+        for key, expected in requirements.items():
+            value = plist.get(key)
+            valid = (
+                isinstance(value, expected) and bool(value)
+                if expected is str
+                else value is expected
+            )
+            if not valid:
+                failures.append(f"{path}: missing or invalid {key}")
 
     if failures:
         print("Invalid Apple property lists:")
