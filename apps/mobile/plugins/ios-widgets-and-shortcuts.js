@@ -120,11 +120,23 @@ const ensureSourceFileInTarget = (xcodeProject, { filePath, groupKey, targetUuid
 const ensureWidgetSwiftSourcesInTarget = (
   xcodeProject,
   { swiftFiles, groupKey, targetUuid }
-) => swiftFiles.filter((fileName) => ensureSourceFileInTarget(xcodeProject, {
-  filePath: `${TARGET_NAME}/${fileName}`,
-  groupKey,
-  targetUuid,
-}));
+) => {
+  // node-xcode locates target phases by their conventional comment; an old
+  // target-name comment makes addSourceFile fall back to the app's Sources.
+  const objects = xcodeProject.hash.project.objects;
+  for (const phase of objects.PBXNativeTarget[targetUuid].buildPhases) {
+    if (objects.PBXSourcesBuildPhase[phase.value]) {
+      phase.comment = 'Sources';
+      objects.PBXSourcesBuildPhase[`${phase.value}_comment`] = 'Sources';
+    }
+  }
+  return swiftFiles.filter((fileName) => ensureSourceFileInTarget(xcodeProject, {
+    // The group already owns the MindwtrWidgets directory.
+    filePath: fileName,
+    groupKey,
+    targetUuid,
+  }));
+};
 
 const addSiriShortcutsRegistrationToAppDelegate = (contents) => {
   const registrationCall = `${SIRI_CAPTURE_SHORTCUTS_PROVIDER}.updateAppShortcutParameters()`;
@@ -362,13 +374,13 @@ const addWidgetTargetToXcode = (config) =>
     xcodeProject.addBuildPhase(
       [...widgetFiles.swiftFiles, ...widgetFiles.intentFiles],
       'PBXSourcesBuildPhase',
-      TARGET_NAME,
+      'Sources',
       targetUuid,
       'app_extension',
       '""'
     );
-    xcodeProject.addBuildPhase([], 'PBXFrameworksBuildPhase', TARGET_NAME, targetUuid, 'app_extension', '""');
-    xcodeProject.addBuildPhase([...widgetFiles.assetDirectories], 'PBXResourcesBuildPhase', TARGET_NAME, targetUuid, 'app_extension', '""');
+    xcodeProject.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', targetUuid, 'app_extension', '""');
+    xcodeProject.addBuildPhase([...widgetFiles.assetDirectories], 'PBXResourcesBuildPhase', 'Resources', targetUuid, 'app_extension', '""');
 
     const mainTargetUuid = xcodeProject.getFirstTarget().uuid;
     let embedPhase = xcodeProject.buildPhaseObject('PBXCopyFilesBuildPhase', 'Embed App Extensions', mainTargetUuid);
