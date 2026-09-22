@@ -32,7 +32,7 @@ This folder contains small, focused decision documents that explain **why** we m
 - [ADR 0026: Apple Watch companion and durable capture boundary](0026-watch-companion-boundary.md)
 - [ADR 0027: Cancellation as an archived outcome](0027-cancellation-outcome.md)
 - [ADR 0028: How native surfaces run core commands while the app is closed](0028-native-surfaces-run-core-commands.md) (Proposed)
-- [ADR 0029: Native clients host the TypeScript core in-process](0029-native-clients-host-the-typescript-core.md) (Proposed)
+- [ADR 0029: Native clients host the TypeScript core in-process](0029-native-clients-host-the-typescript-core.md) (Accepted 2026-09-22)
 
 ## Template
 

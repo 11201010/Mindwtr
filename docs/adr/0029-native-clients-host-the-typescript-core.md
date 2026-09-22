@@ -1,7 +1,7 @@
 # ADR 0029: Native clients host the TypeScript core in-process
 
-Date: 2026-09-21
-Status: Proposed
+Date: 2026-09-21 (decision 2026-09-22)
+Status: Accepted
 
 ## Context
 
@@ -188,9 +188,24 @@ Findings for the shared side:
 
 Not measured: scrolling smoothness for either client (this phone refuses `adb shell screenrecord`; the recordings are frame sequences at about three per second and show order, not smoothness), the React Native client's Focus derivation and tap-to-answer in this session, whether either engine merges faster, network sync in the pilot, non-English sorting (both sides share the collator stand-in), TalkBack, rotation, tablets. Every interaction was an injected tap; nobody used the pilot by hand yet. Side effect on the shared phone: running the baseline's merge scenario left its store at 4,400 tasks with " (remote)" appended to 250 titles; its bench scenario now refuses to run until that store is reset by uninstall and reinstall.
 
+## Decision (maintainer, 2026-09-22)
+
+**Proceed with completing the native Android client on the shared TypeScript core, and begin a native iOS client on the same core and the same host contract.**
+
+The reviewed pilot is enough evidence to invest in this direction. It does not establish production readiness or across-the-board performance superiority, and the Android result says nothing about Apple performance or readiness. The React Native apps remain the production clients until feature completion, correctness, accessibility, language behavior, physical-device testing, compatibility with other clients and an opt-in rollout are done. The Android runtime's production suitability and the timing of any iOS replacement remain separate decisions.
+
+Work order:
+
+1. Put the pilot on a clean foundation: drop the obsolete regex shim (fixed in `da57df2ef`), and move the two leaked rules (stored-date construction with its midday default; the allowed statuses and priorities) back into the core, where Kotlin only presents them.
+2. Windowed host API: lightweight row summaries, section counts, a result revision and paged retrieval, with membership and ordering in the core and the full task fetched for the editor. One task owns this contract; Android and iOS implement the same definitions.
+3. Merge responsiveness, as its own reviewed task: one authoritative store and persistence owner; acceptance is responsive interaction with correct results, including edits that arrive while work is outstanding (the pilot's edit test did not record whether a merge was running at submission, so that guarantee must be established in the scheduling patch), honest handling of failed writes, and the response a person sees.
+4. iOS: a runnable SwiftUI Inbox on JavaScriptCore in the simulator, separate bundle id, generated data, isolated storage, the same contract and fixtures, Apple host services in Swift, the runtime off the main thread (JavaScriptCore serializes access within one virtual machine, so it does not remove the merge stall by itself), and production sorting and date behavior validated instead of the collation stand-in. Simulator numbers are simulator numbers; physical-iPhone checks come before any responsiveness claim.
+
+Apple hardware: an M4 Mac mini (16 GB, 256 GB) was bought on 2026-09-22, so the "no Apple hardware" limit in the Non-goals below no longer applies to building and inspecting; a physical iPhone is still needed for device validation. Not in scope: Rust, a macOS desktop rewrite, a Watch rewrite, further engine comparisons.
+
 ## Non-goals
 
-This ADR does not decide to migrate. It does not choose the Android engine, does not cover iOS work (no Apple hardware is available yet), and does not change the React Native app, which stays the production client. The public discussion of a native direction waits for Gate 2 numbers.
+This ADR does not decide to migrate. It does not choose the Android engine, did not cover iOS work at the time (no Apple hardware was available; see the Decision), and does not change the React Native app, which stays the production client. The public discussion of a native direction waits for Gate 2 numbers.
 
 ## Consequences
 
