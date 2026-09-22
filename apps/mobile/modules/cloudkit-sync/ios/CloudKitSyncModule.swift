@@ -65,6 +65,7 @@ public class CloudKitSyncModule: Module {
             case .noAccount: return "noAccount"
             case .restricted: return "restricted"
             case .temporarilyUnavailable: return "temporarilyUnavailable"
+            case .couldNotDetermine: return "unknown"
             @unknown default: return "unknown"
             }
         }

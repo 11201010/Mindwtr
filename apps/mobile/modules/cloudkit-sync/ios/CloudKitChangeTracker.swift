@@ -20,7 +20,7 @@ enum CloudKitChangeTracker {
     ) async throws -> ChangeResult {
         let previousToken = deserializeToken(changeTokenBase64)
 
-        var config = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
+        let config = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
         config.previousServerChangeToken = previousToken
 
         let op = CKFetchRecordZoneChangesOperation(recordZoneIDs: [zoneID], configurationsByRecordZoneID: [zoneID: config])

@@ -515,8 +515,13 @@ export const subscribeToCloudKitChanges = (onChanged: () => void): (() => void) 
 
     // Expo SDK 54+: NativeModule from requireNativeModule has addListener built-in
     changeSubscription = (CloudKitSync as any).addListener('onRemoteChange', () => {
+        // Proves a silent push reached the app. The native delegate method had
+        // the wrong return type since March and was never called, so this
+        // line had never been written by a real push before v1.3.2.
         void logInfo('CloudKit remote change notification received', {
             scope: 'cloudkit',
+            force: true,
+            extra: { releaseCheck: 'v1.3.2/cloudkit-push-delivered', origin: 'push' },
         });
         onChanged();
     });

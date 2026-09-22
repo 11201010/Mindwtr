@@ -236,8 +236,11 @@ public final class MindwtrSceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) -> [UIApplication.OpenURLOptionsKey: Any] {
         var options: [UIApplication.OpenURLOptionsKey: Any] = [
             .openInPlace: context.options.openInPlace,
-            .annotation: context.options.annotation,
         ]
+        // `annotation` is `Any?`; storing it directly would box the optional.
+        if let annotation = context.options.annotation {
+            options[.annotation] = annotation
+        }
         if let sourceApplication = context.options.sourceApplication {
             options[.sourceApplication] = sourceApplication
         }
