@@ -162,6 +162,32 @@ The Inbox control was unchanged, which is reassuring but does not prove identica
 
 With Gate 1 passed, build Inbox, the task editor and Focus in Compose on the same core, the same database and the same phone as the React Native app. Exercise the failure families from ADR 0028's evidence: large lists, keyboard and insets, sheets, navigation and deep links. Compare startup to a usable Inbox, list frame behavior, open, complete and save latency, memory, responsiveness during sync, code size, and the amount of workaround code. Record how it feels as well as the numbers.
 
+### Gate 2 result (2026-09-22): a usable pilot, recommendation "go, with one named blocker"
+
+A Jetpack Compose pilot (`apps/android-native/` on the local branch `experiment/gate2-native-android`, commit `6c74a67e9`; report `apps/android-native/PILOT-REPORT.md`; APK SHA-256 `f32626d6…1df60`, 13.3 MB) with Inbox, a task editor and Focus runs on the Gate 1 host, extended, with the core frozen at `main` `7273715d9`. It seeds the same fixture the React Native baseline used (hash `6b34f324`) and compares against that baseline on the same phone, alternating clients with the order reversed halfway and interrupted rounds discarded. Nothing under `packages/core`, `apps/mobile` or `apps/desktop` changed. Not reviewed independently yet.
+
+| Measure (same phone, thermal status 0, 30 °C) | Pilot | React Native |
+| --- | ---: | ---: |
+| Launch to a usable Focus, 4 rounds each | 651 / 662 / 663 / 670 ms | 1,045 / 1,051 / 1,080 / 1,083 ms |
+| Launch to first frame | 108 to 118 ms | 293 to 332 ms |
+| Memory on a fresh launch, same data on screen | 83 to 86 MB | 183 MB (the whole app) |
+| Tap to a visible answer, idle | 52 to 80 ms (6 samples) | not measured (needs a log line in the app) |
+| Tap to a visible answer during a 250-change merge | 829 to 862 ms, one at 1,513 (8 samples) | not measured |
+
+The React Native launch figure matches the 1,044 ms recorded above, which cross-checks the method. The engine-wait probe during merges ran in both clients, but the merge step crossed over between the two workloads inside the session (the device-state staircase above), and the pilot's probe fired about twice as often, so the runs do not establish that either engine merges faster. What stands in both: one merge is an uninterrupted block of about a second on this store.
+
+The four criteria: (1) better everyday experience: yes on start-up, keyboard handling (the field stays visible), large text, an unsaved edit surviving back navigation, and memory; worse on row detail, undo and everything not built. (2) Performance: faster at starting, opening, editing and saving; during a sync at least as bad as today and possibly worse, and the data cannot separate that from the phone's state. (3) Correct shared behavior: 33,905 field values match the workstation with 0 differences; both clients hold 4,398 tasks, Inbox 465, Focus 44 / 596 / 0 / 2,468 / 29; a completion survived a process kill one second later; an edit submitted while merges ran survived in both runs. (4) Implementation: 1,359 non-blank Kotlin lines (280 engine and ports, 276 facade, 803 screens), no compatibility layer, no domain rule in Kotlin.
+
+Recommendation from the pilot: **go, with one named blocker.** A sync merge holds the one JavaScript thread for most of a second in both clients, so a tap that answers in 66 ms when idle takes about 840 ms during a merge. That is a shared core and scheduling problem, not a native-client problem; finishing a native client without addressing it would ship the same stall in a new app. The decision belongs to the maintainer.
+
+Findings for the shared side:
+
+- The core does not load in this QuickJS at all until one escape changes: `packages/core/src/quick-add.ts` line 258 has `\-` inside a Unicode-mode character class, which V8 and Hermes accept and this engine rejects while reading the file. The pilot's build step rewrites that one escape to `\x2D`, asserts it appears exactly once, and proves the two patterns behave identically over 22 cases. A core fix must not simply drop the backslash: `}-–` would then read as a range. Move the hyphen to the end of the class or write `\x2D`.
+- The clearest single improvement found: the Focus derivation costs 67 ms in the pilot, but shipping it to the screen costs 154 ms, because the host API sends all 3,137 rows for a screen that shows about ten. Send the drawn rows plus counts. This is a design fix in the host API.
+- `getTranslator` answers in English with no error until `loadTranslations` has finished; a host must load the language before any screen asks.
+
+Not measured: scrolling smoothness for either client (this phone refuses `adb shell screenrecord`; the recordings are frame sequences at about three per second and show order, not smoothness), the React Native client's Focus derivation and tap-to-answer in this session, whether either engine merges faster, network sync in the pilot, non-English sorting (both sides share the collator stand-in), TalkBack, rotation, tablets. Every interaction was an injected tap; nobody used the pilot by hand yet. Side effect on the shared phone: running the baseline's merge scenario left its store at 4,400 tasks with " (remote)" appended to 250 titles; its bench scenario now refuses to run until that store is reset by uninstall and reinstall.
+
 ## Non-goals
 
 This ADR does not decide to migrate. It does not choose the Android engine, does not cover iOS work (no Apple hardware is available yet), and does not change the React Native app, which stays the production client. The public discussion of a native direction waits for Gate 2 numbers.
