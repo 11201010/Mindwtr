@@ -65,6 +65,18 @@ const logAutomationCaptureProjectDiagnostic = (outcome: 'created' | 'reused' | '
     })}\n`);
 };
 
+const logAutomationFailedOperationSettledDiagnostic = (): void => {
+    process.stderr.write(`${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'automation-storage',
+        message: 'Automation failed operation pending work settled',
+        context: {
+            releaseCheck: 'v1.3.2/automation-failed-operation-settled',
+        },
+    })}\n`);
+};
+
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'];
 
 export const asTaskStatus = (value: unknown): TaskStatus | null => {
@@ -157,18 +169,28 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
     const storage = createMindwtrAutomationStorage(options);
     const runStoreOperation = <T>(operation: () => Promise<T>): Promise<T> => singletonStoreQueue.run(async () => {
         const storageIdentity = `${storage.paths.dataPath}\0${storage.paths.dbPath}`;
-        const replacesActiveDocument = activeStorageIdentity !== storageIdentity;
         setStorageAdapter(storage);
         let retried = false;
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                if (replacesActiveDocument) markNextLoadAsDocumentReplacement();
+                if (activeStorageIdentity !== storageIdentity) markNextLoadAsDocumentReplacement();
                 const result = await operation();
                 await flushPendingSave();
                 activeStorageIdentity = storageIdentity;
                 if (retried) logAutomationRetryDiagnostic();
                 return result;
             } catch (error) {
+                let settled = false;
+                try {
+                    await flushPendingSave();
+                    settled = true;
+                } catch {
+                    // A terminal flush failure dequeues its payload. Keep the
+                    // operation error, but never let this profile's work cross
+                    // the adapter handoff below.
+                }
+                activeStorageIdentity = null;
+                if (settled) logAutomationFailedOperationSettledDiagnostic();
                 if (attempt > 0 || !isRetryableAutomationConcurrencyError(error)) throw error;
                 retried = true;
             }

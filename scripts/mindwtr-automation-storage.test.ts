@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { spawn } from 'child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setTimeout as waitFor } from 'timers/promises';
@@ -556,5 +556,89 @@ describe('automation script sqlite writes', () => {
             .toEqual(['First profile task']);
         expect((JSON.parse(readFileSync(second.dataPath, 'utf8')) as AppData).tasks.map((task) => task.title))
             .toEqual(['Second profile task']);
+    });
+
+    test('settles a failed operation before another profile can use the singleton store', async () => {
+        const first = makeProfile();
+        const second = makeProfile();
+        const firstService = await createMindwtrAutomationService(first);
+        const secondService = await createMindwtrAutomationService(second);
+        await firstService.createTask({ title: 'First profile private task' });
+        await secondService.createTask({ title: 'Second profile private task' });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+
+        let secondTasks: Task[];
+        try {
+            await expect(firstService.createTask({
+                input: 'Rejected capture +FirstProfileProject',
+                props: { sectionId: 'missing-section' },
+            })).rejects.toThrow('Section not found');
+            secondTasks = await secondService.listTasks({ includeAll: true });
+        } finally {
+            stderrSpy.mockRestore();
+        }
+
+        expect(secondTasks!.map((task) => task.title)).toEqual(['Second profile private task']);
+        expect(readRows(second.dbPath, 'SELECT title FROM tasks ORDER BY title')).toEqual([
+            { title: 'Second profile private task' },
+        ]);
+        expect(readRows(second.dbPath, 'SELECT title FROM projects ORDER BY title')).toEqual([]);
+        const secondMirror = JSON.parse(readFileSync(second.dataPath, 'utf8')) as AppData;
+        expect(secondMirror.tasks.map((task) => task.title)).toEqual(['Second profile private task']);
+        expect(secondMirror.projects).toEqual([]);
+        expect(readRows(first.dbPath, 'SELECT title FROM projects ORDER BY title')).toEqual([
+            { title: 'FirstProfileProject' },
+        ]);
+        expect((JSON.parse(readFileSync(first.dataPath, 'utf8')) as AppData).projects.map((item) => item.title))
+            .toEqual(['FirstProfileProject']);
+        expect(stderrLines.join('')).toContain('v1.3.2/automation-failed-operation-settled');
+    });
+
+    test('preserves the operation error when failed settlement is terminal', async () => {
+        const firstRoot = mkdtempSync(join(tmpdir(), 'mindwtr-automation-storage-'));
+        tempDirs.push(firstRoot);
+        const firstDataDir = join(firstRoot, 'json');
+        const first = {
+            dataPath: join(firstDataDir, 'data.json'),
+            dbPath: join(firstRoot, 'sqlite', 'mindwtr.db'),
+        };
+        const second = makeProfile();
+        const firstService = await createMindwtrAutomationService(first);
+        const secondService = await createMindwtrAutomationService(second);
+        await firstService.createTask({ title: 'First profile private task' });
+        await secondService.createTask({ title: 'Second profile private task' });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+
+        chmodSync(firstDataDir, 0o555);
+        let secondTasks: Task[];
+        try {
+            await expect(firstService.createTask({
+                input: 'Rejected capture +FirstProfileProject',
+                props: { sectionId: 'missing-section' },
+            })).rejects.toThrow('Section not found');
+            secondTasks = await secondService.listTasks({ includeAll: true });
+        } finally {
+            chmodSync(firstDataDir, 0o755);
+            stderrSpy.mockRestore();
+        }
+
+        expect(stderrLines.join('')).not.toContain('v1.3.2/automation-failed-operation-settled');
+        expect(secondTasks!.map((task) => task.title)).toEqual(['Second profile private task']);
+        expect(readRows(second.dbPath, 'SELECT title FROM tasks ORDER BY title')).toEqual([
+            { title: 'Second profile private task' },
+        ]);
+        const secondMirror = JSON.parse(readFileSync(second.dataPath, 'utf8')) as AppData;
+        expect(secondMirror.tasks.map((task) => task.title)).toEqual(['Second profile private task']);
+        expect(secondMirror.projects).toEqual([]);
     });
 });
