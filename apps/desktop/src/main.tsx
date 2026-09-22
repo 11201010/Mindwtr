@@ -74,14 +74,15 @@ const installCoreLoggerBridge = () => {
                 scope,
                 extra,
                 message: payload.message,
+                force: payload.force,
             });
             return;
         }
         if (payload.level === 'warn') {
-            void logWarn(payload.message, { scope, extra });
+            void logWarn(payload.message, { scope, extra, force: payload.force });
             return;
         }
-        void logInfo(payload.message, { scope, extra });
+        void logInfo(payload.message, { scope, extra, force: payload.force });
     });
 };
 
