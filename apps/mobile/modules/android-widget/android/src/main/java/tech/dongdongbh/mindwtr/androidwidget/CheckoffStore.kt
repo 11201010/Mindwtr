@@ -52,13 +52,19 @@ object CheckoffStore {
   private const val REFRESH_COUNT = "refreshCount"
   private const val INDEX_RETRY = "indexRetry"
   private const val FAST_RETRY_COUNT = "fastRetryCount"
+  private const val SERIALIZED_COUNT = "serializedCount"
   internal const val MAX_FAST_RETRIES = 2
   private const val TAG = "MindwtrWidgetCheckoff"
+  private val stateMonitor = Any()
 
   // Lazy: the pure helpers run in JVM unit tests where android.os.Handler is a stub.
   private val handler by lazy { Handler(Looper.getMainLooper()) }
 
-  fun pending(context: Context): Map<String, Long> = readPending(context) ?: emptyMap()
+  private fun <T> withStateTransaction(action: () -> T): T = synchronized(stateMonitor, action)
+
+  fun pending(context: Context): Map<String, Long> = withStateTransaction {
+    readPending(context) ?: emptyMap()
+  }
 
   fun isPending(context: Context, taskId: String): Boolean = pending(context).containsKey(taskId)
 
@@ -67,25 +73,28 @@ object CheckoffStore {
    * by older builds may hold `true` rather than a name; they map to "" and stay
    * compatible. Once committed, a widget interaction never removes queue data.
    */
-  fun committedFiles(context: Context): Map<String, String> =
+  fun committedFiles(context: Context): Map<String, String> = withStateTransaction {
     context.getSharedPreferences(COMMITTED_PREFS_NAME, Context.MODE_PRIVATE).all
       .mapValues { (_, value) -> value as? String ?: "" }
+  }
 
   fun committed(context: Context): Set<String> = committedFiles(context).keys
 
   fun isCommitted(context: Context, taskId: String): Boolean = committed(context).contains(taskId)
 
   /** Struck through on the widget: waiting for its undo window, or queued and not yet ingested. */
-  fun isStruck(context: Context, taskId: String): Boolean = isPending(context, taskId) || isCommitted(context, taskId)
+  fun isStruck(context: Context, taskId: String): Boolean = withStateTransaction {
+    isPending(context, taskId) || isCommitted(context, taskId)
+  }
 
   /**
    * Forgets committed ids the payload no longer lists: the app ingested them (or
    * the task went away). Called on every render so the set cannot grow forever.
    */
-  fun prune(context: Context, presentTaskIds: Set<String>) {
+  fun prune(context: Context, presentTaskIds: Set<String>) = withStateTransaction {
     val current = committedFiles(context)
     val keep = pruned(current, presentTaskIds)
-    if (keep.size == current.size) return
+    if (keep.size == current.size) return@withStateTransaction
     writeCommitted(context, keep)
   }
 
@@ -104,11 +113,11 @@ object CheckoffStore {
   }
 
   /** Refuses a state-changing tap when pending state cannot be read safely. */
-  fun tapAction(context: Context, taskId: String, now: Long = System.currentTimeMillis()): TapAction {
-    if (isCommitted(context, taskId)) return TapAction.RECONCILE
-    val current = readPending(context) ?: return TapAction.NO_OP
+  fun tapAction(context: Context, taskId: String, now: Long = System.currentTimeMillis()): TapAction = withStateTransaction {
+    if (isCommitted(context, taskId)) return@withStateTransaction TapAction.RECONCILE
+    val current = readPending(context) ?: return@withStateTransaction TapAction.NO_OP
     val tappedAt = current[taskId]
-    return tapAction(
+    tapAction(
       isCommitted = false,
       hasQueuedCompletion = tappedAt != null && PendingCaptureWriter.hasQueuedCompletion(context.filesDir, taskId, tappedAt),
       pendingSince = tappedAt,
@@ -117,27 +126,36 @@ object CheckoffStore {
   }
 
   /** Marks or, when already pending, un-marks (undo). Returns the durable state. */
-  fun toggle(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Boolean {
-    if (isCommitted(context, taskId)) return false
-    val current = readPending(context) ?: return false
+  fun toggle(context: Context, taskId: String, now: Long = System.currentTimeMillis()): Boolean = withStateTransaction {
+    if (isCommitted(context, taskId)) return@withStateTransaction false
+    val current = readPending(context) ?: return@withStateTransaction false
+    val tappedAt = current[taskId]
+    if (tapAction(
+        isCommitted = false,
+        hasQueuedCompletion = tappedAt != null && PendingCaptureWriter.hasQueuedCompletion(context.filesDir, taskId, tappedAt),
+        pendingSince = tappedAt,
+        now = now,
+      ) != TapAction.TOGGLE_PENDING
+    ) return@withStateTransaction current.containsKey(taskId)
     val result = toggledDurably(current, taskId, now) { writePending(context, it) }
     if (!result.persisted) {
       Log.w(TAG, "Could not persist widget check-off toggle")
       if (result.isPending) scheduleInitialCommit(context)
-      return result.isPending
+      return@withStateTransaction result.isPending
     }
+    recordSerializedCheckoff(context)
     if (result.isPending) scheduleInitialCommit(context)
-    return result.isPending
+    result.isPending
   }
 
   /**
    * Queues every entry older than the Undo window. Failed queue writes remain
    * pending and are retried; only durably queued entries become hidden.
    */
-  fun sweep(context: Context, now: Long = System.currentTimeMillis()): SweepState {
+  fun sweep(context: Context, now: Long = System.currentTimeMillis()): SweepState = withStateTransaction {
     val committed = committedFiles(context)
     val current = readPending(context)
-      ?: return SweepState(emptyMap(), committed, newlyCommitted = 0, failed = 1)
+      ?: return@withStateTransaction SweepState(emptyMap(), committed, newlyCommitted = 0, failed = 1)
     val next = swept(current, committed, now) { taskId, tappedAt ->
       PendingCaptureWriter.writeCompletion(context.filesDir, taskId, tappedAt).name
     }
@@ -149,7 +167,7 @@ object CheckoffStore {
       // deterministic file before it tries the index again.
       markIndexRetry(context, true)
       Log.e(TAG, "Could not persist queued widget completions; leaving check-offs pending")
-      return next.copy(
+      return@withStateTransaction next.copy(
         pending = current,
         committed = committedFiles(context),
         failed = next.failed + 1,
@@ -161,7 +179,7 @@ object CheckoffStore {
     val actual = if (pendingWritten) next else next.copy(pending = current, failed = next.failed + 1)
     if (!pendingWritten) Log.w(TAG, "Could not clear queued widget check-offs; retrying")
     if (actual.failed > 0) Log.w(TAG, "Could not queue ${actual.failed} widget completion(s); retrying")
-    return actual
+    actual
   }
 
   fun toggled(pending: Map<String, Long>, taskId: String, now: Long): Map<String, Long> =
@@ -308,6 +326,20 @@ object CheckoffStore {
       .edit()
       .putInt(FAST_RETRY_COUNT, count)
       .commit()
+  }
+
+  private fun recordSerializedCheckoff(context: Context) {
+    val prefs = context.getSharedPreferences(DIAGNOSTICS_PREFS_NAME, Context.MODE_PRIVATE)
+    val total = prefs.getInt(SERIALIZED_COUNT, 0).coerceAtLeast(0) + 1
+    prefs.edit().putInt(SERIALIZED_COUNT, total).commit()
+  }
+
+  /** Read once by the React Native bridge so Diagnostics can prove the serialized tap ran. */
+  fun consumeSerializedCount(context: Context): Int = withStateTransaction {
+    val prefs = context.getSharedPreferences(DIAGNOSTICS_PREFS_NAME, Context.MODE_PRIVATE)
+    val count = prefs.getInt(SERIALIZED_COUNT, 0).coerceAtLeast(0)
+    if (count <= 0) return@withStateTransaction 0
+    if (prefs.edit().remove(SERIALIZED_COUNT).commit()) count else 0
   }
 
   internal fun nextFastRetry(previous: Int): Int? =

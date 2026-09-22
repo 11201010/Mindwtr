@@ -16,10 +16,12 @@ class AndroidWidgetModule : Module() {
       val context = appContext.reactContext
       val result = context?.let { WidgetRenderer.refreshAll(it) } ?: WidgetRenderer.RefreshResult()
       val hiddenCheckoffCount = context?.let { CheckoffStore.consumeHiddenCount(it) } ?: 0
+      val serializedCheckoffCount = context?.let { CheckoffStore.consumeSerializedCount(it) } ?: 0
       mapOf(
         "legacyWidgetCount" to result.legacyWidgetCount,
         "compactWidgetCount" to result.compactWidgetCount,
         "hiddenCheckoffCount" to hiddenCheckoffCount,
+        "serializedCheckoffCount" to serializedCheckoffCount,
         "directCollectionCount" to result.directCollectionCount,
         "renderedTaskCount" to result.renderedTaskCount,
         "eligibleTaskCount" to result.eligibleTaskCount,

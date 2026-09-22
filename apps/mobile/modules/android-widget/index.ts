@@ -13,6 +13,7 @@ type WidgetRefreshResult = {
   legacyWidgetCount: number;
   compactWidgetCount: number;
   hiddenCheckoffCount?: number;
+  serializedCheckoffCount?: number;
   directCollectionCount?: number;
   renderedTaskCount?: number;
   eligibleTaskCount?: number;
