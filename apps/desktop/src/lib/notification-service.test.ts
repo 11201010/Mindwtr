@@ -352,7 +352,6 @@ describe('Linux native notification path (#1232)', () => {
             'Linux desktop notification submitted',
             expect.objectContaining({
                 extra: {
-                    releaseCheck: 'v1.3.1/linux-notification-delivery',
                     backend: 'linux-dbus',
                     outcome: 'submitted',
                 },
@@ -388,7 +387,6 @@ describe('Linux native notification path (#1232)', () => {
             'Linux desktop notification delivery failed',
             expect.objectContaining({
                 extra: {
-                    releaseCheck: 'v1.3.1/linux-notification-delivery',
                     backend: 'linux-dbus',
                     outcome: 'failed',
                     errorType: 'service_unavailable',

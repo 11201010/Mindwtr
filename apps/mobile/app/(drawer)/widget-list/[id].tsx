@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, Text, View } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { shallow, useTaskStore, type Task, type TaskStatus } from '@mindwtr/core';
@@ -9,7 +9,6 @@ import { useLanguage } from '@/contexts/language-context';
 import { useTheme } from '@/contexts/theme-context';
 import { useThemeColors } from '@/hooks/use-theme-colors';
 import { resolveWidgetListDestination } from '@/lib/widget-list-destination';
-import { logInfo } from '@/lib/app-log';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 
 /** An exact widget list destination, not an additional main navigation item. */
@@ -60,17 +59,6 @@ export default function WidgetListScreen() {
     setRefreshing(true);
     try { await fetchData(); } finally { setRefreshing(false); }
   }, [fetchData]);
-  useEffect(() => {
-    void logInfo('Widget list destination resolved', {
-      scope: 'widget',
-      extra: {
-        releaseCheck: 'v1.3.1/widget-list-navigation',
-        listKind,
-        available: String(available),
-      },
-    });
-    // Report route resolution, not every task edit or store refresh.
-  }, [id, available, listKind]);
   return (
     <View style={{ flex: 1, backgroundColor: tc.bg }}>
       <Stack.Screen options={{ title }} />

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { completeTaskForProjectArchive } from './store-helpers';
 import { buildLoadContext, runLoadMigrations, LEGACY_REFERENCE_RECOVERY_VERSION, MIGRATION_VERSION } from './store-load-migrations';
 import { createReferenceSearchPredicate, isReferenceInVisibleProject } from './reference';
-import { consoleLogger, setLogger, type LogPayload } from './logger';
 import { mergeAppData } from './sync';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Project, Task } from './types';
@@ -110,20 +109,6 @@ describe('legacy archived-project Reference recovery (#1198)', () => {
         const result = load(data);
         expect(result.applied).not.toContain('recover-legacy-project-references');
         expect(result.data.tasks[0]).toEqual(legacyReference);
-    });
-
-    it('emits a content-free recovery count only on the repairing load', () => {
-        const logs: LogPayload[] = [];
-        setLogger((payload) => logs.push(payload));
-        try {
-            const repaired = load(makeData());
-            load(repaired.data);
-            const recoveryLogs = logs.filter((log) => log.context?.releaseCheck === 'v1.3.1/archive-reference-recovered');
-            expect(recoveryLogs).toHaveLength(1);
-            expect(recoveryLogs[0].context).toEqual({ releaseCheck: 'v1.3.1/archive-reference-recovered', count: 1 });
-        } finally {
-            setLogger(consoleLogger);
-        }
     });
 
     it('persists recovery through the shared store and reloads without another save', async () => {

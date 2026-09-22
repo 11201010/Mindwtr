@@ -297,7 +297,6 @@ describe('widget-service', () => {
         expect(mockLogInfo).toHaveBeenCalledWith('Android widget list rendered within parcel budget', {
             scope: 'widget',
             extra: {
-                releaseCheck: 'v1.3.1/android-widget-list-budget',
                 count: '2',
                 items: '87',
                 totalItems: '240',

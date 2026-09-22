@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   data: { tasks: [], projects: [], sections: [], areas: [], settings: {} } as AppData,
   canonical: {} as { _allTasks?: AppData['tasks']; _allProjects?: AppData['projects'] },
   id: 'next' as string | string[],
-  updateTask: vi.fn(), deleteTask: vi.fn(), fetchData: vi.fn(), logInfo: vi.fn(),
+  updateTask: vi.fn(), deleteTask: vi.fn(), fetchData: vi.fn(),
 }));
 vi.mock('@mindwtr/core', async (original) => ({
   ...await original<typeof import('@mindwtr/core')>(),
@@ -25,7 +25,6 @@ vi.mock('@/hooks/use-theme-colors', () => {
   const tc = { bg: '#fff', text: '#111', secondaryText: '#555' };
   return { useThemeColors: () => tc };
 });
-vi.mock('@/lib/app-log', () => ({ logInfo: state.logInfo }));
 vi.mock('@/lib/task-meta-navigation', () => ({ openProjectScreen: vi.fn(), openContextsScreen: vi.fn() }));
 vi.mock('@/components/swipeable-task-item', () => ({ SwipeableTaskItem: (props: object) => React.createElement('TaskRow', props) }));
 vi.mock('@/components/task-edit-modal', () => ({ TaskEditModal: (props: object) => React.createElement('TaskModal', props) }));
@@ -44,7 +43,7 @@ describe('WidgetListScreen', () => {
     state.canonical = {};
     vi.clearAllMocks();
   });
-  it('keeps the full live list, refreshes after completion, and logs no content', async () => {
+  it('keeps the full live list and refreshes after completion', async () => {
     state.data.tasks = Array.from({ length: 90 }, (_, i) => task(`task-${i}`));
     let tree!: ReactTestRenderer;
     await act(async () => { tree = create(<WidgetListScreen />); });
@@ -54,8 +53,6 @@ describe('WidgetListScreen', () => {
     state.data.tasks = state.data.tasks.map((item, i) => i === 0 ? { ...item, status: 'done' } : item);
     await act(async () => { tree.update(<WidgetListScreen />); });
     expect(rows().data).toHaveLength(89);
-    expect(state.logInfo).toHaveBeenCalledTimes(1);
-    expect(state.logInfo.mock.calls[0][1].extra).toEqual({ releaseCheck: 'v1.3.1/widget-list-navigation', listKind: 'next', available: 'true' });
     await act(async () => { tree.unmount(); });
   });
   it('uses a saved filter by ID and becomes empty when that filter is deleted', async () => {

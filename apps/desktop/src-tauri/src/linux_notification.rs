@@ -149,16 +149,6 @@ mod imp {
                 .await
                 .map_err(|error| classify_zbus_error(&error))?;
 
-            // A broken optional logo must never prevent the reminder from being delivered.
-            let outcome = if logo.is_some() {
-                "bundled"
-            } else {
-                "theme-fallback"
-            };
-            log::info!(
-                "Linux notification icon submitted extra.releaseCheck=v1.3.1/linux-notification-icon backend=linux-dbus outcome={outcome}"
-            );
-
             Ok(())
         }
 

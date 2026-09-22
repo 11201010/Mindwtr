@@ -48,8 +48,6 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // share-card-export (local PNG export adapters)
     'cardKind', 'exportMethod', 'failureStage', 'errorType', 'nativeCode',
     // file-sync-attachment-failure reuses errorType/nativeCode and stage/backend/operation/releaseCheck below.
-    // linux-notification-delivery reuses releaseCheck/backend/outcome/errorType below.
-    // linux-notification-icon reuses releaseCheck/backend/outcome below.
     // android-system-bars reuses releaseCheck/backend/outcome below.
     // sandbox-workspace (desktop/mobile entry drain and immutable workspace bootstrap)
     'workspace', 'stage',
@@ -99,7 +97,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'focusItems', 'todayItems', 'totalItems',
     // android-widget-lists (bounded GTD snapshots and Compact fallback, #1211)
     'nextItems', 'inboxItems', 'listKind', 'available',
-    // android-widget-list-budget (measured direct RemoteViews collection size, #1225)
+    // Android widget list budget (measured direct RemoteViews collection size)
     'collectionBytes',
     // Apple Watch capture, command and Focus/timer snapshot (#1175)
     'action', 'focusCount', 'timerPhase', 'timerRunning',

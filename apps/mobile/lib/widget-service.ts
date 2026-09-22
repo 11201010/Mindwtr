@@ -124,7 +124,6 @@ function createPayloadProjectionFromData(data: AppData, language: Language): Wid
 // The native widget's task list scrolls (RemoteViewsService), so the payload
 // carries a fixed slice instead of a per-widget-height budget.
 const ANDROID_WIDGET_MAX_ITEMS = 200;
-const ANDROID_WIDGET_LIST_BUDGET_RELEASE_CHECK = 'v1.3.1/android-widget-list-budget';
 const ANDROID_WIDGET_RELEASE_CHECK = 'v1.3.0/android-native-widget';
 const ANDROID_WIDGET_PROVIDER_COMPAT_RELEASE_CHECK = 'v1.3.0/android-widget-provider-compat';
 const WIDGET_FOCUS_TODAY_RELEASE_CHECK = 'v1.3.0/widget-focus-today';
@@ -168,7 +167,6 @@ async function updateAndroidWidgetsFromData(rendered: TasksWidgetPayload, langua
             void logInfo('Android widget list rendered within parcel budget', {
                 scope: 'widget',
                 extra: {
-                    releaseCheck: ANDROID_WIDGET_LIST_BUDGET_RELEASE_CHECK,
                     count: String(directCollectionCount),
                     items: String(renderedTaskCount),
                     totalItems: String(eligibleTaskCount),

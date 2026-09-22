@@ -44,7 +44,6 @@ let tauriNotificationApi: TauriNotificationApi | null = null;
 
 const CHECK_INTERVAL_MS = 15_000;
 const REPEAT_CATCH_UP_MS = CHECK_INTERVAL_MS;
-const LINUX_NOTIFICATION_RELEASE_CHECK = 'v1.3.1/linux-notification-delivery';
 const LINUX_NOTIFICATION_ERROR_TYPES = [
     'invalid_title',
     'session_bus_unavailable',
@@ -230,7 +229,6 @@ async function handleLinuxNotification(title: string, body?: string): Promise<bo
         void logInfo('Linux desktop notification submitted', {
             scope: 'notification',
             extra: {
-                releaseCheck: LINUX_NOTIFICATION_RELEASE_CHECK,
                 backend,
                 outcome: 'submitted',
             },
@@ -239,7 +237,6 @@ async function handleLinuxNotification(title: string, body?: string): Promise<bo
         void logWarn('Linux desktop notification delivery failed', {
             scope: 'notification',
             extra: {
-                releaseCheck: LINUX_NOTIFICATION_RELEASE_CHECK,
                 backend,
                 outcome: 'failed',
                 errorType: classifyLinuxNotificationError(error),

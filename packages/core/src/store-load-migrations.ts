@@ -300,11 +300,6 @@ const recoverLegacyProjectReferencesMigration: LoadMigration = {
             };
         });
         if (count === 0) return null;
-        logInfo('Legacy archived project references recovered during load migration', {
-            scope: 'store',
-            category: 'storage',
-            context: { releaseCheck: 'v1.3.1/archive-reference-recovered', count },
-        });
         return {
             ...data,
             tasks,
