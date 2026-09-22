@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -153,12 +153,23 @@ test('rollout workflow schedules one automatic stage per day and retains explici
   expect(rollout.on.schedule).toEqual([{ cron: '17 15 * * *' }]);
   expect(rollout.on.workflow_dispatch.inputs.action.default).toBe('status');
   expect(rollout.permissions).toEqual({ contents: 'read' });
+  const gate = rollout.jobs['promotion-gate'];
+  expect(gate.if).toContain("github.repository == 'dongdongbh/Mindwtr'");
+  expect(gate.outputs.ready).toBe('${{ steps.age.outputs.ready }}');
+  const age = gate.steps.find((step) => step.id === 'age');
+  expect(age.run).toContain('releases/latest');
+  expect(age.run).toContain('age_seconds');
+  expect(age.run).toContain('-lt 86400');
   expect(rollout.jobs.play.concurrency.group).toBe('google-play-production');
   expect(rollout.jobs.msstore.concurrency.group).toBe('msstore-production');
+  expect(rollout.jobs.play.needs).toBe('promotion-gate');
+  expect(rollout.jobs.msstore.needs).toBe('promotion-gate');
   expect(rollout.jobs.play.if).toContain("github.event_name == 'schedule'");
   expect(rollout.jobs.msstore.if).toContain("github.event_name == 'schedule'");
+  expect(rollout.jobs.play.if).toContain("needs.promotion-gate.outputs.ready == 'true'");
+  expect(rollout.jobs.msstore.if).toContain("needs.promotion-gate.outputs.ready == 'true'");
   // A fork holds no Store credentials, so the daily schedule must not run there.
-  for (const job of Object.values(rollout.jobs)) {
+  for (const job of [rollout.jobs.play, rollout.jobs.msstore]) {
     expect(job.if).toContain("github.repository == 'dongdongbh/Mindwtr'");
   }
   const play = rollout.jobs.play.steps.find((step) => step.env?.VERSION_CODE);
@@ -171,11 +182,37 @@ test('rollout workflow schedules one automatic stage per day and retains explici
   expect(msstore.run).toContain('args=(--action auto)');
   expect(msstore.env.ROLLOUT_ACTION).toContain("github.event_name == 'schedule'");
   expect(msstore.env.MS_STORE_APP_ID).toBe("${{ secrets.MS_STORE_APP_ID || '9N0V5B0B6FRX' }}");
-  for (const job of Object.values(rollout.jobs)) {
+  for (const job of [rollout.jobs.play, rollout.jobs.msstore]) {
     expect(job.concurrency['cancel-in-progress']).toBe(false);
     for (const step of job.steps) {
       expect(step.run ?? '').not.toMatch(/(?:upload|create-plan|build-aab|tauri build)/);
     }
+  }
+});
+
+test('automatic rollout keeps a stable release at 5% until it is 24 hours old', () => {
+  const gate = workflow('rollout').jobs['promotion-gate'].steps.find((step) => step.id === 'age');
+  const directory = mkdtempSync(join(tmpdir(), 'mindwtr-rollout-age-'));
+  try {
+    writeFileSync(join(directory, 'gh'), '#!/bin/sh\nprintf "%s\\n" "$MOCK_PUBLISHED_AT"\n', { mode: 0o755 });
+    for (const [hours, ready] of [[23, false], [25, true]]) {
+      const outputPath = join(directory, `${hours}.txt`);
+      const result = spawnSync('bash', ['-e', '-c', gate.run], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          GITHUB_EVENT_NAME: 'schedule',
+          GITHUB_REPOSITORY: 'dongdongbh/Mindwtr',
+          GITHUB_OUTPUT: outputPath,
+          MOCK_PUBLISHED_AT: new Date(Date.now() - hours * 60 * 60 * 1000).toISOString(),
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(readFileSync(outputPath, 'utf8')).toContain(`ready=${ready}\n`);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

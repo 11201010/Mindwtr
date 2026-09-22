@@ -26,8 +26,10 @@ and [Fastlane's phased_release option](https://docs.fastlane.tools/actions/deliv
 The **Manage Store Rollout** workflow runs daily at 15:17 UTC. For each active
 Play and Microsoft production rollout, it discovers the current production
 release and advances at most one exact stage: 5% → 20% → 50% → 100%. A delayed
-store approval does not make one run skip multiple stages. Completed,
-non-staged, pending, or halted releases are successful no-ops.
+store approval does not make one run skip multiple stages. A new stable release
+remains at 5% for at least 24 hours after its GitHub release `published_at`
+timestamp; scheduled jobs delivered late on release day skip both stores.
+Completed, non-staged, pending, or halted releases are successful no-ops.
 
 Monitor crash/ANR reports, launch failures, storage/migration and sync errors,
 feedback, and reviews while the schedule progresses. Halt promptly for a
