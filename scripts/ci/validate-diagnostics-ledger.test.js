@@ -68,6 +68,7 @@ function parseLedger(source) {
 const sources = (await Promise.all([
   collectSources(path.join(root, "packages")),
   collectSources(path.join(root, "apps")),
+  collectSources(path.join(root, "scripts")),
 ])).flat();
 const codeSites = sources.flatMap(collectCodeSlugs);
 function findUnemittedSlugs(slugs, sites) {
