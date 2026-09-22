@@ -3,10 +3,12 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { basename, join } from 'path';
 import {
+    applyCapturedProject,
     applyTaskProjectReactivationTransition,
     applyTaskUpdates,
     applyProjectLifecycleTransition,
     areSyncPayloadsEqual,
+    buildCaptureTaskProps,
     buildHttpRemoteFileFingerprint,
     buildNewProject,
     compactPurgedProjectSectionTombstone,
@@ -531,6 +533,11 @@ const handleEntityRoute = async <T extends CloudEntity>(
             writeCloudData(context.filePath, finalized, {
                 assertStorageRoot: context.assertStorageRoot,
             });
+            if (route.path === '/v1/tasks') {
+                logInfo('Cloud quick-add capture saved', {
+                    releaseCheck: 'v1.3.2/cloud-quick-add-capture',
+                });
+            }
             const savedEntity = getEntityCollection(finalized, route).find((item) => item.id === entity.id) ?? entity;
             return jsonResponse({ [route.itemKey]: savedEntity }, { status: 201 });
         });
@@ -667,27 +674,52 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                     buildQuickAddParseOptions(data.settings, { tasks: data.tasks, people: data.people }),
                 )
                 : { title: rawTitle, props: {} };
-            const title = (parsed.title || rawTitle || input).trim();
-            if (!title) return errorResponse('Missing task title');
+            if (parsed.invalidDateCommands?.length) {
+                return errorResponse('Invalid date command', 400);
+            }
+            const assembly = buildCaptureTaskProps({
+                parsed: { ...parsed, title: parsed.title || rawTitle },
+                rawInput: input,
+                fallbackTitle: rawTitle,
+                projects: data.projects,
+                extraProps: initialProps,
+            });
+            if (!assembly.ok) return errorResponse('Missing task title');
+            const { title } = assembly;
             if (title.length > MAX_TASK_TITLE_LENGTH) {
                 return errorResponse(`Task title too long (max ${MAX_TASK_TITLE_LENGTH} characters)`, 400);
             }
 
-            const props: Partial<Task> = {
+            const explicitProps: Partial<Task> = {
                 ...parsed.props,
                 ...initialProps,
             };
-
-            const rawStatus = props.status;
+            const rawStatus = explicitProps.status;
             const parsedStatus = asStatus(rawStatus);
             if (rawStatus !== undefined && parsedStatus === null) {
                 return errorResponse('Invalid task status', 400);
+            }
+            let props = assembly.props;
+            if (assembly.projectToCreate && !props.projectId) {
+                const project = buildNewProject({
+                    title: assembly.projectToCreate.title,
+                    color: assembly.projectToCreate.color,
+                    initialProps: assembly.projectToCreate.initialProps,
+                    existingProjects: data.projects,
+                    existingAreas: data.areas,
+                    settings: data.settings,
+                    deviceId: CLOUD_API_REV_BY,
+                    now: nowIso,
+                    id: generateUUID(),
+                });
+                data.projects.push(project);
+                props = applyCapturedProject(props, project.id);
             }
             // Mirrors the store's create-side promotion (addTasks): a
             // start date at capture is a clarify decision, so a task
             // created with a start date and no explicit status enters
             // as Next rather than Inbox.
-            const status = resolveCaptureStatusForStart(props, parsedStatus || 'inbox');
+            const status = resolveCaptureStatusForStart(explicitProps, parsedStatus || 'inbox');
             const tags = Array.isArray(props.tags) ? props.tags : [];
             const contexts = Array.isArray(props.contexts) ? props.contexts : [];
             const {

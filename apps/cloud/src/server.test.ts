@@ -21,10 +21,13 @@ import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import {
+    buildCaptureTaskProps,
+    buildQuickAddParseOptions,
     CLOUD_SYNC_TOKEN_PATTERN,
     DEFAULT_PROJECT_COLOR,
     cloudHeadJson,
     cloudPutJson,
+    parseQuickAdd,
     TASK_SORT_BY_VALUES,
     type AppData,
     type Task,
@@ -4793,6 +4796,147 @@ describe('cloud server api', () => {
         expect(createResponse.status).toBe(201);
         const payload = await createResponse.json();
         expect(payload.task.title).toBe('Cloud Task');
+    });
+
+    test('quick-add capture creates or reuses eligible projects while explicit props win', async () => {
+        const timestamp = '2026-01-01T00:00:00.000Z';
+        const projects: AppData['projects'] = [
+            { id: 'active-project', title: 'ActiveCloud', status: 'active', color: '#111111', order: 0, tagIds: [], createdAt: timestamp, updatedAt: timestamp },
+            { id: 'archived-project', title: 'ArchivedCloud', status: 'archived', color: '#222222', order: 1, tagIds: [], createdAt: timestamp, updatedAt: timestamp },
+            { id: 'explicit-project', title: 'ExplicitCloud', status: 'active', color: '#333333', order: 2, tagIds: [], createdAt: timestamp, updatedAt: timestamp },
+        ];
+        const seedResponse = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ tasks: [], projects, sections: [], areas: [], people: [], settings: {} } satisfies AppData),
+        });
+        expect(seedResponse.status).toBe(200);
+
+        const createTask = async (body: Record<string, unknown>): Promise<Task> => {
+            const response = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            expect(response.status).toBe(201);
+            return (await response.json() as { task: Task }).task;
+        };
+
+        const unknown = await createTask({ input: 'Draft launch +NewCloud' });
+        const archivedOnly = await createTask({ input: 'Revisit plan +ArchivedCloud' });
+        const active = await createTask({ input: 'Continue work +ActiveCloud' });
+        const explicit = await createTask({
+            input: 'Override metadata +IgnoredCloud /due:tomorrow',
+            props: { projectId: 'explicit-project', dueDate: '2031-04-05' },
+        });
+        const titleFallback = await createTask({
+            input: '+ActiveCloud /due:tomorrow',
+            title: 'Keep Cloud title fallback',
+        });
+
+        const storedResponse = await fetch(`${baseUrl}/v1/data`, { headers: authHeaders });
+        expect(storedResponse.status).toBe(200);
+        const stored = await storedResponse.json() as AppData;
+        const newProject = stored.projects.find((project) => project.title === 'NewCloud');
+        const replacementProject = stored.projects.find((project) => (
+            project.title === 'ArchivedCloud' && project.id !== 'archived-project'
+        ));
+        expect(newProject?.status).toBe('active');
+        expect(unknown.projectId).toBe(newProject?.id);
+        expect(replacementProject?.status).toBe('active');
+        expect(archivedOnly.projectId).toBe(replacementProject?.id);
+        expect(active.projectId).toBe('active-project');
+        expect(explicit.projectId).toBe('explicit-project');
+        expect(explicit.dueDate).toBe('2031-04-05');
+        expect(titleFallback.title).toBe('Keep Cloud title fallback');
+        expect(titleFallback.projectId).toBe('active-project');
+        expect(stored.projects.some((project) => project.title === 'IgnoredCloud')).toBe(false);
+    });
+
+    test('quick-add capture matches core natural-date title and due-date assembly', async () => {
+        const input = 'Submit cloud report tomorrow';
+        const response = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ input }),
+        });
+        expect(response.status).toBe(201);
+        const task = (await response.json() as { task: Task }).task;
+        const parsed = parseQuickAdd(
+            input,
+            [],
+            new Date(task.createdAt),
+            [],
+            buildQuickAddParseOptions({}, { tasks: [], people: [] }),
+        );
+        const expected = buildCaptureTaskProps({ parsed, rawInput: input, projects: [] });
+        expect(expected.ok).toBe(true);
+        if (!expected.ok) throw new Error('Expected core capture assembly to succeed');
+        expect(task.title).toBe(expected.title);
+        expect(task.dueDate).toBe(expected.props.dueDate);
+    });
+
+    test('quick-add capture rejects invalid dates and later validation without partial writes', async () => {
+        const invalidDate = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ input: 'Invalid date +RejectedCloud /due:2026-99-99' }),
+        });
+        expect(invalidDate.status).toBe(400);
+        expect((await invalidDate.json()).error).toBe('Invalid date command');
+
+        const invalidReference = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({
+                input: 'Invalid reference +OrphanCloud',
+                props: { sectionId: crypto.randomUUID() },
+            }),
+        });
+        expect(invalidReference.status).toBe(400);
+
+        const storedResponse = await fetch(`${baseUrl}/v1/data`, { headers: authHeaders });
+        expect(storedResponse.status).toBe(200);
+        const stored = await storedResponse.json() as AppData;
+        expect(stored.tasks).toEqual([]);
+        expect(stored.projects).toEqual([]);
+    });
+
+    test('quick-add capture logs one privacy-safe proof only after durable success', async () => {
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        let createdTaskId = '';
+        try {
+            const rejected = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ input: 'Private rejected title /due:2026-99-99' }),
+            });
+            expect(rejected.status).toBe(400);
+
+            const saved = await fetch(`${baseUrl}/v1/tasks`, {
+                method: 'POST',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ input: 'Private saved title +PrivateCloudProject' }),
+            });
+            expect(saved.status).toBe(201);
+            createdTaskId = (await saved.json() as { task: Task }).task.id;
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+
+        const entries = captured.join('').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+        const proof = entries.filter((entry) => entry.message === 'Cloud quick-add capture saved');
+        expect(proof).toHaveLength(1);
+        expect(proof[0].context).toEqual({ releaseCheck: 'v1.3.2/cloud-quick-add-capture' });
+        const serializedProof = JSON.stringify(proof[0]);
+        expect(serializedProof).not.toContain('Private rejected title');
+        expect(serializedProof).not.toContain('Private saved title');
+        expect(serializedProof).not.toContain('PrivateCloudProject');
+        expect(serializedProof).not.toContain(createdTaskId);
     });
 
     test('rejects quick-add input above the cloud quick-add length cap', async () => {
