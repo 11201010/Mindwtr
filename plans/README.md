@@ -1,5 +1,19 @@
 # Plans index
 
+## Review loop from v1.3.0 — September 22, 2026
+
+Planned against `59d0e575e` (public docs `89ac579b`). GPT-6 Astra reviewed all nine improve categories; GPT-5.6 Sol implements the selected findings. Automatic selection under review-improve-loop includes all three high-confidence actionable plans. The comprehensive fixes are separate commits; their evidence is in the local task report. Existing plan128 is an unrelated native experiment and is preserved.
+
+| Plan | Finding | Priority | Effort | Dependencies | Status |
+| --- | --- | --- | --- | --- | --- |
+| [129](129-authenticated-developer-examples.md) | DOCS-01: developer examples omit required authentication | P3 | S | None | TODO |
+| [130](130-cloud-quick-add-capture-parity.md) | CORRECTNESS-01: Cloud quick-add drops project/date capture metadata | P2 | S | None | TODO |
+| [131](131-widget-shared-focus-pools.md) | ARCH-01: widget duplicates core Focus pool policy through an obsolete adapter | P3 | S | None | TODO |
+
+Plans may run independently in isolated worktrees. Plan129 changes only the public-doc repository;130 reuses core capture inside the existing single Cloud write;131 is the sole additional Strong architecture candidate, deleting the obsolete adapter and duplicate policy. AUTO-04 already handles the CLI capture deepening, so it is not a second architecture refactor. Root maintains status and creates one commit per finding.
+
+Considered and rejected: PWA port drift (5173 matches), Core API tombstone visibility mismatch (visible versus all collections are intentional), new CI/dependency restructuring, generic retry/notification/controller frameworks, size-only module splits, new caches, and reopening ADR0029 native/merge scheduling direction without new measurements. Existing image-size build-input advisories and quick-xml/rkyv dependency deferrals remain; current locked-manifest checks and configured Rust audit gate pass. No additional supported security or performance defect was established. Physical-device/background/signing limits remain explicit in the result.
+
 ## Review loop from v1.3.0 — September 18, 2026
 
 Planned against `561cfdfa0` (integration branch `agent/integrate-20260918` = main `8fe8c9293` + the phase-1 review fixes and their closure corrections). Phase-1 findings were fixed directly (see `.orchestrator/tasks/impl-20260918/LEDGER.md`, not tracked). This is the phase-2 improve set, selected by default (non-interactive run): every high-confidence actionable finding of the three audits. Plan 116 targets the public docs repository.
