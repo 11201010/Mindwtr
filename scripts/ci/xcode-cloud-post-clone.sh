@@ -3,6 +3,7 @@ set -euo pipefail
 
 cd "${CI_PRIMARY_REPOSITORY_PATH:?Xcode Cloud must provide the repository path}"
 export CI=1 EXPO_NO_TELEMETRY=1
+export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
 
 # Match the Node major and Bun version used by the GitHub iOS release job.
