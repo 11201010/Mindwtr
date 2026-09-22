@@ -1,5 +1,6 @@
 import {
     createSerializedAsyncQueue,
+    executeCaptureTransaction,
     flushPendingSave,
     isTaskFinished,
     buildQuickAddParseOptions,
@@ -47,6 +48,19 @@ const logAutomationRetryDiagnostic = (): void => {
         context: {
             releaseCheck: 'v1.3.2/automation-concurrent-write-retry',
             retryCount: 1,
+        },
+    })}\n`);
+};
+
+const logAutomationCaptureProjectDiagnostic = (outcome: 'created' | 'reused' | 'explicit'): void => {
+    process.stderr.write(`${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'automation-storage',
+        message: 'Automation quick-add project routing completed',
+        context: {
+            releaseCheck: 'v1.3.2/automation-capture-project-routing',
+            outcome,
         },
     })}\n`);
 };
@@ -191,27 +205,51 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                         people: state.people,
                     }),
                 )
-                : { title: typeof title === 'string' ? title : '', props: {} };
-            const resolvedTitle = (parsed.title || title || input || '').trim();
-            if (!resolvedTitle) {
-                throw new Error('Task title is required');
-            }
+                : {
+                    title: typeof title === 'string' ? title : '',
+                    props: {},
+                    projectTitle: undefined,
+                    detectedDate: undefined,
+                    invalidDateCommands: undefined,
+                };
+            const explicitProps = { ...(props || {}) };
+            const parsedStatus = requireValidStatus(explicitProps.status);
+            if (parsedStatus) explicitProps.status = parsedStatus;
 
-            const parsedStatus = requireValidStatus((props || {}).status);
-
-            const result = await state.addTask(resolvedTitle, {
-                ...parsed.props,
-                ...(props || {}),
-                ...(parsedStatus ? { status: parsedStatus } : {}),
-            } as Partial<Task>);
-            if (!result.success) {
-                throw new Error(result.error || 'Failed to create task');
+            const capture = await executeCaptureTransaction({
+                parsed: {
+                    ...parsed,
+                    title: parsed.title || title || '',
+                },
+                rawInput: typeof input === 'string' ? input : (title || ''),
+                projects: state._allProjects,
+                extraProps: explicitProps,
+            }, {
+                addProject: (projectTitle, color, initialProps) => (
+                    state.addProject(projectTitle, color, initialProps)
+                ),
+                addTask: (taskTitle, initialProps) => state.addTask(taskTitle, initialProps),
+            });
+            if (!capture.success) {
+                if (capture.reason === 'invalid-date-command') {
+                    throw new Error(`Invalid date command: ${capture.invalidDateCommands.join(', ')}`);
+                }
+                if (capture.reason === 'empty-title') throw new Error('Task title is required');
+                throw new Error(capture.error || 'Failed to create task');
             }
 
             await flushPendingSave();
-            const created = useTaskStore.getState()._allTasks.find((task) => !beforeTaskIds.has(task.id));
+            const allTasks = useTaskStore.getState()._allTasks;
+            const created = capture.createdTaskId
+                ? allTasks.find((task) => task.id === capture.createdTaskId)
+                : allTasks.find((task) => !beforeTaskIds.has(task.id));
             if (!created) {
                 throw new Error('Failed to locate newly created task');
+            }
+            if (parsed.projectTitle || parsed.props.projectId) {
+                logAutomationCaptureProjectDiagnostic(
+                    explicitProps.projectId ? 'explicit' : capture.createdProject ? 'created' : 'reused',
+                );
             }
             return created;
         }),

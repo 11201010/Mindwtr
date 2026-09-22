@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // automation concurrent-write replay; capture routing reuses outcome below.
+    'retryCount',
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.
     // calendar-date-color-diagnostics uses only aggregate counts; no dates, names, ids, or colors.
     'calendarCount', 'eventCount', 'allDayCount', 'timedCount',

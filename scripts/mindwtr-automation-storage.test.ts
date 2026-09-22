@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { setTimeout as waitFor } from 'timers/promises';
 
-import type { AppData, Person, Task } from '@mindwtr/core';
+import type { AppData, Person, Project, Task } from '@mindwtr/core';
 
 import { createMindwtrAutomationStorage } from './mindwtr-automation-storage';
 import { createMindwtrAutomationService } from './mindwtr-automation-core';
@@ -28,7 +28,29 @@ const readRow = (dbPath: string, sql: string, id: string) => {
     }
 };
 
+const readRows = (dbPath: string, sql: string, ...params: unknown[]) => {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+        return db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    } finally {
+        db.close();
+    }
+};
+
 const emptyData = (): AppData => ({ tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} });
+
+const project = (id: string, title: string, status: Project['status'] = 'active'): Project => ({
+    id,
+    title,
+    status,
+    color: '#3b82f6',
+    order: 0,
+    tagIds: [],
+    rev: 1,
+    revBy: 'seed',
+    createdAt: '2026-09-22T12:00:00.000Z',
+    updatedAt: '2026-09-22T12:00:00.000Z',
+});
 
 afterEach(() => {
     while (tempDirs.length > 0) {
@@ -97,6 +119,157 @@ describe('automation script sqlite writes', () => {
 
         expect(readRow(dbPath, 'SELECT assignedTo, energyLevel, timeSpentMinutes FROM tasks WHERE id = ?', created.id))
             .toEqual({ assignedTo: 'Bob', energyLevel: 'high', timeSpentMinutes: 12 });
+    });
+
+    test('creates and durably routes a quick-add project while explicit props win', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+        const created = await (async () => {
+            try {
+                return await service.createTask({
+                    input: 'Prepare brief +Launch /due:2026-10-02',
+                    props: { status: 'waiting', dueDate: '2026-10-01' },
+                });
+            } finally {
+                stderrSpy.mockRestore();
+            }
+        })();
+
+        expect(readRow(dbPath, `
+            SELECT tasks.title, tasks.status, tasks.dueDate, projects.title AS projectTitle
+            FROM tasks JOIN projects ON projects.id = tasks.projectId
+            WHERE tasks.id = ?
+        `, created.id)).toEqual({
+            title: 'Prepare brief',
+            status: 'waiting',
+            dueDate: '2026-10-01',
+            projectTitle: 'Launch',
+        });
+        const mirror = JSON.parse(readFileSync(dataPath, 'utf8')) as AppData;
+        expect(mirror.tasks.find((task) => task.id === created.id)).toMatchObject({
+            status: 'waiting',
+            dueDate: '2026-10-01',
+            projectId: mirror.projects.find((item) => item.title === 'Launch')?.id,
+        });
+        expect(JSON.parse(stderrLines.join('').trim())).toMatchObject({
+            level: 'info',
+            scope: 'automation-storage',
+            message: 'Automation quick-add project routing completed',
+            context: {
+                releaseCheck: 'v1.3.2/automation-capture-project-routing',
+                outcome: 'created',
+            },
+        });
+    });
+
+    test('reuses an active project named by quick add', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const existing = project('active-roadmap', 'Roadmap');
+        await createMindwtrAutomationStorage({ dataPath, dbPath }).saveData({
+            ...emptyData(),
+            projects: [existing],
+        });
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+
+        const created = await (async () => {
+            try {
+                return await service.createTask({ input: 'Draft plan +Roadmap' });
+            } finally {
+                stderrSpy.mockRestore();
+            }
+        })();
+
+        expect(created.projectId).toBe(existing.id);
+        expect(readRows(dbPath, 'SELECT id FROM projects WHERE title = ?', existing.title)).toEqual([{ id: existing.id }]);
+        const mirror = JSON.parse(readFileSync(dataPath, 'utf8')) as AppData;
+        expect(mirror.tasks.find((task) => task.id === created.id)?.projectId).toBe(existing.id);
+        expect(mirror.projects).toHaveLength(1);
+        expect(JSON.parse(stderrLines.join('').trim())).toMatchObject({
+            context: {
+                releaseCheck: 'v1.3.2/automation-capture-project-routing',
+                outcome: 'reused',
+            },
+        });
+    });
+
+    test('lets an explicit project override a parsed quick-add project', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const explicit = project('explicit-project', 'Explicit');
+        await createMindwtrAutomationStorage({ dataPath, dbPath }).saveData({
+            ...emptyData(),
+            projects: [explicit],
+        });
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+
+        const created = await service.createTask({
+            input: 'Draft plan +Parsed',
+            props: { projectId: explicit.id },
+        });
+
+        expect(created.projectId).toBe(explicit.id);
+        expect(readRows(dbPath, 'SELECT id, title FROM projects')).toEqual([{ id: explicit.id, title: explicit.title }]);
+        const mirror = JSON.parse(readFileSync(dataPath, 'utf8')) as AppData;
+        expect(mirror.tasks.find((task) => task.id === created.id)?.projectId).toBe(explicit.id);
+        expect(mirror.projects).toEqual([expect.objectContaining({ id: explicit.id, title: explicit.title })]);
+    });
+
+    test('creates a fresh active project instead of assigning to an archived name match', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const archived = project('archived-roadmap', 'Roadmap', 'archived');
+        await createMindwtrAutomationStorage({ dataPath, dbPath }).saveData({
+            ...emptyData(),
+            projects: [archived],
+        });
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+
+        const created = await service.createTask({ input: 'Restart planning +Roadmap' });
+
+        expect(created.projectId).not.toBe(archived.id);
+        expect(readRows(dbPath, 'SELECT id, status FROM projects WHERE title = ? ORDER BY id', archived.title))
+            .toEqual(expect.arrayContaining([
+                { id: archived.id, status: 'archived' },
+                { id: created.projectId, status: 'active' },
+            ]));
+        const mirror = JSON.parse(readFileSync(dataPath, 'utf8')) as AppData;
+        expect(mirror.projects).toHaveLength(2);
+        expect(mirror.tasks.find((task) => task.id === created.id)?.projectId).toBe(created.projectId);
+    });
+
+    test('rejects an invalid quick-add date before creating either project or task', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+
+        try {
+            await expect(service.createTask({ input: 'Broken capture +Orphan /due:notadate' }))
+                .rejects.toThrow('Invalid date command: /due:notadate');
+        } finally {
+            stderrSpy.mockRestore();
+        }
+
+        expect(readRows(dbPath, 'SELECT id FROM projects')).toEqual([]);
+        expect(readRows(dbPath, 'SELECT id FROM tasks')).toEqual([]);
+        const mirror = JSON.parse(readFileSync(dataPath, 'utf8')) as AppData;
+        expect(mirror.projects).toEqual([]);
+        expect(mirror.tasks).toEqual([]);
+        expect(stderrLines.join('')).not.toContain('v1.3.2/automation-capture-project-routing');
     });
 
     test('writes into the installed data/ layout instead of orphaning a database at a pinned flat path', async () => {
