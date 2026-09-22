@@ -19,6 +19,19 @@ describe('quick-add', () => {
         expect(splitQuickAddBulkLines(' \n\t\r\n ')).toEqual([]);
     });
 
+    it('trims a trailing hyphen or dash before a detected date, and nothing between } and the dashes', () => {
+        const now = new Date('2025-01-01T10:00:00Z');
+        // Each separator on its own, before a date the parser reads out of the prose.
+        for (const sep of [' - ', ' – ', ' — ', ' -- ', '- ']) {
+            const result = parseQuickAdd(`Pay rent${sep}tomorrow`, undefined, now);
+            expect(result.detectedDate?.titleWithoutDate).toBe('Pay rent');
+        }
+        // If the class ever became `}-–` (a range), every character between `}`
+        // and `–` in code-point order, `~` among them, would be trimmed as well.
+        expect(parseQuickAdd('Fix bug ~ tomorrow', undefined, now).detectedDate?.titleWithoutDate).toBe('Fix bug ~');
+        expect(parseQuickAdd('Fix bug } tomorrow', undefined, now).detectedDate?.titleWithoutDate).toBe('Fix bug');
+    });
+
     it('parses status, due, note, tags, contexts', () => {
         const now = new Date('2025-01-01T10:00:00Z');
         const result = parseQuickAdd('Call mom @phone #family /next /due:tomorrow 5pm /note:ask about trip', undefined, now);
