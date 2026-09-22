@@ -8,6 +8,7 @@ if (!dbPath || !readyPath || !releasePath || !outcomePath) {
 }
 
 const db = new Database(dbPath);
+db.exec('PRAGMA busy_timeout = 5000;');
 const client: SqliteClient = {
   run: async (sql, params = []) => { db.prepare(sql).run(params); },
   all: async <T>(sql: string, params: unknown[] = []) => db.prepare(sql).all(params) as T[],

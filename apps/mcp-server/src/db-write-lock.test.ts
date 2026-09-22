@@ -16,11 +16,41 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 // A second bun process on a loaded CI runner can take well over 5 s to reach
 // its ready marker (three flakes in a week); the whole test has 20 s.
-const waitForPath = async (path: string, timeoutMs = 15_000): Promise<void> => {
+const waitForPath = async (
+  path: string,
+  child: ChildProcess,
+  timeoutMs = 15_000,
+  outcomePath?: string,
+): Promise<void> => {
   const startedAt = Date.now();
-  while (!existsSync(path)) {
-    if (Date.now() - startedAt > timeoutMs) throw new Error(`Timed out waiting for ${path}`);
-    await delay(10);
+  let stderr = '';
+  let spawnError: Error | undefined;
+  const onStderr = (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-8192); };
+  const onError = (error: Error) => { spawnError = error; };
+  child.stderr?.on('data', onStderr);
+  child.on('error', onError);
+  try {
+    while (!existsSync(path)) {
+      if (spawnError) throw new Error(`Worker failed to start: ${spawnError.message}`);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        const outcome = outcomePath && existsSync(outcomePath)
+          ? readFileSync(outcomePath, 'utf8')
+          : '';
+        throw new Error(
+          `Worker exited before creating ${path} (code=${child.exitCode}, signal=${child.signalCode})`
+          + `; stderr=${stderr.trim() || '<empty>'}; outcome=${outcome || '<missing>'}`,
+        );
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(
+          `Timed out waiting for ${path}; worker still running; stderr=${stderr.trim() || '<empty>'}`,
+        );
+      }
+      await delay(10);
+    }
+  } finally {
+    child.stderr?.off('data', onStderr);
+    child.off('error', onError);
   }
 };
 
@@ -60,7 +90,7 @@ describe('MCP cross-process database write lock', () => {
         releasePath,
       ], { stdio: ['ignore', 'ignore', 'pipe'] });
       children.push(holder);
-      await waitForPath(holderReadyPath);
+      await waitForPath(holderReadyPath, holder);
 
       const contender = spawn(process.execPath, [
         workerPath,
@@ -115,7 +145,7 @@ describe('MCP cross-process database write lock', () => {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     try {
-      await waitForPath(readyPath);
+      await waitForPath(readyPath, worker, 15_000, outcomePath);
       const desktopDb = new Database(dbPath);
       try {
         desktopDb.exec('BEGIN IMMEDIATE;');
@@ -147,4 +177,27 @@ describe('MCP cross-process database write lock', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, CROSS_PROCESS_TEST_TIMEOUT_MS);
+
+  test('reports a worker setup error before the readiness timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-cas-error-'));
+    const workerPath = join(testDirectory, 'test-fixtures', 'mcp-guarded-write-worker.ts');
+    const dbPath = join(dir, 'mindwtr.db');
+    const readyPath = join(dir, 'worker-ready');
+    const releasePath = join(dir, 'release-worker');
+    const outcomePath = join(dir, 'worker-outcome');
+    const malformedDb = new Database(dbPath);
+    malformedDb.exec('CREATE VIEW tasks AS SELECT 1;');
+    malformedDb.close();
+    const child = spawn(process.execPath, [workerPath, dbPath, readyPath, releasePath, outcomePath], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    try {
+      await expect(waitForPath(readyPath, child, 15_000, outcomePath)).rejects.toThrow(
+        'outcome=cannot create BEFORE trigger on view: tasks',
+      );
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
