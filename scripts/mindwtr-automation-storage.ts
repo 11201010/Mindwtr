@@ -12,6 +12,7 @@ import {
     type TaskQueryOptions,
 } from '@mindwtr/core';
 
+import { withMcpWriteLock } from '../apps/mcp-server/src/db-write-lock';
 import { resolveMindwtrStoragePaths } from './mindwtr-paths';
 
 type AutomationStorageOptions = {
@@ -119,39 +120,43 @@ function openSqliteDatabase(dbPath: string) {
         };
     };
     const db = new sqlite.Database(dbPath);
+    db.exec('PRAGMA busy_timeout = 5000;');
     db.exec('PRAGMA journal_mode = WAL;');
     db.exec('PRAGMA foreign_keys = ON;');
-    db.exec('PRAGMA busy_timeout = 5000;');
     return db;
 }
 
 function createSqliteClient(dbPath: string) {
-    const db = openSqliteDatabase(dbPath);
+    let db: ReturnType<typeof openSqliteDatabase> | null = null;
+    const getDb = () => {
+        db ??= openSqliteDatabase(dbPath);
+        return db;
+    };
 
     return {
-        db,
         client: {
             run: async (sql: string, params: unknown[] = []) => {
-                db.prepare(sql).run(...params);
+                getDb().prepare(sql).run(...params);
             },
             all: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
-                return db.query(sql).all(params) as T[];
+                return getDb().query(sql).all(params) as T[];
             },
             get: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => {
-                return db.query(sql).get(params) as T | undefined;
+                return getDb().query(sql).get(params) as T | undefined;
             },
             exec: async (sql: string) => {
-                db.exec(sql);
+                getDb().exec(sql);
             },
         },
-        close: () => db.close(),
+        close: () => db?.close(),
     };
 }
 
 export function createMindwtrAutomationStorage(options: AutomationStorageOptions = {}): AutomationStorage {
     const paths = resolveMindwtrStoragePaths(options);
+    mkdirSync(dirname(paths.dbPath), { recursive: true });
     const { client } = createSqliteClient(paths.dbPath);
-    const sqlite = new SqliteAdapter(client);
+    const sqlite = new SqliteAdapter(client, { rejectConcurrentWrites: true });
     let initPromise: Promise<void> | null = null;
 
     const saveNormalizedData = async (data: AppData) => {
@@ -160,16 +165,13 @@ export function createMindwtrAutomationStorage(options: AutomationStorageOptions
         // `rev <= excluded.rev` guard, so a snapshot loaded a moment ago can never
         // overwrite a row the desktop app advanced in the meantime.
         await sqlite.saveData(normalized);
-        writeJsonData(paths.dataPath, normalized);
+        const committed = normalizeAppData(await sqlite.getData());
+        writeJsonData(paths.dataPath, committed);
+        return committed;
     };
 
     const ensureReady = async () => {
-        if (initPromise) {
-            await initPromise;
-            return;
-        }
-
-        initPromise = (async () => {
+        initPromise ??= (async () => {
             const sqliteData = normalizeAppData(await sqlite.getData());
             const jsonData = loadJsonData(paths.dataPath);
             const merged = jsonData ? normalizeAppData(mergeAppData(sqliteData, jsonData)) : sqliteData;
@@ -189,26 +191,35 @@ export function createMindwtrAutomationStorage(options: AutomationStorageOptions
             }
         })();
 
-        await initPromise;
+        try {
+            await initPromise;
+        } catch (error) {
+            initPromise = null;
+            throw error;
+        }
     };
+
+    const withStorageLock = <T>(operation: () => Promise<T>): Promise<T> => (
+        withMcpWriteLock(paths.dbPath, operation)
+    );
 
     return {
         paths,
-        getData: async () => {
+        getData: () => withStorageLock(async () => {
             await ensureReady();
             return normalizeAppData(await sqlite.getData());
-        },
-        saveData: async (data) => {
+        }),
+        saveData: (data) => withStorageLock(async () => {
             await ensureReady();
             await saveNormalizedData(data);
-        },
-        queryTasks: async (query) => {
+        }),
+        queryTasks: (query) => withStorageLock(async () => {
             await ensureReady();
             return sqlite.queryTasks ? sqlite.queryTasks(query as TaskQueryOptions) : [];
-        },
-        searchAll: async (query) => {
+        }),
+        searchAll: (query) => withStorageLock(async () => {
             await ensureReady();
             return sqlite.searchAll ? sqlite.searchAll(query) : ({ tasks: [], projects: [] } satisfies SearchResults);
-        },
+        }),
     };
 }

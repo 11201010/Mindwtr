@@ -1,4 +1,5 @@
 import {
+    createSerializedAsyncQueue,
     flushPendingSave,
     isTaskFinished,
     buildQuickAddParseOptions,
@@ -15,8 +16,40 @@ import {
     type Task,
     type TaskStatus,
 } from '@mindwtr/core';
+import { markNextLoadAsDocumentReplacement } from '../packages/core/src/store-settings';
 
 import { createMindwtrAutomationStorage } from './mindwtr-automation-storage';
+
+// ponytail: one queue owns every profile because core's store and adapter are process
+// singletons; per-profile parallelism requires isolated stores, not another lock.
+const singletonStoreQueue = createSerializedAsyncQueue();
+let activeStorageIdentity: string | null = null;
+const AUTOMATION_CONCURRENT_WRITE_PREFIX = 'SQLITE_BUSY: database changed after the automation snapshot was loaded';
+
+const isRetryableAutomationConcurrencyError = (error: unknown): boolean => {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code ?? '')
+        : '';
+    const message = error instanceof Error ? error.message : String(error);
+    return message.startsWith(`${AUTOMATION_CONCURRENT_WRITE_PREFIX} (external commit)`)
+        || message.startsWith(`${AUTOMATION_CONCURRENT_WRITE_PREFIX} (no read baseline)`)
+        || code === 'SQLITE_BUSY'
+        || code === 'SQLITE_LOCKED'
+        || /database is (?:busy|locked)/i.test(message);
+};
+
+const logAutomationRetryDiagnostic = (): void => {
+    process.stderr.write(`${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'automation-storage',
+        message: 'Automation storage operation succeeded after concurrent-write retry',
+        context: {
+            releaseCheck: 'v1.3.2/automation-concurrent-write-retry',
+            retryCount: 1,
+        },
+    })}\n`);
+};
 
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'];
 
@@ -45,7 +78,11 @@ type CreateTaskInput = {
 };
 
 const refreshState = async () => {
-    await useTaskStore.getState().fetchData({ silent: true });
+    await useTaskStore.getState().fetchData({ silent: true, throwOnError: true });
+    // A read can run a core load migration. Settle that queued snapshot before
+    // another service operation is allowed to point the singleton store at a
+    // different profile.
+    await flushPendingSave();
     return useTaskStore.getState();
 };
 
@@ -104,8 +141,28 @@ const filterProjectsForSearch = (projects: Project[], includeDeleted = false) =>
 
 export async function createMindwtrAutomationService(options: AutomationServiceOptions = {}) {
     const storage = createMindwtrAutomationStorage(options);
-    setStorageAdapter(storage);
-    await refreshState();
+    const runStoreOperation = <T>(operation: () => Promise<T>): Promise<T> => singletonStoreQueue.run(async () => {
+        const storageIdentity = `${storage.paths.dataPath}\0${storage.paths.dbPath}`;
+        const replacesActiveDocument = activeStorageIdentity !== storageIdentity;
+        setStorageAdapter(storage);
+        let retried = false;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+                if (replacesActiveDocument) markNextLoadAsDocumentReplacement();
+                const result = await operation();
+                await flushPendingSave();
+                activeStorageIdentity = storageIdentity;
+                if (retried) logAutomationRetryDiagnostic();
+                return result;
+            } catch (error) {
+                if (attempt > 0 || !isRetryableAutomationConcurrencyError(error)) throw error;
+                retried = true;
+            }
+        }
+        throw new Error('Automation storage retry exhausted');
+    });
+
+    await runStoreOperation(refreshState);
 
     const updateTask = async (taskId: string, patch: Partial<Task>): Promise<Task> => {
         const state = await refreshState();
@@ -119,7 +176,7 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
 
     return {
         paths: storage.paths,
-        createTask: async ({ input, title, props }: CreateTaskInput): Promise<Task> => {
+        createTask: ({ input, title, props }: CreateTaskInput): Promise<Task> => runStoreOperation(async () => {
             const state = await refreshState();
             const beforeTaskIds = new Set(state._allTasks.map((task) => task.id));
             const now = new Date();
@@ -157,8 +214,8 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                 throw new Error('Failed to locate newly created task');
             }
             return created;
-        },
-        listTasks: async ({ includeAll, includeDeleted, status, query, isFocusedToday }: ListTasksOptions = {}): Promise<Task[]> => {
+        }),
+        listTasks: ({ includeAll, includeDeleted, status, query, isFocusedToday }: ListTasksOptions = {}): Promise<Task[]> => runStoreOperation(async () => {
             const state = await refreshState();
             let tasks = state._allTasks.filter((task) => includeDeleted || !task.deletedAt);
             if (!includeAll) {
@@ -180,18 +237,18 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                 tasks = filterTasksBySearch(tasks, filterProjectsForSearch(state._allProjects, includeDeleted), query);
             }
             return tasks;
-        },
-        getTask: async (taskId: string): Promise<Task> => {
-            return requireTask(taskId);
-        },
-        updateTask,
-        completeTask: async (taskId: string): Promise<Task> => {
-            return updateTask(taskId, { status: 'done' });
-        },
-        archiveTask: async (taskId: string): Promise<Task> => {
-            return updateTask(taskId, { status: 'archived' });
-        },
-        deleteTask: async (taskId: string): Promise<Task> => {
+        }),
+        getTask: (taskId: string): Promise<Task> => runStoreOperation(() => requireTask(taskId)),
+        updateTask: (taskId: string, patch: Partial<Task>): Promise<Task> => (
+            runStoreOperation(() => updateTask(taskId, patch))
+        ),
+        completeTask: (taskId: string): Promise<Task> => (
+            runStoreOperation(() => updateTask(taskId, { status: 'done' }))
+        ),
+        archiveTask: (taskId: string): Promise<Task> => (
+            runStoreOperation(() => updateTask(taskId, { status: 'archived' }))
+        ),
+        deleteTask: (taskId: string): Promise<Task> => runStoreOperation(async () => {
             const state = await refreshState();
             const result = await state.deleteTask(taskId);
             if (!result.success) {
@@ -199,8 +256,8 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
             }
             await flushPendingSave();
             return requireTask(taskId);
-        },
-        restoreTask: async (taskId: string): Promise<Task> => {
+        }),
+        restoreTask: (taskId: string): Promise<Task> => runStoreOperation(async () => {
             const state = await refreshState();
             const result = await state.restoreTask(taskId);
             if (!result.success) {
@@ -208,16 +265,16 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
             }
             await flushPendingSave();
             return requireTask(taskId);
-        },
-        search: async (query: string): Promise<SearchResults> => {
+        }),
+        search: (query: string): Promise<SearchResults> => runStoreOperation(async () => {
             const state = await refreshState();
             return searchAll(
                 state._allTasks.filter((task) => !task.deletedAt),
                 state._allProjects.filter((project) => !project.deletedAt),
                 query,
             );
-        },
-        listProjects: async (): Promise<SearchProjectResult[]> => {
+        }),
+        listProjects: (): Promise<SearchProjectResult[]> => runStoreOperation(async () => {
             const state = await refreshState();
             return state._allProjects
                 .filter((project) => !project.deletedAt)
@@ -227,24 +284,24 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                     status: project.status,
                     areaId: project.areaId,
                 }));
-        },
-        listAreas: async (): Promise<Area[]> => {
+        }),
+        listAreas: (): Promise<Area[]> => runStoreOperation(async () => {
             const state = await refreshState();
             return state._allAreas.filter((area) => !area.deletedAt);
-        },
-        listSections: async (projectId?: string): Promise<Section[]> => {
+        }),
+        listSections: (projectId?: string): Promise<Section[]> => runStoreOperation(async () => {
             const state = await refreshState();
             return state._allSections.filter(
                 (section) => !section.deletedAt && (!projectId || section.projectId === projectId)
             );
-        },
-        getSection: async (sectionId: string): Promise<Section> => {
+        }),
+        getSection: (sectionId: string): Promise<Section> => runStoreOperation(async () => {
             const state = await refreshState();
             const section = state._allSections.find((item) => item.id === sectionId && !item.deletedAt);
             if (!section) throw new Error(`Section not found: ${sectionId}`);
             return section;
-        },
-        createSection: async ({
+        }),
+        createSection: ({
             projectId,
             title,
             props,
@@ -252,14 +309,14 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
             projectId: string;
             title: string;
             props?: Partial<Section>;
-        }): Promise<Section> => {
+        }): Promise<Section> => runStoreOperation(async () => {
             const state = await refreshState();
             const section = await state.addSection(projectId, title, props);
             if (!section) throw new Error('Failed to create section');
             await flushPendingSave();
             return section;
-        },
-        updateSection: async (sectionId: string, patch: Partial<Section>): Promise<Section> => {
+        }),
+        updateSection: (sectionId: string, patch: Partial<Section>): Promise<Section> => runStoreOperation(async () => {
             const state = await refreshState();
             const result = await state.updateSection(sectionId, sanitizeSectionPatch(patch));
             if (!result.success) throw new Error(result.error || `Failed to update section: ${sectionId}`);
@@ -267,12 +324,12 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
             const updated = useTaskStore.getState()._allSections.find((item) => item.id === sectionId);
             if (!updated) throw new Error(`Section not found after update: ${sectionId}`);
             return updated;
-        },
-        deleteSection: async (sectionId: string): Promise<void> => {
+        }),
+        deleteSection: (sectionId: string): Promise<void> => runStoreOperation(async () => {
             const state = await refreshState();
             const result = await state.deleteSection(sectionId);
             if (!result.success) throw new Error(result.error || `Failed to delete section: ${sectionId}`);
             await flushPendingSave();
-        },
+        }),
     };
 }
