@@ -21,6 +21,13 @@ export const setBackgroundSafeFetchDeadline = (at: number | null): void => {
   deadlineAt = at;
 };
 
+/** Read back the deadline set above. CloudKit calls in cloudkit-sync.ts are
+ *  not fetch requests, so they cannot share the enforcement above, but they
+ *  share this same wall-clock deadline: it is checked before and after every
+ *  native CloudKit call so a run resumed from suspension past its deadline
+ *  aborts at once instead of starting (or trusting the result of) another one. */
+export const getBackgroundSafeFetchDeadline = (): number | null => deadlineAt;
+
 // Only React Native's XMLHttpRequest has the timer-free completion and the
 // native timeout; a browser (the web build, tests) keeps its own fetch.
 const hasNativeXhr = (): boolean => (

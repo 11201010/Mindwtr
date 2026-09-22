@@ -10,6 +10,7 @@ import { requireNativeModule, type NativeModule } from 'expo-modules-core';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CLOUDKIT_ATTACHMENT_RECORD_TYPE, type AppData } from '@mindwtr/core';
 import { logInfo, logWarn, logError } from './app-log';
+import { getBackgroundSafeFetchDeadline } from './background-safe-fetch';
 import { CLOUDKIT_CHANGE_TOKEN_KEY, CLOUDKIT_SEEDED_KEY, CLOUDKIT_ZONE_CREATED_KEY } from './sync-constants';
 
 // MARK: - Types
@@ -134,21 +135,64 @@ const throwIfAborted = (signal: AbortSignal | undefined, fallbackMessage: string
 const isAbortLikeError = (error: unknown, signal?: AbortSignal): boolean =>
     Boolean(signal?.aborted) || (error instanceof Error && error.name === 'AbortError');
 
+/** The wall-clock deadline background-sync-task.ts arms for the run (shared
+ *  with fetch via background-safe-fetch.ts). A CloudKit op has no way to know
+ *  the app was suspended mid-request, so this is checked on the JS side
+ *  before starting a native call and again right after one resolves — a run
+ *  resumed past its deadline must not start (or trust the result of) another. */
+const throwIfMobileSyncDeadlinePassed = (fallbackMessage: string): void => {
+    const deadlineAt = getBackgroundSafeFetchDeadline();
+    if (deadlineAt !== null && Date.now() >= deadlineAt) {
+        throw createAbortError(`Mobile background sync deadline passed; ${fallbackMessage}`);
+    }
+};
+
+/** CloudKitOperationTimeouts.apply (ios/CloudKitOperationTimeouts.swift) gives
+ *  every CKOperation a 30s request timeout. Only the elapsed time decides
+ *  whether a failure is logged as a timeout: no CKError code crosses the
+ *  bridge, and the message that does is CKError.localizedDescription, which
+ *  iOS translates — matching English words in it would never fire on a phone
+ *  that is not set to English. A genuinely offline device fails in well under
+ *  a second, so this floor filters it out. */
+const CLOUDKIT_OPERATION_TIMEOUT_LOG_THRESHOLD_MS = 25_000;
+
+const logCloudKitOperationTimeoutIfNeeded = (operationName: string, startedAt: number, error: unknown): void => {
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs < CLOUDKIT_OPERATION_TIMEOUT_LOG_THRESHOLD_MS) return;
+    // We cancelled it ourselves; that is the wall-clock abort's line to write.
+    if (error instanceof Error && error.name === 'AbortError') return;
+    void logWarn('CloudKit operation timed out', {
+        scope: 'cloudkit',
+        force: true,
+        extra: { operation: operationName, elapsedMs: String(elapsedMs), releaseCheck: 'v1.3.2/cloudkit-op-timeout' },
+    });
+};
+
 const runNativeOperation = async <T>(
+    operationName: string,
     operation: () => Promise<T>,
     signal: AbortSignal | undefined,
     fallbackMessage: string,
 ): Promise<T> => {
     throwIfAborted(signal, fallbackMessage);
-    if (!signal) return operation();
-
-    return new Promise<T>((resolve, reject) => {
-        const onAbort = () => reject(resolveAbortError(signal, fallbackMessage));
-        signal.addEventListener('abort', onAbort, { once: true });
-        operation()
-            .then(resolve, reject)
-            .finally(() => signal.removeEventListener('abort', onAbort));
-    });
+    throwIfMobileSyncDeadlinePassed(fallbackMessage);
+    const startedAt = Date.now();
+    try {
+        const result = !signal
+            ? await operation()
+            : await new Promise<T>((resolve, reject) => {
+                const onAbort = () => reject(resolveAbortError(signal, fallbackMessage));
+                signal.addEventListener('abort', onAbort, { once: true });
+                operation()
+                    .then(resolve, reject)
+                    .finally(() => signal.removeEventListener('abort', onAbort));
+            });
+        throwIfMobileSyncDeadlinePassed(fallbackMessage);
+        return result;
+    } catch (error) {
+        logCloudKitOperationTimeoutIfNeeded(operationName, startedAt, error);
+        throw error;
+    }
 };
 
 /** Create the zone again after CloudKit reported it gone, and drop the two
@@ -158,7 +202,7 @@ const runNativeOperation = async <T>(
 const recreateCloudKitZone = async (signal: AbortSignal | undefined): Promise<void> => {
     await AsyncStorage.removeItem(CLOUDKIT_CHANGE_TOKEN_KEY);
     await AsyncStorage.removeItem(CLOUDKIT_ZONE_CREATED_KEY);
-    await runNativeOperation(() => CloudKitSync!.ensureZone(), signal, 'CloudKit setup cancelled');
+    await runNativeOperation('ensureZone', () => CloudKitSync!.ensureZone(), signal, 'CloudKit setup cancelled');
     await AsyncStorage.setItem(CLOUDKIT_ZONE_CREATED_KEY, '1');
     void logWarn('CloudKit zone was deleted or cleared; recreated it and reset the change token', {
         scope: 'cloudkit',
@@ -169,17 +213,18 @@ const recreateCloudKitZone = async (signal: AbortSignal | undefined): Promise<vo
 /** Every native call goes through here. A zone-gone failure recreates the
  *  zone and retries the call once; a second failure surfaces as usual. */
 const runCloudKitOperation = async <T>(
+    operationName: string,
     operation: () => Promise<T>,
     signal: AbortSignal | undefined,
     fallbackMessage: string,
     recoverZone = true,
 ): Promise<T> => {
     try {
-        return await runNativeOperation(operation, signal, fallbackMessage);
+        return await runNativeOperation(operationName, operation, signal, fallbackMessage);
     } catch (error) {
         if (!recoverZone || !isCloudKitZoneGoneError(error)) throw error;
         await recreateCloudKitZone(signal);
-        return runNativeOperation(operation, signal, fallbackMessage);
+        return runNativeOperation(operationName, operation, signal, fallbackMessage);
     }
 };
 
@@ -210,13 +255,14 @@ export const ensureCloudKitReady = async (options: CloudKitOperationOptions = {}
     throwIfAborted(options.signal, 'CloudKit setup cancelled');
     const zoneCreated = await AsyncStorage.getItem(CLOUDKIT_ZONE_CREATED_KEY);
     if (!zoneCreated) {
-        await runCloudKitOperation(() => CloudKitSync!.ensureZone(), options.signal, 'CloudKit setup cancelled');
+        await runCloudKitOperation('ensureZone', () => CloudKitSync!.ensureZone(), options.signal, 'CloudKit setup cancelled');
         await AsyncStorage.setItem(CLOUDKIT_ZONE_CREATED_KEY, '1');
         void logInfo('CloudKit zone created', { scope: 'cloudkit' });
     }
 
     try {
         await runCloudKitOperation(
+            'ensureSubscription',
             () => CloudKitSync!.ensureSubscription(),
             options.signal,
             'CloudKit subscription setup cancelled',
@@ -245,6 +291,7 @@ export const readRemoteCloudKit = async (options: CloudKitOperationOptions = {})
             let result: ChangeResult;
             try {
                 result = await runCloudKitOperation(
+                    'fetchChanges',
                     () => CloudKitSync!.fetchChanges(changeToken),
                     options.signal,
                     'CloudKit read cancelled',
@@ -319,6 +366,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         if (allTasks.length > 0) {
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:task',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.task, JSON.stringify(allTasks)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -328,6 +376,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         if (allProjects.length > 0) {
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:project',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.project, JSON.stringify(allProjects)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -337,6 +386,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         if (allSections.length > 0) {
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:section',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.section, JSON.stringify(allSections)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -346,6 +396,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         if (allAreas.length > 0) {
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:area',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.area, JSON.stringify(allAreas)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -355,6 +406,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         if (allPeople.length > 0) {
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:person',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.person, JSON.stringify(allPeople)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -373,6 +425,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
             ];
             savePromises.push(
                 runCloudKitOperation(
+                    'saveRecords:settings',
                     () => CloudKitSync!.saveRecords(RECORD_TYPES.settings, JSON.stringify(settingsRecord)),
                     options.signal,
                     'CloudKit write cancelled',
@@ -398,6 +451,7 @@ export const writeRemoteCloudKit = async (data: AppData, options: CloudKitOperat
         // so advancing the token would cause the next sync to skip them.
         if (allConflicts.length === 0) {
             const changeResult: ChangeResult = await runCloudKitOperation(
+                'fetchChanges',
                 async () => CloudKitSync!.fetchChanges(await AsyncStorage.getItem(CLOUDKIT_CHANGE_TOKEN_KEY)),
                 options.signal,
                 'CloudKit write cancelled',
@@ -433,6 +487,7 @@ export const saveCloudKitAttachmentAsset = async (
     if (!isCloudKitAvailable()) throw new Error('CloudKit is not available on platform');
     throwIfAborted(options.signal, 'CloudKit attachment upload cancelled');
     return runCloudKitOperation(
+        'saveAttachmentAsset',
         () => CloudKitSync!.saveAttachmentAsset(recordName, filePath, metadata),
         options.signal,
         'CloudKit attachment upload cancelled',
@@ -448,6 +503,7 @@ export const fetchCloudKitAttachmentAsset = async (
     throwIfAborted(options.signal, 'CloudKit attachment download cancelled');
     try {
         return await runCloudKitOperation(
+            'fetchAttachmentAsset',
             () => CloudKitSync!.fetchAttachmentAsset(recordName, targetPath),
             options.signal,
             'CloudKit attachment download cancelled',
@@ -468,6 +524,7 @@ export const deleteCloudKitAttachmentAssets = async (
     if (recordNames.length === 0) return;
     throwIfAborted(options.signal, 'CloudKit attachment delete cancelled');
     await runCloudKitOperation(
+        'deleteRecords:attachment',
         () => CloudKitSync!.deleteRecords(CLOUDKIT_ATTACHMENT_RECORD_TYPE, recordNames),
         options.signal,
         'CloudKit attachment delete cancelled',
@@ -555,31 +612,37 @@ async function fullFetch(options: CloudKitOperationOptions = {}): Promise<AppDat
     throwIfAborted(options.signal, 'CloudKit read cancelled');
     const [tasks, projects, sections, areas, people, settingsRecords] = await Promise.all([
         runCloudKitOperation(
+            'fetchAllRecords:task',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.task),
             options.signal,
             'CloudKit read cancelled',
         ),
         runCloudKitOperation(
+            'fetchAllRecords:project',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.project),
             options.signal,
             'CloudKit read cancelled',
         ),
         runCloudKitOperation(
+            'fetchAllRecords:section',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.section),
             options.signal,
             'CloudKit read cancelled',
         ),
         runCloudKitOperation(
+            'fetchAllRecords:area',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.area),
             options.signal,
             'CloudKit read cancelled',
         ),
         runCloudKitOperation(
+            'fetchAllRecords:person',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.person),
             options.signal,
             'CloudKit read cancelled',
         ),
         runCloudKitOperation(
+            'fetchAllRecords:settings',
             () => CloudKitSync!.fetchAllRecords(RECORD_TYPES.settings),
             options.signal,
             'CloudKit read cancelled',
@@ -601,6 +664,7 @@ async function fullFetch(options: CloudKitOperationOptions = {}): Promise<AppDat
         // After a full fetch, get the current token for future incremental fetches
         try {
             const result: ChangeResult = await runCloudKitOperation(
+                'fetchChanges',
                 () => CloudKitSync!.fetchChanges(null),
                 options.signal,
                 'CloudKit read cancelled',
@@ -634,6 +698,7 @@ async function deletePurgedRecords(data: AppData, options: CloudKitOperationOpti
     if (purgedTaskIDs.length > 0) {
         deletePromises.push(
             runCloudKitOperation(
+                'deleteRecords:task',
                 () => CloudKitSync!.deleteRecords(RECORD_TYPES.task, purgedTaskIDs),
                 options.signal,
                 'CloudKit write cancelled',
@@ -643,6 +708,7 @@ async function deletePurgedRecords(data: AppData, options: CloudKitOperationOpti
     if (purgedProjectIDs.length > 0) {
         deletePromises.push(
             runCloudKitOperation(
+                'deleteRecords:project',
                 () => CloudKitSync!.deleteRecords(RECORD_TYPES.project, purgedProjectIDs),
                 options.signal,
                 'CloudKit write cancelled',

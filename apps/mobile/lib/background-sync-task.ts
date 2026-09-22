@@ -190,6 +190,52 @@ const withDeadline = <T>(work: Promise<T>, deadlineMs: number, onDeadline: () =>
   })
 );
 
+/** Same race as withDeadline, but the deadline can also be declared past by an
+ *  AppState 'active' event, not only by its own timer. A setTimeout scheduled
+ *  before the app was suspended does not fire again until the app resumes —
+ *  by then a CloudKit operation may have sat suspended for up to half an hour
+ *  (see the module comment above). AppState delivers 'active' the moment JS
+ *  resumes, before anything else runs, so a run that is already past its
+ *  deadline by then is abandoned immediately instead of waiting for that timer. */
+const withDeadlineAndResumeCheck = <T>(
+  work: Promise<T>,
+  deadlineAt: number,
+  onDeadline: (stage: 'timer' | 'resume') => T,
+): Promise<T> => (
+  new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let subscription: { remove: () => void } | null = null;
+    const cleanup = () => {
+      clearTimeout(timer);
+      subscription?.remove();
+    };
+    const settleWithDeadline = (stage: 'timer' | 'resume') => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(onDeadline(stage));
+    };
+    const timer = setTimeout(() => settleWithDeadline('timer'), Math.max(0, deadlineAt - Date.now()));
+    subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && Date.now() >= deadlineAt) settleWithDeadline('resume');
+    });
+    work.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  })
+);
+
 const performBackgroundSyncWork = async (): Promise<BackgroundTask.BackgroundTaskResult> => {
   const { backend, configured } = await getMobileSyncConfigurationStatus();
   if (!configured || !supportsMobileScheduledBackgroundSync(backend)) {
@@ -250,7 +296,12 @@ const runMobileBackgroundSync = async (
   // Kept on an object: the deadline callback below assigns it from a closure,
   // which control-flow narrowing on a plain `let` cannot see.
   const run: { outcome: 'success' | 'failed' | 'abandoned' | 'crashed' } = { outcome: 'crashed' };
-  setMobileSyncRequestDeadline(startedAt + MOBILE_BACKGROUND_SYNC_DEADLINE_MS);
+  // Counted from here, not from startedAt: the capture drain above does file
+  // work and can take a while after a long backlog. Counting from startedAt
+  // would hand the sync whatever is left of the four minutes — possibly none
+  // of it, abandoning a run that never began and arming the failure cooldown.
+  const deadlineAt = Date.now() + MOBILE_BACKGROUND_SYNC_DEADLINE_MS;
+  setMobileSyncRequestDeadline(deadlineAt);
   // A "started" line without its "finished" line in a shared log is the
   // signature of a run that never settled (#1001).
   void logInfo('Mobile background sync started', {
@@ -258,15 +309,30 @@ const runMobileBackgroundSync = async (
     extra: { timersPaused: String(areJsTimersPaused()) },
   });
   try {
-    const result = await withDeadline(performBackgroundSyncWork(), MOBILE_BACKGROUND_SYNC_DEADLINE_MS, () => {
-      abortMobileSync();
-      run.outcome = 'abandoned';
-      void logWarn('Mobile background sync did not finish before its deadline and was abandoned', {
-        scope: 'sync',
-        extra: { deadlineMs: String(MOBILE_BACKGROUND_SYNC_DEADLINE_MS) },
-      });
-      return BackgroundTask.BackgroundTaskResult.Failed;
-    });
+    const result = await withDeadlineAndResumeCheck(
+      performBackgroundSyncWork(),
+      deadlineAt,
+      // Which of the two branches wins is a race the app does not control: on
+      // resume, React Native restarts the paused timer at the same moment
+      // AppState delivers 'active'. So both carry the proof fields and `stage`
+      // says which one it was — otherwise a working build could log a line the
+      // tester cannot see and the release check would report a false failure.
+      (stage) => {
+        abortMobileSync();
+        run.outcome = 'abandoned';
+        void logWarn('Mobile background sync did not finish before its deadline and was abandoned', {
+          scope: 'sync',
+          force: true,
+          extra: {
+            deadlineMs: String(MOBILE_BACKGROUND_SYNC_DEADLINE_MS),
+            elapsedMs: String(Date.now() - startedAt),
+            stage,
+            releaseCheck: 'v1.3.2/background-sync-wallclock-abort',
+          },
+        });
+        return BackgroundTask.BackgroundTaskResult.Failed;
+      },
+    );
     if (run.outcome !== 'abandoned') {
       run.outcome = result === BackgroundTask.BackgroundTaskResult.Success ? 'success' : 'failed';
     }

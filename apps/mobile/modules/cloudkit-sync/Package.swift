@@ -26,7 +26,10 @@ let package = Package(
                 "CloudKitSyncManager.swift",
                 "CloudKitSyncModule.swift",
             ],
-            sources: ["CloudKitAttachmentErrorClassifier.swift"]
+            sources: [
+                "CloudKitAttachmentErrorClassifier.swift",
+                "CloudKitOperationTimeouts.swift",
+            ]
         ),
         .testTarget(
             name: "CloudKitAttachmentErrorClassifierTests",

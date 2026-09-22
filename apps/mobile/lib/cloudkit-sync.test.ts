@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppData } from '@mindwtr/core';
 import {
     CLOUDKIT_ATTACHMENT_NOT_FOUND_CODE,
@@ -11,6 +11,8 @@ import {
     readRemoteCloudKit,
     writeRemoteCloudKit,
 } from './cloudkit-sync';
+import { logWarn } from './app-log';
+import { setBackgroundSafeFetchDeadline } from './background-safe-fetch';
 import { CLOUDKIT_CHANGE_TOKEN_KEY, CLOUDKIT_ZONE_CREATED_KEY } from './sync-constants';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -235,6 +237,63 @@ describe('cloudkit-sync abort handling', () => {
         await expect(ensureCloudKitReady({ signal: controller.signal })).rejects.toThrow('Already cancelled');
         expect(cloudKitSync.ensureZone).not.toHaveBeenCalled();
         expect(cloudKitSync.ensureSubscription).not.toHaveBeenCalled();
+    });
+
+    // The mobile background sync run arms this deadline (setMobileSyncRequestDeadline,
+    // shared with background-safe-fetch.ts) so a run resumed from suspension past it
+    // aborts at once rather than starting — or trusting the result of — another
+    // native CloudKit call. See background-sync-task.ts and CloudKitSyncManager.swift.
+    describe('mobile sync wall-clock deadline', () => {
+        afterEach(() => {
+            setBackgroundSafeFetchDeadline(null);
+        });
+
+        it('rejects a native call started after the deadline has already passed', async () => {
+            setBackgroundSafeFetchDeadline(Date.now() - 1);
+
+            await expect(ensureCloudKitReady()).rejects.toMatchObject({ name: 'AbortError' });
+            expect(cloudKitSync.ensureZone).not.toHaveBeenCalled();
+        });
+
+        it('rejects once the deadline passes while a native call is in flight, even though it succeeded', async () => {
+            // The call itself succeeds, but the deadline lapses while it is running
+            // (e.g. the app was suspended mid-call and only resumed after it) — the
+            // AFTER check must still fail the run rather than trust that result.
+            cloudKitSync.ensureZone.mockImplementation(async () => {
+                setBackgroundSafeFetchDeadline(Date.now() - 1);
+            });
+
+            await expect(ensureCloudKitReady()).rejects.toMatchObject({ name: 'AbortError' });
+            expect(cloudKitSync.ensureZone).toHaveBeenCalledTimes(1);
+            expect(cloudKitSync.ensureSubscription).not.toHaveBeenCalled();
+        });
+    });
+
+    // CloudKitOperationTimeouts.apply gives every CKOperation a 30s request
+    // timeout; CloudKit then reports it as a plain network-failure-class error.
+    // Only the elapsed time may decide whether that is logged as a timeout: the
+    // one thing that crosses the bridge is CKError.localizedDescription, which
+    // iOS translates, so the message here is German on purpose — matching
+    // English words in it would leave most testers' logs empty.
+    it('logs a slow native failure as a timeout whatever language the phone reports it in', async () => {
+        vi.useFakeTimers();
+        try {
+            cloudKitSync.ensureZone.mockImplementation(() => new Promise((_resolve, reject) => {
+                setTimeout(() => reject(new Error('Die Verbindung zu iCloud ist fehlgeschlagen.')), 26_000);
+            }));
+
+            const promise = ensureCloudKitReady();
+            const assertion = expect(promise).rejects.toThrow('fehlgeschlagen');
+            await vi.advanceTimersByTimeAsync(26_000);
+            await assertion;
+
+            expect(logWarn).toHaveBeenCalledWith('CloudKit operation timed out', expect.objectContaining({
+                force: true,
+                extra: expect.objectContaining({ operation: 'ensureZone', releaseCheck: 'v1.3.2/cloudkit-op-timeout' }),
+            }));
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('normalizes the stable native attachment absence code without message matching', async () => {

@@ -103,6 +103,8 @@ final class CloudKitSyncManager {
         let op = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
         op.savePolicy = .changedKeys
         op.qualityOfService = .userInitiated
+        // Moves the asset bytes up, so it gets the long transfer budget.
+        CloudKitOperationTimeouts.apply(to: op, resourceSeconds: CloudKitOperationTimeouts.assetResourceSeconds)
 
         let savedRecord = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CKRecord, Error>) in
             var perRecordError: Error?
@@ -194,6 +196,7 @@ final class CloudKitSyncManager {
             let zone = CKRecordZone(zoneID: zoneID)
             let op = CKModifyRecordZonesOperation(recordZonesToSave: [zone], recordZoneIDsToDelete: nil)
             op.qualityOfService = .userInitiated
+            CloudKitOperationTimeouts.apply(to: op)
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 op.modifyRecordZonesResultBlock = { result in
                     switch result {
@@ -250,6 +253,7 @@ final class CloudKitSyncManager {
                 subscriptionIDsToDelete: nil
             )
             op.qualityOfService = .utility
+            CloudKitOperationTimeouts.apply(to: op)
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 op.modifySubscriptionsResultBlock = { result in
                     switch result {
@@ -328,6 +332,7 @@ final class CloudKitSyncManager {
             let op = CKModifyRecordsOperation(recordsToSave: batch, recordIDsToDelete: nil)
             op.savePolicy = .changedKeys
             op.qualityOfService = .userInitiated
+            CloudKitOperationTimeouts.apply(to: op)
 
             // Serialize per-record callbacks — CloudKit dispatches on arbitrary queues.
             let cbQueue = DispatchQueue(label: "tech.dongdongbh.mindwtr.savecb")
@@ -407,6 +412,11 @@ final class CloudKitSyncManager {
         if ids.isEmpty { return [:] }
         let op = CKFetchRecordsOperation(recordIDs: ids)
         op.qualityOfService = .userInitiated
+        // This is how both saveAttachmentAsset and fetchAttachmentAsset pull an
+        // existing attachment record down, asset bytes included, so it gets the
+        // long transfer budget too. (saveRecords also calls it, for conflict
+        // re-reads of plain records, which finish well inside either budget.)
+        CloudKitOperationTimeouts.apply(to: op, resourceSeconds: CloudKitOperationTimeouts.assetResourceSeconds)
 
         let cbQueue = DispatchQueue(label: "tech.dongdongbh.mindwtr.fetchcb")
 
@@ -473,6 +483,7 @@ final class CloudKitSyncManager {
 
             let op = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: batch)
             op.qualityOfService = .utility
+            CloudKitOperationTimeouts.apply(to: op)
             let cbQueue = DispatchQueue(label: "tech.dongdongbh.mindwtr.deletecb")
 
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -537,6 +548,7 @@ final class CloudKitSyncManager {
         let initialOp = CKQueryOperation(query: query)
         initialOp.zoneID = zoneID
         initialOp.qualityOfService = .userInitiated
+        CloudKitOperationTimeouts.apply(to: initialOp)
 
         do {
             let firstResult = try await runQueryOperation(initialOp)
@@ -551,6 +563,7 @@ final class CloudKitSyncManager {
             let continueOp = CKQueryOperation(cursor: nextCursor)
             continueOp.zoneID = zoneID
             continueOp.qualityOfService = .userInitiated
+            CloudKitOperationTimeouts.apply(to: continueOp)
             let result = try await runQueryOperation(continueOp)
             allRecords.append(contentsOf: result.records)
             cursor = result.cursor

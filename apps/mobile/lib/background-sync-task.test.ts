@@ -77,9 +77,17 @@ vi.mock('./app-log', () => appLogMock);
 vi.mock('./js-timers', () => ({ areJsTimersPaused: vi.fn(() => true) }));
 const reactNativeMock = vi.hoisted(() => {
   const headlessTasks = new Map<string, () => () => Promise<void>>();
+  const appStateListeners = new Set<(state: string) => void>();
   return {
     headlessTasks,
-    AppState: { currentState: 'active' as string },
+    appStateListeners,
+    AppState: {
+      currentState: 'active' as string,
+      addEventListener: vi.fn((event: string, listener: (state: string) => void) => {
+        if (event === 'change') appStateListeners.add(listener);
+        return { remove: () => appStateListeners.delete(listener) };
+      }),
+    },
     Platform: { OS: 'android' },
     AppRegistry: {
       registerHeadlessTask: vi.fn((name: string, provider: () => () => Promise<void>) => {
@@ -88,6 +96,13 @@ const reactNativeMock = vi.hoisted(() => {
     },
   };
 });
+
+/** Fires every 'change' listener registered via AppState.addEventListener —
+ *  the harness has no real OS to deliver the event, so a test drives it directly. */
+const emitAppStateChange = (state: string) => {
+  reactNativeMock.AppState.currentState = state;
+  for (const listener of reactNativeMock.appStateListeners) listener(state);
+};
 vi.mock('react-native', () => reactNativeMock);
 
 const captureDrainMock = vi.hoisted(() => ({ drainPendingCapturesInBackground: vi.fn() }));
@@ -101,6 +116,7 @@ describe('mobile background sync task', () => {
     vi.clearAllMocks();
     taskManagerMock.state.executor = null;
     reactNativeMock.AppState.currentState = 'active';
+    reactNativeMock.appStateListeners.clear();
     nativeBackgroundTaskState.registered = false;
     taskManagerMock.isTaskDefined.mockReturnValue(false);
     taskManagerMock.isAvailableAsync.mockResolvedValue(true);
@@ -367,6 +383,83 @@ describe('mobile background sync task', () => {
       const deadlineCalls = syncServiceMock.setMobileSyncRequestDeadline.mock.calls;
       expect(deadlineCalls[0]?.[0]).toBeGreaterThan(Date.now() - 1);
       expect(deadlineCalls.at(-1)?.[0]).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts a sync resumed past its deadline as soon as the app is foregrounded, without waiting for the paused timer', async () => {
+    vi.useFakeTimers();
+    try {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      // Never settles on its own — only abortMobileSync (called by the deadline
+      // handling below) ends the run, same as a CloudKit op stuck mid-request.
+      syncServiceMock.performMobileSync.mockImplementation(() => new Promise(() => undefined));
+
+      const module = await loadModule();
+      const executor = taskManagerMock.state.executor;
+      if (!executor) throw new Error('Expected the background sync task to be defined');
+
+      const startedAt = Date.now();
+      const run = executor();
+      // Let the run's own awaits (drain, failure-state read) settle so it has
+      // reached the deadline race and registered the AppState listener.
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The app is suspended mid-operation: the clock moves on, but the OS
+      // pauses JavaScript timers, so nothing scheduled with setTimeout fires.
+      vi.setSystemTime(startedAt + module.MOBILE_BACKGROUND_SYNC_DEADLINE_MS + 5000);
+      expect(syncServiceMock.abortMobileSync).not.toHaveBeenCalled();
+
+      // The app resumes: AppState delivers 'active' the instant JS runs again.
+      emitAppStateChange('active');
+
+      expect(await run).toBe(backgroundTaskMock.BackgroundTaskResult.Failed);
+      expect(syncServiceMock.abortMobileSync).toHaveBeenCalledTimes(1);
+      // One line for both branches, with `stage` telling them apart: which of
+      // the two wins on resume is a race the app does not control, so the
+      // tester's release check must not depend on it.
+      expect(appLogMock.logWarn).toHaveBeenCalledWith(
+        'Mobile background sync did not finish before its deadline and was abandoned',
+        expect.objectContaining({
+          force: true,
+          extra: expect.objectContaining({ stage: 'resume', releaseCheck: 'v1.3.2/background-sync-wallclock-abort' }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores an AppState change while the run is still within its deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      syncServiceMock.getMobileSyncConfigurationStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+      syncServiceMock.performMobileSync.mockImplementation(() => new Promise(() => undefined));
+
+      const module = await loadModule();
+      const executor = taskManagerMock.state.executor;
+      if (!executor) throw new Error('Expected the background sync task to be defined');
+
+      const run = executor();
+      await vi.advanceTimersByTimeAsync(0);
+      emitAppStateChange('active');
+      expect(syncServiceMock.abortMobileSync).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(module.MOBILE_BACKGROUND_SYNC_DEADLINE_MS);
+      expect(await run).toBe(backgroundTaskMock.BackgroundTaskResult.Failed);
+      expect(syncServiceMock.abortMobileSync).toHaveBeenCalledTimes(1);
+      expect(appLogMock.logWarn).toHaveBeenCalledWith(
+        'Mobile background sync did not finish before its deadline and was abandoned',
+        expect.objectContaining({
+          force: true,
+          extra: expect.objectContaining({
+            stage: 'timer',
+            deadlineMs: String(module.MOBILE_BACKGROUND_SYNC_DEADLINE_MS),
+            releaseCheck: 'v1.3.2/background-sync-wallclock-abort',
+          }),
+        }),
+      );
     } finally {
       vi.useRealTimers();
     }
