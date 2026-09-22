@@ -16,6 +16,7 @@ test('Mac caches survive cleanup while stale generated sources are removed', () 
       writeFileSync(join(repo, path), 'fixture');
     }
     writeFileSync(join(bin, 'xcodebuild'), '#!/bin/sh\necho "Xcode $FIXTURE_XCODE"\n', { mode: 0o755 });
+    writeFileSync(join(bin, 'watchman'), '#!/bin/sh\ntest "$1" = --no-site-spawner\n', { mode: 0o755 });
     const envFile = join(root, 'env');
     const run = (version) => {
       writeFileSync(envFile, '');

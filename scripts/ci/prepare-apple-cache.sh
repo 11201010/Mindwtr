@@ -16,6 +16,8 @@ if [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
   echo "GEM_HOME=$gem_home" >> "$GITHUB_ENV"
   echo "GEM_PATH=$gem_home" >> "$GITHUB_ENV"
   echo "$gem_home/bin" >> "$GITHUB_PATH"
+  # This account has no desktop login, so Watchman's LaunchAgent cannot start.
+  watchman --no-site-spawner get-sockname >/dev/null
 fi
 
 # Keep Swift/Xcode intermediates outside checkout cleanup, separated by compiler.
