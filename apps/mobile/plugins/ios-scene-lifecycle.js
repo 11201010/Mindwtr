@@ -9,7 +9,6 @@ const {
 } = require('@expo/config-plugins');
 
 const SCENE_DELEGATE_FILE = 'MindwtrSceneDelegate.swift';
-const BRIDGING_HEADER_FILE = 'Mindwtr-Bridging-Header.h';
 const ALARM_NOTIFICATION_IMPORT = '#import <RnAlarmNotification.h>';
 const SCENE_DELEGATE_CLASS = '$(PRODUCT_MODULE_NAME).MindwtrSceneDelegate';
 const SCENE_CONFIGURATION_NAME = 'Default Configuration';
@@ -335,7 +334,7 @@ const migrateGeneratedAppDelegate = (config) =>
       const bridgingHeaderPath = path.join(
         cfg.modRequest.platformProjectRoot,
         appName,
-        BRIDGING_HEADER_FILE
+        `${appName}-Bridging-Header.h`
       );
       if (!fs.existsSync(appDelegatePath)) {
         throw new Error(`[ios-scene-lifecycle] Missing generated AppDelegate: ${appDelegatePath}`);
@@ -364,7 +363,6 @@ module.exports.__testables = {
   APP_DELEGATE_METHODS,
   APP_DELEGATE_STATE,
   ALARM_NOTIFICATION_IMPORT,
-  BRIDGING_HEADER_FILE,
   LEGACY_ROOT_STARTUP,
   MIGRATION_MARKER,
   SCENE_CONFIGURATION_NAME,

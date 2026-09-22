@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const plugin = require('./ios-scene-lifecycle');
 
 const {
   ALARM_NOTIFICATION_IMPORT,
-  BRIDGING_HEADER_FILE,
   LEGACY_ROOT_STARTUP,
   MIGRATION_MARKER,
   SCENE_CONFIGURATION_NAME,
@@ -63,6 +63,27 @@ class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {}
 `;
 
 describe('ios-scene-lifecycle', () => {
+  it.each(['Mindwtr', 'Mindwtr Dev', 'Mindwtr Benchmark'])('migrates the generated header for %s', async (name) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mindwtr-scene-'));
+    const appName = name.replaceAll(' ', '');
+    const appDir = path.join(root, appName);
+    fs.mkdirSync(appDir);
+    fs.writeFileSync(path.join(appDir, 'AppDelegate.swift'), appDelegateFixture);
+    const header = path.join(appDir, `${appName}-Bridging-Header.h`);
+    fs.writeFileSync(header, '// Generated bridging header\n');
+    try {
+      const config = plugin({ name, slug: 'mindwtr', _internal: { projectRoot: root } });
+      await config.mods.ios.dangerous({
+        ...config,
+        modRequest: { platformProjectRoot: root, projectRoot: root, platform: 'ios' },
+      });
+      expect(fs.readFileSync(header, 'utf8')).toContain(ALARM_NOTIFICATION_IMPORT);
+      expect(fs.readFileSync(path.join(appDir, 'AppDelegate.swift'), 'utf8')).toContain(MIGRATION_MARKER);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('migrates the locked Expo 54 AppDelegate exactly once', () => {
     const migrated = migrateAppDelegate(appDelegateFixture);
 
@@ -111,7 +132,6 @@ describe('ios-scene-lifecycle', () => {
     const fixture = '// Generated bridging header\n';
     const migrated = migrateBridgingHeader(fixture);
 
-    expect(BRIDGING_HEADER_FILE).toBe('Mindwtr-Bridging-Header.h');
     expect(migrated).toContain(ALARM_NOTIFICATION_IMPORT);
     expect(migrateBridgingHeader(migrated)).toBe(migrated);
   });
