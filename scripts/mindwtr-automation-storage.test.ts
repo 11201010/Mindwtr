@@ -168,6 +168,61 @@ describe('automation script sqlite writes', () => {
         });
     });
 
+    test('preserves store status inference when capture status is omitted', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const service = await createMindwtrAutomationService({ dataPath, dbPath });
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+
+        let started: Task;
+        let cancelled: Task;
+        let explicitInbox: Task;
+        try {
+            started = await service.createTask({
+                title: 'Started without status',
+                props: { startTime: '2026-10-01' },
+            });
+            cancelled = await service.createTask({
+                title: 'Cancelled without status',
+                props: { cancelledAt: '2026-09-22T12:00:00.000Z' },
+            });
+            explicitInbox = await service.createTask({
+                title: 'Explicit inbox with start',
+                props: { status: 'inbox', startTime: '2026-10-01' },
+            });
+        } finally {
+            stderrSpy.mockRestore();
+        }
+
+        expect([started!.status, cancelled!.status, explicitInbox!.status]).toEqual([
+            'next',
+            'archived',
+            'inbox',
+        ]);
+        expect(cancelled!.cancelledAt).toBe('2026-09-22T12:00:00.000Z');
+        expect(readRow(dbPath, 'SELECT cancelledAt FROM tasks WHERE id = ?', cancelled!.id)).toEqual({
+            cancelledAt: '2026-09-22T12:00:00.000Z',
+        });
+        expect(readRows(dbPath, 'SELECT title, status FROM tasks ORDER BY title')).toEqual([
+            { title: 'Cancelled without status', status: 'archived' },
+            { title: 'Explicit inbox with start', status: 'inbox' },
+            { title: 'Started without status', status: 'next' },
+        ]);
+        expect((JSON.parse(readFileSync(dataPath, 'utf8')) as AppData).tasks
+            .map((task) => ({ title: task.title, status: task.status }))
+            .sort((a, b) => a.title.localeCompare(b.title))).toEqual([
+            { title: 'Cancelled without status', status: 'archived' },
+            { title: 'Explicit inbox with start', status: 'inbox' },
+            { title: 'Started without status', status: 'next' },
+        ]);
+        expect(stderrLines.filter((line) => line.includes('v1.3.2/automation-capture-implicit-status')))
+            .toHaveLength(2);
+    });
+
     test('reuses an active project named by quick add', async () => {
         const { dataPath, dbPath } = makeProfile();
         const existing = project('active-roadmap', 'Roadmap');

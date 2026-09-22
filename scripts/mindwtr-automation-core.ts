@@ -77,6 +77,18 @@ const logAutomationFailedOperationSettledDiagnostic = (): void => {
     })}\n`);
 };
 
+const logAutomationCaptureImplicitStatusDiagnostic = (): void => {
+    process.stderr.write(`${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'automation-storage',
+        message: 'Automation capture applied implicit task status',
+        context: {
+            releaseCheck: 'v1.3.2/automation-capture-implicit-status',
+        },
+    })}\n`);
+};
+
 export const TASK_STATUSES: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'];
 
 export const asTaskStatus = (value: unknown): TaskStatus | null => {
@@ -237,6 +249,7 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
             const explicitProps = { ...(props || {}) };
             const parsedStatus = requireValidStatus(explicitProps.status);
             if (parsedStatus) explicitProps.status = parsedStatus;
+            const shouldInferTaskStatus = parsed.props.status === undefined && explicitProps.status === undefined;
 
             const capture = await executeCaptureTransaction({
                 parsed: {
@@ -250,7 +263,12 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                 addProject: (projectTitle, color, initialProps) => (
                     state.addProject(projectTitle, color, initialProps)
                 ),
-                addTask: (taskTitle, initialProps) => state.addTask(taskTitle, initialProps),
+                addTask: (taskTitle, initialProps) => {
+                    if (!shouldInferTaskStatus) return state.addTask(taskTitle, initialProps);
+                    const taskProps = { ...initialProps };
+                    delete taskProps.status;
+                    return state.addTask(taskTitle, taskProps);
+                },
             });
             if (!capture.success) {
                 if (capture.reason === 'invalid-date-command') {
@@ -267,6 +285,9 @@ export async function createMindwtrAutomationService(options: AutomationServiceO
                 : allTasks.find((task) => !beforeTaskIds.has(task.id));
             if (!created) {
                 throw new Error('Failed to locate newly created task');
+            }
+            if (shouldInferTaskStatus && (created.startTime || created.cancelledAt)) {
+                logAutomationCaptureImplicitStatusDiagnostic();
             }
             if (parsed.projectTitle || parsed.props.projectId) {
                 logAutomationCaptureProjectDiagnostic(
