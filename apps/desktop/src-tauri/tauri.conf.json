@@ -54,9 +54,7 @@
     "macOS": {
       "signingIdentity": "Developer ID Application",
       "entitlements": "./Entitlements.mac.plist",
-      "files": {
-        "Info.plist": "./Info.plist"
-      }
+      "infoPlist": "./Info.plist"
     },
     "icon": [
       "icons/icon.png",
