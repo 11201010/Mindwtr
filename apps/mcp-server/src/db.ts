@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from 'fs';
+import { randomUUID } from 'crypto';
+import { existsSync, linkSync, mkdirSync, rmSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 
 import type { AppData, SqliteClient } from '@mindwtr/core';
 
+import { withMcpWriteLock } from './db-write-lock.js';
 import { resolveMindwtrDataJsonPath, resolveMindwtrDbPath } from './paths.js';
 
 export type DbOptions = {
@@ -33,6 +35,20 @@ const isBun = () => typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined'
 const getErrorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+const isAlreadyExistsError = (error: unknown): boolean =>
+  isRecord(error) && error.code === 'EEXIST';
+
+type BootstrapOutcome = 'created' | 'existing';
+
+const logBootstrapDiagnostic = (outcome: BootstrapOutcome): void => {
+  process.stderr.write(`${JSON.stringify({
+    ts: new Date().toISOString(),
+    level: 'info',
+    scope: 'mcp',
+    message: 'MCP SQLite fallback bootstrap resolved',
+    context: { releaseCheck: 'v1.3.2/mcp-bootstrap-serialized', outcome },
+  })}\n`);
+};
 
 const normalizeBootstrapData = (core: CoreModule, raw: unknown): AppData => {
   const record = isRecord(raw) ? raw : {};
@@ -91,26 +107,24 @@ const createBootstrapSqliteClient = async (dbPath: string) => {
   };
 };
 
-async function bootstrapMindwtrDbFromJson(dbPath: string, dataJsonPath: string): Promise<void> {
+async function bootstrapMindwtrDbFromJson(dbPath: string, dataJsonPath: string): Promise<BootstrapOutcome> {
   const raw = await readFile(dataJsonPath, 'utf8');
   const parsed = JSON.parse(raw) as unknown;
   const core = (await import('@mindwtr/core')) as CoreModule;
   const data = normalizeBootstrapData(core, parsed);
 
   mkdirSync(dirname(dbPath), { recursive: true });
-  // Build at a temp path and rename into place. A SIGKILL, a host startup timeout,
+  // Build at a temp path and publish it only when the canonical path is still free.
+  // A SIGKILL, a host startup timeout,
   // or the server's own SIGINT handler partway through must never leave a
   // schema-only database at the canonical path: the next start would see the file,
   // skip the bootstrap, and serve an empty library forever.
-  const tempPath = `${dbPath}.bootstrap-tmp`;
+  const tempPath = `${dbPath}.bootstrap-${randomUUID()}.tmp`;
   const removeTemp = () => {
     rmSync(tempPath, { force: true });
     rmSync(`${tempPath}-shm`, { force: true });
     rmSync(`${tempPath}-wal`, { force: true });
   };
-  // A temp left by an interrupted earlier start is never reused. Two first starts
-  // at once would still collide, exactly as the previous in-place build did.
-  removeTemp();
   const { client, close } = await createBootstrapSqliteClient(tempPath);
   let closed = false;
   const closeOnce = () => {
@@ -122,11 +136,17 @@ async function bootstrapMindwtrDbFromJson(dbPath: string, dataJsonPath: string):
     const adapter = new core.SqliteAdapter(client);
     await adapter.ensureSchema();
     await adapter.saveData(data);
-    // Fold the WAL into the database file before the rename: the -wal sibling is
-    // left behind at the temp path, so the renamed file has to be self-contained.
+    // Fold the WAL into the database file before publication: the -wal sibling is
+    // left behind at the temp path, so the published file has to be self-contained.
     await client.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     closeOnce();
-    renameSync(tempPath, dbPath);
+    try {
+      linkSync(tempPath, dbPath);
+      return 'created';
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      return 'existing';
+    }
   } finally {
     closeOnce();
     removeTemp();
@@ -167,10 +187,16 @@ export async function ensureMindwtrDbPath(options: DbOptions = {}): Promise<stri
     // explicit --db the two already share a directory, so this keeps that path.
     const bootstrapPath = join(dirname(dataJsonPath), basename(path));
     try {
-      console.warn(`[mindwtr-mcp] Bootstrapping SQLite database from fallback data.json: ${dataJsonPath}`);
-      await bootstrapMindwtrDbFromJson(bootstrapPath, dataJsonPath);
+      const outcome = await withMcpWriteLock(bootstrapPath, async () => {
+        if (existsSync(bootstrapPath)) return 'existing';
+        console.warn(`[mindwtr-mcp] Bootstrapping SQLite database from fallback data.json: ${dataJsonPath}`);
+        return bootstrapMindwtrDbFromJson(bootstrapPath, dataJsonPath);
+      });
       if (existsSync(bootstrapPath)) {
-        console.warn(`[mindwtr-mcp] Bootstrapped SQLite database at: ${bootstrapPath}`);
+        if (outcome === 'created') {
+          console.warn(`[mindwtr-mcp] Bootstrapped SQLite database at: ${bootstrapPath}`);
+        }
+        logBootstrapDiagnostic(outcome);
         return bootstrapPath;
       }
     } catch (error) {
