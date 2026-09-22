@@ -1242,7 +1242,7 @@ jobs:
 
       - name: Upload IPA to App Store Connect
         if: ${{ inputs.upload && !inputs.testflight_only && env.SKIP_APPSTORE_UPLOAD != 'true' }}
-        timeout-minutes: 30
+        timeout-minutes: 60
         env:
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}

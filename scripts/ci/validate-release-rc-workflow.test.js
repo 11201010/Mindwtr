@@ -168,6 +168,7 @@ test('TestFlight-only route bypasses production version state and uses only pilo
   }
   const production = steps.find((step) => step.name === 'Upload IPA to App Store Connect');
   expect(production.if).toContain('!inputs.testflight_only');
+  expect(production['timeout-minutes']).toBe(60);
   for (const name of ['Prepare Fastlane metadata', 'Prepare Fastlane screenshots']) {
     expect(steps.find((step) => step.name === name).if).toContain('!inputs.testflight_only');
   }
