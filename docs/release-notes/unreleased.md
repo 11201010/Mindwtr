@@ -68,3 +68,4 @@ Changes collected since the latest stable release.
 - Mobile: starred projects now sit at the top of their area in the Projects list, so the star is a quick way to bring your most important projects up. The other projects keep the order set by dragging on desktop, then the name. Desktop is unchanged, because its list is ordered by dragging. (#1263)
 - iOS: with iCloud sync, a change made on another Apple device now reaches the phone within seconds. The push message that announces such a change was never handed to the app, so the phone only noticed at its next scheduled or foreground sync.
 - Search: `@home`, `#tag` and `%name` now work as short forms of `context:`, `tag:` and `person:`, on desktop and mobile. Before, typing a context with its `@` found nothing. (#1264)
+- Desktop: the keyboard shortcuts help now says that `h`/`←` and `l`/`→` move the focus one panel left or right, which is what they do since the Projects page gained keyboard navigation. (#1212)
