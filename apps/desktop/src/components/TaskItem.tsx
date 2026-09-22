@@ -223,6 +223,7 @@ export const TaskItem = memo(function TaskItem({
         addLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
+        appendRetainedAttachment,
         removeAttachment,
         openAttachment,
         beginAttachmentSave,
@@ -656,6 +657,7 @@ export const TaskItem = memo(function TaskItem({
         addLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
+        appendRetainedAttachment,
         openAttachment,
         removeAttachment,
     }), [
@@ -665,6 +667,7 @@ export const TaskItem = memo(function TaskItem({
         addLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
+        appendRetainedAttachment,
         openAttachment,
         removeAttachment,
     ]);

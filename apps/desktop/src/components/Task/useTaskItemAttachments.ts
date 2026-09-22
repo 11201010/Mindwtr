@@ -574,6 +574,21 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         );
     }, []);
 
+    const appendRetainedAttachment = useCallback((
+        attachment: Attachment,
+        latestStoreAttachments: Attachment[],
+    ) => {
+        setEditAttachments((currentDraft) => {
+            const merged = new Map<string, Attachment>();
+            for (const stored of latestStoreAttachments) merged.set(stored.id, stored);
+            // Local edits win for records that existed when the editor opened,
+            // while records that arrived later in the store are retained too.
+            for (const drafted of currentDraft) merged.set(drafted.id, drafted);
+            merged.set(attachment.id, attachment);
+            return [...merged.values()];
+        });
+    }, []);
+
     const settleAttachmentFiles = useCallback((committedAttachments: Attachment[]) => {
         const removable = planAttachmentDraftSettlement({
             baselineAttachments: baselineAttachmentsRef.current,
@@ -637,6 +652,7 @@ export function useTaskItemAttachments({ task, t }: UseTaskItemAttachmentsProps)
         addObsidianNoteAttachment,
         editLinkAttachment,
         handleAddLinkAttachment,
+        appendRetainedAttachment,
         removeAttachment,
         openAttachment,
         beginAttachmentSave,

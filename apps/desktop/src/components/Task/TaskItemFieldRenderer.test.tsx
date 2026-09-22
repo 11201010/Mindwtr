@@ -16,6 +16,17 @@ const audioMocks = vi.hoisted(() => ({
     resolveSpeechCapture: vi.fn(async () => ({ ready: true, config: {} })),
     remove: vi.fn(async () => undefined),
 }));
+const logMocks = vi.hoisted(() => ({
+    logInfo: vi.fn(async () => null),
+}));
+const coreMocks = vi.hoisted(() => ({
+    flushPendingSave: vi.fn(async () => undefined),
+}));
+
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@mindwtr/core')>(),
+    flushPendingSave: coreMocks.flushPendingSave,
+}));
 
 vi.mock('../../lib/audio-capture', () => ({
     startAudioCapture: audioMocks.startAudioCapture,
@@ -26,6 +37,10 @@ vi.mock('../../lib/speech-to-text', () => ({
 }));
 vi.mock('@tauri-apps/plugin-fs', () => ({
     remove: audioMocks.remove,
+}));
+vi.mock('../../lib/app-log', async (importOriginal) => ({
+    ...await importOriginal<typeof import('../../lib/app-log')>(),
+    logInfo: logMocks.logInfo,
 }));
 
 const baseTask: Task = {
@@ -199,6 +214,7 @@ const createProps = (overrides: FixtureOverrides = {}): Omit<RendererProps, 'fie
             addLinkAttachment: vi.fn(),
             addObsidianNoteAttachment: vi.fn(),
             editLinkAttachment: vi.fn(),
+            appendRetainedAttachment: vi.fn(),
             openAttachment: vi.fn(),
             removeAttachment: vi.fn(),
             ...overrides.attachments,
@@ -327,7 +343,7 @@ describe('TaskItemFieldRenderer description dictation', () => {
         });
     };
 
-    const dictate = async () => {
+    const dictate = async (overrides: FixtureOverrides = {}) => {
         const capture = {
             path: '/data/audio-captures/mindwtr-audio-20260918T101112-uuid.wav',
             name: 'mindwtr-audio-20260918T101112-uuid.wav',
@@ -342,7 +358,7 @@ describe('TaskItemFieldRenderer description dictation', () => {
         });
         const { getByRole } = render(
             <LanguageProvider>
-                <TaskItemFieldRenderer fieldId="description" {...createProps()} />
+                <TaskItemFieldRenderer fieldId="description" {...createProps(overrides)} />
             </LanguageProvider>
         );
 
@@ -358,9 +374,10 @@ describe('TaskItemFieldRenderer description dictation', () => {
     it('keeps the recording as an attachment when transcription fails', async () => {
         audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
         const updateTask = vi.fn(async () => ({ success: true }));
+        const appendRetainedAttachment = vi.fn();
         seedStore(baseTask, updateTask);
 
-        const { capture } = await dictate();
+        const { capture } = await dictate({ attachments: { appendRetainedAttachment } });
 
         await waitFor(() => expect(updateTask).toHaveBeenCalled());
         expect(updateTask).toHaveBeenCalledWith(baseTask.id, expect.objectContaining({
@@ -370,7 +387,35 @@ describe('TaskItemFieldRenderer description dictation', () => {
                 uri: capture.path,
             })],
         }));
+        expect(appendRetainedAttachment).toHaveBeenCalledWith(
+            expect.objectContaining({ uri: capture.path }),
+            [],
+        );
+        expect(logMocks.logInfo).toHaveBeenCalledWith('Dictation audio retained after task save completed', {
+            scope: 'audio',
+            extra: { releaseCheck: 'v1.3.2/dictation-audio-retained' },
+        });
+        expect(coreMocks.flushPendingSave.mock.invocationCallOrder[0])
+            .toBeLessThan(logMocks.logInfo.mock.invocationCallOrder[0]);
         expect(audioMocks.remove).not.toHaveBeenCalled();
+    });
+
+    it('keeps the recording in the draft when the immediate task update is rejected', async () => {
+        audioMocks.processAudioCapture.mockRejectedValue(new Error('Whisper model not found'));
+        const updateTask = vi.fn(async () => ({ success: false, error: 'Store rejected update' }));
+        const appendRetainedAttachment = vi.fn();
+        seedStore(baseTask, updateTask);
+
+        const { capture } = await dictate({ attachments: { appendRetainedAttachment } });
+
+        await waitFor(() => expect(updateTask).toHaveBeenCalled());
+        expect(appendRetainedAttachment).toHaveBeenCalledWith(
+            expect.objectContaining({ uri: capture.path }),
+            [],
+        );
+        expect(coreMocks.flushPendingSave).not.toHaveBeenCalled();
+        expect(logMocks.logInfo).not.toHaveBeenCalled();
+        expect(audioMocks.remove).not.toHaveBeenCalledWith(capture.path);
     });
 
     it('removes the recording once the transcript reached the description', async () => {

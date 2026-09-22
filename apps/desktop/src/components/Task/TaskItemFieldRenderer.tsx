@@ -8,6 +8,7 @@ import {
     continueMarkdownOnEnter,
     computeRelativeStartTime,
     editRRuleString,
+    flushPendingSave,
     generateUUID,
     getProjectedRecurringTaskCalendarDate,
     getRecurrenceCompletedOccurrencesValue,
@@ -66,7 +67,7 @@ import {
     keepTextareaSelectionVisible,
     restoreScrollSnapshotSoon,
 } from '../../lib/scroll-preservation';
-import { logWarn } from '../../lib/app-log';
+import { logInfo, logWarn } from '../../lib/app-log';
 import { startAudioCapture, type AudioCaptureSession } from '../../lib/audio-capture';
 import { processAudioCapture, resolveSpeechCapture } from '../../lib/speech-to-text';
 
@@ -127,6 +128,7 @@ export type TaskEditorAttachments = {
     addLinkAttachment: () => void;
     addObsidianNoteAttachment: () => void;
     editLinkAttachment: (attachment: Attachment) => void;
+    appendRetainedAttachment: (attachment: Attachment, latestStoreAttachments: Attachment[]) => void;
     openAttachment: (attachment: Attachment) => void;
     removeAttachment: (id: string) => void;
 };
@@ -193,6 +195,7 @@ export function TaskItemFieldRenderer({
         addLinkAttachment,
         addObsidianNoteAttachment,
         editLinkAttachment,
+        appendRetainedAttachment,
         openAttachment,
         removeAttachment,
     } = attachments;
@@ -653,18 +656,28 @@ export function TaskItemFieldRenderer({
             const existing = currentTasks.find((item) => item.id === taskId);
             if (capture && existing) {
                 const nowIso = new Date().toISOString();
+                const retainedAttachment: Attachment = {
+                    id: generateUUID(),
+                    kind: 'file',
+                    title: `${tFallback(t, 'quickAdd.audioNoteTitle', 'Audio note')} ${safeFormatDate(new Date(), 'Pp')}`,
+                    uri: capture.path,
+                    mimeType: 'audio/wav',
+                    size: capture.size,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                };
+                appendRetainedAttachment(retainedAttachment, existing.attachments ?? []);
                 try {
-                    await updateTaskNow(taskId, {
-                        attachments: [...(existing.attachments ?? []), {
-                            id: generateUUID(),
-                            kind: 'file',
-                            title: `${tFallback(t, 'quickAdd.audioNoteTitle', 'Audio note')} ${safeFormatDate(new Date(), 'Pp')}`,
-                            uri: capture.path,
-                            mimeType: 'audio/wav',
-                            size: capture.size,
-                            createdAt: nowIso,
-                            updatedAt: nowIso,
-                        }],
+                    const updateResult = await updateTaskNow(taskId, {
+                        attachments: [...(existing.attachments ?? []), retainedAttachment],
+                    });
+                    if (!updateResult.success) {
+                        throw new Error(updateResult.error || tFallback(t, 'task.updateFailed', 'Could not update task.'));
+                    }
+                    await flushPendingSave();
+                    await logInfo('Dictation audio retained after task save completed', {
+                        scope: 'audio',
+                        extra: { releaseCheck: 'v1.3.2/dictation-audio-retained' },
                     });
                 } catch (attachError) {
                     void logWarn('Failed to keep the dictation audio', {
@@ -684,7 +697,7 @@ export function TaskItemFieldRenderer({
             }
             setDescriptionAudioState('idle');
         }
-    }, [descriptionAudioState, insertDescriptionTranscript, t, taskId]);
+    }, [appendRetainedAttachment, descriptionAudioState, insertDescriptionTranscript, t, taskId]);
     const handleEditDescriptionFromPreview = (source?: HTMLElement) => {
         const scrollSnapshot = captureScrollSnapshot(source);
         editDescriptionFromPreview();
