@@ -88,6 +88,25 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="1.3.2" date="2026-09-22">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.2</url>
+      <description>
+        <p>Mindwtr 1.3.2 simplifies task screens, speeds up Focus, and improves calendars, sync, storage, and desktop reliability.</p>
+        <p xml:lang="de">Mindwtr 1.3.2 vereinfacht Aufgabenansichten, beschleunigt Fokus und verbessert Kalender, Sync, Speicher und Desktop-Zuverlaessigkeit.</p>
+        <ul>
+          <li>Use cleaner task screens, combined History tabs, direct Sort and Group controls, and consistent status icons.</li>
+          <li xml:lang="de">Nutze uebersichtlichere Aufgabenansichten, gemeinsame Verlauf-Tabs, direkte Sortier- und Gruppierregler sowie einheitliche Statussymbole.</li>
+          <li>Search with context, tag, and person shorthand while Focus grouping does less repeated work.</li>
+          <li xml:lang="de">Suche mit Kurzformen fuer Kontext, Tag und Person, waehrend Fokus weniger Arbeit wiederholt.</li>
+          <li>Choose an installed font, save diagnostic logs, and use steadier calendar, filter, and loading controls.</li>
+          <li xml:lang="de">Waehle eine installierte Schrift, speichere Diagnoseprotokolle und nutze stabilere Kalender-, Filter- und Ladeelemente.</li>
+          <li>Keep Save &amp; edit navigation, filters, calendar layouts, and weekly review editing stable.</li>
+          <li xml:lang="de">Halte Speichern-und-Bearbeiten-Navigation, Filter, Kalenderlayouts und Bearbeitung im Wochenrueckblick stabil.</li>
+          <li>Handle WebDAV encryption, rejected attachments, calendars, and diagnostic redaction more reliably.</li>
+          <li xml:lang="de">Behandle WebDAV-Verschluesselung, abgelehnte Anhaenge, Kalender und Diagnose-Redaktion zuverlaessiger.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.1" date="2026-09-17">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.1</url>
       <description>

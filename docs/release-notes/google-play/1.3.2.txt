@@ -1,0 +1,35 @@
+<en-US>
+- Task screens are cleaner, and Focus grouping is faster.
+- Android shortcut, widget, and Quick Settings captures sync without opening Mindwtr.
+- Search accepts @context, #tag, and %person shorthand.
+- Widget dates, History restore, and Inbox filter counts are more reliable.
+- Sync, attachments, calendars, and speech-model downloads handle failures better.
+</en-US>
+<de-DE>
+- Aufgabenansichten sind uebersichtlicher und Fokus gruppiert schneller.
+- Android-Erfassungen per Kurzbefehl, Widget und Schnelleinstellung synchronisieren ohne App-Start.
+- Suche versteht @Kontext, #Tag und %Person.
+- Widget-Daten, Verlauf und Inbox-Filter sind zuverlaessiger.
+- Sync, Anhaenge, Kalender und Sprachmodell-Downloads behandeln Fehler besser.
+</de-DE>
+<es-ES>
+- Las pantallas de tareas son más claras y Enfoque agrupa más rápido.
+- Las capturas desde atajos, widgets y ajustes rápidos de Android sincronizan sin abrir Mindwtr.
+- Busca con @contexto, #etiqueta y %persona.
+- Mejoran las fechas de widgets, Historial y el contador de filtros.
+- Sync, adjuntos, calendarios y descargas del modelo de voz fallan mejor.
+</es-ES>
+<fr-FR>
+- Les écrans de tâches sont plus clairs et le regroupement Focus est plus rapide.
+- Les captures Android par raccourci, widget ou réglage rapide se synchronisent sans ouvrir Mindwtr.
+- Recherche avec @contexte, #tag et %personne.
+- Dates des widgets, Historique et compteur de filtres sont plus fiables.
+- Sync, pièces jointes, calendriers et modèle vocal gèrent mieux les échecs.
+</fr-FR>
+<zh-CN>
+- 任务界面更简洁，聚焦分组速度更快。
+- Android 快捷方式、小组件和快速设置中的任务无需打开 Mindwtr 即可同步。
+- 搜索支持 @情境、#标签和 %人员简写。
+- 小组件日期、历史恢复和收件箱筛选计数更可靠。
+- 同步、附件、日历和语音模型下载的失败处理更稳健。
+</zh-CN>

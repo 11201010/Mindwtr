@@ -1,0 +1,5 @@
+- Les écrans de tâches sont plus clairs et le regroupement Focus est plus rapide.
+- Les captures Android par raccourci, widget ou réglage rapide se synchronisent sans ouvrir Mindwtr.
+- Recherche avec @contexte, #tag et %personne.
+- Dates des widgets, Historique et compteur de filtres sont plus fiables.
+- Sync, pièces jointes, calendriers et modèle vocal gèrent mieux les échecs.

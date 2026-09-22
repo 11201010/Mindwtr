@@ -1,0 +1,5 @@
+- Aufgabenansichten sind uebersichtlicher und Fokus gruppiert schneller.
+- Android-Erfassungen per Kurzbefehl, Widget und Schnelleinstellung synchronisieren ohne App-Start.
+- Suche versteht @Kontext, #Tag und %Person.
+- Widget-Daten, Verlauf und Inbox-Filter sind zuverlaessiger.
+- Sync, Anhaenge, Kalender und Sprachmodell-Downloads behandeln Fehler besser.

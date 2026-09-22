@@ -1,5 +1,5 @@
-- Organize Someday tasks into sections and edit new project follow-ups immediately.
-- Widgets improve list navigation, completion Undo, row refill, and saved-filter handling.
-- Bulk date editing and checklist input above the keyboard are easier to use.
-- Share and Shortcut capture avoid routing failures and retain safer diagnostics.
-- Sync, attachments, archived-project recovery, reminders, and storage are more reliable.
+- Task screens are cleaner, and Focus grouping is faster.
+- Apple Reminders can import automatically without creating duplicate tasks.
+- iCloud changes arrive by silent push, and stalled background sync ends sooner.
+- Widgets follow your date format, and recurring calendar exceptions work reliably.
+- Search accepts @context, #tag, and %person shorthand, with stronger sync and attachment handling.

@@ -1,5 +1,5 @@
-- Organiza tareas de Algún día en secciones y edita de inmediato las nuevas acciones de proyecto.
-- Los widgets mejoran navegación, Deshacer al completar, rellenado y filtros guardados.
-- La edición masiva de fechas y las listas sobre el teclado son más fáciles.
-- Compartir y Atajos evitan errores de ruta y usan diagnósticos más seguros.
-- Sincronización, adjuntos, recuperación de archivados, recordatorios y almacenamiento son más fiables.
+- Las pantallas de tareas son más claras y Enfoque agrupa más rápido.
+- Los Recordatorios de Apple pueden importarse automáticamente sin tareas duplicadas.
+- Los cambios de iCloud llegan por push silencioso y la sincronización bloqueada termina antes.
+- Los widgets siguen tu formato de fecha y mejoran las excepciones del calendario.
+- Busca con @contexto, #etiqueta y %persona; mejoran sync y adjuntos.

@@ -1,5 +1,5 @@
-- Organisiere Irgendwann-Aufgaben in Abschnitten und bearbeite neue Projekt-Folgeaktionen sofort.
-- Widgets verbessern Listennavigation, Rueckgaengig beim Erledigen, Auffuellen und gespeicherte Filter.
-- Massendatumsbearbeitung und Checklisten ueber der Tastatur sind einfacher.
-- Teilen und Kurzbefehle vermeiden Routingfehler und nutzen sichere Diagnosen.
-- Sync, Anhaenge, Archivwiederherstellung, Erinnerungen und Speicher sind zuverlaessiger.
+- Aufgabenansichten sind uebersichtlicher und Fokus gruppiert schneller.
+- Apple-Erinnerungen lassen sich automatisch und ohne doppelte Aufgaben importieren.
+- iCloud-Aenderungen kommen per stillem Push an; blockierter Hintergrund-Sync endet frueher.
+- Widgets folgen dem Datumsformat und Kalenderausnahmen funktionieren zuverlaessig.
+- Suche versteht @Kontext, #Tag und %Person; Sync und Anhaenge sind robuster.

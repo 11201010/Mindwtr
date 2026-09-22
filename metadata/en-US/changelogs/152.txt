@@ -1,0 +1,5 @@
+- Task screens are cleaner, and Focus grouping is faster.
+- Android shortcut, widget, and Quick Settings captures sync without opening Mindwtr.
+- Search accepts @context, #tag, and %person shorthand.
+- Widget dates, History restore, and Inbox filter counts are more reliable.
+- Sync, attachments, calendars, and speech-model downloads handle failures better.

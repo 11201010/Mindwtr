@@ -1,5 +1,5 @@
-- Organisez les tâches Un jour en sections et modifiez aussitôt les nouvelles actions de projet.
-- Les widgets améliorent navigation, annulation d'achèvement, remplissage et filtres enregistrés.
-- L'édition groupée des dates et les listes au-dessus du clavier sont simplifiées.
-- Partage et Raccourcis évitent les erreurs de routage avec des diagnostics plus sûrs.
-- Sync, pièces jointes, récupération d'archives, rappels et stockage sont plus fiables.
+- Les écrans de tâches sont plus clairs et le regroupement Focus est plus rapide.
+- Les Rappels Apple peuvent être importés automatiquement sans tâches en double.
+- Les changements iCloud arrivent par push silencieux et la sync bloquée finit plus tôt.
+- Les widgets suivent le format de date et les exceptions de calendrier sont fiables.
+- Recherche avec @contexte, #tag et %personne ; sync et pièces jointes sont renforcées.

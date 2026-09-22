@@ -1,0 +1,5 @@
+- Las pantallas de tareas son más claras y Enfoque agrupa más rápido.
+- Las capturas desde atajos, widgets y ajustes rápidos de Android sincronizan sin abrir Mindwtr.
+- Busca con @contexto, #etiqueta y %persona.
+- Mejoran las fechas de widgets, Historial y el contador de filtros.
+- Sync, adjuntos, calendarios y descargas del modelo de voz fallan mejor.
