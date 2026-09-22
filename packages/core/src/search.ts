@@ -25,6 +25,7 @@ export interface SearchQuery {
 
 const DATE_FIELDS = new Set(['due', 'start', 'review', 'created']);
 const ASSIGNEE_FIELDS = new Set(['assigned', 'assignee', 'assignedto']);
+const SHORTHAND_FIELDS: Record<string, 'context' | 'tag' | 'person'> = { '@': 'context', '#': 'tag', '%': 'person' };
 const LOCATION_FIELDS = new Set(['location', 'where']);
 
 function tokenize(query: string): string[] {
@@ -164,6 +165,19 @@ export function parseSearchQuery(query: string): SearchQuery {
                 negated,
             });
         } else {
+            // The quick-add prefixes work in search too (#1264): `@home` is
+            // `context:@home`, `#tag` is `tag:#tag`, `%name` is `person:name`.
+            // A bare prefix stays a text term.
+            const shorthand = SHORTHAND_FIELDS[token[0]];
+            if (shorthand && token.length > 1) {
+                currentTerms.push({
+                    field: shorthand,
+                    comparator: null,
+                    value: shorthand === 'person' ? token.slice(1) : token,
+                    negated,
+                });
+                continue;
+            }
             currentTerms.push({
                 field: null,
                 comparator: null,

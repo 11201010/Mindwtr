@@ -164,6 +164,22 @@ describe('search', () => {
         expect(results.map((task) => task.id)).toEqual(['t1']);
     });
 
+    it('treats @context, #tag and %person as filters (#1264)', () => {
+        const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
+        const base = { status: 'next' as const, createdAt: nowIso, updatedAt: nowIso };
+        const tasks: Task[] = [
+            { id: 'home', title: 'Water plants', tags: ['#chores'], contexts: ['@home'], ...base },
+            { id: 'work', title: 'Email Alex about @home page', tags: [], contexts: ['@work'], assignedTo: 'Alex', ...base },
+        ];
+        expect(filterTasksBySearch(tasks, [], '@home').map((task) => task.id)).toEqual(['home']);
+        expect(filterTasksBySearch(tasks, [], '-@home').map((task) => task.id)).toEqual(['work']);
+        expect(filterTasksBySearch(tasks, [], '#chores').map((task) => task.id)).toEqual(['home']);
+        expect(filterTasksBySearch(tasks, [], '%alex').map((task) => task.id)).toEqual(['work']);
+        expect(filterTasksBySearch(tasks, [], '@work plants')).toEqual([]);
+        // A bare prefix is still a text search.
+        expect(filterTasksBySearch(tasks, [], '@').map((task) => task.id)).toEqual(['work']);
+    });
+
     it('matches project filter by title', () => {
         const nowIso = new Date('2025-01-01T00:00:00Z').toISOString();
         const projects: Project[] = [
