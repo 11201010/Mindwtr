@@ -17,6 +17,13 @@ Unacceptable behavior:
 - Publishing others' private information without permission
 - Any conduct that would be inappropriate in a professional setting
 
+## About Blame
+Mindwtr is maintained by one person. It has many features and runs on several platforms, and building it takes a lot of work, time, energy, and money. It is free and open source: nobody pays for it, and nobody is owed anything by it.
+
+We try to build something helpful and we do our best. Mistakes will still happen: a bug, a wrong line in the docs, a slow reply. Point them out and they get fixed. Blame does not, and we do not accept it here.
+
+If Mindwtr does not work for you, that is fine. You can fork it and change it, or switch to another app. Both are respected choices. Reports, patches, translations, and patient questions are always welcome; demands and blame are not.
+
 ## Enforcement
 Instances of unacceptable behavior may be reported by:
 - Contacting the project maintainer directly (GitHub: @dongdongbh)
