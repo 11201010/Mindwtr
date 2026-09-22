@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import type { AppData, Task } from '@mindwtr/core';
+import type { AppData, Person, Task } from '@mindwtr/core';
 
 import { createMindwtrAutomationStorage } from './mindwtr-automation-storage';
 import { createMindwtrAutomationService } from './mindwtr-automation-core';
@@ -36,6 +36,53 @@ afterEach(() => {
 });
 
 describe('automation script sqlite writes', () => {
+    test('preserves people and their notes while migrating JSON into SQLite and its mirror', async () => {
+        const { dataPath, dbPath } = makeProfile();
+        const now = '2026-09-22T12:00:00.000Z';
+        const person: Person = {
+            id: 'person-json-migration',
+            name: 'Alex',
+            note: 'Design lead\nKeeps **project context**.',
+            referenceLink: 'https://example.com/alex',
+            createdAt: now,
+            updatedAt: now,
+        };
+        writeFileSync(dataPath, JSON.stringify({
+            ...emptyData(),
+            people: [person],
+        }, null, 2));
+
+        const stdoutSpy = spyOn(console, 'info').mockImplementation(() => undefined);
+        const stderrLines: string[] = [];
+        const stderrTarget = process.stderr as unknown as { write: (chunk: string) => boolean };
+        const stderrSpy = spyOn(stderrTarget, 'write').mockImplementation((chunk) => {
+            stderrLines.push(chunk);
+            return true;
+        });
+        try {
+            const storage = createMindwtrAutomationStorage({ dataPath, dbPath });
+            const loaded = await storage.getData();
+
+            expect(loaded.people).toEqual([person]);
+            expect(readRow(dbPath, 'SELECT id, name, note, referenceLink FROM people WHERE id = ?', person.id))
+                .toEqual({ id: person.id, name: person.name, note: person.note, referenceLink: person.referenceLink });
+            expect((JSON.parse(readFileSync(dataPath, 'utf8')) as AppData).people).toEqual([person]);
+            expect(stdoutSpy).not.toHaveBeenCalled();
+            expect(JSON.parse(stderrLines.join('').trim())).toMatchObject({
+                level: 'info',
+                scope: 'automation-storage',
+                message: 'Automation people preserved during storage migration',
+                context: {
+                    releaseCheck: 'v1.3.2/automation-people-preserved',
+                    count: 1,
+                },
+            });
+        } finally {
+            stderrSpy.mockRestore();
+            stdoutSpy.mockRestore();
+        }
+    });
+
     test('stores every task column the API accepts, not just the ones it once listed', async () => {
         const { dataPath, dbPath } = makeProfile();
         const service = await createMindwtrAutomationService({ dataPath, dbPath });

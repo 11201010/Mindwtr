@@ -26,11 +26,25 @@ type AutomationStorage = StorageAdapter & {
     };
 };
 
+const logPeopleMigrationDiagnostic = (count: number): void => {
+    process.stderr.write(`${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: 'info',
+        scope: 'automation-storage',
+        message: 'Automation people preserved during storage migration',
+        context: {
+            releaseCheck: 'v1.3.2/automation-people-preserved',
+            count,
+        },
+    })}\n`);
+};
+
 const hasAnyAppData = (data: AppData): boolean => (
     data.tasks.length > 0
     || data.projects.length > 0
     || data.sections.length > 0
     || data.areas.length > 0
+    || (data.people?.length ?? 0) > 0
     || Object.keys(data.settings).length > 0
 );
 
@@ -60,6 +74,7 @@ const serializeComparable = (data: AppData): string => {
             .sort((a, b) => a.id.localeCompare(b.id)),
         sections: [...data.sections].map((section) => ({ ...section })).sort((a, b) => a.id.localeCompare(b.id)),
         areas: [...data.areas].map((area) => ({ ...area })).sort((a, b) => a.id.localeCompare(b.id)),
+        people: [...(data.people ?? [])].map((person) => ({ ...person })).sort((a, b) => a.id.localeCompare(b.id)),
         settings: data.settings,
     });
 };
@@ -73,6 +88,7 @@ const loadJsonData = (path: string): AppData | null => {
         projects: Array.isArray(parsed.projects) ? (parsed.projects as AppData['projects']) : [],
         sections: Array.isArray(parsed.sections) ? (parsed.sections as AppData['sections']) : [],
         areas: Array.isArray(parsed.areas) ? (parsed.areas as AppData['areas']) : [],
+        people: Array.isArray(parsed.people) ? (parsed.people as AppData['people']) : [],
         settings: typeof parsed.settings === 'object' && parsed.settings ? (parsed.settings as AppData['settings']) : {},
     });
 };
@@ -157,12 +173,19 @@ export function createMindwtrAutomationStorage(options: AutomationStorageOptions
             const sqliteData = normalizeAppData(await sqlite.getData());
             const jsonData = loadJsonData(paths.dataPath);
             const merged = jsonData ? normalizeAppData(mergeAppData(sqliteData, jsonData)) : sqliteData;
+            const sqlitePersonIds = new Set((sqliteData.people ?? []).map((person) => person.id));
+            const mergedPersonIds = new Set((merged.people ?? []).map((person) => person.id));
+            const retainedPersonCount = (jsonData?.people ?? [])
+                .filter((person) => !sqlitePersonIds.has(person.id) && mergedPersonIds.has(person.id)).length;
             const sqliteMatchesMerged = serializeComparable(sqliteData) === serializeComparable(merged);
             const jsonMatchesMerged = jsonData ? serializeComparable(jsonData) === serializeComparable(merged) : false;
             const shouldRepairMirror = !jsonData || !sqliteMatchesMerged || !jsonMatchesMerged;
 
             if (shouldRepairMirror && (hasAnyAppData(merged) || jsonData || existsSync(paths.dbPath))) {
                 await saveNormalizedData(merged);
+                if (retainedPersonCount > 0) {
+                    logPeopleMigrationDiagnostic(retainedPersonCount);
+                }
             }
         })();
 
