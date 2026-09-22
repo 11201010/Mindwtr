@@ -21,6 +21,7 @@ import {
   logAttachmentInfo,
   logAttachmentWarn,
   markAttachmentPresenceReconciled,
+  shouldAttemptAttachmentUpload,
 } from '../attachment-sync-utils';
 import { getMobileCloudRequestOptions } from '../webdav-request-options';
 import {
@@ -313,6 +314,7 @@ export const syncCloudAttachments = async (
       && (!attachment.cloudKey || attachment.pendingContentUpload === true)
       && mayUploadLocalFile
     ) {
+      if (!shouldAttemptAttachmentUpload(attachment)) continue;
       let shouldPropagateError = false;
       let snapshot: Awaited<ReturnType<typeof createMobileAttachmentUploadSnapshot>> = null;
       try {
@@ -406,9 +408,8 @@ export const syncCloudAttachments = async (
         // folder that became a symbolic link or moved, and it hits every upload at once — so
         // it stays an ordinary retryable failure. Both upload transports carry the body:
         // core's cloudPutFile and the native uploader in ./common both set `refusalText`.
-        // Bounded like desktop's client-side refusals: count it, and let the third one take
-        // the attachment out of the pending-upload list, which is what lets the rest of the
-        // document reach the other devices again.
+        // Bounded like desktop's client-side refusals: a first upload becomes terminal;
+        // a replacement stays pending but this content identity is no longer retried.
         const refusesTheseBytes = status === 413
           || (status === 400 && isBlockedAttachmentContentRefusal(error));
         if (refusesTheseBytes && !options.activationProbe) {
@@ -419,6 +420,18 @@ export const syncCloudAttachments = async (
           if (failure.mutated) recordPatch(attachment);
           reportProgress(attachment.id, 'upload', 0, attachment.size ?? 0, 'failed', failure.message);
           logAttachmentWarn(failure.logMessage);
+          if (
+            failure.reachedLimit
+            && !failure.mutated
+            && attachment.pendingContentUpload === true
+            && attachment.cloudKey !== undefined
+          ) {
+            logAttachmentWarn(
+              'Attachment replacement retained after upload refusal',
+              undefined,
+              { releaseCheck: 'v1.3.2/attachment-replacement-held' },
+            );
+          }
           continue;
         }
         reportProgress(

@@ -1,11 +1,25 @@
 import {
     markAttachmentUnrecoverable,
-    stopRefusedAttachmentContentUpload,
+    preserveRefusedAttachmentContentUpload,
     type Attachment,
 } from '@mindwtr/core';
 
 const ATTACHMENT_VALIDATION_MAX_ATTEMPTS = 3;
-const attachmentValidationFailures = new Map<string, number>();
+type AttachmentValidationFailure = { contentIdentity: string; attempts: number };
+const attachmentValidationFailures = new Map<string, AttachmentValidationFailure>();
+
+const attachmentContentIdentity = (attachment: Attachment): string => (
+    attachment.pendingContentUpload === true
+        ? attachment.fileHash?.trim().toLowerCase() ?? ''
+        : ''
+);
+
+const matchingFailure = (attachment: Attachment): AttachmentValidationFailure | undefined => {
+    const failure = attachmentValidationFailures.get(attachment.id);
+    if (!failure || failure.contentIdentity === attachmentContentIdentity(attachment)) return failure;
+    attachmentValidationFailures.delete(attachment.id);
+    return undefined;
+};
 
 export { markAttachmentUnrecoverable };
 
@@ -18,30 +32,40 @@ export const clearAttachmentValidationFailures = (): void => {
 };
 
 export const getAttachmentValidationFailureAttempts = (attachmentId: string): number => {
-    return attachmentValidationFailures.get(attachmentId) ?? 0;
+    return attachmentValidationFailures.get(attachmentId)?.attempts ?? 0;
 };
+
+export const shouldAttemptAttachmentUpload = (attachment: Attachment): boolean => (
+    (matchingFailure(attachment)?.attempts ?? 0) < ATTACHMENT_VALIDATION_MAX_ATTEMPTS
+);
 
 export const handleAttachmentValidationFailure = (
     attachment: Attachment,
     error: string | undefined,
 ): { attempts: number; reachedLimit: boolean; mutated: boolean; message: string; logMessage: string } => {
-    const attempts = (attachmentValidationFailures.get(attachment.id) || 0) + 1;
-    attachmentValidationFailures.set(attachment.id, attempts);
+    const contentIdentity = attachmentContentIdentity(attachment);
+    const attempts = Math.min(
+        (matchingFailure(attachment)?.attempts ?? 0) + 1,
+        ATTACHMENT_VALIDATION_MAX_ATTEMPTS,
+    );
+    attachmentValidationFailures.set(attachment.id, { contentIdentity, attempts });
     const reason = error || 'unknown';
     const message = `Attachment validation failed (${reason}) for ${attachment.title} [attempt ${attempts}/${ATTACHMENT_VALIDATION_MAX_ATTEMPTS}]`;
     if (attempts < ATTACHMENT_VALIDATION_MAX_ATTEMPTS) {
         return { attempts, reachedLimit: false, mutated: false, message, logMessage: message };
     }
+    const keepsRemoteCopy = preserveRefusedAttachmentContentUpload(attachment);
+    if (keepsRemoteCopy) {
+        return {
+            attempts,
+            reachedLimit: true,
+            mutated: false,
+            message,
+            logMessage: `${message}; keeping the edited content pending and the remote copy unchanged`,
+        };
+    }
     attachmentValidationFailures.delete(attachment.id);
-    // A refused RE-UPLOAD of edited content keeps its record: the other devices hold the
-    // server copy this cloudKey names, and a tombstone would make them delete it. Core's
-    // stopRefusedAttachmentContentUpload explains the trade.
-    const keepsRemoteCopy = attachment.pendingContentUpload === true && attachment.cloudKey !== undefined;
-    const mutated = keepsRemoteCopy
-        ? stopRefusedAttachmentContentUpload(attachment)
-        : markAttachmentUnrecoverable(attachment);
-    const logMessage = keepsRemoteCopy
-        ? `${message}; keeping the attachment, dropping only the edited content`
-        : `${message}; marking attachment unrecoverable`;
+    const mutated = markAttachmentUnrecoverable(attachment);
+    const logMessage = `${message}; marking attachment unrecoverable`;
     return { attempts, reachedLimit: true, mutated, message, logMessage };
 };

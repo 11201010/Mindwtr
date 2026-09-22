@@ -15,10 +15,10 @@ import {
   isDropboxUnauthorizedError,
   isSandboxMode,
   markAttachmentUnrecoverable,
+  preserveRefusedAttachmentContentUpload,
   reportProgress,
   sanitizeAttachmentUriForSyncMerge,
   sleep,
-  stopRefusedAttachmentContentUpload,
   validateAttachmentHash,
   type AppData,
   type Attachment,
@@ -67,9 +67,24 @@ export const CLOUD_PROVIDER_DROPBOX = 'dropbox';
 export { markAttachmentUnrecoverable, sleep };
 
 // Mobile twin of apps/desktop/src/lib/sync-attachment-validation.ts: a per-session count of
-// permanent upload refusals; the third one marks the attachment unrecoverable.
+// permanent upload refusals. A third first-upload refusal is terminal; a replacement remains
+// pending and suppresses further attempts for the same content identity.
 const ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS = 3;
-const attachmentUploadRefusals = new Map<string, number>();
+type AttachmentUploadRefusal = { contentIdentity: string; attempts: number };
+const attachmentUploadRefusals = new Map<string, AttachmentUploadRefusal>();
+
+const attachmentContentIdentity = (attachment: Attachment): string => (
+  attachment.pendingContentUpload === true
+    ? attachment.fileHash?.trim().toLowerCase() ?? ''
+    : ''
+);
+
+const matchingUploadRefusal = (attachment: Attachment): AttachmentUploadRefusal | undefined => {
+  const refusal = attachmentUploadRefusals.get(attachment.id);
+  if (!refusal || refusal.contentIdentity === attachmentContentIdentity(attachment)) return refusal;
+  attachmentUploadRefusals.delete(attachment.id);
+  return undefined;
+};
 
 export const clearAttachmentUploadRefusal = (attachmentId: string): void => {
   attachmentUploadRefusals.delete(attachmentId);
@@ -79,29 +94,39 @@ export const clearAttachmentUploadRefusals = (): void => {
   attachmentUploadRefusals.clear();
 };
 
+export const shouldAttemptAttachmentUpload = (attachment: Attachment): boolean => (
+  (matchingUploadRefusal(attachment)?.attempts ?? 0) < ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS
+);
+
 export const handleAttachmentUploadRefusal = (
   attachment: Attachment,
   reason: string,
 ): { attempts: number; reachedLimit: boolean; mutated: boolean; message: string; logMessage: string } => {
-  const attempts = (attachmentUploadRefusals.get(attachment.id) || 0) + 1;
-  attachmentUploadRefusals.set(attachment.id, attempts);
+  const contentIdentity = attachmentContentIdentity(attachment);
+  const attempts = Math.min(
+    (matchingUploadRefusal(attachment)?.attempts ?? 0) + 1,
+    ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS,
+  );
+  attachmentUploadRefusals.set(attachment.id, { contentIdentity, attempts });
   // The id, not the title: mobile's attachment warnings never carry the file name.
   const message = `Attachment upload refused (${reason}) for ${attachment.id}`
     + ` [attempt ${attempts}/${ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS}]`;
   if (attempts < ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS) {
     return { attempts, reachedLimit: false, mutated: false, message, logMessage: message };
   }
+  const keepsRemoteCopy = preserveRefusedAttachmentContentUpload(attachment);
+  if (keepsRemoteCopy) {
+    return {
+      attempts,
+      reachedLimit: true,
+      mutated: false,
+      message,
+      logMessage: `${message}; keeping the edited content pending and the remote copy unchanged`,
+    };
+  }
   attachmentUploadRefusals.delete(attachment.id);
-  // A refused RE-UPLOAD of edited content keeps its record: the other devices hold the
-  // server copy this cloudKey names, and a tombstone would make them delete it. Core's
-  // stopRefusedAttachmentContentUpload explains the trade.
-  const keepsRemoteCopy = attachment.pendingContentUpload === true && attachment.cloudKey !== undefined;
-  const mutated = keepsRemoteCopy
-    ? stopRefusedAttachmentContentUpload(attachment)
-    : markAttachmentUnrecoverable(attachment);
-  const logMessage = keepsRemoteCopy
-    ? `${message}; keeping the attachment, dropping only the edited content`
-    : `${message}; marking attachment unrecoverable`;
+  const mutated = markAttachmentUnrecoverable(attachment);
+  const logMessage = `${message}; marking attachment unrecoverable`;
   return { attempts, reachedLimit: true, mutated, message, logMessage };
 };
 
@@ -120,9 +145,15 @@ export const FILE_BACKEND_VALIDATION_CONFIG = {
   blockedMimeTypes: [],
 };
 
-export const logAttachmentWarn = (message: string, error?: unknown) => {
-  const extra = error ? { error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)) } : undefined;
-  void logWarn(message, { scope: 'attachment', extra });
+export const logAttachmentWarn = (
+  message: string,
+  error?: unknown,
+  extra?: Record<string, string>,
+) => {
+  const fields = error
+    ? { ...extra, error: sanitizeLogMessage(error instanceof Error ? error.message : String(error)) }
+    : extra;
+  void logWarn(message, { scope: 'attachment', extra: fields });
 };
 
 export const logAttachmentInfo = (message: string, extra?: Record<string, string>) => {

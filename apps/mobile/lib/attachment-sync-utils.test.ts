@@ -40,6 +40,7 @@ import {
   deleteManagedAttachmentFile,
   getLocalAttachmentPresence,
   handleAttachmentUploadRefusal,
+  shouldAttemptAttachmentUpload,
   writeBytesSafely,
 } from './attachment-sync-utils';
 
@@ -109,9 +110,7 @@ describe('handleAttachmentUploadRefusal', () => {
     expect(message).not.toContain('refused.txt');
   });
 
-  // The other devices hold the server copy this cloudKey names; a tombstone would reach
-  // them and their cleanup pass would delete it.
-  it('never tombstones a refused re-upload of edited content', () => {
+  it('keeps a refused replacement pending and resets the budget for new content', () => {
     const attachment: Attachment = {
       ...refusedAttachment(),
       cloudKey: 'attachments/attachment-1.txt',
@@ -123,12 +122,22 @@ describe('handleAttachmentUploadRefusal', () => {
 
     const failure = handleAttachmentUploadRefusal(attachment, 'server_rejected');
 
-    expect(failure).toMatchObject({ reachedLimit: true, mutated: true });
-    expect(failure.logMessage).toContain('dropping only the edited content');
+    expect(failure).toMatchObject({ reachedLimit: true, mutated: false });
+    expect(failure.logMessage).toContain('keeping the edited content pending');
     expect(attachment.deletedAt).toBeUndefined();
     expect(attachment.cloudKey).toBe('attachments/attachment-1.txt');
     expect(attachment.localStatus).toBe('available');
-    expect(attachment.pendingContentUpload).toBeUndefined();
+    expect(attachment.pendingContentUpload).toBe(true);
+    expect(shouldAttemptAttachmentUpload(attachment)).toBe(false);
+
+    attachment.fileHash = 'b'.repeat(64);
+
+    expect(shouldAttemptAttachmentUpload(attachment)).toBe(true);
+    expect(handleAttachmentUploadRefusal(attachment, 'server_rejected')).toMatchObject({
+      attempts: 1,
+      reachedLimit: false,
+      mutated: false,
+    });
   });
 });
 

@@ -2920,10 +2920,9 @@ describe('attachment sync', () => {
       }
     });
 
-    // The other devices hold the older copy of this attachment. A tombstone would reach
-    // them and their cleanup pass would delete it, leaving the bytes nowhere.
-    it('never tombstones a refused re-upload of edited content', async () => {
+    it('keeps a refused replacement pending and bounds retries to its content identity', async () => {
       await rejectUploadsWith(400, BLOCKED_SIGNATURE);
+      const core = await import('@mindwtr/core');
       const appData = refusedData();
       Object.assign(appData.tasks[0].attachments![0], {
         cloudKey: 'attachments/refused.txt',
@@ -2938,8 +2937,30 @@ describe('attachment sync', () => {
       expect(attachment?.deletedAt).toBeUndefined();
       expect(attachment?.cloudKey).toBe('attachments/refused.txt');
       expect(attachment?.localStatus).toBe('available');
-      // Only the "waiting to re-upload" flag goes, which is what unblocks the document.
-      expect(attachment?.pendingContentUpload).toBeUndefined();
+      expect(attachment?.pendingContentUpload).toBe(true);
+      expect(attachment?.uri).toBe(REFUSED_URI);
+      expect(core.cloudPutFile).toHaveBeenCalledTimes(3);
+      const appLog = await import('./app-log');
+      expect(appLog.logWarn).toHaveBeenCalledWith(
+        'Attachment replacement retained after upload refusal',
+        {
+          scope: 'attachment',
+          extra: { releaseCheck: 'v1.3.2/attachment-replacement-held' },
+        },
+      );
+
+      await runCloudUpload(appData);
+      expect(core.cloudPutFile).toHaveBeenCalledTimes(3);
+
+      const nextBytes = new Uint8Array([4, 5, 6]);
+      fileSystemMock.readAsStringAsync.mockResolvedValue(base64Of(nextBytes));
+      Object.assign(appData.tasks[0].attachments![0], {
+        fileHash: sha256Hex(nextBytes),
+        contentRev: 2,
+      });
+
+      await runCloudUpload(appData);
+      expect(core.cloudPutFile).toHaveBeenCalledTimes(4);
     });
   });
 

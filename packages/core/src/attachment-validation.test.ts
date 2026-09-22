@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stopRefusedAttachmentContentUpload, validateAttachmentForUpload } from './attachment-validation';
+import { preserveRefusedAttachmentContentUpload, validateAttachmentForUpload } from './attachment-validation';
 import type { Attachment } from './types';
 
 const baseAttachment: Attachment = {
@@ -12,7 +12,7 @@ const baseAttachment: Attachment = {
     updatedAt: new Date().toISOString(),
 };
 
-describe('stopRefusedAttachmentContentUpload', () => {
+describe('preserveRefusedAttachmentContentUpload', () => {
     const reUpload = (): Attachment => ({
         ...baseAttachment,
         cloudKey: 'attachments/att-1.txt',
@@ -21,25 +21,26 @@ describe('stopRefusedAttachmentContentUpload', () => {
         pendingContentUpload: true,
     });
 
-    it('keeps the record, the server copy and the local file', () => {
+    it('keeps the pending candidate, server copy and local file unchanged', () => {
         const attachment = reUpload();
+        const before = { ...attachment };
 
-        expect(stopRefusedAttachmentContentUpload(attachment)).toBe(true);
+        expect(preserveRefusedAttachmentContentUpload(attachment)).toBe(true);
 
-        expect(attachment.pendingContentUpload).toBeUndefined();
-        expect(attachment.cloudKey).toBe('attachments/att-1.txt');
-        expect(attachment.fileHash).toBe('a'.repeat(64));
-        expect(attachment.localStatus).toBe('available');
-        // The tombstone is the whole point: it would reach the other devices and make
-        // them delete the good copy they still hold.
-        expect(attachment.deletedAt).toBeUndefined();
+        expect(attachment).toEqual(before);
     });
 
-    it('changes nothing when no content upload is waiting', () => {
+    it('does not classify an attachment without a pending replacement', () => {
         const attachment = { ...baseAttachment, cloudKey: 'attachments/att-1.txt' };
 
-        expect(stopRefusedAttachmentContentUpload(attachment)).toBe(false);
+        expect(preserveRefusedAttachmentContentUpload(attachment)).toBe(false);
         expect(attachment).toEqual({ ...baseAttachment, cloudKey: 'attachments/att-1.txt' });
+    });
+
+    it('does not classify a first upload without a proven server copy', () => {
+        const attachment = { ...reUpload(), cloudKey: undefined };
+
+        expect(preserveRefusedAttachmentContentUpload(attachment)).toBe(false);
     });
 });
 

@@ -822,9 +822,9 @@ describe('desktop sync attachment backends', () => {
             expect(putCount(fetcher)).toBe(3);
         });
 
-        // The other devices hold the older copy of this attachment. A tombstone would reach
-        // them and their cleanup pass would delete it, leaving the bytes nowhere.
-        it('never tombstones a refused re-upload of edited content', async () => {
+        // The other devices hold the older copy of this attachment. Publishing the candidate
+        // hash without its bytes would make that good remote copy unverifiable.
+        it('keeps a refused replacement pending and bounds retries to its content identity', async () => {
             const fetcher = serverRefusal(400, 'Blocked executable attachment signature: elf');
             const logSyncWarning = vi.fn();
             const deps = refusalDeps(fetcher, logSyncWarning);
@@ -844,16 +844,40 @@ describe('desktop sync attachment backends', () => {
 
             await runCloudUpload(appData, deps, postMergeHelpers());
             await runCloudUpload(appData, deps, postMergeHelpers());
-            const result = expectFoldedData(await runCloudUpload(appData, deps, postMergeHelpers()));
+            const result = await runCloudUpload(appData, deps, postMergeHelpers());
 
-            const attachment = result.tasks[0].attachments?.[0];
+            const attachment = refusedAttachment(result, appData);
             expect(attachment?.deletedAt).toBeUndefined();
             expect(attachment?.cloudKey).toBe('attachments/attachment-1.txt');
             expect(attachment?.localStatus).toBe('available');
-            // Only the "waiting to re-upload" flag goes, which is what unblocks the document.
-            expect(attachment?.pendingContentUpload).toBeUndefined();
-            expect(findPendingAttachmentUploads(result)).toHaveLength(0);
+            expect(attachment?.pendingContentUpload).toBe(true);
+            expect(attachment?.fileHash).toBe('039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81');
+            expect(findPendingAttachmentUploads(result === false ? appData : result)).toHaveLength(1);
             expect(putCount(fetcher)).toBe(3);
+            expect(fsMocks.remove).not.toHaveBeenCalled();
+            expect(logSyncWarning).toHaveBeenCalledWith(
+                expect.stringContaining('keeping the edited content pending'),
+            );
+            expect(logSyncWarning).toHaveBeenCalledWith(
+                'Attachment replacement retained after upload refusal',
+                undefined,
+                { releaseCheck: 'v1.3.2/attachment-replacement-held' },
+            );
+
+            expect(await runCloudUpload(appData, deps, postMergeHelpers())).toBe(false);
+            expect(putCount(fetcher)).toBe(3);
+
+            const nextBytes = new Uint8Array([4, 5, 6]);
+            fsMocks.readFile.mockResolvedValue(nextBytes);
+            Object.assign(appData.tasks[0].attachments![0], {
+                fileHash: await coreMocks.computeSha256Hex(nextBytes),
+                contentRev: 8,
+                contentMtimeMs: 2000,
+                contentSize: nextBytes.length,
+            });
+
+            await runCloudUpload(appData, deps, postMergeHelpers());
+            expect(putCount(fetcher)).toBe(4);
         });
     });
 

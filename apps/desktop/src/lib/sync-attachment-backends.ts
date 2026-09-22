@@ -67,6 +67,7 @@ import {
     clearAttachmentValidationFailure,
     handleAttachmentValidationFailure,
     markAttachmentUnrecoverable,
+    shouldAttemptAttachmentUpload,
 } from './sync-attachment-validation';
 import { openAttachmentBytes, sealAttachmentBytes } from './sync-encryption-service';
 import {
@@ -792,6 +793,7 @@ export async function syncWebdavAttachments(
             shouldDownload,
         },
         onUpload: async (attachment, _localPath, snapshot) => {
+            if (!shouldAttemptAttachmentUpload(attachment)) return false;
             const cloudKey = buildCloudKey(attachment);
             if (!snapshot?.bytes) throw new Error('Immutable attachment upload bytes are unavailable');
             const fileData = snapshot.bytes;
@@ -1073,6 +1075,7 @@ export async function syncCloudAttachments(
         contentChangePhase: helpers?.phase,
         isFatalError: isSyncRemoteMutationFenceError,
         onUpload: async (attachment, _localPath, snapshot) => {
+            if (!shouldAttemptAttachmentUpload(attachment)) return false;
             const cloudKey = buildCloudKey(attachment);
             if (!snapshot?.bytes) throw new Error('Immutable attachment upload bytes are unavailable');
             const fileData = snapshot.bytes;
@@ -1130,8 +1133,8 @@ export async function syncCloudAttachments(
                 // other 400 is about the server, not the file — `Invalid attachment path`
                 // answers a storage folder that became a symbolic link or moved, and it hits
                 // every upload at once — so it stays an ordinary retryable failure. Same
-                // bounded rule as a client-side refusal: count it, and let the third one take
-                // the attachment out of the pending-upload list.
+                // bounded rule as a client-side refusal: a first upload becomes terminal;
+                // a replacement stays pending but this content identity is no longer retried.
                 const refusesTheseBytes = status === 413
                     || (status === 400 && isBlockedAttachmentContentRefusal(error));
                 if (refusesTheseBytes && helpers?.activationProbe !== true) {
@@ -1148,6 +1151,18 @@ export async function syncCloudAttachments(
                         failure.message,
                     );
                     deps.logSyncWarning(failure.logMessage);
+                    if (
+                        failure.reachedLimit
+                        && !failure.mutated
+                        && attachment.pendingContentUpload === true
+                        && attachment.cloudKey !== undefined
+                    ) {
+                        deps.logSyncWarning(
+                            'Attachment replacement retained after upload refusal',
+                            undefined,
+                            { releaseCheck: 'v1.3.2/attachment-replacement-held' },
+                        );
+                    }
                     return failure.mutated;
                 }
                 throw error;
@@ -1342,6 +1357,7 @@ export async function syncDropboxAttachments(
             || error instanceof DropboxConflictError
         ),
         onUpload: async (attachment, _localPath, snapshot) => {
+            if (!shouldAttemptAttachmentUpload(attachment)) return false;
             const cloudKey = buildCloudKey(attachment);
             if (!snapshot?.bytes) throw new Error('Immutable attachment upload bytes are unavailable');
             const fileData = snapshot.bytes;
@@ -1549,6 +1565,7 @@ export async function syncCloudKitAttachments(
         // CloudKit record key, so CloudKit must still treat the attachment as needing upload.
         hasCloudCopy: (attachment) => Boolean(parseCloudKitAttachmentKey(attachment.cloudKey)),
         onUpload: async (attachment, localPath, snapshot) => {
+            if (!shouldAttemptAttachmentUpload(attachment)) return false;
             const owned = ownerByAttachmentId.get(attachment.id);
             if (!owned) return false;
             if (!snapshot?.bytes) throw new Error('Immutable attachment upload bytes are unavailable');
@@ -2084,6 +2101,7 @@ export async function syncFileAttachments(
         contentChangePhase: helpers?.phase,
         isFatalError: isAttachmentUploadAdmissionError,
         onUpload: async (attachment, _localPath, snapshot) => {
+            if (!shouldAttemptAttachmentUpload(attachment)) return false;
             if (!snapshot?.bytes) throw new Error('Immutable attachment upload bytes are unavailable');
             const cloudKey = buildFileSyncGenerationCloudKey(attachment, snapshot.fileHash);
             const fileData = snapshot.bytes;
