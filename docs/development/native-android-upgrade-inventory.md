@@ -52,6 +52,21 @@ What the native release needs, per channel:
 - **F-Droid:** F-Droid builds from source. Its current recipe uses `subdir: apps/mobile`, npm, and Expo prebuild steps, with `AutoUpdateMode: Version` on `v*` tags. A native release needs a new fdroiddata recipe (Gradle build in `apps/android-native`, Node for the core bundle). Without it, automatic updates build the wrong app or fail. F-Droid's inclusion policy allows prebuilt FLOSS libraries from Maven Central, which covers the QuickJS wrapper and `sqlite-bundled` native libraries.
 - **Local harness:** we cannot sign with Google's or F-Droid's key. Local in-place tests can use the EAS key (direct APK path) and the maintainer key (FOSS path). Play and F-Droid need their own channel tests.
 
+### Store rules for the F-Droid and IzzyOnDroid builds
+
+These rules come from the store review threads: [IzzyOnDroid repo#933](https://gitlab.com/IzzyOnDroid/repo/-/work_items/933) (listed 2026-02-17), [F-Droid RFP#3685](https://gitlab.com/fdroid/rfp/-/work_items/3685), and [fdroiddata!35008](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/35008) (merged 2026-05-12). The native FOSS build must keep meeting them.
+
+- **IzzyOnDroid checks reproducibility.** Izzy's builder rebuilds the GitHub `-foss.apk` from the tagged commit and compares the two. The tag must point at the commit that built the APK. The build steps are in `config/izzyonandroid.yml`. Izzy asked us to replace host-dependent values, such as `react_native_dev_server_ip`, with fixed values. Izzy also needed an `apksigner` padding fix.
+- **Never replace a published release file.** Izzy said this after we replaced one (2026-02-09). A replaced file breaks their reproducibility check and confuses update clients.
+- **Sign with the maintainer release key.** Izzy rejected debug-signed APKs.
+- **Size:** Izzy gave a 30 MB per-app limit on 2026-01-01. The 1.3.1 FOSS APK is 35.5 MB. Confirm the current limit with Izzy before a large change.
+- **Scanner blockers, both stores:** non-free libraries (Firebase, Google Play services, ML Kit), the Google `DEPENDENCY_INFO_BLOCK` signing block, unneeded dangerous permissions (only `RECORD_AUDIO` and `POST_NOTIFICATIONS` are justified), and `BIND_GET_INSTALL_REFERRER_SERVICE`.
+- **Izzy's policy for the FOSS build:** no proprietary AI providers (only a local or custom server), and no update checker unless the user explicitly opts in. The reviewer also checked that the app makes no unexpected network connections.
+- **The F-Droid scanner deletes files that reference non-free libraries.** It deleted `expo-application`'s `build.gradle` because of the Play Install Referrer. Autolinking then skipped the module, and the app crashed at launch. The native FOSS flavor (a build variant that leaves out Play-only code) must not reference Play-only libraries anywhere.
+- **F-Droid reviewers want build logic upstream.** Keep patch scripts in this repo. The fdroiddata recipe should only call them.
+- **F-Droid's automatic update reads `apps/mobile/app.json`.** Its `UpdateCheckData` takes `versionCode` and `version` from that file on `v*` tags. When the native app replaces the RN app, move this setting in the same fdroiddata change as the new recipe.
+- **The native app needs FOSS and Play flavors.** The RN app already has them. The FOSS flavor leaves out the Play update module and proprietary AI providers, turns off the update checker, and keeps the diagnostic heartbeat opt-in. This is a parity row.
+
 ## 2. Database
 
 | Item | Where it lives on device | Owner code (file:line) | Native replacement must | Risk if missed |
