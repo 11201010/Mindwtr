@@ -1,4 +1,6 @@
-import { isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, resolveAreaFilterSelection } from './area-filter';
+import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
+import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, projectMatchesAreaFilterSelection, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
+import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
@@ -13,6 +15,8 @@ import { buildProjectGroups, type ProjectAreaGroup } from './project-grouping';
 import { resolveTaskSortByForFeatures, sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { createDateFormatter, hasTimeComponent, safeParseDate, type DateFormattingConfig } from './date';
 import { getProjectDeadlineBoostLabel } from './focus-grouping';
+import { getFocusStarBlockedText } from './focus-star';
+import { normalizeFocusTaskLimit } from './focus-utils';
 import {
     buildFocusPools,
     buildFocusTaskSections,
@@ -104,6 +108,7 @@ export type NativeFocusSection = {
 export type NativeFocusView = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     revision: string;
+    dateLabel: string;
     /** Mobile hides a section whose total is 0: no header, no rows. */
     sections: NativeFocusSection[];
     /**
@@ -114,6 +119,7 @@ export type NativeFocusView = {
 };
 export type NativeProjectRow = Pick<Project, 'id' | 'title' | 'status'> & {
     isFocused: boolean;
+    focusDisabled: boolean;
     color: string | null;
     activeTaskCount: number;
     nextActionId: string | null;
@@ -183,6 +189,7 @@ const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>, meta: T
 const toNativeProjectRow = (
     project: Project,
     summaries: ReturnType<ReturnType<typeof useTaskStore.getState>['getDerivedState']>['projectTaskSummaryById'],
+    focusedProjectCount: number,
 ): NativeProjectRow => {
     const summary = summaries.get(project.id);
     const nextAction = summary?.nextAction;
@@ -193,6 +200,7 @@ const toNativeProjectRow = (
         title: project.title,
         status: project.status,
         isFocused,
+        focusDisabled: !isFocused && focusedProjectCount >= MAX_FOCUSED_PROJECTS,
         color: project.color ?? null,
         activeTaskCount,
         nextActionId: nextAction?.id ?? null,
@@ -249,6 +257,8 @@ export function createNativeHostContract() {
     let cachedProjects: NativeProjectsView | null = null;
     let cachedProjectDetailKey = '';
     let cachedProjectDetail: ProjectDetailCache | null = null;
+    // ponytail: title/area dedupe survives process death, but a renamed, moved, archived, or deleted project can be recreated; persist a capture ID if those retries become required.
+    const createdProjects = new Map<string, string>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -325,8 +335,10 @@ export function createNativeHostContract() {
             const state = useTaskStore.getState();
             const tasks = state.tasks.filter(isTaskActionable);
             const projectById = new Map(state.projects.map((project) => [project.id, project]));
-            const resolvedAreaFilter = resolveAreaFilterSelection(undefined, state.areas);
-            const visibleTasks = tasks.filter((task) => isTaskVisibleInArea(task, { projectById, resolvedAreaFilter }));
+            const resolvedAreaFilter = resolveAreaFilterSelection(state.settings.filters, state.areas);
+            const areaById = new Map(sortAreasForDisplay(state.areas).map((area) => [area.id, area]));
+            // RN Focus uses the selected area for visible tasks and review projects.
+            const visibleTasks = tasks.filter((task) => isTaskVisibleInArea(task, { projectById, areaById, resolvedAreaFilter }));
             const pools = buildFocusPools({ tasks, visibleTasks, projects: state.projects, criteria: undefined, now });
             const lists = deriveFocusTaskLists(pools, {
                 now,
@@ -338,7 +350,6 @@ export function createNativeHostContract() {
             });
             const schedule = splitTodayTasksByStartTime(lists.schedule, now);
             cachedDeadlineBoosts = lists.projectDeadlineBoosts;
-            const areaById = new Map(state.areas.map((area) => [area.id, area]));
             cachedReviewProjects = getReviewDueProjects(state.projects.filter((project) => (
                 !project.deletedAt && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
             )), now);
@@ -372,7 +383,8 @@ export function createNativeHostContract() {
     );
 
     // The mobile project workspace as it opens: the project's saved sort, no
-    // filter or search, Show completed off, nothing collapsed.
+    // search, Show completed off, nothing collapsed. RN TaskList filters its
+    // project rows by area, including completed and reference tasks.
     const projectDetail = (projectId: string, currentRevision: string): ProjectDetailCache | null => {
         const key = `${currentRevision}\u0000${projectId}`;
         if (cachedProjectDetailKey === key && cachedProjectDetail) return cachedProjectDetail;
@@ -384,6 +396,8 @@ export function createNativeHostContract() {
         // the cues); TaskList then resolves that for the all-status list.
         const projectSortBy = resolveTaskSortByForFeatures(project.taskSortBy ?? 'default', state.settings);
         const projectTasks = state._allTasks.filter((task) => task.projectId === project.id && !task.deletedAt);
+        const areaById = new Map(sortAreasForDisplay(state.areas).map((area) => [area.id, area]));
+        const selection = resolveAreaFilterSelection(state.settings.filters, state.areas);
         const model = buildProjectTaskListModel({
             project,
             tasks: selectProjectTaskListTasks(projectTasks, {
@@ -391,6 +405,7 @@ export function createNativeHostContract() {
                 statusFilter: 'all',
                 includeArchived: options.includeArchived,
                 includeDone: options.includeDone,
+                isVisible: (task) => taskMatchesAreaFilterSelection(task, selection, state._projectsById, areaById),
             }),
             visibleTasks: state.tasks,
             sections: state.sections,
@@ -433,6 +448,77 @@ export function createNativeHostContract() {
 
     return {
         version: NATIVE_HOST_CONTRACT_VERSION,
+
+        getAreaFilter(): NativeHostResult<{ revision: string; label: string; summary: string; options: { id: string; label: string; color: string | null; state: 'included' | 'excluded' | 'none'; next: AreaFilterSelection }[] }> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            const state = useTaskStore.getState();
+            const areas = sortAreasForDisplay(state.areas);
+            const selection = resolveAreaFilterSelection(state.settings.filters, areas);
+            const value = areaFilterSelectionToValue(selection);
+            const areaById = new Map(areas.map((area) => [area.id, area]));
+            const areaName = (id: string) => id === AREA_FILTER_NONE
+                ? translate('projects.noArea') : areaById.get(id)?.name ?? translate('projects.noArea');
+            const isDefault = !isAreaFilterSelectionActive(selection);
+            const summary = isDefault ? translate('projects.allAreas') : [
+                selection.included.map(areaName).join(', '),
+                selection.excluded.length ? `${tFallback(translate, 'filters.excluded', 'Excluded')}: ${selection.excluded.map(areaName).join(', ')}` : '',
+            ].filter(Boolean).join(' · ');
+            // RN's trigger says All/None for those scopes and counts richer selections.
+            const label = isDefault ? translate('common.all')
+                : value === AREA_FILTER_NONE ? translate('common.none')
+                    : value !== AREA_FILTER_ALL ? areaName(value)
+                        : [selection.included.length || '', selection.excluded.length ? `−${selection.excluded.length}` : '']
+                            .filter(Boolean).join(' ');
+            return { ok: true, value: {
+                revision: `${revision()}:${settingsRevision()}:${language}`,
+                label, summary,
+                options: [
+                    { id: AREA_FILTER_ALL, label: translate('projects.allAreas'), color: null, state: isDefault ? 'included' as const : 'none' as const, next: { included: [], excluded: [] } },
+                    ...areas.map((area) => ({ id: area.id, label: area.name, color: area.color ?? null,
+                        state: selection.included.includes(area.id) ? 'included' as const : selection.excluded.includes(area.id) ? 'excluded' as const : 'none' as const,
+                        next: cycleAreaFilterSelection(selection, area.id),
+                    })),
+                    { id: AREA_FILTER_NONE, label: translate('projects.noArea'), color: null,
+                        state: selection.included.includes(AREA_FILTER_NONE) ? 'included' as const : selection.excluded.includes(AREA_FILTER_NONE) ? 'excluded' as const : 'none' as const,
+                        next: cycleAreaFilterSelection(selection, AREA_FILTER_NONE),
+                    },
+                ],
+            } };
+        },
+
+        async setAreaFilter(input: AreaFilterSelection): Promise<NativeHostResult<AreaFilterSelection>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            const state = useTaskStore.getState();
+            const validIds = new Set([AREA_FILTER_NONE, ...state.areas.filter((area) => !area.deletedAt).map((area) => area.id)]);
+            if (!input || !Array.isArray(input.included) || !Array.isArray(input.excluded)
+                || [...input.included, ...input.excluded].some((id) => typeof id !== 'string' || !validIds.has(id))
+                || new Set([...input.included, ...input.excluded]).size !== input.included.length + input.excluded.length) {
+                return fail('INVALID_INPUT', 'Area filter selection is not available');
+            }
+            const selection = { included: [...input.included], excluded: [...input.excluded] };
+            const current = resolveAreaFilterSelection(state.settings.filters, state.areas);
+            try {
+                if (current.included.length !== selection.included.length
+                    || current.excluded.length !== selection.excluded.length
+                    || current.included.some((id, index) => id !== selection.included[index])
+                    || current.excluded.some((id, index) => id !== selection.excluded[index])) {
+                    await state.updateSettings({ filters: {
+                        ...state.settings.filters,
+                        ...areaFilterSelectionToFilters(selection),
+                    } });
+                } else if (state.persistenceFailure) {
+                    await state.retryPersistence();
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: selection };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
+        },
 
         async setLanguage(input: { storedLanguage: string | null; systemLocale: string | null }): Promise<NativeHostResult<{ language: Language }>> {
             if (!input || (input.storedLanguage !== null && typeof input.storedLanguage !== 'string')
@@ -528,6 +614,7 @@ export function createNativeHostContract() {
             }
             const state = useTaskStore.getState();
             if (cachedRevision !== currentRevision) {
+                // RN Inbox stays global across area selections.
                 cachedInbox = sortTasksBy(state.tasks.filter((task) => (
                     task.status === 'inbox' && isTaskVisibleInInbox(task, { projectById: state._projectsById })
                 )), resolveNonDoneTaskSortBy(state.settings.taskSortBy, state.settings));
@@ -562,16 +649,17 @@ export function createNativeHostContract() {
                 total: section.items.length,
                 rows: focusRows(section, 0, input.limit, now),
             }));
-            const summaries = useTaskStore.getState().getDerivedState().projectTaskSummaryById;
+            const { projectTaskSummaryById: summaries, focusedProjectCount } = useTaskStore.getState().getDerivedState();
             const formatDate = createDateFormatter(dateFormatting());
             return {
                 ok: true,
                 value: {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision: currentRevision,
+                    dateLabel: formatDate(now, 'PPPP'),
                     sections,
                     reviewProjects: cachedReviewProjects.map((project) => ({
-                        ...toNativeProjectRow(project, summaries),
+                        ...toNativeProjectRow(project, summaries, focusedProjectCount),
                         reviewDateLabel: project.reviewAt ? formatDate(project.reviewAt, 'P') : null,
                     })),
                 },
@@ -581,16 +669,17 @@ export function createNativeHostContract() {
         getProjects(): NativeHostResult<NativeProjectsView> {
             const ready = readiness();
             if (!ready.ok) return ready;
-            const currentRevision = revision();
+            const currentRevision = `${revision()}:${settingsRevision()}`;
             if (cachedProjectsRevision !== currentRevision || !cachedProjects) {
                 const state = useTaskStore.getState();
                 const orderedAreas = sortAreasForDisplay(state.areas);
                 const areaById = new Map(orderedAreas.map((area) => [area.id, area]));
-                const summaries = state.getDerivedState().projectTaskSummaryById;
+                const { projectTaskSummaryById: summaries, focusedProjectCount } = state.getDerivedState();
+                // RN Projects groups apply the selected area, including No area.
                 const groups = buildProjectGroups({
                     projects: state.projects,
                     orderedAreas,
-                    areaFilter: resolveAreaFilterSelection(undefined, state.areas),
+                    areaFilter: resolveAreaFilterSelection(state.settings.filters, orderedAreas),
                     tagFilter: { kind: 'all' },
                     pinFocused: true,
                 });
@@ -601,7 +690,7 @@ export function createNativeHostContract() {
                         areaName: area?.name ?? null,
                         areaColor: area?.color ?? null,
                         areaIcon: area?.icon ?? null,
-                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries)),
+                        projects: group.projects.map((project) => toNativeProjectRow(project, summaries, focusedProjectCount)),
                     };
                 };
                 cachedProjects = {
@@ -881,6 +970,102 @@ export function createNativeHostContract() {
                 return { ok: true, value: { id: result.id } };
             } catch (error) {
                 return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+            }
+        },
+
+        async createProject(input: { title: string; areaId: string | null; requestId: string }): Promise<NativeHostResult<{ id: string }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.title !== 'string' || !input.title.trim()
+                || (input.areaId !== null && typeof input.areaId !== 'string')
+                || typeof input.requestId !== 'string' || !CAPTURE_ID_PATTERN.test(input.requestId)) {
+                return fail('INVALID_INPUT', 'Project title, area ID, and request UUID are required');
+            }
+            try {
+                const state = useTaskStore.getState();
+                const previousId = createdProjects.get(input.requestId);
+                const previous = previousId && state._projectsById.get(previousId);
+                if (previous && !previous.deletedAt) {
+                    if (state.persistenceFailure) await state.retryPersistence();
+                    const saved = await save();
+                    if (!saved.ok) return saved;
+                    return { ok: true, value: { id: previous.id } };
+                }
+                const area = state.areas.find((candidate) => candidate.id === input.areaId && !candidate.deletedAt);
+                const created = await state.addProject(input.title, area?.color || DEFAULT_PROJECT_COLOR, { areaId: area?.id });
+                if (!created) {
+                    const failure = useTaskStore.getState().persistenceFailure;
+                    return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? useTaskStore.getState().error ?? 'Project creation failed');
+                }
+                createdProjects.set(input.requestId, created.id);
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { id: created.id } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
+        },
+
+        async setTaskFocus(input: { id: string; focused: boolean }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: string; blockedTitle: string }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean') {
+                return fail('INVALID_INPUT', 'Task ID and target focus state are required');
+            }
+            const state = useTaskStore.getState();
+            const task = state._tasksById.get(input.id);
+            if (!task || task.deletedAt) return fail('TASK_NOT_FOUND', 'Task not found');
+            try {
+                if (Boolean(task.isFocusedToday) === input.focused) {
+                    if (state.persistenceFailure) await state.retryPersistence();
+                } else {
+                    const action = state.getFocusStarAction(task);
+                    if (!action.canToggle) return { ok: true, value: {
+                        blocked: getFocusStarBlockedText(translate, action, normalizeFocusTaskLimit(state.settings.gtd?.focusTaskLimit)) ?? '',
+                        blockedTitle: tFallback(translate, 'digest.focus', 'Focus'),
+                    } };
+                    if (action.patch.isFocusedToday !== input.focused) return fail('ACTION_FAILED', 'Focus action did not match target state');
+                    const result = await state.updateTask(input.id, action.patch);
+                    if (!result.success) {
+                        const failure = useTaskStore.getState().persistenceFailure;
+                        return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? result.error ?? 'Task focus failed');
+                    }
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { id: input.id, focused: input.focused } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
+            }
+        },
+
+        async setProjectFocus(input: { id: string; focused: boolean }): Promise<NativeHostResult<{ id: string; focused: boolean } | { blocked: '' }>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.id !== 'string' || !input.id.trim() || typeof input.focused !== 'boolean') {
+                return fail('INVALID_INPUT', 'Project ID and target focus state are required');
+            }
+            const state = useTaskStore.getState();
+            const project = state._projectsById.get(input.id);
+            if (!project || project.deletedAt) return fail('INVALID_INPUT', 'Project is not available');
+            try {
+                if (Boolean(project.isFocused) === input.focused) {
+                    if (state.persistenceFailure) await state.retryPersistence();
+                } else {
+                    await state.toggleProjectFocus(input.id);
+                    const after = useTaskStore.getState();
+                    const failure = after.persistenceFailure;
+                    if (failure) return fail('SAVE_FAILED', failure.message);
+                    if (Boolean(after._projectsById.get(input.id)?.isFocused) !== input.focused) return { ok: true, value: { blocked: '' } };
+                }
+                const saved = await save();
+                if (!saved.ok) return saved;
+                return { ok: true, value: { id: input.id, focused: input.focused } };
+            } catch (error) {
+                const failure = useTaskStore.getState().persistenceFailure;
+                return fail(failure ? 'SAVE_FAILED' : 'ACTION_FAILED', failure?.message ?? (error instanceof Error ? error.message : String(error)));
             }
         },
 

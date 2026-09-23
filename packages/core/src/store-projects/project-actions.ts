@@ -121,6 +121,9 @@ type BuildNewProjectParams = {
     id?: string;
 };
 
+/** At most this many projects can be starred (focused) at once. */
+export const MAX_FOCUSED_PROJECTS = 5;
+
 export const buildNewProject = ({
     title,
     color,
@@ -827,7 +830,7 @@ export const createProjectCoreActions = ({
             select: (state) => state._allProjects.filter((project) => project.id === id),
             buildUpdates: (project) => {
                 if (project.status !== 'active' && !project.isFocused) return null;
-                if (!project.isFocused && get().getDerivedState().focusedProjectCount >= 5) return null;
+                if (!project.isFocused && get().getDerivedState().focusedProjectCount >= MAX_FOCUSED_PROJECTS) return null;
                 return { isFocused: !project.isFocused };
             },
         });

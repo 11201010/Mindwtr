@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WINDOW, type NativeEditableFields } from './native-host-contract';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
-import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
+import { DEFAULT_PROJECT_COLOR } from './color-constants';
 import * as projectGrouping from './project-grouping';
 import * as focusDerivation from './focus-sections';
 import * as projectTaskListModel from './project-task-list-model';
 import { formatLocalDate } from './import-source-reader';
 import { resolveFeatureFlags } from './resolve-feature-flags';
-import { configureDateFormatting } from './date';
+import { configureDateFormatting, getDateFormattingConfig, safeFormatDate } from './date';
+import { getFocusStarBlockedText } from './focus-star';
+import { normalizeFocusTaskLimit } from './focus-utils';
 import { buildTaskRowMeta, resolveTaskRowFeatures, resolveTaskRowLookup } from './task-row-meta';
 import { isTaskActionable } from './task-status';
 import { splitTodayTasksByStartTime } from './task-utils';
@@ -529,6 +532,7 @@ describe('native host contract', () => {
         expect(host.getInboxWindow({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getProjects()).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getAreaFilter()).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getProjectDetail({ projectId: 'x', offset: 0, limit: 1 }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: 'x' }))
@@ -536,6 +540,14 @@ describe('native host contract', () => {
         expect(host.getTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTaskEditor({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.createInboxTask({ title: 'x', captureId: CAPTURE_ID }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.createProject({ title: 'x', areaId: null, requestId: CAPTURE_ID }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.setTaskFocus({ id: 'x', focused: true }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.setProjectFocus({ id: 'x', focused: true }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(await host.setAreaFilter({ included: [], excluded: [] }))
             .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.completeTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.updateTask({ id: 'x', base: { title: 'x' }, patch: { title: 'y' } }))
@@ -1336,7 +1348,7 @@ describe('native host contract', () => {
             expect(focus.value.reviewProjects.map(({ id }) => id))
                 .toEqual(focusDerivation.getReviewDueProjects(state.projects, NOW).map(({ id }) => id));
             expect(focus.value.reviewProjects[1]).toEqual({
-                id: 'p-review', title: 'Garden', status: 'active', isFocused: false, color: '#123456',
+                id: 'p-review', title: 'Garden', status: 'active', isFocused: false, focusDisabled: false, color: '#123456',
                 activeTaskCount: 0, nextActionId: null, nextActionTitle: null, focusedWithoutNextAction: false,
                 reviewDateLabel: '09/20/2026',
             });
@@ -1359,5 +1371,269 @@ describe('native host contract', () => {
         expect(first.ok).toBe(true);
         expect(second).toEqual(first);
         expect(derive).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets task focus to a target, blocks at the limit in both languages, and retries a failed save', async () => {
+        freezeClock();
+        const host = await activateWith([
+            task('first', '2026-09-01T00:00:00.000Z', { status: 'next' }),
+            task('second', '2026-09-01T00:00:00.000Z', { status: 'next' }),
+        ]);
+        saveData.mockClear();
+        expect(await host.setTaskFocus({ id: 'first', focused: true })).toEqual({ ok: true, value: { id: 'first', focused: true } });
+        expect(saveData).toHaveBeenCalledTimes(1);
+        expect(saveData.mock.calls[0][0].tasks.find((item: Task) => item.id === 'first').isFocusedToday).toBe(true);
+        const rev = useTaskStore.getState()._tasksById.get('first')?.rev;
+        expect(await host.setTaskFocus({ id: 'first', focused: true })).toMatchObject({ ok: true });
+        expect(useTaskStore.getState()._tasksById.get('first')?.rev).toBe(rev);
+        expect(saveData).toHaveBeenCalledTimes(1);
+        await useTaskStore.getState().updateSettings({ gtd: { focusTaskLimit: 1 } });
+        const blockedAction = useTaskStore.getState().getFocusStarAction(useTaskStore.getState()._tasksById.get('second')!);
+        const english = getFocusStarBlockedText(getTranslator('en'), blockedAction, normalizeFocusTaskLimit(1));
+        const beforeBlocked = useTaskStore.getState()._tasksById.get('second')?.rev;
+        const savesBeforeBlocked = saveData.mock.calls.length;
+        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { blocked: english ?? '', blockedTitle: tFallback(getTranslator('en'), 'digest.focus', 'Focus') } });
+        expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
+        const chinese = getFocusStarBlockedText(getTranslator('zh'), blockedAction, normalizeFocusTaskLimit(1));
+        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { blocked: chinese ?? '', blockedTitle: tFallback(getTranslator('zh'), 'digest.focus', 'Focus') } });
+        expect(useTaskStore.getState()._tasksById.get('second')?.rev).toBe(beforeBlocked);
+        expect(saveData).toHaveBeenCalledTimes(savesBeforeBlocked);
+        expect(await host.setTaskFocus({ id: 'first', focused: false })).toEqual({ ok: true, value: { id: 'first', focused: false } });
+
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.setTaskFocus({ id: 'second', focused: true }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        const failedRev = useTaskStore.getState()._tasksById.get('second')?.rev;
+        const savesAfterFailure = saveData.mock.calls.length;
+        saveData.mockResolvedValue(undefined);
+        expect(await host.setTaskFocus({ id: 'second', focused: true })).toEqual({ ok: true, value: { id: 'second', focused: true } });
+        expect(useTaskStore.getState()._tasksById.get('second')?.rev).toBe(failedRev);
+        expect(saveData).toHaveBeenCalledTimes(savesAfterFailure + 1);
+        expect(saveData.mock.lastCall?.[0].tasks.find((item: Task) => item.id === 'second').isFocusedToday).toBe(true);
+    });
+
+    it('sets project focus once per target and retries its failed save', async () => {
+        freezeClock();
+        const host = await activateWith([], [project('one'), project('archived', 'archived')]);
+        saveData.mockClear();
+        expect(await host.setProjectFocus({ id: 'one', focused: true })).toEqual({ ok: true, value: { id: 'one', focused: true } });
+        const rev = useTaskStore.getState()._projectsById.get('one')?.rev;
+        expect(await host.setProjectFocus({ id: 'one', focused: true })).toMatchObject({ ok: true });
+        expect(useTaskStore.getState()._projectsById.get('one')?.rev).toBe(rev);
+        expect(saveData).toHaveBeenCalledTimes(1);
+        expect(await host.setProjectFocus({ id: 'archived', focused: true }))
+            .toEqual({ ok: true, value: { blocked: '' } });
+        useTaskStore.setState({ error: 'stale transient error' });
+        expect(await host.setProjectFocus({ id: 'archived', focused: true }))
+            .toEqual({ ok: true, value: { blocked: '' } });
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.setProjectFocus({ id: 'one', focused: false }))
+            .toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        const failedRev = useTaskStore.getState()._projectsById.get('one')?.rev;
+        saveData.mockResolvedValue(undefined);
+        expect(await host.setProjectFocus({ id: 'one', focused: false })).toEqual({ ok: true, value: { id: 'one', focused: false } });
+        expect(useTaskStore.getState()._projectsById.get('one')?.rev).toBe(failedRev);
+        expect(saveData.mock.lastCall?.[0].projects.find((item: Project) => item.id === 'one').isFocused).toBe(false);
+    });
+
+    it('disables an unstarred project after five stars across all areas and ignores stale errors', async () => {
+        freezeClock();
+        const host = await activateWith([]);
+        useTaskStore.setState({
+            _allAreas: [area('a', 'Alpha', 0), area('z', 'Zeta', 1)],
+            _allProjects: [
+                ...Array.from({ length: 5 }, (_, index) => project(`star-${index}`, 'active', index, { isFocused: true, areaId: 'a' })),
+                project('candidate', 'active', 6, { areaId: 'z' }),
+            ],
+        });
+        expect(await host.setAreaFilter({ included: ['z'], excluded: [] })).toMatchObject({ ok: true });
+        expect(useTaskStore.getState().projects.map((item) => [item.id, item.areaId])).toContainEqual(['candidate', 'z']);
+        expect(useTaskStore.getState().settings.filters).toMatchObject({ areaIds: ['z'] });
+        const view = host.getProjects();
+        if (!view.ok) throw new Error('Projects query failed');
+        expect(view.value.active.flatMap((group) => group.projects)).toMatchObject([{ id: 'candidate', focusDisabled: true }]);
+        saveData.mockClear();
+        expect(await host.setProjectFocus({ id: 'candidate', focused: true }))
+            .toEqual({ ok: true, value: { blocked: '' } });
+        expect(saveData).not.toHaveBeenCalled();
+        useTaskStore.setState({ error: 'stale transient error' });
+        expect(await host.setProjectFocus({ id: 'star-0', focused: false }))
+            .toEqual({ ok: true, value: { id: 'star-0', focused: false } });
+        expect(host.getProjects()).toMatchObject({ ok: true, value: { active: [{ projects: [{ focusDisabled: false }] }] } });
+    });
+
+    it('creates one project per request ID with the RN area color and retries a failed save', async () => {
+        freezeClock();
+        const host = await activateWith([]);
+        useTaskStore.setState({ _allAreas: [area('live', 'Live', 0, { color: '#aabbcc' }), area('deleted', 'Deleted', 1, { deletedAt: '2026-09-01' })] });
+        saveData.mockClear();
+        const input = { title: 'Project', areaId: 'live', requestId: CAPTURE_ID };
+        expect(await host.createProject({ ...input, requestId: 'bad' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.createProject({ ...input, title: ' ' })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        saveData.mockRejectedValue(new Error('disk unavailable'));
+        expect(await host.createProject(input)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
+        const created = useTaskStore.getState().projects.find((item) => item.title === 'Project')!;
+        expect(created).toMatchObject({ areaId: 'live', color: '#aabbcc' });
+        await useTaskStore.getState().updateProject(created.id, { title: 'Renamed project' });
+        saveData.mockResolvedValue(undefined);
+        expect(await host.createProject(input)).toEqual({ ok: true, value: { id: created.id } });
+        expect(await host.createProject(input)).toEqual({ ok: true, value: { id: created.id } });
+        expect(useTaskStore.getState().projects.filter((item) => item.id === created.id)).toHaveLength(1);
+        expect(useTaskStore.getState().projects).toHaveLength(1);
+        const noArea = await host.createProject({ title: 'No area', areaId: 'deleted', requestId: '123e4567-e89b-12d3-a456-426614174001' });
+        expect(noArea.ok).toBe(true);
+        expect(useTaskStore.getState().projects.find((item) => item.title === 'No area'))
+            .toMatchObject({ color: DEFAULT_PROJECT_COLOR });
+        expect(useTaskStore.getState().projects.find((item) => item.title === 'No area')?.areaId).toBeFalsy();
+    });
+
+    it('formats the Focus date through the host configuration without changing the global formatter', async () => {
+        freezeClock();
+        const host = await activateWith([]);
+        const sentinel = { language: 'fa', dateFormat: 'ymd', calendarSystem: 'jalali', systemLocale: 'fa-IR' };
+        configureDateFormatting(sentinel);
+        const before = getDateFormattingConfig();
+        const now = new Date();
+        configureDateFormatting({ language: 'en' });
+        const english = safeFormatDate(now, 'PPPP');
+        configureDateFormatting(sentinel);
+        expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: true, value: { dateLabel: english } });
+        expect(getDateFormattingConfig()).toEqual(before);
+        expect(await host.setLanguage({ storedLanguage: 'zh', systemLocale: 'zh-CN' })).toMatchObject({ ok: true });
+        configureDateFormatting({ language: 'zh', systemLocale: 'zh-CN' });
+        const chinese = safeFormatDate(now, 'PPPP');
+        configureDateFormatting(sentinel);
+        expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: true, value: { dateLabel: chinese } });
+        expect(getDateFormattingConfig()).toEqual(before);
+        configureDateFormatting();
+    });
+
+    it('matches the RN area switcher and filters Focus and Projects while keeping Inbox global', async () => {
+        freezeClock();
+        const host = await activateWith([]);
+        useTaskStore.setState({
+            _allAreas: [
+                area('z', 'Zeta', 2, { color: '#111111' }),
+                area('a', 'Alpha', 1, { color: '#222222' }),
+                area('gone', 'Gone', 0, { deletedAt: '2026-09-01' }),
+            ],
+            _allProjects: [project('in-a', 'active', 0, { areaId: 'a' }), project('no-area')],
+            _allTasks: [
+                task('inbox-a', '2026-09-01', { projectId: 'in-a' }),
+                task('inbox-none', '2026-09-01', { projectId: 'no-area' }),
+                task('next-a', '2026-09-01', { status: 'next', projectId: 'in-a' }),
+                task('next-none', '2026-09-01', { status: 'next', projectId: 'no-area' }),
+            ],
+        });
+        const all = host.getAreaFilter();
+        if (!all.ok) throw new Error('Area filter query failed');
+        expect(all.value).toMatchObject({ label: getTranslator('en')('common.all'), summary: getTranslator('en')('projects.allAreas') });
+        expect(all.value.options).toEqual([
+            { id: AREA_FILTER_ALL, label: getTranslator('en')('projects.allAreas'), color: null, state: 'included', next: { included: [], excluded: [] } },
+            { id: 'a', label: 'Alpha', color: '#222222', state: 'none', next: cycleAreaFilterSelection({ included: [], excluded: [] }, 'a') },
+            { id: 'z', label: 'Zeta', color: '#111111', state: 'none', next: cycleAreaFilterSelection({ included: [], excluded: [] }, 'z') },
+            { id: AREA_FILTER_NONE, label: getTranslator('en')('projects.noArea'), color: null, state: 'none', next: cycleAreaFilterSelection({ included: [], excluded: [] }, AREA_FILTER_NONE) },
+        ]);
+        const inbox = host.getInboxWindow({ offset: 0, limit: 10 });
+        const focus = host.getFocus({ limit: 10 });
+        const projects = host.getProjects();
+        if (!inbox.ok || !focus.ok || !projects.ok) throw new Error('Initial query failed');
+        expect(await host.setAreaFilter({ included: ['missing'], excluded: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.setAreaFilter({ included: ['gone'], excluded: [] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.setAreaFilter({ included: ['a'], excluded: ['a'] })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(await host.setAreaFilter({ included: ['a'], excluded: [] })).toEqual({ ok: true, value: { included: ['a'], excluded: [] } });
+        const state = useTaskStore.getState();
+        expect(state.settings.filters).toMatchObject({ areaId: 'a', areaIds: ['a'], excludedAreaIds: [] });
+        const selected = host.getAreaFilter();
+        if (!selected.ok) throw new Error('Selected area filter query failed');
+        expect(selected.value.revision).not.toBe(all.value.revision);
+        expect(selected.value).toMatchObject({ label: 'Alpha', summary: 'Alpha' });
+        expect(selected.value.options.find((option) => option.id === 'a')).toMatchObject({ state: 'included', next: cycleAreaFilterSelection({ included: ['a'], excluded: [] }, 'a') });
+        const sortedAreas = [...state.areas].filter((item) => !item.deletedAt)
+            .sort((left, right) => left.order !== right.order ? left.order - right.order : left.name.localeCompare(right.name));
+        const selection = resolveAreaFilterSelection(state.settings.filters, sortedAreas);
+        const projectById = new Map(state.projects.map((item) => [item.id, item]));
+        const areaById = new Map(sortedAreas.map((item) => [item.id, item]));
+        const rnInbox = state.tasks.filter((item) => item.status === 'inbox' && isTaskVisibleInInbox(item, { projectById }));
+        const rnVisible = state.tasks.filter((item) => isTaskVisibleInArea(item, { projectById, areaById, resolvedAreaFilter: selection }));
+        const rnPools = focusDerivation.buildFocusPools({
+            tasks: state.tasks.filter(isTaskActionable), visibleTasks: rnVisible.filter(isTaskActionable),
+            projects: state.projects, criteria: undefined, now: new Date(),
+        });
+        const rnLists = focusDerivation.deriveFocusTaskLists(rnPools, {
+            now: new Date(), projects: state.projects, sections: state.sections,
+            sortBy: focusDerivation.DEFAULT_FOCUS_SORT_BY,
+            prioritiesEnabled: resolveFeatureFlags(state.settings).priorities, sortOrder: undefined,
+        });
+        const rnSections = focusDerivation.buildFocusTaskSections(rnLists, getTranslator('en'));
+        const rnGroups = projectGrouping.buildProjectGroups({
+            projects: state.projects, orderedAreas: sortedAreas, areaFilter: selection,
+            tagFilter: { kind: 'all' }, pinFocused: true,
+        });
+        const narrowedInbox = host.getInboxWindow({ offset: 0, limit: 10 });
+        const narrowedFocus = host.getFocus({ limit: 10 });
+        const narrowedProjects = host.getProjects();
+        if (!narrowedInbox.ok || !narrowedFocus.ok || !narrowedProjects.ok) throw new Error('Filtered query failed');
+        expect(narrowedInbox.value.rows.map(({ id }) => id)).toEqual(rnInbox.map(({ id }) => id));
+        expect(narrowedFocus.value.sections.map(({ key, rows }) => ({ key, ids: rows.map(({ id }) => id) })))
+            .toEqual(rnSections.map(({ key, items }) => ({ key, ids: items.map(({ id }) => id) })));
+        expect(narrowedProjects.value.active.map(({ areaId, projects: rows }) => ({ areaId, ids: rows.map(({ id }) => id) })))
+            .toEqual(rnGroups.active.map(({ areaId, projects: rows }) => ({ areaId: areaId ?? null, ids: rows.map(({ id }) => id) })));
+        const projectDetail = host.getProjectDetail({ projectId: 'in-a', offset: 0, limit: 10 });
+        if (!projectDetail.ok) throw new Error('Project detail query failed');
+        expect(projectDetail.value.items.filter((item) => item.type === 'task').map((item) => item.row.id))
+            .toEqual(state.tasks.filter((item) => item.projectId === 'in-a'
+                && taskMatchesAreaFilterSelection(item, selection, projectById, areaById)).map((item) => item.id));
+        expect(narrowedInbox.value.revision).not.toBe(inbox.value.revision);
+        expect(narrowedFocus.value.revision).not.toBe(focus.value.revision);
+        expect(narrowedProjects.value.revision).not.toBe(projects.value.revision);
+        expect(host.getInboxWindow({ offset: 1, limit: 1, revision: inbox.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: focus.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        expect(host.getAreaFilter()).toMatchObject({ ok: true, value: { label: 'Alpha' } });
+        const currentRevision = narrowedProjects.value.revision;
+        expect(await host.setAreaFilter({ included: ['a'], excluded: [] })).toMatchObject({ ok: true });
+        expect(host.getProjects()).toMatchObject({ ok: true, value: { revision: currentRevision } });
+        expect(await host.setAreaFilter({ included: [AREA_FILTER_NONE], excluded: [] })).toMatchObject({ ok: true });
+        expect(host.getAreaFilter()).toMatchObject({ ok: true, value: { label: getTranslator('en')('common.none'), summary: getTranslator('en')('projects.noArea') } });
+        expect(host.getAreaFilter()).toMatchObject({ ok: true, value: { options: [
+            { id: AREA_FILTER_ALL, state: 'none', next: { included: [], excluded: [] } },
+            { id: 'a', state: 'none' }, { id: 'z', state: 'none' },
+            { id: AREA_FILTER_NONE, state: 'included', next: cycleAreaFilterSelection({ included: [AREA_FILTER_NONE], excluded: [] }, AREA_FILTER_NONE) },
+        ] } });
+        expect(host.getProjects()).toMatchObject({ ok: true, value: { active: [{ areaId: null }] } });
+        expect(await host.setAreaFilter({ included: ['a', 'z'], excluded: [] })).toMatchObject({ ok: true });
+        expect(host.getAreaFilter()).toMatchObject({ ok: true, value: { label: '2', summary: 'Alpha, Zeta' } });
+        expect(host.getAreaFilter()).toMatchObject({ ok: true, value: { options: [
+            { id: AREA_FILTER_ALL, state: 'none' },
+            { id: 'a', state: 'included', next: cycleAreaFilterSelection({ included: ['a', 'z'], excluded: [] }, 'a') },
+            { id: 'z', state: 'included', next: cycleAreaFilterSelection({ included: ['a', 'z'], excluded: [] }, 'z') },
+            { id: AREA_FILTER_NONE, state: 'none' },
+        ] } });
+        expect(await host.setAreaFilter({ included: [], excluded: ['z'] })).toMatchObject({ ok: true });
+        const excludeOnly = host.getAreaFilter();
+        if (!excludeOnly.ok) throw new Error('Exclude-only filter query failed');
+        const excludeSelection: AreaFilterSelection = { included: [], excluded: ['z'] };
+        const rnLabel = isAreaFilterSelectionActive(excludeSelection) && areaFilterSelectionToValue(excludeSelection) === AREA_FILTER_ALL ? '−1' : '';
+        expect(excludeOnly.value).toMatchObject({ label: rnLabel, summary: `${tFallback(getTranslator('en'), 'filters.excluded', 'Excluded')}: Zeta` });
+        expect(excludeOnly.value.options.find((option) => option.id === 'z'))
+            .toMatchObject({ state: 'excluded', next: cycleAreaFilterSelection(excludeSelection, 'z') });
+        expect(state.settings.filters).not.toEqual(areaFilterSelectionToFilters(excludeSelection));
+        expect(useTaskStore.getState().settings.filters).toMatchObject(areaFilterSelectionToFilters(excludeSelection));
+        const detailBefore = host.getProjectDetail({ projectId: 'in-a', offset: 0, limit: 10 });
+        if (!detailBefore.ok) throw new Error('Project detail query failed');
+        expect(await host.setAreaFilter({ included: ['z'], excluded: [] })).toMatchObject({ ok: true });
+        const detailAfter = host.getProjectDetail({ projectId: 'in-a', offset: 0, limit: 10 });
+        if (!detailAfter.ok) throw new Error('Filtered project detail query failed');
+        const filteredState = useTaskStore.getState();
+        const filteredSelection = resolveAreaFilterSelection(filteredState.settings.filters, filteredState.areas);
+        expect(detailAfter.value.items.filter((item) => item.type === 'task').map((item) => item.row.id))
+            .toEqual(filteredState.tasks.filter((item) => item.projectId === 'in-a'
+                && taskMatchesAreaFilterSelection(item, filteredSelection, filteredState._projectsById, areaById)).map((item) => item.id));
+        expect(detailAfter.value.items.filter((item) => item.type === 'task')).toHaveLength(0);
+        expect(detailAfter.value.revision).not.toBe(detailBefore.value.revision);
+        expect(host.getProjectDetail({ projectId: 'in-a', offset: 1, limit: 1, revision: detailBefore.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
     });
 });

@@ -38,7 +38,7 @@ export * from './sandbox-data';
 export * from './store';
 export * from './native-host-contract';
 export * from './legacy-json-import';
-export { buildNewProject } from './store-projects/project-actions';
+export { buildNewProject, MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 export { nameNotifyListener } from './store-notify-profiler';
 export * from './store-types';
 export * from './store-helpers';
