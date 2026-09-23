@@ -1003,7 +1003,7 @@ export default function ProjectsScreen() {
             ))}
           </View>
         )}
-        <View style={styles.filterSection}>
+        <View style={styles.filterSection} testID="projects-tag-filter-section">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <TouchableOpacity
               accessibilityLabel={`${projectTagFilterHeading}, ${projectTagFilterActionLabel}`}

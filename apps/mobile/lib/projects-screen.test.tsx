@@ -379,7 +379,8 @@ describe('ProjectsScreen list controls', () => {
     expect(toggle.props.accessibilityLabel).toBe('Tag filter, Show');
     expect(toggle.props.accessibilityState).toEqual({ expanded: false, selected: false });
     expect(flattenStyle(toggle.props.style)).toEqual(expect.objectContaining({ minHeight: 44 }));
-    expect(flattenStyle(toggle.parent?.props.style)).toEqual(expect.objectContaining({ marginTop: 0 }));
+    expect(flattenStyle(tree.root.findByProps({ testID: 'projects-tag-filter-section' }).props.style))
+      .toEqual(expect.objectContaining({ marginTop: 0 }));
     expect(flattenStyle(tree.root.findByProps({ testID: 'projects-list-controls' }).props.style))
       .toEqual(expect.objectContaining({ paddingBottom: 0 }));
     const list = tree.root.findByType(FlatList);
