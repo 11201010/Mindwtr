@@ -130,15 +130,25 @@ const openEditor = async (title) => {
 };
 /** RN's status chips: "Status: <status>", selected when chosen. */
 const chooseStatus = async (value) => {
-    await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`), `Status ${value} selected`);
+    await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`)
+        // RN hides the status field for Reference (core's REFERENCE_HIDDEN_TASK_FIELDS), so the chips leave.
+        || (value === 'Reference' && !nodes.some((node) => (node['content-desc'] ?? '').startsWith('Status: '))), `Status ${value} selected`);
 };
 const month = () => sh('date +%Y-%m');
-/** The instant core stores for 00:00 on [day] of this month in the phone's time zone (the same offset all month). */
+/** The instant core stores for 00:00 on [day] of this month in the phone's time zone, with that day's own offset (DST). */
 const phoneMidnight = (day) => {
     const [year, mon] = month().split('-').map(Number);
-    const offset = sh('date +%z').match(/^([+-])(\d\d)(\d\d)$/);
-    const minutes = (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]));
-    return new Date(Date.UTC(year, mon - 1, day) - minutes * 60_000).toISOString();
+    const zone = sh('getprop persist.sys.timezone') || 'UTC';
+    // The zone's offset at a UTC instant: its wall clock there, read back as if it were UTC, minus the instant.
+    const offsetAt = (instant) => {
+        const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit',
+            day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(instant).map(({ type, value }) => [type, value]));
+        return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) - instant;
+    };
+    const guess = Date.UTC(year, mon - 1, day);
+    // Two steps settle a midnight on either side of a DST change.
+    const first = guess - offsetAt(guess);
+    return new Date(guess - offsetAt(first)).toISOString();
 };
 /** Picks [day] of the month the date picker opens on (the current month) and confirms. */
 const pickDay = async (day) => {

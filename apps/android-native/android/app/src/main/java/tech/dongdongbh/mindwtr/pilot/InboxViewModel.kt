@@ -106,6 +106,8 @@ private class EditorDrafts(private val dir: File) {
 }
 
 private const val PAGE = 50
+/** The typed-input name of the relative start's lead time. */
+const val RELATIVE_AMOUNT = "relativeAmount"
 /** The suggestions of RN's waiting prompt (people, like the Assigned To field). */
 const val WAITING_PROMPT = "waitingFor"
 /** RN's editor shows 4 matches (MAX_VISIBLE_SUGGESTIONS). */
@@ -213,6 +215,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 ui {
                     host = runtime; showLists(lists, ++issued); writable = true; loading = false
                     restored?.let { resumeEditor(it, savedDraft.optJSONObject("pending")) }
+                    // Control edits core had not answered before the process died are sent again, in order.
+                    pumpEdits()
                 }
             } catch (failure: Throwable) {
                 Log.e(CoreHost.TAG, "Core boot failed", failure)
@@ -354,40 +358,66 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         return current.viewed(current.model.edited(runtime.editTaskDraft(current.id, draftJson(sent), "")), sent)
     }
 
-    /** RN's controls' edits waiting for core, sent one at a time so each applies to the draft the one before returned. */
-    private val draftEdits = ArrayDeque<String>()
-    /** An edit is with core, or waits for it; Save waits for them, and Close counts them as unsaved. */
-    var editsPending by mutableStateOf(false); private set
-    private var editInFlight = false
+    /** Control edits are with core or wait for it (the editor's persisted queue); Save waits for them, and Close counts them as unsaved. */
+    val editsPending get() = editor?.pending?.isNotEmpty() == true
+    /** The session and number of the edit core is answering now. */
+    private var inFlight: Pair<String, Long>? = null
+    /** Core's message for the last refused edit; the next accepted edit clears it. */
+    private var editRefusal: String? = null
 
     /**
      * One control's edit through core's editTaskDraft (a date pick, a quick date, a recurrence or relative start
-     * edit, field values): core applies it with its cascades and returns the draft's whole model, which the
-     * editor shows. Nothing is written until Save.
+     * edit, field values). It is numbered and written to the draft file before it is sent, and sent one at a
+     * time, so each applies to the draft the one before returned. [field] names the typed input it came from.
+     * Nothing is written to the task until Save.
      */
-    fun editDraft(edit: JSONObject) {
-        editor ?: return
-        draftEdits.addLast(edit.toString())
-        editsPending = true
+    fun editDraft(edit: JSONObject, field: String? = null) {
+        val current = editor ?: return
+        keepEditor(current.queued(edit.toString(), field))
         pumpEdits()
+    }
+
+    /**
+     * RN's relative start: the lead time and the unit are one edit. A missing part comes from the latest
+     * pending relative start edit, else from core's model, so a quick amount-then-unit keeps both.
+     */
+    fun relativeStart(amount: Any?, unit: String?) {
+        val current = editor ?: return
+        val latest = current.pending.map { JSONObject(it.edit) }.lastOrNull { it.optString("type") == "relativeStart" }
+        val shown = current.view.fields.relativeStart ?: return
+        editDraft(JSONObject().put("type", "relativeStart")
+            .put("amount", amount ?: latest?.get("amount") ?: shown.getInt("amount"))
+            .put("unit", unit ?: latest?.getString("unit") ?: shown.getString("unit")), if (amount != null) RELATIVE_AMOUNT else null)
     }
 
     private fun pumpEdits() {
         val current = editor
         val runtime = host
-        if (editInFlight || current == null || runtime == null || busy || failedAction != null) return
-        val edit = draftEdits.removeFirstOrNull() ?: run { editsPending = false; return }
-        editInFlight = true
+        if (inFlight != null || current == null || runtime == null || busy || failedAction != null) return
+        val next = current.pending.firstOrNull() ?: return
+        val ticket = current.session to next.seq
+        inFlight = ticket
         val sent = current.fullDraft()
-        background(listOf(Part.Editor), { engine -> runCatching { current.model.edited(engine.editTaskDraft(current.id, draftJson(sent), edit)) } }) { reply, _ ->
-            editInFlight = false
-            reply.onSuccess { view -> editor?.takeIf { it.id == current.id }?.let { keepEditor(it.viewed(view, sent)) } }
-                .onFailure { failure ->
-                    // Core refused the edit (an invalid value); the draft stays as it was, and later edits go on from it.
-                    Log.w(CoreHost.TAG, "Editor edit refused", failure)
-                    error = failure.message ?: failure.javaClass.simpleName
-                }
-            if (draftEdits.isEmpty()) editsPending = false
+        background(listOf(Part.Editor), { engine -> runCatching { current.model.edited(engine.editTaskDraft(current.id, draftJson(sent), next.edit)) } }) { reply, _ ->
+            if (inFlight == ticket) inFlight = null
+            // A reply counts only for its own session and the edit it answers, still first in the queue: a closed,
+            // discarded, or reloaded editor, or an older edit, never changes the draft on screen.
+            val now = editor?.takeIf { it.session == ticket.first && it.pending.firstOrNull()?.seq == ticket.second }
+                ?: return@background pumpEdits()
+            reply.onSuccess { view ->
+                // The new draft and the removal of the edit it answers go to the draft file in one write.
+                keepEditor(now.viewed(view, sent).copy(pending = now.pending.drop(1)))
+                if (error != null && error == editRefusal) error = null
+                editRefusal = null
+            }.onFailure { failure ->
+                // Core refused the edit: the draft stays as it was, the typed text and core's message stay on
+                // screen, and a Save queued behind it is cancelled.
+                Log.w(CoreHost.TAG, "Editor edit refused", failure)
+                keepEditor(now.copy(pending = now.pending.drop(1)))
+                editRefusal = failure.message ?: failure.javaClass.simpleName
+                error = editRefusal
+                saveQueued = false
+            }
             pumpEdits()
             if (!editsPending && saveQueued && editor?.waiting == false) { saveQueued = false; saveEditor() }
         }
@@ -423,8 +453,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     }
 
     fun closeEditor() {
-        draftEdits.clear()
-        editsPending = false
+        inFlight = null
+        editRefusal = null
         keepEditor(null)
         suggestions = emptyMap()
         saveQueued = false

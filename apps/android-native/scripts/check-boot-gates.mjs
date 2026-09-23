@@ -76,7 +76,8 @@ assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("S
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
 assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
-assert.equal(code(model).match(/\berror = null\b/g).length, 3, 'perform and applyPage (no retry owed), closeEditor');
+assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and applyPage (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
+assert.match(model, /if \(error != null && error == editRefusal\) error = null/);
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
 assert.match(model, /val owed = failedAction\?\.takeIf \{ action == null && it\.kind != "storage" \}\s+if \(owed == null\) \{\s+error = message[\s\S]{0,120}?if \(failed != null\) failedAction = failed/);
 assert.match(owner, /if \(pending\.action\.kind == "storage" && failure\?\.action\?\.kind\.let \{ it != null && it != "storage" \}\) return/);
@@ -311,8 +312,26 @@ assert.match(editorUi, /for \(section in editor\.view\.sections\) \{/);
 // Every structural edit goes through core's editTaskDraft, one at a time, and the editor shows the model core returns.
 assert.match(coreHost, /fun editTaskDraft\(id: String, draftJson: String, editJson: String\): JSONObject =\s*callAsync\("editDraft"/);
 assert.match(hostEntry, /editDraft\(json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.editTaskDraft\(JSON\.parse\(json\)\)\);/);
-assert.match(model, /background\(listOf\(Part\.Editor\), \{ engine -> runCatching \{ current\.model\.edited\(engine\.editTaskDraft\(current\.id, draftJson\(sent\), edit\)\) \} \}\)/);
-assert.match(model, /if \(editInFlight \|\| current == null \|\| runtime == null \|\| busy \|\| failedAction != null\) return/);
+assert.match(model, /background\(listOf\(Part\.Editor\), \{ engine -> runCatching \{ current\.model\.edited\(engine\.editTaskDraft\(current\.id, draftJson\(sent\), next\.edit\)\) \} \}\)/);
+assert.match(model, /if \(inFlight != null \|\| current == null \|\| runtime == null \|\| busy \|\| failedAction != null\) return/);
+// Generation and sequence: a reply counts only for its own editor session and the edit it answers, still first in the
+// queue; open, restore and Reload start a new session, and Close drops the in-flight ticket.
+assert.match(model, /val ticket = current\.session to next\.seq/);
+assert.match(model, /val now = editor\?\.takeIf \{ it\.session == ticket\.first && it\.pending\.firstOrNull\(\)\?\.seq == ticket\.second \}/);
+assert.match(editorUi, /val session: String = UUID\.randomUUID\(\)\.toString\(\)/);
+assert.match(model, /fun closeEditor\(\) \{\s+inFlight = null/);
+// Pending edits are in the draft file before dispatch; each reply's draft and the removal of its edit are one write;
+// a restore sends them again in order.
+assert.match(model, /keepEditor\(current\.queued\(edit\.toString\(\), field\)\)\s+pumpEdits\(\)/);
+assert.match(model, /keepEditor\(now\.viewed\(view, sent\)\.copy\(pending = now\.pending\.drop\(1\)\)\)/);
+assert.match(editorUi, /\.put\("edits", JSONArray\(\)\.apply \{ pending\.forEach/);
+assert.match(editorUi, /val edits = saved\.optJSONArray\("edits"\)/);
+assert.match(model, /restored\?\.let \{ resumeEditor\(it, savedDraft\.optJSONObject\("pending"\)\) \}\s+\/\/[^\n]*\s+pumpEdits\(\)/);
+// A refused edit cancels a queued Save and keeps core's message; typed text keeps newer typing; Reload waits for the queue.
+assert.match(model, /error = editRefusal\s+saveQueued = false/);
+assert.match(editorUi, /LaunchedEffect\(coreValue\) \{ if \(!pending\) text = coreValue \}/);
+assert.match(editorUi, /enabled = !busy && !failed && !editsPending\) \{ Text\(t\("common\.retry"\)\) \}/);
+assert.match(model, /\.put\("amount", amount \?: latest\?\.get\("amount"\) \?: shown\.getInt\("amount"\)\)/);
 assert.match(model, /fun editFields\(values: Map<String, Any\?>\) =\s*editDraft\(JSONObject\(\)\.put\("type", "fields"\)/);
 assert.match(editorUi, /if \(\(current\[field\] \?: "null"\) != \(sent\[field\] \?: "null"\)\) current\[field\] \?: "null" else reply\.draft\[field\] \?: "null"/);
 // Dates: core's label, core's picker starts, core's date edits; Kotlin never writes a date value of its own.

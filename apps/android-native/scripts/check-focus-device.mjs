@@ -145,7 +145,9 @@ const tapDescribed = async (description, expected, what = description) => {
 };
 /** RN's status chips: "Status: <status>", selected when chosen. */
 const chooseStatus = async (value) => {
-    await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`), `Status ${value} selected`);
+    await tapDescribed(`Status: ${value}`, (nodes) => chipOn(nodes, `Status: ${value}`)
+        // RN hides the status field for Reference (core's REFERENCE_HIDDEN_TASK_FIELDS), so the chips leave.
+        || (value === 'Reference' && !nodes.some((node) => (node['content-desc'] ?? '').startsWith('Status: '))), `Status ${value} selected`);
 };
 /** The capture or editor Save took effect: the sheet or editor closed, or it is busy (Save disabled), or a failure shows. */
 const saveTookEffect = (nodes) => !button(nodes, 'Save') || button(nodes, 'Save')?.enabled === 'false' || hasError(nodes);

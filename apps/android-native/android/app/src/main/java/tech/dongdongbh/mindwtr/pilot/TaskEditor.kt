@@ -71,6 +71,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.UUID
 
 /** One draft value as JSON text: a draft compares, saves, and survives process death exactly as core sent it. */
 fun draftLiteral(value: Any?): String = when (value) {
@@ -143,6 +144,9 @@ class EditorModel(val source: String) {
     }
 }
 
+/** One control's edit for core's editTaskDraft, numbered in its session; [field] names a typed input it came from. */
+data class PendingEdit(val seq: Long, val edit: String, val field: String?)
+
 /** One quick date chip: core's label, whether it is on, and the field's draft value after a tap. */
 data class QuickDate(val label: String, val selected: Boolean, val value: String)
 
@@ -199,6 +203,11 @@ data class TaskEditor(
     val resolved: Map<String, String> = emptyMap(), val bases: Map<String, String> = emptyMap(), val waitingFor: String? = null,
     /** Core's model for the current draft (editTaskDraft's reply): the layout, options, and fields to show. */
     val view: EditorModel = model,
+    /** This editor session. A reply from core counts only for the session and the first pending edit it answers. */
+    val session: String = UUID.randomUUID().toString(),
+    /** Control edits not yet answered by core, in order; kept in the draft file before they are sent. */
+    val pending: List<PendingEdit> = emptyList(),
+    val nextSeq: Long = 1,
 ) {
     val id get() = model.id
     val readOnly get() = model.readOnly
@@ -226,6 +235,11 @@ data class TaskEditor(
     val dirty get() = patch.isNotEmpty() || waiting
 
     fun typed(field: String, text: String) = copy(inputs = inputs + (field to text))
+
+    /** A control's edit joins the queue with the next number of this session. */
+    fun queued(edit: String, field: String?) = copy(pending = pending + PendingEdit(nextSeq, edit, field), nextSeq = nextSeq + 1)
+    /** A typed input with an edit still waiting for core keeps its own text. */
+    fun pendingFor(field: String) = pending.any { it.field == field }
 
     /** The whole draft as JSON text, for core's editTaskDraft. */
     fun fullDraft(): Map<String, String> = (model.draft.keys + edited.keys).associateWith { edited[it] ?: loaded(it) }
@@ -261,12 +275,15 @@ data class TaskEditor(
      */
     fun reloaded(fresh: EditorModel): TaskEditor {
         val kept = { field: String -> (fresh.draft[field] ?: "null") == base(field) }
+        // A new session: a reply to an edit sent before the reload never enters the reloaded editor.
         return TaskEditor(fresh, edited.filterKeys(kept), inputs.filterKeys(kept), resolved.filterKeys(kept), waitingFor = waitingFor, view = view)
     }
 
     /** The draft's own state, without the model: the edits with their bases, the typed text, and the open prompt. */
     fun state(): JSONObject = JSONObject().put("id", id).put("edited", JSONObject(edited)).put("bases", JSONObject(edited.keys.associateWith { base(it) }))
         .put("inputs", JSONObject(inputs)).put("resolved", JSONObject(resolved)).put("waitingFor", waitingFor ?: JSONObject.NULL)
+        .put("edits", JSONArray().apply { pending.forEach { put(JSONObject().put("seq", it.seq).put("edit", it.edit).put("field", it.field ?: JSONObject.NULL)) } })
+        .put("nextSeq", nextSeq)
 
     companion object {
         fun open(model: EditorModel) = TaskEditor(model, emptyMap())
@@ -274,8 +291,13 @@ data class TaskEditor(
         /** A saved draft onto a model read again from core: the edits keep their own bases, so core still checks them. */
         fun restore(model: EditorModel, saved: JSONObject): TaskEditor {
             fun map(name: String) = saved.getJSONObject(name).let { m -> m.keys().asSequence().associateWith { m.getString(it) } }
+            // Edits core had not answered come back, in order, and are sent again on the fresh model.
+            val edits = saved.optJSONArray("edits")?.objects().orEmpty().map {
+                PendingEdit(it.getLong("seq"), it.getString("edit"), if (it.isNull("field")) null else it.getString("field"))
+            }
             return TaskEditor(model, map("edited"), map("inputs"), map("resolved"), map("bases"),
-                if (saved.isNull("waitingFor")) null else saved.getString("waitingFor"))
+                if (saved.isNull("waitingFor")) null else saved.getString("waitingFor"),
+                pending = edits, nextSeq = saved.optLong("nextSeq", (edits.maxOfOrNull { it.seq } ?: 0) + 1))
         }
     }
 }
@@ -350,7 +372,8 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
         }
         // Core's message; after a conflict, "Try again" takes the stored values of the fields core named and keeps the other edits.
         error?.let { message ->
-            FailureBanner(message) { if (conflict) TextButton(onClick = model::reloadEditor, enabled = !busy && !failed) { Text(t("common.retry")) } }
+            // Reload waits while control edits are with core, so it never leaves them unsent.
+            FailureBanner(message) { if (conflict) TextButton(onClick = model::reloadEditor, enabled = !busy && !failed && !editsPending) { Text(t("common.retry")) } }
         }
         Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(20.dp)) {
             if (editor.readOnly) Text(t("projects.archivedReadOnlyHint"), style = rnText(14, 400), color = c.secondaryText,
@@ -543,14 +566,15 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             val estimate = editor.view.fields.timeEstimate
             if (estimate.getBoolean("customSelected")) {
                 // RN's custom input: core parses the typed text ("2h30", "45"); text that does not parse keeps the estimate.
-                TypedInput(estimate.getString("customText"), "${t("taskEdit.timeEstimateLabel")}: ${estimate.getString("customLabel")}", !locked) {
-                    editDraft(JSONObject().put("type", "timeEstimate").put("text", it))
-                }
+                TypedInput(estimate.getString("customText"), "${t("taskEdit.timeEstimateLabel")}: ${estimate.getString("customLabel")}", !locked,
+                    editor.pendingFor("timeEstimate")) { editDraft(JSONObject().put("type", "timeEstimate").put("text", it), "timeEstimate") }
             }
             if (editor.view.fields.timeSpent) {
                 FieldHeading(Lucide.History, t("taskEdit.timeSpentLabel"), Modifier.padding(top = 12.dp))
                 val spent = (editor.value("timeSpentMinutes") as? Number)?.toInt()?.toString() ?: ""
-                TypedInput(spent, t("taskEdit.timeSpentLabel"), !locked) { editDraft(JSONObject().put("type", "timeSpent").put("text", it)) }
+                TypedInput(spent, t("taskEdit.timeSpentLabel"), !locked, editor.pendingFor("timeSpent")) {
+                    editDraft(JSONObject().put("type", "timeSpent").put("text", it), "timeSpent")
+                }
             }
         }
         "contexts", "tags" -> FormGroup {
@@ -608,7 +632,7 @@ private fun EditorField(model: InboxViewModel, editor: TaskEditor, id: String, l
             if (id != "reviewAt" && editor.view.fields.dateIssue.isNotEmpty()) {
                 Text(editor.view.fields.dateIssue, style = rnText(12, 600), color = c.warning, modifier = Modifier.padding(top = 8.dp))
             }
-            if (id == "startTime") editor.view.fields.relativeStart?.let { RelativeStart(model, it, locked) }
+            if (id == "startTime") editor.view.fields.relativeStart?.let { RelativeStart(model, editor, it, locked) }
             if (id == "dueDate") Reminders(model, editor, locked)
         }
         "recurrence" -> FormGroup {
@@ -654,32 +678,29 @@ private fun QuickDateChips(fieldLabel: String, chips: List<QuickDate>, enabled: 
 /** RN's start mode: Absolute or Relative, then the lead time and its unit; core computes the start (relativeStart edit). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RelativeStart(model: InboxViewModel, state: JSONObject, locked: Boolean) = with(model) {
+private fun RelativeStart(model: InboxViewModel, editor: TaskEditor, state: JSONObject, locked: Boolean) = with(model) {
     val c = LocalTheme.current.colors
     val active = state.getBoolean("active")
     val amount = state.getInt("amount")
     val unit = state.getString("unit")
-    val relative = { newAmount: Any, newUnit: String ->
-        editDraft(JSONObject().put("type", "relativeStart").put("amount", newAmount).put("unit", newUnit))
-    }
     Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip(!active, !locked, t("taskEdit.startModeAbsolute"), { editFields(mapOf("relativeStartOffset" to null)) }) { color ->
             Text(t("taskEdit.startModeAbsolute"), style = rnText(14, 400), color = color)
         }
-        Chip(active, !locked, t("taskEdit.startModeRelative"), { relative(amount, unit) }) { color ->
+        Chip(active, !locked, t("taskEdit.startModeRelative"), { relativeStart(null, null) }) { color ->
             Text(t("taskEdit.startModeRelative"), style = rnText(14, 400), color = color)
         }
     }
     if (active) {
         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.widthIn(min = 74.dp, max = 74.dp)) { TypedInput("$amount", t("taskEdit.relativeStartAmount"), !locked) { relative(it, unit) } }
+            Box(Modifier.widthIn(min = 74.dp, max = 74.dp)) { TypedInput("$amount", t("taskEdit.relativeStartAmount"), !locked, editor.pendingFor(RELATIVE_AMOUNT)) { relativeStart(it, null) } }
             Text(t("taskEdit.relativeStartBeforeDue"), style = rnText(14, 400), color = c.secondaryText, modifier = Modifier.padding(start = 8.dp))
         }
         FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (option in state.getJSONArray("units").objects()) {
                 val value = option.getString("unit")
                 val unitLabel = option.getString("label")
-                Chip(value == unit, !locked, unitLabel, { relative(amount, value) }) { color ->
+                Chip(value == unit, !locked, unitLabel, { relativeStart(null, value) }) { color ->
                     Text(unitLabel, style = rnText(14, 400), color = color)
                 }
             }
@@ -745,7 +766,9 @@ private fun RecurrenceField(model: InboxViewModel, editor: TaskEditor, locked: B
     Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(t("recurrence.repeatEvery"), style = rnText(13, 600), color = c.secondaryText)
         Box(Modifier.padding(horizontal = 8.dp).widthIn(min = 64.dp, max = 80.dp)) {
-            TypedInput("${details.getInt("interval")}", t("recurrence.repeatEvery"), !locked) { edit(JSONObject().put("kind", "interval").put("text", it)) }
+            TypedInput("${details.getInt("interval")}", t("recurrence.repeatEvery"), !locked, editor.pendingFor("interval")) {
+                editDraft(recurrenceEdit(JSONObject().put("kind", "interval").put("text", it)), "interval")
+            }
         }
         Text(t(unit), style = rnText(13, 600), color = c.secondaryText)
     }
@@ -785,7 +808,9 @@ private fun RecurrenceField(model: InboxViewModel, editor: TaskEditor, locked: B
     }
     if (ends == "count") Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.widthIn(min = 64.dp, max = 80.dp)) {
-            TypedInput("${details.getInt("count")}", t("recurrence.endsAfterCount"), !locked) { edit(JSONObject().put("kind", "count").put("text", it)) }
+            TypedInput("${details.getInt("count")}", t("recurrence.endsAfterCount"), !locked, editor.pendingFor("count")) {
+                editDraft(recurrenceEdit(JSONObject().put("kind", "count").put("text", it)), "count")
+            }
         }
         Text(t("recurrence.occurrenceUnit"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(start = 8.dp))
     }
@@ -807,8 +832,11 @@ private fun RecurrenceField(model: InboxViewModel, editor: TaskEditor, locked: B
  * when it changes.
  */
 @Composable
-private fun TypedInput(coreValue: String, description: String, enabled: Boolean, send: (String) -> Unit) {
-    var text by remember(coreValue) { mutableStateOf(coreValue) }
+private fun TypedInput(coreValue: String, description: String, enabled: Boolean, pending: Boolean, send: (String) -> Unit) {
+    // The typed text stays as typed. Core's value replaces it only when core's value changes and no edit
+    // from this input is still waiting: an older reply never resets newer typing, and refused text stays.
+    var text by remember { mutableStateOf(coreValue) }
+    LaunchedEffect(coreValue) { if (!pending) text = coreValue }
     EditorInput(text, { text = it; send(it) }, null, enabled, singleLine = true, description = description)
 }
 
