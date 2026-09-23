@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNativeHostContract, NATIVE_HOST_EDITOR_FIELDS, NATIVE_HOST_MAX_WINDOW, type NativeEditableFields } from './native-host-contract';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
+import { isTaskVisibleInArea, resolveAreaFilterSelection } from './area-filter';
+import * as focusDerivation from './focus-sections';
+import { formatLocalDate } from './import-source-reader';
+import { resolveFeatureFlags } from './resolve-feature-flags';
+import { isTaskActionable } from './task-status';
+import { splitTodayTasksByStartTime } from './task-utils';
 import type { Project, Task } from './types';
 
 const CAPTURE_ID = '123e4567-e89b-12d3-a456-426614174000';
@@ -47,6 +53,7 @@ describe('native host contract', () => {
     });
 
     afterEach(async () => {
+        vi.useRealTimers();
         await flushPendingSave();
         resetForTests();
         vi.restoreAllMocks();
@@ -75,7 +82,7 @@ describe('native host contract', () => {
         expect(first.value.rows.map(({ id }) => id)).toEqual(['first', 'middle']);
         expect(first.value.rows[0]).toEqual({
             id: 'first', title: 'first', status: 'inbox', priority: null, dueDate: null,
-            startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false,
+            startTime: null, isFocusedToday: false, projectTitle: null, hasNotes: false, revealDate: null, laterToday: false,
         });
         expect(host.getInboxWindow({ offset: 2, limit: 2, revision: first.value.revision }))
             .toMatchObject({ ok: true, value: { rows: [{ id: 'later' }], total: 3 } });
@@ -198,6 +205,9 @@ describe('native host contract', () => {
         setStorageAdapter(noopStorage);
         const host = createNativeHostContract();
         expect(host.getInboxWindow({ offset: 0, limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getFocus({ limit: 1 })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
+        expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: 'x' }))
+            .toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTask({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(host.getTaskEditor({ id: 'x' })).toMatchObject({ ok: false, error: { code: 'NOT_READY' } });
         expect(await host.createInboxTask({ title: 'x', captureId: CAPTURE_ID }))
@@ -593,5 +603,201 @@ describe('native host contract', () => {
             .toHaveLength(1);
         expect(useTaskStore.getState()._allTasks).toHaveLength(2);
         expect(useTaskStore.getState()._tasksById.get('recurring')?.rev).toBe(revAfterFailure);
+    });
+
+    it('matches the mobile Focus core pipeline and carries Upcoming reveal dates', async () => {
+        const now = new Date(2026, 8, 23, 10, 0);
+        const tomorrow = formatLocalDate(new Date(2026, 8, 24));
+        const tasks = [
+            task('starred', '2026-09-01T00:00:00.000Z', { status: 'next', isFocusedToday: true }),
+            task('due-today', '2026-09-02T00:00:00.000Z', { status: 'next', dueDate: formatLocalDate(now) }),
+            task('later-today', '2026-09-03T00:00:00.000Z', { status: 'next', startTime: new Date(2026, 8, 23, 17).toISOString() }),
+            task('review-due', '2026-09-04T00:00:00.000Z', { status: 'waiting', reviewAt: new Date(2026, 8, 22).toISOString() }),
+            task('seq-first', '2026-09-05T00:00:00.000Z', { status: 'next', projectId: 'seq', order: 0 }),
+            task('seq-second', '2026-09-06T00:00:00.000Z', { status: 'next', projectId: 'seq', order: 1 }),
+            task('upcoming', '2026-09-07T00:00:00.000Z', { status: 'next', startTime: tomorrow, description: 'Notes' }),
+            task('parked-someday', '2026-09-07T00:00:00.000Z', { status: 'next', projectId: 'someday' }),
+            task('parked-archived', '2026-09-07T00:00:00.000Z', { status: 'next', projectId: 'archived' }),
+            task('starred-parked', '2026-09-07T00:00:00.000Z', { status: 'next', projectId: 'someday', isFocusedToday: true }),
+            task('done', '2026-09-08T00:00:00.000Z', { status: 'done' }),
+            task('deleted', '2026-09-09T00:00:00.000Z', { status: 'next', deletedAt: '2026-09-10T00:00:00.000Z' }),
+        ];
+        const host = await activateWith(tasks, [
+            project('seq', 'active', 0, { isSequential: true }),
+            project('someday', 'someday'),
+            project('archived', 'archived'),
+        ]);
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const result = host.getFocus({ limit: 20 });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        const state = useTaskStore.getState();
+        const actionable = state.tasks.filter(isTaskActionable);
+        const projectById = new Map(state.projects.map((item) => [item.id, item]));
+        const resolvedAreaFilter = resolveAreaFilterSelection(undefined, state.areas);
+        const visibleTasks = actionable.filter((item) => isTaskVisibleInArea(item, { projectById, resolvedAreaFilter }));
+        const pools = focusDerivation.buildFocusPools({
+            tasks: actionable, visibleTasks, projects: state.projects, criteria: undefined, now,
+        });
+        const lists = focusDerivation.deriveFocusTaskLists(pools, {
+            now, projects: state.projects, sections: state.sections,
+            sortBy: focusDerivation.DEFAULT_FOCUS_SORT_BY,
+            prioritiesEnabled: resolveFeatureFlags(state.settings).priorities,
+            sortOrder: undefined,
+        });
+        const direct = focusDerivation.buildFocusTaskSections(lists, () => undefined);
+        const scheduleByStartTime = splitTodayTasksByStartTime(lists.schedule, now);
+        expect(result.value.sections.map(({ key, title, total, rows }) => ({ key, title, total, ids: rows.map(({ id }) => id) })))
+            .toEqual(direct.map(({ key, title, items }) => ({
+                key, title, total: items.length,
+                ids: (key === 'schedule' ? [...scheduleByStartTime.ready, ...scheduleByStartTime.laterToday] : items).map(({ id }) => id),
+            })));
+        expect(result.value.sections.map(({ key, title }) => ({ key, title }))).toEqual([
+            { key: 'focus', title: "Today's Focus" },
+            { key: 'schedule', title: 'Today' },
+            { key: 'reviewDue', title: 'Review Due' },
+            { key: 'next', title: 'Next actions' },
+            { key: 'upcoming', title: 'Upcoming' },
+        ]);
+        const visibleIds = result.value.sections.flatMap(({ rows }) => rows.map(({ id }) => id));
+        for (const id of ['seq-second', 'parked-someday', 'parked-archived', 'done', 'deleted']) expect(visibleIds).not.toContain(id);
+        expect(result.value.sections.find(({ key }) => key === 'focus')?.rows.map(({ id }) => id)).toContain('starred-parked');
+        expect(result.value.sections.find(({ key }) => key === 'next')?.rows.map(({ id }) => id)).toContain('seq-first');
+        expect(result.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ id, laterToday }) => ({ id, laterToday })))
+            .toEqual([{ id: 'due-today', laterToday: false }, { id: 'later-today', laterToday: true }]);
+        const reveal = pools.upcoming.find(({ task: item }) => item.id === 'upcoming')?.appearsAt;
+        expect(reveal).toBeInstanceOf(Date);
+        expect(reveal && formatLocalDate(reveal)).toBe('2026-09-24');
+        expect(result.value.sections.find(({ key }) => key === 'upcoming')?.rows[0])
+            .toMatchObject({ id: 'upcoming', revealDate: '2026-09-24', hasNotes: true, laterToday: false });
+        expect(result.value.sections.filter(({ key }) => key !== 'schedule').flatMap(({ rows }) => rows.every(({ laterToday }) => !laterToday)))
+            .toEqual([true, true, true, true]);
+        expect(result.value.sections.filter(({ key }) => key !== 'upcoming').flatMap(({ rows }) => rows.map(({ revealDate }) => revealDate)))
+            .toEqual(Array(visibleIds.length - 1).fill(null));
+    });
+
+    it('follows core ordering with priorities enabled and disabled', async () => {
+        const now = new Date(2026, 8, 23, 10);
+        const items = [
+            task('urgent-later-created', '2026-09-02T00:00:00.000Z', { status: 'next', dueDate: formatLocalDate(now), priority: 'urgent' }),
+            task('low-earlier-created', '2026-09-01T00:00:00.000Z', { status: 'next', dueDate: formatLocalDate(now), priority: 'low' }),
+        ];
+        const host = await activateWith(items);
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        for (const priorities of [true, false]) {
+            useTaskStore.setState({ settings: { features: { priorities } } });
+            const result = host.getFocus({ limit: 10 });
+            if (!result.ok) throw new Error('Focus query failed');
+            const state = useTaskStore.getState();
+            const active = state.tasks.filter(isTaskActionable);
+            const pools = focusDerivation.buildFocusPools({ tasks: active, visibleTasks: active, projects: state.projects, criteria: undefined, now });
+            const direct = focusDerivation.deriveFocusTaskLists(pools, {
+                now, projects: state.projects, sections: state.sections, sortBy: focusDerivation.DEFAULT_FOCUS_SORT_BY,
+                prioritiesEnabled: resolveFeatureFlags(state.settings).priorities, sortOrder: undefined,
+            });
+            expect(result.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ id }) => id))
+                .toEqual(direct.schedule.map(({ id }) => id));
+            expect(result.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ id }) => id))
+                .toEqual(priorities ? ['urgent-later-created', 'low-earlier-created'] : ['low-earlier-created', 'urgent-later-created']);
+        }
+    });
+
+    it('bounds initial Focus rows and pages a section beyond 100 rows', async () => {
+        const host = await activateWith(Array.from({ length: 215 }, (_, index) =>
+            task(`next-${index}`, '2026-09-01T00:00:00.000Z', { status: 'next' })));
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        const first = host.getFocus({ limit: 50 });
+        if (!first.ok) throw new Error('Focus query failed');
+        expect(first.value.sections.find(({ key }) => key === 'next')).toMatchObject({ total: 215, rows: expect.any(Array) });
+        expect(first.value.sections.find(({ key }) => key === 'next')?.rows).toHaveLength(50);
+        const ids: string[] = [];
+        for (const offset of [0, 100, 200]) {
+            const page = host.getFocusSectionWindow({ key: 'next', offset, limit: 100, revision: first.value.revision });
+            if (!page.ok) throw new Error('Focus page failed');
+            expect(page.value).toMatchObject({ version: 1, revision: first.value.revision, key: 'next', total: 215 });
+            ids.push(...page.value.rows.map(({ id }) => id));
+        }
+        expect(ids).toHaveLength(215);
+        expect(new Set(ids).size).toBe(215);
+        expect(host.getFocus({ limit: 0 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        expect(host.getFocus({ limit: NATIVE_HOST_MAX_WINDOW + 1 })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        for (const input of [
+            { key: 'bad', offset: 0, limit: 1 },
+            { key: 'focus', offset: 0, limit: 1 },
+            { key: 'next', offset: -1, limit: 1 },
+            { key: 'next', offset: 0.5, limit: 1 },
+            { key: 'next', offset: 0, limit: 0 },
+            { key: 'next', offset: 0, limit: NATIVE_HOST_MAX_WINDOW + 1 },
+        ]) {
+            expect(host.getFocusSectionWindow({ ...input, revision: first.value.revision } as never))
+                .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+        }
+    });
+
+    it('invalidates Focus pages after store edits, minute ticks, and local midnight', async () => {
+        const now = new Date(2026, 8, 23, 23, 59, 0);
+        const tomorrow = formatLocalDate(new Date(2026, 8, 24));
+        const host = await activateWith([
+            task('editable', '2026-09-01T00:00:00.000Z', { status: 'next' }),
+            task('reveals-tomorrow', '2026-09-01T00:00:00.000Z', { status: 'next', startTime: tomorrow }),
+        ]);
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const first = host.getFocus({ limit: 10 });
+        if (!first.ok) throw new Error('Focus query failed');
+        expect(first.value.sections.find(({ key }) => key === 'upcoming')?.rows.map(({ id }) => id)).toContain('reveals-tomorrow');
+        useTaskStore.setState({ _allTasks: [
+            task('editable', '2026-09-01T00:00:00.000Z', { status: 'next', title: 'Edited' }),
+            task('reveals-tomorrow', '2026-09-01T00:00:00.000Z', { status: 'next', startTime: tomorrow }),
+        ] });
+        const edited = host.getFocus({ limit: 10 });
+        if (!edited.ok) throw new Error('Focus query failed');
+        expect(edited.value.revision).not.toBe(first.value.revision);
+        expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: first.value.revision }))
+            .toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+        vi.setSystemTime(new Date(2026, 8, 24, 0, 0, 0));
+        const midnight = host.getFocus({ limit: 10 });
+        if (!midnight.ok) throw new Error('Focus query failed');
+        expect(midnight.value.revision).not.toBe(edited.value.revision);
+        expect(midnight.value.sections.some(({ key }) => key === 'upcoming')).toBe(false);
+        expect(midnight.value.sections.find(({ key }) => key === 'schedule')?.rows.map(({ id }) => id)).toContain('reveals-tomorrow');
+        vi.setSystemTime(new Date(2026, 8, 24, 0, 1, 0));
+        const minute = host.getFocus({ limit: 10 });
+        if (!minute.ok) throw new Error('Focus query failed');
+        expect(minute.value.revision).not.toBe(midnight.value.revision);
+    });
+
+    it('reuses the core Focus derivation for one revision', async () => {
+        const host = await activateWith([task('next', '2026-09-01T00:00:00.000Z', { status: 'next' })]);
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        const derive = vi.spyOn(focusDerivation, 'deriveFocusTaskLists');
+        const first = host.getFocus({ limit: 1 });
+        if (!first.ok) throw new Error('Focus query failed');
+        expect(host.getFocus({ limit: 1 })).toEqual(first);
+        expect(host.getFocusSectionWindow({ key: 'next', offset: 0, limit: 1, revision: first.value.revision }).ok).toBe(true);
+        expect(derive).toHaveBeenCalledTimes(1);
+    });
+
+    it('queries 5,000 tasks and serves the same revision from cache', async () => {
+        const host = await activateWith(Array.from({ length: 5_000 }, (_, index) =>
+            task(`next-${index}`, '2026-09-01T00:00:00.000Z', { status: 'next' })));
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 23, 10));
+        const derive = vi.spyOn(focusDerivation, 'deriveFocusTaskLists');
+        const start = performance.now();
+        const first = host.getFocus({ limit: 50 });
+        const firstMs = performance.now() - start;
+        const cachedStart = performance.now();
+        const second = host.getFocus({ limit: 50 });
+        const cachedMs = performance.now() - cachedStart;
+        console.info(`native Focus 5,000 tasks: first ${firstMs.toFixed(1)} ms, cached ${cachedMs.toFixed(1)} ms`);
+        expect(first.ok).toBe(true);
+        expect(second).toEqual(first);
+        expect(derive).toHaveBeenCalledTimes(1);
     });
 });

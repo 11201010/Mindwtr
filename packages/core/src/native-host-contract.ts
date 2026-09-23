@@ -1,10 +1,14 @@
-import { isTaskVisibleInInbox } from './area-filter';
+import { isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection } from './area-filter';
 import { flushPendingSave, getPersistenceStatus, getStorageAdapter, useTaskStore } from './store';
 import { noopStorage, type StorageAdapter } from './storage';
 import { resolveNonDoneTaskSortBy } from './task-list-sort-options';
 import { isSelectableProjectForTaskAssignment } from './project-utils';
-import { sortTasksBy } from './task-utils';
+import { sortTasksBy, splitTodayTasksByStartTime } from './task-utils';
 import { hasTimeComponent, safeParseDate } from './date';
+import { buildFocusPools, buildFocusTaskSections, DEFAULT_FOCUS_SORT_BY, deriveFocusTaskLists, type FocusTaskSection, type FocusTaskSectionKey } from './focus-sections';
+import { formatLocalDate } from './import-source-reader';
+import { resolveFeatureFlags } from './resolve-feature-flags';
+import { isTaskActionable } from './task-status';
 import type { Project, Task, TaskPriority, TaskStatus } from './types';
 import { generateUUID } from './uuid';
 
@@ -43,14 +47,17 @@ export type NativeHostResult<T> = { ok: true; value: T } | {
     error: { code: NativeHostErrorCode; message: string };
 };
 
-export type NativeInboxRow = Pick<Task, 'id' | 'title' | 'status'> & {
+export type NativeTaskRow = Pick<Task, 'id' | 'title' | 'status'> & {
     priority: Task['priority'] | null;
     dueDate: string | null;
     startTime: string | null;
     isFocusedToday: boolean;
     projectTitle: string | null;
     hasNotes: boolean;
+    revealDate: string | null;
+    laterToday: boolean;
 };
+export type NativeInboxRow = NativeTaskRow;
 export type NativeInboxWindow = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     /** Opaque within this host instance; send it back on later pages. */
@@ -58,6 +65,31 @@ export type NativeInboxWindow = {
     total: number;
     rows: NativeInboxRow[];
 };
+export type NativeFocusSection = {
+    key: FocusTaskSectionKey;
+    title: string;
+    total: number;
+    rows: NativeTaskRow[];
+};
+export type NativeFocusView = {
+    version: typeof NATIVE_HOST_CONTRACT_VERSION;
+    revision: string;
+    sections: NativeFocusSection[];
+};
+
+const toNativeTaskRow = (task: Task, projectTitles: Map<string, string>): NativeTaskRow => ({
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority ?? null,
+    dueDate: task.dueDate ?? null,
+    startTime: task.startTime ?? null,
+    isFocusedToday: task.isFocusedToday === true,
+    projectTitle: task.projectId ? projectTitles.get(task.projectId) ?? null : null,
+    hasNotes: typeof task.description === 'string' && task.description.length > 0,
+    revealDate: null,
+    laterToday: false,
+});
 
 const fail = (code: NativeHostErrorCode, message: string): NativeHostResult<never> => ({
     ok: false,
@@ -87,9 +119,16 @@ export function createNativeHostContract() {
     let lastProjects = useTaskStore.getState()._allProjects;
     let lastSections = useTaskStore.getState()._allSections;
     let lastSortBy = resolveNonDoneTaskSortBy(useTaskStore.getState().settings.taskSortBy, useTaskStore.getState().settings);
+    let lastSettings = useTaskStore.getState().settings;
+    let settingsGeneration = 0;
     let cachedRevision = '';
     let cachedInbox: Task[] = [];
     let cachedProjectTitles = new Map<string, string>();
+    let cachedFocusRevision = '';
+    let cachedFocusSections: FocusTaskSection[] = [];
+    let cachedFocusProjectTitles = new Map<string, string>();
+    let cachedRevealDates = new Map<string, string>();
+    let cachedLaterTodayIds = new Set<string>();
     useTaskStore.subscribe((state) => {
         if (hasLoadError(state.error)) readyAdapter = null;
     });
@@ -116,6 +155,54 @@ export function createNativeHostContract() {
         }
         return `${processId}:${generation}`;
     };
+
+    const focusRevision = (now: Date) => {
+        const storeRevision = revision();
+        const settings = useTaskStore.getState().settings;
+        if (settings !== lastSettings) {
+            settingsGeneration += 1;
+            lastSettings = settings;
+        }
+        return `${storeRevision}:${settingsGeneration}:${formatLocalDate(now)}:${Math.floor(now.getTime() / 60_000)}`;
+    };
+
+    const focusSections = (currentRevision: string, now: Date): FocusTaskSection[] => {
+        if (cachedFocusRevision !== currentRevision) {
+            const state = useTaskStore.getState();
+            const tasks = state.tasks.filter(isTaskActionable);
+            const projectById = new Map(state.projects.map((project) => [project.id, project]));
+            const resolvedAreaFilter = resolveAreaFilterSelection(undefined, state.areas);
+            const visibleTasks = tasks.filter((task) => isTaskVisibleInArea(task, { projectById, resolvedAreaFilter }));
+            const pools = buildFocusPools({ tasks, visibleTasks, projects: state.projects, criteria: undefined, now });
+            const lists = deriveFocusTaskLists(pools, {
+                now,
+                projects: state.projects,
+                sections: state.sections,
+                sortBy: DEFAULT_FOCUS_SORT_BY,
+                prioritiesEnabled: resolveFeatureFlags(state.settings).priorities,
+                sortOrder: undefined,
+            });
+            const schedule = splitTodayTasksByStartTime(lists.schedule, now);
+            cachedLaterTodayIds = new Set(schedule.laterToday.map((task) => task.id));
+            cachedFocusSections = buildFocusTaskSections(lists, () => undefined).map((section) => (
+                section.key === 'schedule'
+                    ? { ...section, items: [...schedule.ready, ...schedule.laterToday] }
+                    : section
+            ));
+            cachedFocusProjectTitles = new Map(state.projects.map((project) => [project.id, project.title]));
+            cachedRevealDates = new Map(pools.upcoming.map(({ task, appearsAt }) => [task.id, formatLocalDate(appearsAt)]));
+            cachedFocusRevision = currentRevision;
+        }
+        return cachedFocusSections;
+    };
+
+    const focusRows = (section: FocusTaskSection, offset: number, limit: number): NativeTaskRow[] => (
+        section.items.slice(offset, offset + limit).map((task) => ({
+            ...toNativeTaskRow(task, cachedFocusProjectTitles),
+            revealDate: section.key === 'upcoming' ? cachedRevealDates.get(task.id) ?? null : null,
+            laterToday: section.key === 'schedule' && cachedLaterTodayIds.has(task.id),
+        }))
+    );
 
     const save = async (): Promise<NativeHostResult<null>> => {
         const before = readiness();
@@ -206,17 +293,64 @@ export function createNativeHostContract() {
                     version: NATIVE_HOST_CONTRACT_VERSION,
                     revision: currentRevision,
                     total: cachedInbox.length,
-                    rows: cachedInbox.slice(input.offset, input.offset + input.limit).map((task) => ({
-                        id: task.id,
-                        title: task.title,
-                        status: task.status,
-                        priority: task.priority ?? null,
-                        dueDate: task.dueDate ?? null,
-                        startTime: task.startTime ?? null,
-                        isFocusedToday: task.isFocusedToday === true,
-                        projectTitle: task.projectId ? cachedProjectTitles.get(task.projectId) ?? null : null,
-                        hasNotes: typeof task.description === 'string' && task.description.length > 0,
+                    rows: cachedInbox.slice(input.offset, input.offset + input.limit).map((task) => toNativeTaskRow(task, cachedProjectTitles)),
+                },
+            };
+        },
+
+        getFocus(input: { limit: number }): NativeHostResult<NativeFocusView> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW) {
+                return fail('INVALID_INPUT', 'A bounded limit is required');
+            }
+            const now = new Date();
+            const currentRevision = focusRevision(now);
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: currentRevision,
+                    sections: focusSections(currentRevision, now).map((section) => ({
+                        key: section.key,
+                        title: section.title,
+                        total: section.items.length,
+                        rows: focusRows(section, 0, input.limit),
                     })),
+                },
+            };
+        },
+
+        getFocusSectionWindow(input: {
+            key: FocusTaskSectionKey; offset: number; limit: number; revision: string;
+        }): NativeHostResult<{
+            version: typeof NATIVE_HOST_CONTRACT_VERSION;
+            revision: string;
+            key: FocusTaskSectionKey;
+            total: number;
+            rows: NativeTaskRow[];
+        }> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!input || typeof input.key !== 'string'
+                || !Number.isSafeInteger(input.offset) || input.offset < 0
+                || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > NATIVE_HOST_MAX_WINDOW
+                || typeof input.revision !== 'string') {
+                return fail('INVALID_INPUT', 'A valid section, offset, bounded limit, and revision are required');
+            }
+            const now = new Date();
+            const currentRevision = focusRevision(now);
+            if (input.revision !== currentRevision) return fail('STALE_REVISION', 'Focus changed; restart paging');
+            const section = focusSections(currentRevision, now).find(({ key }) => key === input.key);
+            if (!section) return fail('INVALID_INPUT', 'Focus section is not available');
+            return {
+                ok: true,
+                value: {
+                    version: NATIVE_HOST_CONTRACT_VERSION,
+                    revision: currentRevision,
+                    key: section.key,
+                    total: section.items.length,
+                    rows: focusRows(section, input.offset, input.limit),
                 },
             };
         },
